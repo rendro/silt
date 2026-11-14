@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::ast::{Decl, ExprKind, FnDecl, PatternKind, Program, Stmt};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
+use crate::program::{TestFn, TestKind};
 use crate::source::{FileId, Span};
 use crate::types::Type;
 
@@ -14,16 +15,6 @@ pub const ENTRY_POINT: &str = "main";
 
 /// The builtin module that holds the assertions.
 const TEST_MODULE: &str = "test";
-
-/// How `silt test` treats a top-level function, going by its name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestKind {
-    /// `test_*`: the function is called; it fails when it raises an error
-    /// or returns `Err(..)`.
-    Run,
-    /// `skip_test_*`: the function is reported as skipped, not called.
-    Skip,
-}
 
 /// Classify a top-level function name. `None`: not a test.
 pub fn test_kind(name: &str) -> Option<TestKind> {
@@ -73,17 +64,6 @@ pub fn looks_like_test_file(program: &Program) -> bool {
             Decl::Import(target, _) => resolve(target.module()) == TEST_MODULE,
             _ => false,
         })
-}
-
-/// A test function selected to run or to be reported as skipped.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TestFn {
-    pub name: String,
-    pub kind: TestKind,
-    /// The span of the function's name.
-    pub span: Span,
-    /// The function's global slot, which the compiler gives it.
-    pub slot: u16,
 }
 
 /// The diagnostic for an entry file `path` (as the user named it) that

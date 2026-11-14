@@ -108,7 +108,7 @@ missing belong to codes that are gone.
 | `E0409` | A defect in silt: the compiler lost track of its own state. |
 | `E0410` | A module file, or an import, whose name is not a module name: named like a builtin module (`import` of the name always means the builtin one; an import alias too), a keyword, or not lowercase letters, digits and `_` starting with a letter or `_`. |
 | `E0411` | A host module an embedder declared that a builtin module, a dependency or a module file of the same name hides or is hidden by. |
-| `E0412` | A host function whose signature is not one `fn` header. |
+| `E0412` | A host function whose signature is not one `fn` header, or a host type that is not one record or enum declaration. |
 | `E0501` | `silt run` of a program without a `main` function. |
 | `E0502` | A `main` that takes parameters, returns something other than `()` or `Result((), e)`, or returns an error type with no `Display`. |
 | `E0503` | A test function that cannot be called with no arguments, returns something other than `()` or `Result((), e)`, or returns an error type with no `Display`. |

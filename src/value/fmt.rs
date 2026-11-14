@@ -72,6 +72,11 @@ impl Value {
     pub fn format_silt(&self) -> String {
         Inspected(self).to_string()
     }
+
+    /// [`Value::format_silt`], written to `out` (which may refuse more).
+    pub(crate) fn write_silt(&self, out: &mut dyn fmt::Write) -> fmt::Result {
+        write!(out, "{}", Inspected(self))
+    }
 }
 
 /// What writes a value in place of the formatter: for a value of a type

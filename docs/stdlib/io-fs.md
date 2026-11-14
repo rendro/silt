@@ -78,8 +78,9 @@ io.eprint(value: a) -> () where a: Display
 
 Prints a value to stderr, as `print` prints it to stdout: shown as `Display`
 says, without a newline. A write to stderr that fails (a closed stderr) is
-ignored: there is nowhere left to say it. Each call writes its whole text at
-once, so the texts of two tasks never mix inside one call's text.
+ignored: there is nowhere left to say it. Each call's text reaches stderr whole
+(a text of any length, as `println`'s), so the texts of two tasks never mix
+inside one call's text.
 
 ```silt
 import io
@@ -123,7 +124,9 @@ io.inspect(x: a) -> String
 
 Returns a debug-style string representation of any value, using silt syntax:
 every string is in quotes and escaped as a program writes it (`"a\"b"`),
-lists show brackets.
+lists show brackets. Its result is a string, so it holds at most 10,000,000
+bytes (1,000,000 in the playground): the text of a larger value is a runtime
+error, as string interpolation and `string.from` of it are.
 
 ```silt
 import io

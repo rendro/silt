@@ -1041,7 +1041,7 @@ fn docs_ffi_output_and_clock() {
     use std::path::Path;
     use std::time::Duration;
 
-    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
     use silt::{Buffer, Clock, HostIo, Vm};
 
     // A clock that starts at a fixed time and moves only when the
@@ -1065,6 +1065,7 @@ fn docs_ffi_output_and_clock() {
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: vec![],
+        builtins: Builtins::All,
     });
     let source = r#"
 import result

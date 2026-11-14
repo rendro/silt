@@ -351,21 +351,19 @@ fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
 
 builtins! {
     fn eprint(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, |vm, text| {
-            super::prelude::print_to(vm, crate::vm::Stream::Stderr, text, "io.eprint")
-        })
+        vm.print_value(value, crate::vm::Stream::Stderr, "io.eprint", false)
     }
 
     fn eprintln(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, |vm, mut text| {
-            text.push('\n');
-            super::prelude::print_to(vm, crate::vm::Stream::Stderr, text, "io.eprintln")
-        })
+        vm.print_value(value, crate::vm::Stream::Stderr, "io.eprintln", true)
     }
 
     fn inspect(x: &Value) -> Result<String, VmError> {
         x.writable()?;
-        Ok(x.format_silt())
+        // (No longer than a string may be, as it is written.)
+        let mut text = super::common::Bounded::default();
+        let _ = x.write_silt(&mut text);
+        text.text("io.inspect", None)
     }
 
     fn read_file(vm, path: &str) -> Result<Step, VmError> {

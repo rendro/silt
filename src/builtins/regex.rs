@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::common::{ok, too_long_text};
 use super::typed::{self, Text, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{MAX_COLLECTION_LEN, Value};
+use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::{Step, VmError, iterate, next};
 
 /// How `RegexError` shows the variant `tag` with `fields`:
@@ -122,12 +122,12 @@ fn replaced(
         out.push_str(&text[last..whole.start]);
         caps.interpolate_string_into(text, replacement, &mut out);
         last = whole.end;
-        if out.len() > MAX_COLLECTION_LEN {
+        if out.len() > MAX_TEXT_LEN {
             return Err(too_long_text(name, out.len()));
         }
     }
     out.push_str(&text[last..]);
-    if out.len() > MAX_COLLECTION_LEN {
+    if out.len() > MAX_TEXT_LEN {
         return Err(too_long_text(name, out.len()));
     }
     Ok(string(&out))
@@ -289,7 +289,7 @@ builtins! {
                 state.out.push_str(&state.text[state.last_end..start]);
                 state.out.push_str(&replacement);
                 state.last_end = end;
-                if state.out.len() > MAX_COLLECTION_LEN {
+                if state.out.len() > MAX_TEXT_LEN {
                     return Err(too_long_text("regex.replace_with", state.out.len()));
                 }
                 next()
@@ -297,7 +297,7 @@ builtins! {
             |state| {
                 let mut out = std::mem::take(&mut state.out);
                 out.push_str(&state.text[state.last_end..]);
-                if out.len() > MAX_COLLECTION_LEN {
+                if out.len() > MAX_TEXT_LEN {
                     return Err(too_long_text("regex.replace_with", out.len()));
                 }
                 Ok(Value::string(out))
