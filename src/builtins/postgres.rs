@@ -368,6 +368,19 @@ impl Conn {
         }
     }
 
+    /// `e`, an error of an operation on the connection, says that a
+    /// statement the connection prepared is gone from the session
+    /// (SQLSTATE 26000: one of the client's own, a type look-up, dropped
+    /// by a `DEALLOCATE` in a `DO` block or a function, which the first
+    /// word of a statement does not show): every later statement that
+    /// needs it would fail the same way, so the connection is closed, not
+    /// given back.
+    fn lost_a_statement(&self, e: &tokio_postgres::Error) {
+        if e.code() == Some(&tokio_postgres::error::SqlState::INVALID_SQL_STATEMENT_NAME) {
+            self.closes.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     /// It must not go back to the pool.
     fn is_broken(&self) -> bool {
         self.broken
@@ -2275,7 +2288,10 @@ fn with_conn<A>(
                 let mut first = first;
                 match first(conn.conn()) {
                     Ok(given) => rest(conn.conn(), given, Last::Plain),
-                    Err(e) => Err(pg_error_to_variant(&e)),
+                    Err(e) => {
+                        conn.conn().lost_a_statement(&e);
+                        Err(pg_error_to_variant(&e))
+                    }
                 }
             }
             Err(e) => Err(e),
@@ -2331,7 +2347,10 @@ fn live<A>(
                 conn.discard();
                 conn = took(pool)?;
             }
-            Err(e) => return Err(pg_error_to_variant(&e)),
+            Err(e) => {
+                conn.lost_a_statement(&e);
+                return Err(pg_error_to_variant(&e));
+            }
         }
     }
 }
@@ -2357,9 +2376,10 @@ fn prepare(
     (row, rt, impls): &Decoding,
     sql: &str,
 ) -> Result<(tokio_postgres::Statement, Plan), Value> {
-    let statement = conn
-        .wait(conn.client().prepare(sql))
-        .map_err(|e| pg_error_to_variant(&e))?;
+    let statement = conn.wait(conn.client().prepare(sql)).map_err(|e| {
+        conn.lost_a_statement(&e);
+        pg_error_to_variant(&e)
+    })?;
     let plan = Plan::new(rt, impls.clone(), row, statement.columns())?;
     Ok((statement, plan))
 }
@@ -2457,7 +2477,10 @@ fn do_query(
             let plan = Plan::new(rt, impls.clone(), row, statement.columns())?;
             conn.closes_after(&sql);
             let rows = finish(conn, last, conn.client().query(&statement, &bind));
-            let rows = rows.map_err(|e| pg_error_to_variant(&e))?;
+            let rows = rows.map_err(|e| {
+                conn.lost_a_statement(&e);
+                pg_error_to_variant(&e)
+            })?;
             let rows = plan.rows(rt, rows.iter())?;
             Ok(to_fill.give(rt, &plan, rows, None))
         },
@@ -2475,7 +2498,10 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>, wanted: 
             conn.closes_after(&sql);
             match finish(conn, last, conn.client().execute(&statement, &bind)) {
                 Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
-                Err(e) => Err(pg_error_to_variant(&e)),
+                Err(e) => {
+                    conn.lost_a_statement(&e);
+                    Err(pg_error_to_variant(&e))
+                }
             }
         },
     )

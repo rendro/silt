@@ -8,3 +8,6 @@ the transaction goes on and commits: Ok
 a type looked up: Ok
 its look-up dropped: Ok
 another type looked up: Ok
+its look-up dropped in a DO block: Ok
+the statement that finds it gone: Err [26000]
+the statement after it: Ok

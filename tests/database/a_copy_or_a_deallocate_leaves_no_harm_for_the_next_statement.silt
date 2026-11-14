@@ -4,8 +4,10 @@
 -- connection). A `DEALLOCATE` of one of the statements the connection
 -- keeps prepared for itself, by its name, closes the connection when the
 -- statement ends: the next statement that needs a look-up of a type is
--- not refused for a statement that is gone. (A pool of one connection,
--- so that every statement gets the connection the one before had.)
+-- not refused for a statement that is gone. One that a DO block drops is
+-- found by the statement that needs it, whose connection is then closed.
+-- (A pool of one connection, so that every statement gets the connection
+-- the one before had.)
 import env
 import list
 import postgres
@@ -23,6 +25,14 @@ fn url() -> String {
 fn said(answer: Result(a, postgres.PostgresError)) -> String {
   match answer {
     Ok(_) -> "Ok"
+    Err(e) -> "{e}"
+  }
+}
+
+fn code(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(postgres.Query(_, sqlstate)) -> "Err [{sqlstate}]"
     Err(e) -> "{e}"
   }
 }
@@ -57,21 +67,36 @@ fn main() {
       let _ = postgres.execute(pool, "DROP TYPE IF EXISTS silt_database_copy_b", ())
       let _ = postgres.execute(pool, "CREATE TYPE silt_database_copy_a AS ENUM ('x')", ())
       let _ = postgres.execute(pool, "CREATE TYPE silt_database_copy_b AS ENUM ('y')", ())
+      let _ = postgres.execute(pool, "DROP TYPE IF EXISTS silt_database_copy_c", ())
+      let _ = postgres.execute(pool, "DROP TYPE IF EXISTS silt_database_copy_d", ())
+      let _ = postgres.execute(pool, "CREATE TYPE silt_database_copy_c AS ENUM ('z')", ())
+      let _ = postgres.execute(pool, "CREATE TYPE silt_database_copy_d AS ENUM ('w')", ())
       println("a type looked up: {said(postgres.execute(pool, "SELECT $1::silt_database_copy_a", ("x",)))}")
-      let look_ups = postgres.query(
-        pool,
-        "SELECT name FROM pg_prepared_statements WHERE NOT from_sql AND statement LIKE '%pg_catalog.pg_type%' ORDER BY name LIMIT 1",
-        (),
-        Name,
-      )
+      let look_up = "SELECT name FROM pg_prepared_statements WHERE NOT from_sql AND statement LIKE '%pg_catalog.pg_type%' ORDER BY name LIMIT 1"
+      let look_ups = postgres.query(pool, look_up, (), Name)
       match look_ups {
         Ok([one]) -> println("its look-up dropped: {said(postgres.execute(pool, "DEALLOCATE {one.name}", ()))}")
         other -> println("no look-up found: {said(other)}")
       }
       println("another type looked up: {said(postgres.execute(pool, "SELECT $1::silt_database_copy_b", ("y",)))}")
+      -- The same by a DEALLOCATE the first word does not show (in a DO
+      -- block): the statement that finds the look-up gone fails, and its
+      -- connection is closed; the next one gets a new connection.
+      let _ = postgres.execute(pool, "SELECT $1::silt_database_copy_a", ("x",))
+      match postgres.query(pool, look_up, (), Name) {
+        Ok([one]) -> {
+          let dropped = "DO $$ BEGIN EXECUTE 'DEALLOCATE {one.name}'; END $$"
+          println("its look-up dropped in a DO block: {said(postgres.execute(pool, dropped, ()))}")
+        }
+        other -> println("no look-up found: {said(other)}")
+      }
+      println("the statement that finds it gone: {code(postgres.execute(pool, "SELECT $1::silt_database_copy_c", ("z",)))}")
+      println("the statement after it: {said(postgres.execute(pool, "SELECT $1::silt_database_copy_d", ("w",)))}")
       let _ = postgres.execute(pool, "DROP TABLE silt_database_copy", ())
       let _ = postgres.execute(pool, "DROP TYPE silt_database_copy_a", ())
       let _ = postgres.execute(pool, "DROP TYPE silt_database_copy_b", ())
+      let _ = postgres.execute(pool, "DROP TYPE silt_database_copy_c", ())
+      let _ = postgres.execute(pool, "DROP TYPE silt_database_copy_d", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect failed: {e}")
