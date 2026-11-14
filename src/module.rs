@@ -180,9 +180,11 @@ pub(crate) fn builtin_prelude_enum_variants_with_arity()
 }
 
 /// The builtin enums as `(enum_name, variant_names)` pairs: the prelude
-/// enums (Result, Option) and the enums of the builtin modules. The
-/// compiler finds a builtin variant by its name here in the derived
-/// impls of the builtin types, which name variants unresolved.
+/// enums (Result, Option) and the enums of the builtin modules, whose
+/// variants the language server and the playground offer
+/// (`all_builtin_constructor_names`). (Equality, order, hash and
+/// display of a builtin variant are the runtime's own: no derived impl
+/// names one.)
 #[cfg(any(feature = "lsp", feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
     static ENUMS: OnceLock<Vec<(&'static str, Vec<&'static str>)>> = OnceLock::new();
