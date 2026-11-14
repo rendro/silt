@@ -122,7 +122,7 @@ fn main() -> Result((), postgres.PostgresError) {
 postgres.execute(conn: a, sql: String, params: p) -> Result(Int, PostgresError)
 ```
 
-Runs `sql` with `params` on a pool or in a transaction and gives the number of rows it changed (0 for a statement that changes none).
+Runs `sql` with `params` on a pool or in a transaction and gives the number of rows it changed, or, for a `SELECT`, returned (0 for a statement that changes none).
 
 ```silt
 import postgres

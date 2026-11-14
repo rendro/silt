@@ -303,8 +303,8 @@ of `?`.
 ## Exhaustiveness Checking
 
 The compiler checks that your match covers all possible cases. Missing a
-variant produces a compile-time error. This is one of the strongest benefits
-of `match` as the sole branching construct.
+variant produces a compile-time error. Since silt has no `if`, every choice
+between values is a `match`, and every one of them is checked.
 
 The check looks inside patterns: the fields of constructors, tuples and
 records, the elements of list patterns, the alternatives of or-patterns.

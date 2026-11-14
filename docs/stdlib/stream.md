@@ -452,7 +452,7 @@ fn main() {
 stream.file_chunks(path: String, size: Int) -> Channel(Result(Bytes, IoError))
 ```
 
-The bytes of the file at `path`, in pieces of at most `size` bytes. A failure to open or read it is an `Err` element, and the stream ends there.
+The bytes of the file at `path`, in pieces of at most `size` bytes. A failure to open or read it is an `Err` element, and the stream ends there. A `size` below 1 is a runtime error, "stream.file_chunks: size must be positive".
 
 ```silt
 import bytes
@@ -684,7 +684,7 @@ fn main() {
 stream.chunks(ch: Channel(a), n: Int) -> Channel(List(a))
 ```
 
-The values of `ch` in lists of `n`; the last list holds what is left.
+The values of `ch` in lists of `n`; the last list holds what is left. An `n` below 1 is a runtime error, "stream.chunks: n must be positive".
 
 ```silt
 import stream
