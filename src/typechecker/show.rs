@@ -267,13 +267,19 @@ impl TypeChecker {
 
     /// The path an import of `module` would write here, for a help that
     /// names the import to add: the path an import of the module uses
-    /// already (`import dep.{ T }`), a builtin module's name, or the name
+    /// already (`import dep.{ T }`), the key of a dependency of the
+    /// package whose library it is, a builtin module's name, or the name
     /// of a module of the same package. None for any other module (a
-    /// module of another package that is not imported here: no import
-    /// written here reaches it by the name it calls itself).
+    /// module of a dependency's dependency, a dependency's module other
+    /// than its library: no import written here reaches it).
     pub(super) fn import_path(&self, module: crate::session::ModuleId) -> Option<Symbol> {
         if let Some(path) = self.import_paths.get(&module) {
             return Some(*path);
+        }
+        // (A dependency's library that another module of the package
+        // imports: by its key.)
+        if let Some(key) = self.dependency_keys.get(&module) {
+            return Some(*key);
         }
         if let Some(name) = module.builtin_name() {
             return Some(intern(name));

@@ -730,6 +730,9 @@ pub struct TypeChecker {
     /// by here (`dep` for a dependency's root module, whatever the
     /// module calls itself), for a help that says which import to add.
     pub(super) import_paths: HashMap<crate::session::ModuleId, Symbol>,
+    /// The library module of each dependency of the module's package the
+    /// session has, by its key (`ModuleContext::dependencies`).
+    pub(super) dependency_keys: HashMap<crate::session::ModuleId, Symbol>,
     /// The module's type declarations that are rejected (a reserved or
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
@@ -980,6 +983,7 @@ impl TypeChecker {
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
             import_paths: HashMap::new(),
+            dependency_keys: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
@@ -2270,6 +2274,10 @@ pub struct ModuleContext<'a> {
     /// The package it is of: a help offers an import of a module of the
     /// same package by its name.
     pub package: crate::package_graph::PackageId,
+    /// The keys of the package's `[dependencies]` whose library module
+    /// the session has, each with that module: a help offers an import
+    /// of one by its key.
+    pub dependencies: Vec<(Symbol, crate::session::ModuleId)>,
     /// Its name, for diagnostics.
     pub module_name: Symbol,
     /// A file, a REPL cell, or an embedder's host module, whose
@@ -2300,6 +2308,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     let ModuleContext {
         module,
         package,
+        dependencies,
         module_name,
         kind,
         reach,
@@ -2336,6 +2345,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;
+    checker.dependency_keys = dependencies.into_iter().map(|(key, m)| (m, key)).collect();
     for binding in scope.types.values() {
         if let names::Binding::Def(id) = binding {
             checker.seen_traits.insert(*id);
