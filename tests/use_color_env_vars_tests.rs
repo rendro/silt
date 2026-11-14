@@ -28,8 +28,8 @@
 //! `FORCE_COLOR` to be affected — silt code only reads these vars from
 //! `use_color()`, and no other test exercises that path concurrently.
 
-use silt::diagnostic::{Code, Diagnostic, render_human};
-use silt::source::{FileId, SourceMap, SourceName, Span};
+use silt::testing::diagnostic::{Code, Diagnostic, render_human};
+use silt::testing::source::{FileId, SourceMap, SourceName, Span};
 
 /// Render a minimal diagnostic that exercises every color hook (header
 /// label, locator arrow, gutter, caret). The exact content doesn't

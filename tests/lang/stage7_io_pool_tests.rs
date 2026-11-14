@@ -15,7 +15,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use silt::session::testing::compile_str;
+use silt::testing::compile_str;
 use silt::{Buffer, HostIo, Vm};
 
 /// How long a program may take before the test calls it hung.
@@ -69,7 +69,7 @@ fn no_thread_is_left_in_an_operation(vm: &Vm) {
     #[cfg(feature = "test-hooks")]
     until(
         "a thread is still in an operation that nobody waits for",
-        || silt::vm::io_pool_live_threads(vm) == silt::vm::io_pool_threads(vm),
+        || silt::testing::vm::io_pool_live_threads(vm) == silt::testing::vm::io_pool_threads(vm),
     );
     let _ = vm;
 }

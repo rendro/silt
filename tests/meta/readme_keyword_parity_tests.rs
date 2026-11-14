@@ -13,17 +13,17 @@
 //!
 //! Strategy: include the README at compile time, scan for the
 //! `**keywords**` table row, extract the backtick-quoted body, split
-//! on whitespace, and compare as a set against `silt::lexer::KEYWORDS`.
+//! on whitespace, and compare as a set against `silt::testing::lexer::KEYWORDS`.
 //! Also lock the boolean literals (`true`, `false`) referenced
 //! elsewhere in README/syntax docs — they live in
-//! `silt::lexer::KEYWORD_LITERALS`. We don't currently expose them in
+//! `silt::testing::lexer::KEYWORD_LITERALS`. We don't currently expose them in
 //! README's Reference table, but we still assert the constant is
 //! exactly `{"true", "false"}` so the LSP gating logic in
 //! `src/lsp/rename.rs` stays in sync.
 
 use std::collections::BTreeSet;
 
-use silt::lexer::{KEYWORD_LITERALS, KEYWORDS};
+use silt::testing::lexer::{KEYWORD_LITERALS, KEYWORDS};
 
 const README: &str = include_str!("../../README.md");
 
@@ -58,7 +58,7 @@ fn round84_readme_keyword_row_matches_lexer_keywords() {
     let src_set: BTreeSet<&str> = KEYWORDS.iter().copied().collect();
     assert_eq!(
         doc_set, src_set,
-        "README.md `**keywords**` row drifted from `silt::lexer::KEYWORDS`. \
+        "README.md `**keywords**` row drifted from `silt::testing::lexer::KEYWORDS`. \
          README has: {doc_set:?}, lexer has: {src_set:?}. \
          The lexer is canonical; update README to match."
     );

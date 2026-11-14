@@ -1,15 +1,15 @@
-use silt::value::Value;
+use silt::testing::value::Value;
 
 #[cfg(feature = "http")]
 use crate::port_file::PortFile;
 
 /// The Float `f`, a finite number, as a value.
 fn float(f: f64) -> Value {
-    Value::Float(silt::value::Float::new(f).expect("a finite number"))
+    Value::Float(silt::testing::value::Float::new(f).expect("a finite number"))
 }
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 // ── Typed AST verification ──────────────────────────────────────────
@@ -21,11 +21,11 @@ fn answer() {
   42
 }
     "#;
-    let (program, _) = silt::session::testing::analyze_str(input);
+    let (program, _) = silt::testing::analyze_str(input);
 
-    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+    if let silt::testing::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "body should be typed");
-        assert_eq!(f.body.ty, Some(silt::types::Type::Int));
+        assert_eq!(f.body.ty, Some(silt::testing::types::Type::Int));
     } else {
         panic!("expected fn decl");
     }
@@ -38,10 +38,10 @@ fn answer() {
   "hello"
 }
     "#;
-    let (program, _) = silt::session::testing::analyze_str(input);
+    let (program, _) = silt::testing::analyze_str(input);
 
-    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
-        assert_eq!(f.body.ty, Some(silt::types::Type::String));
+    if let silt::testing::ast::Decl::Fn(f) = &program.decls[0] {
+        assert_eq!(f.body.ty, Some(silt::testing::types::Type::String));
     } else {
         panic!("expected fn decl");
     }
@@ -54,13 +54,13 @@ fn answer() {
   [1, 2, 3]
 }
     "#;
-    let (program, _) = silt::session::testing::analyze_str(input);
+    let (program, _) = silt::testing::analyze_str(input);
 
-    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+    if let silt::testing::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "body should be typed");
         assert_eq!(
             f.body.ty,
-            Some(silt::types::Type::List(Box::new(silt::types::Type::Int)))
+            Some(silt::testing::types::Type::List(Box::new(silt::testing::types::Type::Int)))
         );
     } else {
         panic!("expected fn decl");
@@ -75,12 +75,12 @@ fn answer() {
   x + 32
 }
     "#;
-    let (program, _) = silt::session::testing::analyze_str(input);
+    let (program, _) = silt::testing::analyze_str(input);
 
-    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+    if let silt::testing::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "main body should be typed");
         // Block containing `let x = 10; x + 32` should resolve to Int
-        assert_eq!(f.body.ty, Some(silt::types::Type::Int));
+        assert_eq!(f.body.ty, Some(silt::testing::types::Type::Int));
     } else {
         panic!("expected fn decl");
     }
@@ -99,12 +99,12 @@ fn main() {
   let _ = double(21)
 }
     "#;
-    let (program, _) = silt::session::testing::analyze_str(input);
+    let (program, _) = silt::testing::analyze_str(input);
 
     // double's body (x * 2) should resolve to Int
-    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+    if let silt::testing::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "double body should be typed");
-        assert_eq!(f.body.ty, Some(silt::types::Type::Int));
+        assert_eq!(f.body.ty, Some(silt::testing::types::Type::Int));
     } else {
         panic!("expected fn decl");
     }

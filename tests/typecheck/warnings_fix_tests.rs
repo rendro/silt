@@ -1,8 +1,8 @@
 //! The quick fixes of the warnings: each one, applied to the text,
 //! leaves a program without that warning and without an error.
 
-use silt::diagnostic::{Code, Diagnostic};
-use silt::session::testing::check_str;
+use silt::testing::diagnostic::{Code, Diagnostic};
+use silt::testing::check_str;
 
 /// `text` with the edits of the first fix of `d` applied.
 fn fixed(text: &str, d: &Diagnostic) -> String {

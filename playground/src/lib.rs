@@ -382,5 +382,5 @@ pub fn tokens(source: &str) -> Vec<u32> {
 
 /// The version of silt this is.
 pub fn version() -> &'static str {
-    silt::VERSION
+    silt::playground::VERSION
 }

@@ -1,4 +1,4 @@
-//! Integration tests for the `silt::manifest` module.
+//! Integration tests for the `silt::testing::manifest` module.
 //!
 //! Each test writes its manifest into a temporary directory of its own.
 
@@ -6,10 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use silt::diagnostic::{Code, Diagnostic};
-use silt::intern;
-use silt::manifest::{Dependency, GitRef, Manifest};
-use silt::source::SourceMap;
+use silt::testing::diagnostic::{Code, Diagnostic};
+use silt::testing::intern;
+use silt::testing::manifest::{Dependency, GitRef, Manifest};
+use silt::testing::source::SourceMap;
 
 // ── Test scaffolding ──────────────────────────────────────────────────
 

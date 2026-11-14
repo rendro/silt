@@ -2,7 +2,7 @@
 //! slice (`Vm::set_time_slice`) and the step budget
 //! (`Vm::set_step_budget`).
 
-use silt::session::testing::compile_given;
+use silt::testing::compile_given;
 use silt::{Buffer, HostIo, Value, Vm, VmError};
 
 /// The value the program gave (`host.give`) or its error, and what the program and the

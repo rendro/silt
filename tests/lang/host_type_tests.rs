@@ -5,11 +5,11 @@
 //! boundary checked: a host function's result against the type its
 //! signature returns, the fields and payloads too.
 
-use silt::diagnostic::{Code, Diagnostic};
-use silt::session::testing::{check_with_host, run_with_host};
+use silt::testing::diagnostic::{Code, Diagnostic};
+use silt::testing::{check_with_host, run_with_host};
 use silt::session::{HostCall, HostModule};
-use silt::value::Value;
-use silt::vm::VmError;
+use silt::testing::value::Value;
+use silt::testing::vm::VmError;
 
 /// The field `name` of the record `value`, as an `Int`.
 fn int_field(value: &Value, name: &str) -> Result<i64, VmError> {
@@ -610,7 +610,7 @@ fn a_field_of_a_generic_host_type_shows_a_variable() {
             Ok(Value::string("s"))
         })
         .function("fn right(e: Either(a, b)) -> Option(b)", |_: &HostCall| {
-            Ok(Value::variant(silt::typeinfo::bv::SOME, [Value::Int(1)]))
+            Ok(Value::variant(silt::testing::typeinfo::bv::SOME, [Value::Int(1)]))
         })
         .function("fn same(b: Box(a)) -> a", |call: &HostCall| {
             match &call.args[0] {
@@ -696,7 +696,7 @@ fn a_prelude_name_is_no_host_type_and_the_check_reads_the_prelude_type() {
     let source = "import h\nimport host\nfn main() { host.give(h.f()) }";
     assert_eq!(
         run(source, host),
-        Ok(Value::variant(silt::typeinfo::bv::SOME, [Value::Int(5)]))
+        Ok(Value::variant(silt::testing::typeinfo::bv::SOME, [Value::Int(5)]))
     );
 }
 
@@ -733,21 +733,21 @@ fn the_fields_of_every_record_and_enum_of_a_result_are_checked() {
             call.variant("json.Value", "Int", vec![Value::string("7")])
         })
         .function("fn bad_poly() -> Poly(Int)", |call: &HostCall| {
-            let none = Value::variant(silt::typeinfo::bv::NONE, []);
+            let none = Value::variant(silt::testing::typeinfo::bv::NONE, []);
             let inner = call.record(
                 "Poly",
                 [("v", Value::list(vec![Value::string("s")])), ("next", none)],
             )?;
-            let next = Value::variant(silt::typeinfo::bv::SOME, [inner]);
+            let next = Value::variant(silt::testing::typeinfo::bv::SOME, [inner]);
             call.record("Poly", [("v", Value::Int(1)), ("next", next)])
         })
         .function("fn good_poly() -> Poly(Int)", |call: &HostCall| {
-            let none = Value::variant(silt::typeinfo::bv::NONE, []);
+            let none = Value::variant(silt::testing::typeinfo::bv::NONE, []);
             let inner = call.record(
                 "Poly",
                 [("v", Value::list(vec![Value::Int(2)])), ("next", none)],
             )?;
-            let next = Value::variant(silt::typeinfo::bv::SOME, [inner]);
+            let next = Value::variant(silt::testing::typeinfo::bv::SOME, [inner]);
             call.record("Poly", [("v", Value::Int(1)), ("next", next)])
         });
     for (call, expected) in [
@@ -789,12 +789,12 @@ fn a_deeply_nested_generic_host_type_is_registered_at_once() {
     let host = HostModule::new("h")
         .declare_type("type T3(a) { x: a, y: a, z: a }")
         .function(format!("fn f(n: Int) -> Option({ty})"), |_: &HostCall| {
-            Ok(Value::variant(silt::typeinfo::bv::NONE, []))
+            Ok(Value::variant(silt::testing::typeinfo::bv::NONE, []))
         });
     let source = "import h\nimport host\nfn main() { host.give(h.f(1)) }";
     assert_eq!(
         run(source, host),
-        Ok(Value::variant(silt::typeinfo::bv::NONE, []))
+        Ok(Value::variant(silt::testing::typeinfo::bv::NONE, []))
     );
 }
 

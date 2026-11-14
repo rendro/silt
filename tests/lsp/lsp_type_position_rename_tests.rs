@@ -87,7 +87,7 @@ fn pos_of(text: &str, needle: &str, occurrence: usize) -> (u64, u64) {
 /// the round-101 bug produced WorkspaceEdits whose application yielded
 /// `unknown type` errors, i.e. this function returning an Err.
 fn front_end_errors(source: &str) -> Result<(), String> {
-    let errors: Vec<_> = silt::session::testing::check_str(source)
+    let errors: Vec<_> = silt::testing::check_str(source)
         .into_iter()
         .filter(|e| e.is_error())
         .collect();

@@ -56,7 +56,7 @@ fn every_example_is_canonical_formatted() {
             }
         };
 
-        let formatted = match silt::format::format(silt::source::FileId::default(), &source) {
+        let formatted = match silt::testing::format::format(silt::testing::source::FileId::default(), &source) {
             Ok(f) => f,
             Err(e) => {
                 failures.push(format!("{}: not formatted: {}", file.display(), e.message));

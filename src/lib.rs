@@ -35,62 +35,166 @@
 
 #![allow(clippy::mutable_key_type)]
 
-pub mod ast;
-pub mod builtins;
-pub mod bytecode;
+mod ast;
+mod builtins;
+mod bytecode;
 // The `silt` command; src/main.rs calls `cli::main`. Not for wasm32,
 // where the playground uses the library and there is no command.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub mod cli;
-pub(crate) mod compiler;
-pub mod defs;
-pub mod diagnostic;
-pub mod disassemble;
-pub(crate) mod evidence;
-pub mod feature_stub;
-pub mod file_discovery;
-pub mod format;
+mod compiler;
+mod defs;
+mod diagnostic;
+mod disassemble;
+mod evidence;
+mod feature_stub;
+mod file_discovery;
+mod format;
 #[cfg(any(test, feature = "test-hooks"))]
-pub mod fuzz_invariants;
-pub mod git;
+mod fuzz_invariants;
+mod git;
 #[cfg(feature = "http")]
-pub mod http_wire;
-pub mod intern;
-pub mod layers;
-pub mod lexer;
-pub mod lockfile;
+mod http_wire;
+mod intern;
+mod layers;
+mod lexer;
+mod lockfile;
 #[cfg(feature = "lsp")]
-pub mod lsp;
-pub mod manifest;
-pub mod module;
-pub mod package_graph;
-pub mod parser;
+mod lsp;
+mod manifest;
+mod module;
+mod package_graph;
+mod parser;
 #[cfg(feature = "playground")]
 pub mod playground;
-pub(crate) mod program;
+mod program;
 #[cfg(feature = "repl")]
-pub mod repl;
-pub mod scheduler;
+mod repl;
+mod runtime;
+mod scheduler;
 pub mod session;
-pub mod source;
-pub mod typechecker;
-pub mod typeinfo;
-pub mod types;
+mod source;
+mod typechecker;
+mod typeinfo;
+mod types;
 // The self-updater shells out to curl/tar and replaces the running binary in
 // place. Neither mechanism applies on wasm32 — the playground is embedded via
 // the library path, not the CLI — so gate the module to native targets only.
-pub mod runtime;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod update;
-pub mod value;
-pub mod vm;
+mod update;
+mod value;
+mod vm;
 #[cfg(feature = "watch")]
-pub mod watch;
+mod watch;
 
-// Re-export the value and conversion types embedders use.
+// The names an embedder uses (see "What the crate promises" above).
 pub use value::{FromValue, IntoValue, Value};
-pub use vm::{Buffer, Clock, Exit, HostIo, Output, SystemClock, Vm, VmError};
+pub use vm::{Buffer, Clock, Exit, HostIo, Output, Vm, VmError};
 
 /// The version of silt: what `silt --version` prints after the name.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The test API: what the tests, the benches and the fuzz crate read of
+/// the crate's inside. Built with the `test-hooks` feature only (and in
+/// the crate's own tests); no part of what the crate promises.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub mod testing {
+    pub use crate::session::testing::*;
+    pub use crate::vm::SystemClock;
+
+    pub mod fuzz_invariants {
+        pub use crate::fuzz_invariants::*;
+    }
+    pub mod ast {
+        pub use crate::ast::*;
+    }
+    pub mod builtins {
+        pub use crate::builtins::*;
+    }
+    pub mod bytecode {
+        pub use crate::bytecode::*;
+    }
+    pub mod defs {
+        pub use crate::defs::*;
+    }
+    pub mod diagnostic {
+        pub use crate::diagnostic::*;
+    }
+    pub mod disassemble {
+        pub use crate::disassemble::*;
+    }
+    pub mod feature_stub {
+        pub use crate::feature_stub::*;
+    }
+    pub mod file_discovery {
+        pub use crate::file_discovery::*;
+    }
+    pub mod format {
+        pub use crate::format::*;
+    }
+    pub mod git {
+        pub use crate::git::*;
+    }
+    #[cfg(feature = "http")]
+    pub mod http_wire {
+        pub use crate::http_wire::*;
+    }
+    pub mod intern {
+        pub use crate::intern::*;
+    }
+    pub mod layers {
+        pub use crate::layers::*;
+    }
+    pub mod lexer {
+        pub use crate::lexer::*;
+    }
+    pub mod lockfile {
+        pub use crate::lockfile::*;
+    }
+    #[cfg(feature = "lsp")]
+    pub mod lsp {
+        pub use crate::lsp::*;
+    }
+    pub mod manifest {
+        pub use crate::manifest::*;
+    }
+    pub mod module {
+        pub use crate::module::*;
+    }
+    pub mod package_graph {
+        pub use crate::package_graph::*;
+    }
+    pub mod parser {
+        pub use crate::parser::*;
+    }
+    #[cfg(feature = "repl")]
+    pub mod repl {
+        pub use crate::repl::*;
+    }
+    pub mod runtime {
+        pub use crate::runtime::*;
+    }
+    pub mod scheduler {
+        pub use crate::scheduler::*;
+    }
+    pub mod source {
+        pub use crate::source::*;
+    }
+    pub mod typechecker {
+        pub use crate::typechecker::*;
+    }
+    pub mod typeinfo {
+        pub use crate::typeinfo::*;
+    }
+    pub mod types {
+        pub use crate::types::*;
+    }
+    pub mod value {
+        pub use crate::value::*;
+    }
+    pub mod vm {
+        pub use crate::vm::*;
+    }
+}

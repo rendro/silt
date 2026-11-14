@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 /// Cap on the number of diagnostics any single typecheck pass may
 /// emit before we treat it as a runaway. Real programs (even the
@@ -21,7 +21,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // 2. Lex — typechecker only sees token streams that lexed cleanly.
-    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s)
+    let Ok(tokens) = Lexer::new(silt::testing::source::FileId::default(), s)
         .tokenize()
         .checked()
     else {
@@ -38,7 +38,7 @@ fuzz_target!(|data: &[u8]| {
 
     // 4. Analyse it as every front door does. Must never panic /
     //    unwind on any input that lexed and parsed.
-    let errors = silt::session::testing::analyze_str(s).1;
+    let errors = silt::testing::analyze_str(s).1;
 
     // 5. Diagnostic count must be bounded — runaway diagnostic
     //    generation indicates a cascade-reporting bug.

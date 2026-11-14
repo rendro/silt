@@ -9,20 +9,20 @@
 // a set of values, as a program's set holds them.
 #![allow(clippy::mutable_key_type)]
 
-use silt::typeinfo::bv;
+use silt::testing::typeinfo::bv;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use silt::bytecode::{Function, VmClosure};
-use silt::runtime::handle::TaskHandle;
-use silt::value::Value;
+use silt::testing::bytecode::{Function, VmClosure};
+use silt::testing::runtime::handle::TaskHandle;
+use silt::testing::value::Value;
 
 /// The builtin function `name` (`println`, `list.map`) as a value.
 fn builtin(name: &str) -> Value {
-    silt::builtins::registry::registry()
+    silt::testing::builtins::registry::registry()
         .named(name)
         .unwrap_or_else(|| panic!("the builtin {name}"))
         .value()
@@ -30,7 +30,7 @@ fn builtin(name: &str) -> Value {
 
 /// The list `lo..hi` makes: it holds no element.
 fn range(lo: i64, hi: i64) -> Value {
-    Value::List(silt::value::List::ints(lo, hi).expect("a list"))
+    Value::List(silt::testing::value::List::ints(lo, hi).expect("a list"))
 }
 
 fn hash_of(v: &Value) -> u64 {

@@ -19,10 +19,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use silt::http_wire::{
+use silt::testing::http_wire::{
     BODIES_MAX, BODY_MAX, HEAD_MAX, HEADERS_MAX, REFUSAL_TIME, REQUEST_TIME, TRANSFER_TIME,
 };
-use silt::session::testing::compile_str;
+use silt::testing::compile_str;
 use silt::{Buffer, Clock, HostIo, Vm};
 
 /// How long a test waits for what must come before it calls it lost.
@@ -1275,7 +1275,7 @@ fn a_last_word_beside_a_read_does_not_end_the_read() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_last_word_waits_its_turn_behind_the_interim_response() {
-    use silt::vm::{WriteMoment, watch_writes};
+    use silt::testing::vm::{WriteMoment, watch_writes};
     use std::sync::atomic::AtomicBool;
     use std::sync::{Mutex, mpsc};
     let clock = TestClock::default();
@@ -1355,7 +1355,7 @@ fn a_last_word_waits_its_turn_behind_the_interim_response() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn an_interim_response_that_the_system_does_not_take_is_skipped() {
-    use silt::vm::{WriteMoment, watch_writes};
+    use silt::testing::vm::{WriteMoment, watch_writes};
     use std::sync::atomic::AtomicBool;
     let clock = TestClock::default();
     let server = Server::on(ECHO, Some(clock.clone()));
@@ -1433,7 +1433,7 @@ fn an_interim_response_that_the_system_does_not_take_is_skipped() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn nothing_is_written_behind_a_last_word() {
-    use silt::vm::{WriteMoment, watch_writes};
+    use silt::testing::vm::{WriteMoment, watch_writes};
     use std::sync::atomic::AtomicBool;
     use std::sync::{Mutex, mpsc};
     let clock = TestClock::default();
@@ -1538,7 +1538,7 @@ fn nothing_is_written_behind_a_last_word() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_request_behind_a_response_that_is_not_read_is_served() {
-    use silt::vm::{WriteMoment, watch_writes};
+    use silt::testing::vm::{WriteMoment, watch_writes};
     use std::sync::atomic::AtomicUsize;
     // More than the system takes in for a client that reads nothing.
     const LENGTH: usize = 64_000_000;

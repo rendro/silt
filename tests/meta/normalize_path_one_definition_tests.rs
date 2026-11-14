@@ -1,6 +1,6 @@
 //! Round-101 LATENT lock: lexical `normalize_path` (collapse `.`/`..`
 //! without touching the filesystem) must have exactly ONE definition,
-//! in `silt::lockfile`, with `silt add` (src/cli/add.rs) delegating to
+//! in `silt::testing::lockfile`, with `silt add` (src/cli/add.rs) delegating to
 //! it.
 //!
 //! History: the body was mirrored verbatim between src/lockfile.rs and
@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
-use silt::lockfile::normalize_path;
+use silt::testing::lockfile::normalize_path;
 
 #[test]
 fn normalize_collapses_curdir_and_parentdir() {

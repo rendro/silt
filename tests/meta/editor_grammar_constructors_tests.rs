@@ -16,7 +16,7 @@
 //! this test was introduced. Do not loosen this check — it is the
 //! mechanism that keeps the grammars honest.
 
-use silt::module::builtin_enum_variants;
+use silt::testing::module::builtin_enum_variants;
 
 use std::collections::BTreeSet;
 use std::fs;

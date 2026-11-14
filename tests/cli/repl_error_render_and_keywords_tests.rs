@@ -12,11 +12,11 @@
 //!           `completion_candidates_for_prefix`, which mirrors the
 //!           `SiltHelper::complete` filter logic over `builtin_names`.
 
-use silt::diagnostic::render_human;
+use silt::testing::diagnostic::render_human;
 #[cfg(feature = "repl")]
-use silt::repl::{builtin_names, completion_candidates_for_prefix};
-use silt::source::SourceMap;
-use silt::vm::VmError;
+use silt::testing::repl::{builtin_names, completion_candidates_for_prefix};
+use silt::testing::source::SourceMap;
+use silt::testing::vm::VmError;
 
 // ── GAP #4 / #5: multi-line runtime messages ───────────────────────
 

@@ -3,13 +3,13 @@
 //! trip. Every other error test is a golden case under
 //! `tests/golden/lang/errors/error__*`.
 
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 /// Expect a parse error; returns the error message.
 /// Uses parse_program which returns the first fatal error.
 fn parse_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(silt::source::FileId::default(), input)
+    let tokens = Lexer::new(silt::testing::source::FileId::default(), input)
         .tokenize()
         .checked()
         .expect("lexer error");
@@ -25,7 +25,7 @@ fn test_import_nonexistent_builtin_item() {
     // when the program is checked, at the item.
     let source =
         "import list.{ nonexistent_function }\nfn main() { nonexistent_function([1, 2]) }\n";
-    let errors: Vec<String> = silt::session::testing::analyze_str(source)
+    let errors: Vec<String> = silt::testing::analyze_str(source)
         .1
         .into_iter()
         .map(|d| d.message)
@@ -47,7 +47,7 @@ fn test_parenthesized_break_parses_and_roundtrips_through_formatter() {
     // guard used to reject it with a fake "syntax error" even though
     // the token stream is perfectly valid ident-in-statement.
     let src = "fn main() {\n  (break)\n}\n";
-    let formatted = silt::format::format(silt::source::FileId::default(), src)
+    let formatted = silt::testing::format::format(silt::testing::source::FileId::default(), src)
         .expect("paren-wrapped break must format without error");
     // parse_errors drops any typechecker diagnostics; we only care
     // that the *parser* accepts the formatter's output.

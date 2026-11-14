@@ -1,10 +1,10 @@
 //! Which comments are a declaration's documentation, and that `silt
 //! fmt` does not change the answer.
 
-use silt::ast::Decl;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::source::FileId;
+use silt::testing::ast::Decl;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
+use silt::testing::source::FileId;
 
 /// The documentation of each function of `source`, in order.
 fn docs(source: &str) -> Vec<Option<String>> {
@@ -30,7 +30,7 @@ fn docs(source: &str) -> Vec<Option<String>> {
 /// once `silt fmt` has written the file its way.
 fn docs_before_and_after_fmt(source: &str) -> Vec<Option<String>> {
     let before = docs(source);
-    let formatted = silt::format::format(FileId::default(), source).expect("formats");
+    let formatted = silt::testing::format::format(FileId::default(), source).expect("formats");
     assert_eq!(
         before,
         docs(&formatted),

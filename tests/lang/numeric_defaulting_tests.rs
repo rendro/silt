@@ -55,13 +55,13 @@
 //! `tests/golden/lang/typecheck/numeric_defaulting__*`, plus the test
 //! below.
 
-use silt::diagnostic::Severity;
+use silt::testing::diagnostic::Severity;
 
-fn typecheck(source: &str) -> Vec<silt::diagnostic::Diagnostic> {
-    silt::session::testing::analyze_str(source).1
+fn typecheck(source: &str) -> Vec<silt::testing::diagnostic::Diagnostic> {
+    silt::testing::analyze_str(source).1
 }
 
-fn errors_only(errs: &[silt::diagnostic::Diagnostic]) -> Vec<&silt::diagnostic::Diagnostic> {
+fn errors_only(errs: &[silt::testing::diagnostic::Diagnostic]) -> Vec<&silt::testing::diagnostic::Diagnostic> {
     errs.iter()
         .filter(|e| e.severity == Severity::Error)
         .collect()

@@ -22,6 +22,9 @@ pub use crate::diagnostic::{Diagnostic, Severity, render_human};
 pub use crate::format::format;
 pub use crate::source::FileId;
 
+/// The version of silt this is.
+pub const VERSION: &str = crate::VERSION;
+
 // ── Complete ──────────────────────────────────────────────────────────
 
 /// The names a program can use, each with its kind: the keywords, what

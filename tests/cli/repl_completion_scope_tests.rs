@@ -5,7 +5,7 @@
 
 #![cfg(feature = "repl")]
 
-use silt::repl::{Repl, builtin_names, completion_candidates_for_prefix};
+use silt::testing::repl::{Repl, builtin_names, completion_candidates_for_prefix};
 use silt::session::ProjectSetup;
 
 /// The names <Tab> offers after `inputs` ran, each of which must run.

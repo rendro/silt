@@ -20,7 +20,7 @@
 //! `BUILTIN_TYPES` table in `src/types/builtins.rs` (container-kind
 //! entries, queried via `src/types/builtins.rs::is_container`), which
 //! `primitives()` below consumes through
-//! `silt::types::builtins::iter_all()`.
+//! `silt::testing::types::builtins::iter_all()`.
 //!
 //! Mirrors the pattern of:
 //!   - tests/meta/editor_grammar_constructors_tests.rs
@@ -36,7 +36,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Primitive and built-in container type names sourced from the
-/// authoritative table at `silt::types::builtins::BUILTIN_TYPES`. The
+/// authoritative table at `silt::testing::types::builtins::BUILTIN_TYPES`. The
 /// `()` surface alias is filtered out — it is a punctuation form, not
 /// a keyword token, and neither editor grammar represents it as such.
 /// Every other entry in `BUILTIN_TYPES` is asserted present in both
@@ -45,7 +45,7 @@ use std::path::PathBuf;
 /// Adding a new entry to `BUILTIN_TYPES` without also adding the name
 /// to both editor grammars will fail this test.
 fn primitives() -> Vec<&'static str> {
-    silt::types::builtins::iter_all()
+    silt::testing::types::builtins::iter_all()
         .map(|b| b.name)
         .filter(|n| *n != "()")
         .collect()
@@ -209,16 +209,16 @@ fn vscode_primitive_tokens(block: &str) -> BTreeSet<String> {
 }
 
 /// Authoritative set of primitive / builtin-container type names per
-/// `silt::types::builtins::BUILTIN_TYPES`, with the `()` surface alias
+/// `silt::testing::types::builtins::BUILTIN_TYPES`, with the `()` surface alias
 /// filtered out (matches `primitives()` above).
 ///
-/// Round 82 DX-GAP-1: also includes `silt::module::builtin_module_types()`
+/// Round 82 DX-GAP-1: also includes `silt::testing::module::builtin_module_types()`
 /// (the per-module record/enum types like `FileStat`, `Date`, `Response`).
 /// Both sets share the vim `siltType` keyword scope and the vscode
 /// `"primitives"` regex so the bidirectional parity check accepts both.
 fn authoritative_primitive_names() -> BTreeSet<String> {
     let mut set: BTreeSet<String> = primitives().into_iter().map(|s| s.to_string()).collect();
-    for n in silt::module::builtin_module_types() {
+    for n in silt::testing::module::builtin_module_types() {
         set.insert((*n).to_string());
     }
     set
@@ -228,7 +228,7 @@ fn authoritative_primitive_names() -> BTreeSet<String> {
 fn every_vim_primitive_entry_is_authoritative() {
     // Reverse direction (round-79 GAP DX-G3): catch stale entries left
     // in the vim grammar after a primitive is removed from
-    // `silt::types::builtins::BUILTIN_TYPES`. The forward test above
+    // `silt::testing::types::builtins::BUILTIN_TYPES`. The forward test above
     // only catches additions; without this test, removals silently
     // leave ghost highlighting in editors. Mirrors
     // `every_vim_constructor_entry_is_authoritative` in
@@ -244,7 +244,7 @@ fn every_vim_primitive_entry_is_authoritative() {
         if !authoritative.contains(tok) {
             stray.push(format!(
                 "editors/vim/syntax/silt.vim siltType keyword list contains stray \
-                 entry `{}` not in silt::types::builtins::BUILTIN_TYPES",
+                 entry `{}` not in silt::testing::types::builtins::BUILTIN_TYPES",
                 tok
             ));
         }
@@ -264,7 +264,7 @@ fn every_vim_primitive_entry_is_authoritative() {
 fn every_vscode_primitive_entry_is_authoritative() {
     // Reverse direction (round-79 GAP DX-G3): catch stale entries left
     // in the VS Code grammar after a primitive is removed from
-    // `silt::types::builtins::BUILTIN_TYPES`. Mirrors
+    // `silt::testing::types::builtins::BUILTIN_TYPES`. Mirrors
     // `every_vscode_constructor_entry_is_authoritative` in
     // tests/meta/editor_grammar_constructors_tests.rs.
     let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");
@@ -278,7 +278,7 @@ fn every_vscode_primitive_entry_is_authoritative() {
         if !authoritative.contains(tok) {
             stray.push(format!(
                 "editors/vscode/syntaxes/silt.tmLanguage.json \"primitives\" alternation \
-                 contains stray entry `{}` not in silt::types::builtins::BUILTIN_TYPES",
+                 contains stray entry `{}` not in silt::testing::types::builtins::BUILTIN_TYPES",
                 tok
             ));
         }

@@ -140,7 +140,7 @@ fn wrap_fragment(src: &str) -> String {
         out.push_str(line);
         out.push('\n');
     }
-    for module in &silt::builtins::registry::registry().modules {
+    for module in &silt::testing::builtins::registry::registry().modules {
         let imported = imports.iter().any(|l| {
             l.strip_prefix("import ")
                 .and_then(|rest| rest.strip_prefix(module.name))

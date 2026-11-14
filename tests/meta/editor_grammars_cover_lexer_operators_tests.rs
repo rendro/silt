@@ -30,7 +30,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use silt::lexer::{Lexer, Token};
+use silt::testing::lexer::{Lexer, Token};
 
 /// The canonical set of multi-character operators the lexer can
 /// emit, checked against the real lexer by
@@ -91,7 +91,7 @@ fn lexer_multi_char_operators() -> BTreeSet<String> {
         if cand == "#{" || cand == "#[" {
             continue;
         }
-        let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &cand)
+        let Ok(tokens) = Lexer::new(silt::testing::source::FileId::default(), &cand)
             .tokenize()
             .checked()
         else {

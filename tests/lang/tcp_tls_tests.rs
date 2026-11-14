@@ -9,10 +9,10 @@
 
 #![cfg(feature = "tcp-tls")]
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Generate a self-signed cert + key for `localhost` and return them as
@@ -175,10 +175,10 @@ fn main() {
   }
 }
 "#;
-    let (_, errors) = silt::session::testing::analyze_str(src);
+    let (_, errors) = silt::testing::analyze_str(src);
     let hard: Vec<_> = errors
         .into_iter()
-        .filter(|e| e.severity == silt::diagnostic::Severity::Error)
+        .filter(|e| e.severity == silt::testing::diagnostic::Severity::Error)
         .collect();
     assert!(hard.is_empty(), "got: {hard:?}");
 }
@@ -240,7 +240,7 @@ fn main() {{
         cert_hex = hex(&cert_pem),
         key_hex = hex(&key_pem),
     );
-    let program = silt::session::testing::compile_str(&source).unwrap_or_else(|e| panic!("{e:?}"));
+    let program = silt::testing::compile_str(&source).unwrap_or_else(|e| panic!("{e:?}"));
     let out = silt::Buffer::new();
     let mut vm = silt::Vm::new(silt::HostIo::buffer(&out));
     let result = vm.run_program(&program).map_err(|e| e.message);
@@ -253,7 +253,7 @@ fn main() {{
     {
         use std::time::{Duration, Instant};
         let limit = Instant::now() + Duration::from_secs(10);
-        while silt::vm::io_pool_live_threads(&vm) != silt::vm::io_pool_threads(&vm) {
+        while silt::testing::vm::io_pool_live_threads(&vm) != silt::testing::vm::io_pool_threads(&vm) {
             assert!(
                 Instant::now() < limit,
                 "the thread of the given-up handshake is still there"

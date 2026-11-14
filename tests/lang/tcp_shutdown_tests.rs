@@ -15,10 +15,10 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Run a silt program on a worker thread and return either its return

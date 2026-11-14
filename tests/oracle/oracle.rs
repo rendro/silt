@@ -61,9 +61,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once};
 use std::time::{Duration, Instant};
 
-use silt::builtins::registry::registry;
-use silt::bytecode::{Function, Instr};
-use silt::diagnostic::Code;
+use silt::testing::builtins::registry::registry;
+use silt::testing::bytecode::{Function, Instr};
+use silt::testing::diagnostic::Code;
 use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::{Buffer, Clock, HostIo, Value, Vm};
 
@@ -478,7 +478,7 @@ struct Run {
 }
 
 /// The failures of tasks are collected for the whole process
-/// (`silt::scheduler::collect_unjoined_failures`), so that the oracle
+/// (`silt::testing::scheduler::collect_unjoined_failures`), so that the oracle
 /// has each as an error and not as a line of text. They are taken
 /// between runs only ([`Gate`]): a failure that is taken while its
 /// program runs can no longer be joined by it. What is taken is sorted
@@ -557,7 +557,7 @@ impl Gate {
 /// The failures of the tasks of the run with the tag `owner`, which has
 /// ended.
 fn failures_of(owner: u64) -> Vec<TaskFailure> {
-    let taken = GATE.alone(silt::scheduler::take_unjoined_failures);
+    let taken = GATE.alone(silt::testing::scheduler::take_unjoined_failures);
     let mut failed = FAILED
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -568,7 +568,7 @@ fn failures_of(owner: u64) -> Vec<TaskFailure> {
             out_of_steps: failure.error.out_of_steps,
         });
     }
-    for silt::scheduler::NotShown { owner, count, .. } in taken.not_shown {
+    for silt::testing::scheduler::NotShown { owner, count, .. } in taken.not_shown {
         failed.entry(owner).or_default().push(TaskFailure {
             message: format!("{count} more tasks failed"),
             type_confusion: false,
@@ -772,7 +772,7 @@ fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), (Verdict, Str
         let verdict = Verdict::Finding(Finding::new(kind, detail));
         Err((verdict, String::new()))
     };
-    let first = |diagnostics: &[silt::diagnostic::Diagnostic]| {
+    let first = |diagnostics: &[silt::testing::diagnostic::Diagnostic]| {
         let error = diagnostics.iter().find(|d| d.is_error());
         error.map(|d| d.message.clone()).unwrap_or_default()
     };
@@ -816,7 +816,7 @@ fn module_of(name: &str) -> &str {
 }
 
 /// A session with the files of `source`, and its entry file.
-fn open(source: &Source) -> Option<(Session, silt::source::FileId)> {
+fn open(source: &Source) -> Option<(Session, silt::testing::source::FileId)> {
     let config = |project| Config {
         project,
         lock: LockPolicy::ReadOnly,
@@ -857,8 +857,8 @@ fn verify_all(
     builtins: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     let wrong = |error| format!("function '{}' is malformed {error}", function.name());
-    silt::bytecode::verify(function).map_err(wrong)?;
-    silt::bytecode::verify::verify_globals(function, &program.globals).map_err(wrong)?;
+    silt::testing::bytecode::verify(function).map_err(wrong)?;
+    silt::testing::bytecode::verify::verify_globals(function, &program.globals).map_err(wrong)?;
     // (The verifier has seen that each row is there.)
     let name = |id| registry().builtin(id).map(|row| row.qualified());
     for (_, instr) in function.chunk().instrs() {
@@ -912,7 +912,7 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
         .name(name.clone())
         .stack_size(STACK_BYTES)
         .spawn(move || {
-            silt::scheduler::collect_unjoined_failures();
+            silt::testing::scheduler::collect_unjoined_failures();
             if tasks {
                 GATE.enter();
             }

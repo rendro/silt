@@ -9,7 +9,7 @@
 
 #![cfg(feature = "repl")]
 
-use silt::repl::{builtin_names, completion_candidates_for_prefix};
+use silt::testing::repl::{builtin_names, completion_candidates_for_prefix};
 
 #[test]
 fn test_repl_builtin_names_includes_short_commands() {

@@ -10,9 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use silt::diagnostic::Diagnostic;
-use silt::manifest::Manifest;
-use silt::source::SourceMap;
+use silt::testing::diagnostic::Diagnostic;
+use silt::testing::manifest::Manifest;
+use silt::testing::source::SourceMap;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 

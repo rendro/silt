@@ -1,10 +1,10 @@
 #![no_main]
-//! The reader of HTTP requests (`silt::http_wire`), which `http.serve`
+//! The reader of HTTP requests (`silt::testing::http_wire`), which `http.serve`
 //! hands whatever a client sends: on any bytes it must end without a
 //! panic, give no request beyond the server's limits, and read the
 //! same requests however the bytes arrive.
 use libfuzzer_sys::fuzz_target;
-use silt::http_wire::{BODY_MAX, HEADERS_MAX, HEAD_MAX, Next, Reader, Request};
+use silt::testing::http_wire::{BODY_MAX, HEADERS_MAX, HEAD_MAX, Next, Reader, Request};
 use std::io::Read;
 
 /// `bytes`, read at most `piece` at a time.

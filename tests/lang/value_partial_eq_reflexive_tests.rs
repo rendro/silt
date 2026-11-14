@@ -20,14 +20,14 @@
 
 use std::sync::Arc;
 
-use silt::bytecode::{Function, VmClosure};
-use silt::runtime::handle::TaskHandle;
-use silt::typeinfo::bv;
-use silt::value::Value;
+use silt::testing::bytecode::{Function, VmClosure};
+use silt::testing::runtime::handle::TaskHandle;
+use silt::testing::typeinfo::bv;
+use silt::testing::value::Value;
 
 /// The builtin function `name` (`println`, `list.map`) as a value.
 fn builtin(name: &str) -> Value {
-    silt::builtins::registry::registry()
+    silt::testing::builtins::registry::registry()
         .named(name)
         .unwrap_or_else(|| panic!("the builtin {name}"))
         .value()
@@ -125,12 +125,12 @@ fn partial_eq_variant_constructor_same_name_and_arity() {
 fn partial_eq_variant_constructor_differences() {
     let some_1 = Value::VariantConstructor(bv::SOME.tag());
     let none_0 = Value::VariantConstructor(bv::NONE.tag());
-    let other = silt::typeinfo::TypeInfo::new_enum(
-        silt::defs::TypeId(silt::defs::DefId(9000)),
+    let other = silt::testing::typeinfo::TypeInfo::new_enum(
+        silt::testing::defs::TypeId(silt::testing::defs::DefId(9000)),
         "Maybe",
         &[("Some", 2)],
     );
-    let some_2 = Value::VariantConstructor(silt::typeinfo::Tag::new(other, 0));
+    let some_2 = Value::VariantConstructor(silt::testing::typeinfo::Tag::new(other, 0));
     assert_ne!(some_1, none_0);
     assert_ne!(some_1, some_2);
     assert_ne!(none_0, some_2);
@@ -149,18 +149,18 @@ fn partial_eq_reflexivity_every_variant() {
         Value::Unit,
         Value::Bool(true),
         Value::Int(42),
-        Value::Float(silt::value::Float::new(1.5).expect("a finite number")),
+        Value::Float(silt::testing::value::Float::new(1.5).expect("a finite number")),
         Value::string("hi"),
         Value::list(vec![Value::Int(1), Value::Int(2)]),
-        Value::List(silt::value::List::ints(1, 5).expect("a list")),
+        Value::List(silt::testing::value::List::ints(1, 5).expect("a list")),
         Value::tuple(vec![Value::Int(1), Value::string("x")]),
         Value::variant(bv::OK, [Value::Int(1)]),
         Value::VariantConstructor(bv::SOME.tag()),
         builtin("println"),
         Value::VmClosure(closure_arc),
         Value::Handle(handle_arc),
-        Value::TypeDescriptor(silt::typeinfo::TypeInfo::new_record(
-            silt::defs::TypeId(silt::defs::DefId(9001)),
+        Value::TypeDescriptor(silt::testing::typeinfo::TypeInfo::new_record(
+            silt::testing::defs::TypeId(silt::testing::defs::DefId(9001)),
             "Point",
             Vec::new(),
         )),

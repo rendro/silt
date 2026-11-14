@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use silt::diagnostic::Code;
+use silt::testing::diagnostic::Code;
 
 #[test]
 fn the_error_codes_page_lists_every_code_once() {

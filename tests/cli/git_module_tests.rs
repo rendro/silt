@@ -1,11 +1,11 @@
-//! Tests for `silt::git`. The hermetic tests cover cache path
+//! Tests for `silt::testing::git`. The hermetic tests cover cache path
 //! computation and ref-shape validation; the network-gated tests (only
 //! enabled when `SILT_GIT_INTEGRATION_TESTS=1`) exercise `ls-remote` and
 //! a real clone against silt's own GitHub repo.
 
 use std::path::Path;
 
-use silt::git::{self, GitRef};
+use silt::testing::git::{self, GitRef};
 
 // ── Hermetic tests (always run) ───────────────────────────────────────
 

@@ -25,8 +25,8 @@ fn manifest_dir() -> PathBuf {
 /// post-conditions hold.
 #[test]
 fn fuzz_typechecker_runs_on_existing_corpus() {
-    use silt::lexer::Lexer;
-    use silt::parser::Parser;
+    use silt::testing::lexer::Lexer;
+    use silt::testing::parser::Parser;
 
     let corpus = manifest_dir().join("fuzz/corpus/fuzz_parser");
     if !corpus.exists() {
@@ -51,7 +51,7 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
         let Ok(s) = std::str::from_utf8(&bytes) else {
             continue;
         };
-        let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s)
+        let Ok(tokens) = Lexer::new(silt::testing::source::FileId::default(), s)
             .tokenize()
             .checked()
         else {
@@ -60,7 +60,7 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
         let Ok(_) = Parser::new(tokens, s).parse_program() else {
             continue;
         };
-        let errors = silt::session::testing::analyze_str(s).1;
+        let errors = silt::testing::analyze_str(s).1;
         assert!(
             errors.len() <= max_diagnostics,
             "typechecker produced {} diagnostics on corpus seed {:?} (cap {})",

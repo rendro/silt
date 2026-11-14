@@ -116,7 +116,7 @@ fn readme_tooling_block_matches_main_help() {
 #[test]
 fn postgres_doc_says_it_is_opt_in_and_how_to_enable_it() {
     // The module's page, whether or not this build has the feature.
-    let body = silt::builtins::registry::registry()
+    let body = silt::testing::builtins::registry::registry()
         .module("postgres")
         .expect("the postgres module")
         .page;

@@ -38,7 +38,7 @@ fn the_guide_links_every_stdlib_page() {
 #[test]
 fn every_builtin_module_has_its_page_in_the_guide() {
     let section = standard_library_section();
-    let registry = silt::builtins::registry::registry();
+    let registry = silt::testing::builtins::registry::registry();
     let mut missing = Vec::new();
     for module in &registry.modules {
         if !section.contains(&format!("(stdlib/{})", module.page_file)) {

@@ -3,7 +3,7 @@
 //! that used to live here are golden cases named `hardening__*` under
 //! `tests/golden/lang/`.
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 // ── Value ordering: Float Eq/Ord consistency ───────────────────────
 
@@ -11,7 +11,7 @@ use silt::value::Value;
 fn test_float_ord_consistency() {
     // Verify that Value::Float ordering is consistent with equality.
     // Two equal floats must compare as Equal.
-    let float = |f: f64| Value::Float(silt::value::Float::new(f).expect("a finite number"));
+    let float = |f: f64| Value::Float(silt::testing::value::Float::new(f).expect("a finite number"));
     let a = float(1.5);
     let b = float(1.5);
     assert_eq!(a, b);

@@ -6,14 +6,14 @@
 
 #![cfg(feature = "repl")]
 
-use silt::session::testing::session_with;
+use silt::testing::session_with;
 
 fn completion_names(src: &str) -> Vec<String> {
     let (mut session, file) = session_with(&[("main.silt", src)]);
     session.analyze(file);
     let module = session.module_of(file);
     let analysis = session.module_analysis(module).expect("analysed");
-    silt::repl::scope_completion_names(&analysis.scope, session.defs(), |_| None)
+    silt::testing::repl::scope_completion_names(&analysis.scope, session.defs(), |_| None)
 }
 
 fn assert_names(src: &str, expected: &[&str]) {

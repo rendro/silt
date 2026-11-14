@@ -19,7 +19,7 @@ mod graph;
 mod host;
 mod packages;
 #[cfg(any(test, feature = "test-hooks"))]
-pub mod testing;
+pub(crate) mod testing;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

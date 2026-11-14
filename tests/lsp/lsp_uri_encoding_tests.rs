@@ -21,7 +21,7 @@ use std::str::FromStr;
 
 use lsp_types::Uri;
 
-use silt::lsp::{file_uri_to_path, path_to_file_uri};
+use silt::testing::lsp::{file_uri_to_path, path_to_file_uri};
 
 /// VSCode sends `rootUri` with spaces percent-encoded. Pre-fix we
 /// returned `PathBuf::from("/home/klaus/My%20Project")` — a directory

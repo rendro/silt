@@ -1,4 +1,4 @@
-use silt::types::Type;
+use silt::testing::types::Type;
 
 #[test]
 fn typeof_renders_as_type() {

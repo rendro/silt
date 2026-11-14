@@ -21,11 +21,11 @@
 
 #![cfg(feature = "postgres")]
 
-use silt::builtins::postgres::{
+use silt::testing::builtins::postgres::{
     EffectiveSslMode, connect_limit_for_tests, read_max_pool_size_for_tests, redact_pg_message,
     resolve_effective_sslmode_for_tests,
 };
-use silt::value::Value;
+use silt::testing::value::Value;
 
 // ── HIGH-4: default sslmode is verify-full, not prefer ─────────────
 
