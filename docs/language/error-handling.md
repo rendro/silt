@@ -299,7 +299,7 @@ fn get_or_die(opt) {
 A function may say that it never returns: `-> Never` as its return type.
 Its body must not end: it ends in `panic`, in a call of another function
 that returns `Never`, or in a `loop` that never stops, and neither a
-`return` nor a `?` may stand in it (each returns from the function). A call of it then never returns either, so it can end a
+`return` nor a `?` of a Result or an Option may stand in it (each returns from the function). A call of it then never returns either, so it can end a
 block that must leave, as `panic` can:
 
 ```silt
@@ -326,8 +326,9 @@ declared with `fn` (not of a trait's method): anywhere else in an
 annotation it is an error.
 
 A value of type `Never` is accepted where a value of any type is asked,
-and a `let` with a type annotation gives its names the written type,
-whatever the value: `let port: Int = todo()` makes `port` an `Int`. So a
+and what is taken from it never is either: a call of it, a field read of
+it, its `?` (which never runs, in any function). A `let` with a type
+annotation gives its names the written type, whatever the value: `let port: Int = todo()` makes `port` an `Int`. So a
 stub stands for the value it will be, and the code after it is checked
 as for that value:
 
