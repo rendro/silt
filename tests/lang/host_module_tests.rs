@@ -1465,3 +1465,24 @@ fn host_results_of_postgres_handles_are_checked() {
         "got: {err}"
     );
 }
+
+/// A host result of a builtin module's record or enum type where the
+/// signature names a host type of the same bare name: the message names
+/// the result's type with its module (it read "returned Variant Null").
+#[test]
+fn a_host_result_of_a_builtin_module_type_is_named_with_its_module() {
+    let host = HostModule::new("h")
+        .declare_type("type Value { n: Int }")
+        .function("fn f(n: Int) -> Value", |_call: &HostCall| {
+            Ok(Value::variant(bv::JSON_NULL, []))
+        });
+    let err = run(
+        "import h\nimport host\nfn main() {\n  host.give(h.f(1).n)\n}",
+        host,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("h.f: its signature returns Value, but it returned json.Value Null"),
+        "got: {err}"
+    );
+}
