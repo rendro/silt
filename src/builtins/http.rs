@@ -1134,7 +1134,7 @@ fn path_in_ascii(url: &str) -> std::borrow::Cow<'_, str> {
         (url[host_start..].find(['/', '?', '#'])).map_or(url.len(), |at| host_start + at);
     let mut text = String::with_capacity(url.len() + 16);
     text.push_str(&url[..path_start]);
-    for &byte in url[path_start..].as_bytes() {
+    for &byte in &url.as_bytes()[path_start..] {
         match byte.is_ascii() {
             true => text.push(byte as char),
             false => {
