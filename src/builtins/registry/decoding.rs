@@ -321,7 +321,11 @@ impl Decoding {
                 .collect(),
             false => [record].into_iter().chain(json_value).collect(),
         };
-        if self.family.decodes_enums() {
+        if self == Decoding::TOML_RECORD {
+            // (A toml document is a table: of an enum, a variant with
+            // fields.)
+            types.push("an enum type that has a variant with fields".to_string());
+        } else if self.family.decodes_enums() {
             types.push("an enum type".to_string());
         }
         if self.family.honours_impls() {
