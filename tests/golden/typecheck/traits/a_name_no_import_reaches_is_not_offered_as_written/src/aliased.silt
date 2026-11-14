@@ -1,0 +1,11 @@
+import da as errs
+
+type T { A }
+
+trait Loclat for T { fn loc(self) -> String { "a" } }
+
+pub fn one() -> Int {
+  match errs.u() {
+    _ -> 1
+  }
+}

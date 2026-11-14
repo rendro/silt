@@ -1,0 +1,26 @@
+error[type]: trait 'Shwon' is not declared
+ --> src/main.silt:15:1
+    |
+ 15 | trait Shwon for T { fn shn(self) -> String { "a" } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Shwon' is not declared
+  = help: did you mean `da.Shown` (a trait of module `da`, after `import da`)?
+
+error[type]: trait 'Loclat' is not declared
+ --> src/aliased.silt:5:1
+   |
+ 5 | trait Loclat for T { fn loc(self) -> String { "a" } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Loclat' is not declared
+
+error[type]: non-exhaustive match: missing variants InIo, InOther
+ --> src/deep.silt:4:9
+   |
+ 4 |   match da.deep() {
+   |         ^^^^^^^^^ non-exhaustive match: missing variants InIo, InOther
+  = help: these are variants of a type of a module that no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+
+error[type]: non-exhaustive match: missing variants UA, UB
+ --> src/deep.silt:9:9
+   |
+ 9 |   match da.u() {
+   |         ^^^^^^ non-exhaustive match: missing variants UA, UB
+  = help: these are variants of a type of a module that no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them

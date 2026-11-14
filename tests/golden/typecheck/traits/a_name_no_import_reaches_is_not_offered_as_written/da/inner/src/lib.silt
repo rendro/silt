@@ -1,0 +1,3 @@
+pub type InErr { InIo, InOther }
+
+pub fn mk() -> InErr { InOther }

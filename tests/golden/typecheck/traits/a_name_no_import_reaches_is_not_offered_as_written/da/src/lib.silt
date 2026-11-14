@@ -1,0 +1,8 @@
+import inner
+import util
+
+pub trait Shown { fn shn(self) -> String }
+
+pub fn deep() -> inner.InErr { inner.mk() }
+
+pub fn u() -> util.UErr { util.mk() }

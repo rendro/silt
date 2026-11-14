@@ -218,11 +218,26 @@ impl TypeChecker {
     /// name where none does.
     pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
         match self.other_module(enum_ty) {
+            // (Of a module no import here reaches, by its own name: the
+            // module's name is none the program can write.)
+            Some(_) if self.variant_out_of_reach(enum_ty, name) => name.to_string(),
             Some(module) => (self.module_of_type(enum_ty))
                 .and_then(|id| self.spelling_in_reach(id, &resolve(name)))
                 .unwrap_or_else(|| format!("{module}.{name}")),
             None => name.to_string(),
         }
+    }
+
+    /// Whether the variant `name` of `enum_ty`, a type of another module,
+    /// is one this module cannot write in any form: no import here puts
+    /// it in reach, and none written here can (a module of a dependency's
+    /// dependency, a dependency's module other than its library).
+    pub(super) fn variant_out_of_reach(&self, enum_ty: TypeRef, name: Symbol) -> bool {
+        self.other_module(enum_ty).is_some()
+            && self.module_of_type(enum_ty).is_some_and(|module| {
+                self.spelling_in_reach(module, &resolve(name)).is_none()
+                    && self.import_path(module).is_none()
+            })
     }
 
     /// The variant `name` of `enum_ty` as this module can write it, or

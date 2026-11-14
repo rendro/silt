@@ -1,0 +1,8 @@
+import da
+import errs
+
+pub fn two() -> Int {
+  match da.deep() {
+    _ -> errs.n()
+  }
+}
