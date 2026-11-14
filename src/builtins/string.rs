@@ -62,7 +62,7 @@ fn aligned(vm: &mut Vm, x: &Value, width: i64, at_left: bool) -> Result<Step, Vm
         false => ("right", "string.right"),
     };
     fits_width(name, width)?;
-    vm.show_within(x, Some(builtin), move |_, text| {
+    vm.show_within(x, builtin, move |_, text| {
         let spaces = fill(&text, width, ' ');
         let line = match at_left {
             true => text + &spaces,

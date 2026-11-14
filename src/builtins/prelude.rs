@@ -33,17 +33,14 @@ pub(crate) fn print_to(
 
 builtins! {
     fn print(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, "print", |vm, text| print_to(vm, Stream::Stdout, text, "print"))
+        vm.print_value(value, Stream::Stdout, "print", false)
     }
 
     fn println(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, "println", |vm, mut text| {
-            text.push('\n');
-            print_to(vm, Stream::Stdout, text, "println")
-        })
+        vm.print_value(value, Stream::Stdout, "println", true)
     }
 
     fn panic(vm, message: &Value) -> Result<Step, VmError> {
-        vm.show(message, "panic", |_, text| Err(VmError::new(format!("panic: {text}"))))
+        vm.show(message, |_, text| Err(VmError::new(format!("panic: {text}"))))
     }
 }

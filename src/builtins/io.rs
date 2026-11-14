@@ -318,16 +318,11 @@ fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
 
 builtins! {
     fn eprint(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, "io.eprint", |vm, text| {
-            super::prelude::print_to(vm, crate::vm::Stream::Stderr, text, "io.eprint")
-        })
+        vm.print_value(value, crate::vm::Stream::Stderr, "io.eprint", false)
     }
 
     fn eprintln(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, "io.eprintln", |vm, mut text| {
-            text.push('\n');
-            super::prelude::print_to(vm, crate::vm::Stream::Stderr, text, "io.eprintln")
-        })
+        vm.print_value(value, crate::vm::Stream::Stderr, "io.eprintln", true)
     }
 
     fn inspect(x: &Value) -> Result<String, VmError> {

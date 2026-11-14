@@ -1464,9 +1464,8 @@ impl Vm {
                 Instr::Panic => {
                     let msg = pop(&mut self.stack);
                     save!();
-                    let step = ok!(self.show(&msg, "panic", |_, text| Err(VmError::new(format!(
-                        "panic: {text}"
-                    )))));
+                    let step =
+                        ok!(self.show(&msg, |_, text| Err(VmError::new(format!("panic: {text}")))));
                     go_on!(ok!(self.enter_step(step)));
                 }
                 Instr::CallMethod {
