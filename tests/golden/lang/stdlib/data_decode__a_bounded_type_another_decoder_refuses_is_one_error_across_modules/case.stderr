@@ -2,7 +2,7 @@ error[type]: `toml.parse` cannot decode `L`: its type argument must be a record 
  --> main.silt:11:27
     |
  11 |   let _ = lib.tl("n = 1", L)
-    |                           ^ `toml.parse` cannot decode `L`: its type argument must be a record type, json.Value, an enum type, or a type with a `json.Decode` impl
+    |                           ^ here
   = note: `lib.tl` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
@@ -10,6 +10,6 @@ error[type]: `toml.parse` cannot decode `L`: its type argument must be a record 
  --> main.silt:12:29
     |
  12 |   let _ = lib.deep("n = 1", L)
-    |                             ^ `toml.parse` cannot decode `L`: its type argument must be a record type, json.Value, an enum type, or a type with a `json.Decode` impl
+    |                             ^ here
   = note: `lib.deep` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list

@@ -649,7 +649,7 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
             "-->",
             &located,
             '^',
-            &visible_text(&d.message),
+            &caret_label(&visible_text(&d.message)),
             color,
         );
     }
@@ -691,6 +691,21 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
         }
     }
     out
+}
+
+/// The longest message, in characters, that is said again under the
+/// caret: a longer one (a panic's message can be a long text) is in the
+/// headline only.
+const CARET_LABEL_MAX: usize = 120;
+
+/// What stands after the caret of a diagnostic whose message is
+/// `message`: the message itself when it is one short line, else
+/// `here`, as the headline above says it already.
+fn caret_label(message: &str) -> &str {
+    match message.contains('\n') || message.chars().count() > CARET_LABEL_MAX {
+        true => "here",
+        false => message,
+    }
 }
 
 /// ` --> file:line:col`, then the line with marks under the span and
@@ -1131,6 +1146,21 @@ mod tests {
         assert!(color_from(false, None, Some("xterm"), tty));
         assert!(!color_from(false, None, None, || false));
         assert!(!color_from(true, Some("1"), None, tty));
+    }
+
+    /// A message longer than one line of the terminal is not said again
+    /// under the caret (a panic's can be a long text); a short one is.
+    /// FAILS on the base: the label was always the message.
+    #[test]
+    fn a_long_message_is_not_repeated_under_the_caret() {
+        let map = sources("let x = 1");
+        let long = "x".repeat(CARET_LABEL_MAX + 1);
+        let out = render_human(&map, &Diagnostic::error(Code::CompileLimit, span(4, 5), &long));
+        assert_eq!(out.matches(&long).count(), 1, "{out}");
+        assert!(out.contains("^ here"), "{out}");
+        let short = "x".repeat(CARET_LABEL_MAX);
+        let out = render_human(&map, &Diagnostic::error(Code::CompileLimit, span(4, 5), &short));
+        assert_eq!(out.matches(&short).count(), 2, "{out}");
     }
 
     fn sources(text: &str) -> SourceMap {

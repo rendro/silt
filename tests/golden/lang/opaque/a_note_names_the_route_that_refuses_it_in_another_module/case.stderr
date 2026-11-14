@@ -18,6 +18,6 @@ error[type]: type 'secret.Secret' cannot be decoded outside module 'secret': it 
  --> main.silt:15:39
     |
  15 |   println(util.mix("\{\"k\": \"x\"}", secret.Secret))
-    |                                       ^^^^^^^^^^^^^ type 'secret.Secret' cannot be decoded outside module 'secret': it is opaque, and 'secret' writes no 'json.Decode' impl for it
+    |                                       ^^^^^^^^^^^^^ here
   = note: `util.mix` passes it to `mail.load`, which passes it to `json.parse`
   = help: decode it inside module 'secret', or write `trait json.Decode for Secret` there
