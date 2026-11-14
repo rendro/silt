@@ -20,7 +20,8 @@
 //! Since audit R9 (FE-8) a number has one spelling: the prefixes
 //! `0x`/`0b` and the exponent `e` in lower case, no `+` in an
 //! exponent, a `_` only between two digits, no leading zero in a
-//! decimal number. The other spellings are lex errors, and the
+//! decimal number or in an exponent (zeros at the end of a fraction
+//! stay: `1.50`). The other spellings are lex errors, and the
 //! grammars match only the one.
 //!
 //! ## What this test locks
@@ -76,6 +77,13 @@ const ACCEPTED: &[(&str, Kind)] = &[
     ("0e1", Kind::Float),
     ("9e-2", Kind::Float),
     ("1e1_0", Kind::Float),
+    ("1e0", Kind::Float),
+    ("1e10", Kind::Float),
+    ("2.5e-10", Kind::Float),
+    // Zeros at the end of a fraction stay (audit R9 NUM-2).
+    ("1.50", Kind::Float),
+    ("10.050", Kind::Float),
+    ("1.0", Kind::Float),
 ];
 
 /// Forms the lexer does NOT lex as a single number token (either a
@@ -97,6 +105,8 @@ const REJECTED: &[&str] = &[
     // Other spellings of a number (audit R9 FE-8).
     "0XFF", "0B10", "1E5", "1.5E-3", "1e+5", "1_", "1__0", "0x_F", "0b_1", "1_.5", "1.5_", "007",
     "00.5", "01e3",
+    // No leading zero in an exponent (audit R9 NUM-2).
+    "1e007", "1e-07", "1e00", "1.5e01", "1e0_7",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
