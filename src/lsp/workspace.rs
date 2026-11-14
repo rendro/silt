@@ -1364,20 +1364,17 @@ impl Server {
         }
         let places = self.places_of(uri, target, true);
         // One of silt's own names, visible in every module: a builtin
-        // function, type, trait or constructor. (A type of a builtin
-        // module, `regex.Regex` or `time.Weekday`, reserves no name: a
-        // program may declare its own; an import of it by name is a
-        // top-level name, below.)
+        // function, type, trait or constructor of the prelude. (A type or
+        // a constructor of a builtin module, `regex.Regex` or `io.Other`,
+        // reserves no name: a program may declare its own; an import of
+        // it by name is a top-level name, below.)
         let own = crate::module::builtin_free_function_names().contains(&new)
             || crate::types::builtins::is_prelude_name(new)
-            || crate::module::all_builtin_constructor_names().any(|name| name == new)
             || crate::defs::PRELUDE_TRAITS.contains(&new)
-            || self.projects.values().any(|project| {
-                let defs = project.session.defs();
-                defs.of_module(ModuleId::PRELUDE)
-                    .iter()
-                    .any(|id| defs.get(*id).name == new_sym)
-            });
+            || {
+                let prelude = &crate::typechecker::names::builtins().1.prelude;
+                prelude.values.contains_key(&new_sym) || prelude.types.contains_key(&new_sym)
+            };
         if own {
             return Some(format!("`{new}` is one of silt's own names"));
         }

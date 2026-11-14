@@ -190,8 +190,8 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
     })
 }
 
-/// Every builtin enum variant name across all builtin enums, for LSP
-/// rename and completion and for REPL completion.
+/// Every builtin enum variant name across all builtin enums, for
+/// completion in the playground.
 pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
     builtin_enum_variants()
         .iter()
