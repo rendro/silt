@@ -1,0 +1,22 @@
+-- cmd: lsp
+-- lsp: prepare-rename 8:11
+-- lsp: rename 8:11 left
+-- lsp: references 8:11
+-- A field read on a value that never is (`v.x` after a panic) reads no
+-- record's field: it is no place of `x` of `Pt`, and it does not hold up
+-- a rename of that field, which leaves it as it is.
+type Pt { x: Int, y: Int }
+
+fn boom() -> Never {
+  panic("b")
+}
+
+fn dead() -> Int {
+  let v = boom()
+  v.x + v.x.x
+}
+
+fn main() {
+  let p = Pt { x: 1, y: 2 }
+  println(p.x + p.{ x: 3 }.x)
+}

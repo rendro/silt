@@ -91,9 +91,9 @@ pub(super) struct Names<'a> {
     pub(super) methods: Vec<MethodUse>,
     pub(super) fields: Vec<FieldUse>,
     /// The field reads on a value whose record type is not known (a
-    /// type error, an anonymous record): the span of the name and the
-    /// name. A field of that name cannot be renamed while one is there,
-    /// since the read may be one of its places.
+    /// type error; a value that never is reads no field): the span of
+    /// the name and the name. A field of that name cannot be renamed
+    /// while one is there, since the read may be one of its places.
     pub(super) unknown_reads: Vec<(Span, Symbol)>,
     /// The fields of a record literal or update whose name was not found
     /// in the text before the value: the span of the value, the record
@@ -526,7 +526,11 @@ impl<'a> Names<'a> {
                     && let Some(record) = self.record_of(receiver.ty.as_ref())
                 {
                     self.field(*field_span, record, *field, false);
-                } else if field_span.is_in_source() {
+                } else if field_span.is_in_source()
+                    // (A read of a value that never is, `panic("a").x`,
+                    // reads no record's field: it never runs.)
+                    && !matches!(receiver.ty, Some(crate::types::Type::Never))
+                {
                     self.unknown_reads.push((*field_span, *field));
                 }
                 self.expr(receiver);
