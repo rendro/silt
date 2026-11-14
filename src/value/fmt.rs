@@ -151,8 +151,8 @@ enum Parts<'a> {
     /// The elements a list holds: what is left of a run of them, and
     /// the runs after it.
     Elements(std::slice::Iter<'a, Value>, Runs<'a>),
-    /// The fields of a record, in the order its type declares them
-    /// (an anonymous record's in name order), each after its name.
+    /// The fields of a record, in the order its type declares them,
+    /// each after its name.
     Fields(
         std::slice::Iter<'a, (String, FieldType)>,
         std::slice::Iter<'a, Value>,
@@ -304,18 +304,13 @@ fn begin<'a>(
             if shown && write_time(record, f)? {
                 return Ok(None);
             }
-            // (An anonymous record is written without a name.)
-            if !record.ty().is_anon() {
-                f.write_str(&record.ty().name)?;
-                f.write_str(" ")?;
-            }
-            f.write_str("{")?;
+            f.write_str(&record.ty().name)?;
+            f.write_str(" {")?;
             let names = record.ty().fields().iter();
             (Parts::Fields(names, record.fields().iter()), "}")
         }
         Value::Variant(variant) => {
-            // A builtin error is shown as its message, the text its
-            // `Error.message` gives: one text for both.
+            // A builtin error is shown as its message.
             if shown && let Some(message) = crate::builtins::error_text(variant) {
                 return f.write_str(&message).map(|()| None);
             }
@@ -350,6 +345,7 @@ fn begin<'a>(
         Value::Bytes(b) => return f.write_str(&format_bytes_preview(b)).map(|()| None),
         Value::TcpListener(t) => return write!(f, "<tcp-listener:{}>", t.id).map(|()| None),
         Value::TcpStream(t) => return write!(f, "<tcp-stream:{}>", t.id).map(|()| None),
+        Value::Regex(re) => return write!(f, "<regex:{}>", re.pattern).map(|()| None),
         Value::Dict(crate::bytecode::dict::Dict::Built(d)) => {
             return write!(f, "<dict:{}>", d.template.name).map(|()| None);
         }

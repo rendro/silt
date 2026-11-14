@@ -24,7 +24,7 @@ fn main() {
   let content = match io.read_file(file_path) {
     Ok(c) -> c
     Err(e) -> {
-      println("Error reading file: {Error.message(e)}")
+      println("Error reading file: {e}")
       return panic("Cannot continue without file")
     }
   }
@@ -33,7 +33,7 @@ fn main() {
   println("")
   -- Extract all [text](url) links using regex capture groups
   let pattern = """\[([^\]]*)\]\(([^)]*)\)"""
-  let matches = regex.captures_all(content, pattern) |> result.unwrap_or([])
+  let matches = (regex.compile(pattern) |> result.map { compiled_re -> regex.captures_all(content, compiled_re) }) |> result.unwrap_or([])
   let total = list.length(matches)
   println("Found {total} links")
   println("")

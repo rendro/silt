@@ -53,11 +53,13 @@ fn main() {
 }
 "#;
 
+/// Only a `\n` or a `\r\n` ends a line: a last `\r` with no `\n` after
+/// it is the line's, as in a file and on a connection.
 #[test]
 fn stdin_lines_drops_crlf_line_ends() {
     let (out, err, ok) = run_with("crlf", LINES, b"a\r\nb\r\n\r\nc\r");
     assert!(ok, "{err}");
-    assert_eq!(out, "[Ok(\"a\"), Ok(\"b\"), Ok(\"\"), Ok(\"c\")]\n");
+    assert_eq!(out, "[Ok(\"a\"), Ok(\"b\"), Ok(\"\"), Ok(\"c\\r\")]\n");
 }
 
 #[test]
@@ -102,7 +104,7 @@ fn main() {
   list.each(lines) { line ->
     match line {
       Ok(text) -> println("{string.length(text)} {string.slice(text, string.length(text) - 4, string.length(text))}")
-      Err(e) -> println("error: {Error.message(e)}")
+      Err(e) -> println("error: {e}")
     }
   }
 }
@@ -139,7 +141,7 @@ import io
 fn main() {
   match io.read_stdin_bytes() {
     Ok(b) -> println(bytes.to_list(b))
-    Err(e) -> println("error: {Error.message(e)}")
+    Err(e) -> println("error: {e}")
   }
 }
 "#;
@@ -182,7 +184,7 @@ fn main() {
   match io.read_line() {
     Ok(Some(line)) -> println("then {line}")
     Ok(None) -> println("then the end")
-    Err(e) -> println("error: {Error.message(e)}")
+    Err(e) -> println("error: {e}")
   }
 }
 "#;

@@ -184,6 +184,55 @@ impl TypeChecker {
         }
     }
 
+    /// Owe, of each use of the definition the decode of `ty` at `origin`
+    /// is in, the decoder's judgement of `ty` whole at the type the use
+    /// gives each annotation variable an `Option` in `ty` holds directly
+    /// (`Option(t)`, `List(Option(t))`): `t` given `Option(Int)` makes an
+    /// Option in an Option, which no decoder has, and the bound `t:
+    /// json.Decode` holds of `Option(Int)`. The need is the variable's,
+    /// as a toml decoder's is (`check_builtin_argument`).
+    pub(super) fn owe_option_around_rigid(
+        &mut self,
+        ty: &Type,
+        origin: Origin,
+        owners: &[crate::session::ModuleId],
+    ) {
+        fn walk(ty: &Type, out: &mut Vec<Type>) {
+            match ty {
+                Type::Generic(head, args) => {
+                    if head.is_builtin("Option")
+                        && let Some(arg @ Type::Rigid(_)) = args.first()
+                    {
+                        out.push(arg.clone());
+                    }
+                    args.iter().for_each(|arg| walk(arg, out));
+                }
+                Type::List(t) | Type::Set(t) => walk(t, out),
+                Type::Map(k, v) => {
+                    walk(k, out);
+                    walk(v, out);
+                }
+                Type::Tuple(parts) => parts.iter().for_each(|part| walk(part, out)),
+                _ => {}
+            }
+        }
+        let mut rigids = Vec::new();
+        walk(ty, &mut rigids);
+        if rigids.is_empty() {
+            return;
+        }
+        let check = crate::types::BuiltinCheck::Decodes {
+            builtin: origin.callee.unwrap_or_else(|| intern("json.parse")),
+            decoding: Decoding::JSON,
+            written: None,
+        };
+        let around = self.owing_within.replace(ty.clone());
+        for rigid in rigids {
+            self.check_builtin_argument(check, &rigid, (None, &[]), owners, origin);
+        }
+        self.owing_within = around;
+    }
+
     /// Owe, of each use of the definition the decode at `origin` is in,
     /// the decoder's judgement of `whole` (`held_instance_in`) at the
     /// types the use gives the variables in it, as an annotation
@@ -1219,8 +1268,8 @@ impl TypeChecker {
             | Type::Channel(_) => {
                 self.decode_refusal(builtin, Decoding::JSON, written, ty, owner, span)
             }
-            // A type no type argument names (a function, an
-            // anonymous record): what a decoder's type argument may be.
+            // A type no type argument names (a function): what a
+            // decoder's type argument may be.
             other => {
                 let accepted = Decoding::JSON.type_arguments(str::to_string);
                 Some(

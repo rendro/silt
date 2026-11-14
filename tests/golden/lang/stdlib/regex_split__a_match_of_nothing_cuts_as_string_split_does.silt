@@ -6,15 +6,20 @@ import io
 import regex
 import string
 
-fn main() {
-  println(io.inspect(regex.split("abc", "")))
+fn main() -> Result((), regex.RegexError) {
+  let nothing = regex.compile("")?
+  let xs = regex.compile("x*")?
+  let comma = regex.compile(",")?
+  let boundary = regex.compile("\\b")?
+  println(io.inspect(regex.split("abc", nothing)))
   println(io.inspect(string.split("abc", "")))
-  println(io.inspect(regex.split("", "")))
+  println(io.inspect(regex.split("", nothing)))
   println(io.inspect(string.split("", "")))
-  println(io.inspect(regex.split("axb", "x*")))
-  println(io.inspect(regex.split("", "x*")))
-  println(io.inspect(regex.split("", ",")))
-  println(io.inspect(regex.split(",a,", ",")))
+  println(io.inspect(regex.split("axb", xs)))
+  println(io.inspect(regex.split("", xs)))
+  println(io.inspect(regex.split("", comma)))
+  println(io.inspect(regex.split(",a,", comma)))
   println(io.inspect(string.split(",a,", ",")))
-  println(io.inspect(regex.split("a b", "\\b")))
+  println(io.inspect(regex.split("a b", boundary)))
+  Ok(())
 }

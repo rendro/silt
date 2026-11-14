@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A field read on a value whose type is decided after the read is
+-- refused as one on a value of a known type, outside the opaque type's
+-- module; so is a type given where a value with fields is read.
+import mail
+
+fn main() {
+  let f = { u -> u.name }
+  println(f(mail.user("a")))
+  let g = { t -> t.name }
+  println(g(mail.User))
+}

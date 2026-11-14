@@ -72,7 +72,6 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &[
     "Compare",
     "Hash",
     "Display",
-    "Error",
     "Number",
     "Functor",
     "Applicative",
@@ -84,9 +83,9 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &[
 pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Number"];
 
 /// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
-/// with no impl (`Display` unless one is written for it). `Error` is
-/// not one: an impl of it is written. (`json.Encode` and `json.Decode`,
-/// traits of the json module, are too: [`WRITABLE_STRUCTURAL_TRAITS`].)
+/// with no impl (`Display` unless one is written for it). (`json.Encode`
+/// and `json.Decode`, traits of the json module, are too:
+/// [`WRITABLE_STRUCTURAL_TRAITS`].)
 pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 /// The builtin traits a type has by its structure unless an impl of
@@ -302,20 +301,6 @@ pub struct TypeChecker {
     /// The alias a use names the type a decoder is given by, at the
     /// place of the type argument.
     pub(super) decode_aliases: HashMap<Span, Symbol>,
-    /// The row variables of the signatures of the module's functions
-    /// (each by the variable it is in the function's scheme).
-    pub(super) sig_rows: std::collections::HashSet<TyVar>,
-    /// Those of them a body spreads a record over, or binds the rest
-    /// of: no declared record may stand for one (`Pred::Anon`).
-    pub(super) anon_rows: std::collections::HashSet<TyVar>,
-    /// What stands for a signature's row variable whose body may not be
-    /// checked yet: decided when the module's bodies are
-    /// (`settle_rows`).
-    pub(super) anon_waiting: Vec<(TyVar, Type, Origin)>,
-    /// The fields a body adds to a record over a row variable of its
-    /// signature: what stands for the row has none of them
-    /// (`Pred::Lacks`).
-    pub(super) row_adds: HashMap<TyVar, Vec<Symbol>>,
     /// What the bodies ask of the annotation variables of their
     /// signatures for the builtins they give them to (`Pred::Builtin`),
     /// each by the variable's representative (`rigid_rep_var`).
@@ -398,7 +383,11 @@ pub struct TypeChecker {
     /// The receiver and the name of the callee just checked, when it is
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
-    pub(super) unknown_receiver: Option<(Type, Symbol)>,
+    pub(super) unknown_receiver: Option<(Type, Symbol, solve::ReadAt)>,
+    /// The type variables of the plain `let`s without an annotation
+    /// (`let v = fail("x")`), by the name each binds: what a field read
+    /// that nothing decides says to annotate.
+    pub(super) plain_let_vars: HashMap<TyVar, Symbol>,
     /// How `x.m(..)` made a parameter of a function or closure be read
     /// (`x`'s, or one whose type it shares, also through a call that
     /// passes it on), by the callee and the parameter's place, with the
@@ -687,8 +676,7 @@ pub struct TypeChecker {
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// The variables of the uses of another module's definitions, each
-    /// with that module: an opaque type of it may pass into such a row,
-    /// which the module's own code reads, and be decoded for such a
+    /// with that module: an opaque type of it may be decoded for such a
     /// variable, which the module's own code decodes.
     pub(super) use_owners: HashMap<TyVar, crate::session::ModuleId>,
     /// The predicates, by their evidence, that a use of another module's
@@ -857,10 +845,6 @@ impl TypeChecker {
             impl_decode_vars: HashMap::new(),
             let_links: HashMap::new(),
             decode_aliases: HashMap::new(),
-            sig_rows: std::collections::HashSet::new(),
-            anon_rows: std::collections::HashSet::new(),
-            anon_waiting: Vec::new(),
-            row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             need_paths: HashMap::new(),
             need_owners: HashMap::new(),
@@ -887,6 +871,7 @@ impl TypeChecker {
             method_values: HashMap::new(),
             method_value_lets: HashMap::new(),
             unknown_receiver: None,
+            plain_let_vars: HashMap::new(),
             readings: HashMap::new(),
             closure_readings: Vec::new(),
             held_params: Vec::new(),
@@ -1814,14 +1799,6 @@ impl TypeChecker {
                         subject: rep(subject),
                         asker,
                     },
-                    Pred::Anon { row, given } => Pred::Anon {
-                        row: rep(row),
-                        given: given.map(|var| self.rigid_rep_var(var)),
-                    },
-                    Pred::Lacks { row, field } => Pred::Lacks {
-                        row: rep(row),
-                        field,
-                    },
                     Pred::Builtin {
                         check,
                         subject,
@@ -1964,7 +1941,7 @@ impl TypeChecker {
     /// An impl's method is checked against the signature its trait
     /// gives it (`register_trait_impl` keeps it in `impl_sigs`, by the
     /// canonical head of the impl's target: `List` for a
-    /// user alias of `List(..)`, `Fn` for `Fun`, `()` for the unit type).
+    /// user alias of `List(..)`, `()` for the unit type).
     ///
     /// A default method is checked once, in its trait: `Self` is rigid
     /// there, bounded by the trait and its supertraits, so the body may
@@ -2080,45 +2057,6 @@ pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-/// The row variables of the anonymous record types in `ty`, which stand
-/// for fields, not for a type.
-fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
-    match ty {
-        Type::AnonRecord { fields, tail } => {
-            if let RowTail::Var(v) = tail {
-                out.push(*v);
-            }
-            fields.values().for_each(|t| row_tail_vars(t, out));
-        }
-        Type::Generic(_, args) | Type::Tuple(args) => {
-            args.iter().for_each(|t| row_tail_vars(t, out))
-        }
-        Type::Fun(params, ret) => {
-            params.iter().for_each(|t| row_tail_vars(t, out));
-            row_tail_vars(ret, out);
-        }
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => row_tail_vars(t, out),
-        Type::Map(k, v) => {
-            row_tail_vars(k, out);
-            row_tail_vars(v, out);
-        }
-        Type::App(head, arg) => {
-            row_tail_vars(head, out);
-            row_tail_vars(arg, out);
-        }
-        Type::Con(_, rest) => rest.iter().for_each(|t| row_tail_vars(t, out)),
-        Type::Int
-        | Type::Float
-        | Type::Bool
-        | Type::String
-        | Type::Unit
-        | Type::Var(_)
-        | Type::Rigid(_)
-        | Type::Error
-        | Type::Never => {}
-    }
-}
-
 /// The definitions the type names written in `te` resolve to.
 fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::DefId>) {
     if let Some(crate::defs::Res::Def(id)) = te.res {
@@ -2130,9 +2068,6 @@ fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::
         TypeExprKind::Function(params, ret) => {
             params.iter().for_each(|p| written_defs(p, out));
             written_defs(ret, out);
-        }
-        TypeExprKind::AnonRecord { fields, .. } => {
-            fields.iter().for_each(|(_, t)| written_defs(t, out))
         }
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
     }
@@ -2166,6 +2101,122 @@ pub struct ModuleCheck {
     /// they are initialised in: each after the `let`s its initialiser
     /// can reach, and in source order where nothing orders two.
     pub let_order: Vec<Span>,
+    /// For each top-level `main` and test function whose error type has
+    /// no `Display`, the error the session reports where it is an entry
+    /// point (`TypeChecker::entry_errors_shown`).
+    pub entry_display: HashMap<Symbol, Diagnostic>,
+}
+
+impl TypeChecker {
+    /// The error an entry point returns, `main`'s or a test's `Err(e)`,
+    /// is shown through `Display` (`error: <e>`, the test's failure):
+    /// its type must have it, as `"{e}"` would ask, a written impl's
+    /// bounds included. For each top-level `main` or `test_*` /
+    /// `skip_test_*` (a `fn` or a `let`) whose error type lacks it, the
+    /// error to report, by name. It is not reported here: the session
+    /// reports it where the function is an entry point (`main` of the
+    /// file run, a test of the file tested). A type the checker could
+    /// not decide, or one left to the caller (`Result((), e)` with
+    /// nothing deciding `e`), is let through.
+    fn entry_errors_shown(
+        &mut self,
+        program: &Program,
+        env: &TypeEnv,
+    ) -> HashMap<Symbol, Diagnostic> {
+        let mut found = HashMap::new();
+        for decl in &program.decls {
+            let (name, span) = match decl {
+                Decl::Fn(f) => (
+                    f.name,
+                    f.return_type.as_ref().map_or(f.name_span, |ty| ty.span),
+                ),
+                Decl::Let { pattern, ty, .. } => match pattern.kind {
+                    PatternKind::Ident(name) => {
+                        (name, ty.as_ref().map_or(pattern.span, |ty| ty.span))
+                    }
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let text = resolve(name);
+            let who = match () {
+                _ if text == crate::session::ENTRY_POINT => EntryWho::Main,
+                _ if crate::session::test_kind(&text).is_some() => EntryWho::Test(text),
+                _ => continue,
+            };
+            let Some(scheme) = env.lookup(name) else {
+                continue;
+            };
+            let Type::Fun(params, ret) = self.apply(&scheme.ty) else {
+                continue;
+            };
+            let Type::Generic(result, args) = *ret else {
+                continue;
+            };
+            let [_, error] = args.as_slice() else {
+                continue;
+            };
+            if !params.is_empty() || !result.is_builtin("Result") || !free_vars_in(error).is_empty()
+            {
+                continue;
+            }
+            // The judgement `"{e}"` makes: by the type's structure, or
+            // by its written impl and what that impl's header asks.
+            let before = self.errors.len();
+            self.want(
+                Pred::Trait {
+                    tr: TraitKey::builtin("Display"),
+                    args: Vec::new(),
+                    subject: error.clone(),
+                    asker: None,
+                },
+                solve::Origin {
+                    span,
+                    callee: None,
+                    op: None,
+                    header: None,
+                },
+            );
+            let lacks: Vec<Diagnostic> = self.errors.drain(before..).collect();
+            let Some(first) = lacks.into_iter().next() else {
+                continue;
+            };
+            let (code, message, help) = match who {
+                EntryWho::Main => (
+                    Code::MainSignature,
+                    format!(
+                        "the entry point 'main' must return an error that can be shown, but {}",
+                        first.message
+                    ),
+                    "main's `Err(e)` is shown as `error: {e}`: return a String, or a type that \
+                     has Display (by its structure, or by `trait Display for ...`)",
+                ),
+                EntryWho::Test(name) => (
+                    Code::TestSignature,
+                    format!(
+                        "the test function '{name}' must return an error that can be shown, but \
+                         {}",
+                        first.message
+                    ),
+                    "a test's `Err(e)` is shown in its failure: return a String, or a type that \
+                     has Display (by its structure, or by `trait Display for ...`)",
+                ),
+            };
+            let mut d = Diagnostic::error(code, span, message);
+            d.notes.extend(first.notes);
+            d.help.extend(first.help);
+            d.help_at = first.help_at;
+            d.help.push(help.to_string());
+            found.insert(name, d);
+        }
+        found
+    }
+}
+
+/// Which entry point [`TypeChecker::entry_errors_shown`] looks at.
+enum EntryWho {
+    Main,
+    Test(String),
 }
 
 /// The context a module is checked in, from the session.
@@ -2274,12 +2325,15 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         checker.take_up_waiting(program, earlier);
     }
     let env = checker.check_program_in(program, env);
+    let entry_display = match kind {
+        names::ModuleKind::File => checker.entry_errors_shown(program, &env),
+        _ => HashMap::new(),
+    };
     if checker.is_cell {
         checker.report_at_cell(program);
         checker.leave_waiting(program);
         program.run_refusals = std::mem::take(&mut checker.run_refusals);
     }
-    checker.settle_rows();
     checker.settle_builtin_needs();
     checker.settle_decode_gaps();
     checker.settle_encode_owners();
@@ -2374,6 +2428,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         top_level,
         signatures,
         let_order: checker.let_order,
+        entry_display,
     }
 }
 

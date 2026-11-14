@@ -1,6 +1,7 @@
 //! `silt run [<file>]` — compile and execute a silt program with the
 //! bytecode VM.
 
+use std::path::Path;
 use std::process;
 
 use silt::diagnostic::{Diagnostic, render_human};
@@ -12,7 +13,10 @@ use crate::cli::help::{asks_for_help, run_help_text, run_usage_banner};
 use crate::cli::package::{
     EntryPointKind, find_project_root, resolve_package_entry_point, resolve_package_entry_point_in,
 };
-use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
+use crate::cli::paths::{
+    FILE_OR_PACKAGE, PathArg, ProgramFiles, door_diagnostics, open_entry_or_exit, path_arg,
+    refuse_path,
+};
 
 /// Dispatch `silt run [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -72,30 +76,23 @@ pub(crate) fn dispatch(args: &[String]) {
     // No explicit file → look for an enclosing silt package and use
     // its `src/main.silt`. Outside a package, the usage line says that
     // a file is needed.
-    let file = match file {
+    // The path given is what the five commands that take one make of
+    // it (`paths::path_arg`). No path: the package's `src/main.silt`;
+    // outside a package, the usage line says that a file is needed.
+    let file = match file.as_deref().map(path_arg) {
         // A package's directory runs its `main`, as `silt run` in it does.
-        Some(dir)
-            if std::path::Path::new(&dir).is_dir()
-                && std::path::Path::new(&dir).join("silt.toml").is_file() =>
-        {
-            match resolve_package_entry_point_in(
-                std::path::Path::new(&dir),
-                EntryPointKind::RequireMain,
-            ) {
+        Some(PathArg::Package(dir)) => {
+            match resolve_package_entry_point_in(Path::new(&dir), EntryPointKind::RequireMain) {
                 Ok(Some(p)) => p.to_string_lossy().into_owned(),
                 // (Not found: it is read as the directory it is.)
                 Ok(None) => dir,
                 Err(()) => process::exit(1),
             }
         }
+        Some(PathArg::Dir(dir)) => refuse_path("run", &dir, FILE_OR_PACKAGE),
         // Any other file is no program: most likely it is meant for the
-        // program, as its argument. (A path that names nothing is a file
-        // that cannot be read, a misspelt name more likely.)
-        Some(f)
-            if !f.ends_with(".silt")
-                && std::path::Path::new(&f).exists()
-                && !std::path::Path::new(&f).is_dir() =>
-        {
+        // program, as its argument.
+        Some(PathArg::NotSilt(f)) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
             let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
             // (In a package, `silt run` with no file runs the package's
@@ -112,7 +109,7 @@ pub(crate) fn dispatch(args: &[String]) {
             );
             process::exit(1);
         }
-        Some(f) => f,
+        Some(PathArg::File(f)) => f,
         None => match resolve_package_entry_point() {
             Ok(Some(p)) => p.to_string_lossy().into_owned(),
             Ok(None) => {

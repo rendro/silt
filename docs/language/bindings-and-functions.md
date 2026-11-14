@@ -82,7 +82,7 @@ fn main() {
   let _ = task.spawn { -> println("in the background") }
   match io.write_file("out.txt", "data") {
     Ok(_) -> println("saved")
-    Err(e) -> println("not saved: {Error.message(e)}")
+    Err(e) -> println("not saved: {e}")
   }
 }
 ```
@@ -302,8 +302,11 @@ when let [a, b, c] = xs else {
 use(a, b, c)
 ```
 
-**Type annotations** are optional (Hindley-Milner infers everything) but
-useful for documentation:
+**Type annotations** are mostly optional (Hindley-Milner infers the
+rest) and useful for documentation. One place needs one: a function that
+reads a field of a parameter names the parameter's record type,
+`fn age(u: User) -> Int { u.age }`, since no field name tells the
+record's type.
 
 ```silt
 let x: Int = 42
@@ -436,6 +439,27 @@ let total = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 pairs |> list.each { (n, word) -> println("{n} is {word}") }
 ```
 
+In the header of a `match` or a `loop`, `silt fmt` writes a closure
+inside the call's parentheses:
+
+```silt
+match list.find(xs, { x -> x > 1 }) {
+  Some(x) -> println(x)
+  None -> println("none")
+}
+```
+
+Written behind the call there, `match list.find(xs) { x -> x > 1 } {`,
+it is read the same: braces behind a call in a `match` header are the
+call's closure when another `{` follows them on their line, and that
+`{` opens the arms. Without one they are the arms.
+
+A `match` that stands in another header, `match match f(x) { .. } { .. }`,
+`loop v = match f(x) { .. } { .. } {`, or in the value of a `when`, reads
+the braces behind a call as its arms, whatever follows them: there the
+`{` behind them belongs to the outer header (or is a closure given to the
+match's value), as it always has.
+
 **Return type annotations:**
 
 ```silt
@@ -456,6 +480,9 @@ fn get_or_die(opt) {
   }
 }
 ```
+
+The last line of a function is its value, so a `return` there says
+nothing more: `silt fmt` writes `x` for a last line `return x`.
 
 `return` leaves the function it is written in, and a closure is a
 function of its own: a `return` inside a closure ends that call of the

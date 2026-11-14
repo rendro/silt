@@ -1,0 +1,16 @@
+a\.b
+\\\.\+\*\?\(\)\|\[\]\{\}\^\$\#\&\-\~
+plain text, é ü
+
+a.b: true
+(: true
+[x]: true
+1+1=2: true
+$5: true
+\d: true
+{2}: true
+a|b: true
+^start$: true
+true
+false
+invalid regex pattern at position 0: unclosed group

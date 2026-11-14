@@ -1,0 +1,6 @@
+error[parse]: expected a type, found {
+ --> record_without_a_name__a_type_is_refused.silt:5:12
+   |
+ 5 | fn name(p: { name: String, ...rest }) -> String {
+   |            ^ expected a type, found {
+  = help: a record type is declared with a name, `type P { x: Int }`, and written by it, `P`

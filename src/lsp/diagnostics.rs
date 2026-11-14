@@ -52,17 +52,55 @@ fn analysis_failed_diagnostic() -> Diagnostic {
 }
 
 /// The note published on an open document of a project whose packages
-/// cannot be resolved: the errors are in `silt.toml`, and the document's
-/// imports cannot be resolved until they are fixed.
-fn broken_manifest_note() -> Diagnostic {
+/// cannot be resolved: the errors are in a `silt.toml`, and the
+/// document's imports cannot be resolved until they are fixed. `elsewhere`
+/// is the manifest of a dependency that has them, when the project's own
+/// has none.
+fn broken_manifest_note(elsewhere: Option<String>) -> Diagnostic {
+    let message = match elsewhere {
+        None => "this file is not checked: the project's silt.toml has errors (see silt.toml)"
+            .to_string(),
+        Some(manifest) => format!(
+            "this file is not checked: the silt.toml of a dependency has errors (see {manifest})"
+        ),
+    };
     Diagnostic {
         range: Range::new(Position::new(0, 0), Position::new(0, 0)),
         severity: Some(DiagnosticSeverity::INFORMATION),
         source: Some("silt".to_string()),
-        message: "this file is not checked: the project's silt.toml has errors (see silt.toml)"
-            .to_string(),
+        message,
         ..Diagnostic::default()
     }
+}
+
+/// The manifest of a dependency that has the package errors `found` of
+/// the project in `dir`, when the project's own `silt.toml` has none of
+/// them: inside the project as a path relative to it, written with `/`.
+fn dependency_manifest_with_errors(
+    dir: &std::path::Path,
+    sources: &SourceMap,
+    found: &[crate::diagnostic::Diagnostic],
+) -> Option<String> {
+    let own = path_key(&dir.join("silt.toml"));
+    let mut manifests = found
+        .iter()
+        .filter_map(|d| match &sources.get(d.span.file)?.path {
+            SourceName::Manifest(path) | SourceName::Path(path) => Some(path.clone()),
+            _ => None,
+        });
+    let in_own = |path: &PathBuf| path_key(path) == own;
+    if manifests.clone().any(|path| in_own(&path)) {
+        return None;
+    }
+    let path = manifests.next()?;
+    let shown = match path_key(&path).strip_prefix(path_key(dir)) {
+        Ok(inside) => (inside.components())
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/"),
+        Err(_) => path.display().to_string(),
+    };
+    Some(shown)
 }
 
 /// The text of the file at `path` and the document made of it, indexed
@@ -88,6 +126,10 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
     }
 }
 
+/// The directory under which [`uri_to_path`] puts a document that is no
+/// file.
+const UNSAVED: &str = "\0unsaved";
+
 /// The path a document's URI names. A URI that names no file by a
 /// rooted path (`untitled:wb.silt`, `file:wb.silt`) gets a path that no
 /// file has, by its scheme and its own path: such a document is never
@@ -99,7 +141,7 @@ pub(super) fn uri_to_path(uri: &Uri) -> PathBuf {
         _ => {
             let (scheme, rest) = uri.as_str().split_once(':').unwrap_or(("", uri.as_str()));
             // No file name holds a NUL: nothing on disk is at this path.
-            PathBuf::from("\0unsaved")
+            PathBuf::from(UNSAVED)
                 .join(scheme)
                 .join(rest.trim_start_matches('/'))
         }
@@ -111,10 +153,14 @@ impl Server {
     /// its analysis.
     ///
     /// Only silt files are analysed: a `silt.toml` the editor opens is
-    /// not a module. Each edit moves the analysis [`DEBOUNCE`] later.
+    /// not a module. A document that is no file (an unsaved buffer such
+    /// as `untitled:Untitled-1`) has no file name to tell by: the editor
+    /// gave it to the silt server, so it is silt, analysed as a file
+    /// outside any package. Each edit moves the analysis [`DEBOUNCE`]
+    /// later.
     pub(super) fn update_document(&mut self, uri: Uri, text: String) {
         let path = uri_to_path(&uri);
-        if path.extension().is_none_or(|ext| ext != "silt") {
+        if !path.starts_with(UNSAVED) && path.extension().is_none_or(|ext| ext != "silt") {
             return;
         }
         let source = SourceFile::new(SourceName::Overlay(path.clone()), text.into());
@@ -316,10 +362,12 @@ impl Server {
                     // The cascade an unresolved project causes is not
                     // shown; its errors are in the manifest.
                     found.retain(|d| d.phase() == Phase::Package);
+                    let elsewhere =
+                        dependency_manifest_with_errors(dir, project.session.sources(), &found);
                     diagnostics
                         .entry(uri.clone())
                         .or_default()
-                        .push(broken_manifest_note());
+                        .push(broken_manifest_note(elsewhere));
                 }
                 let sources = project.session.sources();
                 let uri_of = |f: FileId| uri_of(&uris_by_key, sources, f);

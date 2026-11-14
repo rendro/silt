@@ -137,19 +137,15 @@ pub(super) fn returns(f: &FnDecl) -> (HostShape, Vec<HostVar>) {
     let Some(ret) = &f.return_type else {
         return (HostShape::Any, Vec::new());
     };
-    let (mut names, mut rows) = (Vec::new(), Vec::new());
+    let mut names = Vec::new();
     type_vars_of(ret, &mut names);
-    row_vars_of(ret, &mut rows);
-    let order: Vec<(Symbol, bool)> = (names.iter().map(|name| (*name, false)))
-        .chain(rows.iter().map(|row| (*row, true)))
-        .collect();
-    let mut vars: Vec<HostVar> = (order.iter())
-        .map(|(name, _)| HostVar {
+    let mut vars: Vec<HostVar> = (names.iter())
+        .map(|name| HostVar {
             name: resolve(*name),
             sources: Vec::new(),
         })
         .collect();
-    let index = |name: Symbol, row: bool| order.iter().position(|var| *var == (name, row));
+    let index = |name: Symbol| names.iter().position(|var| *var == name);
     for (at, param) in f.params.iter().enumerate() {
         let name = match param.pattern.kind {
             PatternKind::Ident(name) => Some(resolve(name)),
@@ -160,11 +156,10 @@ pub(super) fn returns(f: &FnDecl) -> (HostShape, Vec<HostVar>) {
             name,
             path: Vec::new(),
             of_type: false,
-            written: Vec::new(),
         };
         if param.kind == ParamKind::Type {
             if let PatternKind::Ident(var) = param.pattern.kind
-                && let Some(var) = index(var, false)
+                && let Some(var) = index(var)
             {
                 source.of_type = true;
                 vars[var].sources.push(source);
@@ -214,7 +209,7 @@ fn is_variable(name: Symbol) -> bool {
 fn sources_in(
     ty: &TypeExpr,
     source: &mut HostSource,
-    index: &dyn Fn(Symbol, bool) -> Option<usize>,
+    index: &dyn Fn(Symbol) -> Option<usize>,
     vars: &mut [HostVar],
 ) {
     let mut step = |step: HostStep, ty: &TypeExpr, source: &mut HostSource| {
@@ -226,7 +221,7 @@ fn sources_in(
     // the type a call gives there, as of `type a`, at its place
     // (`t: TypeOf(a)`, `o: Option(TypeOf(a))`).
     if let Some(var) = type_of_variable(ty) {
-        if let Some(var) = index(var, false) {
+        if let Some(var) = index(var) {
             let mut at = source.clone();
             at.of_type = true;
             vars[var].sources.push(at);
@@ -237,7 +232,7 @@ fn sources_in(
         TypeExprKind::Named {
             module: None, name, ..
         } if is_variable(*name) => {
-            if let Some(var) = index(*name, false) {
+            if let Some(var) = index(*name) {
                 vars[var].sources.push(source.clone());
             }
         }
@@ -264,30 +259,18 @@ fn sources_in(
                 step(HostStep::Part(n), part, source);
             }
         }
-        TypeExprKind::AnonRecord { fields, tail } => {
-            for (name, field) in fields {
-                step(HostStep::Field(resolve(*name)), field, source);
-            }
-            if let Some((row, _)) = tail
-                && let Some(var) = index(*row, true)
-            {
-                let mut at = source.clone();
-                at.written = fields.iter().map(|(name, _)| resolve(*name)).collect();
-                vars[var].sources.push(at);
-            }
-        }
         _ => {}
     }
 }
 
 /// The shape of the values of the type `ty`, which a host function's
 /// result is checked against, its variables numbered by `index`.
-fn shape(ty: &TypeExpr, index: &dyn Fn(Symbol, bool) -> Option<usize>) -> HostShape {
+fn shape(ty: &TypeExpr, index: &dyn Fn(Symbol) -> Option<usize>) -> HostShape {
     let boxed = |ty: &TypeExpr| Box::new(shape(ty, index));
     match &ty.kind {
         TypeExprKind::Named {
             module: None, name, ..
-        } if is_variable(*name) => match index(*name, false) {
+        } if is_variable(*name) => match index(*name) {
             Some(var) => HostShape::Var(var, resolve(*name)),
             None => HostShape::Any,
         },
@@ -320,23 +303,6 @@ fn shape(ty: &TypeExpr, index: &dyn Fn(Symbol, bool) -> Option<usize>) -> HostSh
         TypeExprKind::Tuple(items) => {
             HostShape::Tuple(items.iter().map(|item| shape(item, index)).collect())
         }
-        TypeExprKind::AnonRecord { fields, tail } => {
-            let row = match tail {
-                Some((row, _)) => match index(*row, true) {
-                    Some(var) => Some((var, resolve(*row))),
-                    // (No parameter shows the row: the checker refuses
-                    // that signature.)
-                    None => return HostShape::Any,
-                },
-                None => None,
-            };
-            HostShape::Record {
-                fields: (fields.iter())
-                    .map(|(name, ty)| (resolve(*name), shape(ty, index)))
-                    .collect(),
-                row,
-            }
-        }
         _ => HostShape::Any,
     }
 }
@@ -349,9 +315,6 @@ pub(super) fn mentions_function(ty: &TypeExpr) -> bool {
         TypeExprKind::Function(..) => true,
         TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
             args.iter().any(mentions_function)
-        }
-        TypeExprKind::AnonRecord { fields, .. } => {
-            fields.iter().any(|(_, ty)| mentions_function(ty))
         }
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => false,
     }
@@ -369,21 +332,16 @@ pub(super) fn type_of_not_a_variable(ty: &TypeExpr) -> Option<&TypeExpr> {
         TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
             args.iter().find_map(type_of_not_a_variable)
         }
-        TypeExprKind::AnonRecord { fields, .. } => {
-            fields.iter().find_map(|(_, ty)| type_of_not_a_variable(ty))
-        }
         TypeExprKind::Function(..) | TypeExprKind::Named { .. } | TypeExprKind::SelfType => None,
     }
 }
 
 /// The variables of the return type of the host function `f` that no
-/// parameter introduces (by its type, or as a `type a` parameter), each
-/// with whether it is a row variable (`{name: String, ...r}`). Nothing
-/// could check that the function's result is of the type each call
-/// asks for of one, as a silt function's body is checked.
-pub(super) fn return_only_variables(f: &FnDecl) -> Vec<(Symbol, bool)> {
+/// parameter introduces (by its type, or as a `type a` parameter).
+/// Nothing could check that the function's result is of the type each
+/// call asks for of one, as a silt function's body is checked.
+pub(super) fn return_only_variables(f: &FnDecl) -> Vec<Symbol> {
     let mut given = Vec::new();
-    let mut given_rows = Vec::new();
     for param in &f.params {
         if param.kind == ParamKind::Type
             && let PatternKind::Ident(name) = param.pattern.kind
@@ -392,45 +350,17 @@ pub(super) fn return_only_variables(f: &FnDecl) -> Vec<(Symbol, bool)> {
         }
         if let Some(ty) = &param.ty {
             type_vars_of(ty, &mut given);
-            row_vars_of(ty, &mut given_rows);
         }
     }
-    let (mut written, mut rows) = (Vec::new(), Vec::new());
+    let mut written = Vec::new();
     if let Some(ty) = &f.return_type {
         type_vars_of(ty, &mut written);
-        row_vars_of(ty, &mut rows);
     }
     // (A name that starts with `_` is no variable: the checker says it
     // is an unknown type, wherever it is written.)
-    let vars =
-        (written.into_iter()).filter(|v| !given.contains(v) && !resolve(*v).starts_with('_'));
-    let rows = rows.into_iter().filter(|r| !given_rows.contains(r));
-    vars.map(|v| (v, false))
-        .chain(rows.map(|r| (r, true)))
+    (written.into_iter())
+        .filter(|v| !given.contains(v) && !resolve(*v).starts_with('_'))
         .collect()
-}
-
-/// The row variables of the open records `ty` writes (`...r`), into
-/// `out`.
-fn row_vars_of(ty: &TypeExpr, out: &mut Vec<Symbol>) {
-    match &ty.kind {
-        TypeExprKind::AnonRecord { fields, tail } => {
-            if let Some((name, _)) = tail
-                && !out.contains(name)
-            {
-                out.push(*name);
-            }
-            fields.iter().for_each(|(_, ty)| row_vars_of(ty, out));
-        }
-        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
-            args.iter().for_each(|ty| row_vars_of(ty, out));
-        }
-        TypeExprKind::Function(params, ret) => {
-            params.iter().for_each(|ty| row_vars_of(ty, out));
-            row_vars_of(ret, out);
-        }
-        TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
-    }
 }
 
 impl fmt::Debug for HostModule {

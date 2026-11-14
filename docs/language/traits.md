@@ -136,12 +136,11 @@ traits without colliding with the built-in `Equal` / `Compare`, which
 cannot be redefined.)
 
 Implementing `Cmp2` on a type requires that type to also implement `Eq2`
-(four of silt's six built-in traits — `Equal`, `Hash`, `Compare`,
+(four of silt's built-in traits — `Equal`, `Hash`, `Compare`,
 `Display` — are structural: the language answers them for every type
 made of types that have them, so for most types the obligation holds
-without an impl; a type that holds a function has none of the four. Of
-the other two, `Error` is implemented by hand, and `Number` is `Int` and
-`Float` only).
+without an impl; a type that holds a function has none of the four.
+`Number` is `Int` and `Float` only).
 
 Multiple supertraits separate with `+`:
 
@@ -262,6 +261,9 @@ A trait can mix default and abstract methods freely:
 - Methods with a `{ ... }` body are **defaults**. Impls may omit them; if
   they do, the default body is used.
 - Methods without a body are **abstract**. Impls must provide them.
+
+Only the methods of a trait declaration may leave out the body. A
+method of an impl, like any other function, has one.
 
 Overriding a default is just writing the method in the impl as usual:
 
@@ -458,9 +460,9 @@ trait Greet for Box(a) where a: Greet + Loud {
 }
 ```
 
-An impl of `Display`, `json.Encode`, `json.Decode` or `Error` asks only
-the traits found by the value (`Display`, `Equal`, `Compare`, `Hash`,
-`json.Encode`, `json.Decode`, `Error`) and `Number` of its type's
+An impl of `Display`, `json.Encode` or `json.Decode` asks only the
+traits found by the value (`Display`, `Equal`, `Compare`, `Hash`,
+`json.Encode`, `json.Decode`) and `Number` of its type's
 variables. The runtime runs such an impl itself (`println` shows the
 value, `json.stringify` encodes it), with no caller to give what a bound
 of a program's own trait needs. With `Number` it may do arithmetic on a
@@ -783,16 +785,17 @@ A dot after a value names a field, whatever methods traits declare, with
 one exception (the third point):
 
 - `p.name` is the record's field; `r.f(..)` calls the function the field
-  `f` holds.
-- In a function whose parameter has no annotation, `fn name_of(p) {
-  p.name }` takes any record with a field `name`.
-- In such a function a call `t.zero()`, where exactly one trait in sight
-  has a method `zero` that makes a value, takes `t` as a type that has
-  that trait, as `json.parse(s, t)` takes one that has `json.Decode`:
-  `fn zeros(t) { t.zero() }` is `fn zeros(type a) -> a where a: Zero`.
-  Annotate the parameter (`fn get(r: Rec)`) to call a record's field of
-  that name. If the function also reads a field of `t`, `t` is a record,
-  and `t.zero()` calls its field.
+  `f` holds. The record's type is the one the function decides: a
+  parameter that is read so is annotated, `fn name_of(p: Person) {
+  p.name }`; without it the read is an error that asks for the
+  annotation.
+- In a function whose parameter has no annotation, a call `t.zero()`,
+  where exactly one trait in sight has a method `zero` that makes a
+  value, takes `t` as a type that has that trait, as `json.parse(s, t)`
+  takes one that has `json.Decode`: `fn zeros(t) { t.zero() }` is
+  `fn zeros(type a) -> a where a: Zero`. Annotate the parameter
+  (`fn get(r: Rec)`) to call a record's field of that name; once the
+  function decides that `t` is a record, `t.zero()` calls its field.
 - A trait's method is called through the trait: `fn g(x) {
   Greet.greet(x) }` is `fn g(x: a) -> String where a: Greet`, the bound
   coming from the trait the call names.
@@ -852,10 +855,10 @@ where it runs:
   that use, so `shout(K)` and `shout(J)` are each their type's.
 
 The built-in traits `Equal`, `Compare`, `Hash`, `Display`,
-`json.Encode`, `json.Decode` and `Error` are found by the value where the
-code runs: `println` shows a `Pt` inside a list with `Pt`'s `Display`,
-at any depth. An impl of `Display`, `json.Encode`, `json.Decode` or
-`Error` asks only those and `Number` of its type's variables (see
+`json.Encode` and `json.Decode` are found by the value where the code
+runs: `println` shows a `Pt` inside a list with `Pt`'s `Display`, at any
+depth. An impl of `Display`, `json.Encode` or `json.Decode` asks only
+those and `Number` of its type's variables (see
 [Impl-level where clauses](#impl-level-where-clauses)).
 
 `Number` is found both ways. Its operators by the value: `x + y` adds
@@ -872,11 +875,11 @@ module functions (`list.map`, `option.flat_map`, ...).
 
 ## Built-in Traits
 
-silt ships **nine** built-in traits. Four of them — `Equal`, `Hash`,
+silt ships **eight** built-in traits. Four of them — `Equal`, `Hash`,
 `Compare`, `Display` — are **structural**: the language answers them
 itself, for every type made of types that have them (what that means
 for each kind of type is listed below). Of the four only `Display` may
-be written by hand. `Error` is implemented by hand. `Number` is the
+be written by hand. `Number` is the
 types arithmetic is on, `Int` and `Float`, and nothing else. `Functor`,
 `Applicative` and `Monad` are traits of type constructors (see
 [Functors](functors.md)).
@@ -887,7 +890,6 @@ types arithmetic is on, `Int` and `Float`, and nothing else. `Functor`,
 | `Equal`   | Equality comparison              | by structure | no (an error) |
 | `Hash`    | Hash value for maps/sets         | by structure | no (an error) |
 | `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
-| `Error`   | Error reporting (`Error.message(e)`) | types with an impl | yes |
 | `Number`  | `+ - * / %`, unary `-`, and `from_int` | Int and Float only | no |
 | `Functor` | `map` over a type constructor | `List`, `Option`, `Result`, `Channel`; types with an impl | yes, for a type of your own |
 | `Applicative` | `pure` and `map2`; includes `Functor` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
@@ -943,8 +945,7 @@ known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
 The structural `Display` formats in constructor syntax: `Circle(5.0)`
 for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
-order the type declares them (`{x: 1, y: 2}` for an anonymous record,
-its fields in the order of their names). A string inside a structure
+order the type declares them. A string inside a structure
 is written as a program writes it, in quotes and escaped:
 `["a", "b, c"]`, `Some("x")`, `(1, "a\nb")`, `#{"k": "v"}`, so the
 parts can be told apart. A string shown by itself (`println(s)`,
@@ -1022,8 +1023,7 @@ and for `Display` where no impl is written:
   when their parts do, and no `Compare`.
 - A record or an enum has a trait when every field and payload does, at
   the type's arguments: `Option(Int)` has `Compare`, `Option(Fn(Int) ->
-  Int)` has none of them. A closed anonymous record (`{a: Int}`) has
-  `Equal`, `Hash` and `Display` when its fields do.
+  Int)` has none of them.
 - A type variable has what its bound says (`where a: Compare`).
   `Compare` includes `Equal`: what is ordered can be compared with `==`.
 
@@ -1055,10 +1055,9 @@ println(Job { name: "j", run: { n -> n } })
 -- of type 'Fn(Int) -> Int', which does not implement trait 'Display'
 ```
 
-The `Error` trait has supertrait `Display` and one method,
-`message(self) -> String`. Each stdlib error enum (`IoError`,
-`JsonError`, `HttpError`, …) implements it explicitly, and user code
-can implement it on its own error types.
+An error is shown as any value is. Each stdlib error enum (`IoError`,
+`JsonError`, `HttpError`, …) is shown as its message; an error type of
+your own by its structure, or by the `Display` impl you write for it.
 
 ### Equality and order idioms
 
@@ -1143,8 +1142,8 @@ module that declares its type. Anywhere else it is an error.
 
 A built-in trait and a built-in type are declared in no module, so:
 
-- an impl of `Display` or `Error` for a type goes in the module that
-  declares the type;
+- an impl of `Display` for a type goes in the module that declares the
+  type;
 - an impl for `Int`, `String`, `List(a)`, `Option(a)` or another
   built-in type goes in the module that declares the trait;
 - no module may write an impl of a built-in trait for a built-in type.
@@ -1162,8 +1161,8 @@ value is shown, and a method answers, the same way in every module.
 A module calls a trait's methods through the trait's name, which it
 names as any item: a trait it declares, one it imports by name
 (`import shapes.{ Area }`), one of a module it imports
-(`shapes.Area.area(s)`), or a built-in trait (`Compare`, `Hash`,
-`Error`; `json.Encode` after `import json`).
+(`shapes.Area.area(s)`), or a built-in trait (`Compare`, `Hash`;
+`json.Encode` after `import json`).
 
 ### In the trait's module
 

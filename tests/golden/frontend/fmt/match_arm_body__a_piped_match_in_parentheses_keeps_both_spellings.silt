@@ -15,20 +15,20 @@ fn empty(xs) {
 
 fn braced(r, xs) {
   match r {
-    { a: 1 } -> { match (xs |> first) { x -> 1 } }
-    { a: 2 } -> { match !(xs |> empty) { x -> 2 } }
-    { a } -> a
+    1 -> { match (xs |> first) { x -> 1 } }
+    2 -> { match !(xs |> empty) { x -> 2 } }
+    a -> a
   }
 }
 
 fn bare(r, xs) {
   match r {
-    { a: 1 } -> match (xs |> first) { x -> 1 }
-    { a: 2 } -> match !(xs |> empty) { x -> 2 }
-    { a } -> a
+    1 -> match (xs |> first) { x -> 1 }
+    2 -> match !(xs |> empty) { x -> 2 }
+    a -> a
   }
 }
 
 fn main() {
-  println((braced({ a: 1 }, [1]), bare({ a: 1 }, [1])))
+  println((braced(1, [1]), bare(1, [1])))
 }

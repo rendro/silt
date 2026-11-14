@@ -534,7 +534,6 @@ fn trait_text(decl: &crate::ast::TraitDecl) -> String {
             TypeExprKind::Tuple(elems) => format!("({})", all(elems)),
             TypeExprKind::Function(params, ret) => format!("Fn({}) -> {}", all(params), ty(ret)),
             TypeExprKind::SelfType => "Self".to_string(),
-            _ => "_".to_string(),
         }
     }
     let mut header = format!("trait {}", decl.name);
@@ -998,12 +997,12 @@ mod tests {
         ))
         .expect("a page");
         assert!(
-            page.contains("| `toml.parse` | a record type, an enum type, or a type with a `json.Decode` impl |"),
+            page.contains("| `toml.parse` | a record type, `json.Value`, an enum type, or a type with a `json.Decode` impl |"),
             "{page}"
         );
         assert!(
             page.contains(
-                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |"
+                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |"
             ),
             "{page}"
         );

@@ -1,0 +1,6 @@
+error[parse]: expected the end of the type, found ::
+ --> double_colon__the_caret_covers_both_colons.silt:8:12
+   |
+ 8 | fn g(x: Has::Item) -> Int {
+   |            ^^ expected the end of the type, found ::
+  = help: silt has no `::`: a type of a module is written `m.Type`, and a type a trait leaves to each impl is a parameter of the trait, `trait Stream(item)`

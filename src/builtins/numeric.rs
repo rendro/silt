@@ -83,13 +83,13 @@ fn parse_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
-/// What `IntError`'s `message` says of the variant `tag` with `fields`:
+/// How `IntError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn int_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     parse_error_text(tag, fields)
 }
 
-/// What `FloatError`'s `message` says of the variant `tag` with
+/// How `FloatError` shows the variant `tag` with
 /// `fields`: `None` if they are no variant of it. It has the variants
 /// of `IntError` and `NotFinite`; a literal out of range is said by the
 /// `Float` bound it passes.

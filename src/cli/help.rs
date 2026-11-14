@@ -1,6 +1,6 @@
 //! Top-level help text, usage banners, and the shared signature/description
 //! alignment plumbing. Pulled out of `main.rs` so the banner helpers can
-//! share one source-of-truth and the `tests/cli/cli_round26_tests.rs` lockers
+//! share one source-of-truth and the `tests/cli/cli_help_rows_and_banners_tests.rs` lockers
 //! keep passing across refactors.
 
 use crate::cli::features::enabled_features;
@@ -21,7 +21,7 @@ pub(crate) fn usage_text() -> String {
     // Alignment is structural: each row is `  <signature (padded to SIG_WIDTH)>  <desc>`.
     // Widen SIG_WIDTH if a new signature exceeds it — the help-row
     // alignment tests in tests/cli/cli_test_rendering_tests.rs and
-    // tests/cli/cli_round26_tests.rs will fail otherwise.
+    // tests/cli/cli_help_rows_and_banners_tests.rs will fail otherwise.
     //
     // SIG_WIDTH is wide enough for the longest signature, `silt check`'s
     // (69 chars), so that every description column aligns.
@@ -179,7 +179,7 @@ pub(crate) fn run_usage_banner() -> &'static str {
 /// `silt test` accepts a directory too — the positional argument is
 /// semantically a path, not a single file.
 ///
-/// `tests/cli/cli_round36_tests.rs` locks the two banners so
+/// `tests/cli/cli_test_banner_and_unknown_flag_tests.rs` locks the two banners so
 /// they can't drift apart again.
 pub(crate) fn test_usage_banner() -> &'static str {
     "silt test [--filter <pattern>] [--watch] [path]"
@@ -191,7 +191,7 @@ pub(crate) fn test_usage_banner() -> &'static str {
 /// gate when outside a package, and the bare-invocation fallback
 /// outside a package. The bracketed form reflects that `<file.silt>`
 /// is optional when invoked inside a silt package (the entry point is
-/// resolved from the manifest). `tests/cli/cli_round26_tests.rs`
+/// resolved from the manifest). `tests/cli/cli_help_rows_and_banners_tests.rs`
 /// locks this helper so the three banners can't drift apart.
 pub(crate) fn disasm_usage_banner() -> &'static str {
     "silt disasm [<file.silt>]"

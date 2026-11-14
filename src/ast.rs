@@ -46,7 +46,7 @@ pub enum Selection {
         ty: crate::defs::TypeId,
     },
     /// The method `name` of the builtin trait `tr` (Compare, Hash,
-    /// Error, json's) for a receiver whose type has no written impl of
+    /// json's) for a receiver whose type has no written impl of
     /// it: the VM's own.
     Native { tr: crate::defs::TraitId },
     /// The method `name` of the trait `tr`, for a receiver whose type is
@@ -127,14 +127,6 @@ pub enum ExprKind {
         fields: Vec<(Symbol, Expr)>,
         /// As on `RecordCreate`.
         punned: Vec<Symbol>,
-    },
-    /// Anonymous (row-polymorphic) record literal: `{name: "A", age: 30}`
-    /// or with a spread head `{...other, age: 30}`. The optional
-    /// `spread` is the base record whose fields are copied; `fields`
-    /// are added/overridden on top.
-    AnonRecord {
-        spread: Option<Box<Expr>>,
-        fields: Vec<(Symbol, Expr)>,
     },
 
     // Control flow
@@ -355,24 +347,13 @@ pub enum PatternKind {
         /// [`PatternKind::Constructor::qualifier`] — checked by the
         /// typechecker, invisible to exhaustiveness and codegen.
         module: Option<Qualifier>,
-        name: Option<Symbol>,
+        name: Symbol,
         /// Span of the type name itself.
         name_span: Span,
         /// Each field's name, the span of the name, and its sub-pattern;
         /// `None` for the shorthand `{ x }`, which binds `x`.
         fields: Vec<(Symbol, Span, Option<Pattern>)>,
         has_rest: bool,
-    },
-    /// Anonymous record pattern with optional named rest binding:
-    /// `{name: n, ...rest}` binds `rest` to a record carrying the
-    /// unmatched fields. `rest = None` means closed (no extra fields
-    /// allowed). v1 forbids unnamed rest (`{x, ...}`); use `{x, ...rest}`
-    /// or omit the pattern entirely.
-    AnonRecord {
-        /// As in [`PatternKind::Record::fields`].
-        fields: Vec<(Symbol, Span, Option<Pattern>)>,
-        /// The rest binder and the span of its name.
-        rest: Option<(Symbol, Span)>,
     },
     /// Match a list: `[a, b, c]`, `[]`, or with a rest after the
     /// elements, `[head, ..tail]` or `[head, ..]`. The rest is the list
@@ -473,15 +454,6 @@ pub enum TypeExprKind {
     Tuple(Vec<TypeExpr>),
     Function(Vec<TypeExpr>, Box<TypeExpr>),
     SelfType,
-    /// Anonymous structural record type, optionally row-polymorphic:
-    /// `{name: String, age: Int}` (closed) or `{name: String, ...r}`
-    /// (open, where `r` is a row variable name; its span is that of
-    /// `...r`). Multiple annotations in the same scope sharing a row name `r` refer to the same
-    /// row variable, so `fn id(p: {name: String, ...r}) -> {name: String, ...r}` threads it.
-    AnonRecord {
-        fields: Vec<(Symbol, TypeExpr)>,
-        tail: Option<(Symbol, Span)>,
-    },
 }
 
 // ── Statements ───────────────────────────────────────────────────────
@@ -924,12 +896,6 @@ pub struct Program {
 /// What the parser saw of statements that the tree does not hold.
 #[derive(Debug, Clone, Default)]
 pub struct StatementMarks {
-    /// The statements that start at a `{` right behind a name on the
-    /// same line, by where they start: `point { x: 1 }`, where the
-    /// parser reads two statements and a record literal with a
-    /// lower-case type name was likely meant (see
-    /// `Parser::at_lowercase_record_literal_brace`).
-    pub brace_after_name: Vec<Span>,
     /// The statements that start with a parenthesis: the span of the
     /// statement's expression, which starts behind its own parentheses
     /// (`(a + 1) * 2`, `(f)()`, `((a))`), and the statement's extent,

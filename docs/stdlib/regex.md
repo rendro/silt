@@ -8,10 +8,12 @@ order: 9
 
 Regular expression functions. Pattern strings use standard regex syntax.
 
-Every function takes the text first and the pattern second, so a text pipes
-into them (`line |> regex.split("\\s+")`), and returns a `Result`: a pattern
-is text like any other, and one that is no pattern is `Err(RegexError)`, not
-a failure of the program.
+A pattern is checked once, by `regex.compile`, which gives a `Regex` or
+`Err(RegexError)`. Every other function takes the text first and the `Regex`
+second, so a text pipes into them (`line |> regex.split(spaces)`), and gives
+its value bare: a `Bool`, an `Option`, a `List`, a `String`. A pattern can
+only be wrong where it is compiled, so a closure that calls `regex.is_match`
+has no error to deal with.
 
 Write a pattern as a raw string, `"""\d{2,5}"""`, when it holds a `{` or a
 `\`: in a `"..."` string a `{` starts an interpolation and a `\` an escape,
@@ -19,10 +21,15 @@ so the same pattern there is `"\\d\{2,5}"`. A raw string has neither, and
 holds the pattern as the regex reads it.
 
 ```silt
+import list
 import regex
 
-fn main() {
-  println(regex.is_match("port 8080", """\d{2,5}""")) -- Ok(true)
+fn main() -> Result((), regex.RegexError) {
+  let port = regex.compile("""\d{2,5}""")?
+  println(regex.is_match("port 8080", port)) -- true
+  let lines = ["port 80", "no port", "port 8080"]
+  println(list.filter(lines) { l -> regex.is_match(l, port) }) -- ["port 80", "port 8080"]
+  Ok(())
 }
 ```
 
@@ -30,10 +37,10 @@ fn main() {
 import regex
 
 fn main() {
-  match regex.find("abc 123", "(") {
-    Ok(found) -> println(found)
+  match regex.compile("(") {
+    Ok(_) -> println("compiles")
     Err(regex.InvalidPattern(why, at)) -> println("{why} at {at}") -- unclosed group at 0
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println(e)
   }
 }
 ```
@@ -50,60 +57,69 @@ characters of any kind) and `\w{100}` are `TooBig`; `^\w{3,32}$` (about
 1.8 MB) is not, and the ASCII forms `[a-z0-9_]{100}` and `(?-u)\w{100}` are
 small. A length check is better written with `string.length`.
 
-A compiled pattern is kept for the next call with the same pattern, by every
-task of the program: up to 256 patterns and 128 MiB of them. When a new one
-does not fit, the patterns used least recently are dropped, and compiled again
-if they are used again. A pattern that does not compile is remembered too, so
-the error comes back without compiling it again. What a search keeps for its next one, on each
-thread that searched with a pattern, is not counted in the 128 MiB: it grows
-with the searching, up to a few MiB a pattern and thread.
+Two `Regex` values of the same pattern are equal (`==`). A `Regex` has no
+`Display`: `io.inspect` shows it as `<regex:PATTERN>`.
 
-A pattern the program writes itself can be `TooBig` as well, and
-`result.unwrap_or` hides that:
-`regex.is_match(name, "^.{8,4096}$") |> result.unwrap_or(false)` is `false` for
-every name. Match the `Err`, or try each pattern once in a test.
+A compiled pattern is kept for the next `regex.compile` of the same pattern,
+by every task of the program: up to 256 patterns and 128 MiB of them. When a
+new one does not fit, the patterns used least recently are dropped from that
+store, and compiled again if they are compiled again; a `Regex` the program
+holds stays as it is. A pattern that does not compile is remembered too, so
+the error comes back without compiling it again. What a search keeps for its
+next one, on each thread that searched with a pattern, is not counted in the
+128 MiB: it grows with the searching, up to a few MiB a pattern and thread.
+
+The 256 patterns and 128 MiB bound that store only. A `Regex` the program
+keeps, in a list, a map or a record, is not counted: each one holds its
+compiled pattern, at most 4 MiB, for as long as the program holds it, and
+nothing limits how many the program keeps, as nothing limits how many strings
+it keeps. A program that compiles patterns given by its users should cap how
+many of them it keeps.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `captures` | `(String, String) -> Result(Option(List(String)), RegexError)` | Capture groups from first match |
-| `captures_all` | `(String, String) -> Result(List(List(String)), RegexError)` | Capture groups from all matches |
-| `captures_named` | `(String, String) -> Result(Option(Map(String, String)), RegexError)` | Named capture groups from first match |
-| `find` | `(String, String) -> Result(Option(String), RegexError)` | First match |
-| `find_all` | `(String, String) -> Result(List(String), RegexError)` | All matches |
-| `is_match` | `(String, String) -> Result(Bool, RegexError)` | Test if pattern matches |
-| `replace` | `(String, String, String) -> Result(String, RegexError)` | Replace all matches |
-| `replace_first` | `(String, String, String) -> Result(String, RegexError)` | Replace first match |
-| `replace_with` | `(String, String, Fn(String) -> String) -> Result(String, RegexError)` | Replace all with callback |
-| `split` | `(String, String) -> Result(List(String), RegexError)` | Split on pattern |
+| `captures` | `(String, Regex) -> Option(List(String))` | Capture groups from first match |
+| `captures_all` | `(String, Regex) -> List(List(String))` | Capture groups from all matches |
+| `captures_named` | `(String, Regex) -> Option(Map(String, String))` | Named capture groups from first match |
+| `compile` | `(String) -> Result(Regex, RegexError)` | Check a pattern and compile it, once |
+| `escape` | `(String) -> String` | The text as a pattern that matches it and nothing else |
+| `find` | `(String, Regex) -> Option(String)` | First match |
+| `find_all` | `(String, Regex) -> List(String)` | All matches |
+| `is_match` | `(String, Regex) -> Bool` | Test if pattern matches |
+| `replace` | `(String, Regex, String) -> String` | Replace all matches |
+| `replace_first` | `(String, Regex, String) -> String` | Replace first match |
+| `replace_with` | `(String, Regex, Fn(String) -> String) -> String` | Replace all with callback |
+| `split` | `(String, Regex) -> List(String)` | Split on pattern |
 
 
 ## `regex.captures`
 
 ```
-regex.captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)
+regex.captures(text: String, re: Regex) -> Option(List(String))
 ```
 
 Returns capture groups from the first match, or `None` if no match. The full
 match is at index 0, followed by numbered groups. A group that took no part
 in the match (`(a)?` where there is no `a`) is the empty string, as one that
-matched nothing is: `regex.captures("b", "(a)?(b)")` is `Ok(Some(["b", "",
-"b"]))`. `regex.captures_named` leaves such a group out.
+matched nothing is: `regex.captures("b", re)` of the pattern `(a)?(b)` is
+`Some(["b", "", "b"])`. `regex.captures_named` leaves such a group out.
 
 ```silt
 import list
 import regex
 
-fn main() {
-  match regex.captures("user@host", "(\\w+)@(\\w+)") {
-    Ok(Some(groups)) -> {
+fn main() -> Result((), regex.RegexError) {
+  let address = regex.compile("(\\w+)@(\\w+)")?
+  match regex.captures("user@host", address) {
+    Some(groups) -> {
       println(list.get(groups, 1)) -- Some("user")
       println(list.get(groups, 2)) -- Some("host")
     }
-    Ok(None) -> println("no match")
-    Err(e) -> println(Error.message(e))
+    None -> println("no match")
   }
+  Ok(())
 }
 ```
 
@@ -111,7 +127,7 @@ fn main() {
 ## `regex.captures_all`
 
 ```
-regex.captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)
+regex.captures_all(text: String, re: Regex) -> List(List(String))
 ```
 
 Returns capture groups for every match. Each inner list has the full match at
@@ -120,9 +136,11 @@ index 0 followed by numbered groups.
 ```silt
 import regex
 
-fn main() {
-  println(regex.captures_all("1-2 and 3-4", "(\\d+)-(\\d+)"))
-  -- Ok([[1-2, 1, 2], [3-4, 3, 4]])
+fn main() -> Result((), regex.RegexError) {
+  let pair = regex.compile("(\\d+)-(\\d+)")?
+  println(regex.captures_all("1-2 and 3-4", pair))
+  -- [["1-2", "1", "2"], ["3-4", "3", "4"]]
+  Ok(())
 }
 ```
 
@@ -130,7 +148,7 @@ fn main() {
 ## `regex.captures_named`
 
 ```
-regex.captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)
+regex.captures_named(text: String, re: Regex) -> Option(Map(String, String))
 ```
 
 Returns a map of named capture groups from the first match. Named groups use
@@ -147,23 +165,72 @@ the `(?P<name>...)` syntax.
 import map
 import regex
 
-fn main() {
-  match regex.captures_named("alice@example", "(?P<user>\\w+)@(?P<host>\\w+)") {
-    Ok(Some(groups)) -> {
+fn main() -> Result((), regex.RegexError) {
+  let address = regex.compile("(?P<user>\\w+)@(?P<host>\\w+)")?
+  match regex.captures_named("alice@example", address) {
+    Some(groups) -> {
       println(map.get(groups, "user")) -- Some("alice")
       println(map.get(groups, "host")) -- Some("example")
     }
-    Ok(None) -> println("no match")
-    Err(e) -> println(Error.message(e))
+    None -> println("no match")
   }
+  Ok(())
 }
 ```
 
 
-## `regex.find`
+## `regex.compile`
 
 ```
-regex.find(text: String, pattern: String) -> Result(Option(String), RegexError)
+regex.compile(pattern: String) -> Result(Regex, RegexError)
+```
+
+Checks the pattern and compiles it: `Ok` of the `Regex` that every other
+function takes, or `Err(InvalidPattern(why, at))` for a pattern that does
+not parse and `Err(TooBig)` for one too large to run. Compile a pattern once
+and pass the `Regex` on; `?` gives the error to the caller.
+
+```silt
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  println(regex.find_all("a1 b22", digits)) -- ["1", "22"]
+  match regex.compile("a(b") {
+    Ok(_) -> println("compiles")
+    Err(e) -> println(e) -- invalid regex pattern at position 1: unclosed group
+  }
+  Ok(())
+}
+```
+
+
+## `regex.escape`
+
+```
+regex.escape(text: String) -> String
+```
+
+The text with a `\` in front of every character that means something in a
+pattern (`.`, `*`, `(`, `[`, `{`, `$` and the others), so the result, as a
+pattern, matches the text and nothing else. Escape text a user gave before
+it goes into a pattern: a `.` in it would match any character, and a `(`
+would make the pattern fail to compile.
+
+```silt
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  println(regex.escape("1.5 (approx)")) -- 1\.5 \(approx\)
+  let price = regex.compile("^{regex.escape("$1.50")}$")?
+  println(regex.is_match("$1.50", price)) -- true
+  println(regex.is_match("$1x50", price)) -- false
+  Ok(())
+}
+```
+
+```
+regex.find(text: String, re: Regex) -> Option(String)
 ```
 
 Returns `Some(matched_text)` for the first match, or `None`.
@@ -171,9 +238,11 @@ Returns `Some(matched_text)` for the first match, or `None`.
 ```silt
 import regex
 
-fn main() {
-  println(regex.find("abc 123 def", "\\d+")) -- Ok(Some("123"))
-  println(regex.find("abc", "\\d+")) -- Ok(None)
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  println(regex.find("abc 123 def", digits)) -- Some("123")
+  println(regex.find("abc", digits)) -- None
+  Ok(())
 }
 ```
 
@@ -181,7 +250,7 @@ fn main() {
 ## `regex.find_all`
 
 ```
-regex.find_all(text: String, pattern: String) -> Result(List(String), RegexError)
+regex.find_all(text: String, re: Regex) -> List(String)
 ```
 
 Returns all non-overlapping matches as a list of strings.
@@ -189,8 +258,10 @@ Returns all non-overlapping matches as a list of strings.
 ```silt
 import regex
 
-fn main() {
-  println(regex.find_all("a1 b22 c333", "\\d+")) -- Ok(["1", "22", "333"])
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  println(regex.find_all("a1 b22 c333", digits)) -- ["1", "22", "333"]
+  Ok(())
 }
 ```
 
@@ -198,7 +269,7 @@ fn main() {
 ## `regex.is_match`
 
 ```
-regex.is_match(text: String, pattern: String) -> Result(Bool, RegexError)
+regex.is_match(text: String, re: Regex) -> Bool
 ```
 
 Returns `true` if the pattern matches anywhere in the text.
@@ -206,9 +277,11 @@ Returns `true` if the pattern matches anywhere in the text.
 ```silt
 import regex
 
-fn main() {
-  println(regex.is_match("123", "^\\d+$")) -- Ok(true)
-  println(regex.is_match("abc", "^\\d+$")) -- Ok(false)
+fn main() -> Result((), regex.RegexError) {
+  let number = regex.compile("^\\d+$")?
+  println(regex.is_match("123", number)) -- true
+  println(regex.is_match("abc", number)) -- false
+  Ok(())
 }
 ```
 
@@ -216,7 +289,7 @@ fn main() {
 ## `regex.replace`
 
 ```
-regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
+regex.replace(text: String, re: Regex, replacement: String) -> String
 ```
 
 Replaces every match with the replacement string, as `string.replace`
@@ -226,13 +299,16 @@ and `$$` for a `$`. A name runs as far as letters, digits and `_` go, so
 `$1x` is the group named `1x`, which is no group and stands for nothing:
 write `${1}x`, which a string literal writes `"$\{1}x"` (a `{` in it starts
 an interpolation). A group that took no part in the match stands for
-nothing: `regex.replace("ab", "(a)(b)", "$2$1")` is `Ok(ba)`.
+nothing. With `re` the pattern `(a)(b)`, `regex.replace("ab", re, "$2$1")` is
+`"ba"`.
 
 ```silt
 import regex
 
-fn main() {
-  println(regex.replace("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def NUM")
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  println(regex.replace("abc 123 def 456", digits, "NUM")) -- abc NUM def NUM
+  Ok(())
 }
 ```
 
@@ -240,7 +316,7 @@ fn main() {
 ## `regex.replace_first`
 
 ```
-regex.replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
+regex.replace_first(text: String, re: Regex, replacement: String) -> String
 ```
 
 Replaces the first match only, with the replacement string, which reads
@@ -249,8 +325,10 @@ Replaces the first match only, with the replacement string, which reads
 ```silt
 import regex
 
-fn main() {
-  println(regex.replace_first("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def 456")
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  println(regex.replace_first("abc 123 def 456", digits, "NUM")) -- abc NUM def 456
+  Ok(())
 }
 ```
 
@@ -258,7 +336,7 @@ fn main() {
 ## `regex.replace_with`
 
 ```
-regex.replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
+regex.replace_with(text: String, re: Regex, f: Fn(String) -> String) -> String
 ```
 
 Replaces all matches by calling `f` with each matched text. The callback must
@@ -270,12 +348,14 @@ import regex
 import result
 import string
 
-fn main() {
-  let doubled = regex.replace_with("a1 b22 c333", "\\d+") { m ->
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  let doubled = regex.replace_with("a1 b22 c333", digits) { m ->
     let n = int.parse(m) |> result.unwrap_or(0)
     string.from(n * 2)
   }
-  println(doubled) -- Ok("a2 b44 c666")
+  println(doubled) -- a2 b44 c666
+  Ok(())
 }
 ```
 
@@ -283,21 +363,23 @@ fn main() {
 ## `regex.split`
 
 ```
-regex.split(text: String, pattern: String) -> Result(List(String), RegexError)
+regex.split(text: String, re: Regex) -> List(String)
 ```
 
 Splits the text on every occurrence of the pattern. A match of nothing at
 the start or the end of the text gives no empty piece there, as
-`string.split` with an empty separator: `regex.split("abc", "")` is
-`Ok([a, b, c])`, and `regex.split("", "")` is `Ok([])`. A match of
-something there does (`regex.split(",a,", ",")` is `Ok(["", a, ""])`).
+`string.split` with an empty separator: with `nothing` the pattern `""`,
+`regex.split("abc", nothing)` is `["a", "b", "c"]`, and `regex.split("",
+nothing)` is `[]`. A match of something there does: with `comma` the pattern
+`","`, `regex.split(",a,", comma)` is `["", "a", ""]`.
 
 ```silt
 import regex
-import result
 
-fn main() {
-  let parts = "hello   world   silt" |> regex.split("\\s+") |> result.unwrap_or([])
+fn main() -> Result((), regex.RegexError) {
+  let spaces = regex.compile("\\s+")?
+  let parts = "hello   world   silt" |> regex.split(spaces)
   println(parts) -- ["hello", "world", "silt"]
+  Ok(())
 }
 ```

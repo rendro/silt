@@ -10,9 +10,11 @@ use silt::diagnostic::{Diagnostic, SourceView, render_human};
 use silt::session::{Entry, LockPolicy, Session};
 
 use crate::cli::help::check_usage_banner;
-use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
+use crate::cli::package::{EntryPointKind, resolve_package_entry_point_in};
 use crate::cli::paths::{
-    ProgramFiles, STDIN_NAME, door_diagnostics, open_entry, open_stdin, package_test_files,
+    CanonicalFiles, FILE_OR_DIRECTORY, PathArg, ProgramFiles, STDIN_NAME, door_diagnostics,
+    find_silt_files, open_entry, open_stdin, package_test_files, path_arg, refuse_empty_walk,
+    refuse_path, unicode_path,
 };
 
 /// Output format for `silt check` — human-readable by default, or
@@ -73,8 +75,10 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("  --watch, -w         Re-run on file changes");
             println!();
             println!("Each file is checked as a program of its own; '-' reads the");
-            println!("program from stdin. With no file, inside a silt package, every");
-            println!("module of the package and its test files are checked.");
+            println!("program from stdin. A package's directory is checked as a package:");
+            println!("every module of it and its test files. Another directory stands for");
+            println!("the .silt files under it. With no path, inside a silt package, the");
+            println!("package is checked.");
             process::exit(0);
         } else if args[i] == "-" {
             files.push(args[i].clone());
@@ -107,13 +111,7 @@ pub(crate) fn dispatch(args: &[String]) {
         crate::cli::package::print_manifest_errors_as_json();
     }
     let programs: Vec<PackageFiles> = match files.is_empty() {
-        false => (files.into_iter())
-            .map(|entry| PackageFiles {
-                entry,
-                modules: Vec::new(),
-                tests: Vec::new(),
-            })
-            .collect(),
+        false => programs_of(&files),
         true => match package_files() {
             Ok(Some(files)) => vec![files],
             Ok(None) => {
@@ -125,6 +123,54 @@ pub(crate) fn dispatch(args: &[String]) {
         },
     };
     check_files(&programs, format, deny_warnings);
+}
+
+/// The programs `silt check <paths>` checks: a file as a program of its
+/// own, the package of a package's directory, and each `.silt` file
+/// under another directory (as `silt fmt` finds them) as a program of
+/// its own. A path that names one of them again is left out; a path that
+/// is none of them is a usage error (exit 1).
+fn programs_of(paths: &[String]) -> Vec<PackageFiles> {
+    let file = |entry: String| PackageFiles {
+        entry,
+        modules: Vec::new(),
+        tests: Vec::new(),
+    };
+    let mut programs = Vec::new();
+    for arg in paths {
+        if arg == "-" {
+            programs.push(file(arg.clone()));
+            continue;
+        }
+        match path_arg(arg) {
+            PathArg::File(path) => programs.push(file(path)),
+            PathArg::Package(dir) => match package_files_in(Path::new(&dir)) {
+                Ok(Some(files)) => programs.push(files),
+                Ok(None) => {}
+                Err(()) => process::exit(1),
+            },
+            PathArg::Dir(dir) => {
+                let found = find_silt_files(Path::new(&dir));
+                if found.is_empty() {
+                    refuse_empty_walk("check", Path::new(&dir), &dir);
+                }
+                programs.extend(found.into_iter().map(file));
+            }
+            PathArg::NotSilt(path) => refuse_path("check", &path, FILE_OR_DIRECTORY),
+        }
+    }
+    // One file given twice (two spellings of its path, a link and what
+    // it leads to) is checked once, and so is one package.
+    let mut seen = HashSet::new();
+    programs.retain(|program| {
+        let package = !program.modules.is_empty() || !program.tests.is_empty();
+        program.entry == "-"
+            || seen.insert((
+                package,
+                silt::source::canonical_path(Path::new(&program.entry)),
+            ))
+    });
+    programs
 }
 
 /// The files of a program that `silt check` checks: a file named on the
@@ -145,7 +191,12 @@ pub(crate) struct PackageFiles {
 /// A library (`src/lib.silt` with no `src/main.silt`) is checked too:
 /// that is the shape of a dependency.
 pub(crate) fn package_files() -> Result<Option<PackageFiles>, ()> {
-    let Some(entry) = resolve_package_entry_point_for(EntryPointKind::AllowLib)? else {
+    package_files_in(&std::env::current_dir().unwrap_or_else(|_| ".".into()))
+}
+
+/// [`package_files`] for the package that the directory `dir` is in.
+pub(crate) fn package_files_in(dir: &Path) -> Result<Option<PackageFiles>, ()> {
+    let Some(entry) = resolve_package_entry_point_in(dir, EntryPointKind::AllowLib)? else {
         return Ok(None);
     };
     let root = entry
@@ -188,7 +239,7 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
         .filter(|p| p.extension().is_some_and(|x| x == "silt") && p.is_file())
         .filter(|p| !same(p, entry))
         .filter(|p| !tests.iter().any(|t| same(p, Path::new(t))))
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(unicode_path)
         .collect();
     modules.sort();
     modules
@@ -273,7 +324,9 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
     let mut failed = false;
     let mut warnings = 0;
     let mut json: Vec<serde_json::Value> = Vec::new();
-    // What was shown, as rendered.
+    // What was shown, as rendered with each file named by its canonical
+    // path: a file reached by two spellings of its path (in two
+    // programs) is one file.
     let mut shown: HashSet<String> = HashSet::new();
     let mut printed = false;
     for program in programs {
@@ -300,8 +353,15 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         };
         failed |= checked.failed();
         let files = ProgramFiles::new(path, checked.session.sources());
+        // (One program's diagnostics are each once already: what two
+        // programs both found is told apart by its text, rendered once
+        // more, which a program with many thousands of warnings pays
+        // for. A single program does not.)
         let diagnostics: Vec<Diagnostic> = (checked.diagnostics.iter())
-            .filter(|d| shown.insert(render_human(&files, d)))
+            .filter(|d| {
+                programs.len() == 1
+                    || shown.insert(render_human(&CanonicalFiles(checked.session.sources()), d))
+            })
             .cloned()
             .collect();
         warnings += diagnostics.iter().filter(|d| d.is_warning()).count();

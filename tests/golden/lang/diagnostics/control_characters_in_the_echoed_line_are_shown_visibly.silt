@@ -2,7 +2,8 @@
 -- exit: 1
 -- A control character in the echoed line stands as a visible one, so
 -- an escape sequence (here one that clears the screen) does not reach
--- the terminal, nor does a bidirectional control; the carets stay under
+-- the terminal, nor does a bidirectional control (refused itself, as a
+-- raw text-direction control); the carets stay under
 -- the place.
 fn main() {
   let s = "a[2J‮b" + 1

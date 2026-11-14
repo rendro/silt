@@ -86,6 +86,9 @@ pub enum Value {
     /// transparently — the TLS layer in v0.9 PR 3 will substitute a
     /// rustls-wrapped stream behind the same `Arc<Mutex<Box<dyn ReadWrite>>>`.
     TcpStream(Arc<TcpStreamHandle>),
+    /// A compiled regex pattern (`regex.compile`): equal to another of
+    /// the same pattern text.
+    Regex(Arc<crate::builtins::regex::Compiled>),
     /// A dictionary (`bytecode::dict`): no program value is one; the
     /// code passes it, hidden, to what has bounds of a program's trait.
     Dict(bytecode::dict::Dict),
@@ -207,11 +210,18 @@ impl Value {
         let fields = fields.into_iter().map(|(_, value)| value).collect();
         Value::record(ty.clone(), fields)
     }
+}
 
-    /// The anonymous record of the fields `fields`, whose names are
-    /// distinct.
-    pub fn anon_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
-        Value::Record(Record::anon(fields.into_iter().collect()))
+#[cfg(test)]
+impl Value {
+    /// A record of the test type `R` with the fields `fields`, in that
+    /// order.
+    pub fn test_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+        let (names, values): (Vec<_>, Vec<_>) = (fields.into_iter())
+            .map(|(name, value)| ((name.to_string(), crate::typeinfo::FieldType::Int), value))
+            .unzip();
+        let id = crate::defs::TypeId(crate::defs::DefId(u32::MAX - 3));
+        Value::record(TypeInfo::new_record(id, "R", names), values)
     }
 }
 
@@ -248,6 +258,7 @@ impl Value {
             Value::Bytes(_) => "Bytes",
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",
+            Value::Regex(_) => "Regex",
             Value::Dict(_) => "Dict",
             Value::Unit => "()",
         }

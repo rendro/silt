@@ -601,21 +601,8 @@ impl TypeChecker {
                     trailing.push(t);
                 }
                 let mut d = Diagnostic::error(Code::UnusedValue, extent, message);
-                // `point { x: 1 }`: `let _ = ` before the `{` would not
-                // parse, and is not what is missing.
-                if marks
-                    .brace_after_name
-                    .iter()
-                    .any(|at| at.file == extent.file && at.start == extent.start)
-                {
-                    d = d.with_help(
-                        "a record literal's type name starts with an upper-case letter \
-                         (`Point { ... }`); a `{` behind a value starts a statement of its own",
-                    );
-                } else {
-                    let at = Span::point(extent.file, extent.start);
-                    d = d.with_fix("Discard with `let _ =`", vec![(at, "let _ = ".to_string())]);
-                }
+                let at = Span::point(extent.file, extent.start);
+                d = d.with_fix("Discard with `let _ =`", vec![(at, "let _ = ".to_string())]);
                 // A line that starts with `-` does not continue the
                 // line above. Said where the line above is something to
                 // subtract from, on whichever of the two is unused: this
@@ -672,7 +659,6 @@ fn holds(ty: &Type, v: TyVar) -> bool {
         Type::List(t) | Type::Set(t) | Type::Channel(t) => holds(t, v),
         Type::Map(key, value) => holds(key, v) || holds(value, v),
         Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().any(|t| holds(t, v)),
-        Type::AnonRecord { fields, .. } => fields.values().any(|t| holds(t, v)),
         // (What the constructor is decides whether it holds its
         // argument.)
         Type::App(head, arg) => holds(head, v) || holds(arg, v),
@@ -698,7 +684,6 @@ fn holds_result(ty: &Type) -> bool {
         Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_result(t),
         Type::Map(key, value) => holds_result(key) || holds_result(value),
         Type::Tuple(ts) => ts.iter().any(holds_result),
-        Type::AnonRecord { fields, .. } => fields.values().any(holds_result),
         Type::App(_, arg) => holds_result(arg),
         Type::Fun(..)
         | Type::Con(..)

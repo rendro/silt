@@ -44,6 +44,7 @@ mod folding;
 mod formatting;
 mod hover;
 mod implementation;
+pub(crate) mod in_memory;
 mod inlay_hints;
 mod local_bindings;
 mod locals;
@@ -58,6 +59,7 @@ mod semantic_tokens;
 mod signature_help;
 mod state;
 mod trait_hover;
+mod transport;
 mod type_definition;
 mod workspace;
 mod workspace_symbol;
@@ -773,7 +775,9 @@ fn extract_request<R: lsp_types::request::Request>(
 // ── Entry point ────────────────────────────────────────────────────
 
 pub fn run() {
-    let (connection, io_threads) = Connection::stdio();
+    // A message that cannot be read is answered with an error, and the
+    // session goes on (lsp-server's own transport ends it).
+    let (connection, io_threads) = transport::stdio();
 
     // Read initialize request and respond with capabilities.
     let server_capabilities = ServerCapabilities {

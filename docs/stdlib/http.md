@@ -59,9 +59,9 @@ fn main() {
   match http.get("http://127.0.0.1:8080/") {
     Ok(resp) -> match bytes.to_string(resp.body) {
       Ok(text) -> println(text)
-      Err(e) -> println("the body is no text: {Error.message(e)}")
+      Err(e) -> println("the body is no text: {e}")
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 ```
@@ -85,8 +85,8 @@ is there (DNS, connection, TLS, a timeout, a head that is no HTTP), and
 one after it: a body that is cut short (`ClosedEarly`), and a body that
 does not unpack or is larger than 10,000,000 bytes (`InvalidResponse`).
 A program for which a status is a failure looks at `resp.status`.
-`HttpError` implements the built-in `Error` trait, so `Error.message(e)`
-always yields a rendered string.
+An `HttpError` is shown as its message, so `"{e}"` always yields a
+rendered string.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
@@ -163,7 +163,7 @@ fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {bytes.length(resp.body)}")
     Err(http.Timeout) -> println("timed out; retry later")
-    Err(e) -> println("Network error: {Error.message(e)}")
+    Err(e) -> println("Network error: {e}")
   }
 }
 ```
@@ -469,7 +469,7 @@ fn main() {
   let server = task.spawn { -> http.serve(listener, hello) }
   match http.get("http://127.0.0.1:{port}/") {
     Ok(r) -> println(r.status) -- 200
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   tcp.close_listener(listener)
   task.join(server)
@@ -538,9 +538,9 @@ fn main() {
             body: bytes.from_string(json.stringify(user)),
             headers: #{ "Content-Type": "application/json" },
           }
-          Err(e) -> reply(400, Error.message(e))
+          Err(e) -> reply(400, "{e}")
         }
-        Err(e) -> reply(400, Error.message(e))
+        Err(e) -> reply(400, "{e}")
       }
 
       _ -> reply(404, "Not found")

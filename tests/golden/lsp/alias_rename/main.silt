@@ -1,0 +1,33 @@
+-- cmd: lsp
+-- lsp: references 19:18
+-- lsp: prepare-rename 31:16
+-- lsp: rename 31:16 shp
+-- lsp: highlight 31:16
+-- lsp: rename 19:18 geometry
+-- lsp: rename 19:18 string
+-- lsp: rename 19:18 sh2
+-- lsp: rename 19:18 size
+-- lsp: definition 31:16
+-- The alias of `import shapes as sh` is renamed in its file: in the
+-- import, before a name in an expression, a type, a record literal and
+-- a pattern. A name that another import, a local where the alias is
+-- used, a top-level name or one of silt's own modules has is refused.
+-- Definition on the alias opens the module's file.
+import geometry
+import geometry.{ double }
+import list
+import shapes as sh
+
+fn size(s: sh.Shape) -> Int {
+  match s {
+    sh.Shape.Circle(r) -> r
+    sh.Square(w) -> w
+  }
+}
+
+fn main() {
+  let p: sh.Pt = sh.Pt { x: 1, y: 2 }
+  let sh2 = 3
+  println(size(sh.Circle(2)) + sh.area(p) + double(sh2) + geometry.triple(1))
+  println(list.length([p]))
+}

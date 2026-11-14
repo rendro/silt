@@ -21,8 +21,8 @@ type Student {
 fn parse_student(line) {
   let fields = line |> string.split(",")
   let name = fields |> list.get(0) |> option.unwrap_or("")
-  let age = fields |> list.get(1) |> option.unwrap_or("0") |> int.parse() |> result.unwrap_or(0)
-  let score = fields |> list.get(2) |> option.unwrap_or("0") |> int.parse() |> result.unwrap_or(0)
+  let age = fields |> list.get(1) |> option.unwrap_or("0") |> int.parse |> result.unwrap_or(0)
+  let score = fields |> list.get(2) |> option.unwrap_or("0") |> int.parse |> result.unwrap_or(0)
   let grade = fields |> list.get(3) |> option.unwrap_or("")
   Student { name: name, age: age, score: score, grade: grade }
 }
@@ -89,7 +89,7 @@ fn main() {
   -- Read and parse CSV; bail out on IO errors with a rendered message.
   let content = match io.read_file("examples/data.csv") {
     Ok(text) -> text
-    Err(e) -> panic("Error reading data.csv: {Error.message(e)}")
+    Err(e) -> panic("Error reading data.csv: {e}")
   }
   let lines = content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
   let data_lines = lines |> list.drop(1)

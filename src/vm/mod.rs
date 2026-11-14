@@ -857,15 +857,11 @@ impl Vm {
     /// Where the program is now: the place of the instruction that the
     /// innermost function of the program runs, if it has one in the
     /// source. A builtin's place is its caller's: the innermost
-    /// function. So is that of code silt compiled for a builtin trait's
-    /// default method (`Error.message`), which has no place in the
-    /// program: the place is the call's.
+    /// function.
     pub(crate) fn place_here(&self) -> Option<crate::source::Span> {
         let innermost = self.frames.iter().rev().find_map(|frame| match frame {
-            Frame::Code(frame) if !silts_own(frame.closure.function.name(), place(frame)) => {
-                Some(frame)
-            }
-            Frame::Code(_) | Frame::Native(_) => None,
+            Frame::Code(frame) => Some(frame),
+            Frame::Native(_) => None,
         });
         innermost.map(place).filter(|span| span.is_in_source())
     }
@@ -900,10 +896,7 @@ impl Vm {
             };
             let func_name = frame.closure.function.name().to_string();
             let span = place(frame);
-            // (Silt's own code is no frame of the program's.)
-            if !silts_own(&func_name, span) {
-                stack.push((func_name, span));
-            }
+            stack.push((func_name, span));
             // Newer (later-pushed) entries for this depth are more recent
             // callers, so they come first: the chain stays callee-first.
             // A caller's place is the tail call: the instruction before
@@ -979,7 +972,7 @@ impl Vm {
     /// skipped (`type_name_for_impl` returns `None`); `Op::DisplayValue`
     /// consults this predicate at the execution site to reject the same
     /// set rather than silently rendering a debug string. Locked by
-    /// tests/typecheck/round95_interp_display_runtime_tests.rs.
+    /// tests/typecheck/interp_display_runtime_tests.rs.
     pub fn value_implements_display(val: &Value) -> bool {
         !matches!(
             val,
@@ -991,6 +984,7 @@ impl Vm {
                 | Value::Handle(_)
                 | Value::TcpListener(_)
                 | Value::TcpStream(_)
+                | Value::Regex(_)
                 | Value::TypeDescriptor(_)
                 | Value::PrimitiveDescriptor(_)
         )
@@ -1011,13 +1005,12 @@ impl Vm {
     ///     ``"TypeDescriptor `name`"`` / ``"PrimitiveDescriptor `name`"``.
     ///
     /// The `pub` visibility is required by
-    /// `tests/typecheck/round75_kind_naming_canonical_tests.rs`, which pins
+    /// `tests/typecheck/kind_naming_tests.rs`, which pins
     /// the alignment matrix.
     pub fn user_facing_type_name(&self, val: &Value) -> String {
         match val {
             // Variants that carry semantic content into the user-facing
             // diagnostic. Each is a deliberate alias documented above.
-            Value::Record(record) if record.ty().is_anon() => "an anonymous record".to_string(),
             Value::Record(record) => record.ty().name.clone(),
             Value::Variant(variant) => variant.ty().name.clone(),
             Value::VariantConstructor(tag) => {
@@ -1037,14 +1030,6 @@ impl Vm {
 
 #[cfg(test)]
 mod tests;
-
-/// Whether the function `name`, at the place `span`, is code silt
-/// compiled for a builtin trait (`Error.message`'s default): code with no
-/// place in the program that is no synthetic frame (`<script>`, which the
-/// call stack's rendering leaves out).
-fn silts_own(name: &str, span: crate::source::Span) -> bool {
-    !span.is_in_source() && !name.starts_with('<')
-}
 
 /// The place of the instruction a frame runs: the one before its
 /// instruction pointer.

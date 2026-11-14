@@ -1,0 +1,90 @@
+-- csv.stringify writes a header of the field names, then a line for each
+-- record, quoting a field with a comma, a quote or a line break; csv.parse
+-- reads the text back as the same records. csv.join_line writes one line
+-- that csv.split_line reads back.
+import csv
+import result
+import time
+
+type Person {
+  name: String,
+  age: Int,
+  score: Float,
+  member: Bool,
+  email: Option(String),
+  born: Option(time.Date),
+}
+
+type Score = Float
+
+type One {
+  a: Option(Int),
+}
+
+type Entry {
+  at: time.DateTime,
+  start: time.Time,
+  points: Score,
+}
+
+fn main() {
+  let born = time.date(2024, 3, 9) |> result.to_option
+  let people = [
+    Person {
+      name: "Smith, John",
+      age: 42,
+      score: 1.5,
+      member: true,
+      email: Some("john@example.com"),
+      born: None,
+    },
+    Person { name: "say \"hi\"", age: -1, score: 0.25, member: false, email: None, born: born },
+    Person { name: "two\nlines", age: 0, score: -3.0, member: true, email: None, born: None },
+    Person {
+      name: "tab\there",
+      age: 7,
+      score: 100.0,
+      member: false,
+      email: Some("a,b"),
+      born: None,
+    },
+    Person { name: "", age: 1, score: 0.0, member: true, email: None, born: None },
+  ]
+  let text = csv.stringify(people)
+  print(text)
+  println(csv.parse(text, Person) == Ok(people))
+  -- No rows: the empty text, which csv.parse reads as no rows.
+  let none: List(Person) = []
+  println(csv.stringify(none) == "")
+  println(csv.parse(csv.stringify(none), Person) == Ok(none))
+  -- Dates and times as json.stringify writes them; an alias as its type.
+  match (time.date(2024, 3, 9), time.time(7, 30, 0)) {
+    (Ok(day), Ok(start)) -> {
+      let entries = [Entry { at: time.datetime(day, start), start: start, points: 2.5 }]
+      let written = csv.stringify(entries)
+      print(written)
+      println(csv.parse(written, Entry) == Ok(entries))
+    }
+    _ -> println("no date")
+  }
+  -- Some("") is an empty cell, which reads back as None.
+  let blank = [Person { name: "x", age: 1, score: 1.0, member: true, email: Some(""), born: None }]
+  println(csv.parse(csv.stringify(blank), Person))
+  -- One line.
+  let fields = ["1", "Smith, John", "say \"hi\"", "", "two\nlines"]
+  let line = csv.join_line(fields)
+  println(line)
+  println(csv.split_line(line) == Ok(fields))
+  println(csv.join_line(["a", "b"]))
+  -- A carriage return is quoted too (not printed: it moves the cursor).
+  println(csv.join_line(["cr\rhere"]) == "\"cr\rhere\"")
+  let returns = [
+    Person { name: "cr\rhere", age: 1, score: 1.0, member: true, email: None, born: None },
+  ]
+  println(csv.parse(csv.stringify(returns), Person) == Ok(returns))
+  println("[{csv.join_line([])}] [{csv.join_line([""])}]")
+  -- A row of one empty cell is the line "", which no reader skips.
+  let ones = [One { a: None }, One { a: Some(1) }]
+  print(csv.stringify(ones))
+  println(csv.parse(csv.stringify(ones), One) == Ok(ones))
+}

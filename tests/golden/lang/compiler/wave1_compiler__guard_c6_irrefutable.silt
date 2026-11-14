@@ -2,6 +2,7 @@ import list
 
 type P { x: Int, y: Int }
 type W { Wrap(Int) }
+type Person { name: String, age: Int }
 
 fn sum(p: P) -> Int {
   let P { x, y } = p
@@ -17,7 +18,7 @@ fn main() {
   println(n)
   let ((c, d), e) = ((1, 2), 3)
   println(c + d + e)
-  let {name, age} = {name: "A", age: 3}
+  let Person { name, age } = Person { name: "A", age: 3 }
   println("{name} {age}")
   println(sum(P { x: 3, y: 4 }))
   let pairs = [(1, 2), (3, 4)]

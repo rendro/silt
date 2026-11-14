@@ -9,6 +9,9 @@ INSTALL_DIR="${SILT_INSTALL_DIR:-$HOME/.local/bin}"
 BASE_URL="https://github.com/$REPO/releases"
 
 main() {
+    # The tool that downloads, chosen once: curl, or a wget that can be
+    # kept to https.
+    DOWNLOADER="$(downloader)" || exit 1
     os="$(detect_os)"
     arch="$(detect_arch)"
     target="${arch}-${os}"
@@ -35,6 +38,9 @@ main() {
 
     tmpdir="$(mktemp -d)" || err "mktemp -d failed"
     trap 'rm -rf "$tmpdir"' EXIT
+    # A signal ends the script through `exit`, so that the EXIT trap
+    # runs (dash runs none when a signal ends it).
+    trap 'exit 130' INT TERM HUP
 
     printf "  Downloading %s\n" "$url"
     fetch "$url" "$tmpdir/silt.$ext" \
@@ -75,10 +81,22 @@ main() {
 
     mkdir -p "$INSTALL_DIR" \
         || err "failed to create install dir $INSTALL_DIR (permission denied?)"
-    cp "$tmpdir/$bin" "$INSTALL_DIR/$bin" \
+    if [ -d "$INSTALL_DIR/$bin" ]; then
+        err "$INSTALL_DIR/$bin is a directory: remove it, or install elsewhere with SILT_INSTALL_DIR"
+    fi
+    # The new binary is copied beside the old one and then moved onto
+    # its name: a running silt (an editor's `silt lsp`) keeps running,
+    # and an interrupted install leaves the old binary whole.
+    staged="$INSTALL_DIR/.$bin.new.$$"
+    trap 'rm -rf "$tmpdir"; rm -f "$staged"' EXIT
+    cp "$tmpdir/$bin" "$staged" \
         || err "failed to install binary to $INSTALL_DIR (permission denied?)"
-    chmod +x "$INSTALL_DIR/$bin" \
+    # Readable and runnable by everyone, as a binary in a bin directory
+    # is, whatever the umask made of the copy.
+    chmod 755 "$staged" \
         || err "failed to mark $INSTALL_DIR/$bin executable (permission denied?)"
+    mv -f "$staged" "$INSTALL_DIR/$bin" \
+        || err "failed to replace $INSTALL_DIR/$bin (permission denied?)"
 
     printf "\n  silt %s installed to %s\n\n" "$version" "$INSTALL_DIR/$bin"
 
@@ -115,10 +133,25 @@ fetch() {
     _url="$1"
     _dest="$2"
     # Only over https, a redirect included.
-    if command -v curl > /dev/null 2>&1; then
+    if [ "$DOWNLOADER" = curl ]; then
         curl --proto '=https' --tlsv1.2 -fsSL "$_url" -o "$_dest"
-    elif command -v wget > /dev/null 2>&1; then
+    else
         wget_https "$_url" "$_dest"
+    fi
+}
+
+downloader() {
+    # downloader: prints `curl` or `wget`, the tool that downloads. A wget
+    # must know --max-redirect (GNU wget does; busybox's does not), as it
+    # is kept to https by following each redirect itself.
+    if command -v curl > /dev/null 2>&1; then
+        echo curl
+    elif command -v wget > /dev/null 2>&1; then
+        if wget --help 2>&1 | grep -q -e '--max-redirect'; then
+            echo wget
+        else
+            err "this wget cannot be kept to https (it has no --max-redirect, as busybox's wget): install curl or GNU wget"
+        fi
     else
         err "need curl or wget to download"
     fi
@@ -134,20 +167,39 @@ wget_https() {
         _said="$(wget --max-redirect=0 --server-response -O "$2" "$_wurl" 2>&1)" && return 0
         # The Location of the server's answer (its headers are indented).
         _loc="$(printf '%s\n' "$_said" | awk '/^  / && tolower($1) == "location:" { l = $2 } END { sub(/\r$/, "", l); print l }')"
+        _host="${_wurl#https://}"
+        _host="${_host%%/*}"
         case "$_loc" in
             "") return 1 ;;
-            https://*) _wurl="$_loc" ;;
-            /*)
-                _host="${_wurl#https://}"
-                _wurl="https://${_host%%/*}$_loc"
-                ;;
+            [Hh][Tt][Tt][Pp][Ss]://*) _wurl="https://${_loc#*://}" ;;
+            # On the https host it names, or on this one.
+            //*) _wurl="https:$_loc" ;;
+            /*) _wurl="https://$_host$_loc" ;;
+            # A new query of the path asked for.
+            \?*) _wurl="${_wurl%%[?#]*}$_loc" ;;
             *)
-                printf "  error: a download was redirected to %s, which is not https\n" "$_loc" >&2
-                return 1
+                case "${_loc%%:*}" in
+                    "$_loc" | [!A-Za-z]* | *[!A-Za-z0-9+.-]* | "")
+                        # A path beside the one asked for (at the root of
+                        # a URL that has no path).
+                        _base="${_wurl%%[?#]*}"
+                        case "${_base#https://}" in
+                            */*) _wurl="${_base%/*}/$_loc" ;;
+                            *) _wurl="$_base/$_loc" ;;
+                        esac
+                        ;;
+                    *)
+                        printf "  error: a download was redirected to %s, which is not https\n" "$_loc" >&2
+                        return 1
+                        ;;
+                esac
                 ;;
         esac
         _hops=$((_hops + 1))
-        [ "$_hops" -lt 10 ] || return 1
+        if [ "$_hops" -gt 10 ]; then
+            printf "  error: a download was redirected more than 10 times\n" >&2
+            return 1
+        fi
     done
 }
 
@@ -206,10 +258,10 @@ get_latest_version() {
     # GitHub's /releases/latest endpoint 302-redirects to /releases/tag/<version>.
     # We fetch only the response headers (no -L) and parse the Location header
     # case-insensitively, then take the final path segment as the version.
-    if command -v curl > /dev/null 2>&1; then
+    if [ "$DOWNLOADER" = curl ]; then
         curl --proto '=https' --tlsv1.2 -fsI "$BASE_URL/latest" 2>/dev/null \
             | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n]; exit }'
-    elif command -v wget > /dev/null 2>&1; then
+    else
         wget --server-response --spider --max-redirect=0 "$BASE_URL/latest" 2>&1 \
             | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n]; exit }'
     fi

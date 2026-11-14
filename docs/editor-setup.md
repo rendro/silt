@@ -19,13 +19,23 @@ silt lsp
 
 The server communicates over stdin/stdout using the standard LSP protocol.
 
+A buffer that was never saved (`untitled:Untitled-1`) is checked as a
+file of its own, outside any package. It reads no file on disk; it can
+import another unsaved buffer whose name ends in `.silt`
+(`import helper` for `untitled:helper.silt`).
+
+The server fetches nothing: opening a folder runs no git and connects
+to no host. A git dependency of the project that is not in silt's cache
+yet is an error on its line of `silt.toml`, "not fetched: run
+`silt check`"; `silt check` (or `silt run`, `silt test`) fetches it.
+
 ### Supported Features
 
 | Feature | Description |
 |---------|-------------|
 | **Diagnostics** | Lex, parse, and type errors on every edit |
 | **Hover** | Show inferred type for any expression (`K` in nvim) |
-| **Go to definition** | Jump to function, type, trait, let-binding definitions (`gd`) |
+| **Go to definition** | Jump to where a function, `let`, type, variant, trait, method, record field or local is declared; from an import or a module's alias to the module's file, from an item of `import m.{ f }` to `f` (`gd`) |
 | **Go to type definition** | Jump from a value to the definition of its type |
 | **Go to implementation** | Jump from a trait method to its implementations |
 | **Completion** | Keywords, builtins, stdlib functions, user definitions |
@@ -33,9 +43,9 @@ The server communicates over stdin/stdout using the standard LSP protocol.
 | **Document symbols** | Outline of all declarations in the file |
 | **Workspace symbol search** | Find any definition across the entire workspace by name |
 | **Formatting** | Format via the existing `silt fmt` formatter |
-| **Find references** | Locate every use of a definition across the workspace |
+| **Find references** | Locate every use of a definition, a trait method, a record field or a local across the workspace, and of a module's alias in its file. A field is found by its record type: `x` of `P` is not `x` of `Q` |
 | **Document highlight** | Highlight every occurrence of the symbol under the cursor in the active file |
-| **Rename** | Rename a definition and update every reference (`<leader>rn`) |
+| **Rename** | Rename a definition, a trait method, a record field, a local or a module's alias and update every reference (`<leader>rn`). A field written alone is written out: renaming the field `x` makes `P { x }` into `P { new: x }`. A field's name is also its key in the text `json` writes and in what `json` and `toml` read, and it is shown when the record is printed, so a rename of a field changes those too. Not renamed: silt's own names and the fields of its types, the fields of a type of another package, and a module's name, which is its file's. A rename to a name that is taken where it is written is refused with the reason |
 | **Code actions** | Quick fixes and refactors offered for the symbol or diagnostic under the cursor |
 | **Inlay hints** | Inferred types for `let`-bindings and unannotated parameters rendered as inline hints |
 | **Folding ranges** | Editor-driven code folding for blocks, records, and match arms |

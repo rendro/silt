@@ -40,7 +40,7 @@ Three design commitments shape everything:
   task running in parallel can see a shared value without a lock.
 - Errors are values of a typed enum, not interface-typed strings. You
   pattern-match on specific variants (`Err(io.NotFound(path)) -> ...`)
-  and fall back to `Error.message` for the long tail.
+  and show the long tail with `"{e}"`, which gives its message.
 - No `nil`. `Option(a)` is the only way to model absence, and the type
   checker makes you handle the `None` case.
 - You still get CSP with channels and cheap tasks.
@@ -57,10 +57,9 @@ Three design commitments shape everything:
 
 - Syntax leans toward C-family (`fn`, braces) rather than ML-style
   (`let … in`). Familiar to most programmers on day one.
-- Nominal records (`type User { name: String, age: Int }`) are first-class; anonymous
-  structural records and row polymorphism are also available — see
-  [Types](language/types.md). Record update is a first-class operator:
-  `user.{ age: 31 }`.
+- Records are nominal (`type User { name: String, age: Int }`): a record
+  literal names its type — see [Types](language/types.md). Record update
+  is a first-class operator: `user.{ age: 31 }`.
 - The standard library is larger and more task-focused. `http`, `json`,
   `channel`, `stream`, `tcp`, and `time` ship in-box by default;
   `postgres` is available as an opt-in feature (build with

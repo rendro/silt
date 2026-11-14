@@ -1248,15 +1248,7 @@ impl TypeChecker {
             let mut own: Vec<(TyVar, Symbol)> = param_map
                 .iter()
                 .filter_map(|(name, ty)| match ty {
-                    // (A row variable, `{x: Int, ...r}`, is kept under
-                    // `__row__r`: it is named `r`.)
-                    Type::Var(v) if !known_vars.contains(v) => {
-                        let name = match resolve(*name).strip_prefix("__row__") {
-                            Some(row) => intern(row),
-                            None => *name,
-                        };
-                        Some((*v, name))
-                    }
+                    Type::Var(v) if !known_vars.contains(v) => Some((*v, *name)),
                     _ => None,
                 })
                 .collect();
@@ -1700,18 +1692,6 @@ impl TypeChecker {
     /// (`trait Functor for Result(_, e)`), an impl of a trait of types
     /// names every type argument. What does not fit is reported.
     fn impl_header_fits(&mut self, ti: &TraitImpl, tr: TraitKey, written: TypeRef) -> bool {
-        // (`trait Q for W()`: empty parentheses, which the header ends
-        // with, are no spelling of a type, as in an annotation.)
-        if ti.target_type_args.is_empty() && ti.header_span.end > ti.target_type_span.end {
-            let shown = Qualifier::written(ti.target_module, ti.target_type);
-            let message = self.type_arguments_message(&shown, written);
-            let span = Span {
-                start: ti.target_type_span.start,
-                ..ti.header_span
-            };
-            self.error(Code::ArityMismatch, message, span);
-            return false;
-        }
         let holes: Vec<usize> = (ti.target_type_args.iter().enumerate())
             .filter(|(_, arg)| is_hole(arg))
             .map(|(i, _)| i)
@@ -1904,11 +1884,27 @@ impl TypeChecker {
         };
         let target_type = canonical_head(&self.tables.resolver, written);
         let Some(trait_key) = self.impl_trait(ti) else {
-            self.error(
-                Code::UnknownTrait,
-                format!("trait '{}' is not declared", ti.trait_name),
-                ti.span,
-            );
+            let message = format!("trait '{}' is not declared", ti.trait_name);
+            // (An error type of another language's kind: an error is
+            // shown as any value is.)
+            // An impl of Display can be written only for a type of this
+            // module; any other type is shown by the Display it has.
+            let own = matches!(ti.target_res, Some(crate::defs::Res::Def(id))
+                if self.defs.as_ref().is_some_and(|defs| defs.get(id).module == self.module));
+            let help = (ti.trait_module.is_none() && resolve(ti.trait_name) == "Error").then(|| {
+                let ty = Qualifier::written(ti.target_module, ti.target_type);
+                match own {
+                    true => format!(
+                        "an error is shown as any value is: to say how `{ty}` is shown (by \
+                         `{{e}}`, and as the error of main), write `trait Display for {ty}`"
+                    ),
+                    false => format!(
+                        "an error is shown as any value is: `{ty}` is shown (by `{{e}}`, and as \
+                         the error of main) by the Display it has"
+                    ),
+                }
+            });
+            self.error_help(Code::UnknownTrait, (message, help), ti.span);
             return;
         };
         if !self.impl_header_fits(ti, trait_key, written) {
@@ -2133,7 +2129,7 @@ impl TypeChecker {
                 let shown = self.show_trait(impl_trait);
                 let message = format!(
                     "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \
-                     'json.Encode', 'json.Decode', 'Error' or 'Number' of its type's variables: \
+                     'json.Encode', 'json.Decode' or 'Number' of its type's variables: \
                      the runtime runs it with nothing else"
                 );
                 // (Each help points at what the impl can do instead.)
@@ -2150,7 +2146,6 @@ impl TypeChecker {
                         "Decode",
                         "decode the part with `json.decode` and bound it by json.Decode",
                     ),
-                    ("Error", "show the part with `{x}` and bound it by Display"),
                 ]
                 .iter()
                 .find(|(tr, _)| impl_trait.is_builtin(tr))
@@ -2424,10 +2419,7 @@ impl TypeChecker {
             if let Type::Var(var) = ty {
                 let id = RigidId {
                     var: *var,
-                    name: match resolve(*name).strip_prefix("__row__") {
-                        Some(row) => intern(row),
-                        None => *name,
-                    },
+                    name: *name,
                 };
                 rigid.push(id);
                 impl_names.insert(*name, Type::Rigid(id));
@@ -3229,7 +3221,7 @@ impl TypeChecker {
             // `_ => Type::Generic(..)` below, silently producing a phantom
             // type that no value has. Derive fixed-arity builtin entries
             // from the authoritative table. Variadic shapes (`Tuple`,
-            // `Fn`, `Fun`, `Handle`) carry `arity: None` and are
+            // `Fn`, `Handle`) carry `arity: None` and are
             // intentionally skipped — they do not participate in this
             // trait-impl arity check.
             let builtin_arity: Option<usize> = builtin_type_name(written)
@@ -3805,11 +3797,6 @@ impl SelfUses {
                     self.read(part);
                 }
             }
-            TypeExprKind::AnonRecord { fields, .. } => {
-                for (_, part) in fields {
-                    self.read(part);
-                }
-            }
             TypeExprKind::Named { .. } => {}
         }
     }
@@ -3928,8 +3915,8 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
 }
 
 /// The first part of the supertrait argument `te` that is no type there
-/// (`Self`, an anonymous record, a name that is no type and none of the
-/// trait's `params`), as the error names it, with
+/// (`Self`, a name that is no type and none of the trait's `params`),
+/// as the error names it, with
 /// its span: what `resolve_supertrait_arg` would read as no type at all.
 fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, Span)> {
     // (A name the resolver refused it reported.)
@@ -3940,7 +3927,6 @@ fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, S
     };
     match &te.kind {
         TypeExprKind::SelfType => Some(("'Self'".to_string(), te.span)),
-        TypeExprKind::AnonRecord { .. } => Some(("an anonymous record type".to_string(), te.span)),
         TypeExprKind::Named { name, .. } if unread(*name) => {
             Some((format!("'{}'", resolve(*name)), te.span))
         }

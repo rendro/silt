@@ -1,0 +1,11 @@
+-- `point { ... }` on one line is a record literal with a lowercase name,
+-- not two statements: the error names the lowercase name, not the
+-- same-line newline rule.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'point' is no type name: a record literal starts with the name of its type, which starts with an uppercase letter, `Point { x: ... }`
+-- stderr-not-contains: expected a newline
+fn main() {
+  let p = point { x: 1, y: 2 }
+  println(p)
+}

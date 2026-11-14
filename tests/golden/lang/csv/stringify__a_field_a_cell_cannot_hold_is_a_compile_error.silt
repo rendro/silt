@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `csv.stringify` cannot write `A`: field `xs` has type `List(Int)`, and a list cannot be written in a cell
+-- stderr-contains: field `i` has type `Inner`, and a record type cannot be written in a cell
+-- stderr-contains: field `c` has type `Color`, which cannot be written in a cell
+-- stderr-contains: and an Option in an Option cannot be written in a cell
+-- stderr-contains: `csv.stringify` cannot write `Int`: a row must be a record type
+-- stderr-contains: `csv.stringify` cannot write `(Int, String)`: a row must be a record type
+-- stderr-contains: `rows_of` passes it to `csv.stringify`
+-- stderr-contains: help: writable field types are Int, Float, String, Bool
+-- The rows csv.stringify writes are of a type csv.parse reads back: a
+-- record type whose fields are leaves or an Option of one.
+import csv
+type Inner { x: Int }
+type Color { Red, Green }
+type A { xs: List(Int) }
+type B { i: Inner }
+type C { c: Color }
+type E { o: Option(Option(Int)) }
+fn rows_of(rows: List(r)) -> String {
+  csv.stringify(rows)
+}
+fn main() {
+  println(csv.stringify([A { xs: [] }]))
+  println(csv.stringify([B { i: Inner { x: 1 } }]))
+  println(csv.stringify([C { c: Red }]))
+  println(csv.stringify([E { o: None }]))
+  println(csv.stringify([1, 2]))
+  println(csv.stringify([(1, "a")]))
+  println(rows_of([A { xs: [1] }]))
+}

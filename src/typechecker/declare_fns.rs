@@ -74,6 +74,25 @@ impl TypeChecker {
             return;
         }
         let given: Vec<TyVar> = params.iter().flat_map(free_vars_in).collect();
+        // A field read in it that nothing decides is refused with its
+        // annotation at the scope's end, the cause of what its result
+        // leaves undecided (`fn i(p) { p.a + p.d }`): its result is an
+        // error, which its callers do not judge again.
+        let undecided_read = (self.wanted.iter()).any(|w| {
+            !w.solved
+                && matches!(&w.goal, Goal::Select { recv, .. }
+                    if matches!(self.apply(recv), Type::Var(v) if scheme.vars.contains(&v)))
+                && w.origin.span.file == span.file
+                && w.origin.span.start >= span.start
+                && w.origin.span.end <= span.end
+        });
+        if undecided_read {
+            scheme.ty = Type::Fun(params.clone(), Box::new(Type::Error));
+            scheme
+                .preds
+                .retain(|pred| given.iter().any(|v| pred.mentions(*v)));
+            return;
+        }
         // (A variable the scheme does not quantify is an outer
         // definition's, which a later one may decide.)
         if let Type::Var(v) = **ret
@@ -258,9 +277,22 @@ impl TypeChecker {
         // Recovery-stub special case (Option B): record the name and bind
         // its signature just like a real fn, so downstream references in
         // unrelated code do not cascade into "undefined variable" errors.
+        // What is wrong with the signature of one is not said: the
+        // syntax error that cut it short is its error, and what was read
+        // of it may be a part of what was meant (`-> Result` of `->
+        // Result<Int, String>`).
         if f.is_recovery_stub {
             self.recovery_stub_names.insert(f.name);
+            let said = self.errors.len();
+            let sig = self.register_fn_signature(f, env);
+            self.errors.truncate(said);
+            return sig;
         }
+        self.register_fn_signature(f, env)
+    }
+
+    /// `register_fn_decl` of any function.
+    fn register_fn_signature(&mut self, f: &FnDecl, env: &mut TypeEnv) -> FnSig {
         // A function of more parameters and bounds than a function can
         // have does not run: its signature is read for its own errors,
         // and its body is not checked (`refuse_past_bounds`).
@@ -307,6 +339,10 @@ impl TypeChecker {
                 ParamKind::Data => {
                     if let Some(te) = &param.ty {
                         self.resolve_type_expr(te, &mut param_map)
+                    } else if f.is_recovery_stub {
+                        // What a recovery stub was meant to take is not
+                        // known: no use of it is judged.
+                        Type::Error
                     } else {
                         self.fresh_var()
                     }
@@ -332,6 +368,10 @@ impl TypeChecker {
             let resolved = self.resolve_type_expr(te, &mut param_map);
             self.never_return = prev_never;
             resolved
+        } else if f.is_recovery_stub {
+            // Nor what it was meant to give: `inc(1) + inc(2)` of a
+            // stub `inc` asks no bound of its result.
+            Type::Error
         } else {
             self.fresh_var()
         };
@@ -350,12 +390,7 @@ impl TypeChecker {
             let type_param = &wc.type_param;
             let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
-            // (A bound may be on a row variable: `where r: Display`.)
-            let row_key = intern(&format!("__row__{type_param}"));
-            if let Some(ty) = param_map
-                .get(type_param)
-                .or_else(|| param_map.get(&row_key))
-            {
+            if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
                 // An unknown trait is reported when the body is checked
                 // (or was, by the resolver); what the variable is bounded
@@ -366,31 +401,6 @@ impl TypeChecker {
                         .is_none_or(|t| !self.tables.traits.contains_key(&t))
                 {
                     self.unknown_bounds.insert(tv);
-                }
-                // A row variable stands for the rest of a record's
-                // fields, not for a type: the one thing a bound can ask
-                // of it is a trait a record has by its fields.
-                let on_row = !param_map.contains_key(type_param);
-                if on_row
-                    && let Some(tr) = self.named_trait(wc.trait_res, *trait_name)
-                    && !["Display", "Equal", "Hash"]
-                        .iter()
-                        .any(|name| tr.is_builtin(name))
-                {
-                    self.errors.push(
-                        Diagnostic::error(
-                            Code::InvalidTypeAnnotation,
-                            wc.trait_name_span,
-                            format!(
-                                "the row variable '{type_param}' cannot be bounded by '{}': it stands for the rest of a record's fields, not for a type that implements a trait",
-                                self.show_trait(tr)
-                            ),
-                        )
-                        .with_help(
-                            "a row can be bounded by Display, Equal or Hash, which a record has when its fields do",
-                        ),
-                    );
-                    continue;
                 }
                 // A type is bounded by a trait of types, a type
                 // constructor by a trait of type constructors.
@@ -450,9 +460,7 @@ impl TypeChecker {
             }
         }
 
-        // The annotation variables: rigid in the body, a row variable
-        // (`{name: String, ...r}`) like any other. (A row variable is
-        // kept under `__row__r`, apart from a type variable `r`.)
+        // The annotation variables: rigid in the body.
         let mut rigid: Vec<RigidId> = Vec::new();
         let mut names: HashMap<Symbol, Type> = HashMap::new();
         let mut body_view: HashMap<TyVar, Type> = HashMap::new();
@@ -460,20 +468,9 @@ impl TypeChecker {
             let Type::Var(var) = ty else { continue };
             let id = RigidId {
                 var: *var,
-                name: match resolve(*name).strip_prefix("__row__") {
-                    Some(row) => intern(row),
-                    None => *name,
-                },
+                name: *name,
             };
-            // A declared record may stand for a row variable only if
-            // the body makes no anonymous record from it.
-            if resolve(*name).starts_with("__row__") {
-                self.sig_rows.insert(*var);
-                bounds.push(Pred::Anon {
-                    row: Type::Var(*var),
-                    given: Some(*var),
-                });
-            } else if !self.registry_rows {
+            if !self.registry_rows {
                 // What the body asks of the variable for the builtins it
                 // gives it to, each use asks of the type it gives.
                 bounds.push(Pred::Given {

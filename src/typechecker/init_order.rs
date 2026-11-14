@@ -27,8 +27,7 @@
 //!    stored it, which runs too. So every such body is reached by
 //!    mentions.
 //! 3. Code the module does not write: another module's functions,
-//!    methods and default methods, the builtin traits' default methods,
-//!    the impls of builtin container types. It cannot name this module's
+//!    methods and default methods, the impls of builtin container types. It cannot name this module's
 //!    `let`s. It can call back in two ways only: a function value it is
 //!    handed (covered by 2: someone mentioned it), and a method of a
 //!    trait it knows on a value it is handed. The traits it knows are
@@ -129,9 +128,6 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
                 .is_some_and(|def| def.module.is_builtin())
                 && all(args)
         }
-        Type::AnonRecord { fields, tail } => {
-            matches!(tail, RowTail::Closed) && fields.values().all(|t| builtin_through(checker, t))
-        }
         Type::List(t) | Type::Set(t) | Type::Channel(t) => builtin_through(checker, t),
         Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
         Type::Tuple(ts) => all(ts),
@@ -174,11 +170,9 @@ fn plain_value(
         ExprKind::Map(entries) => entries
             .iter()
             .all(|(k, v)| plain_value(checker, k, reads) && plain_value(checker, v, reads)),
-        ExprKind::RecordCreate { fields, .. }
-        | ExprKind::AnonRecord {
-            spread: None,
-            fields,
-        } => fields.iter().all(|(_, e)| plain_value(checker, e, reads)),
+        ExprKind::RecordCreate { fields, .. } => {
+            fields.iter().all(|(_, e)| plain_value(checker, e, reads))
+        }
         ExprKind::Call(callee, args) => {
             checker.is_syntactic_value(expr) && {
                 reads.push(callee.res);
@@ -244,12 +238,6 @@ impl TypeChecker {
                 };
                 for field in &fields {
                     self.parts_shown(&self.apply(field), true, parts);
-                }
-            }
-            Type::AnonRecord { fields, tail } => {
-                parts.outside |= !declared && !matches!(tail, RowTail::Closed);
-                for field in fields.values() {
-                    self.parts_shown(field, declared, parts);
                 }
             }
             Type::List(t) | Type::Set(t) | Type::Channel(t) => self.parts_shown(t, declared, parts),

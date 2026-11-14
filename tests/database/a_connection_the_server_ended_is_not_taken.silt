@@ -1,9 +1,9 @@
 -- The server ends the session of a pooled connection while the
 -- connection is idle in the pool (here a second pool of the program
 -- terminates it, 20 times over). The next statement on the pool does
--- not get that connection, whose end it would answer with an error: the
--- pool checks the connection it takes with a round trip, finds it
--- closed, and opens another.
+-- not answer that connection's end with an error: its first message
+-- (which prepares it, and runs nothing) finds the session ended, and
+-- the statement goes to another connection.
 import env
 import list
 import postgres
@@ -49,7 +49,7 @@ fn round(db: postgres.PgPool, observer: postgres.PgPool) -> Result(String, postg
   match postgres.query(db, "SELECT pg_backend_pid()::int8 AS pid", (), Pid) {
     Ok([row]) when row.pid != pid -> Ok("a new connection")
     Ok(_) -> Ok("the same connection")
-    Err(e) -> Ok("the statement failed: {Error.message(e)}")
+    Err(e) -> Ok("the statement failed: {e}")
   }
 }
 
@@ -59,7 +59,7 @@ fn main() {
       let answers = 1..20 |> list.map { _ ->
         match round(db, observer) {
           Ok(answer) -> answer
-          Err(e) -> "the round failed: {Error.message(e)}"
+          Err(e) -> "the round failed: {e}"
         }
       }
       let other = answers |> list.filter { a -> a != "a new connection" }

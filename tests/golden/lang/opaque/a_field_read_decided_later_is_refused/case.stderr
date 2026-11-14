@@ -1,0 +1,12 @@
+error[type]: cannot read field 'name' of a 'mail.User' outside module 'mail': the type is opaque
+ --> main.silt:9:18
+   |
+ 9 |   let f = { u -> u.name }
+   |                  ^^^^^^ cannot read field 'name' of a 'mail.User' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+
+error[type]: type mismatch: expected a value with a field `name`, got the type `mail.User`
+ --> main.silt:11:18
+    |
+ 11 |   let g = { t -> t.name }
+    |                  ^^^^^^ type mismatch: expected a value with a field `name`, got the type `mail.User`

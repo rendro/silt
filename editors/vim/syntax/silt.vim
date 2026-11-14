@@ -18,7 +18,7 @@ syntax keyword siltConstructor Null Bool Int Float String Array Object
 " names the compiler prints in diagnostics and the names accepted in
 " type-annotation position. Keep in sync with the lock test at
 " tests/editor_grammar_primitives_tests.rs.
-syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Fun Handle Bytes TcpListener TcpStream
+syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Handle Bytes TcpListener TcpStream Regex
 " The record and enum types the builtin modules declare
 " (`silt::module::builtin_module_types`). Lock test at
 " tests/meta/editor_grammar_primitives_tests.rs.
@@ -66,29 +66,26 @@ syntax region siltStringInterp start='{' end='}' contained contains=TOP
 syntax region siltRawString start='"""' end='"""\("\)\@!'
 
 " ── Numbers ─────────────────────────────────────────────────────────
-" Mirrors src/lexer.rs number scanning (scan_number / scan_hex_int /
-" scan_binary_int): hex `0x`/`0X` and binary `0b`/`0B` prefixes, `_`
-" digit separators, and e/E exponents with an optional sign and at
-" least one digit immediately after the (optional) sign. Float
-" patterns are defined AFTER the integer patterns: when two matches
-" start at the same column vim prefers the item defined last, so
-" `1.5` highlights as siltFloat instead of stopping at the leading
-" `1`. Parity lock: tests/editor_grammar_number_literals_tests.rs.
-syntax match siltNumber "\<0[xX][0-9a-fA-F_]\+\>"
-syntax match siltNumber "\<0[bB][01_]\+\>"
-syntax match siltNumber "\<\d[0-9_]*\>"
-syntax match siltFloat "\<\d[0-9_]*[eE][+-]\=\d[0-9_]*\>"
-syntax match siltFloat "\<\d[0-9_]*\.\d[0-9_]*\([eE][+-]\=\d[0-9_]*\)\=\>"
+" Mirrors the one spelling of a number in src/lexer.rs (scan_number,
+" number_spelling): the prefixes `0x` and `0b`, a `_` only between two
+" digits, no leading zero in a decimal number, and an exponent `e`
+" with an optional `-`. Float patterns are defined AFTER the integer
+" patterns: when two matches start at the same column vim prefers the
+" item defined last, so `1.5` highlights as siltFloat instead of
+" stopping at the leading `1`. Parity lock:
+" tests/meta/editor_grammar_number_literals_tests.rs.
+syntax match siltNumber "\<0x[0-9a-fA-F]\(_\=[0-9a-fA-F]\)*\>"
+syntax match siltNumber "\<0b[01]\(_\=[01]\)*\>"
+syntax match siltNumber "\<\(0\|[1-9]\(_\=\d\)*\)\>"
+syntax match siltFloat "\<\(0\|[1-9]\(_\=\d\)*\)e-\=\d\(_\=\d\)*\>"
+syntax match siltFloat "\<\(0\|[1-9]\(_\=\d\)*\)\.\d\(_\=\d\)*\(e-\=\d\(_\=\d\)*\)\=\>"
 
 " ── Operators ───────────────────────────────────────────────────────
 " Multi-character operators are listed first so vim's longest-match
 " rule prefers them over the single-character forms below (e.g. `==`
-" beats `=`, `->` beats `-`, `<=` beats `<`). Within the multi-char
-" group, `...` must appear before `..` so the three-dot spread/rest
-" token wins over the two-dot range token on shared prefix matches.
+" beats `=`, `->` beats `-`, `<=` beats `<`).
 syntax match siltOperator "|>"
 syntax match siltOperator "->"
-syntax match siltOperator "\.\.\."
 syntax match siltOperator "\.\."
 syntax match siltOperator "?"
 syntax match siltOperator "\^"

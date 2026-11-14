@@ -65,12 +65,20 @@ pub(super) struct MethodUse {
     pub(super) selection: Selection,
 }
 
-/// A field name in a record pattern (`x` in `Pt { x }` or `Pt { x: a }`),
-/// with the record type the pattern names.
+/// A field name of a record type, with the type: where the type
+/// declares it (`x` in `type P { x: Int }`), in a record literal or
+/// update (`P { x: 1 }`, `p.{ x: 2 }`), in a read (`p.x`) and in a
+/// record pattern (`P { x: a }`, `P { x }`).
 pub(super) struct FieldUse {
     pub(super) span: Span,
+    /// The record type (through an alias: the record it names).
     pub(super) record: DefId,
     pub(super) field: Symbol,
+    /// The field is written without its value or pattern (`P { x }`):
+    /// the name is also a local's or a definition's.
+    pub(super) punned: bool,
+    /// It is the field's declaration in its type.
+    pub(super) declaration: bool,
 }
 
 /// Every name a module writes that has a meaning, apart from the names
@@ -82,6 +90,16 @@ pub(super) struct Names<'a> {
     pub(super) locals: Vec<LocalName>,
     pub(super) methods: Vec<MethodUse>,
     pub(super) fields: Vec<FieldUse>,
+    /// The field reads on a value whose record type is not known (a
+    /// type error, an anonymous record): the span of the name and the
+    /// name. A field of that name cannot be renamed while one is there,
+    /// since the read may be one of its places.
+    pub(super) unknown_reads: Vec<(Span, Symbol)>,
+    /// The module names written before a dot: `geo` in `geo.mk(1)`, in
+    /// `geo.Pt { x: 1 }`, in a type `geo.Pt`, in a pattern
+    /// `geo.Shape.Circle(r)`, in `where a: geo.Sized`. A name in an
+    /// expression is one only when the resolver took it for a module.
+    pub(super) qualifiers: Vec<crate::ast::Qualifier>,
     /// The names of definitions written as a field without a pattern
     /// or a value: declared by a top-level `let` (`let P { x } = p`), or
     /// used in a record literal or update (`P { x }`).
@@ -89,6 +107,11 @@ pub(super) struct Names<'a> {
     /// The pattern being walked is a top-level `let`'s: its names are
     /// definitions.
     declares: bool,
+    /// The text of the module's file, and its tokens once a record
+    /// literal needs them: where the name of a field written with its
+    /// value is (the tree keeps the value only).
+    text: Option<&'a str>,
+    tokens: Option<Vec<crate::lexer::Tok>>,
 }
 
 /// The definitions the item `item` of `import module.{ item }` in module
@@ -140,7 +163,16 @@ impl<'a> Names<'a> {
             methods: Vec::new(),
             punned: Vec::new(),
             fields: Vec::new(),
+            qualifiers: Vec::new(),
+            unknown_reads: Vec::new(),
             declares: false,
+            text: session
+                .graph()
+                .module(module)
+                .file
+                .and_then(|file| session.sources().get(file))
+                .map(|source| &source.text[..]),
+            tokens: None,
         };
         for decl in &program.decls {
             names.decl(decl);
@@ -159,6 +191,76 @@ impl<'a> Names<'a> {
         {
             self.defs.push(DefUse { span, id });
         }
+    }
+
+    /// The record type `id` names, through an alias: none for an enum
+    /// or anything else.
+    fn record(&self, id: DefId) -> Option<DefId> {
+        let defs = self.table();
+        let id = defs.through_alias(id);
+        let def = defs.get(id);
+        (matches!(def.kind, DefKind::Type(_)) && defs.variants(id).is_empty()).then_some(id)
+    }
+
+    /// The record type of a value of type `ty`, if it is one.
+    fn record_of(&self, ty: Option<&crate::types::Type>) -> Option<DefId> {
+        match ty {
+            Some(crate::types::Type::Generic(ty, _)) => self.record(ty.id.0),
+            _ => None,
+        }
+    }
+
+    /// The field `field` of the record `record` at `span`.
+    fn field(&mut self, span: Span, record: DefId, field: Symbol, punned: bool) {
+        if span.is_in_source() {
+            self.fields.push(FieldUse {
+                span,
+                record,
+                field,
+                punned,
+                declaration: false,
+            });
+        }
+    }
+
+    /// A module name before a dot.
+    fn qualifier(&mut self, qualifier: &Option<crate::ast::Qualifier>) {
+        if let Some(q) = qualifier
+            && q.span.is_in_source()
+        {
+            self.qualifiers.push(*q);
+        }
+    }
+
+    /// Where the name of the field `field` is written in front of its
+    /// value `value` (`x` in `x: 1`), in a record literal or update that
+    /// starts at byte `from`: the last `field :` before the value, as the
+    /// lexer reads the text.
+    fn field_name_span(&mut self, from: u32, field: Symbol, value: &Expr) -> Option<Span> {
+        use crate::lexer::Token;
+        let text = self.text?;
+        let tokens = self.tokens.get_or_insert_with(|| {
+            crate::lexer::Lexer::new(crate::source::FileId::default(), text)
+                .tokenize()
+                .tokens
+        });
+        let before = tokens.partition_point(|tok| tok.span.end <= value.span.start);
+        let tokens = &tokens[..before];
+        for pair in tokens.windows(2).rev() {
+            let [name, colon] = pair else { break };
+            if name.span.start < from {
+                break;
+            }
+            if let (Token::Ident(sym), Token::Colon) = (&name.kind, &colon.kind)
+                && *sym == field
+            {
+                return Some(Span {
+                    file: value.span.file,
+                    ..name.span
+                });
+            }
+        }
+        None
     }
 
     /// A local name at `span`.
@@ -181,6 +283,8 @@ impl<'a> Names<'a> {
         match decl {
             Decl::Fn(f) => self.fn_decl(f),
             Decl::TraitImpl(ti) => {
+                self.qualifier(&ti.trait_module);
+                self.qualifier(&ti.target_module);
                 self.name(ti.trait_name_span, ti.trait_res);
                 self.name(ti.target_type_span, ti.target_res);
                 self.where_clauses(&ti.where_clauses);
@@ -213,7 +317,19 @@ impl<'a> Names<'a> {
             }
             Decl::Type(t) => match &t.body {
                 TypeBody::Record(fields) => {
+                    let defs = self.table();
+                    let record = (defs.of_module(self.module).iter().copied())
+                        .find(|id| defs.get(*id).span == t.name_span);
                     for field in fields {
+                        if let Some(record) = record {
+                            self.fields.push(FieldUse {
+                                span: field.name_span,
+                                record,
+                                field: field.name,
+                                punned: false,
+                                declaration: true,
+                            });
+                        }
                         self.type_expr(&field.ty);
                     }
                 }
@@ -254,6 +370,7 @@ impl<'a> Names<'a> {
 
     fn where_clauses(&mut self, clauses: &[WhereClause]) {
         for clause in clauses {
+            self.qualifier(&clause.trait_module);
             self.name(clause.trait_name_span, clause.trait_res);
             for arg in &clause.trait_args {
                 self.type_expr(arg);
@@ -262,6 +379,7 @@ impl<'a> Names<'a> {
     }
 
     fn trait_ref(&mut self, r: &TraitRef) {
+        self.qualifier(&r.module);
         self.name(r.span, r.res);
         for arg in &r.args {
             self.type_expr(arg);
@@ -270,10 +388,19 @@ impl<'a> Names<'a> {
 
     fn type_expr(&mut self, te: &TypeExpr) {
         match &te.kind {
-            TypeExprKind::Named { name_span, .. } => self.name(*name_span, te.res),
-            TypeExprKind::Generic {
-                name_span, args, ..
+            TypeExprKind::Named {
+                module, name_span, ..
             } => {
+                self.qualifier(module);
+                self.name(*name_span, te.res);
+            }
+            TypeExprKind::Generic {
+                module,
+                name_span,
+                args,
+                ..
+            } => {
+                self.qualifier(module);
                 self.name(*name_span, te.res);
                 for arg in args {
                     self.type_expr(arg);
@@ -291,11 +418,6 @@ impl<'a> Names<'a> {
                 self.type_expr(ret);
             }
             TypeExprKind::SelfType => {}
-            TypeExprKind::AnonRecord { fields, .. } => {
-                for (_, ty) in fields {
-                    self.type_expr(ty);
-                }
-            }
         }
     }
 
@@ -335,6 +457,10 @@ impl<'a> Names<'a> {
             }
             ExprKind::Ident(name) => match expr.res {
                 Some(Res::Local) => self.local(expr.span, *name, false, false),
+                Some(Res::Module(_)) => self.qualifier(&Some(crate::ast::Qualifier {
+                    name: *name,
+                    span: expr.span,
+                })),
                 res => self.name(expr.span, res),
             },
             ExprKind::FieldAccess(receiver, field, field_span) => {
@@ -343,8 +469,13 @@ impl<'a> Names<'a> {
                 // field access is its receiver's.) After a trait
                 // (`Sized.size`) the name is the method the checker
                 // selected; on a value it is a field.
+                // (A record literal names its type too, `Pt { x: 1 }.x`,
+                // but it is a value: `.x` behind it is a field.)
                 let qualified = match receiver.res {
                     Some(Res::Module(_)) => true,
+                    Some(Res::Def(_)) if matches!(receiver.kind, ExprKind::RecordCreate { .. }) => {
+                        false
+                    }
                     Some(Res::Def(id)) => self.table().get(id).is_type(),
                     Some(Res::Local | Res::Error) | None => false,
                 };
@@ -380,6 +511,12 @@ impl<'a> Names<'a> {
                         name: *field,
                         selection,
                     });
+                } else if let Some(Selection::Field | Selection::FieldCall) = expr.sel
+                    && let Some(record) = self.record_of(receiver.ty.as_ref())
+                {
+                    self.field(*field_span, record, *field, false);
+                } else if field_span.is_in_source() {
+                    self.unknown_reads.push((*field_span, *field));
                 }
                 self.expr(receiver);
             }
@@ -412,29 +549,29 @@ impl<'a> Names<'a> {
                 self.expr(body);
             }
             ExprKind::RecordCreate {
+                module,
                 name_span,
                 fields,
                 punned,
                 ..
             } => {
+                self.qualifier(module);
                 self.name(*name_span, expr.res);
-                self.field_values(fields, punned);
+                let record = match expr.res {
+                    Some(Res::Def(id)) => self.record(id),
+                    _ => self.record_of(expr.ty.as_ref()),
+                };
+                self.field_values(record, name_span.end, fields, punned);
             }
             ExprKind::RecordUpdate {
-                expr: record,
+                expr: base,
                 fields,
                 punned,
             } => {
-                self.expr(record);
-                self.field_values(fields, punned);
-            }
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(spread) = spread {
-                    self.expr(spread);
-                }
-                for (_, value) in fields {
-                    self.expr(value);
-                }
+                self.expr(base);
+                let record =
+                    (self.record_of(base.ty.as_ref())).or_else(|| self.record_of(expr.ty.as_ref()));
+                self.field_values(record, base.span.start, fields, punned);
             }
             ExprKind::Match {
                 expr: scrutinee,
@@ -516,6 +653,12 @@ impl<'a> Names<'a> {
                 args,
                 ..
             } => {
+                // (A module's name is lower-case, an enum's is not.)
+                for segment in qualifier {
+                    if resolve_sym(segment.name).starts_with(|c: char| c.is_ascii_lowercase()) {
+                        self.qualifier(&Some(*segment));
+                    }
+                }
                 self.name(*name_span, pattern.res);
                 // `m.Shape.Circle(r)`, `Shape.Circle(r)`: the segment
                 // that names the variant's enum.
@@ -532,24 +675,21 @@ impl<'a> Names<'a> {
                 }
             }
             PatternKind::Record {
-                name_span, fields, ..
+                module,
+                name_span,
+                fields,
+                ..
             } => {
+                self.qualifier(module);
                 self.name(*name_span, pattern.res);
-                if let Some(Res::Def(record)) = pattern.res {
-                    self.fields
-                        .extend(fields.iter().map(|(field, span, _)| FieldUse {
-                            span: *span,
-                            record,
-                            field: *field,
-                        }));
+                if let Some(Res::Def(record)) = pattern.res
+                    && let Some(record) = self.record(record)
+                {
+                    for (field, span, sub) in fields {
+                        self.field(*span, record, *field, sub.is_none());
+                    }
                 }
                 self.field_patterns(fields);
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                self.field_patterns(fields);
-                if let Some((name, span)) = rest {
-                    self.local(*span, *name, true, false);
-                }
             }
             PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
                 for p in pats {
@@ -589,22 +729,41 @@ impl<'a> Names<'a> {
         }
     }
 
-    /// The fields of a record literal or update: `{ x: e }` is `e`, the
-    /// shorthand `{ x }` uses `x`, and another name for it is written
-    /// behind the field, `{ x: y }`.
-    fn field_values(&mut self, fields: &[(Symbol, Expr)], punned: &[Symbol]) {
+    /// The fields of a literal or an update of the record `record`,
+    /// which starts at byte `from`: `{ x: e }` is the field `x` and `e`,
+    /// the shorthand `{ x }` is the field `x` and a use of `x`; another
+    /// name for that is written behind the field, `{ x: y }`.
+    fn field_values(
+        &mut self,
+        record: Option<DefId>,
+        from: u32,
+        fields: &[(Symbol, Expr)],
+        punned: &[Symbol],
+    ) {
         for (field, value) in fields {
             match &value.kind {
-                ExprKind::Ident(name) if punned.contains(field) => match value.res {
-                    Some(Res::Local) => self.local(value.span, *name, false, true),
-                    res => {
-                        if matches!(res, Some(Res::Def(_))) {
-                            self.punned.push(value.span);
-                        }
-                        self.name(value.span, res);
+                ExprKind::Ident(name) if punned.contains(field) => {
+                    if let Some(record) = record {
+                        self.field(value.span, record, *field, true);
                     }
-                },
-                _ => self.expr(value),
+                    match value.res {
+                        Some(Res::Local) => self.local(value.span, *name, false, true),
+                        res => {
+                            if matches!(res, Some(Res::Def(_))) {
+                                self.punned.push(value.span);
+                            }
+                            self.name(value.span, res);
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(record) = record
+                        && let Some(span) = self.field_name_span(from, *field, value)
+                    {
+                        self.field(span, record, *field, false);
+                    }
+                    self.expr(value);
+                }
             }
         }
     }

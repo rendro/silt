@@ -158,11 +158,6 @@ pub fn opaque_type_arity(name: &str) -> Option<usize> {
 /// parameter): `TypeOf(Pt)`, a prelude type.
 pub const TYPE_OF: &str = "TypeOf";
 
-/// The dispatch key of an anonymous record type, which no impl can
-/// target: `type '<anon>' does not implement trait 'T'`. A builtin type
-/// no program can name.
-pub const ANON_RECORD: &str = "<anon>";
-
 /// Every builtin type, with the builtin module that declares it (`None`
 /// for the prelude), in the order of their ids: the `k`th is
 /// `TypeId(DefId(k))`. The builtin definitions begin with them, so their
@@ -211,7 +206,6 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
         for (name, _) in crate::builtins::registry::PRELUDE_OPAQUE {
             add(name, None);
         }
-        add(ANON_RECORD, None);
         for module in &registry.modules {
             for name in of_module(module) {
                 add(name, Some(module.name));
@@ -226,7 +220,6 @@ pub const PRELUDE_TRAITS: &[&str] = &[
     "Compare",
     "Display",
     "Equal",
-    "Error",
     "Hash",
     "Number",
     "Functor",
@@ -261,15 +254,13 @@ pub fn builtin_trait_of_id(id: DefId) -> Option<(&'static str, Option<&'static s
 }
 
 /// The builtin trait whose method `method` is (`display` of Display,
-/// `message` of Error, `encode` of json.Encode); `None` for any other
-/// name.
+/// `encode` of json.Encode); `None` for any other name.
 pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
     let name = match method {
         "display" => "Display",
         "compare" => "Compare",
         "equal" => "Equal",
         "hash" => "Hash",
-        "message" => "Error",
         "encode" => "Encode",
         "decode" => "Decode",
         _ => return None,
@@ -285,9 +276,8 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
 /// and `m.pure(x)` have no value of the type to find its impl by.
 /// (An operator on numbers is still found by the value: the VM's
 /// arithmetic reads it.)
-pub const VALUE_DRIVEN_TRAITS: &[&str] = &[
-    "Compare", "Display", "Equal", "Error", "Hash", "Encode", "Decode",
-];
+pub const VALUE_DRIVEN_TRAITS: &[&str] =
+    &["Compare", "Display", "Equal", "Hash", "Encode", "Decode"];
 
 /// Whether a value of a type with the trait `t` is passed with the
 /// trait's dictionary: a trait a program declares, or a builtin one that

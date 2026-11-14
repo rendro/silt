@@ -25,7 +25,7 @@
 //! number of arguments (e.g. `List(a)` → `Some(1)`, `Map(k, v)` →
 //! `Some(2)`), `Some(0)` for primitives that take no parameters
 //! (`Int`, `Bool`, etc.), and `None` for variadic / unspecified
-//! shapes (`Tuple`, `Fn`, `Fun`, `Handle`). The typechecker only
+//! shapes (`Tuple`, `Fn`, `Handle`). The typechecker only
 //! consults `arity` when validating fixed-arity trait-impl targets;
 //! the variadic shapes do not yet participate in that check.
 
@@ -36,7 +36,7 @@ pub enum BuiltinKind {
     /// `Bool`, `String` and the unit type `()`.
     Primitive,
     /// Parameterized container, callable, or resource type: `List`,
-    /// `Map`, `Set`, `Channel`, `Tuple`, `Fn`, `Fun`, `Handle`.
+    /// `Map`, `Set`, `Channel`, `Tuple`, `Fn`, `Handle`.
     Container,
 }
 
@@ -48,7 +48,7 @@ pub struct BuiltinType {
     pub name: &'static str,
     /// Number of type arguments. `Some(n)` for fixed-arity entries
     /// (primitives use `Some(0)`); `None` for variadic shapes
-    /// (`Tuple`, `Fn`, `Fun`, `Handle`).
+    /// (`Tuple`, `Fn`, `Handle`).
     pub arity: Option<u32>,
     /// Whether this entry is a scalar primitive or a parameterized
     /// container.
@@ -120,11 +120,6 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
         kind: BuiltinKind::Container,
     },
     BuiltinType {
-        name: "Fun",
-        arity: None,
-        kind: BuiltinKind::Container,
-    },
-    BuiltinType {
         name: "Handle",
         arity: None,
         kind: BuiltinKind::Container,
@@ -147,6 +142,12 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
     },
     BuiltinType {
         name: "TcpStream",
+        arity: Some(0),
+        kind: BuiltinKind::Container,
+    },
+    // A compiled pattern of the regex module (`regex.compile`).
+    BuiltinType {
+        name: "Regex",
         arity: Some(0),
         kind: BuiltinKind::Container,
     },

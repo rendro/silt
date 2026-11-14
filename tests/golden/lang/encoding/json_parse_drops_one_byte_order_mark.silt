@@ -1,0 +1,23 @@
+-- json.parse drops one byte order mark (U+FEFF) before the document, as
+-- toml.parse and csv.parse do; a syntax error's byte is counted from the
+-- start of the text, the mark included, as theirs is. A second mark, or
+-- one after a space, is no JSON.
+import csv
+import json
+import toml
+
+type P { a: Int }
+
+fn main() {
+  println(json.parse("\u{feff}1", json.Value))
+  println(json.parse("\u{feff}\{\"a\": 1}", P))
+  println(json.parse("\u{feff}[1, 2]", List(Int)))
+  println(json.parse("\u{feff}\{\"a\": x}", P))
+  println(json.parse("\{\"a\": x}", P))
+  println(json.parse("\u{feff}\u{feff}1", json.Value))
+  println(json.parse(" \u{feff}1", json.Value))
+  -- The same in toml and csv.
+  println(toml.parse("\u{feff}a = 1", P))
+  println(toml.parse_map("\u{feff}= =", Int))
+  println(csv.parse("\u{feff}a\n1\n", P))
+}

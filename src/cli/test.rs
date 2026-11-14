@@ -11,7 +11,10 @@ use silt::source::SourceMap;
 use silt::vm::{Exit, Vm};
 
 use crate::cli::help::test_usage_banner;
-use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry, package_test_files};
+use crate::cli::paths::{
+    FILE_OR_DIRECTORY, PathArg, ProgramFiles, door_diagnostics, open_entry, package_test_files,
+    path_arg, refuse_path,
+};
 use crate::cli::run::render_runtime_error;
 
 /// Dispatch `silt test [--filter <pat>] [path]`.
@@ -58,9 +61,10 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("  --watch, -w         Re-run on file changes");
             println!();
             println!("Auto-discovery: when no file is given, recursively runs tests");
-            println!("from files matching *_test.silt. In a package, it first checks");
-            println!("the package as 'silt check' does, and runs no test when the");
-            println!("package has an error.");
+            println!("from files matching *_test.silt; a directory given is searched");
+            println!("the same way. In a package (also when the path given is in one),");
+            println!("it first checks the package as 'silt check' does, and runs no test");
+            println!("when the package has an error.");
             process::exit(0);
         } else if args[i].starts_with('-') {
             // Unknown flag — don't silently treat as a filename.
@@ -130,14 +134,16 @@ fn report_diagnostics(
     true
 }
 
-/// A `silt test` given no path, in a package, checks the package first
-/// as `silt check` does (its manifest, its lock and every module of
-/// `src/`; the test files are checked as they are run): a package that
-/// does not check fails the run before a test runs, also where no test
-/// file imports what is broken. Its errors are shown; its warnings are
-/// left to `silt check`. Outside a package there is nothing to check.
-fn check_package_first() {
-    let files = match crate::cli::check::package_files() {
+/// A `silt test` in a package checks the package first as `silt check`
+/// does (its manifest, its lock and every module of `src/`; the test
+/// files are checked as they are run): a package that does not check
+/// fails the run before a test runs, also where no test file imports
+/// what is broken. The package is the one the directory `dir` is in:
+/// the working directory's, or that of the path given. Its errors are
+/// shown; its warnings are left to `silt check`. Outside a package there
+/// is nothing to check.
+fn check_package_first(dir: &Path) {
+    let files = match crate::cli::check::package_files_in(dir) {
         Ok(Some(files)) => files,
         Ok(None) => return,
         Err(()) => process::exit(1),
@@ -174,19 +180,40 @@ fn check_package_first() {
 
 fn run_tests(file: Option<&str>, filter: Option<String>) {
     silt::intern::reset();
-    let paths: Vec<String> = if let Some(f) = file {
-        let p = Path::new(f);
-        if p.is_dir() {
-            // silt test dir/ — find all test files in directory recursively
-            package_test_files(p)
-        } else {
-            // silt test file.silt — single file
-            vec![f.to_string()]
+    // The path given is what the five commands that take one make of
+    // it (`paths::path_arg`). The package it is in (or the working
+    // directory is in) is checked first.
+    let paths: Vec<String> = match file.map(path_arg) {
+        // silt test dir/ — find all test files in directory recursively
+        Some(PathArg::Package(dir) | PathArg::Dir(dir)) => {
+            check_package_first(Path::new(&dir));
+            package_test_files(Path::new(&dir))
         }
-    } else {
+        // silt test file.silt — single file
+        Some(PathArg::File(f)) => {
+            let dir = Path::new(&f).parent().filter(|d| !d.as_os_str().is_empty());
+            let dir = dir.unwrap_or(Path::new("."));
+            // A file reached through a link (to the file, or to a
+            // directory on its way) is run in the package of the file it
+            // leads to (`open_entry`), so that package is checked. Where
+            // the path as given finds the same package, it is looked for
+            // from there, so that its files are shown as given.
+            let real = silt::source::canonical_path(Path::new(&f));
+            let package_of = |dir: &Path| {
+                silt::manifest::Manifest::find(dir).map(|root| silt::source::canonical_path(&root))
+            };
+            match real.parent() {
+                Some(real) if package_of(dir) != package_of(real) => check_package_first(real),
+                _ => check_package_first(dir),
+            }
+            vec![f]
+        }
+        Some(PathArg::NotSilt(f)) => refuse_path("test", &f, FILE_OR_DIRECTORY),
         // silt test — find all test files in current directory recursively
-        check_package_first();
-        package_test_files(Path::new("."))
+        None => {
+            check_package_first(Path::new("."));
+            package_test_files(Path::new("."))
+        }
     };
 
     if paths.is_empty() {

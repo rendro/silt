@@ -1,0 +1,60 @@
+> references 24:10
+main.silt:23:10-23:11
+main.silt:24:10-24:11
+main.silt:30:16-30:17
+main.silt:34:21-34:22
+main.silt:35:12-35:13
+main.silt:37:16-37:17
+main.silt:37:29-37:30
+main.silt:37:39-37:40
+main.silt:37:53-37:54
+main.silt:38:42-38:43
+main.silt:38:55-38:56
+shapes.silt:2:3-2:4
+shapes.silt:16:8-16:9
+shapes.silt:20:7-20:8
+shapes.silt:20:12-20:13
+> rename 24:10 left
+main.silt:23:10-23:11 => left: x
+main.silt:24:10-24:11 => left
+main.silt:30:16-30:17 => left: x
+main.silt:34:21-34:22 => left
+main.silt:35:12-35:13 => left
+main.silt:37:16-37:17 => left
+main.silt:37:29-37:30 => left
+main.silt:37:39-37:40 => left
+main.silt:37:53-37:54 => left
+main.silt:38:42-38:43 => left
+main.silt:38:55-38:56 => left
+shapes.silt:2:3-2:4 => left
+shapes.silt:16:8-16:9 => left
+shapes.silt:20:7-20:8 => left
+shapes.silt:20:12-20:13 => left
+> references 33:34
+main.silt:31:18-31:19
+main.silt:33:34-33:35
+main.silt:38:20-38:21
+main.silt:38:33-38:34
+shapes.silt:7:3-7:4
+> rename 33:34 w
+error: `x` cannot be renamed to `w`: `Size` already has a field `w`
+> rename 24:10 y
+error: `x` cannot be renamed to `y`: `Pt` already has a field `y`
+> prepare-rename 34:21
+34:21-34:22
+> definition 34:21
+shapes.silt:2:3-2:4
+> highlight 36:24
+23:13-23:14
+24:16-24:17
+30:19-30:20
+35:19-35:20
+36:24-36:25
+37:22-37:23
+37:45-37:46
+38:48-38:49
+> rename 23:10 n
+main.silt:23:10-23:11 => x: n
+main.silt:23:23-23:24 => n
+> definition 30:16
+main.silt:29:7-29:8

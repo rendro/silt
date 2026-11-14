@@ -19,8 +19,7 @@
 //!
 //! A record is of its type: two records are equal if they are of one
 //! type and their fields are equal, and records of one type are in the
-//! order of their fields as the type declares them. An anonymous record
-//! is not a declared one of the same fields.
+//! order of their fields as the type declares them.
 //!
 //! A closure is of its function: two closures are equal if they run
 //! one `Function` and their captures are equal, so a task's own copy of
@@ -73,6 +72,7 @@ fn rank(value: &Value) -> u8 {
         Value::PrimitiveDescriptor(_) => 20,
         Value::HostFn(_) => 21,
         Value::Dict(_) => 22,
+        Value::Regex(_) => 23,
     }
 }
 
@@ -111,7 +111,7 @@ fn cmp_heads(a: &Value, b: &Value) -> Ordering {
         (Value::Variant(a), Value::Variant(b)) => {
             (a.type_id(), a.ordinal()).cmp(&(b.type_id(), b.ordinal()))
         }
-        (Value::Record(a), Value::Record(b)) => cmp_record_types(a.ty(), b.ty()),
+        (Value::Record(a), Value::Record(b)) => a.type_id().cmp(&b.type_id()),
         _ => cmp_other_heads(a, b),
     }
 }
@@ -126,6 +126,8 @@ fn cmp_other_heads(a: &Value, b: &Value) -> Ordering {
         (Value::Handle(a), Value::Handle(b)) => a.id.cmp(&b.id),
         (Value::TcpListener(a), Value::TcpListener(b)) => a.id.cmp(&b.id),
         (Value::TcpStream(a), Value::TcpStream(b)) => a.id.cmp(&b.id),
+        // A regex: its pattern text.
+        (Value::Regex(a), Value::Regex(b)) => a.pattern.cmp(&b.pattern),
         // A closure: which function it runs (two copies of one closure
         // run the one `Function`), then its captures, which are its
         // parts.
@@ -152,24 +154,6 @@ fn dict_key(dict: &crate::bytecode::dict::Dict) -> (u32, usize) {
             (built.template.index, Arc::as_ptr(built) as usize)
         }
     }
-}
-
-/// The order of the types of two records: by the types' ids, and for
-/// two anonymous records, whose types share one id, by their field
-/// names.
-#[inline]
-fn cmp_record_types(a: &Arc<TypeInfo>, b: &Arc<TypeInfo>) -> Ordering {
-    if Arc::ptr_eq(a, b) {
-        return Ordering::Equal;
-    }
-    a.id.cmp(&b.id).then_with(|| match a.is_anon() {
-        true => field_names(a).cmp(field_names(b)),
-        false => Ordering::Equal,
-    })
-}
-
-fn field_names(ty: &TypeInfo) -> impl Iterator<Item = &str> {
-    ty.fields().iter().map(|(name, _)| &**name)
 }
 
 /// The head's part of a hash: its rank, then what it holds.
@@ -201,6 +185,7 @@ fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
         }
         Value::TcpListener(listener) => listener.id.hash(state),
         Value::TcpStream(stream) => stream.id.hash(state),
+        Value::Regex(re) => re.pattern.hash(state),
         Value::BuiltinFn(id) => id.hash(state),
         Value::HostFn(host) => host.name.hash(state),
         Value::VariantConstructor(tag) => tag.hash(state),

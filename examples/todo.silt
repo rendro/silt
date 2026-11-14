@@ -14,17 +14,17 @@ type Todo {
   done: Bool,
 }
 
-fn next_id(todos) {
+fn next_id(todos: List(Todo)) {
   todos |> list.fold(0) { acc, t -> int.max(acc, t.id) } |> { n -> n + 1 }
 }
 
-fn add_todo(todos, text) {
+fn add_todo(todos: List(Todo), text) {
   let id = next_id(todos)
   let todo = Todo { id: id, text: text, done: false }
   list.append(todos, todo)
 }
 
-fn mark_done(todos, id) {
+fn mark_done(todos: List(Todo), id) {
   todos
     |> list.map { t ->
       match t.id == id {
@@ -34,11 +34,11 @@ fn mark_done(todos, id) {
     }
 }
 
-fn remove_todo(todos, id) {
+fn remove_todo(todos: List(Todo), id) {
   todos |> list.filter { t -> t.id != id }
 }
 
-fn show_todos(todos) {
+fn show_todos(todos: List(Todo)) {
   match list.length(todos) {
     0 -> println("  (no todos)")
     _ -> todos
@@ -52,11 +52,11 @@ fn show_todos(todos) {
   }
 }
 
-fn save_todos(todos, path) {
+fn save_todos(todos: List(Todo), path) {
   let content = json.stringify(todos)
   match io.write_file(path, content) {
     Ok(_) -> println("  Saved {list.length(todos)} todo(s) to {path}")
-    Err(e) -> println("  Error saving: {Error.message(e)}")
+    Err(e) -> println("  Error saving: {e}")
   }
 }
 
@@ -73,13 +73,13 @@ fn load_todos(path) {
           todos
         }
         Err(e) -> {
-          println("  Error parsing: {Error.message(e)}")
+          println("  Error parsing: {e}")
           []
         }
       }
     }
     Err(e) -> {
-      println("  Error loading: {Error.message(e)}")
+      println("  Error loading: {e}")
       []
     }
   }

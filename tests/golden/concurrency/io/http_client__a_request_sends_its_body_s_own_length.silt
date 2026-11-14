@@ -30,7 +30,7 @@ fn main() {
     println("{method} [{body}] with content-length {length}")
     match http.request(method, url, bytes.from_string(body), #{"Content-Length": length}) {
       Ok(resp) -> println("  the client:  {resp.status}")
-      Err(e) -> println("  the client: {Error.message(e)}")
+      Err(e) -> println("  the client: {e}")
     }
   }
   task.cancel(server)

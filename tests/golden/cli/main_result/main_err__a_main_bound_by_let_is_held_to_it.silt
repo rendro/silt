@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- A `main` bound by `let` is held to the rule of a `fn main`: its error
+-- must have Display.
+-- stderr-contains: error[compile]: the entry point 'main' must return an error that can be shown, but type 'Fn(Int) -> Int' does not implement trait 'Display'
+let main = { -> Err({ x -> x + 1 }) }

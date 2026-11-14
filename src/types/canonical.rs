@@ -209,17 +209,6 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
             rest.iter().map(|t| canonicalize(resolver, t)).collect(),
         ),
 
-        // ── Anonymous structural records ───────────────────────────
-        // Recurse on each field. Tail is preserved as-is — row variables
-        // are inference-internal and unification handles their binding.
-        Type::AnonRecord { fields, tail } => Type::AnonRecord {
-            fields: fields
-                .iter()
-                .map(|(n, t)| (*n, canonicalize(resolver, t)))
-                .collect(),
-            tail: tail.clone(),
-        },
-
         // ── Leaf shapes: identity ──────────────────────────────────
         Type::Int
         | Type::Float
@@ -315,10 +304,6 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Rigid(r) => r.name.to_string(),
         Type::Error => "_".to_string(),
         Type::Never => "Never".to_string(),
-        // Anonymous structural records have no nominal name; use a
-        // dispatch key of their own, for which no impl is ever
-        // registered.
-        Type::AnonRecord { .. } => "<anon>".to_string(),
         // A constructor variable applied: as a variable. A constructor:
         // its head.
         Type::App(..) => "_".to_string(),
@@ -333,21 +318,14 @@ pub fn canonical_name(ty: &Type) -> String {
 }
 
 /// The type a dispatch table knows `ty` by: the type itself, or for a
-/// surface alias of a builtin type, the builtin type, or for a user
-/// alias, the head of the type it stands for.
+/// user alias, the head of the type it stands for.
 ///
-/// - `Fun` -> `Fn` (the surface alias of the function-type name — the
-///   VM dispatches closures under `"Fn"`, so a `trait T for Fun` impl
-///   must register there too).
-/// - Registered user aliases route to the canonical head of their
-///   target: `type Bytes = List(Int)` collapses to `List`; chained
-///   aliases collapse fully via recursion.
+/// Registered user aliases route to the canonical head of their
+/// target: `type Bytes = List(Int)` collapses to `List`; chained
+/// aliases collapse fully via recursion.
 ///
 /// Any other type is its own head.
 pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
-    if ty.is_builtin("Fun") {
-        return TypeRef::builtin("Fn");
-    }
     if let Some(info) = resolver.lookup_alias(ty) {
         let canon_target = canonicalize(resolver, &info.target);
         if let Some(head) = head_of_canon(&canon_target) {
@@ -363,7 +341,7 @@ pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
 /// registration path.
 ///
 /// Returns `None` for shapes that have no nominal head (raw
-/// type-variables, error / never sentinels, anonymous records).
+/// type-variables, error / never sentinels).
 pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
     let builtin = match ty {
         Type::Int => "Int",
@@ -386,12 +364,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
             crate::types::Head::Set => "Set",
             crate::types::Head::Channel => "Channel",
         },
-        Type::App(..)
-        | Type::Var(_)
-        | Type::Rigid(_)
-        | Type::Error
-        | Type::Never
-        | Type::AnonRecord { .. } => return None,
+        Type::App(..) | Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => return None,
     };
     Some(TypeRef::builtin(builtin))
 }
@@ -430,6 +403,7 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
         Value::Handle(_) => kinds.handle,
         Value::TcpListener(_) => kinds.tcp_listener,
         Value::TcpStream(_) => kinds.tcp_stream,
+        Value::Regex(_) => kinds.regex,
         // (No method is found by a dictionary.)
         Value::Dict(_) => kinds.unit,
     }
@@ -454,6 +428,7 @@ struct KindTypes {
     handle: TypeId,
     tcp_listener: TypeId,
     tcp_stream: TypeId,
+    regex: TypeId,
 }
 
 fn kind_types() -> &'static KindTypes {
@@ -477,6 +452,7 @@ fn kind_types() -> &'static KindTypes {
             handle: TypeRef::builtin("Handle").id,
             tcp_listener: TypeRef::builtin("TcpListener").id,
             tcp_stream: TypeRef::builtin("TcpStream").id,
+            regex: TypeRef::builtin("Regex").id,
         }
     })
 }
@@ -529,7 +505,7 @@ mod tests {
             "Set" => Some(Type::Set(Box::new(Type::Int))),
             "Channel" => Some(Type::Channel(Box::new(Type::Int))),
             "Tuple" => Some(Type::Tuple(vec![Type::Int, Type::Int])),
-            "Fn" | "Fun" => Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
+            "Fn" => Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
             // Handle is a runtime-only resource type with no Type
             // variant; it does not participate in canonicalisation.
             "Handle" => None,
@@ -721,10 +697,7 @@ mod tests {
                 continue; // e.g. Handle: no Type variant
             };
             let got = canonical_name(&t);
-            let expected = match b.name {
-                "Fun" => "Fn", // Fn and Fun are surface aliases for Type::Fun
-                other => other,
-            };
+            let expected = b.name;
             assert_eq!(
                 got, expected,
                 "canonical_name mismatch for builtin {} (kind={:?}): got {got:?}, expected {expected:?}",

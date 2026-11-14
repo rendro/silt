@@ -141,19 +141,12 @@ pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) 
                 pattern_binders(part, out);
             }
         }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             for (field, _, sub) in fields {
                 match sub {
                     Some(sub) => pattern_binders(sub, out),
                     None => out.push((*field, pattern.span)),
                 }
-            }
-            if let PatternKind::AnonRecord {
-                rest: Some((rest, _)),
-                ..
-            } = &pattern.kind
-            {
-                out.push((*rest, pattern.span));
             }
         }
         PatternKind::List(elems, rest) => {
@@ -271,6 +264,11 @@ pub(crate) const NO_IF: &str =
 pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> value` arm per \
      line, and last `_ -> value` for when no condition is true";
 
+/// The help of braces of fields where a pattern starts: a record pattern
+/// names its type.
+const RECORD_PATTERN_HELP: &str =
+    "a record pattern starts with the name of its type: `P { x, .. }`";
+
 /// The help of the error of `t.0`: a tuple is taken apart where it is
 /// bound, and a closure's parameter is such a place.
 pub(crate) const TUPLE_INDEX_HELP: &str =
@@ -306,6 +304,13 @@ struct BlockHeader {
     depth: i32,
     /// True while the right operand of a `|>` in the header is parsed.
     in_pipe_rhs: bool,
+    /// The header stands in another header at its depth, or in the
+    /// value of a `when`: `match match f(x) { a -> 1 } { b -> 2 }`, where
+    /// the `{` behind the inner match's arms opens the outer one's, and
+    /// `loop v = match f(x) { a -> a } { b -> b } {`, where the braces
+    /// behind the arms have been a closure given to the match's value.
+    /// Such a match keeps that reading.
+    nested: bool,
 }
 
 /// How a comma-separated list ends (see `Parser::comma_list`).
@@ -411,6 +416,26 @@ pub struct Parser<'src> {
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
     top_level_item: &'static str,
+    /// The depth of the value of the `when` being parsed (see
+    /// `parse_when_value`).
+    when_value_depth: Option<i32>,
+    /// Whether a function at the top level may be a header with no
+    /// body: the signatures of a host module, and the builtin registry
+    /// (see `with_signatures`).
+    signatures: bool,
+}
+
+/// Where a function header is parsed, which says whether it may stand
+/// without a body.
+#[derive(Clone, Copy, PartialEq)]
+enum FnBody {
+    /// A method of a trait declaration, or a signature (see
+    /// `Parser::with_signatures`): the body may be left out.
+    Optional,
+    /// A function at the top level of a file.
+    Needed,
+    /// A method of an impl, which stands in for the trait's default.
+    NeededInImpl,
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
@@ -473,6 +498,8 @@ impl<'src> Parser<'src> {
             depth: 0,
             docs: None,
             top_level_item: "declaration",
+            signatures: false,
+            when_value_depth: None,
         }
     }
 
@@ -482,6 +509,24 @@ impl<'src> Parser<'src> {
     pub fn with_docs(mut self) -> Self {
         self.docs = Some(std::mem::take(&mut self.comments));
         self
+    }
+
+    /// Read a function at the top level that has no body as a
+    /// signature: the text is a host module's signatures, or the builtin
+    /// registry. Anywhere else only a trait declaration's methods may
+    /// leave out the body.
+    pub fn with_signatures(mut self) -> Self {
+        self.signatures = true;
+        self
+    }
+
+    /// How the body of a function at the top level is read.
+    fn top_level_body(&self) -> FnBody {
+        if self.signatures {
+            FnBody::Optional
+        } else {
+            FnBody::Needed
+        }
     }
 
     /// Parse a REPL entry. One that starts with a declaration keyword is
@@ -551,10 +596,13 @@ impl<'src> Parser<'src> {
     /// a header cannot leak the context into the rest of the file.
     fn parse_header_expr(&mut self, kind: HeaderKind) -> Result<Expr> {
         let depth = self.delim_depth_at(self.pos);
+        let nested = self.header.is_some_and(|outer| outer.depth == depth)
+            || self.when_value_depth == Some(depth);
         let prev = self.header.replace(BlockHeader {
             kind,
             depth,
             in_pipe_rhs: false,
+            nested,
         });
         let result = self.parse_expr();
         self.header = prev;
@@ -648,6 +696,19 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Where the current token is, as an error that names it with
+    /// `found` points at it: both colons of a `::`.
+    fn found_span(&self) -> Span {
+        let span = self.span();
+        match self.found().as_str() {
+            "::" => Span {
+                end: span.end + 1,
+                ..span
+            },
+            _ => span,
+        }
+    }
+
     fn at(&self, tok: &Token) -> bool {
         std::mem::discriminant(self.peek()) == std::mem::discriminant(tok)
     }
@@ -732,7 +793,7 @@ impl<'src> Parser<'src> {
         } else {
             let d = Diagnostic::error(
                 Code::ExpectedToken,
-                self.span(),
+                self.found_span(),
                 format!("expected {expected}, found {}", self.found()),
             );
             Err(self.with_line_start_help(d))
@@ -798,6 +859,19 @@ impl<'src> Parser<'src> {
             && matches!(kind(i + 1), Some(Token::Colon))
     }
 
+    /// Whether the `{` at the cursor holds the fields of a record: a
+    /// field name then `,`, `:` or `}` (`{ x, y }`, `{ x }`), not a
+    /// header left open (`fn fa( {`).
+    fn braces_hold_fields(&self) -> bool {
+        let kind = |i: usize| self.tokens.get(i).map(|t| &t.kind);
+        self.at(&Token::LBrace)
+            && matches!(kind(self.pos + 1), Some(t) if matches!(t, Token::Ident(_)) || t.keyword().is_some())
+            && matches!(
+                kind(self.pos + 2),
+                Some(Token::Comma | Token::Colon | Token::RBrace)
+            )
+    }
+
     /// The error for a field named by the keyword at `span`, written
     /// alone, where `what` (a value or a pattern) belongs behind it.
     fn keyword_field_alone(span: Span, keyword: &str, what: &str, example: &str) -> Diagnostic {
@@ -811,19 +885,65 @@ impl<'src> Parser<'src> {
         )
     }
 
-    /// The error for the field `name` of an anonymous record literal,
-    /// at `span`, written without its value.
-    fn anon_field_alone(span: Span, name: Symbol) -> Diagnostic {
-        let name = intern::resolve(name);
-        Diagnostic::error(
-            Code::UnsupportedSyntax,
-            span,
-            format!(
-                "an anonymous record writes each field as `name: value`: write `{name}: {name}`; \
-                 only a record literal with a type name takes a field written alone \
-                 (`P {{ {name} }}`)"
+    /// The error for braces that hold the fields of a record (`{ x: 1 }`,
+    /// `{ x, y }`) where an expression starts, the first field at `span`:
+    /// a record literal starts with its type.
+    fn record_without_a_name(&self, span: Span) -> Diagnostic {
+        // (A name in front of the braces on their line, `point { x: 1 }`,
+        // is written as a type's name, which starts with an uppercase
+        // letter.)
+        let named = match self.pos.checked_sub(1).map(|at| &self.tokens[at].kind) {
+            Some(Token::Ident(name)) if !self.nl_before() => Some(intern::resolve(*name)),
+            _ => None,
+        };
+        let ty = match &named {
+            Some(name) => {
+                let mut chars = name.chars();
+                chars.next().map_or(String::new(), |first| {
+                    first.to_uppercase().chain(chars).collect()
+                })
+            }
+            None => "P".to_string(),
+        };
+        let field = self.source.get(span.start as usize..span.end as usize);
+        let example = match field {
+            Some(field)
+                if self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Colon) =>
+            {
+                format!("{ty} {{ {field}: ... }}")
+            }
+            Some(field) => format!("{ty} {{ {field}, ... }}"),
+            None => format!("{ty} {{ ... }}"),
+        };
+        let message = match named {
+            Some(name) => format!(
+                "'{name}' is no type name: a record literal starts with the name of its type, \
+                 which starts with an uppercase letter, `{example}`"
             ),
-        )
+            None => format!(
+                "a record literal starts with the name of its type, `{example}`; braces alone \
+                 hold a block"
+            ),
+        };
+        Diagnostic::error(Code::UnsupportedSyntax, span, message)
+    }
+
+    /// Report the empty parentheses that `open` starts (the last token
+    /// consumed is their `)`) behind the name `name`: `W()`, a second
+    /// spelling of `W`. `fix` says what to write instead. The parse goes
+    /// on as if they were not there, so nothing else is said of the
+    /// declaration.
+    fn empty_parens(&mut self, open: Span, name: Symbol, fix: &str) {
+        if self.cut_short {
+            return;
+        }
+        let name = intern::resolve(name);
+        let fix = fix.replace("{name}", &name);
+        self.keep_or_count(Diagnostic::error(
+            Code::UnsupportedSyntax,
+            self.close(open),
+            format!("empty parentheses behind `{name}`: {fix}"),
+        ));
     }
 
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
@@ -835,7 +955,7 @@ impl<'src> Parser<'src> {
             }
             _ => Err(Diagnostic::error(
                 Code::ExpectedIdentifier,
-                self.span(),
+                self.found_span(),
                 format!("expected identifier, found {}", self.found()),
             )),
         }
@@ -861,7 +981,7 @@ impl<'src> Parser<'src> {
     ) -> Diagnostic {
         Diagnostic::error(
             Code::UnclosedDelimiter,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected '{closer}' to close {construct}, found {}",
                 self.found()
@@ -946,7 +1066,7 @@ impl<'src> Parser<'src> {
     fn unclosed_list_err(&self, what: &str, open: Span, close: &Token) -> Diagnostic {
         let d = Diagnostic::error(
             Code::UnclosedDelimiter,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected '{close}' or ',' to continue {what}, found {}",
                 self.found()
@@ -970,7 +1090,7 @@ impl<'src> Parser<'src> {
     fn arrow_fn_type_error(&mut self, start: Span, param: &TypeExpr) -> Diagnostic {
         let err = Diagnostic::error(
             Code::UnclosedDelimiter,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected ')' or ',' to continue tuple type, found {}",
                 self.found()
@@ -1055,9 +1175,28 @@ impl<'src> Parser<'src> {
             self.fn_stub = None;
             match self.parse_decl() {
                 Ok(decl) => {
-                    decls.push(decl);
                     if let Some(err) = self.same_line_decl_err() {
+                        decls.push(decl);
                         self.keep_or_count(err);
+                    } else if self.cut_short_by_its_line() {
+                        // The parse of the rest of the line reports it;
+                        // the declaration is a damaged one, of which
+                        // nothing more is said: a function is a recovery
+                        // stub, another declaration binds its names as
+                        // unknown ones.
+                        self.skipped = true;
+                        match decl {
+                            Decl::Fn(mut f) => {
+                                f.is_recovery_stub = true;
+                                f.is_signature_only = false;
+                                f.where_clauses = Vec::new();
+                                f.body = Expr::new(ExprKind::Block(Vec::new()), f.span);
+                                decls.push(Decl::Fn(f));
+                            }
+                            _ => self.names_of_failed(start..self.pos),
+                        }
+                    } else {
+                        decls.push(decl);
                     }
                 }
                 Err(e) => {
@@ -1180,6 +1319,24 @@ impl<'src> Parser<'src> {
     /// that starts a declaration is a second declaration on the line;
     /// any other token (`with`, `5`, `!`, ...) is left to the plain
     /// "expected declaration" error the next `parse_decl` reports.
+    /// Whether the declaration just parsed, which ended in front of the
+    /// current token, was cut short by the rest of its line: a token
+    /// that starts no declaration stands behind it on its line, and the
+    /// declaration does not end with a brace that closes it. `type C =
+    /// A | B`, `fn f() -> Result<Int, String>`, `const X = 1` behind a
+    /// `let`: what the declaration was meant to be is not known.
+    fn cut_short_by_its_line(&self) -> bool {
+        !self.nl_before()
+            && !self.at(&Token::Eof)
+            && !matches!(
+                self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
+                Some(Tok {
+                    kind: Token::RBrace,
+                    ..
+                })
+            )
+    }
+
     fn same_line_decl_err(&self) -> Option<Diagnostic> {
         if self.nl_before() {
             return None;
@@ -1278,26 +1435,7 @@ impl<'src> Parser<'src> {
         match rest.first().map(|tok| &tok.kind) {
             Some(Token::Type) => {
                 names.extend(rest.get(1).and_then(name));
-                // The variants of an enum: the upper-case names that
-                // stand behind a comma or the brace in its braces. (A
-                // type among a variant's fields can be taken for one:
-                // the resolver leaves a name that is declared, imported
-                // or silt's own what it is.)
-                let mut depth = 0;
-                for (i, tok) in rest.iter().enumerate() {
-                    match tok.kind {
-                        Token::LBrace => depth += 1,
-                        Token::RBrace => depth -= 1,
-                        Token::Ident(variant)
-                            if depth == 1
-                                && upper(variant)
-                                && matches!(rest[i - 1].kind, Token::LBrace | Token::Comma) =>
-                        {
-                            names.push(variant);
-                        }
-                        _ => {}
-                    }
-                }
+                Self::variants_of_failed(rest, &mut names);
             }
             // A trait declaration, not an impl (`trait T for X`).
             Some(Token::Trait) => {
@@ -1319,9 +1457,48 @@ impl<'src> Parser<'src> {
                     .filter_map(name)
                     .filter(|name| !upper(*name)),
             ),
+            // A declaration of another language, `const X = 1`, `struct
+            // P {`, `enum C { A, B }`, `def f(`: the name behind its
+            // first word, and the variants in its braces.
+            Some(Token::Ident(_)) => {
+                if let Some(bound) = rest.get(1).and_then(name) {
+                    names.push(bound);
+                    Self::variants_of_failed(rest, &mut names);
+                }
+            }
             _ => {}
         }
         self.unknown.extend(names);
+    }
+
+    /// The variants a failed type declaration `tokens` would have had:
+    /// the upper-case names in its braces that stand behind the brace, a
+    /// comma, or a variant before them that has no comma behind it
+    /// (`{ Circle(Int) Rect(Int, Int) }`, `{ A B }`). (A type among a
+    /// variant's fields can be taken for one: the resolver leaves a name
+    /// that is declared, imported or silt's own what it is.)
+    fn variants_of_failed(tokens: &[Tok], names: &mut Vec<Symbol>) {
+        let upper =
+            |name: Symbol| intern::resolve(name).starts_with(|c: char| c.is_ascii_uppercase());
+        let mut depth = 0;
+        for (i, tok) in tokens.iter().enumerate() {
+            match tok.kind {
+                Token::LBrace => depth += 1,
+                Token::RBrace => depth -= 1,
+                Token::Ident(variant)
+                    if depth == 1
+                        && upper(variant)
+                        && match tokens[i - 1].kind {
+                            Token::LBrace | Token::Comma | Token::RParen => true,
+                            Token::Ident(before) => upper(before),
+                            _ => false,
+                        } =>
+                {
+                    names.push(variant);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// A method of the body of a trait or an impl. One that fails in its
@@ -1333,10 +1510,10 @@ impl<'src> Parser<'src> {
     /// trait or the impl fails with it.) Returns whether the body goes
     /// on. A line in the body that does not start with `fn` is no
     /// method: the error says what such a body holds.
-    fn parse_method(&mut self, methods: &mut Vec<FnDecl>) -> Result<bool> {
+    fn parse_method(&mut self, methods: &mut Vec<FnDecl>, body: FnBody) -> Result<bool> {
         let start = self.pos;
         self.fn_stub = None;
-        match self.parse_fn_decl() {
+        match self.parse_fn_decl(body) {
             Ok(method) => {
                 methods.push(method);
                 Ok(true)
@@ -1422,7 +1599,7 @@ impl<'src> Parser<'src> {
                 self.advance();
                 match self.peek() {
                     Token::Fn => {
-                        let parsed = self.parse_fn_decl();
+                        let parsed = self.parse_fn_decl(self.top_level_body());
                         // The function, or the stub that stands in for
                         // it, is public and starts at its `pub`. If
                         // pub's line carries a doc, that takes
@@ -1546,7 +1723,7 @@ impl<'src> Parser<'src> {
                     "'opaque' needs 'pub': a private type is not seen outside its module at all",
                 ))
             }
-            Token::Fn => Ok(Decl::Fn(self.parse_fn_decl()?)),
+            Token::Fn => Ok(Decl::Fn(self.parse_fn_decl(self.top_level_body())?)),
             Token::Type => Ok(Decl::Type(self.parse_type_decl()?)),
             Token::Trait => self.parse_trait_or_impl(),
             Token::Import => self.parse_import(),
@@ -1561,7 +1738,7 @@ impl<'src> Parser<'src> {
                 }
                 Err(Diagnostic::error(
                     Code::ExpectedDeclaration,
-                    self.span(),
+                    self.found_span(),
                     format!("expected declaration, found {}", self.found()),
                 ))
             }
@@ -1574,7 +1751,7 @@ impl<'src> Parser<'src> {
     /// with an empty body, which the checker trusts for its signature
     /// and does not check, so that uses of the name are not "undefined"
     /// errors of their own.
-    fn parse_fn_decl(&mut self) -> Result<FnDecl> {
+    fn parse_fn_decl(&mut self, body: FnBody) -> Result<FnDecl> {
         let span = self.span();
         let doc = self.doc_for_span(span);
         self.expect(&Token::Fn)?;
@@ -1592,7 +1769,7 @@ impl<'src> Parser<'src> {
             is_signature_only: false,
             doc,
         };
-        match self.parse_fn_rest(&mut decl) {
+        match self.parse_fn_rest(&mut decl, body) {
             Ok((where_clauses, body, is_signature_only)) => {
                 decl.where_clauses = where_clauses;
                 decl.body = body;
@@ -1612,8 +1789,13 @@ impl<'src> Parser<'src> {
 
     /// What follows the name of the function `decl`: its parameters and
     /// return type, which are entered in `decl` as they are read, then
-    /// its where clauses, its body, and whether it has none.
-    fn parse_fn_rest(&mut self, decl: &mut FnDecl) -> Result<(Vec<WhereClause>, Expr, bool)> {
+    /// its where clauses, its body, and whether it has none, which only
+    /// a header read under `FnBody::Optional` may.
+    fn parse_fn_rest(
+        &mut self,
+        decl: &mut FnDecl,
+        body_rule: FnBody,
+    ) -> Result<(Vec<WhereClause>, Expr, bool)> {
         self.fn_header_whole = false;
         decl.params = self.parse_fn_params()?;
         if self.peek() == &Token::Arrow {
@@ -1629,11 +1811,31 @@ impl<'src> Parser<'src> {
             self.fn_body = outer;
             self.bodies -= 1;
             Ok((where_clauses, body?, false))
-        } else {
-            // Abstract method — no body (e.g. trait method declarations).
+        } else if body_rule == FnBody::Optional
+            || !(self.nl_before() || self.at(&Token::RBrace) || self.at(&Token::Eof))
+        {
+            // A method of a trait declaration, or a signature: no body.
             // The Unit placeholder keeps the AST shape uniform; the
-            // is_signature_only flag is the authoritative signal.
+            // is_signature_only flag is the authoritative signal. (A
+            // token on the header's line that starts no body, `fn f() =
+            // 1` or `fn f(): Int`, is a mistake in the header, which the
+            // parse of what follows reports.)
             Ok((where_clauses, self.mk_expr(ExprKind::Unit, decl.span), true))
+        } else {
+            // Said at the header: what follows it may be lines below.
+            let name = intern::resolve(decl.name);
+            let err = Diagnostic::error(
+                Code::ExpectedToken,
+                self.close(decl.span),
+                format!("`{name}` has no body: a function needs a body in braces, `{{ ... }}`"),
+            );
+            Err(match body_rule {
+                FnBody::NeededInImpl => err.with_help(
+                    "only a trait's own methods may leave out the body; to keep the trait's \
+                     default, leave the method out of the impl",
+                ),
+                _ => err.with_help("only a trait's own methods may leave out the body"),
+            })
         }
     }
 
@@ -1706,11 +1908,15 @@ impl<'src> Parser<'src> {
         let start = self.pos;
         self.parse_pattern().map_err(|err| {
             if self.pos == start && err.code == Code::ExpectedPattern {
-                Diagnostic::error(
+                let refused = Diagnostic::error(
                     Code::ExpectedIdentifier,
                     err.span,
                     format!("expected parameter name, found {}", self.found()),
-                )
+                );
+                match self.braces_hold_fields() {
+                    true => refused.with_help(RECORD_PATTERN_HELP),
+                    false => refused,
+                }
             } else {
                 err
             }
@@ -1724,11 +1930,17 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(self.mk_pattern(PatternKind::Ident(name), start))
             }
-            _ => Err(Diagnostic::error(
-                Code::ExpectedIdentifier,
-                self.span(),
-                format!("expected parameter name, found {}", self.found()),
-            )),
+            _ => {
+                let refused = Diagnostic::error(
+                    Code::ExpectedIdentifier,
+                    self.found_span(),
+                    format!("expected parameter name, found {}", self.found()),
+                );
+                Err(match self.braces_hold_fields() {
+                    true => refused.with_help(RECORD_PATTERN_HELP),
+                    false => refused,
+                })
+            }
         }
     }
 
@@ -1764,6 +1976,13 @@ impl<'src> Parser<'src> {
                 ListEnd::Close(&Token::RParen),
                 Self::expect_ident,
             )?;
+            if written.is_empty() {
+                self.empty_parens(
+                    open,
+                    name,
+                    "a type without parameters is declared `type {name}`",
+                );
+            }
             for (param, param_span) in written {
                 let text = intern::resolve(param);
                 if !text.starts_with(char::is_lowercase) {
@@ -1890,12 +2109,16 @@ impl<'src> Parser<'src> {
                 let (name, name_span) = p.expect_ident()?;
                 let fields = if p.at_on_line(&Token::LParen) {
                     let open = p.advance().span;
-                    p.comma_list(
+                    let fields = p.comma_list(
                         "enum variant field list",
                         open,
                         ListEnd::Close(&Token::RParen),
                         Self::parse_type_expr,
-                    )?
+                    )?;
+                    if fields.is_empty() {
+                        p.empty_parens(open, name, "a variant without fields is written `{name}`");
+                    }
+                    fields
                 } else {
                     Vec::new()
                 };
@@ -2029,7 +2252,7 @@ impl<'src> Parser<'src> {
     fn parse_trait_ref(&mut self) -> Result<TraitRef> {
         let (module, name, name_span) = self.parse_qualified_name("trait name")?;
         let args = if self.at_on_line(&Token::LParen) {
-            self.parse_trait_args()?
+            self.parse_trait_args(name)?
         } else {
             Vec::new()
         };
@@ -2044,14 +2267,23 @@ impl<'src> Parser<'src> {
 
     /// The argument list of a trait: `(Int)` in `TryInto(Int)`, `(a, b)`
     /// in `trait Convert(a, b)`.
-    fn parse_trait_args(&mut self) -> Result<Vec<TypeExpr>> {
+    /// The argument list of the trait `name`.
+    fn parse_trait_args(&mut self, name: Symbol) -> Result<Vec<TypeExpr>> {
         let open = self.expect(&Token::LParen)?.span;
-        self.comma_list(
+        let args = self.comma_list(
             "trait argument list",
             open,
             ListEnd::Close(&Token::RParen),
             Self::parse_type_expr,
-        )
+        )?;
+        if args.is_empty() {
+            self.empty_parens(
+                open,
+                name,
+                "write the trait's arguments in them, or `{name}` alone for a trait that takes none",
+            );
+        }
+        Ok(args)
     }
 
     fn parse_trait_or_impl(&mut self) -> Result<Decl> {
@@ -2072,7 +2304,7 @@ impl<'src> Parser<'src> {
         // expression (concrete types, generics, or tyvars from a
         // parameterized impl target).
         let trait_args: Vec<TypeExpr> = if self.at_on_line(&Token::LParen) {
-            self.parse_trait_args()?
+            self.parse_trait_args(name)?
         } else {
             Vec::new()
         };
@@ -2166,7 +2398,7 @@ impl<'src> Parser<'src> {
                 if self.at(&Token::RBrace) {
                     break;
                 }
-                if !self.parse_method(&mut methods)? {
+                if !self.parse_method(&mut methods, FnBody::Optional)? {
                     closed = false;
                     break;
                 }
@@ -2282,7 +2514,7 @@ impl<'src> Parser<'src> {
                 if self.at(&Token::RBrace) {
                     break;
                 }
-                if !self.parse_method(&mut methods)? {
+                if !self.parse_method(&mut methods, FnBody::NeededInImpl)? {
                     closed = false;
                     break;
                 }
@@ -2352,7 +2584,7 @@ impl<'src> Parser<'src> {
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
         // Depth guard mirroring parse_expr_bp / parse_pattern: type-expr
-        // recursion (nested generics, Fn types, anon record types) was
+        // recursion (nested generics, Fn types) was
         // the one unguarded sibling — deep
         // nesting overflowed even the 256MiB silt-main stack.
         self.depth += 1;
@@ -2373,7 +2605,7 @@ impl<'src> Parser<'src> {
         if !self.nl_before() && self.found() == "::" {
             return Err(Diagnostic::error(
                 Code::ExpectedToken,
-                self.span(),
+                self.found_span(),
                 "expected the end of the type, found ::",
             )
             .with_help(
@@ -2475,40 +2707,15 @@ impl<'src> Parser<'src> {
             )?);
             return Ok(self.mk_type(TypeExprKind::Tuple(elems), start));
         }
-        // Anonymous record type: `{name: Type, age: Type}` or open
-        // `{name: Type, ...r}`.
+        // Braces of fields where a type stands: a record type is written
+        // by its name.
         if self.at(&Token::LBrace) {
-            self.advance();
-            let mut tail: Option<(Symbol, Span)> = None;
-            let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-            let fields = self.comma_list(
-                "anon record type",
+            return Err(Diagnostic::error(
+                Code::ExpectedType,
                 start,
-                ListEnd::Close(&Token::RBrace),
-                |p| {
-                    p.nothing_after_rest(tail.is_some(), "...", '}', "an anon record type")?;
-                    if p.at(&Token::DotDotDot) {
-                        let dots = p.advance().span;
-                        // Row variable name (e.g. `r` in `...r`). Required.
-                        let (row, row_span) = p.expect_ident()?;
-                        tail = Some((row, dots.to(row_span)));
-                        return Ok(None);
-                    }
-                    let (fname, fname_span) = p.expect_field_name()?;
-                    p.expect(&Token::Colon)?;
-                    let fty = p.parse_type_expr()?;
-                    if !seen.insert(fname) {
-                        return Err(Diagnostic::error(
-                            Code::DuplicateField,
-                            fname_span,
-                            format!("duplicate field '{}' in anon record type", fname),
-                        ));
-                    }
-                    Ok(Some((fname, fty)))
-                },
-            )?;
-            let fields = fields.into_iter().flatten().collect();
-            return Ok(self.mk_type(TypeExprKind::AnonRecord { fields, tail }, start));
+                "expected a type, found {",
+            )
+            .with_help("a record type is declared with a name, `type P { x: Int }`, and written by it, `P`"));
         }
         let (module, name, name_span) = self.parse_qualified_name("type name")?;
         if module.is_none() && name == intern::intern("Self") {
@@ -2526,6 +2733,15 @@ impl<'src> Parser<'src> {
                 ListEnd::Close(&Token::RParen),
                 Self::parse_type_expr,
             )?;
+            if args.is_empty() {
+                self.empty_parens(
+                    open,
+                    name,
+                    "write the type's arguments in them, or `{name}` alone for a type that takes none",
+                );
+                // (The type stays applied to nothing, which the checker
+                // reads as a type it says nothing more about.)
+            }
             Ok(self.mk_type(
                 TypeExprKind::Generic {
                     module,
@@ -2566,22 +2782,44 @@ impl<'src> Parser<'src> {
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
             if !self.nl_before() && Self::starts_statement(self.peek()) {
-                if !self.at_lowercase_record_literal_brace() {
-                    return Err(self.same_line_err("statement"));
+                if self.at_braced_fields() {
+                    // `point { x: 1 }`: the next statement's parse
+                    // reports the record without a type name.
+                    continue;
                 }
-                self.statements.brace_after_name.push(self.span());
+                let mut err = self.same_line_err("statement");
+                if err.code == Code::MissingNewline && self.at_block_behind_a_name() {
+                    // `task.spawn { work() }`: a block behind a name,
+                    // where a closure without parameters was meant.
+                    err = err.with_help(
+                        "a closure without parameters is written `{ -> ... }`; a block of its \
+                         own starts on a new line",
+                    );
+                }
+                return Err(err);
             }
         }
         Ok(stmts)
     }
 
-    /// True at the `{` of `point { x: 1 }` or `util.pt { x: 1 }`: a
-    /// statement that ended at a name followed by `{` on the same line.
-    /// That is a record literal with a lowercase type name, not two
-    /// statements on one line, so the newline error is skipped and the
-    /// name is left to the typechecker's "undefined variable" (and the
-    /// lowercase type-name error where a `type point` exists).
-    fn at_lowercase_record_literal_brace(&self) -> bool {
+    /// True at a `{` that holds the fields of a record: `{ x: ...` or
+    /// `{ x, ...`.
+    fn at_braced_fields(&self) -> bool {
+        self.at(&Token::LBrace)
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|t| matches!(t.kind, Token::Ident(_)) || t.kind.keyword().is_some())
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|t| &t.kind),
+                Some(Token::Comma | Token::Colon)
+            )
+    }
+
+    /// True at the `{` of `n { ... }` or `task.spawn { ... }`: a
+    /// statement that ended at a name, followed by a block on the same
+    /// line.
+    fn at_block_behind_a_name(&self) -> bool {
         self.at(&Token::LBrace)
             && matches!(
                 self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
@@ -2866,7 +3104,7 @@ impl<'src> Parser<'src> {
             self.advance(); // consume `let`
             let pattern = self.parse_pattern()?;
             self.expect(&Token::Eq)?;
-            let expr = self.parse_expr()?;
+            let expr = self.parse_when_value()?;
             self.expect(&Token::Else)?;
             let else_body = self.parse_block()?;
             return Ok(Stmt::When {
@@ -2877,7 +3115,7 @@ impl<'src> Parser<'src> {
         }
 
         // Boolean form: when <expr> else { <block> }
-        let condition = self.parse_expr()?;
+        let condition = self.parse_when_value()?;
         self.expect(&Token::Else)?;
         let else_body = self.parse_block()?;
         Ok(Stmt::WhenBool {
@@ -2887,6 +3125,17 @@ impl<'src> Parser<'src> {
     }
 
     // ── Expressions (Pratt parser) ───────────────────────────────────
+
+    /// The value of a `when let` or the condition of a `when`. A `match`
+    /// that stands in it at its depth is a nested header (see
+    /// `BlockHeader::nested`), as one in a `loop` header is.
+    fn parse_when_value(&mut self) -> Result<Expr> {
+        let depth = self.delim_depth_at(self.pos);
+        let outer = self.when_value_depth.replace(depth);
+        let result = self.parse_expr();
+        self.when_value_depth = outer;
+        result
+    }
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
         self.parse_expr_bp(0)
@@ -3079,9 +3328,7 @@ impl<'src> Parser<'src> {
                         // `util.Pt { x: 1, y: 2 }` builds the same value as
                         // bare `Pt { x: 1, y: 2 }`, with the qualifier
                         // selecting which module's record type the literal
-                        // is checked against. (This shape once misparsed
-                        // as a field access plus a discarded
-                        // anonymous-record statement.)
+                        // is checked against.
                         //
                         // Gating mirrors the bare `Pt { ... }` atom exactly
                         // (same-line `{`, match-body suppression via the
@@ -3381,31 +3628,28 @@ impl<'src> Parser<'src> {
                 Ok(self.mk_expr(ExprKind::SetLit(elems), span))
             }
             Token::LBrace => {
-                // Could be a trailing closure, an anonymous record
-                // literal, or a block. Disambiguation order:
-                //   1. trailing-closure heuristic (existing) — `{ x -> ... }`
-                //   2. anon-record literal — `{ Ident: ... }` or `{ ...spread, ... }`
-                //   3. block — fallthrough
+                // A trailing closure, `{ x -> ... }`, or a block.
                 if self.is_trailing_closure() {
                     self.parse_trailing_closure_as_lambda()
-                } else if self.is_anon_record_literal() {
-                    self.parse_anon_record_literal()
                 } else if let Some(first) = self.tokens.get(self.pos + 1)
                     && (matches!(first.kind, Token::Ident(_)) || first.kind.keyword().is_some())
                     && matches!(
                         self.tokens.get(self.pos + 2).map(|t| &t.kind),
-                        Some(Token::Comma)
+                        Some(Token::Comma | Token::Colon)
                     )
                 {
-                    // `{ x, ...` starts no block and no closure: an
-                    // anonymous record with a field written alone.
-                    Err(match (&first.kind, first.kind.keyword()) {
-                        (_, Some(keyword)) => {
-                            Self::keyword_field_alone(first.span, keyword, "its value", "value")
-                        }
-                        (Token::Ident(name), None) => Self::anon_field_alone(first.span, *name),
-                        _ => unreachable!("the first token is a name or a keyword"),
-                    })
+                    // `{ x: ...` or `{ x, ...` starts no block and no
+                    // closure: the fields of a record, without its type.
+                    Err(self.record_without_a_name(first.span))
+                } else if let Some(dots) = self.tokens.get(self.pos + 1)
+                    && dots.kind == Token::DotDot
+                {
+                    // `{ ..p, x: 1 }`: no statement starts with `..`.
+                    Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        dots.span,
+                        "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                    ))
                 } else {
                     self.parse_block()
                 }
@@ -3433,7 +3677,7 @@ impl<'src> Parser<'src> {
                 }
                 let d = Diagnostic::error(
                     Code::ExpectedExpression,
-                    self.span(),
+                    self.found_span(),
                     format!("expected expression, found {}", self.found()),
                 );
                 if let Some(help) = self.nested_fn_help() {
@@ -3624,12 +3868,16 @@ impl<'src> Parser<'src> {
                 HeaderKind::LoopInit => true,
                 // A match body has exactly the closure shape
                 // (`{ x -> ... }`), so in a scrutinee the braces are the
-                // match body. The one exception is the right operand of
-                // `|>`, where a closure is allowed as long as something
-                // that can be the rest of the scrutinee, or the match
-                // body, comes after it.
+                // match body, unless another `{` follows them on their
+                // line: then they are the closure of a call and the `{`
+                // is the body (`match list.find(xs) { x -> x > 1 } {`).
+                // (Not in a match that stands in another header, whose
+                // `{` that is.) Behind `|>` a closure is also allowed
+                // where something else that can be the rest of the
+                // scrutinee comes after it.
                 HeaderKind::MatchScrutinee => {
-                    header.in_pipe_rhs && self.scrutinee_continues_after_braces()
+                    !header.nested && self.brace_follows_braces_on_line()
+                        || header.in_pipe_rhs && self.scrutinee_continues_after_braces()
                 }
             },
         }
@@ -3643,13 +3891,19 @@ impl<'src> Parser<'src> {
         self.header_here().is_some()
     }
 
-    /// For closure-shaped braces at the current position: true when the
-    /// token after the matching `}` can continue the expression the
-    /// braces belong to, or open a further block. False when nothing of
-    /// the kind follows: in a match scrutinee the braces then have to be
-    /// the match body itself, as in
-    /// `match xs |> list.first { Some(x) -> x ... }`.
-    fn scrutinee_continues_after_braces(&self) -> bool {
+    /// For the braces at the current position: true when another `{`
+    /// follows their `}` on the same line.
+    fn brace_follows_braces_on_line(&self) -> bool {
+        let next = self.after_braces();
+        next < self.tokens.len()
+            && self.tokens[next].kind == Token::LBrace
+            && !self.starts_line.get(next).copied().unwrap_or(true)
+    }
+
+    /// The index of the token behind the `}` that closes the braces at
+    /// the current position (`tokens.len()` or more if they are not
+    /// closed).
+    fn after_braces(&self) -> usize {
         let inside = self.delim_depth_at(self.pos) + 1;
         let mut close = self.pos + 1;
         while close < self.tokens.len() {
@@ -3662,11 +3916,21 @@ impl<'src> Parser<'src> {
             }
             close += 1;
         }
-        if close >= self.tokens.len() {
+        close + 1
+    }
+
+    /// For closure-shaped braces at the current position: true when the
+    /// token after the matching `}` can continue the expression the
+    /// braces belong to, or open a further block. False when nothing of
+    /// the kind follows: in a match scrutinee the braces then have to be
+    /// the match body itself, as in
+    /// `match xs |> list.first { Some(x) -> x ... }`.
+    fn scrutinee_continues_after_braces(&self) -> bool {
+        let next = self.after_braces();
+        if next > self.tokens.len() {
             // Unclosed braces: leave the report to the closure parser.
             return true;
         }
-        let next = close + 1;
         let crossed_newline = self.starts_line.get(next).copied().unwrap_or(false);
         self.tokens
             .get(next)
@@ -3995,80 +4259,6 @@ impl<'src> Parser<'src> {
 
     // ── Record fields ────────────────────────────────────────────────
 
-    /// Lookahead: is the current `{` the start of an anonymous-record
-    /// literal? Two shapes match:
-    ///   - `{ Ident COLON ... }` — closed anon record literal
-    ///   - `{ DotDotDot ... }` — spread head (extend op `{...other, ...}`)
-    /// Disambiguation runs after `is_trailing_closure()` returned false,
-    /// so the lookahead can be aggressive without needing to defer to
-    /// the closure heuristic.
-    fn is_anon_record_literal(&self) -> bool {
-        if self.peek() != &Token::LBrace {
-            return false;
-        }
-        let i = self.pos + 1;
-        // Spread head is unambiguous.
-        if matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::DotDotDot)) {
-            return true;
-        }
-        // `name COLON`, the name maybe a keyword: an anonymous record.
-        self.field_name_and_colon_at(i)
-    }
-
-    /// Parse `{name: expr, ...}` or `{...spread, name: expr, ...}` after
-    /// the caller has confirmed via `is_anon_record_literal` that the
-    /// current `{` opens an anon-record literal. Consumes the closing
-    /// `}` itself.
-    fn parse_anon_record_literal(&mut self) -> Result<Expr> {
-        let span = self.span();
-        self.expect(&Token::LBrace)?;
-        let mut spread: Option<Box<Expr>> = None;
-        let mut first = true;
-        let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-        let fields = self.comma_list(
-            "anon record literal",
-            span,
-            ListEnd::Close(&Token::RBrace),
-            |p| {
-                let first = std::mem::take(&mut first);
-                if p.at(&Token::DotDotDot) {
-                    if !first {
-                        return Err(Diagnostic::error(
-                            Code::UnsupportedSyntax,
-                            p.span(),
-                            "v1 row polymorphism allows only one spread head per anon record literal",
-                        ));
-                    }
-                    p.advance();
-                    spread = Some(Box::new(p.parse_expr()?));
-                    return Ok(None);
-                }
-                let keyword = p.peek().keyword();
-                let (name, name_span) = p.expect_field_name()?;
-                if !p.at(&Token::Colon) {
-                    return Err(match keyword {
-                        Some(keyword) => {
-                            Self::keyword_field_alone(name_span, keyword, "its value", "value")
-                        }
-                        None => Self::anon_field_alone(name_span, name),
-                    });
-                }
-                p.advance();
-                let value = p.parse_expr()?;
-                if !seen.insert(name) {
-                    return Err(Diagnostic::error(
-                        Code::DuplicateField,
-                        name_span,
-                        format!("duplicate field '{}' in anon record literal", name),
-                    ));
-                }
-                Ok(Some((name, value)))
-            },
-        )?;
-        let fields = fields.into_iter().flatten().collect();
-        Ok(self.mk_expr(ExprKind::AnonRecord { spread, fields }, span))
-    }
-
     /// The braces of a record literal or a record update, at the `{`:
     /// `{ name: expr, ... }`, where a field written `name` alone is
     /// `name: name` (the shorthand of record patterns).
@@ -4109,15 +4299,14 @@ impl<'src> Parser<'src> {
     }
 
     /// The error for an element behind the rest of a pattern (`..`,
-    /// `..tail`, `...rest`) or the row variable of a record type, when
-    /// `seen` says there was one: the rest stands last.
+    /// `..tail`), when `seen` says there was one: the rest stands last.
     fn nothing_after_rest(&self, seen: bool, rest: &str, close: char, list: &str) -> Result<()> {
         if !seen {
             return Ok(());
         }
         Err(Diagnostic::error(
             Code::ExpectedToken,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected '{close}' after `{rest}` in {list}, found {}",
                 self.found()
@@ -4268,6 +4457,14 @@ impl<'src> Parser<'src> {
                 ListEnd::Close(&Token::RParen),
                 Self::parse_pattern,
             )?;
+            if pats.is_empty() {
+                self.empty_parens(
+                    open,
+                    name,
+                    "write a pattern for each field in them, or `{name}` alone for a variant \
+                     without fields",
+                );
+            }
             Ok(mk(PatternKind::Constructor {
                 qualifier,
                 name,
@@ -4285,8 +4482,18 @@ impl<'src> Parser<'src> {
                 |p| {
                     p.nothing_after_rest(has_rest, "..", '}', "a record pattern")?;
                     if p.at(&Token::DotDot) {
-                        p.advance();
+                        let dots = p.advance().span;
                         has_rest = true;
+                        // (`..rest`, `...`: the rest of a record is not
+                        // bound.)
+                        if !p.nl_before() && matches!(p.peek(), Token::Dot | Token::Ident(_)) {
+                            let behind = p.span();
+                            return Err(Diagnostic::error(
+                                Code::UnsupportedSyntax,
+                                Span { end: behind.end, ..dots },
+                                "the rest of a record pattern is `..` alone, `P { x, .. }`: it binds no name",
+                            ));
+                        }
                         return Ok(None);
                     }
                     p.parse_field_pattern().map(Some)
@@ -4307,7 +4514,7 @@ impl<'src> Parser<'src> {
             }
             Ok(mk(PatternKind::Record {
                 module: qualifier.first().copied(),
-                name: Some(name),
+                name,
                 name_span,
                 fields,
                 has_rest,
@@ -4481,32 +4688,12 @@ impl<'src> Parser<'src> {
                     Ok(first)
                 }
             }
-            Token::LBrace => {
-                // Anonymous record pattern: `{name: n, age: a}` or
-                // `{name: n, ...rest}`. Only entered in pattern position
-                // (parse_primary_pattern), so we don't conflict with
-                // block / trailing-closure disambiguation in expression
-                // contexts.
-                self.advance();
-                let mut rest: Option<(Symbol, Span)> = None;
-                let fields = self.comma_list(
-                    "anon record pattern",
-                    start,
-                    ListEnd::Close(&Token::RBrace),
-                    |p| {
-                        p.nothing_after_rest(rest.is_some(), "...", '}', "an anon record pattern")?;
-                        if p.at(&Token::DotDotDot) {
-                            p.advance();
-                            // Named rest binding required (B6: no unnamed rest).
-                            rest = Some(p.expect_ident()?);
-                            return Ok(None);
-                        }
-                        p.parse_field_pattern().map(Some)
-                    },
-                )?;
-                let fields = fields.into_iter().flatten().collect();
-                Ok(mk(PatternKind::AnonRecord { fields, rest }))
-            }
+            Token::LBrace => Err(Diagnostic::error(
+                Code::ExpectedPattern,
+                self.span(),
+                "expected pattern, found {",
+            )
+            .with_help(RECORD_PATTERN_HELP)),
             Token::LBracket => {
                 self.advance(); // consume [
                 let mut rest = None;
@@ -4599,7 +4786,7 @@ impl<'src> Parser<'src> {
             }
             _ => Err(Diagnostic::error(
                 Code::ExpectedPattern,
-                self.span(),
+                self.found_span(),
                 format!("expected pattern, found {}", self.found()),
             )),
         }
@@ -4962,35 +5149,41 @@ fn main() {
     }
 
     /// The brace shapes that the closure-parameter grammar must keep
-    /// apart: a typed closure, a record literal with the same prefix, a
-    /// block holding a tuple, a destructuring closure, a closure whose
-    /// annotation is a function type, and a parameterless closure.
+    /// apart: a typed closure, the fields of a record with the same
+    /// prefix (no type name: refused), a block holding a tuple, a
+    /// destructuring closure, a closure whose annotation is a function
+    /// type, and a parameterless closure.
     #[test]
     fn test_closure_param_brace_disambiguation() {
         let kind_of = |body: &str| -> String {
-            let prog = parse(&format!("fn main() {{\n  {body}\n}}"));
+            let source = format!("fn main() {{\n  {body}\n}}");
+            let tokens = Lexer::new(crate::source::FileId::default(), &source)
+                .tokenize()
+                .checked()
+                .unwrap();
+            let Ok(prog) = Parser::new(tokens, &source).parse_program() else {
+                return "refused".to_string();
+            };
             match &last_expr_of_main(&prog).kind {
                 ExprKind::Lambda { params, .. } => format!(
                     "lambda/{}/{}",
                     params.len(),
                     params.iter().filter(|p| p.ty.is_some()).count()
                 ),
-                ExprKind::AnonRecord { .. } => "record".to_string(),
                 ExprKind::Block(_) => "block".to_string(),
                 other => format!("{other:?}"),
             }
         };
         assert_eq!(kind_of("{ a: Int -> a }"), "lambda/1/1");
-        assert_eq!(kind_of("{ a: 1 }"), "record");
-        assert_eq!(kind_of("{ a: Int }"), "record");
+        assert_eq!(kind_of("{ a: 1 }"), "refused");
+        assert_eq!(kind_of("{ a: Int }"), "refused");
         assert_eq!(kind_of("{ x -> x }"), "lambda/1/0");
         assert_eq!(kind_of("{ (a, b) }"), "block");
         assert_eq!(kind_of("{ (a, b): (Int, Int) -> a }"), "lambda/1/1");
         assert_eq!(kind_of("{ Point { x, y } -> x }"), "lambda/1/0");
-        assert_eq!(kind_of("{ { name, ...rest } -> name }"), "lambda/1/0");
         assert_eq!(kind_of("{ f: Fn(Int) -> Int, x -> f(x) }"), "lambda/2/1");
         assert_eq!(kind_of("{ -> 1 }"), "lambda/0/0");
-        assert_eq!(kind_of("{ a: { v: Int -> v } }"), "record");
+        assert_eq!(kind_of("{ a: { v: Int -> v } }"), "refused");
     }
 
     #[test]
@@ -5454,6 +5647,17 @@ fn main() {
             "A B C E"
         );
         assert_eq!(names("trait T {\n  fn m(self) ->\n}\n"), "T");
+        // A variant behind another without a comma; a declaration of
+        // another language (the name behind its first word).
+        assert_eq!(
+            names("type Shape { Circle(Int) Rect(Int, Int) }\n"),
+            "Circle Int Rect Shape"
+        );
+        assert_eq!(names("const X = 1\n"), "X");
+        assert_eq!(names("enum C { A, B }\n"), "A B C");
+        // A declaration that the rest of its line cuts short.
+        assert_eq!(names("type C = A | B\n"), "C");
+        assert_eq!(names("let x = 1 2\n"), "x");
         assert_eq!(names("trait T for Int {\n  fn m(self) ->\n}\n"), "");
         assert_eq!(names("import geo.{ mk, area, 5 }\n"), "area geo mk");
         // Rejected text in the place of an element is the element.
@@ -5686,7 +5890,7 @@ fn main() {
             ..
         } = arm.pattern.kind
         {
-            assert_eq!(*name, Some(intern::intern("User")));
+            assert_eq!(*name, intern::intern("User"));
             assert_eq!(fields.len(), 2);
             assert_eq!(fields[0].0, intern::intern("name"));
             assert!(fields[0].2.is_none()); // shorthand
@@ -6309,7 +6513,7 @@ fn main() {
             ..
         } = arm.pattern.kind
         {
-            assert_eq!(*name, Some(intern::intern("User")));
+            assert_eq!(*name, intern::intern("User"));
             assert_eq!(fields.len(), 1);
             assert!(has_rest);
         } else {

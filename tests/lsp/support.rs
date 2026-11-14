@@ -120,6 +120,13 @@ impl LspClient {
         panic!("{what}\n--- silt lsp stderr (tail) ---\n{tail}");
     }
 
+    /// Send `bytes` as they are, framing and all: for a message that is
+    /// not well-formed.
+    pub fn send_bytes(&mut self, bytes: &[u8]) {
+        self.stdin.write_all(bytes).expect("write to child stdin");
+        self.stdin.flush().expect("flush child stdin");
+    }
+
     /// Send a raw JSON-RPC message with LSP framing.
     pub fn send_raw(&mut self, msg: &Value) {
         let body = serde_json::to_string(msg).expect("serialize");

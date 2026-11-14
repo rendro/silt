@@ -10,7 +10,7 @@ error[type]: `toml.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`
     |
  27 |   println(toml.parse("x", R))
     |                           ^ `toml.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `R.decode` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
  --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:28:11

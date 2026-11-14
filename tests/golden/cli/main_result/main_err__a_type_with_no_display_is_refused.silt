@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- main's `Err(e)` is shown through Display: an error type that has none
+-- (a function, a channel, a type that holds one with no Display impl)
+-- is refused at main's return type when the program is checked.
+-- stderr-contains: error[compile]: the entry point 'main' must return an error that can be shown, but type 'W' does not implement trait 'Display': variant 'W' payload #1 is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+-- stderr-contains: --> main_err__a_type_with_no_display_is_refused.silt:11:14
+-- stderr-contains: help: main's `Err(e)` is shown as `error: {e}`: return a String, or a type that has Display (by its structure, or by `trait Display for ...`)
+type W { W(Fn(Int) -> Int) }
+
+fn main() -> Result((), W) {
+  Err(W({ x -> x }))
+}

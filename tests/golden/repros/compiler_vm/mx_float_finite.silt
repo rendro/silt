@@ -20,11 +20,11 @@ fn main() {
   show("parse -0.0", float.parse("-0.0"))
   match json.parse("""{"v": 1e999}""", R) {
     Ok(r) -> println("json 1e999: {r.v}")
-    Err(e) -> println("json 1e999: Err {Error.message(e)}")
+    Err(e) -> println("json 1e999: Err {e}")
   }
   match json.parse("""{"v": -0.0}""", R) {
     Ok(r) -> println("json -0.0: {r.v}")
-    Err(e) -> println("json -0.0: Err {Error.message(e)}")
+    Err(e) -> println("json -0.0: Err {e}")
   }
   println("Float.from_int max: {Float.from_int(9223372036854775807)}")
   println("abs min: {int.abs(-9223372036854775807 - 1)}")

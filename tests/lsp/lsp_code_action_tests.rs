@@ -313,27 +313,6 @@ fn main() {
     client.shutdown();
 }
 
-/// `let p = point { x: 1 }` is two statements, and `let _ = ` before the
-/// `{` would not parse: the unused value there has no fix, and a help
-/// that names the likely mistake.
-#[test]
-fn no_discard_quickfix_for_a_brace_behind_a_name() {
-    let source = "type Point {\n  x: Int,\n}\n\nfn main() {\n  let point = Point { x: 0 }\n  let p = point { x: 1 }\n  println(p.x)\n}\n";
-    let mut client = LspClient::spawn();
-    let uri = "file:///tmp/silt_ca_unused_brace.silt";
-    let (unused, offered, fixed) = apply_discard_fixes(&mut client, uri, source);
-    assert_eq!(unused, 1, "the `{{ x: 1 }}` is an unused value");
-    assert_eq!(offered, 0, "no fix is offered");
-    assert_eq!(fixed, source);
-    let diags = client.did_open_and_collect_diagnostics(uri, source);
-    let message = diags[0]["message"].as_str().unwrap_or_default();
-    assert!(
-        message.contains("a record literal's type name starts with an upper-case letter"),
-        "the help names the likely mistake; got {message:?}"
-    );
-    client.shutdown();
-}
-
 #[test]
 fn no_action_when_diagnostic_is_unrelated() {
     let mut client = LspClient::spawn();

@@ -162,14 +162,6 @@ pub(super) fn find_field_in_expr(
 /// Look up a field's type within a record type.
 pub(super) fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
     match ty {
-        // Anonymous structural record (`{ x: Int, y: Int }`). The
-        // typechecker assigns this to bindings whose annotation refers to
-        // a user-declared record type when the literal/initializer is
-        // structurally inferred — without this arm, hover/completion
-        // never see the fields. Tail status doesn't affect lookup of an
-        // explicitly listed field; if the field isn't in `fields` we
-        // simply return `None`.
-        Type::AnonRecord { fields, .. } => fields.get(&field_name).cloned(),
         Type::Tuple(elems) => resolve(field_name)
             .parse::<usize>()
             .ok()
@@ -202,13 +194,10 @@ pub(super) fn get_field_type_resolved(
     }
 }
 
-/// The fields of a record type, each with its type: an anonymous record's
-/// own, a declared record's from the checker's records.
+/// The fields of a declared record type, each with its type, from the
+/// checker's records.
 pub(super) fn record_field_types(ty: &Type, records: &RecordFields) -> Option<Vec<(Symbol, Type)>> {
     match ty {
-        Type::AnonRecord { fields, .. } => {
-            Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
-        }
         Type::Generic(name, _) => records.get(name).cloned(),
         _ => None,
     }
@@ -221,14 +210,6 @@ pub(super) fn record_fields_from_type(
     records: &RecordFields,
 ) -> Option<Vec<(String, Type)>> {
     let fields = match ty {
-        // Anonymous structural record (`{ x: Int, y: Int }`). The
-        // typechecker assigns this shape to bindings whose initializer is
-        // a record literal — even when the binder has an explicit named
-        // type annotation like `let p: Point = { x: 1, y: 2 }`. Listed
-        // fields are surfaced regardless of tail (`Closed` vs row
-        // variable): a row tail only signals "more fields possible",
-        // which the editor can't enumerate, so we report what is known.
-        Type::AnonRecord { fields, .. } => fields.iter().map(|(n, t)| (*n, t.clone())).collect(),
         Type::Generic(name, _) => records.get(name)?.clone(),
         _ => return None,
     };
@@ -243,31 +224,43 @@ mod tests {
     use crate::lsp::testing::checked_program;
     use crate::source::Span;
 
-    /// A closed record type of these fields.
-    fn anon(fields: Vec<(Symbol, Type)>) -> Type {
-        Type::AnonRecord {
-            fields: fields.into_iter().collect(),
-            tail: crate::types::RowTail::Closed,
-        }
+    /// The record types `Outer { inner: Inner }` and `Inner { value:
+    /// Int }`, with the fields a module's analysis gives them.
+    fn records() -> (Type, Type, RecordFields) {
+        let (outer, inner) = (
+            crate::types::TypeRef::test("Outer"),
+            crate::types::TypeRef::test("Inner"),
+        );
+        let inner_ty = Type::Generic(inner, Vec::new());
+        let fields = RecordFields::from([
+            (
+                outer,
+                vec![(crate::intern::intern("inner"), inner_ty.clone())],
+            ),
+            (inner, vec![(crate::intern::intern("value"), Type::Int)]),
+        ]);
+        (Type::Generic(outer, Vec::new()), inner_ty, fields)
     }
 
     // ── get_field_type ────────────────────────────────────────────
 
     #[test]
     fn test_get_field_type_record() {
-        let ty = anon(vec![
-            (crate::intern::intern("name"), Type::String),
-            (crate::intern::intern("age"), Type::Int),
-        ]);
+        let (outer, inner, records) = records();
         assert_eq!(
-            get_field_type(&ty, crate::intern::intern("name")),
-            Some(Type::String)
+            get_field_type_resolved(&outer, crate::intern::intern("inner"), &records),
+            Some(inner.clone())
         );
         assert_eq!(
-            get_field_type(&ty, crate::intern::intern("age")),
+            get_field_type_resolved(&inner, crate::intern::intern("value"), &records),
             Some(Type::Int)
         );
-        assert_eq!(get_field_type(&ty, crate::intern::intern("missing")), None);
+        assert_eq!(
+            get_field_type_resolved(&inner, crate::intern::intern("missing"), &records),
+            None
+        );
+        // (Without the module's records, a record shows no field.)
+        assert_eq!(get_field_type(&inner, crate::intern::intern("value")), None);
     }
 
     #[test]
@@ -292,19 +285,6 @@ mod tests {
     // ── get_field_type: nested records ────────────────────────────
 
     #[test]
-    fn test_get_field_type_missing_field() {
-        let ty = anon(vec![
-            (crate::intern::intern("x"), Type::Float),
-            (crate::intern::intern("y"), Type::Float),
-        ]);
-        assert_eq!(
-            get_field_type(&ty, crate::intern::intern("x")),
-            Some(Type::Float)
-        );
-        assert_eq!(get_field_type(&ty, crate::intern::intern("z")), None);
-    }
-
-    #[test]
     fn test_get_field_type_non_record() {
         assert_eq!(get_field_type(&Type::Int, crate::intern::intern("x")), None);
         assert_eq!(
@@ -319,15 +299,36 @@ mod tests {
     fn test_find_field_single_dot_access() {
         //            0         1         2         3         4         5         6
         //            0123456789012345678901234567890123456789012345678901234567890123456
-        let source = "fn main() { let p = { x: 1, y: 2 }\np.x }";
+        let source = "type P { x: Int, y: Int }\nfn main() { let p = P { x: 1, y: 2 }\np.x }";
         let program = checked_program(source);
+        // The type the checker gave `p`, with the fields of `P`.
+        let Some(Decl::Fn(main)) = program.decls.last() else {
+            panic!("main is the last declaration");
+        };
+        let ExprKind::Block(stmts) = &main.body.kind else {
+            panic!("main has a block");
+        };
+        let Some(Stmt::Expr(access)) = stmts.last() else {
+            panic!("main ends in `p.x`");
+        };
+        let ExprKind::FieldAccess(p, ..) = &access.kind else {
+            panic!("main ends in `p.x`");
+        };
+        let Some(Type::Generic(p_ty, _)) = p.ty.clone() else {
+            panic!("`p` is a `P`");
+        };
+        let fields = vec![
+            (crate::intern::intern("x"), Type::Int),
+            (crate::intern::intern("y"), Type::Int),
+        ];
+        let records = RecordFields::from([(p_ty, fields)]);
 
         // "p.x" — the 'x' field starts after the dot.  Find where "p.x" is
         // in the source and place the cursor on 'x'.
         let px_offset = source.rfind("p.x").unwrap();
         let cursor_on_x = px_offset + 2; // the 'x' in "p.x"
 
-        let result = find_field_type_at_offset(&program, &RecordFields::new(), cursor_on_x);
+        let result = find_field_type_at_offset(&program, &records, cursor_on_x);
         assert!(result.is_some(), "should find field for single-dot access");
         let (name, ty) = result.unwrap();
         assert_eq!(name, "x");
@@ -336,6 +337,7 @@ mod tests {
 
     #[test]
     fn test_find_field_chained_access_rightmost() {
+        let (outer, inner, records) = records();
         // Manually construct a chained field access AST: `d.inner.value`
         // where the source text is "d.inner.value" starting at offset 0.
         //
@@ -357,7 +359,7 @@ mod tests {
         let d_expr = Expr {
             kind: ExprKind::Ident(crate::intern::intern("d")),
             span: at(0, 1),
-            ty: Some(anon(vec![(inner_sym, anon(vec![(value_sym, Type::Int)]))])),
+            ty: Some(outer.clone()),
             res: None,
             sel: None,
             ev: None,
@@ -367,7 +369,7 @@ mod tests {
         let inner_access = Expr {
             kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym, at(2, 7)),
             span: at(0, 7),
-            ty: Some(anon(vec![(value_sym, Type::Int)])),
+            ty: Some(inner.clone()),
             res: None,
             sel: None,
             ev: None,
@@ -387,12 +389,7 @@ mod tests {
         // Cursor on 'v' of "value" — offset 8 in "d.inner.value"
         let cursor_on_value = 8;
         let mut result = None;
-        find_field_in_expr(
-            &outer_access,
-            cursor_on_value,
-            &RecordFields::new(),
-            &mut result,
-        );
+        find_field_in_expr(&outer_access, cursor_on_value, &records, &mut result);
 
         assert!(
             result.is_some(),
@@ -405,6 +402,7 @@ mod tests {
 
     #[test]
     fn test_find_field_chained_access_middle() {
+        let (outer, inner, records) = records();
         // Same chain `d.inner.value`, but cursor on 'i' of "inner" (offset 2).
         // The text is "d.inner.value".
         let at = |start, end| Span {
@@ -419,7 +417,7 @@ mod tests {
         let d_expr = Expr {
             kind: ExprKind::Ident(crate::intern::intern("d")),
             span: at(0, 1),
-            ty: Some(anon(vec![(inner_sym, anon(vec![(value_sym, Type::Int)]))])),
+            ty: Some(outer.clone()),
             res: None,
             sel: None,
             ev: None,
@@ -428,7 +426,7 @@ mod tests {
         let inner_access = Expr {
             kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym, at(2, 7)),
             span: at(0, 7),
-            ty: Some(anon(vec![(value_sym, Type::Int)])),
+            ty: Some(inner.clone()),
             res: None,
             sel: None,
             ev: None,
@@ -446,12 +444,7 @@ mod tests {
         // Cursor on 'i' of "inner" — offset 2 in "d.inner.value"
         let cursor_on_inner = 2;
         let mut result = None;
-        find_field_in_expr(
-            &outer_access,
-            cursor_on_inner,
-            &RecordFields::new(),
-            &mut result,
-        );
+        find_field_in_expr(&outer_access, cursor_on_inner, &records, &mut result);
 
         assert!(
             result.is_some(),
@@ -459,8 +452,7 @@ mod tests {
         );
         let (name, ty) = result.unwrap();
         assert_eq!(name, "inner");
-        // `inner` field type is Record("Inner", ...)
-        // `inner` field type is the record of `value`.
-        assert_eq!(ty, anon(vec![(value_sym, Type::Int)]));
+        // `inner` is an `Inner`.
+        assert_eq!(ty, inner);
     }
 }

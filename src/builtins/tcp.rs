@@ -40,7 +40,7 @@ pub(crate) fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     Value::variant(bv::ERR, [error])
 }
 
-/// What `TcpError`'s `message` says of the variant `tag` with `fields`:
+/// How `TcpError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {

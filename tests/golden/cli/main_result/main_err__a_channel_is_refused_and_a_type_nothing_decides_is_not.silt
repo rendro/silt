@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A channel has no Display: main may not return it as its error. A test
+-- function's error is held to the same rule. An error type that nothing
+-- decides (`Result((), e)` that never fails) is let through.
+-- stderr-contains: error[compile]: the entry point 'main' must return an error that can be shown, but type 'Channel(Int)' does not implement trait 'Display'
+-- stderr-not-contains: helper
+import channel
+
+fn helper() -> Result((), e) {
+  Ok(())
+}
+
+fn main() -> Result((), Channel(Int)) {
+  helper()?
+  Err(channel.new(1))
+}

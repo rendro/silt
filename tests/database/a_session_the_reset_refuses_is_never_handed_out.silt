@@ -1,0 +1,68 @@
+-- Many tasks on a small pool: 25 leave a session the reset refuses (a
+-- statement prepared with `PREPARE`, a temporary table and a setting
+-- beside it, in a transaction), and 25 others look at the session their
+-- statements get. A refused connection is closed by the statement that
+-- takes it next, which takes another, however many of them come one
+-- after the other: none of the lookers sees what another caller left.
+-- (Probe q4 of the reviewer of IO-2.)
+import env
+import list
+import postgres
+import string
+import task
+
+type S { s: String }
+
+fn url() -> String {
+  let url = match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+  match string.contains(url, "?") {
+    true -> "{url}&application_name=silt_refused_case"
+    false -> "{url}?application_name=silt_refused_case"
+  }
+}
+
+fn one(pool: postgres.PgPool, sql: String) -> String {
+  match postgres.query(pool, sql, (), S) {
+    Ok([row]) -> row.s
+    Ok(rows) -> "{rows}"
+    Err(e) -> "Err: {e}"
+  }
+}
+
+fn round(size: Int) {
+  match postgres.connect_with(url(), #{"max_pool_size": size}) {
+    Ok(pool) -> {
+      let look = "SELECT concat_ws(' ', 'prepared:', (SELECT string_agg(name, ',') FROM pg_prepared_statements WHERE from_sql AND name <> 'silt_pool_mark'), 'temp:', (SELECT string_agg(relname, ',') FROM pg_class WHERE relnamespace = pg_my_temp_schema()), 'x:', current_setting('silt.left', true)) AS s"
+      let clean = "prepared: temp: x:"
+      let dirty = 1..25 |> list.map { i ->
+        task.spawn { ->
+          1..4 |> list.each { j ->
+            let _ = postgres.transact(pool) { tx ->
+              let _ = postgres.execute(tx, "CREATE TEMP TABLE IF NOT EXISTS silt_left_by_{i} (n int)", ())?
+              let _ = postgres.execute(tx, "SELECT set_config('silt.left', 'by {i}', false)", ())?
+              let _ = postgres.execute(tx, "PREPARE silt_plan_of_{i}_{j} AS SELECT 1", ())?
+              Ok(1)
+            }
+          }
+        }
+      }
+      let lookers = 1..25 |> list.map { _ ->
+        task.spawn { -> 1..4 |> list.map { _ -> one(pool, look) } }
+      }
+      let seen = lookers |> list.flat_map { t -> task.join(t) }
+      dirty |> list.each { t -> task.join(t) }
+      let bad = seen |> list.filter { s -> s != clean }
+      println("pool of {size}: {list.length(seen)} statements, {list.length(bad)} saw another caller's state")
+      bad |> list.unique |> list.take(3) |> list.each { s -> println("   {s}") }
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e}")
+  }
+}
+
+fn main() {
+  [1, 3] |> list.each { size -> round(size) }
+}

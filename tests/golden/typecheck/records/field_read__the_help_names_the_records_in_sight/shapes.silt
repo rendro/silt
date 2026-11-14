@@ -1,0 +1,2 @@
+pub type Circle { radius: Float }
+type Hidden { radius: Float }

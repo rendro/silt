@@ -281,7 +281,7 @@ fn run_shard(shard: usize) {
         eprintln!("soundness manifest not checked: it needs a build with --all-features");
         return;
     }
-    if std::env::var_os("SILT_GOLDEN_SKIP_VERDICT").is_some_and(|v| v != "0") {
+    if crate::env_switch::on("SILT_GOLDEN_SKIP_VERDICT") {
         eprintln!("soundness manifest not checked: SILT_GOLDEN_SKIP_VERDICT is set");
         return;
     }

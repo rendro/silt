@@ -42,6 +42,6 @@ fn main() {
       println(send_inferred(db, u))
       println(send_it(db, mail.email()))
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

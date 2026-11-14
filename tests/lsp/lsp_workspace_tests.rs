@@ -212,6 +212,65 @@ fn documents_that_are_no_files_import_each_other_and_read_no_disk() {
     client.shutdown();
 }
 
+/// An unsaved buffer whose name has no `.silt` (`untitled:Untitled-1`,
+/// as editors name a new buffer) is analysed as a file outside any
+/// package: its errors are published, hover and formatting answer. A
+/// file document that is no `.silt` file is still left alone. FAIL on
+/// the base commit: the buffer got no diagnostics, hover and formatting
+/// `null`.
+#[test]
+fn an_unsaved_buffer_without_a_silt_name_is_analysed() {
+    let mut client = LspClient::spawn();
+    let uri = "untitled:Untitled-1";
+    let text = "fn main() {\n  let x: Int = \"s\"\n  println(\"{x}\")\n}\n";
+    let published = client.did_open_and_wait(uri, text);
+    let messages: Vec<&str> = published
+        .pointer("/params/diagnostics")
+        .and_then(|d| d.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|d| d.get("message").and_then(|m| m.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        ["type mismatch: expected Int, got String"],
+        "got {published}"
+    );
+    let hover = client.hover(uri, 1, 6);
+    assert!(
+        hover.pointer("/result/contents/value").is_some(),
+        "got {hover}"
+    );
+    let formatted = client.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": {"uri": uri},
+            "options": {"tabSize": 2, "insertSpaces": true},
+        }),
+    );
+    assert!(
+        formatted.get("result").is_some_and(|r| r.is_array()),
+        "got {formatted}"
+    );
+    // A file that is no silt file (a `silt.toml` the editor has open)
+    // is not a module: nothing is published for it.
+    let toml = format!(
+        "file:///silt_no_such_dir_{}_toml/silt.toml",
+        std::process::id()
+    );
+    client.did_open(&toml, "[package]\nname = \"x\"\n");
+    let pulled = client.request(
+        "textDocument/diagnostic",
+        json!({"textDocument": {"uri": toml}}),
+    );
+    assert_eq!(
+        pulled.pointer("/result/items"),
+        Some(&json!([])),
+        "got {pulled}"
+    );
+    client.shutdown();
+}
+
 /// `/x/../a.silt` and `/a.silt` are one document's path.
 #[test]
 fn dot_segments_of_a_file_uri_are_resolved() {

@@ -1,0 +1,57 @@
+-- A pattern is checked once, by `regex.compile`, which gives a `Regex` or
+-- a `RegexError`. Every other `regex` function takes the text, then the
+-- `Regex`, and gives its value bare: a closure has no error to swallow.
+import list
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  let word_digits = regex.compile("^[a-z]+\\d+$")?
+  let two_digits = regex.compile("\\d\\d")?
+  let digits = regex.compile("\\d+")?
+  let comma = regex.compile(",\\s*")?
+  let address = regex.compile("(\\w+)@(\\w+)")?
+  let pair = regex.compile("(\\d)-(\\d)")?
+  let named = regex.compile("(?P<key>\\w)=(?P<value>\\w)")?
+  let spaces = regex.compile("\\s+")?
+  let digit = regex.compile("\\d")?
+  println(regex.is_match("abc123", word_digits))
+  println(regex.find("a1 b22", two_digits))
+  println(regex.find_all("a1 b22 c333", digits))
+  println(regex.split("a, b,c", comma))
+  println(regex.replace_first("a1 b22", digits, "#"))
+  println(regex.replace("a1 b22", digits, "#"))
+  println(regex.replace_with("a1 b22", digits) { m -> "<{m}>" })
+  println(regex.captures("user@host", address))
+  println(regex.captures_all("1-2 3-4", pair))
+  println(regex.captures_named("k=v", named))
+  -- The text is what pipes in.
+  println("x  y" |> regex.split(spaces))
+  println("a1" |> regex.replace(digit, "#"))
+  -- In a closure the answer is the value itself.
+  println(list.filter(["a1", "b", "c22"]) { s -> regex.is_match(s, digits) })
+  -- Two of one pattern are equal.
+  println(regex.compile("\\d+") == Ok(digits))
+
+  -- A pattern that is no pattern is an error of `compile`: what is
+  -- wrong, and the character of the pattern where.
+  match regex.compile("a(b") {
+    Err(e) -> println(e)
+    Ok(_) -> println("compiles")
+  }
+  match regex.compile("ab[c") {
+    Err(regex.InvalidPattern(why, at)) -> println("InvalidPattern: {why}, at {at}")
+    Err(e) -> println(e)
+    Ok(_) -> println("compiles")
+  }
+  -- A valid pattern that is given as the text is just a text.
+  let paren = regex.compile("\\(")?
+  println(regex.is_match("a(b", paren))
+  -- A pattern too large to compile (a million `a`s once compiled: small
+  -- to write and quick to refuse, even in a debug build).
+  match regex.compile("a\{1000}\{1000}") {
+    Err(regex.TooBig) -> println("TooBig")
+    Err(e) -> println(e)
+    Ok(_) -> println("compiles")
+  }
+  Ok(())
+}

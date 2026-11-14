@@ -5,9 +5,8 @@ use super::*;
 pub(super) struct DeclVars {
     /// Its parameters, and the variables reported as not being one.
     known: std::collections::HashSet<Symbol>,
-    /// Each lowercase name its body writes where a type stands, and each
-    /// row (keyed `__row__r`, as `param_vars` keys it), in the order of
-    /// its first use, with the place of that use.
+    /// Each lowercase name its body writes where a type stands, in the
+    /// order of its first use, with the place of that use.
     written: Vec<(Symbol, Span)>,
 }
 
@@ -34,12 +33,6 @@ impl DeclVars {
                 TypeExprKind::Function(params, ret) => {
                     params.iter().for_each(|param| walk(param, written));
                     walk(ret, written);
-                }
-                TypeExprKind::AnonRecord { fields, tail } => {
-                    fields.iter().for_each(|(_, ty)| walk(ty, written));
-                    if let Some((row, span)) = tail {
-                        write(written, intern(&format!("__row__{row}")), *span);
-                    }
                 }
             }
         }
@@ -92,7 +85,7 @@ impl TypeChecker {
         }
         // A type-decl whose name shadows a builtin
         // scalar/container type (Int, Float, Bool, String, Unit, List,
-        // Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
+        // Map, Set, Channel, Tuple, Fn, Handle, Bytes,
         // TcpListener, TcpStream — the authoritative list is
         // `BUILTIN_TYPES` in `src/types/builtins.rs`) is rejected at
         // the declaration with one diagnostic: it would overwrite the
@@ -362,9 +355,7 @@ impl TypeChecker {
     /// after its name (`type Maybe { Some(a) }`) would be one variable
     /// for every use of the type, fixed by the first. Such a variable
     /// is reported, and stands for an error type from then on, so that
-    /// the uses of the type say nothing more of it. A record row
-    /// (`{x: Int, ...r}`) cannot be declared, so a type declaration
-    /// has none.
+    /// the uses of the type say nothing more of it.
     fn resolve_declared(
         &mut self,
         td: &TypeDecl,
@@ -394,7 +385,6 @@ impl TypeChecker {
         // its first use.
         let declared = (td.params.iter().copied())
             .chain(vars.written.iter().map(|(name, _)| *name))
-            .filter(|name| !resolve(*name).starts_with("__row__"))
             .filter(|name| {
                 self.case_mismatched_type_name(&resolve(*name), false)
                     .is_none()
@@ -417,30 +407,15 @@ impl TypeChecker {
                 None => te.span,
             };
             let text = resolve(name);
-            let diagnostic = match text.strip_prefix("__row__") {
-                Some(row) => {
-                    let reason = if td.params.iter().any(|p| resolve(*p) == row) {
-                        "a row cannot be a type parameter".to_string()
-                    } else {
-                        format!("'...{row}' would be one row for every use of '{}'", td.name)
-                    };
-                    Diagnostic::error(
-                        Code::InvalidTypeDeclaration,
-                        at,
-                        format!("a type declaration cannot leave a record open: {reason}"),
-                    )
-                    .with_help("write the record's fields out")
-                }
-                None => Diagnostic::error(
-                    Code::InvalidTypeDeclaration,
-                    at,
-                    format!("type variable '{text}' is not a parameter of '{}'", td.name),
-                )
-                .with_help(format!(
-                    "declare it after the type's name: `type {}({declared})`",
-                    td.name
-                )),
-            };
+            let diagnostic = Diagnostic::error(
+                Code::InvalidTypeDeclaration,
+                at,
+                format!("type variable '{text}' is not a parameter of '{}'", td.name),
+            )
+            .with_help(format!(
+                "declare it after the type's name: `type {}({declared})`",
+                td.name
+            ));
             self.errors.push(diagnostic);
         }
         resolve_in(self, param_vars)
@@ -618,14 +593,6 @@ impl TypeChecker {
                 .find_alias_cycle(head, visiting)
                 .or_else(|| self.find_alias_cycle(arg, visiting)),
             Type::Con(_, rest) => rest.iter().find_map(|t| self.find_alias_cycle(t, visiting)),
-            Type::AnonRecord { fields, .. } => {
-                for t in fields.values() {
-                    if let Some(c) = self.find_alias_cycle(t, visiting) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
             Type::Int
             | Type::Float
             | Type::Bool

@@ -5,15 +5,14 @@
 //! `builtin_trait_decls()` and feed them through the same
 //! `register_trait_decl_inner` body the user path uses. This file keeps
 //! the internal registration-fingerprint check; the user-visible locks
-//! (Display redefinition guard, `Error.message` default synthesis, user
-//! trait `param_where_clauses`) are golden cases
+//! (Display redefinition guard, user trait `param_where_clauses`) are
+//! golden cases
 //! `unified_trait_registration__*` under tests/golden/typecheck/traits/.
 
 /// Lock test 1: every built-in trait is registered through the unified
 /// path. Inspects the post-registration `traits` map via the existing
 /// `__builtin_trait_registration_fingerprint` doc-hidden hook (which
-/// already covers the four sig-only traits) plus a direct check on
-/// Error.
+/// covers the four sig-only traits).
 #[test]
 fn builtin_traits_registered_via_user_path() {
     let fp = silt::typechecker::__builtin_trait_registration_fingerprint();

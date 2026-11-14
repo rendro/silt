@@ -4,8 +4,8 @@ error[type]: operator '+' requires Int or Float, got 'String'; build strings wit
  2 |   "a" + 1
    |   ^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
 
-error[parse]: expected identifier, found 1
- --> src/helper.silt:2:3
+error[parse]: expected parameter name, found {
+ --> src/helper.silt:1:16
    |
- 2 |   1 +
-   |   ^ expected identifier, found 1
+ 1 | pub fn broken( {
+   |                ^ expected parameter name, found {

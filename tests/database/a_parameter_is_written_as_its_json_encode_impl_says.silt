@@ -19,6 +19,11 @@ trait json.Encode for Money {
   }
 }
 
+type Total {
+  total: Money,
+  n: Int,
+}
+
 type Out {
   v: String,
 }
@@ -35,12 +40,12 @@ fn main() {
   match postgres.connect(url()) {
     Ok(db) -> {
       println(postgres.query(db, "SELECT $1::jsonb::text AS v", (m,), Out))
-      println(postgres.query(db, "SELECT $1::jsonb::text AS v", ({ total: m, n: 1 },), Out))
+      println(postgres.query(db, "SELECT $1::jsonb::text AS v", (Total { total: m, n: 1 },), Out))
       println(postgres.query(db, "SELECT $1::jsonb::text AS v", ([Some(m), None],), Out))
       println(postgres.execute(db, "SELECT $1::jsonb", (m,)))
       match postgres.stream(db, "SELECT $1::jsonb::text AS v", ((m, "a"),), Out) {
         Ok(rows) -> println("a stream: {channel.receive(rows)}")
-        Err(e) -> println("a stream: {Error.message(e)}")
+        Err(e) -> println("a stream: {e}")
       }
       let read = postgres.transact(db) { tx ->
         let c = postgres.cursor(tx, "SELECT $1::jsonb::text AS v", (#{"price": m},), 2, Out)?
@@ -50,6 +55,6 @@ fn main() {
       }
       println("a cursor: {read}")
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
