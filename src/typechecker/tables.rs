@@ -389,7 +389,7 @@ impl ImplMethods {
 /// is checked. A module's own top-level values are in its check's
 /// environment while it is checked.
 #[derive(Clone, Default)]
-pub struct Tables {
+pub(crate) struct Tables {
     pub(super) vars: TyVarSupply,
     /// Declared enum types.
     pub(super) enums: Table<HashMap<TypeRef, EnumInfo>, TypeRef>,
@@ -561,12 +561,13 @@ pub(crate) struct Rows {
 
 impl Tables {
     /// The tables a session starts from: the builtins'.
-    pub fn for_session() -> Tables {
+    pub(crate) fn for_session() -> Tables {
         builtin_env().tables.clone()
     }
 
     /// The records of the tables: each record type with its fields.
-    pub fn record_fields(&self) -> HashMap<TypeRef, Vec<(Symbol, Type)>> {
+    #[cfg(feature = "lsp")]
+    pub(crate) fn record_fields(&self) -> HashMap<TypeRef, Vec<(Symbol, Type)>> {
         self.records
             .iter()
             .map(|(ty, info)| (*ty, info.fields.clone()))
@@ -576,7 +577,8 @@ impl Tables {
     /// The methods called on the type `ty` (`Int.empty()`): each method
     /// that takes no value of its trait's type, of each impl `ty` has
     /// rows of, by trait and name.
-    pub fn makers_of(&self, ty: crate::defs::TypeId) -> Vec<(crate::defs::TraitId, Symbol)> {
+    #[cfg(feature = "lsp")]
+    pub(crate) fn makers_of(&self, ty: crate::defs::TypeId) -> Vec<(crate::defs::TraitId, Symbol)> {
         let mut found: Vec<(crate::defs::TraitId, Symbol)> = Vec::new();
         for (of, name, tr, _) in self.impl_methods.keys() {
             let Some(info) = (of.id == ty).then(|| self.traits.get(tr)).flatten() else {
@@ -596,7 +598,7 @@ impl Tables {
 
     /// The fields of the record type `ty`, with their types, in
     /// declaration order; none for a type that is no record.
-    pub fn record_fields_of(&self, ty: TypeRef) -> &[(Symbol, Type)] {
+    pub(crate) fn record_fields_of(&self, ty: TypeRef) -> &[(Symbol, Type)] {
         self.records.get(&ty).map_or(&[], |info| &info.fields)
     }
 
@@ -619,7 +621,7 @@ impl Tables {
 
     /// The variants of the enum type `ty`, each with the types of its
     /// fields, in declaration order; none for a type that is no enum.
-    pub fn variant_fields_of(&self, ty: TypeRef) -> Vec<(Symbol, &[Type])> {
+    pub(crate) fn variant_fields_of(&self, ty: TypeRef) -> Vec<(Symbol, &[Type])> {
         self.enums.get(&ty).map_or_else(Vec::new, |info| {
             (info.variants.iter())
                 .map(|v| (v.name, v.field_types.as_slice()))
@@ -630,7 +632,8 @@ impl Tables {
     /// The types of the fields of the variant `variant` of the enum type
     /// `ty` at the enum's type arguments `args` (`Some` of `Option(Int)`:
     /// `[Int]`); `None` if `ty` has no such variant.
-    pub fn variant_fields_at(
+    #[cfg(feature = "lsp")]
+    pub(crate) fn variant_fields_at(
         &self,
         ty: TypeRef,
         args: &[Type],
@@ -650,7 +653,8 @@ impl Tables {
 
     /// The scheme of the definition `id`: a builtin's as the builtin
     /// scope binds it, a module's as its check left it.
-    pub fn scheme_of(&self, id: crate::defs::DefId) -> Option<Scheme> {
+    #[cfg(any(feature = "lsp", feature = "repl"))]
+    pub(crate) fn scheme_of(&self, id: crate::defs::DefId) -> Option<Scheme> {
         match names::builtin_def(id) {
             Some(def) => builtin_scheme(&def),
             None => self.schemes.get(&id).cloned(),
@@ -671,8 +675,8 @@ impl Tables {
     /// Every row of every table, as text in a fixed order: for a test
     /// that compares two states of a session (what an entry that failed
     /// leaves behind is nothing).
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub fn fingerprint(&self) -> Vec<String> {
+    #[cfg(all(test, feature = "repl"))]
+    pub(crate) fn fingerprint(&self) -> Vec<String> {
         fn keys<K: std::fmt::Debug>(table: &str, keys: impl Iterator<Item = K>) -> Vec<String> {
             keys.map(|key| format!("{table} {key:?}")).collect()
         }
@@ -752,7 +756,7 @@ impl Tables {
     }
 
     /// The type aliases of the session.
-    pub fn resolver(&self) -> &crate::types::canonical::Resolver {
+    pub(crate) fn resolver(&self) -> &crate::types::canonical::Resolver {
         &self.resolver
     }
 
@@ -782,7 +786,7 @@ impl Tables {
 
     /// Forget what the check of `module` added: it is checked again, or
     /// it was a REPL cell that is dropped.
-    pub fn forget(&mut self, module: crate::defs::ModuleId) {
+    pub(crate) fn forget(&mut self, module: crate::defs::ModuleId) {
         self.waiting.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;

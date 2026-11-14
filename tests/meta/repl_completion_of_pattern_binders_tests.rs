@@ -6,7 +6,7 @@
 
 #![cfg(feature = "repl")]
 
-use silt::testing::session_with;
+use silt::testing::{SessionInside, session_with};
 
 fn completion_names(src: &str) -> Vec<String> {
     let (mut session, file) = session_with(&[("main.silt", src)]);

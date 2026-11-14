@@ -81,6 +81,7 @@ pub enum SourceName {
     /// A file on disk, named as it is shown to the user.
     Path(PathBuf),
     /// The `n`th entry typed into the REPL.
+    #[cfg_attr(not(feature = "repl"), allow(dead_code))]
     Repl(usize),
     /// An editor's unsaved text of the file at this path.
     Overlay(PathBuf),
@@ -136,6 +137,7 @@ impl SourceFile {
     }
 
     /// The number of lines: one more than the number of `\n`.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn line_count(&self) -> usize {
         self.line_starts.len()
     }
@@ -173,6 +175,7 @@ impl SourceFile {
 
     /// Byte offset of the start of 1-based line `line`, or the end of the
     /// text for a line past the last one.
+    #[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
     pub fn line_start(&self, line: u32) -> u32 {
         let index = (line as usize).saturating_sub(1);
         self.line_starts
@@ -220,6 +223,7 @@ impl SourceFile {
 /// The lines and columns a span covers, with the text of its first line:
 /// what a diagnostic prints.
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub struct Snippet {
     /// 1-based line and character column of the start.
     pub line: u32,
@@ -243,6 +247,7 @@ impl SourceMap {
     }
 
     /// The number of files in the map.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn file_count(&self) -> usize {
         self.files.len()
     }
@@ -276,11 +281,13 @@ impl SourceMap {
 
     /// The LSP position of byte `at.1` of file `at.0`.
     #[cfg(feature = "lsp")]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn lsp_position(&self, at: (FileId, u32)) -> lsp_types::Position {
         self.file(at.0).lsp_position(at.1)
     }
 
     /// Where `span` starts and ends, and the text of its first line.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn snippet(&self, span: Span) -> Snippet {
         let file = self.file(span.file);
         let (line, col) = file.line_col(span.start);

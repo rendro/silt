@@ -20,6 +20,7 @@
 
 use std::sync::Arc;
 
+use silt::testing::ValueInside;
 use silt::testing::bytecode::{Function, VmClosure};
 use silt::testing::runtime::handle::TaskHandle;
 use silt::testing::typeinfo::bv;

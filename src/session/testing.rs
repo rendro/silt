@@ -195,3 +195,167 @@ pub fn test_path(name: &str) -> PathBuf {
 pub fn session_with(files: &[(&str, &str)]) -> (Session, crate::source::FileId) {
     session(files, Vec::new())
 }
+
+// ── What the tests read of the promised types beyond the promise ─────────
+//
+// The promised types (`Session`, `Program`, `Vm`, `VmError`) have more
+// than the embedding guide uses; that part is crate-internal, and these
+// traits hand the tests what they read of it. Each method is the
+// crate-internal method or field of the same name.
+
+/// The parts of a [`Session`] the tests drive beyond the guide.
+pub trait SessionInside {
+    /// Read the file at `path` into the session.
+    fn open(&mut self, path: &Path) -> Result<crate::source::FileId, std::io::Error>;
+    /// The module of `file`.
+    fn module_of(&self, file: crate::source::FileId) -> crate::defs::ModuleId;
+    /// The analysis of module `id`, once it is analysed.
+    fn module_analysis(&self, id: crate::defs::ModuleId) -> Option<&super::ModuleAnalysis>;
+    /// The definitions of every module analysed so far.
+    fn defs(&self) -> &crate::defs::DefTable;
+    /// The session's source files.
+    fn sources(&self) -> &crate::source::SourceMap;
+    /// The module graph of what the session has read.
+    fn graph(&self) -> &super::ModuleGraph;
+}
+
+impl SessionInside for Session {
+    fn open(&mut self, path: &Path) -> Result<crate::source::FileId, std::io::Error> {
+        Session::open(self, path)
+    }
+
+    fn module_of(&self, file: crate::source::FileId) -> crate::defs::ModuleId {
+        Session::module_of(self, file)
+    }
+
+    fn module_analysis(&self, id: crate::defs::ModuleId) -> Option<&super::ModuleAnalysis> {
+        Session::module_analysis(self, id)
+    }
+
+    fn defs(&self) -> &crate::defs::DefTable {
+        Session::defs(self)
+    }
+
+    fn sources(&self) -> &crate::source::SourceMap {
+        Session::sources(self)
+    }
+
+    fn graph(&self) -> &super::ModuleGraph {
+        Session::graph(self)
+    }
+}
+
+/// What the tests read of a compiled [`Program`].
+pub trait ProgramInside {
+    /// The compiled functions, the first the script that installs the
+    /// globals.
+    fn functions(&self) -> &[crate::bytecode::Function];
+    /// The program's global slots.
+    fn globals(&self) -> &Arc<crate::bytecode::Globals>;
+}
+
+impl ProgramInside for Program {
+    fn functions(&self) -> &[crate::bytecode::Function] {
+        &self.functions
+    }
+
+    fn globals(&self) -> &Arc<crate::bytecode::Globals> {
+        &self.globals
+    }
+}
+
+/// The parts of a [`Vm`] the tests drive beyond the guide.
+pub trait VmInside {
+    /// Tag the tasks spawned from now on with `owner`.
+    fn set_task_owner(&mut self, owner: u64);
+    /// Stop the VM's tasks.
+    fn stop_tasks(&mut self);
+    /// Whether `val` shows itself with `Display`.
+    fn value_implements_display(val: &Value) -> bool;
+    /// The name of the type of `val`, as a message gives it.
+    fn user_facing_type_name(&self, val: &Value) -> String;
+}
+
+impl VmInside for Vm {
+    fn set_task_owner(&mut self, owner: u64) {
+        Vm::set_task_owner(self, owner)
+    }
+
+    fn stop_tasks(&mut self) {
+        Vm::stop_tasks(self)
+    }
+
+    fn value_implements_display(val: &Value) -> bool {
+        Vm::value_implements_display(val)
+    }
+
+    fn user_facing_type_name(&self, val: &Value) -> String {
+        Vm::user_facing_type_name(self, val)
+    }
+}
+
+/// What the tests build and read of a [`Value`] beyond the guide.
+pub trait ValueInside {
+    /// The list of `items`.
+    fn list(items: Vec<Value>) -> Value;
+    /// The tuple of `items`.
+    fn tuple(items: Vec<Value>) -> Value;
+    /// The value's kind, as an error names it.
+    fn kind(&self) -> &'static str;
+}
+
+impl ValueInside for Value {
+    fn list(items: Vec<Value>) -> Value {
+        Value::list(items)
+    }
+
+    fn tuple(items: Vec<Value>) -> Value {
+        Value::tuple(items)
+    }
+
+    fn kind(&self) -> &'static str {
+        Value::kind(self)
+    }
+}
+
+/// What the tests read of a [`crate::vm::VmError`] beyond the guide.
+pub trait VmErrorInside {
+    /// Whether the program ran out of its step budget.
+    fn out_of_steps(&self) -> bool;
+    /// Whether a value was of a type the checker did not give it.
+    fn is_type_confusion(&self) -> bool;
+    /// The error with one more help line.
+    fn with_help(self, help: impl Into<String>) -> Self;
+    /// The error as the diagnostic the command prints.
+    fn to_diagnostic(&self) -> Diagnostic;
+}
+
+impl VmErrorInside for crate::vm::VmError {
+    fn out_of_steps(&self) -> bool {
+        self.out_of_steps
+    }
+
+    fn is_type_confusion(&self) -> bool {
+        self.type_confusion
+    }
+
+    fn with_help(self, help: impl Into<String>) -> Self {
+        crate::vm::VmError::with_help(self, help)
+    }
+
+    fn to_diagnostic(&self) -> Diagnostic {
+        crate::vm::VmError::to_diagnostic(self)
+    }
+}
+
+/// What the tests read of a [`crate::vm::Buffer`] beyond the guide.
+pub trait BufferInside {
+    /// What has been written so far, which the buffer then forgets.
+    fn take(&self) -> String;
+}
+
+impl BufferInside for crate::vm::Buffer {
+    fn take(&self) -> String {
+        crate::vm::Buffer::take(self)
+    }
+}

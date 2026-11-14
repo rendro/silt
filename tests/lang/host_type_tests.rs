@@ -6,6 +6,7 @@
 //! signature returns, the fields and payloads too.
 
 use silt::session::{HostCall, HostModule};
+use silt::testing::ValueInside;
 use silt::testing::diagnostic::{Code, Diagnostic};
 use silt::testing::value::Value;
 use silt::testing::vm::VmError;

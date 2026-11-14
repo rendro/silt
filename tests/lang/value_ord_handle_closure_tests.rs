@@ -14,6 +14,7 @@
 //! backing `Map` will deduplicate values that the language layer
 //! considers distinct, losing user data.
 
+use silt::testing::ValueInside;
 use silt::testing::typeinfo::bv;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};

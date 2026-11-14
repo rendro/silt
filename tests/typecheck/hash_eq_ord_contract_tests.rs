@@ -9,6 +9,7 @@
 // a set of values, as a program's set holds them.
 #![allow(clippy::mutable_key_type)]
 
+use silt::testing::ValueInside;
 use silt::testing::typeinfo::bv;
 use std::cmp::Ordering;
 use std::collections::HashSet;

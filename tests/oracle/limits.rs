@@ -2,7 +2,7 @@
 //! slice (`Vm::set_time_slice`) and the step budget
 //! (`Vm::set_step_budget`).
 
-use silt::testing::compile_given;
+use silt::testing::{VmErrorInside, compile_given};
 use silt::{Buffer, HostIo, Value, Vm, VmError};
 
 /// The value the program gave (`host.give`) or its error, and what the program and the
@@ -108,14 +108,14 @@ fn a_step_budget_ends_a_program_that_does_not_end() {
     let endless = "fn main() {\n  loop {\n    loop()\n  }\n}\n";
     let (result, _) = run_whole(endless, |vm| vm.set_step_budget(100_000));
     let error = result.unwrap_err();
-    assert!(error.out_of_steps, "{error:?}");
-    assert!(!error.type_confusion);
+    assert!(error.out_of_steps(), "{error:?}");
+    assert!(!error.is_type_confusion());
     assert_eq!(error.message, "the step budget is used up");
     // A runtime error of the program is not that.
     let (result, _) = run_whole("fn main() {\n  host.give(1 / 0)\n}\nimport host\n", |vm| {
         vm.set_step_budget(100_000)
     });
-    assert!(!result.unwrap_err().out_of_steps);
+    assert!(!result.unwrap_err().out_of_steps());
 }
 
 /// With slice 1 the steps are counted one by one: the program is ended
@@ -129,7 +129,7 @@ fn at_slice_one_the_budget_is_exact() {
             vm.set_time_slice(1);
             vm.set_step_budget(steps);
         });
-        assert!(result.unwrap_err().out_of_steps);
+        assert!(result.unwrap_err().out_of_steps());
         output.lines().count()
     };
     let (few, more) = (lines(1_000), lines(2_000));
@@ -165,7 +165,7 @@ fn the_budget_ends_the_tasks_of_a_program_too() {
     );
     let (result, _) = run_whole(&joined, |vm| vm.set_step_budget(100_000));
     let error = result.unwrap_err();
-    assert!(error.out_of_steps, "{error:?}");
+    assert!(error.out_of_steps(), "{error:?}");
     // (The budget's error: the join's, or `main`'s own when its next
     // slice does not start.)
     let message = &error.message;
@@ -212,7 +212,7 @@ fn main() {
     for _ in 0..20 {
         let (result, _) = run_whole(source, |vm| vm.set_step_budget(20_000));
         let error = result.unwrap_err();
-        assert!(error.out_of_steps, "{error:?}");
+        assert!(error.out_of_steps(), "{error:?}");
     }
 }
 
@@ -1852,7 +1852,7 @@ fn assert_ended_by_budget(source: &str, steps: u64) {
             vm.set_step_budget(steps);
         });
         let error = result.expect_err("the program does not end by itself");
-        assert!(error.out_of_steps, "slice {slice:?}: {error:?}");
+        assert!(error.out_of_steps(), "slice {slice:?}: {error:?}");
     }
 }
 
@@ -1901,7 +1901,7 @@ fn a_budget_of_no_steps_runs_nothing() {
             }
             vm.set_step_budget(0);
         });
-        assert!(result.unwrap_err().out_of_steps, "slice {slice:?}");
+        assert!(result.unwrap_err().out_of_steps(), "slice {slice:?}");
         assert_eq!(output, "", "slice {slice:?}");
     }
 }
@@ -1919,7 +1919,7 @@ fn a_program_may_run_one_slice_more_than_its_budget() {
         vm.set_time_slice(1);
         vm.set_step_budget(1);
     });
-    assert!(result.unwrap_err().out_of_steps);
+    assert!(result.unwrap_err().out_of_steps());
 }
 
 /// `out_of_steps` marks what the budget did, and nothing else: a fault
@@ -1945,7 +1945,7 @@ fn a_fault_of_the_program_is_not_the_budgets() {
         let (result, output) = run_whole(&source, |vm| vm.set_step_budget(20_000));
         let error = result.unwrap_err();
         assert!(error.message.contains(message), "{error:?}");
-        assert!(!error.out_of_steps, "{error:?}");
+        assert!(!error.out_of_steps(), "{error:?}");
         assert!(output.starts_with("before the fault\n"), "{output}");
         // The task was ended by the budget, and the runtime says so.
         assert!(output.contains("the step budget is used up"), "{output}");
@@ -1997,7 +1997,7 @@ fn steps_to_end(source: &str) -> u64 {
             vm.set_time_slice(1);
             vm.set_step_budget(steps);
         });
-        !result.is_err_and(|error| error.out_of_steps)
+        !result.is_err_and(|error| error.out_of_steps())
     };
     let (mut low, mut high) = (0, 1);
     while !ends(high) {

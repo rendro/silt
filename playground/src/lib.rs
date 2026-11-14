@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use silt::playground::{Diagnostic, FileId, Severity, render_human};
+use silt::playground::{Diagnostic, FileId, Severity, out_of_steps, render_diagnostic, returned};
 use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::{Clock, HostIo, Output, Vm};
 
@@ -99,7 +99,7 @@ fn static_diagnostics(
 fn render(session: &Session, diagnostics: &[Diagnostic]) -> String {
     let texts: Vec<String> = diagnostics
         .iter()
-        .map(|d| render_human(session.sources(), d))
+        .map(|d| render_diagnostic(session, d))
         .collect();
     texts.join("\n\n")
 }
@@ -147,7 +147,7 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
     // A `process.exit` ends the run with its code: 0 is a program that
     // ended well, any other code one that failed.
     let mut exited = None;
-    let mut returned = None;
+    let mut main_err = None;
     let failure = match vm.run_program(&program) {
         // `main` has returned; the program ends when its tasks can do
         // no more.
@@ -161,28 +161,26 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
             exited = Some(code);
             None
         }
-        Err(e) if e.out_of_steps => Some(
-            e.to_diagnostic()
+        Err(e) if out_of_steps(&e) => Some(
+            silt::playground::error_diagnostic(&e)
                 .with_note(format!("the playground ends a program after {steps} steps")),
         ),
         // `main` returned `Err(e)`: the program's message to its user,
         // the one line `error: <e>`, as `silt run` writes it.
-        Err(silt::VmError {
-            returned: Some(text),
-            ..
-        }) => {
-            returned = Some(format!("error: {text}"));
+        Err(e) if returned(&e).is_some() => {
+            let text = returned(&e).unwrap_or_default();
+            main_err = Some(format!("error: {text}"));
             None
         }
-        Err(e) => Some(e.to_diagnostic()),
+        Err(e) => Some(silt::playground::error_diagnostic(&e)),
     };
     // The tasks that have failed and that nobody joined are reported
     // into `out` here at the latest.
     drop(vm);
-    let (ok, error) = match (exited, failure, returned) {
+    let (ok, error) = match (exited, failure, main_err) {
         (Some(0), ..) | (None, None, None) => (true, String::new()),
         (Some(code), ..) => (false, format!("the program exited with code {code}")),
-        (None, Some(d), _) => (false, render_human(session.sources(), &d)),
+        (None, Some(d), _) => (false, render_diagnostic(&session, &d)),
         (None, None, Some(line)) => (false, line),
     };
     Run {
@@ -339,7 +337,7 @@ pub fn check(source: &str) -> Vec<Problem> {
 /// `silt fmt` reports it.
 pub fn format(source: &str) -> Result<String, String> {
     let (session, file) = open(source);
-    silt::playground::format(file, source).map_err(|d| render_human(session.sources(), &d))
+    silt::playground::format(file, source).map_err(|d| render_diagnostic(&session, &d))
 }
 
 // ── Complete ──────────────────────────────────────────────────────────

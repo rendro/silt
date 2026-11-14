@@ -25,6 +25,10 @@
 //! `EarlierCells::globals`). A `let` that binds a name again reads the
 //! old value in its initializer (`let x = x + 1`).
 
+// The bookkeeping of the REPL's entries: a build without the REPL keeps
+// it in the session but never adds an entry.
+#![cfg_attr(not(feature = "repl"), allow(dead_code))]
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 

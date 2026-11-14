@@ -65,6 +65,7 @@ use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::testing::builtins::registry::registry;
 use silt::testing::bytecode::{Function, Instr};
 use silt::testing::diagnostic::Code;
+use silt::testing::{ProgramInside, SessionInside, VmErrorInside, VmInside};
 use silt::{Buffer, Clock, HostIo, Value, Vm};
 
 /// The builtin modules whose functions stay inside the VM, but for
@@ -564,8 +565,8 @@ fn failures_of(owner: u64) -> Vec<TaskFailure> {
     for failure in taken.failures {
         failed.entry(failure.owner).or_default().push(TaskFailure {
             message: failure.error.message.clone(),
-            type_confusion: failure.error.type_confusion,
-            out_of_steps: failure.error.out_of_steps,
+            type_confusion: failure.error.is_type_confusion(),
+            out_of_steps: failure.error.out_of_steps(),
         });
     }
     for silt::testing::scheduler::NotShown { owner, count, .. } in taken.not_shown {
@@ -799,7 +800,7 @@ fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), (Verdict, Str
         }
     };
     let mut builtins = BTreeSet::new();
-    for function in &program.functions {
+    for function in program.functions() {
         if let Err(detail) = verify_all(function, &program, &mut builtins) {
             return finding(Kind::Verifier, detail);
         }
@@ -858,7 +859,7 @@ fn verify_all(
 ) -> Result<(), String> {
     let wrong = |error| format!("function '{}' is malformed {error}", function.name());
     silt::testing::bytecode::verify(function).map_err(wrong)?;
-    silt::testing::bytecode::verify::verify_globals(function, &program.globals).map_err(wrong)?;
+    silt::testing::bytecode::verify::verify_globals(function, program.globals()).map_err(wrong)?;
     // (The verifier has seen that each row is there.)
     let name = |id| registry().builtin(id).map(|row| row.qualified());
     for (_, instr) in function.chunk().instrs() {
@@ -925,8 +926,8 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
                     Ok(()) => End::Returned,
                     Err(error) => End::Error {
                         message: error.message.clone(),
-                        type_confusion: error.type_confusion,
-                        out_of_steps: error.out_of_steps,
+                        type_confusion: error.is_type_confusion(),
+                        out_of_steps: error.out_of_steps(),
                         whole: format!("{error:?}"),
                     },
                 };

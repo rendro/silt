@@ -262,6 +262,7 @@ impl ModuleGraph {
     }
 
     /// The declarations of module `id`, for the session to add to.
+    #[cfg(feature = "repl")]
     pub(super) fn ast_mut(&mut self, id: ModuleId) -> Option<&mut ast::Program> {
         self.modules[id.index()].ast.as_mut()
     }

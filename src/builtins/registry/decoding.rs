@@ -51,6 +51,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf, in the order the help texts name them.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub const ALL: [Leaf; 9] = [
         Leaf::Int,
         Leaf::Float,

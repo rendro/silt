@@ -1,5 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
+use silt::testing::ProgramInside;
 use silt::testing::disassemble::disassemble_function;
 use silt::testing::lexer::Lexer;
 use silt::testing::parser::Parser;
@@ -49,7 +50,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(program) = silt::testing::compile_decls_str(s) else {
         return;
     };
-    let functions = &program.functions;
+    let functions = program.functions();
 
     // 5. A successful compile must produce at least one function: the
     //    script.
@@ -65,7 +66,7 @@ fuzz_target!(|data: &[u8]| {
     //    encodings — the round-92 bug class — are caught here without
     //    ever executing the program.
     for func in functions {
-        let text = disassemble_function(func, &program.globals);
+        let text = disassemble_function(func, program.globals());
         assert!(
             !text.is_empty(),
             "disassembly of function {:?} produced empty output",

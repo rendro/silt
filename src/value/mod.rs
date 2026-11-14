@@ -161,7 +161,7 @@ impl Value {
     }
 
     /// The list of `items`.
-    pub fn list(items: Vec<Value>) -> Value {
+    pub(crate) fn list(items: Vec<Value>) -> Value {
         Value::List(List::from(items))
     }
 
@@ -178,7 +178,7 @@ impl Value {
     }
 
     /// The tuple of `items`.
-    pub fn tuple(items: Vec<Value>) -> Value {
+    pub(crate) fn tuple(items: Vec<Value>) -> Value {
         Value::Tuple(Tuple::from(items))
     }
 
@@ -201,7 +201,7 @@ impl Value {
 
     /// A record of the builtin record type `ty` (`ty::DATE`) with the
     /// fields `fields`, named, in the order the type declares them.
-    pub fn builtin_record<const N: usize>(
+    pub(crate) fn builtin_record<const N: usize>(
         ty: crate::defs::TypeId,
         fields: [(&str, Value); N],
     ) -> Value {
@@ -224,7 +224,7 @@ impl Value {
 impl Value {
     /// A record of the test type `R` with the fields `fields`, in that
     /// order.
-    pub fn test_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+    pub(crate) fn test_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
         let (names, values): (Vec<_>, Vec<_>) = (fields.into_iter())
             .map(|(name, value)| ((name.to_string(), crate::typeinfo::FieldType::Int), value))
             .unzip();
@@ -239,7 +239,7 @@ impl Value {
     ///
     /// Not for method dispatch: that is
     /// `crate::value::dispatch_type_for_value`.
-    pub fn kind(&self) -> &'static str {
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
@@ -277,7 +277,7 @@ impl Value {
     /// Whether the value is a function: a closure, a builtin function, a
     /// host function or a variant's constructor. To a program each is an
     /// `Fn`.
-    pub fn is_fn(&self) -> bool {
+    pub(crate) fn is_fn(&self) -> bool {
         matches!(
             self,
             Value::VmClosure(_)
@@ -302,7 +302,7 @@ impl Value {
     /// `hash` methods (src/vm/dispatch.rs) and the collection builtins
     /// (`ensure_no_fn`, src/builtins/collections.rs). Locked by the goldens
     /// tests/golden/typecheck/fn_compare/container_fn_compare_runtime_gate__*.
-    pub fn contains_fn(&self) -> bool {
+    pub(crate) fn contains_fn(&self) -> bool {
         // A value without parts answers by itself, before the worklist
         // is made: `==` on two Ints, Floats, Bools or Strings allocates
         // nothing.

@@ -8,6 +8,7 @@ use silt::testing::diagnostic::{Code, Diagnostic};
 use silt::testing::typeinfo::bv;
 use silt::testing::value::{IntoValue, Value};
 use silt::testing::vm::VmError;
+use silt::testing::{SessionInside, ValueInside};
 use silt::testing::{check_with_host, run_with_host};
 
 fn mylib() -> HostModule {

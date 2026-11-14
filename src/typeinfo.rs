@@ -418,7 +418,7 @@ impl Tag {
     }
 
     /// The variant of the enum `ty` named `name`.
-    pub fn named(ty: &Arc<TypeInfo>, name: &str) -> Option<Tag> {
+    pub(crate) fn named(ty: &Arc<TypeInfo>, name: &str) -> Option<Tag> {
         let ordinal = ty.variants().iter().position(|v| v.name == name)?;
         Some(Tag::new(
             ty.clone(),
@@ -426,20 +426,20 @@ impl Tag {
         ))
     }
 
-    pub fn ty(&self) -> &Arc<TypeInfo> {
+    pub(crate) fn ty(&self) -> &Arc<TypeInfo> {
         &self.ty
     }
 
     /// The type alone.
-    pub fn into_ty(self) -> Arc<TypeInfo> {
+    pub(crate) fn into_ty(self) -> Arc<TypeInfo> {
         self.ty
     }
 
-    pub fn type_id(&self) -> TypeId {
+    pub(crate) fn type_id(&self) -> TypeId {
         self.ty.id
     }
 
-    pub fn ordinal(&self) -> u16 {
+    pub(crate) fn ordinal(&self) -> u16 {
         self.ordinal
     }
 
@@ -447,18 +447,13 @@ impl Tag {
         &self.ty.variants()[self.ordinal as usize].name
     }
 
-    pub fn arity(&self) -> usize {
+    pub(crate) fn arity(&self) -> usize {
         self.ty.variants()[self.ordinal as usize].arity as usize
     }
 
     /// Whether this is the builtin variant `variant`.
     pub fn is(&self, variant: BuiltinVariant) -> bool {
         self.ty.id == variant.ty && self.ordinal == variant.ordinal
-    }
-
-    /// Whether this is a variant of the type `ty`.
-    pub fn of(&self, ty: TypeId) -> bool {
-        self.ty.id == ty
     }
 }
 

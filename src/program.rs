@@ -40,20 +40,20 @@ pub(crate) fn is_cell_name(name: &str) -> bool {
 /// script that installs the program's globals (and, for
 /// [`crate::session::Entry::Main`], calls `main`).
 pub struct Program {
-    pub functions: Vec<Function>,
+    pub(crate) functions: Vec<Function>,
     /// The types its values are of, which the VM is given
     /// ([`crate::vm::Vm::run_program`]).
     pub types: crate::typeinfo::TypeTable,
     /// Its global slots, which the VM is given too.
-    pub globals: Arc<Globals>,
+    pub(crate) globals: Arc<Globals>,
     /// The part of `globals` that stands whatever becomes of the
     /// program's run. For a REPL entry: the slots, impl methods and
     /// `Display` impls of the entries before it that ran to their end,
     /// without the entry's own, which the session takes back if the
     /// entry fails. For any other program: all of `globals`. (The VM
     /// of a task keeps this table, see `Vm::look_again`.)
-    pub settled: Arc<Globals>,
-    pub entry: EntryPoint,
+    pub(crate) settled: Arc<Globals>,
+    pub(crate) entry: EntryPoint,
 }
 
 /// What a [`Program`] was compiled for.

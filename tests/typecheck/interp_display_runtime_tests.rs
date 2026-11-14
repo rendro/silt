@@ -55,6 +55,7 @@ use silt::testing::runtime::handle::TaskHandle;
 use silt::testing::scheduler::test_support::InProcessRunner;
 use silt::testing::value::Value;
 use silt::testing::vm::Vm;
+use silt::testing::{ValueInside, VmInside};
 use std::sync::Arc;
 #[cfg(feature = "tcp")]
 use std::time::Duration;

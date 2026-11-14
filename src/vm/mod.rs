@@ -342,7 +342,7 @@ impl Vm {
 
     /// Let the program run `steps` more steps, those of its tasks
     /// included. When they are used up, whatever of the program still
-    /// runs ends with an error whose [`VmError::out_of_steps`] is set
+    /// runs ends with an error whose `VmError::out_of_steps` is set
     /// (`main`, and each task: a join of one gives the error on): a
     /// program that does not end by itself ends there. A deadlock of
     /// the program's own code from then on has it set too: the task it
@@ -416,12 +416,12 @@ impl Vm {
     /// Run a compiled program: take in its tables, then run its script.
     /// For a program compiled for `Entry::Main`, that runs `main`; for
     /// one compiled for its tests, the file's top-level code, and the
-    /// test functions are called with [`Vm::call_test`] afterwards.
+    /// test functions are called with `Vm::call_test` afterwards.
     /// This is the one way to start a [`Program`].
     ///
     /// The result says whether the program ran to its end. A `main`
     /// that returns `Err(e)` has failed: that is an error here, with
-    /// [`VmError::returned`] set to `e` as `println`
+    /// `VmError::returned` set to `e` as `println`
     /// writes it. No value leaves the program this way: a program gives
     /// its values to its host through a host function it calls (see
     /// `docs/ffi.md`).
@@ -491,7 +491,7 @@ impl Vm {
     }
 
     /// Wait until the program has ended. [`Vm::run_program`] and
-    /// [`Vm::call_test`] return when the program's own code (`fn main`,
+    /// `Vm::call_test` return when the program's own code (`fn main`,
     /// the test function) has returned; the tasks it spawned may still
     /// run. The program has ended when none of them can go on: each
     /// has ended or waits, and no timer and no I/O operation of theirs
@@ -506,7 +506,7 @@ impl Vm {
     /// to end the program where it is.
     ///
     /// The tasks waited for are those of the current owner
-    /// ([`Vm::set_task_owner`]).
+    /// (`Vm::set_task_owner`).
     pub fn settle(&mut self) {
         // The streams that the code left as it returned are closed
         // first, as they would be by the next step of a task.
@@ -527,7 +527,7 @@ impl Vm {
     /// (`crate::scheduler::UnjoinedFailure::owner`). `silt test`
     /// sets one tag per test, and so judges each test by its own
     /// tasks. The tag is the VM's: two VMs do not see each other's.
-    pub fn set_task_owner(&mut self, owner: u64) {
+    pub(crate) fn set_task_owner(&mut self, owner: u64) {
         self.runtime.scheduler.set_owner(owner, 0);
     }
 
@@ -538,7 +538,7 @@ impl Vm {
     /// while one of them can go on, and [`Vm::settle`] waits for them
     /// too. They are not dropped with the owner's, and their failures
     /// stay theirs.
-    pub fn set_task_owner_within(&mut self, owner: u64, outer: u64) {
+    pub(crate) fn set_task_owner_within(&mut self, owner: u64, outer: u64) {
         self.runtime.scheduler.set_owner(owner, outer);
     }
 
@@ -548,7 +548,7 @@ impl Vm {
     /// is waited for, as after an error of `main` under `silt run`,
     /// where the process ends; `silt test` calls this after a test
     /// that failed, since the VM goes on to the next test.
-    pub fn stop_tasks(&mut self) {
+    pub(crate) fn stop_tasks(&mut self) {
         crate::scheduler::run_deferred();
         self.runtime.scheduler.stop_tasks();
         self.report_unjoined_failures();
@@ -559,7 +559,7 @@ impl Vm {
     /// them. `silt test` calls this after a file's top-level code, the
     /// tasks of which may serve the file's tests
     /// ([`Vm::set_task_owner_within`]).
-    pub fn wait_until_idle(&mut self) {
+    pub(crate) fn wait_until_idle(&mut self) {
         crate::scheduler::run_deferred();
         self.runtime.scheduler.wait_until_idle();
         self.report_unjoined_failures();
@@ -569,7 +569,7 @@ impl Vm {
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
     /// arguments. As for `main`, a test function that returns `Err(e)`
     /// has failed: an error with [`VmError::returned`] set.
-    pub fn call_test(&mut self, test: &crate::program::TestFn) -> Result<(), VmError> {
+    pub(crate) fn call_test(&mut self, test: &crate::program::TestFn) -> Result<(), VmError> {
         let value = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,
         )));
@@ -977,7 +977,7 @@ impl Vm {
     /// consults this predicate at the execution site to reject the same
     /// set rather than silently rendering a debug string. Locked by
     /// tests/typecheck/interp_display_runtime_tests.rs.
-    pub fn value_implements_display(val: &Value) -> bool {
+    pub(crate) fn value_implements_display(val: &Value) -> bool {
         !matches!(
             val,
             Value::VmClosure(_)
@@ -1010,7 +1010,7 @@ impl Vm {
     /// The `pub` visibility is required by
     /// `tests/typecheck/kind_naming_tests.rs`, which pins
     /// the alignment matrix.
-    pub fn user_facing_type_name(&self, val: &Value) -> String {
+    pub(crate) fn user_facing_type_name(&self, val: &Value) -> String {
         match val {
             // Variants that carry semantic content into the user-facing
             // diagnostic. Each is a deliberate alias documented above.

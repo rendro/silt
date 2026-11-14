@@ -10,6 +10,7 @@
 //! `tests/heavy/integration.rs` so the typechecker signature registrations
 //! (FileStat record, new function schemes) are exercised end-to-end.
 
+use silt::testing::ValueInside;
 use silt::testing::typeinfo::bv;
 use silt::testing::value::Value;
 use std::collections::BTreeMap;

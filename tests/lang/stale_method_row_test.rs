@@ -3,6 +3,7 @@
 //! no server, no timing. Written by the stage 8 lane for the lane that
 //! owns the method table (src/typechecker/tables.rs, declare_traits.rs).
 
+use silt::testing::SessionInside;
 use silt::testing::{session_with, test_path};
 
 const A: &str = "pub type T { T(Int) }\npub trait Ta { fn m(self) -> String }\n\

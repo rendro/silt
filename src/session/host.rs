@@ -42,7 +42,7 @@ pub struct HostModule {
     /// The record and enum types it declares, each by its declaration:
     /// `type Point { x: Int, y: Int }`.
     pub types: Vec<String>,
-    pub fns: Vec<HostFunction>,
+    pub(crate) fns: Vec<HostFunction>,
 }
 
 /// What a part of the text a host module is checked from declares: the

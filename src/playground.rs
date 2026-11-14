@@ -17,13 +17,35 @@ use crate::lexer::{KEYWORD_LITERALS, KEYWORDS, Lexer, Tok, Token};
 use crate::module;
 use crate::session::Session;
 use crate::source::{SourceMap, SourceName, Span};
+use crate::vm::VmError;
 
-pub use crate::diagnostic::{Diagnostic, Severity, render_human};
+pub use crate::diagnostic::{Diagnostic, Severity};
 pub use crate::format::format;
 pub use crate::source::FileId;
 
 /// The version of silt this is.
 pub const VERSION: &str = crate::VERSION;
+
+/// `diagnostic` as the `silt` command prints it, its places read from
+/// `session`'s files.
+pub fn render_diagnostic(session: &Session, diagnostic: &Diagnostic) -> String {
+    crate::diagnostic::render_human(session.sources(), diagnostic)
+}
+
+/// Whether `error` ended the program because its steps ran out.
+pub fn out_of_steps(error: &VmError) -> bool {
+    error.out_of_steps
+}
+
+/// What `main` returned in its `Err`, if that ended the program.
+pub fn returned(error: &VmError) -> Option<&str> {
+    error.returned.as_deref()
+}
+
+/// `error` as the diagnostic `silt run` prints.
+pub fn error_diagnostic(error: &VmError) -> Diagnostic {
+    error.to_diagnostic()
+}
 
 // ── Complete ──────────────────────────────────────────────────────────
 

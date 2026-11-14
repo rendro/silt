@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use silt::testing::SessionInside;
 use silt::testing::value::Value;
 use silt::testing::{check_str, run_files, run_str, session_with, test_path};
 

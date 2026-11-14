@@ -21,6 +21,7 @@
 //!      modulo the four documented deliberate aliases.
 
 use silt::testing::typeinfo::bv;
+use silt::testing::{ValueInside, VmInside};
 use std::sync::Arc;
 
 use silt::testing::bytecode::{Function, VmClosure};

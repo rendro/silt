@@ -35,6 +35,7 @@ pub(crate) enum Limit {
     /// which writes the text out itself).
     Discard,
     /// All of it (a REPL entry's value, as the released REPL shows it).
+    #[cfg_attr(not(feature = "repl"), allow(dead_code))]
     Whole,
 }
 
@@ -542,7 +543,8 @@ impl Vm {
     /// VM's own. If one of them fails, or cannot run to its end (it
     /// waits for something that never comes), the text is the value's
     /// plain structure.
-    pub fn show_text(&mut self, value: &Value) -> String {
+    #[cfg(feature = "repl")]
+    pub(crate) fn show_text(&mut self, value: &Value) -> String {
         self.show_or_fail(value, Limit::Whole)
             .unwrap_or_else(|_| value.to_string())
     }

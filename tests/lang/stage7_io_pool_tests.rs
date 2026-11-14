@@ -15,6 +15,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use silt::testing::VmInside;
 use silt::testing::compile_str;
 use silt::{Buffer, HostIo, Vm};
 

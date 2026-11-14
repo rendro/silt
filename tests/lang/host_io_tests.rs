@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use silt::testing::compile_str;
+use silt::testing::{BufferInside, VmInside};
 use silt::{Buffer, Clock, HostIo, Output, Vm};
 
 /// Run `source` on a VM with `io`, and give `main`'s value or the

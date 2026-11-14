@@ -107,6 +107,7 @@ pub struct Resolver {
 
 impl Resolver {
     /// Allocate a fresh resolver with empty maps.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn new() -> Self {
         Self::default()
     }
@@ -136,7 +137,7 @@ impl Resolver {
 
     /// What the registry holds, for a test that compares two states of
     /// a session: each alias, in a fixed order.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub fn fingerprint(&self) -> Vec<String> {
         let mut rows: Vec<String> = self
             .aliases
