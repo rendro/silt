@@ -1770,6 +1770,10 @@ impl Vm {
         self.runtime.charge(0)?;
         let mut run = start(self)?;
         loop {
+            #[cfg(any(test, feature = "test-hooks"))]
+            if program && matches!(run, Slice::Done(_)) {
+                crate::scheduler::stop_race(crate::scheduler::StopRace::MainReturns);
+            }
             crate::scheduler::run_deferred();
             if program {
                 scheduler.give_panic_on();

@@ -320,6 +320,9 @@ struct ThreadState {
 struct Inner {
     /// Which scheduler of the process this is.
     id: u64,
+    /// The scheduler itself, for a look that is to come again later
+    /// ([`stops_pending`]).
+    me: Weak<Inner>,
     queue: Mutex<RunQueue>,
     /// The length of the queue, for a look without its lock.
     queued: AtomicUsize,
@@ -589,6 +592,7 @@ impl Scheduler {
             static SCHEDULERS: AtomicU64 = AtomicU64::new(0);
             Inner {
                 id: SCHEDULERS.fetch_add(1, Ordering::Relaxed),
+                me: inner.clone(),
                 queue: Mutex::default(),
                 queued: AtomicUsize::new(0),
                 spinning: AtomicUsize::new(0),
@@ -899,12 +903,14 @@ impl Scheduler {
         // the end, here if a thread outside a slice let one go (the
         // timer's, as it ended a task by its deadline): a stop may wake
         // a task again.
+        // (They are run here first: the look that ends the wait finds
+        // none pending, and one that came after it is run here too.)
         loop {
+            run_deferred();
             let _ = self.wait_for(MainWaits::Settling);
             if !DEFERRED_ANY.load(Ordering::SeqCst) {
                 break;
             }
-            run_deferred();
         }
         // What still waits is dropped, in one act: dropping a task can
         // wake another (a stage that is dropped closes its output, and
@@ -1966,6 +1972,8 @@ impl Inner {
         handle.stop(&self.parking);
         drop(handle);
         if after_slice {
+            #[cfg(any(test, feature = "test-hooks"))]
+            stop_race(StopRace::TaskEnd);
             run_deferred();
         }
         self.ended(&group);
@@ -2053,10 +2061,11 @@ impl Inner {
     /// [`Inner::end_task`]. `after_slice` where the task's slice has
     /// just run and the runtime holds no lock: the stops of the
     /// streams that it let go of (in its frames, in its result) are
-    /// run here, while it still counts, so that the program cannot
-    /// have ended before them (a stop dismisses a failure in the
-    /// stream it stops; one that came after the end could not,
-    /// [`TaskHandle::keep_failure`]).
+    /// run here, while it still counts. (Another thread may have taken
+    /// them first: nothing is decided about the tasks while a stop is
+    /// pending, [`TAKEN`]; a stop dismisses a failure in the stream it
+    /// stops, and one after the end could not,
+    /// [`TaskHandle::keep_failure`].)
     fn end(&self, task: Task, after_slice: bool) {
         // Its frames are abandoned before it stops counting.
         let Task {
@@ -2068,6 +2077,8 @@ impl Inner {
         handle.stop(&self.parking);
         drop(handle);
         if after_slice {
+            #[cfg(any(test, feature = "test-hooks"))]
+            stop_race(StopRace::TaskEnd);
             run_deferred();
         }
         self.ended(&group);
@@ -2457,6 +2468,11 @@ impl Inner {
         if group.external.load(Ordering::SeqCst) > 0 {
             return;
         }
+        // A stop that is pending may wake a task: the look comes again
+        // when it has run ([`TAKEN`]).
+        if stops_pending(self) {
+            return;
+        }
         // A second look without a lock, at what the registry counts:
         // a stop needs every live task to wait, and no wait that will
         // end. Most waits end here, while other tasks run or sleep, so
@@ -2820,6 +2836,8 @@ fn fire_timers(inner: &Inner) {
         if timer.fire_due(&inner.parking) > 0 {
             inner.check_all();
         }
+        // What a task that its deadline ended let go of (`expire_task`).
+        run_deferred();
     }
 }
 
@@ -3112,19 +3130,176 @@ pub(crate) fn defer(stop: impl FnOnce() + Send + 'static) {
     DEFERRED_ANY.store(true, Ordering::SeqCst);
 }
 
+/// How many batches of stops threads have taken from [`DEFERRED`] and
+/// not run to their end yet ([`Taken`]), and the schedulers whose look
+/// at their tasks found stops pending ([`stops_pending`]). A stop is in
+/// the queue or counted here from the moment it is deferred until it has
+/// run: it is taken and counted under the queue's lock.
+///
+/// The rule this keeps: nothing is decided about the tasks of a program
+/// (that it is deadlocked, that it has ended) while a stop is pending.
+/// A stop may wake a task, and whoever deferred or took it may count for
+/// nothing by then: a task that let go of a stream as it parked (its wait
+/// held the stream's output last), a worker that took the stop after its
+/// slice, whose task has parked or ended, the timer's thread. The look
+/// that found stops pending comes again when the last batch has run.
+static TAKEN: std::sync::Mutex<Pending> = std::sync::Mutex::new(Pending {
+    batches: 0,
+    looks: Vec::new(),
+});
+
+/// What [`TAKEN`] holds.
+struct Pending {
+    batches: usize,
+    looks: Vec<Weak<Inner>>,
+}
+
+/// A batch of stops taken from [`DEFERRED`]: counted in [`TAKEN`] until
+/// it is dropped, after its stops have run (or with them, if one
+/// panicked). The last one to end looks again for the schedulers that
+/// found stops pending.
+struct Taken(Vec<Box<dyn FnOnce() + Send>>);
+
+impl Taken {
+    /// Take what the queue has, counted; `None` when it has nothing.
+    fn take() -> Option<Taken> {
+        let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
+        DEFERRED_ANY.store(false, Ordering::SeqCst);
+        if deferred.is_empty() {
+            return None;
+        }
+        // (Counted before the queue's lock is let go.)
+        TAKEN.lock().unwrap_or_else(|e| e.into_inner()).batches += 1;
+        Some(Taken(std::mem::take(&mut *deferred)))
+    }
+
+    fn run(mut self) {
+        for stop in std::mem::take(&mut self.0) {
+            stop();
+        }
+    }
+}
+
+impl Drop for Taken {
+    fn drop(&mut self) {
+        let looks = {
+            let mut taken = TAKEN.lock().unwrap_or_else(|e| e.into_inner());
+            taken.batches -= 1;
+            // (Stops deferred meanwhile are taken by whoever deferred
+            // them, and the end of that batch looks again.)
+            match taken.batches == 0 && !DEFERRED_ANY.load(Ordering::SeqCst) {
+                true => std::mem::take(&mut taken.looks),
+                false => Vec::new(),
+            }
+        };
+        for inner in looks.iter().filter_map(Weak::upgrade) {
+            inner.check_all();
+        }
+    }
+}
+
 /// Run what was deferred ([`defer`]), and what that defers in turn. The
 /// caller holds no lock of the runtime.
 pub(crate) fn run_deferred() {
     while DEFERRED_ANY.load(Ordering::SeqCst) {
-        let stops = {
-            let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
-            DEFERRED_ANY.store(false, Ordering::SeqCst);
-            std::mem::take(&mut *deferred)
-        };
-        for stop in stops {
-            stop();
+        if let Some(taken) = Taken::take() {
+            taken.run();
         }
     }
+}
+
+/// Whether a stop is deferred, or taken and not yet run; if so, `inner`
+/// looks at its tasks again when the last of them has run ([`TAKEN`]).
+fn stops_pending(inner: &Inner) -> bool {
+    let mut taken = TAKEN.lock().unwrap_or_else(|e| e.into_inner());
+    let pending = taken.batches > 0 || DEFERRED_ANY.load(Ordering::SeqCst);
+    if pending {
+        if !taken.looks.iter().any(|look| look.ptr_eq(&inner.me)) {
+            taken.looks.push(inner.me.clone());
+        }
+        #[cfg(any(test, feature = "test-hooks"))]
+        if taken.batches > 0 {
+            stop_race_waited();
+        }
+    }
+    pending
+}
+
+/// Test-only: where [`force_the_stop_race`] hands the stops to a thread
+/// of its own.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StopRace {
+    /// A task ends after its slice, having let go of a stream.
+    TaskEnd,
+    /// The program's thread has run its last slice: `main` has returned,
+    /// and let go of a stream.
+    MainReturns,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+static STOP_RACE: std::sync::Mutex<Option<StopRace>> = std::sync::Mutex::new(None);
+
+/// Test-only: whether a look has found taken stops pending since the
+/// race was forced.
+#[cfg(any(test, feature = "test-hooks"))]
+static STOP_RACE_WAITED: (std::sync::Mutex<bool>, std::sync::Condvar) =
+    (std::sync::Mutex::new(false), std::sync::Condvar::new());
+
+/// Test-only (`SILT_TEST_STOP_RACE=task-end` or `main-returns` in a build with
+/// `test-hooks`): the first time, at `at`, that there are deferred stops,
+/// they are taken by a thread of the hook's own, which counts for
+/// nothing, as a worker after its slice does, and which runs them only
+/// once a look at the tasks has found them pending ([`stops_pending`]).
+/// That is the order in which such a worker took a stop an ending task
+/// had just deferred: the task stopped counting with its stop not yet
+/// run, and the program was judged deadlocked, or ended.
+/// Forced so, it needs no time; the hook says on stderr when the stops
+/// have run.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn force_the_stop_race(at: StopRace) {
+    *STOP_RACE.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+}
+
+/// Test-only: the place `at` of [`force_the_stop_race`] is reached.
+#[cfg(any(test, feature = "test-hooks"))]
+pub(crate) fn stop_race(at: StopRace) {
+    let mut race = STOP_RACE.lock().unwrap_or_else(|e| e.into_inner());
+    if *race != Some(at) {
+        return;
+    }
+    let Some(taken) = Taken::take() else {
+        return;
+    };
+    *race = None;
+    drop(race);
+    std::thread::spawn(move || {
+        let (waited, woken) = &STOP_RACE_WAITED;
+        let mut waited = waited.lock().unwrap_or_else(|e| e.into_inner());
+        while !*waited {
+            waited = woken.wait(waited).unwrap_or_else(|e| e.into_inner());
+        }
+        drop(waited);
+        // (Counted until the line is out: whoever waits sees it.)
+        let mut taken = taken;
+        for stop in std::mem::take(&mut taken.0) {
+            stop();
+        }
+        // (And what they deferred in turn, as `run_deferred` does.)
+        run_deferred();
+        eprintln!("silt test hook: a thread that counts for nothing ran the stops");
+        drop(taken);
+    });
+}
+
+/// Test-only: a look has found taken stops pending.
+#[cfg(any(test, feature = "test-hooks"))]
+fn stop_race_waited() {
+    let (waited, woken) = &STOP_RACE_WAITED;
+    *waited.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    woken.notify_all();
 }
 
 /// Test-only: [`force_the_end_race`] was called.
