@@ -93,14 +93,20 @@ pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error, text: &str) -> V
 /// comment), and a number too large worded as `int.parse` words it.
 /// `rest` is the text from where the error is: an empty reason there,
 /// with nothing but white space left, is a value missing at the end
-/// (`a = `).
+/// (`a = `); a string the crate looked for where nothing but white space
+/// or a comment is left on the line, a value missing at the end of the
+/// line (`a = ⏎`).
 fn toml_reason(message: &str, rest: &str) -> String {
     let lines: Vec<&str> = (message.lines())
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect();
+    let line_rest = rest.split('\n').next().unwrap_or("").trim();
     match lines.as_slice() {
         [] if rest.trim().is_empty() => "a value is missing at the end of the text".to_string(),
+        ["invalid string", ..] if line_rest.is_empty() || line_rest.starts_with('#') => {
+            "a value is missing at the end of the line".to_string()
+        }
         [] => "a character that is not allowed here".to_string(),
         ["number too large to fit in target type"] => "number too large".to_string(),
         ["number too small to fit in target type"] => "number too small".to_string(),
