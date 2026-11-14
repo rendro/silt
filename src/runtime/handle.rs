@@ -1611,6 +1611,10 @@ pub struct TaskHandle {
     /// it. Read when the program ends, for the report of failures that
     /// nobody joined.
     unjoined_failure: AtomicBool,
+    /// Set when the code of the task's owner has ended with the failure
+    /// unhandled ([`TaskHandle::keep_failure`]): a cancel no longer
+    /// dismisses it.
+    kept: AtomicBool,
     /// Who the task belongs to (`Vm::set_task_owner`): the
     /// program, or one test of a test run.
     owner: u64,
@@ -1665,6 +1669,7 @@ impl TaskHandle {
             result: Cell::labelled(format!("task <handle:{id}>")),
             cancelled: Arc::new(AtomicBool::new(false)),
             unjoined_failure: AtomicBool::new(false),
+            kept: AtomicBool::new(false),
             owner,
             deadline: None,
             expired: AtomicBool::new(false),
@@ -1830,8 +1835,9 @@ impl TaskHandle {
     /// `task.cancel`: the task's result is the cancellation unless it
     /// had one, at once, whatever the task still does (what it returns
     /// or fails with later changes nothing). A failure it had is
-    /// dismissed. The caller ends the task's wait, if it waits
-    /// (`Scheduler::cancel`).
+    /// dismissed, unless the code of its owner has ended with it
+    /// ([`TaskHandle::keep_failure`]). The caller ends the task's
+    /// wait, if it waits (`Scheduler::cancel`).
     ///
     /// A failure the task had taken from a task it joined is not its
     /// own: that task is returned, for the caller to hand the failure
@@ -1841,13 +1847,26 @@ impl TaskHandle {
         let _ = self
             .result
             .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
-        if !self.unjoined_failure.swap(false, AtomicOrdering::SeqCst) {
+        if self.kept.load(AtomicOrdering::SeqCst)
+            || !self.unjoined_failure.swap(false, AtomicOrdering::SeqCst)
+        {
             return None;
         }
         match self.result.get() {
             Some(Ended(Err(error))) => error.taken_from.as_ref().map(|from| from.0.clone()),
             _ => None,
         }
+    }
+
+    /// The code of the task's owner has ended: a failure that nobody
+    /// has handled by now is reported, and a cancel from now on does
+    /// not dismiss it. What cancels the task then is the end itself:
+    /// the stop of a stream stage whose output a task held until the
+    /// end, and let go of as it was dropped with it. That stream was
+    /// never left (a stream that the program leaves is stopped while
+    /// its code still runs).
+    pub(crate) fn keep_failure(&self) {
+        self.kept.store(true, AtomicOrdering::SeqCst);
     }
 
     /// A join took the failure of this task, and the task that joined

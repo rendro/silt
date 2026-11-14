@@ -866,7 +866,17 @@ impl Scheduler {
     /// for the owner it ran it for (`Vm::set_task_owner`): a test waits
     /// for its own tasks only.
     pub(crate) fn settle(&self) {
-        let _ = self.wait_for(MainWaits::Settling);
+        // The stops of the streams that the tasks left are run before
+        // the end, here if a thread outside a slice let one go (the
+        // timer's, as it ended a task by its deadline): a stop may wake
+        // a task again.
+        loop {
+            let _ = self.wait_for(MainWaits::Settling);
+            if !DEFERRED_ANY.load(Ordering::SeqCst) {
+                break;
+            }
+            run_deferred();
+        }
         // What still waits is dropped, in one act: dropping a task can
         // wake another (a stage that is dropped closes its output, and
         // whoever reads that wakes), and the program has ended, so
@@ -882,6 +892,11 @@ impl Scheduler {
     /// Called like [`Scheduler::settle`], for the same owner.
     pub(crate) fn stop_tasks(&self) {
         let group = self.inner.group(self.inner.current_owner());
+        // What has failed by now is reported: a task that is dropped
+        // lets go of the streams it held, and the stops of their stages
+        // dismiss no failure of theirs, whenever they run.
+        self.inner.failed_tasks.lock().keep(group.owner);
+        collected_failures().lock().keep(group.owner);
         // The flag first: a task on its way into a wait reads it.
         group.stopped.store(true, Ordering::SeqCst);
         self.drop_waiting(&group);
@@ -1900,6 +1915,11 @@ impl Inner {
     /// waits for it (`task.deadline`) finds the function's I/O given
     /// up, a connection it was reading shut down.
     fn expire_task(&self, task: Task) {
+        self.expire(task, false);
+    }
+
+    /// [`Inner::expire_task`]; `after_slice` as for [`Inner::end`].
+    fn expire(&self, task: Task, after_slice: bool) {
         let Task {
             vm, handle, group, ..
         } = task;
@@ -1911,6 +1931,9 @@ impl Inner {
         handle.expire(&self.parking);
         handle.stop(&self.parking);
         drop(handle);
+        if after_slice {
+            run_deferred();
+        }
         self.ended(&group);
     }
 
@@ -1990,6 +2013,17 @@ impl Inner {
 
     /// A task has ended: it completed, failed, or was cancelled.
     fn end_task(&self, task: Task) {
+        self.end(task, false);
+    }
+
+    /// [`Inner::end_task`]. `after_slice` where the task's slice has
+    /// just run and the runtime holds no lock: the stops of the
+    /// streams that it let go of (in its frames, in its result) are
+    /// run here, while it still counts, so that the program cannot
+    /// have ended before them (a stop dismisses a failure in the
+    /// stream it stops; one that came after the end could not,
+    /// [`TaskHandle::keep_failure`]).
+    fn end(&self, task: Task, after_slice: bool) {
         // Its frames are abandoned before it stops counting.
         let Task {
             vm, handle, group, ..
@@ -1999,6 +2033,9 @@ impl Inner {
         // while it still counts: a wait for it is never seen as stuck.
         handle.stop(&self.parking);
         drop(handle);
+        if after_slice {
+            run_deferred();
+        }
         self.ended(&group);
     }
 
@@ -2233,7 +2270,7 @@ impl Inner {
             || self.exit.get().is_some()
             || (cancelled && !task.ran)
         {
-            self.end_task(task);
+            self.end(task, true);
             return None;
         }
         #[cfg(any(test, feature = "test-hooks"))]
@@ -2277,15 +2314,15 @@ impl Inner {
             SliceResult::Yielded | SliceResult::Blocked(_) if spent => {
                 // The cancel has given the handle its result.
                 match task.handle.is_cancelled() {
-                    true => self.end_task(task),
-                    false => self.expire_task(task),
+                    true => self.end(task, true),
+                    false => self.expire(task, true),
                 }
             }
             SliceResult::Yielded if on_worker && self.keeps_on() => return Some(task),
             SliceResult::Yielded => self.enqueue(task),
             SliceResult::Completed(value) => {
                 task.handle.complete(Ok(value), &self.parking);
-                self.end_task(task);
+                self.end(task, true);
             }
             SliceResult::Failed(error) => {
                 // A failure that no join receives is reported when the
@@ -2301,7 +2338,7 @@ impl Inner {
                 } else if let Some(joined) = taken_from {
                     self.hand_back(&joined.0);
                 }
-                self.end_task(task);
+                self.end(task, true);
             }
             SliceResult::Blocked(wait) => {
                 // What the task let go of before it waits is stopped
@@ -2873,6 +2910,17 @@ impl FailedTasks {
         match self.owners.get_mut(&owner) {
             Some(failed) => failed.count_unreachable(),
             None => Vec::new(),
+        }
+    }
+
+    /// The code of `owner` has ended: the failures of its tasks that
+    /// nobody has handled are kept for the report
+    /// ([`TaskHandle::keep_failure`]).
+    fn keep(&self, owner: u64) {
+        if let Some(failed) = self.owners.get(&owner) {
+            for handle in &failed.handles {
+                handle.keep_failure();
+            }
         }
     }
 
@@ -3729,6 +3777,50 @@ fn main() {
         // The one that `kept` held, until it was dropped at the end of
         // `main`.
         assert_eq!(vm.scheduler().inner.parking.timer().pending(), 0);
+    }
+
+    /// A failed stage, recorded as the scheduler records one.
+    fn failed_stage(scheduler: &super::Scheduler, id: usize) -> Arc<super::TaskHandle> {
+        let handle = Arc::new(super::TaskHandle::new(id));
+        let error = VmError::new("division by zero".to_string());
+        assert!(handle.fail(error, &scheduler.inner.parking));
+        super::record_failed_task(&scheduler.inner, &handle);
+        handle
+    }
+
+    /// A failure that has happened when the owner's code ends is
+    /// reported, though a stop of its task comes after that: the stop
+    /// of a stream stage whose output a task held to the end, and let
+    /// go of as it was dropped with the end. The stop runs at the next
+    /// `run_deferred` of any thread, maybe a worker's while the report
+    /// is under way; it dismissed the failure then, and the program
+    /// ended with exit 0 and no report
+    /// (wave7_s1__a_failure_the_next_stage_raised_is_reported_once).
+    #[test]
+    fn a_stop_after_the_end_dismisses_no_failure() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = super::Scheduler::new(HostIo::buffer(&out));
+        let stage = failed_stage(&scheduler, 7);
+        scheduler.stop_tasks();
+        // What the stop of the stage does.
+        scheduler.cancel(&stage);
+        assert_eq!(scheduler.report_unjoined_failures(), 1);
+        assert!(out.take().contains("division by zero"));
+    }
+
+    /// A stop that is still to run when the tasks have come to a stop
+    /// (a thread outside a slice let the stream go: the timer's, as it
+    /// ended a task by its deadline) runs before the end: the stream
+    /// was left, and the failure in it is dismissed, on every run.
+    #[test]
+    fn a_stop_still_to_run_when_the_tasks_stop_runs_before_the_end() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = Arc::new(super::Scheduler::new(HostIo::buffer(&out)));
+        let stage = failed_stage(&scheduler, 7);
+        let (stops, stopped) = (scheduler.clone(), stage.clone());
+        super::defer(move || stops.cancel(&stopped));
+        scheduler.settle();
+        assert_eq!(scheduler.report_unjoined_failures(), 0, "{}", out.take());
     }
 
     /// The most failed tasks of one owner the record may hold when
