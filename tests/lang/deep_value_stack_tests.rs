@@ -99,43 +99,55 @@ fn deep_values_compare_order_and_hash() {
     );
 }
 
-/// A value is shown as deep as a string can hold its text (`a`), and
-/// inspected at the full depth (`b`, and a tuple that holds both). A
-/// text that a string cannot hold is refused as it is written: a
-/// release build's `DEPTH` is that deep, and showing it stops with the
-/// error, not by overflowing the stack.
+/// A value is shown and inspected as deep as a string can hold its
+/// text (`a`), and a tuple of two values half as deep (`b` and a list of
+/// it). A text that a string cannot hold is refused as it is written,
+/// by interpolation and by `io.inspect` alike: a release build's `DEPTH`
+/// is that deep, and showing it stops with the error, not by
+/// overflowing the stack.
 #[test]
 fn deep_values_are_shown_inspected_and_dropped() {
-    let (shown, deep) = (text_length(SHOWN_DEPTH), text_length(DEPTH));
+    let half = SHOWN_DEPTH / 2;
+    let (shown, halved) = (text_length(SHOWN_DEPTH), text_length(half));
     assert_eq!(
         run_program(
             "text",
             &program_of(
                 SHOWN_DEPTH,
-                DEPTH,
+                half,
                 &[
                     "string.length(\"{a}\")",
-                    "string.length(io.inspect(b))",
-                    "string.length(io.inspect((a, [b])))",
+                    "string.length(io.inspect(a))",
+                    "string.length(io.inspect((b, [b])))",
                 ]
             )
         ),
-        format!("{shown}\n{deep}\n{}", shown + deep + 6)
+        format!("{shown}\n{shown}\n{}", halved * 2 + 6)
     );
-    let out = ended("too_long", &program(&["string.length(\"{b}\")"]));
-    let (stdout, stderr) = (
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    match deep > 10_000_000 {
-        true => {
-            assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
-            assert!(
-                stderr.contains("string interpolation: result would exceed maximum string size"),
-                "{stderr}"
-            );
+    let deep = text_length(DEPTH);
+    for (name, used, error) in [
+        ("too_long", "string.length(\"{b}\")", "string interpolation"),
+        (
+            "too_long_inspected",
+            "string.length(io.inspect(b))",
+            "io.inspect",
+        ),
+    ] {
+        let out = ended(name, &program(&[used]));
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        match deep > 10_000_000 {
+            true => {
+                assert_eq!(out.status.code(), Some(1), "{used}: {stdout}\n{stderr}");
+                assert!(
+                    stderr.contains(&format!("{error}: result would exceed maximum string size")),
+                    "{used}: {stderr}"
+                );
+            }
+            false => assert_eq!(stdout.trim(), deep.to_string(), "{used}: {stderr}"),
         }
-        false => assert_eq!(stdout.trim(), deep.to_string(), "{stderr}"),
     }
 }
 
