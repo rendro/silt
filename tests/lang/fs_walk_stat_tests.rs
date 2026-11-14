@@ -164,23 +164,19 @@ import host
     // readonly is platform-dependent for a freshly-written file; we just
     // assert the field exists and is a Bool.
     assert!(matches!(fields.get("readonly"), Some(Value::Bool(_))));
-    // mode is an Int on every platform (0 on non-unix). On unix the
-    // permission bits for a freshly-written file are non-zero (umask
-    // stripping leaves at least the owner-read bit), so we can assert
-    // > 0 under cfg(unix). Elsewhere only assert type shape.
+    // mode is an Int on every platform (0 on non-unix). On unix it is
+    // the permission bits only (no file type, S_IFMT = 0o170000), and
+    // for a freshly-written file at least "owner can read" (0o400): the
+    // umask leaves that bit.
     match fields.get("mode") {
         Some(Value::Int(m)) => {
             #[cfg(unix)]
             {
-                // Mask off the file-type bits (S_IFMT = 0o170000) to get
-                // just the permission triple, then require at least
-                // "owner can read" (0o400). Anything less would mean the
-                // umask / perms system didn't kick in.
-                let perms = (*m as u32) & 0o777;
                 assert!(
-                    perms & 0o400 != 0,
-                    "expected owner-read bit set; mode perms = {perms:o}"
+                    (0..0o10000).contains(m),
+                    "expected the permission bits only; mode = {m:o}"
                 );
+                assert!(m & 0o400 != 0, "expected owner-read bit set; mode = {m:o}");
             }
             #[cfg(not(unix))]
             {

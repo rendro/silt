@@ -1,0 +1,12 @@
+-- exit: 1
+-- `test.assert_eq` of two Regex values: they have Display and Equal, so
+-- the call is checked, and a failure writes both as io.inspect does.
+import regex
+import test
+
+fn main() -> Result((), regex.RegexError) {
+  let a = regex.compile("a+")?
+  let b = regex.compile("b+")?
+  test.assert_eq(a, b)
+  Ok(())
+}

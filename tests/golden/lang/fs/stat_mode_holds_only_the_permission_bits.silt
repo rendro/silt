@@ -1,0 +1,16 @@
+-- fs.stat's `mode` holds the permission bits only (the low 12 bits:
+-- the permissions, setuid, setgid, sticky), not the file type, which
+-- is_file / is_dir / is_symlink say; on Windows it is 0. Either way it
+-- is below 4096, for a file and for a directory.
+import fs
+
+fn main() {
+  match fs.stat("stat_mode_holds_only_the_permission_bits.silt") {
+    Ok(s) -> println("file: {s.mode < 4096} {s.mode >= 0} {s.is_file}")
+    Err(e) -> println("{e}")
+  }
+  match fs.stat(".") {
+    Ok(s) -> println("dir: {s.mode < 4096} {s.mode >= 0} {s.is_dir}")
+    Err(e) -> println("{e}")
+  }
+}

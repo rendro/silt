@@ -1,0 +1,10 @@
+a+
+pattern a+
+a+
+[a+, a+]
+Rule {name: "as", re: a+}
+Ok(\d+)
+<a+>
+true
+<regex:a+>
+[<regex:a+>]

@@ -47,6 +47,24 @@ pub fn program_args() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The `mode` of `fs.stat`: the permission bits of the Unix mode, its
+/// low 12 bits (the permissions, setuid, setgid and sticky), without
+/// the file type, which `is_file`, `is_dir` and `is_symlink` say. 0 on
+/// Windows, which has no such bits (`FILE_ATTRIBUTE_*` are no
+/// permissions); `readonly` says what it has.
+fn permission_bits(md: &std::fs::Metadata) -> i64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        i64::from(md.mode() & 0o7777)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = md;
+        0
+    }
+}
+
 /// Convert a `SystemTime` into a Silt `Option(DateTime)`. A missing /
 /// unsupported timestamp (the OS returned `Err`, or the value predates
 /// UNIX_EPOCH by more than chrono can represent) collapses to `None`
@@ -549,20 +567,6 @@ pub(crate) mod fs {
                 // is_file=false / is_dir=false. Surface that directly so
                 // callers can see "this is a symlink, neither file nor
                 // dir" without a follow step.
-
-                // Unix permission bits (e.g. 0o755). On Windows no
-                // equivalent exists — std exposes `FILE_ATTRIBUTE_*`
-                // bits via `MetadataExt::file_attributes()` but those
-                // aren't permission bits, so we report 0 to signal
-                // "not applicable". User code that actually needs
-                // Unix perms should only read `mode` under `cfg(unix)`.
-                #[cfg(unix)]
-                let mode: i64 = {
-                    use std::os::unix::fs::MetadataExt;
-                    md.mode() as i64
-                };
-                #[cfg(not(unix))]
-                let mode: i64 = 0;
                 // modified() can fail on platforms that don't track
                 // mtime, accessed() on filesystems mounted with
                 // `noatime`, and created() (`btime`) is notoriously
@@ -577,7 +581,7 @@ pub(crate) mod fs {
                     ("is_symlink", Value::Bool(md.file_type().is_symlink())),
                     ("modified", system_time_to_option_datetime(md.modified())),
                     ("readonly", Value::Bool(md.permissions().readonly())),
-                    ("mode", Value::Int(mode)),
+                    ("mode", Value::Int(permission_bits(&md))),
                     ("accessed", system_time_to_option_datetime(md.accessed())),
                     ("created", system_time_to_option_datetime(md.created())),
                 ])
@@ -799,7 +803,29 @@ mod tests {
     use std::io::ErrorKind;
     use std::os::unix::fs::PermissionsExt;
 
-    use super::{rename_failed_at, system_time_to_option_datetime};
+    use super::{permission_bits, rename_failed_at, system_time_to_option_datetime};
+
+    /// `mode` is the permission bits only, with setuid, setgid and
+    /// sticky: the file type is not in it, for a file or a directory.
+    #[test]
+    fn the_mode_holds_only_the_permission_bits() {
+        let dir = std::env::temp_dir().join(format!("silt_stat_mode_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        std::fs::write(dir.join("f.txt"), "f").unwrap();
+        for (name, mode) in [
+            ("f.txt", 0o644),
+            ("f.txt", 0o4755),
+            ("d", 0o1775),
+            ("d", 0o700),
+        ] {
+            let path = dir.join(name);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            let md = std::fs::symlink_metadata(&path).unwrap();
+            assert_eq!(permission_bits(&md), i64::from(mode), "{name} {mode:o}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A time of a file before 1970 is a date as any other.
     #[test]

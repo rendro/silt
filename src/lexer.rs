@@ -1690,7 +1690,9 @@ fn is_stray(c: char) -> bool {
 /// What is wrong with the number literal `raw` as it is written, when it
 /// is not in the one spelling of its number: a `_` only between two
 /// digits, the prefixes `0x` and `0b` and the exponent `e` in lower
-/// case, no `+` in an exponent, no leading zero in a decimal number.
+/// case, no `+` in an exponent, no leading zero in a decimal number or
+/// in an exponent. Zeros at the end of a fraction are allowed: `1.50`
+/// tells its reader how exact the number is.
 /// The message says the first fault and writes the whole literal right.
 fn number_spelling(raw: &str) -> Option<String> {
     let lower_prefix = raw.starts_with("0X") || raw.starts_with("0B");
@@ -1758,6 +1760,19 @@ fn number_spelling(raw: &str) -> Option<String> {
             faults.push("a number has no leading zero");
             let whole = if digits.is_empty() { "0" } else { digits };
             fixed = format!("{whole}{}", &fixed[whole_end..]);
+        }
+        // No leading zero in an exponent either: `1e7`, not `1e007`.
+        if let Some(e) = fixed.find('e') {
+            let (sign, digits) = match fixed[e + 1..].strip_prefix('-') {
+                Some(rest) => ("-", rest),
+                None => ("", &fixed[e + 1..]),
+            };
+            if digits.len() > 1 && digits.starts_with('0') {
+                faults.push("an exponent has no leading zero");
+                let trimmed = digits.trim_start_matches(['0', '_']);
+                let digits = if trimmed.is_empty() { "0" } else { trimmed };
+                fixed = format!("{}e{sign}{digits}", &fixed[..e]);
+            }
         }
     }
     let first = faults.first()?;
@@ -2384,6 +2399,11 @@ mod tests {
             ("00.5", "a number has no leading zero: write `0.5`"),
             ("0_7", "a number has no leading zero: write `7`"),
             ("00", "a number has no leading zero: write `0`"),
+            ("1e007", "an exponent has no leading zero: write `1e7`"),
+            ("1e-07", "an exponent has no leading zero: write `1e-7`"),
+            ("2.5e0_3", "an exponent has no leading zero: write `2.5e3`"),
+            ("1e00", "an exponent has no leading zero: write `1e0`"),
+            ("007e07", "a number has no leading zero: write `7e7`"),
             (
                 "0X_1E+3",
                 "the prefix of a number is written in lower case: write `0x1E`",
@@ -2407,6 +2427,10 @@ mod tests {
             ("0e3", Token::Float(0.0)),
             ("1_0.2_5e1_0", Token::Float(10.25e10)),
             ("2.5e-3", Token::Float(2.5e-3)),
+            ("1e0", Token::Float(1.0)),
+            ("1e10", Token::Float(1e10)),
+            ("10.050", Token::Float(10.05)),
+            ("1.50", Token::Float(1.5)),
         ] {
             assert_eq!(lex(src), vec![token], "{src}");
         }
