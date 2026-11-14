@@ -449,16 +449,43 @@ impl TypeChecker {
     fn similar_trait_help(&self, name: Symbol) -> Option<String> {
         let written = resolve(name);
         // (Each candidate: the name compared, and how the help writes it.)
+        // (A trait of another module, as this one writes it: bare when
+        // imported by name, by its module's name or alias when the module
+        // is imported, else with the import it needs.)
+        let spelled = |module: Symbol, name: &str| -> String {
+            let item =
+                (self.imported_items.iter()).any(|(m, i)| *m == module && resolve(*i) == name);
+            match (item, self.import_spellings.get(&module)) {
+                (true, _) => format!("`{name}`"),
+                (false, Some(written)) => format!("`{written}.{name}`"),
+                (false, None) => {
+                    format!(
+                        "`{module}.{name}` (a trait of module `{module}`, after `import {module}`)"
+                    )
+                }
+            }
+        };
         let mut candidates: Vec<(String, String)> = Vec::new();
         for key in self.tables.traits.keys() {
             let shown = resolve(key.name);
             match crate::defs::builtin_trait_of_id(key.id.0) {
                 Some((_, None)) => {}
-                Some((builtin, Some(module))) => candidates.push((
-                    builtin.to_string(),
-                    format!("`{module}.{builtin}` (a trait of module `{module}`, after `import {module}`)"),
-                )),
-                None => candidates.push((shown.clone(), format!("`{shown}`"))),
+                Some((builtin, Some(module))) => {
+                    candidates.push((builtin.to_string(), spelled(intern(module), builtin)));
+                }
+                None => {
+                    let Some(def) = self.def(key.id.0) else {
+                        continue;
+                    };
+                    if def.module == self.module {
+                        candidates.push((shown.clone(), format!("`{shown}`")));
+                    } else if def.vis != crate::defs::Vis::Private
+                        && let Some(module) = self.tables.module_names.get(&def.module).copied()
+                        && !resolve(module).starts_with('<')
+                    {
+                        candidates.push((shown.clone(), spelled(module, &shown)));
+                    }
+                }
             }
         }
         for prelude in crate::defs::PRELUDE_TRAITS {

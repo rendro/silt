@@ -726,6 +726,12 @@ pub struct TypeChecker {
     pub(super) own_types: HashMap<Symbol, TypeRef>,
     /// The traits the module's own declarations declare, by name.
     pub(super) own_traits: HashMap<Symbol, TraitKey>,
+    /// The module's imports, for a help that writes a name of another
+    /// module as this one can: each imported module with the name it is
+    /// written by here (itself, or its alias), and each item imported by
+    /// name with its module.
+    pub(super) import_spellings: HashMap<Symbol, Symbol>,
+    pub(super) imported_items: std::collections::HashSet<(Symbol, Symbol)>,
     /// The module's type declarations that are rejected (a reserved or
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
@@ -975,6 +981,8 @@ impl TypeChecker {
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
+            import_spellings: HashMap::new(),
+            imported_items: std::collections::HashSet::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
@@ -1488,6 +1496,20 @@ impl TypeChecker {
     /// resolver wrote on each name what it names.
     pub(super) fn check_program_in(&mut self, program: &mut Program, mut env: TypeEnv) -> TypeEnv {
         self.enter_own_types();
+        for decl in &program.decls {
+            match decl {
+                Decl::Import(crate::ast::ImportTarget::Module(module), _) => {
+                    self.import_spellings.insert(*module, *module);
+                }
+                Decl::Import(crate::ast::ImportTarget::Alias(module, alias, _), _) => {
+                    self.import_spellings.insert(*module, *alias);
+                }
+                Decl::Import(crate::ast::ImportTarget::Items(module, items), _) => {
+                    (self.imported_items).extend(items.iter().map(|(item, _)| (*module, *item)));
+                }
+                _ => {}
+            }
+        }
 
         // First pass: pre-register every type name with a placeholder
         // body. This makes recursive type references (e.g.

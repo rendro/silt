@@ -1060,7 +1060,9 @@ impl TypeChecker {
             Type::Generic(name, _) => (self.tables.enums.get(name).into_iter())
                 .flat_map(|info| info.variants.iter())
                 .filter(|v| matches!(v.field_types.as_slice(), [field] if *field == error))
-                .map(|v| v.name)
+                // (As the program writes it: `other.Io` of another
+                // module's enum.)
+                .map(|v| self.written_variant(*name, v.name))
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
