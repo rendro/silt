@@ -129,6 +129,10 @@ struct Server {
     /// walk of the workspace to end (see `Server::finish_preload`): they
     /// are taken, in their order, before the next one.
     held: VecDeque<Message>,
+    /// Whether the editor asked for a shutdown: the protocol has a
+    /// server end with 0 after one, with 1 without (an `exit` that came
+    /// first, an editor that went away).
+    shut_down: bool,
 }
 
 /// How long the start waits for the walk of the workspace: one of the
@@ -157,6 +161,7 @@ impl Server {
             def_uses: None,
             preload: None,
             held: VecDeque::new(),
+            shut_down: false,
         }
     }
 
@@ -306,12 +311,13 @@ impl Server {
     }
 
     /// Handle the editor's message `msg`: `true` when the server is to
-    /// stop (a shutdown).
+    /// stop (a shutdown, or an `exit` without one).
     fn handle_message(&mut self, msg: Message) -> bool {
         {
             match msg {
                 Message::Request(req) => {
                     if self.connection.handle_shutdown(&req).unwrap_or(true) {
+                        self.shut_down = true;
                         return true;
                     }
                     // An answer that spans the workspace's files waits
@@ -324,6 +330,7 @@ impl Server {
                     }
                     self.guard_request(req, Self::handle_request);
                 }
+                Message::Notification(notif) if notif.method == Exit::METHOD => return true,
                 Message::Notification(notif) => {
                     self.guard_notification(notif, Self::handle_notification);
                 }
@@ -776,7 +783,10 @@ fn extract_request<R: lsp_types::request::Request>(
 
 // ── Entry point ────────────────────────────────────────────────────
 
-pub fn run() {
+/// Serve the editor on stdio until it ends the session: `true` when it
+/// asked for a shutdown first, as the protocol has it (the server then
+/// ends with 0, else with 1).
+pub fn run() -> bool {
     // A message that cannot be read is answered with an error, and the
     // session goes on (lsp-server's own transport ends it).
     let (connection, io_threads) = transport::stdio();
@@ -833,14 +843,14 @@ pub fn run() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("silt-lsp: failed to serialize capabilities: {e}");
-            return;
+            return false;
         }
     };
     let init_params = match connection.initialize(init_value) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("silt-lsp: initialization failed: {e}");
-            return;
+            return false;
         }
     };
 
@@ -883,6 +893,7 @@ pub fn run() {
     }
 
     server.run();
+    let shut_down = server.shut_down;
     // After `run` returns (the LSP `exit` notification arrived), the
     // reader thread has already exited but the writer thread is still
     // parked on its channel's receive. The writer's `Sender` lives
@@ -894,6 +905,7 @@ pub fn run() {
     if let Err(e) = io_threads.join() {
         eprintln!("silt-lsp: I/O thread error: {e}");
     }
+    shut_down
 }
 
 // ── Test helpers ──────────────────────────────────────────────────

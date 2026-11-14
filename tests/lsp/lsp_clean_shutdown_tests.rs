@@ -91,15 +91,32 @@ fn lsp_exits_cleanly_on_shutdown_exit() {
         }
     };
 
-    // 4) Clean exit. `silt lsp` does not currently call process::exit
-    // with a specific code on graceful shutdown — Rust's default
-    // termination yields success. Accept either success or any
-    // signal-less exit code: the load-bearing assertion above is the
-    // "did it exit at all" check.
-    assert!(
-        status.code().is_some(),
-        "child exited via signal, not graceful exit: {status:?}"
-    );
+    // 4) Clean exit: after a shutdown the protocol has the server end
+    // with 0.
+    assert_eq!(status.code(), Some(0), "exit after a shutdown: {status:?}");
+}
+
+/// Wait up to 3 s for the server to end on its own; its status.
+fn wait_for_exit(client: &mut LspClient) -> std::process::ExitStatus {
+    let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+    loop {
+        match client.child.try_wait() {
+            Ok(Some(status)) => return status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            Ok(None) => panic!("silt lsp did not exit within {SHUTDOWN_TIMEOUT:?}"),
+            Err(e) => panic!("child.try_wait failed: {e}"),
+        }
+    }
+}
+
+/// An `exit` with no shutdown before it ends the server with 1, as the
+/// protocol has it. FAIL on the base commit: it ended with 0.
+#[test]
+fn an_exit_without_a_shutdown_ends_the_server_with_one() {
+    let mut client = LspClient::spawn();
+    client.send_raw(&json!({"jsonrpc": "2.0", "method": "exit"}));
+    let status = wait_for_exit(&mut client);
+    assert_eq!(status.code(), Some(1), "exit without a shutdown: {status:?}");
 }
 
 /// A message that cannot be read is answered with a JSON-RPC error and
