@@ -1,0 +1,6 @@
+import net
+import test
+
+fn test_port_is_given_back() {
+  test.assert_eq(net.test_port(2), 2)
+}

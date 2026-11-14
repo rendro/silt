@@ -221,6 +221,7 @@ struct ModuleUses {
     punned: Vec<Span>,
     fields: Vec<FieldUse>,
     unknown_reads: Vec<(Span, Symbol)>,
+    unplaced: Vec<(Span, DefId, Symbol)>,
 }
 
 /// A place that names a target.
@@ -1054,6 +1055,7 @@ impl Server {
                     punned: names.punned,
                     fields: names.fields,
                     unknown_reads: names.unknown_reads,
+                    unplaced: names.unplaced,
                 });
             }
             projects.push((dir.clone(), modules));
@@ -1193,10 +1195,11 @@ impl Server {
     /// Why the places of the field `name` of the record type `record`
     /// cannot all be known, if they cannot: a module that can see the
     /// type (its own, or one that imports it, also through others) was
-    /// not checked, or reads a field `name` of a value whose record type
-    /// is not known (a type error there). Such a read may be a place of
-    /// the field; a rename that left it would break the program, so it
-    /// is refused. Every other read has its record type from the checker
+    /// not checked, reads a field `name` of a value whose record type is
+    /// not known (a type error there), or gives the field a value in a
+    /// literal or an update where the name of the field was not found in
+    /// the text. Such a place may be one of the field's; a rename that
+    /// left it would break the program, so it is refused. Every other read has its record type from the checker
     /// and is found. Call after [`Server::places_of`] for the target.
     pub(super) fn field_places_unknown(&self, record: &DefKey, name: Symbol) -> Option<String> {
         let def_uses = self.def_uses.as_ref()?;
@@ -1226,9 +1229,20 @@ impl Server {
                         file_of(module.id)
                     ));
                 }
-                let reads = (modules.iter())
-                    .find(|m| m.module == module.id)
-                    .map_or(&[][..], |m| &m.unknown_reads[..]);
+                let uses = (modules.iter()).find(|m| m.module == module.id);
+                let unplaced = uses.map_or(&[][..], |m| &m.unplaced[..]);
+                if let Some((span, ..)) =
+                    (unplaced.iter()).find(|(_, of, field)| *of == id && *field == name)
+                {
+                    let (line, col) = session.sources().line_col((span.file, span.start));
+                    return Some(format!(
+                        "{}:{line}:{col} gives a field `{}` a value, and where the name of \
+                         that field is written there was not found",
+                        file_of(module.id),
+                        resolve_sym(name)
+                    ));
+                }
+                let reads = uses.map_or(&[][..], |m| &m.unknown_reads[..]);
                 if let Some((span, _)) = reads.iter().find(|(_, read)| *read == name) {
                     let (line, col) = session.sources().line_col((span.file, span.start));
                     return Some(format!(

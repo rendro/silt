@@ -1,0 +1,18 @@
+-- cmd: run
+-- exit: 1
+-- stderr-contains: program has no main() function
+-- stderr-contains: add one as the entry point
+-- stderr-not-contains: looks like a test file
+-- A file whose name does not end in `_test.silt` is no test file, even with
+-- functions named like tests and an import of `test`: it is told to add a
+-- `main`, not pointed at the test command, which would hold its helpers
+-- to a test's rules.
+import test
+
+pub fn test_helper(x: Int) -> Int {
+  x + 1
+}
+
+fn check_helper() {
+  test.assert_eq(test_helper(1), 2)
+}

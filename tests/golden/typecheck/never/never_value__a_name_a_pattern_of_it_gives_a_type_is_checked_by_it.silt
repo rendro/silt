@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected String, got Int
+-- stderr-contains: error[type]: type mismatch: expected Int, got String
+-- stderr-contains: error[type]: type 'Int' has no field 'nothing'
+-- The names of a record pattern matched against a value that never is
+-- have the types of their fields, and their uses are checked by them.
+type Cfg { port: Int, name: String }
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn wrong() -> Int {
+  let Cfg { port, name } = todo()
+  let s: String = port
+  let n: Int = name
+  port.nothing + n + string_length(s)
+}
+
+fn string_length(s: String) -> Int {
+  0
+}
+
+fn main() {
+  println("ok")
+}

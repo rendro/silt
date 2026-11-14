@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: '?' operator requires Result or Option type, got 'Never'
+-- stderr-not-contains: compiler bug
+-- `?` of a value that never is, or of a field read of one, is refused as
+-- `?` of any value that is no Result or Option: an ordinary type error,
+-- with its place, and nothing reaches the compiler.
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn direct() -> Result(Int, String) {
+  let t = todo()
+  t?
+}
+
+fn of_a_field() -> Result(Int, String) {
+  let v = todo()
+  Ok(v.x? + v.y.z?)
+}
+
+fn main() {
+  println("ok")
+}

@@ -1,0 +1,110 @@
+-- A value that never is (a panic, a return, a loop without end) is of
+-- every type, and so is each step taken from it: a field read of it, a
+-- call of its field, an update of it, what a pattern binds of
+-- it and leaves undecided, one step after another and through a `let`. None
+-- of these steps runs; each checks and compiles, and the program runs.
+import task
+
+type A { x: Int, y: Int }
+
+fn boom() -> Never {
+  panic("b")
+}
+
+fn chain() -> Int {
+  let v = boom()
+  v.y.z
+}
+
+fn through_let() -> Int {
+  let v = boom()
+  let w = v.x
+  w.y
+}
+
+fn call_chain() -> Int {
+  let v = boom()
+  v.f(1).g
+}
+
+fn call_of_a_field() -> Int {
+  let v = boom()
+  let w = v.x
+  w(1, 2) + w.f(3)
+}
+
+fn update_then_read() -> Int {
+  let v = boom()
+  v.{ x: 2 }.x
+}
+
+fn interpolation() -> String {
+  let v = return "r"
+  "{v.x.y} {v.f(1)} {v.a.b(2).c}"
+}
+
+fn after_a_loop() -> Int {
+  let v = loop {
+    loop()
+  }
+  v.x.y
+}
+
+fn after_two_returns(c: Bool) -> Int {
+  let v = match c {
+    true -> return 1
+    false -> return 2
+  }
+  v.a.b
+}
+
+fn operators() -> Bool {
+  let v = boom()
+  let w = v.x
+  let n: Int = w
+  let s: String = w
+  -w + n > 1 && s == w.s && [w, 1] == [2]
+}
+
+fn as_an_annotated_record() -> Int {
+  let v = boom()
+  let w: A = v.q
+  w.x.y
+}
+
+fn patterns() -> Int {
+  let v = boom()
+  let (p, q) = v.t
+  let A { x, .. } = v.r
+  when let Some(z) = v.o else {
+    return 0
+  }
+  p.a + q.b + x + z.d
+}
+
+fn match_on_a_field() -> Int {
+  let v = boom()
+  match v.x {
+    Some(a) -> a.k
+    None -> 4
+  }
+}
+
+fn match_binds() -> Int {
+  match boom() {
+    (a, b) -> a.k + b.l
+  }
+}
+
+fn in_a_closure_and_a_task() -> Int {
+  let v = boom()
+  let c = { -> v.x.k }
+  let h = task.spawn({ -> v.x.y + 1 })
+  c() + task.join(h)
+}
+
+fn main() {
+  println(interpolation())
+  println(after_two_returns(true))
+  println("ok")
+}

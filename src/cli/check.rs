@@ -332,7 +332,7 @@ pub(crate) fn check_package(
     // `silt check` checks each file as a module: the session's analysis
     // and the compile step, as the language server does. A module needs
     // no `main`; `silt run` asks for one. A `main` the file binds must be
-    // able to start, and so must its test functions.
+    // able to start, and so must its test functions in a test file.
     let (mut session, file) = match path {
         "-" => open_stdin(LockPolicy::Update)?,
         path => open_entry(path, LockPolicy::Update)?,
@@ -343,7 +343,7 @@ pub(crate) fn check_package(
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut seen: HashSet<Diagnostic> = HashSet::new();
     let mut check = |session: &mut Session, file| {
-        let compiled = session.compile(file, Entry::Tests { filter: None });
+        let compiled = session.compile(file, Entry::Module);
         for d in door_diagnostics(session, file, &compiled) {
             if seen.insert(d.clone()) {
                 diagnostics.push(d);

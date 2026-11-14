@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the test function 'test_connection' must take no parameters, but it declares 1 parameter
+-- stderr-contains: error[compile]: the test function 'skip_test_me' must return () or Result((), e), but it returns Int
+-- In a test file (its name ends in `_test.silt`) a function named like a
+-- test is a test, and `check` holds it to the signature of one.
+fn test_connection(host: String) -> Int {
+  3
+}
+
+fn skip_test_me() -> Int {
+  1
+}
