@@ -124,3 +124,43 @@ fn a_hosts_output_gets_one_write_a_print() {
     );
     assert!(writes.is_empty(), "{writes:?}");
 }
+
+/// A Regex shows its pattern in a print in pieces as in a print made
+/// whole: a list of 300,001 of them (about 1.2 MB, past the 1,000,000
+/// bytes printed whole) is written as the short list's text repeated, and
+/// interpolation in pieces says the same.
+#[test]
+fn a_regex_in_a_print_in_pieces_shows_its_pattern() {
+    let dir = std::env::temp_dir().join(format!("silt_pieces_{}_regex", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.silt");
+    let program = "import list\nimport regex\nimport string\n\
+        fn main() -> Result((), regex.RegexError) {\n  \
+        let re = regex.compile(\"a+\")?\n  \
+        let many = string.split(string.repeat(\"x,\", 300000), \",\") |> list.map { _ -> re }\n  \
+        println([re, re])\n  println(many)\n  println(\"{many}\")\n  Ok(())\n}\n";
+    std::fs::write(&file, program).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&file)
+        .output()
+        .expect("run silt");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "three lines");
+    assert_eq!(lines[0], "[a+, a+]");
+    let long = format!("[{}a+]", "a+, ".repeat(300_000));
+    assert!(long.len() > 1_000_000, "the print goes in pieces");
+    assert!(
+        lines[1] == long,
+        "a print in pieces: {} bytes, not the short text's form",
+        lines[1].len()
+    );
+    assert!(lines[2] == long, "interpolation: {} bytes", lines[2].len());
+}
