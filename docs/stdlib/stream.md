@@ -60,7 +60,9 @@ read takes what stdin has at that moment, up to 64 KiB, so a pipe gives many
 lines a read and a line typed at a terminal comes as soon as it is typed. A
 line that is not UTF-8 ends the stream with `Err(InvalidInput(...))` after
 the lines before it, as for `file_lines`; its number counts the lines this
-stream gave. A stream reads ahead of what it gives: once a program has made one,
+stream gave. A line of `stdin_lines` or `file_lines` is as long as the input
+makes it, as for `io.read_line` and `io.read_file`; a line of `tcp_lines` is
+at most 10,000,000 bytes, since the peer chooses it (see [tcp](tcp.md)). A stream reads ahead of what it gives: once a program has made one,
 the rest of stdin is its own, and an `io.read_line` or `io.read_stdin` after it
 does not see what the stream has read but not given.
 

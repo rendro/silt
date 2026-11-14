@@ -1,0 +1,61 @@
+-- timeout: 30
+-- requires-feature: http
+-- A redirect's location is read by its form (RFC 3986): one with a scheme
+-- other than http or https (`file:`, `ftp:`, `mailto:`) is not followed,
+-- and is `InvalidUrl` with the location; `file:///etc/passwd` was taken
+-- for a path and asked of the same server. A location with bytes a URL
+-- cannot hold (a space, `é`, a byte that is no UTF-8) is followed with
+-- those bytes percent-encoded, as browsers send them; it was handed back
+-- as the 302 itself.
+import bytes
+import http
+import list
+import option
+import result
+import string
+import task
+import tcp
+
+fn moved(location: Bytes) -> Bytes {
+  let head = bytes.from_string("HTTP/1.1 302 Found\r\nConnection: close\r\nContent-Length: 0\r\nLocation: ")
+  bytes.concat_all([head, location, bytes.from_string("\r\n\r\n")])
+}
+
+fn answer(path: String) -> Bytes {
+  match path {
+    "/r-file" -> moved(bytes.from_string("file:///etc/passwd"))
+    "/r-ftp" -> moved(bytes.from_string("ftp://127.0.0.1/x"))
+    "/r-mailto" -> moved(bytes.from_string("mailto:someone@example.com"))
+    "/r-nonascii" -> moved(bytes.from_string("/echo?q=h\u{e9} llo"))
+    -- "/echo?q=h" and the byte e9 alone: Latin-1, no UTF-8.
+    "/r-latin1" -> moved(bytes.from_hex("2f6563686f3f713d68e9") |> result.unwrap_or(bytes.empty()))
+    _ -> bytes.from_string("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {string.length(path)}\r\n\r\n{path}")
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let peer = task.spawn { ->
+    [1, 2, 3, 4, 5, 6, 7] |> list.each { _ ->
+      when let Ok(c) = tcp.accept(listener) else { return () }
+      let head = tcp.read(c, 65536) |> result.unwrap_or(bytes.empty())
+      let line = bytes.to_string(head) |> result.unwrap_or("") |> string.split("\r\n") |> list.first |> option.unwrap_or("")
+      println("  the server: {line}")
+      let path = match string.split(line, " ") {
+        [_, path, ..] -> path
+        _ -> ""
+      }
+      let _ = tcp.write(c, answer(path))
+      tcp.close(c)
+    }
+  }
+  ["/r-file", "/r-ftp", "/r-mailto", "/r-nonascii", "/r-latin1"] |> list.each { path ->
+    println("GET {path}")
+    match http.get("http://127.0.0.1:{port}{path}") {
+      Ok(resp) -> println("  the client: {resp.status} {bytes.to_string(resp.body) |> result.unwrap_or("not text")}")
+      Err(e) -> println("  the client: {e}")
+    }
+  }
+  task.join(peer)
+}

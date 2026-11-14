@@ -242,61 +242,57 @@ pub(crate) fn ureq_response_to_value(
 /// to the silt program (F12). Replace the userinfo segment with
 /// `***@` for any `http://` / `https://` substring that carries one.
 ///
-/// Grammar: the userinfo component of RFC 3986 is
-/// `*( unreserved / pct-encoded / sub-delims / ":" )`. We accept a
-/// conservative superset: alphanumerics, `%` escapes, and the common
-/// URL-safe punctuation (`._~-+`) in the user segment, optionally
-/// followed by `:<password>` where password is any non-`@`,
-/// non-whitespace run. The `@` terminates userinfo.
+/// The authority is read as the client reads it (`basic_of_url`): the
+/// scheme in any case (`HTTP://` is sent as `http://` is), and the
+/// userinfo up to the LAST `@` before the end of the authority (a `/`,
+/// `?`, `#`, a space, a tab or a line feed), so a password with a raw `@`
+/// in it is scrubbed whole. `scheme://@host` stays as it is. One pass
+/// over the text.
 #[cfg(feature = "http")]
 pub fn redact_http_url_userinfo(msg: &str) -> String {
+    redact_counting(msg, &mut 0)
+}
+
+/// [`redact_http_url_userinfo`], adding to `looked` the bytes it looked
+/// at (what a test asks: no more than a few times the text's length).
+#[cfg(feature = "http")]
+fn redact_counting(msg: &str, looked: &mut usize) -> String {
+    // (ASCII lower case keeps every byte where it is.)
+    let lower = msg.to_ascii_lowercase();
     let mut out = String::with_capacity(msg.len());
-    let bytes = msg.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        // Look for scheme prefix at position `i`.
-        let rest = &msg[i..];
-        let scheme_len = if rest.starts_with("https://") {
-            8
-        } else if rest.starts_with("http://") {
-            7
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
-            continue;
-        };
-        // Scan forward for `@` before any URL terminator char.
-        // Valid userinfo chars: alphanumeric, `%`, `.`, `_`, `~`, `-`, `+`, `:`.
-        let host_start = i + scheme_len;
-        let mut j = host_start;
-        let mut at_pos: Option<usize> = None;
-        while j < bytes.len() {
-            let b = bytes[j];
-            // Terminators for the authority component.
-            if b == b'@' {
-                at_pos = Some(j);
-                break;
-            }
-            if b == b'/' || b == b'?' || b == b'#' || b == b' ' || b == b'\t' || b == b'\n' {
-                break;
-            }
-            // Accept any non-terminator byte (covers alphanumeric, `%`
-            // escapes, `:` separator, and the `._~-+` URL-safe set).
-            j += 1;
-        }
-        // Copy scheme verbatim.
-        out.push_str(&msg[i..host_start]);
-        if let Some(at) = at_pos {
-            // Only scrub if we actually have content before the `@`
-            // (otherwise `scheme://@host` stays as-is).
-            if at > host_start {
-                out.push_str("***@");
-                i = at + 1; // skip the original userinfo + `@`
+    // What of `msg` is in `out`, and where the search for a scheme goes
+    // on: never back, so each byte is looked at a bounded number of times.
+    let (mut copied, mut at) = (0, 0);
+    while let Some(found) = lower[at..].find("http") {
+        let start = at + found;
+        *looked += found + 4;
+        let rest = &lower[start + 4..];
+        let scheme_len = match (rest.starts_with("://"), rest.starts_with("s://")) {
+            (true, _) => 7,
+            (_, true) => 8,
+            // (No `http` begins inside `http`.)
+            _ => {
+                at = start + 4;
                 continue;
             }
-        }
-        i = host_start;
+        };
+        let host_start = start + scheme_len;
+        let authority = &msg[host_start..];
+        let end = authority
+            .find(['/', '?', '#', ' ', '\t', '\n'])
+            .unwrap_or(authority.len());
+        *looked += 2 * end;
+        at = match authority[..end].rfind('@') {
+            Some(last @ 1..) => {
+                out.push_str(&msg[copied..host_start]);
+                out.push_str("***");
+                copied = host_start + last;
+                copied
+            }
+            _ => host_start,
+        };
     }
+    out.push_str(&msg[copied..]);
     out
 }
 
@@ -403,6 +399,10 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     }
     match error {
         Error::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, []),
+        // The name of the host was not found ([`Resolving`]).
+        Error::Io(io) if io.get_ref().is_some_and(|e| e.is::<NoSuchHost>()) => {
+            Value::variant(bv::HTTP_CONNECT, why())
+        }
         Error::Io(io) => match io.kind() {
             ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::HTTP_TIMEOUT, []),
             ErrorKind::ConnectionRefused
@@ -660,6 +660,49 @@ fn only_this_address(e: &std::io::Error) -> bool {
     )
 }
 
+/// The name lookup of the http client: its resolver's (ureq's, or a
+/// test's), with a lookup that fails marked ([`NoSuchHost`]), so that
+/// [`http_error`] makes it `Connect`, as `tcp.connect` does. The system
+/// says such a failure in a kind of error that names nothing (on Linux
+/// "failed to lookup address information"), and ureq hands it on as it
+/// is.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct Resolving<R>(R);
+
+#[cfg(feature = "http")]
+impl<R: ureq::unversioned::resolver::Resolver> ureq::unversioned::resolver::Resolver
+    for Resolving<R>
+{
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        self.0.resolve(uri, config, timeout).map_err(|e| match e {
+            ureq::Error::Io(e) => ureq::Error::Io(std::io::Error::new(e.kind(), NoSuchHost(e))),
+            e => e,
+        })
+    }
+}
+
+/// A failure of the name lookup of the http client ([`Resolving`]): its
+/// words are the system's.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct NoSuchHost(std::io::Error);
+
+#[cfg(feature = "http")]
+impl std::fmt::Display for NoSuchHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[cfg(feature = "http")]
+impl std::error::Error for NoSuchHost {}
+
 /// A connection the http client made itself ([`Connecting`]), as ureq's
 /// transport for TCP is: its buffers, the socket, shared with the
 /// client's shutdown, and the read and write timeouts it has (set only
@@ -826,7 +869,8 @@ impl Client {
 /// request says `user-agent: silt/<version>` and `accept-encoding:
 /// gzip`, unless the program sets that header itself: ureq sends the
 /// request's header then. Its connector is ureq's default (a CONNECT
-/// proxy, TCP, TLS) with its own TCP connector ([`Connecting`]).
+/// proxy, TCP, TLS) with its own TCP connector ([`Connecting`]), and its
+/// resolver ureq's, with a failed lookup marked ([`Resolving`]).
 #[cfg(feature = "http")]
 fn client_with_times(connect: Duration, global: Duration) -> Client {
     client_resolving(
@@ -857,6 +901,7 @@ fn client_resolving(
         ().chain(ConnectProxyConnector::default())
             .chain(Connecting(connects.clone()))
             .chain(RustlsConnector::default());
+    let resolver = Resolving(resolver);
     Client {
         agent: ureq::Agent::with_parts(config, connector, resolver),
         connects,
@@ -895,7 +940,11 @@ fn do_http_request(
 /// HEAD) and without the program's `content-type` header, and so does
 /// a POST that gets a 301 or 302; any other request goes on with the
 /// same method and body. As ureq does, a
-/// redirect drops the `authorization` and `cookie` headers. A `content-length` header of the program's is not sent:
+/// redirect drops the `authorization`, `proxy-authorization` and `cookie`
+/// headers, and the user
+/// and password of the URL, which are sent as `authorization` (decoded,
+/// [`basic_of_url`]) where the program sets none. A `content-length`
+/// header of the program's is not sent:
 /// the body's own length is (an empty body of a method that takes
 /// none by default has none).
 ///
@@ -935,10 +984,29 @@ fn do_http_request_on(
         if let Some(refused) = refuse_port(&url) {
             return refused;
         }
-        let result = send_request(agent, method, &url, body, &headers);
+        // The user and password of the URL, when the program set no
+        // `authorization` itself.
+        let own = headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("authorization"));
+        let basic = (!own).then(|| basic_of_url(&url)).flatten();
+        let mut sent = headers.clone();
+        if let Some(basic) = &basic {
+            sent.push(("authorization", basic));
+        }
+        let result = send_request(agent, method, &url, body, &sent);
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
+        // A redirect to another scheme is not followed: `file:`, `ftp:`
+        // and the like are no URL of http's.
+        if !scheme_of(&next).is_some_and(|scheme| {
+            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+        }) {
+            let next = redact_http_url_userinfo(&next);
+            let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(next)]);
+            return Value::variant(bv::ERR, [invalid]);
+        }
         // A 303 goes on without a body, as a GET (a HEAD stays a HEAD);
         // a 301 or 302 so only for a POST (RFC 9110); a 307 or 308
         // keeps the request as it is.
@@ -955,12 +1023,37 @@ fn do_http_request_on(
             // (What the body was is no part of a request without one.)
             headers.retain(|(key, _)| !key.eq_ignore_ascii_case("content-type"));
         }
+        // The credentials do not go on: to the same host neither.
         headers.retain(|(key, _)| {
-            !key.eq_ignore_ascii_case("authorization") && !key.eq_ignore_ascii_case("cookie")
+            !["authorization", "proxy-authorization", "cookie"]
+                .iter()
+                .any(|credential| key.eq_ignore_ascii_case(credential))
         });
         url = next;
     }
     finish_http_response(Err(ureq::Error::TooManyRedirects), &url, false)
+}
+
+/// The `authorization` header of the user and password of `url`
+/// (`http://user:pa%20ss@host/`): `Basic` with `user:pa ss`, each
+/// percent-decoded first (RFC 3986 writes a `@`, `:`, `/` or a space in
+/// them so, RFC 7617 sends them as they are). The user ends at the first
+/// `:`, the password at the last `@`, as ureq reads them. `None` for a
+/// URL without them.
+#[cfg(feature = "http")]
+fn basic_of_url(url: &str) -> Option<String> {
+    use base64::Engine;
+    let uri = url.parse::<ureq::http::Uri>().ok()?;
+    let authority = uri.authority()?.as_str();
+    let (userinfo, _) = authority.rsplit_once('@')?;
+    let (user, password) = userinfo.split_once(':').unwrap_or((userinfo, ""));
+    let mut pair: Vec<u8> = percent_encoding::percent_decode_str(user).collect();
+    pair.push(b':');
+    pair.extend(percent_encoding::percent_decode_str(password));
+    Some(format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(pair)
+    ))
 }
 
 /// Send one request of `http.request`, following no redirect. Every
@@ -1014,22 +1107,47 @@ fn send_request(
 
 /// The status of a redirect and where it goes, `url` being where the
 /// response came from; `None` for any other response, and for a
-/// redirect without a location that is text.
+/// redirect without a location. A byte of the location that is not
+/// printable ASCII (a space, the bytes of `é`, which a URL cannot hold)
+/// is percent-encoded first, as browsers and curl do (`%20`, `%C3%A9`).
 #[cfg(feature = "http")]
 pub(crate) fn redirect(
     response: &ureq::http::Response<ureq::Body>,
     url: &str,
 ) -> Option<(u16, String)> {
+    use std::fmt::Write;
     let status = response.status().as_u16();
     if !matches!(status, 301 | 302 | 303 | 307 | 308) {
         return None;
     }
-    let location = response.headers().get("location")?.to_str().ok()?;
-    Some((status, resolve_location(url, location)))
+    let location = response.headers().get("location")?.as_bytes().trim_ascii();
+    let mut text = String::with_capacity(location.len());
+    for &byte in location {
+        match byte {
+            b'!'..=b'~' => text.push(byte as char),
+            _ => {
+                let _ = write!(text, "%{byte:02X}");
+            }
+        }
+    }
+    Some((status, resolve_location(url, &text)))
+}
+
+/// The scheme of `reference` (RFC 3986: a letter, then letters, digits,
+/// `+`, `-` and `.`, up to a `:` that comes before any `/`, `?` or `#`),
+/// or `None` for a reference that has none (`/x`, `//host/x`, `x/y:z`).
+#[cfg(feature = "http")]
+fn scheme_of(reference: &str) -> Option<&str> {
+    let end = reference.find([':', '/', '?', '#'])?;
+    let scheme = &reference[..end];
+    let mut chars = scheme.chars();
+    let lettered = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
+    let rest = chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    (reference[end..].starts_with(':') && lettered && rest).then_some(scheme)
 }
 
 /// `location` resolved against `base` (RFC 3986): a URL with a scheme
-/// as it is, one without (`//host/x`) on the base's scheme, a path from
+/// ([`scheme_of`]) as it is, one without (`//host/x`) on the base's scheme, a path from
 /// the root on the base's scheme and host, a query alone (`?y=2`) on
 /// the base's path, any other path next to the base's; a path's `.` and
 /// `..` segments are taken away, and its query is left as it is. A
@@ -1038,17 +1156,22 @@ pub(crate) fn redirect(
 #[cfg(feature = "http")]
 fn resolve_location(base: &str, location: &str) -> String {
     let location = location.split('#').next().unwrap_or_default();
-    let has_scheme = location
-        .parse::<ureq::http::Uri>()
-        .is_ok_and(|uri| uri.scheme().is_some());
-    if has_scheme {
+    // (By its form, not by whether it is an http URL: `file:///x` is a
+    // URL with a scheme, never a path on the base's host.)
+    if scheme_of(location).is_some() {
         return with_dot_segments_taken_away(location);
     }
     let Ok(uri) = base.parse::<ureq::http::Uri>() else {
         return location.to_string();
     };
+    // (Without the user and password of the base: they are not sent to
+    // where a redirect leads, as the `authorization` header is not.)
     let origin = match (uri.scheme_str(), uri.authority()) {
-        (Some(scheme), Some(authority)) => format!("{scheme}://{authority}"),
+        (Some(scheme), Some(authority)) => {
+            let host = authority.as_str().rsplit_once('@');
+            let host = host.map_or(authority.as_str(), |(_, host)| host);
+            format!("{scheme}://{host}")
+        }
         _ => String::new(),
     };
     if location.starts_with("//") {
@@ -2878,6 +3001,109 @@ mod http_error_tests {
             "http://user:99999@127.0.0.1/",
         ] {
             assert!(refuse_port(url).is_none(), "{url}");
+        }
+    }
+
+    /// A host whose name is not found is `Connect`, as for `tcp.connect`
+    /// ("no such host", http.md), not `Other`. (`.invalid` is never found,
+    /// RFC 6761.)
+    #[test]
+    fn a_host_that_is_not_found_is_connect() {
+        let failed = failure(&do_http_get("http://no-such-host.invalid/"));
+        assert!(failed.starts_with("Connect("), "{failed}");
+    }
+
+    /// What a server that answers 200 got as the head of the request to
+    /// `url` with `headers`: the url is a template, `{}` for the server's
+    /// `host:port`.
+    fn head_sent(url: &str, headers: &[(String, String)]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let addr = listener.local_addr().expect("its address");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut head = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+                let _ = tx.send(String::from_utf8_lossy(&head).into_owned());
+            }
+        });
+        let url = url.replace("{}", &addr.to_string());
+        let done = do_http_request("GET", &url, &[], headers);
+        assert!(failure(&done).starts_with("no error"), "{}", failure(&done));
+        rx.recv_timeout(Duration::from_secs(10)).expect("the head")
+    }
+
+    /// The user and password of a URL are sent as `Basic`, each
+    /// percent-decoded first: `al%40ice:p%3Aw%2Fd%21%20x` is the user
+    /// `al@ice` with the password `p:w/d! x` (they were sent encoded, and
+    /// a server read another password). An `authorization` of the
+    /// program's is sent instead.
+    #[test]
+    fn the_user_and_password_of_a_url_are_sent_decoded() {
+        use base64::Engine;
+        let basic = |pair: &str| {
+            format!(
+                "authorization: Basic {}\r\n",
+                base64::engine::general_purpose::STANDARD.encode(pair)
+            )
+        };
+        let head = head_sent("http://al%40ice:p%3Aw%2Fd%21%20x@{}/x", &[]);
+        assert!(head.contains(&basic("al@ice:p:w/d! x")), "{head}");
+        let head = head_sent("http://caf%C3%A9@{}/x", &[]);
+        assert!(head.contains(&basic("café:")), "{head}");
+        let own = [("Authorization".to_string(), "Bearer t".to_string())];
+        let head = head_sent("http://user:pw@{}/x", &own);
+        assert!(head.contains("authorization: Bearer t\r\n"), "{head}");
+        assert_eq!(head.matches("uthorization").count(), 1, "{head}");
+    }
+
+    /// The redaction of credentials looks at each byte of a text a
+    /// bounded number of times, however many URLs begin in it: 1 MB of
+    /// `http://` or of `https://a@` (each search for the next scheme went
+    /// over the rest of the text, and such a text did not end in two
+    /// minutes).
+    #[test]
+    fn the_redaction_of_credentials_is_one_pass() {
+        for piece in ["http://", "https://a@", "HTTP://", "httpx"] {
+            let text = piece.repeat(1_000_000 / piece.len());
+            let mut looked = 0;
+            let out = redact_counting(&text, &mut looked);
+            assert!(
+                looked <= 4 * text.len(),
+                "{piece}: {looked} for {}",
+                text.len()
+            );
+            if piece == "https://a@" {
+                assert!(!out.contains("a@"), "{piece}: the user is hidden");
+            }
+        }
+    }
+
+    /// A scheme is told by its form (RFC 3986), whatever follows its colon.
+    #[test]
+    fn a_scheme_is_told_by_its_form() {
+        for (reference, scheme) in [
+            ("http://h/x", Some("http")),
+            ("HTTPS://h", Some("HTTPS")),
+            ("file:///etc/passwd", Some("file")),
+            ("mailto:a@b", Some("mailto")),
+            ("svn+ssh://h", Some("svn+ssh")),
+            ("/x", None),
+            ("//h/x", None),
+            ("x/y:z", None),
+            ("?a:b", None),
+            ("1x:y", None),
+            (":x", None),
+            ("x", None),
+        ] {
+            assert_eq!(scheme_of(reference), scheme, "{reference}");
         }
     }
 

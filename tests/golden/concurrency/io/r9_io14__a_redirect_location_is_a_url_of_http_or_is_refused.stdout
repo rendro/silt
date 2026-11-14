@@ -1,0 +1,17 @@
+GET /r-file
+  the server: GET /r-file HTTP/1.1
+  the client: http invalid url: file:///etc/passwd
+GET /r-ftp
+  the server: GET /r-ftp HTTP/1.1
+  the client: http invalid url: ftp://127.0.0.1/x
+GET /r-mailto
+  the server: GET /r-mailto HTTP/1.1
+  the client: http invalid url: mailto:someone@example.com
+GET /r-nonascii
+  the server: GET /r-nonascii HTTP/1.1
+  the server: GET /echo?q=h%C3%A9%20llo HTTP/1.1
+  the client: 200 /echo?q=h%C3%A9%20llo
+GET /r-latin1
+  the server: GET /r-latin1 HTTP/1.1
+  the server: GET /echo?q=h%E9 HTTP/1.1
+  the client: 200 /echo?q=h%E9
