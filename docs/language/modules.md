@@ -290,7 +290,11 @@ the import.
 `silt init` creates a package with a `silt.toml` manifest and a `src/` tree
 with a first test (see [Testing](testing.md#tests-of-a-package)).
 The entry point is `src/main.silt`, and every `.silt` file directly in
-`src/` is a module of the package, imported by its file name.
+`src/` is a module of the package, imported by its file name. A file in a
+sub-directory of `src/` is no module: it cannot be imported, and
+`silt check` does not read it. Test files (`*_test.silt`) are found
+anywhere under the package, in `src/`, its sub-directories or a `tests/`
+directory beside it, and import the package's modules by name.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url> --tag <tag>` (or
@@ -326,43 +330,12 @@ import io
 import list
 ```
 
-Each built-in module has a page in the
-[standard library reference](../stdlib/globals.md), and the LSP shows
-the same text: hover
-any qualified built-in name (`list.map`, `math.cos`, `Result`, …) in
-your editor. The built-in modules:
-
-| Module | Purpose |
-| --- | --- |
-| `io` | File I/O and stdout (`io.read_file`, `io.write_file`, `println`) |
-| `string` | String inspection, slicing, and conversion helpers |
-| `int` | Integer parsing, formatting, and bounded arithmetic |
-| `float` | Floating-point parsing, classification, and numeric helpers |
-| `list` | List construction, traversal, and transformation |
-| `map` | Hash-map insertion, lookup, and iteration |
-| `result` | `Result` combinators (`map`, `map_err`, `unwrap_or`, …) |
-| `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
-| `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
-| `channel` | Bounded MPMC channels for CSP-style messaging |
-| `task` | Tasks: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
-| `regex` | Compiled regular expressions and replacement helpers |
-| `json` | Type-directed JSON parsing and emission |
-| `toml` | TOML parsing and emission |
-| `set` | Hash-set construction and bulk operations |
-| `math` | Trigonometry, exponentials, and numeric constants |
-| `time` | Instants, durations, calendar dates, and weekdays |
-| `http` | HTTP client and server (`http.get`, `http.request`, `http.serve`, `http.segments`, `http.parse_query`) |
-| `fs` | Filesystem queries (`fs.list_dir`, `fs.stat`, `fs.read_link`, `fs.walk`, `fs.glob`, `fs.mkdir`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.exists`, `fs.is_file`, `fs.is_dir`, `fs.is_symlink`) |
-| `env` | Process environment access (`env.get`, `env.set`, `env.remove`, `env.vars`) |
-| `postgres` | PostgreSQL client with typed parameters (opt-in feature; build with `cargo build --features postgres`, not enabled in the default release binary) |
-| `bytes` | Byte-buffer construction, slicing, and conversion |
-| `crypto` | Hashing, HMAC, and constant-time comparison |
-| `encoding` | Hex / base64 / URL encoding helpers |
-| `tcp` | TCP listener and stream primitives |
-| `stream` | Lazy iterators backed by tasks and channels |
-| `uuid` | UUID generation and parsing |
-| `process` | The running process: `process.exit` |
-| `csv` | Comma-separated values: `csv.parse` into records, `csv.split_line` |
+Each built-in module has a page of its own, listed in the
+[Language Guide](../language-guide.md#standard-library), and the editor
+shows the same text when you hover a qualified built-in name
+(`list.map`, `math.cos`, `Result`, ...). The
+[language card](../language-card.md#standard-library) lists every
+module with its types and the signature of each function.
 
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
@@ -374,12 +347,16 @@ modules may have a variant of one name (`tcp.Timeout`,
 them too: `import channel.{ Message }`.
 
 The **prelude** needs no import: the primitive and container types (`Int`,
-`Float`, `Bool`, `String`, `Bytes`, `List`, `Map`, `Set`, `Channel`, ...),
+`Float`, `Bool`, `String`, `()`, `Bytes`, `List`, `Map`, `Set`, `Channel`, `Fn`),
 `TypeOf(a)` (the type of a type used as a value, like `Int` or a
 `type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
-`panic`. A module's own declaration or import of one of these names
-shadows the prelude: after `type Maybe(a) { Some(a), None }`, a bare `None`
-is `Maybe.None`, and the prelude's is still `Option.None`.
+`panic`. The primitive and container types, `TypeOf`, and the types
+`Handle`, `Regex`, `TcpListener` and `TcpStream` of the modules task,
+regex and tcp cannot be declared again: `type List { ... }` is an error, "type 'List' shadows
+builtin type 'List'". The other names can: a module's own declaration or
+import of `Option`, `Result`, one of their variants, `print`, `println` or
+`panic` shadows the prelude. After `type Maybe(a) { Some(a), None }`, a
+bare `None` is `Maybe.None`, and the prelude's is still `Option.None`.
 
 
 ## When modules are initialised
@@ -387,7 +364,7 @@ is `Maybe.None`, and the prelude's is still `Option.None`.
 A module's top-level `let`s are evaluated once, before the first module that
 imports it uses them. The modules a file imports are initialised in the order
 `silt fmt` writes the file's imports: by the name of the module (digits, then
-capital letters, then `_`, then small letters), each after the modules it
+`_`, then letters), each after the modules it
 imports itself. A file's own top-level `let`s run after its imports.
 
 Modules are read and checked in that order too. So the order in which the

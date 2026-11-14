@@ -46,10 +46,9 @@ pub(crate) fn dispatch(args: &[String]) {
             println!();
             println!("Formats silt source files in place. Each positional may be a");
             println!("`.silt` file or a directory; directories are expanded recursively");
-            println!("to every `.silt` descendant. Pass `.` as the sentinel to recursively");
-            println!("format the current directory, or run with no positionals inside a");
-            println!("silt package to recursively format every `.silt` under cwd");
-            println!("of this package, not of a package inside it.");
+            println!("to every `.silt` descendant; `.` is the current directory. With no");
+            println!("path, inside a silt package, every `.silt` file under the current");
+            println!("directory is formatted, except the files of a package inside it.");
             println!();
             println!("`-` reads the program from stdin and writes the formatted program");
             println!("to stdout; with --check it writes nothing and only says whether it");

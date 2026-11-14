@@ -15,7 +15,7 @@ use crate::fmt_property::doc_snippets;
 /// The blocks that stay as written, by file and a line each holds: their
 /// subject is a spelling the formatter makes canonical (two equivalent
 /// forms side by side) or where a line may break.
-const SKIP: [(&str, &str); 6] = [
+const SKIP: [(&str, &str); 5] = [
     ("docs/language/operators.md", "-- these are equivalent:"),
     (
         "docs/language/loops-and-pipes.md",
@@ -26,7 +26,6 @@ const SKIP: [(&str, &str); 6] = [
         "-- OK: * never unary, unambiguous",
     ),
     ("docs/language/operators.md", "-- NOT a trailing closure"),
-    ("docs/language/design-decisions.md", "-- OK: { on same line"),
     (
         "docs/language/pattern-matching.md",
         "  | \"Sunday\" -> \"weekend\"",

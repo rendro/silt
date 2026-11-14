@@ -12,7 +12,9 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use silt::builtins::registry::decoding::{Family, Leaf};
-use silt::builtins::registry::docs::{pages, render_card, render_page, signature_block};
+use silt::builtins::registry::docs::{
+    iter_sections, pages, render_card, render_page, signature_block,
+};
 use silt::builtins::registry::registry;
 
 #[path = "../support/env_switch.rs"]
@@ -116,6 +118,33 @@ fn every_signature_block_of_a_page_is_the_registry_s() {
         stale.is_empty(),
         "signature blocks that are not the registry's:\n  {}",
         stale.join("\n  ")
+    );
+}
+
+/// Every function and constant of a module has a section of its own on
+/// the module's page (`## \`list.map\``, or one heading that names
+/// several), with its signature and an example: what an editor shows
+/// for the name.
+#[test]
+fn every_function_has_a_section_of_its_own() {
+    let mut missing = Vec::new();
+    for module in &registry().modules {
+        let sections: Vec<(Vec<String>, String)> = iter_sections(module.page);
+        for row in &module.rows {
+            let name = format!("{}.{}", module.name, row.name);
+            match sections.iter().find(|(keys, _)| keys.contains(&name)) {
+                None => missing.push(format!("{name} ({}): no section", module.page_file)),
+                Some((_, body)) if !body.contains("```silt") => {
+                    missing.push(format!("{name} ({}): no example", module.page_file))
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "{} builtin(s) have no `## `module.name`` section with a ```silt example on their page: {missing:?}",
+        missing.len()
     );
 }
 

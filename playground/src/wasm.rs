@@ -40,7 +40,7 @@ fn json(value: &impl serde::Serialize) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
-/// The version of silt: `"0.16.0"`.
+/// The version of the silt crate the playground was built from.
 #[wasm_bindgen]
 pub fn version() -> String {
     crate::version().to_string()

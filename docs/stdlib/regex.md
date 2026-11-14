@@ -247,6 +247,26 @@ fn main() -> Result((), regex.RegexError) {
 ```
 
 
+## `regex.find`
+
+```
+regex.find(text: String, re: Regex) -> Option(String)
+```
+
+The first match of `re` in `text`, or `None`.
+
+```silt
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  println(regex.find("a1 b22", digits)) -- Some("1")
+  println(regex.find("none", digits)) -- None
+  Ok(())
+}
+```
+
+
 ## `regex.find_all`
 
 ```

@@ -72,7 +72,9 @@ vim.api.nvim_create_autocmd('FileType', {
     vim.lsp.start({
       name = 'silt',
       cmd = { 'silt', 'lsp' },
-      root_dir = vim.fs.dirname(vim.fs.find({ '.git' }, { upward = true })[1]),
+      -- The package's directory (where silt.toml is); a file outside a
+      -- package gets the server too. vim.fs.root needs Neovim 0.10.
+      root_dir = vim.fs.root(0, { 'silt.toml', '.git' }),
     })
   end,
 })

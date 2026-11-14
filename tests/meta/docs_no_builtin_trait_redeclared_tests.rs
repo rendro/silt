@@ -38,10 +38,6 @@
 // matching `trait <Built-in> {` or `trait <Built-in>:` (supertrait
 // declaration form). Impl blocks (`trait Display for Color { ... }`)
 // remain allowed — they don't *redefine* the trait.
-//
-// We deliberately do NOT scan `docs/proposals/*.md` because proposals
-// may reference future or hypothetical trait shapes during design
-// discussion.
 
 #[test]
 fn no_doc_fence_redeclares_a_builtin_trait() {
@@ -65,11 +61,6 @@ fn no_doc_fence_redeclares_a_builtin_trait() {
         for e in entries.filter_map(|e| e.ok()) {
             let p = e.path();
             if p.is_dir() {
-                // Skip proposals/ — they may discuss hypothetical
-                // trait shapes during design.
-                if p.file_name().and_then(|s| s.to_str()) == Some("proposals") {
-                    continue;
-                }
                 collect_md(&p, out);
             } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
                 out.push(p);
