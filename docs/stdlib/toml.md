@@ -12,7 +12,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(String, type a) -> Result(a, TomlError) where a: json.Decode` | Parse a TOML document (top-level table) into a record or a variant with fields |
+| `parse` | `(String, type a) -> Result(a, TomlError) where a: json.Decode` | Parse a TOML document (top-level table) into a record, an enum, a `json.Value` or a type with a `json.Decode` impl |
 | `parse_list` | `(String, type a) -> Result(List(a), TomlError) where a: json.Decode` | Parse the one array of a document (such as a `[[items]]` section) into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode` | Parse a top-level table into a map |
 | `pretty` | `(a) -> Result(String, TomlError) where a: json.Encode` | Pretty-print a value as TOML |
