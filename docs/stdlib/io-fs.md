@@ -81,6 +81,16 @@ says, without a newline. A write to stderr that fails (a closed stderr) is
 ignored: there is nowhere left to say it. Each call writes its whole text at
 once, so the texts of two tasks never mix inside one call's text.
 
+```silt
+import io
+
+fn main() {
+  io.eprint("loading... ")
+  io.eprintln("done")
+  println("the output")
+}
+```
+
 
 ## `io.eprintln`
 
@@ -348,7 +358,7 @@ import env
 
 fn main() {
   env.set("MY_VAR", "hello")
-  println(env.get("MY_VAR")) -- Some(hello)
+  println(env.get("MY_VAR")) -- Some("hello")
 }
 ```
 
@@ -622,7 +632,7 @@ record FileStat {
     is_symlink: Bool,            // true if the path itself is a symlink
     modified: Option(DateTime),  // last-modified time, or None if unsupported
     readonly: Bool,              // true if the OS reports the path as read-only
-    mode: Int,                   // Unix permission bits (e.g. 0o755); 0 on Windows
+    mode: Int,                   // Unix file-type and permission bits; 0 on Windows
     accessed: Option(DateTime),  // last-access time, or None if unsupported / noatime
     created: Option(DateTime),   // creation (birth) time, or None if unsupported
 }
@@ -634,11 +644,15 @@ is `true` and `is_file` / `is_dir` both report on the link rather than
 its target. To stat the target, call `fs.read_link` and then `fs.stat`
 on the result.
 
-`mode` carries the raw Unix permission/type bits as an integer — mask
-with `0o777` for permission bits, or compare against `0o040000`,
-`0o100000`, etc. for file-type bits. On Windows `mode` is always `0`
-because NTFS does not expose a Unix-style permission triple; use
-`readonly` / `is_dir` / `is_file` instead for portable code.
+`mode` carries the Unix file-type and permission bits as the system
+gives them: a regular file with the permissions `rw-r--r--` (octal 644)
+has the mode 33188, which is octal 100644. silt has no octal literal;
+take the permission bits with `int.bit_and` and a hex mask:
+`int.bit_and(s.mode, 0x1FF)` is 420 for octal 644 (so `== 0x1A4` tests for
+`rw-r--r--`), and the mask `0xFFF` adds the setuid, setgid and sticky bits.
+The file type is in `is_file`, `is_dir` and `is_symlink`. On Windows `mode`
+is always `0` because NTFS does not expose a Unix-style permission
+triple; use `readonly` / `is_dir` / `is_file` instead for portable code.
 
 `modified`, `accessed` and `created` are `Option(DateTime)` because no
 timestamp is universally available:

@@ -7,7 +7,7 @@ description: "Install silt, write your first program, and tour the language thro
 
 # Getting Started
 
-Silt is a statically-typed, expression-based language with a small, fixed keyword set, full immutability, and CSP-style concurrency. Pattern matching is the only way to branch. Types are inferred. Errors are values.
+Silt is a statically-typed, expression-based language with a small, fixed keyword set, full immutability, and CSP-style concurrency. Branching is pattern matching: there is no `if`. Types are inferred. Errors are values.
 
 This guide walks you through the essentials. For the complete reference, see the [Language Guide](language-guide.md).
 
@@ -68,7 +68,7 @@ let add = { x: Int, y: Int -> x + y }
 
 ## 3. Pattern matching
 
-The only branching construct. Match on constructors, tuples, lists, records, guards, ranges, or-patterns.
+How silt branches: there is no `if`. Match on constructors, tuples, lists, records, guards, ranges, or-patterns.
 
 ```silt
 fn describe(n) {
@@ -234,10 +234,12 @@ fn main() {
 
 ```sh
 silt run <file.silt>       -- run a program
+silt run                   -- run the package's src/main.silt (inside a package)
 silt run <dir>             -- run the package in that directory (its src/main.silt)
 silt run <file.silt> -- a b   -- run it with the arguments a and b (io.args())
 silt run -w <file.silt>    -- run and re-run on file changes
 silt check <file.silt>...  -- type-check without running, each file on its own
+silt check                 -- type-check the package (inside a package)
 silt check -               -- type-check the program read from stdin
 silt check --format json <file.silt>   -- type-check with JSON output (for CI/editors)
 silt check --deny-warnings <file.silt>   -- also fail on warnings (for CI)
@@ -248,7 +250,7 @@ silt fmt --check           -- check formatting without modifying files
 silt repl                  -- interactive REPL
 silt init [--lib]          -- create a new silt package (a library with --lib) in this directory
 silt lsp                   -- start the language server
-silt disasm <file.silt>    -- show bytecode disassembly
+silt disasm [<file.silt>]  -- show bytecode disassembly
 silt self-update           -- update the silt binary to the latest release
 silt update                -- regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>  -- add a path-based dependency to silt.toml
@@ -295,9 +297,10 @@ The bare `silt update` command regenerates `silt.lock` from the current package'
 ## What's next
 
 - **[Language Guide](language-guide.md)** — complete coverage of every feature
-- **Standard Library** — every built-in function, constant, and type carries
-  its docs through the LSP. Hover `list.map`, `math.cos`, `Result`, …
-  in your editor to see signature, prose, and runnable examples.
+- **[Standard Library](language-guide.md#standard-library)** — a reference
+  page for each built-in module, with the signature and an example of each
+  function. An editor shows the same text when you hover `list.map`,
+  `math.cos`, `Result`, …
 - **[Concurrency](concurrency.md)** — the full CSP model, channels, and select
 - **[FFI Guide](ffi.md)** — embed silt in Rust applications
 - **[Editor Setup](editor-setup.md)** — configure your editor for silt

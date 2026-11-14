@@ -271,6 +271,20 @@ what it has begun, then `http.serve` returns `()`; `task.cancel` of its
 task ends the server at once and leaves the listener bound, to be served
 again (see [When a program ends](../concurrency.md#when-a-program-ends)).
 
+```silt
+import bytes
+import http
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:8080")?
+  http.serve(listener) { req ->
+    http.Response { status: 200, body: bytes.from_string("you asked for {req.path}"), headers: #{} }
+  }
+  Ok(())
+}
+```
+
 ### Connections and handlers
 
 Each connection has a task of its own. It reads a request, calls the
@@ -543,9 +557,9 @@ http.segments(path: String) -> List(String)
 Splits a URL path into non-empty segments. Useful for pattern-matched routing.
 
 ```silt
-println(http.segments("/api/users/42")) -- [api, users, 42]
+println(http.segments("/api/users/42")) -- ["api", "users", "42"]
 println(http.segments("/")) -- []
-println(http.segments("//foo//bar/")) -- [foo, bar]
+println(http.segments("//foo//bar/")) -- ["foo", "bar"]
 ```
 
 This function has no dependencies and works even with `--no-default-features`.

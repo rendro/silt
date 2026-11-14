@@ -162,9 +162,6 @@ codes! {
     UnknownTrait = "E0313", Type;
     /// A type has no impl of a trait it is required to have.
     MissingTraitImpl = "E0314", Type;
-    /// A type cannot have the derived `Equal`, `Compare` or `Hash` it is
-    /// used with: one of its fields has none.
-    NotDerivable = "E0315", Type;
     /// A call needs a trait bound the enclosing function does not
     /// declare.
     MissingConstraint = "E0316", Type;
