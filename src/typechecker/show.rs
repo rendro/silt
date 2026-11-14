@@ -320,6 +320,9 @@ impl TypeChecker {
     /// that the cell names by its name (`<repl:1>.H` is the `H` an
     /// earlier cell declared again).
     fn qualified_type(&self, r: TypeRef) -> String {
+        if let Some(described) = self.described_type(r) {
+            return described;
+        }
         let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
             Some((_, module)) => Some(intern(module.unwrap_or("prelude"))),
             None => self
@@ -338,12 +341,40 @@ impl TypeChecker {
         }
     }
 
+    /// The type `r` of a module of another package that no import
+    /// written here can reach (a dependency's dependency, a dependency's
+    /// module other than its library), in the one form a message writes
+    /// such a type in, which is no code: `InErr of package inner`, `UErr
+    /// of module util of package da` (the arguments of a generic one
+    /// before the description, see [`crate::types::AFTER_ARGUMENTS`]).
+    /// None for any other type.
+    fn described_type(&self, r: TypeRef) -> Option<String> {
+        let def = self.def(r.id.0)?;
+        let package = |m| self.tables.module_packages.get(&m);
+        if def.module.is_builtin()
+            || package(def.module) == package(self.module)
+            || self.import_path(def.module).is_some()
+        {
+            return None;
+        }
+        let name = self.tables.package_names.get(package(def.module)?)?;
+        let after = crate::types::AFTER_ARGUMENTS;
+        Some(match self.tables.module_names.get(&def.module) {
+            Some(module) if resolve(*module) != "lib" => {
+                format!("{}{after} of module {module} of package {name}", r.name)
+            }
+            _ => format!("{}{after} of package {name}", r.name),
+        })
+    }
+
     /// The name of `r` as the module being checked writes it, for a
     /// hint that spells code: a type of another module with the module
     /// (`time.Date`); in a REPL cell the types of the earlier cells are
     /// in scope by name.
     pub(super) fn written_type(&self, r: TypeRef) -> String {
-        let qualified = self.qualified_type(r);
+        let qualified = self
+            .qualified_type(r)
+            .replace(crate::types::AFTER_ARGUMENTS, "");
         // (An earlier cell's "module" has no name a program writes.)
         match self.is_cell && qualified.starts_with('<') {
             true => r.name.to_string(),

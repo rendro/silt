@@ -1,3 +1,7 @@
 pub type InErr { InIo, InOther }
 
+pub type Wrap(a) { Wrap(a) }
+
 pub fn mk() -> InErr { InOther }
+
+pub fn w() -> Wrap(Int) { Wrap(1) }

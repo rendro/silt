@@ -649,12 +649,15 @@ impl Session {
                 Some((*key, self.graph.module_at(&src.join("lib.silt"))?))
             })
             .collect();
+        let package_name = (packages.packages.get(module.package.0 as usize))
+            .map_or_else(|| intern(""), |package| package.name);
         let mut check = typechecker::check_module(
             &mut ast,
             ModuleContext {
                 module: id,
                 package: module.package,
                 dependencies,
+                package_name,
                 module_name: module.name,
                 kind,
                 reach,

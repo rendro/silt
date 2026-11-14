@@ -1,7 +1,7 @@
 error[type]: trait 'Shwon' is not declared
- --> src/main.silt:15:1
+ --> src/main.silt:18:1
     |
- 15 | trait Shwon for T { fn shn(self) -> String { "a" } }
+ 18 | trait Shwon for T { fn shn(self) -> String { "a" } }
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Shwon' is not declared
   = help: did you mean `da.Shown` (a trait of module `da`, after `import da`)?
 
@@ -16,11 +16,29 @@ error[type]: non-exhaustive match: missing variants InIo, InOther
    |
  4 |   match da.deep() {
    |         ^^^^^^^^^ non-exhaustive match: missing variants InIo, InOther
-  = help: these are variants of a type of a module that no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+  = help: these are variants of InErr of package inner, whose module no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
 
 error[type]: non-exhaustive match: missing variants UA, UB
  --> src/deep.silt:9:9
    |
  9 |   match da.u() {
    |         ^^^^^^ non-exhaustive match: missing variants UA, UB
-  = help: these are variants of a type of a module that no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+  = help: these are variants of UErr of module util of package da, whose module no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+
+error[type]: type mismatch: expected Int, got InErr of package inner
+ --> src/types.silt:4:16
+   |
+ 4 |   let x: Int = da.deep()
+   |                ^^^^^^^^^ type mismatch: expected Int, got InErr of package inner
+
+error[type]: type mismatch: expected Int, got UErr of module util of package da
+ --> src/types.silt:5:16
+   |
+ 5 |   let y: Int = da.u()
+   |                ^^^^^^ type mismatch: expected Int, got UErr of module util of package da
+
+error[type]: type mismatch: expected Int, got List(Wrap(Int) of package inner)
+ --> src/types.silt:6:16
+   |
+ 6 |   let z: Int = da.w()
+   |                ^^^^^^ type mismatch: expected Int, got List(Wrap(Int) of package inner)

@@ -570,8 +570,9 @@ impl TypeChecker {
                     (msg.starts_with("missing variant")
                         && self.variant_out_of_reach(*enum_ty, first.name))
                     .then(|| {
+                        let ty = self.show_type(&Type::Generic(*enum_ty, Vec::new()));
                         format!(
-                            "{these} of a type of a module that no import here reaches, so no \
+                            "{these} of {ty}, whose module no import here reaches, so no \
                              pattern here can name {them}: an arm `_ -> ...` matches {them}"
                         )
                     })

@@ -1,0 +1,8 @@
+import da
+
+pub fn shown() -> (Int, Int, Int) {
+  let x: Int = da.deep()
+  let y: Int = da.u()
+  let z: Int = da.w()
+  (x, y, z)
+}

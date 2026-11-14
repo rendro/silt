@@ -2278,6 +2278,8 @@ pub struct ModuleContext<'a> {
     /// the session has, each with that module: a help offers an import
     /// of one by its key.
     pub dependencies: Vec<(Symbol, crate::session::ModuleId)>,
+    /// The name of the package, from its `silt.toml`.
+    pub package_name: Symbol,
     /// Its name, for diagnostics.
     pub module_name: Symbol,
     /// A file, a REPL cell, or an embedder's host module, whose
@@ -2309,6 +2311,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         module,
         package,
         dependencies,
+        package_name,
         module_name,
         kind,
         reach,
@@ -2324,6 +2327,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     let (mut checker, mut env) = builtin_env().start();
     tables.module_names.insert(module, module_name);
     tables.module_packages.insert(module, package);
+    tables.package_names.insert(package, package_name);
     checker.tables = std::mem::take(tables);
     // A REPL cell that binds a name an earlier cell binds reads the
     // earlier value where its own is not bound yet (`let n = n + 1`):

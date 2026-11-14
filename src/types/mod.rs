@@ -432,7 +432,28 @@ impl Shown<'_> {
             .cloned()
             .unwrap_or_else(|| ty.name.to_string())
     }
+
+    /// Write the named type `ty` with `args`, written by `args` itself:
+    /// its name, the arguments, and the part of a name that follows them
+    /// (after [`AFTER_ARGUMENTS`]: `Box(Int) of package inner`).
+    fn named(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        ty: &TypeRef,
+        args: impl FnOnce(&mut std::fmt::Formatter<'_>) -> std::fmt::Result,
+    ) -> std::fmt::Result {
+        let name = self.name(ty);
+        let (head, after) = name.split_once(AFTER_ARGUMENTS).unwrap_or((&name, ""));
+        f.write_str(head)?;
+        args(f)?;
+        f.write_str(after)
+    }
 }
+
+/// In a name [`Type::show_all`] is given for a type, where the part
+/// that is written after the type's arguments begins: a description of
+/// the type's place (`InErr of package inner`) follows them.
+pub const AFTER_ARGUMENTS: char = '\u{1}';
 
 impl std::fmt::Display for Shown<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -482,18 +503,19 @@ impl std::fmt::Display for Shown<'_> {
                 if name.is_builtin(crate::defs::TYPE_OF) && args.len() == 1 {
                     return write!(f, "type {}", self.of(&args[0]));
                 }
-                write!(f, "{}", self.name(name))?;
-                if !args.is_empty() {
-                    write!(f, "(")?;
-                    for (i, a) in args.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
+                self.named(f, name, |f| {
+                    if !args.is_empty() {
+                        write!(f, "(")?;
+                        for (i, a) in args.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "{}", self.of(a))?;
                         }
-                        write!(f, "{}", self.of(a))?;
+                        write!(f, ")")?;
                     }
-                    write!(f, ")")?;
-                }
-                Ok(())
+                    Ok(())
+                })
             }
             Type::Map(k, v) => write!(f, "Map({}, {})", self.of(k), self.of(v)),
             Type::Set(inner) => write!(f, "Set({})", self.of(inner)),
@@ -512,18 +534,21 @@ impl std::fmt::Display for Shown<'_> {
             // `Option(_)`, `Result(_, String)`, as an impl header writes
             // it.
             Type::Con(head, rest) => {
+                let args = |f: &mut std::fmt::Formatter<'_>| {
+                    write!(f, "(_")?;
+                    for t in rest {
+                        write!(f, ", {}", self.of(t))?;
+                    }
+                    write!(f, ")")
+                };
                 match head {
-                    Head::Named(r) => write!(f, "{}", self.name(r))?,
+                    Head::Named(r) => return self.named(f, r, args),
                     Head::List => write!(f, "List")?,
                     Head::Map => write!(f, "Map")?,
                     Head::Set => write!(f, "Set")?,
                     Head::Channel => write!(f, "Channel")?,
                 }
-                write!(f, "(_")?;
-                for t in rest {
-                    write!(f, ", {}", self.of(t))?;
-                }
-                write!(f, ")")
+                args(f)
             }
         }
     }
