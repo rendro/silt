@@ -936,6 +936,26 @@ impl TypeChecker {
         }
     }
 
+    /// Refuse `operand?` on a value of type `got`, neither the builtin
+    /// Result nor Option. A type of the program with one of those names
+    /// is told apart from the builtin one: the message would read as
+    /// its own contradiction otherwise.
+    pub(super) fn question_misfit(&mut self, got: &Type, span: Span) {
+        let mut message = format!(
+            "'?' operator requires Result or Option type, got '{}'",
+            self.show_type(got)
+        );
+        // (In the words of an entry point that returns such a type.)
+        let named = (got.type_ref())
+            .map(|r| resolve(r.name))
+            .filter(|name| name == "Result" || name == "Option");
+        if let Some(name) = &named {
+            message.push_str(&format!(", a type of this program that is not the builtin {name}"));
+        }
+        let help = named.map(|_| "give the type another name".to_string());
+        self.error_help(Code::InvalidQuestion, (message, help), span);
+    }
+
     /// Check `operand?` now that the operand's type is known: it is a
     /// Result or an Option, whose payload is `result_ty`, and the
     /// function it is in returns the same wrapper.
@@ -955,14 +975,7 @@ impl TypeChecker {
                 ("Option", args.clone())
             }
             other => {
-                self.error(
-                    Code::InvalidQuestion,
-                    format!(
-                        "'?' operator requires Result or Option type, got '{}'",
-                        self.show_type(other)
-                    ),
-                    span,
-                );
+                self.question_misfit(other, span);
                 return;
             }
         };

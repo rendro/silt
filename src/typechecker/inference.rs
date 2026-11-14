@@ -5150,14 +5150,7 @@ impl TypeChecker {
                         result_ty
                     }
                     _ => {
-                        self.error(
-                            Code::InvalidQuestion,
-                            format!(
-                                "'?' operator requires Result or Option type, got '{}'",
-                                self.show_type(&inner_ty)
-                            ),
-                            span,
-                        );
+                        self.question_misfit(&inner_ty, span);
                         self.fresh_var()
                     }
                 }
