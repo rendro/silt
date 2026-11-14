@@ -28,7 +28,7 @@ pub struct TyVarSupply {
     pub(super) trail: Vec<TyVar>,
     /// The variables each checked module allocated, in the order of the
     /// checks, and whether the module was forgotten since.
-    ranges: Vec<(crate::session::ModuleId, TyVar, bool)>,
+    ranges: Vec<(crate::defs::ModuleId, TyVar, bool)>,
 }
 
 impl TyVarSupply {
@@ -138,7 +138,7 @@ impl TyVarSupply {
     }
 
     /// Start the check of `module`: its variables come next.
-    pub(super) fn begin(&mut self, module: crate::session::ModuleId) {
+    pub(super) fn begin(&mut self, module: crate::defs::ModuleId) {
         self.level = 0;
         self.base = self.next;
         self.trail.clear();
@@ -149,7 +149,7 @@ impl TyVarSupply {
     /// modules' variables (`trail`), and give back the variables of the
     /// checks at the end of the supply that are all forgotten, so a long
     /// session (an editor, a REPL) does not grow with each check again.
-    pub(super) fn forget(&mut self, module: crate::session::ModuleId, trail: &[TyVar]) {
+    pub(super) fn forget(&mut self, module: crate::defs::ModuleId, trail: &[TyVar]) {
         for v in trail {
             if let Some(slot) = self.subst.get_mut(*v) {
                 *slot = None;

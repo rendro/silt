@@ -263,7 +263,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
         for id in variants {
             if let Some(scheme) = checker.tables.schemes.remove(id) {
                 let variant = defs.defs[id.0 as usize].name;
-                if of.module == crate::session::ModuleId::PRELUDE {
+                if of.module == crate::defs::ModuleId::PRELUDE {
                     env.define(variant, scheme.clone());
                 }
                 env.define(intern(&format!("{}.{variant}", of.name)), scheme);

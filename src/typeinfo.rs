@@ -894,7 +894,7 @@ mod tests {
     fn program_ids_follow_the_builtin_ids() {
         let mut defs = crate::typechecker::names::new_def_table();
         let id = defs.add(crate::defs::Def {
-            module: crate::session::ModuleId(0),
+            module: crate::defs::ModuleId(0),
             name: crate::intern::intern("Pt"),
             span: crate::source::Span::BUILTIN,
             vis: crate::defs::Vis::Pub,

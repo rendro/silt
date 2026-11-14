@@ -603,7 +603,7 @@ impl TypeChecker {
         };
         // (The trait's methods are definitions of its module, which
         // decodes its own opaque types.)
-        let owners: Vec<crate::session::ModuleId> = self
+        let owners: Vec<crate::defs::ModuleId> = self
             .def(tr.id.0)
             .map(|def| def.module)
             .into_iter()
@@ -2293,7 +2293,7 @@ impl TypeChecker {
         let rest = if row.params.len() > 1 { ", .." } else { "" };
         // (As this module writes the module: `l.length` after `import
         // list as l`.)
-        let written_module = (crate::session::ModuleId::builtin(module))
+        let written_module = (crate::defs::ModuleId::builtin(module))
             .and_then(|id| self.module_spelled.get(&id))
             .map_or_else(|| module.to_string(), |alias| resolve(*alias));
         Some(format!(
@@ -2535,7 +2535,7 @@ impl TypeChecker {
         }
         // (`main` and the function of a REPL entry's statements take no
         // parameter a program gives.)
-        if f.name != intern("main") && !crate::session::is_cell_name(&resolve(f.name)) {
+        if f.name != intern("main") && !crate::program::is_cell_name(&resolve(f.name)) {
             let params = (f.params.iter().zip(&sig.params))
                 .map(|(p, ty)| match p.pattern.kind {
                     PatternKind::Ident(name) => (name, ty.clone()),

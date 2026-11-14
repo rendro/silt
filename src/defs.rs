@@ -114,6 +114,14 @@ pub enum Res {
     Error,
 }
 
+/// A row's number: what a call of a builtin carries
+/// ([`Instr::CallBuiltin`](crate::bytecode::Instr)) and what a builtin
+/// function is as a value ([`crate::value::Value::BuiltinFn`]). It is the row's place
+/// among all rows ([`crate::builtins::registry::Registry::builtin`]) in this build of silt, and
+/// means nothing in another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BuiltinId(pub(crate) u16);
+
 /// A module: of a session's module graph, an index into
 /// [`crate::session::ModuleGraph::modules`]; or a builtin pseudo-module
 /// (the prelude, `list`, ...). Defined here, below the session, as the

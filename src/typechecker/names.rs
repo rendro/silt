@@ -32,12 +32,11 @@ use std::sync::Arc;
 
 use crate::ast::*;
 use crate::defs::{
-    BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TraitId, TypeId, Vis, builtin_types,
+    BuiltinDefs, Def, DefId, DefKind, DefTable, ModuleId, Res, TraitId, TypeId, Vis, builtin_types,
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::parser::{NO_IF, NO_IF_HELP};
-use crate::session::ModuleId;
 use crate::source::Span;
 
 use super::suggest::suggest_similar;
@@ -1481,7 +1480,7 @@ impl Resolver<'_> {
                     for (at, (item, item_span)) in items.iter().enumerate() {
                         // (An imported `main` is the file's entry point:
                         // running the file uses it.)
-                        let entry = *item == intern(crate::session::ENTRY_POINT);
+                        let entry = *item == intern(crate::program::ENTRY_POINT);
                         if used.contains(item) || entry || erred(*item_span, &self.diagnostics) {
                             continue;
                         }

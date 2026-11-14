@@ -46,7 +46,7 @@ pub(super) enum MemberKind {
 pub(super) fn visible_fields(
     tables: &crate::typechecker::Tables,
     defs: &crate::defs::DefTable,
-    module: crate::session::ModuleId,
+    module: crate::defs::ModuleId,
 ) -> super::fields::RecordFields {
     let mut record_fields = tables.record_fields();
     record_fields.retain(|ty, _| {

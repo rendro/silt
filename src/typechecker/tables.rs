@@ -95,7 +95,7 @@ pub(super) struct TraitInfo {
     /// The module that declares the trait without `pub`, and its name:
     /// the trait's methods can be called only in that module. `None` for
     /// a `pub` trait.
-    pub(super) private_to: Option<(crate::session::ModuleId, Symbol)>,
+    pub(super) private_to: Option<(crate::defs::ModuleId, Symbol)>,
     /// What the default methods' bodies ask of their annotation
     /// variables (`var_names`) for the builtins they give them to, once
     /// the trait's module is checked: an impl in another module that
@@ -434,7 +434,7 @@ pub struct Tables {
     /// which decodes or encodes its own opaque types in the type a use
     /// in another module (or a later REPL input) gives it.
     pub(super) def_owners:
-        HashMap<crate::defs::DefId, HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>>,
+        HashMap<crate::defs::DefId, HashMap<(TyVar, bool), Vec<crate::defs::ModuleId>>>,
     /// Of each function of a module (or a REPL input) whose `json.Encode`
     /// bound on a variable of its scheme hands the type to an encoder:
     /// the encoder and the functions on the way (`Asked::Through`), which
@@ -510,15 +510,15 @@ pub struct Tables {
     pub(super) statement_units: HashMap<crate::defs::DefId, Vec<(usize, Span)>>,
     /// What the check of each REPL cell left waiting for the type of a
     /// `let` that a later cell may decide (see [`Waiting`]).
-    pub(super) waiting: HashMap<crate::session::ModuleId, Waiting>,
+    pub(super) waiting: HashMap<crate::defs::ModuleId, Waiting>,
     /// What each module's check added to the tables, so that it can be
     /// forgotten when the module is checked again.
-    pub(super) rows: HashMap<crate::session::ModuleId, Rows>,
+    pub(super) rows: HashMap<crate::defs::ModuleId, Rows>,
     /// The name of each module checked, to tell two types of one name
     /// apart in a message (`a.Pt`, `b.Pt`).
-    pub(super) module_names: HashMap<crate::session::ModuleId, Symbol>,
+    pub(super) module_names: HashMap<crate::defs::ModuleId, Symbol>,
     /// The package of each module checked.
-    pub(super) module_packages: HashMap<crate::session::ModuleId, crate::package_graph::PackageId>,
+    pub(super) module_packages: HashMap<crate::defs::ModuleId, crate::package_graph::PackageId>,
 }
 
 /// The checks a REPL cell made on a type still unknown when its check
@@ -783,7 +783,7 @@ impl Tables {
 
     /// Forget what the check of `module` added: it is checked again, or
     /// it was a REPL cell that is dropped.
-    pub fn forget(&mut self, module: crate::session::ModuleId) {
+    pub fn forget(&mut self, module: crate::defs::ModuleId) {
         self.waiting.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;
@@ -885,7 +885,7 @@ mod stamp_tests {
     fn impls_forgotten_and_entered_have_another_stamp() {
         let mut tables = Tables::default();
         let (tr, ty) = (TraitKey::builtin("Display"), TypeRef::builtin("Int"));
-        let module = crate::session::ModuleId(1);
+        let module = crate::defs::ModuleId(1);
         tables.begin_rows();
         tables.add_impl((tr, ty, ImplArgs::none()));
         let rows = tables.take_rows();

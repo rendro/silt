@@ -28,9 +28,10 @@ use std::sync::Arc;
 use crate::ast;
 use crate::bytecode::Globals;
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
-use crate::defs::DefTable;
+use crate::defs::{DefTable, ModuleId};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
+use crate::program::ENTRY_POINT;
 use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::names::{self, Imported, ModuleKind, ModuleScope};
 use crate::typechecker::{self, ModuleContext, Tables};
@@ -39,9 +40,8 @@ use crate::value::HostFn;
 
 pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
 pub use crate::value::HostCall;
-pub use entry::{ENTRY_POINT, selected_tests, test_functions, test_kind};
-pub(crate) use graph::is_cell_name;
-pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
+pub use entry::{selected_tests, test_functions};
+pub use graph::{Import, ImportResolution, Module, ModuleGraph, Ordering, parse_text};
 pub use host::{HostFunction, HostModule};
 pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
 
@@ -339,7 +339,7 @@ impl Session {
         self.cells.count += 1;
         let n = self.cells.count;
         let file = self.enter_text(
-            &PathBuf::from(graph::cell_name(n)),
+            &PathBuf::from(crate::program::cell_name(n)),
             SourceName::Repl(n),
             &text,
         );

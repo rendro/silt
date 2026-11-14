@@ -199,7 +199,7 @@ impl TypeChecker {
     /// its own name, but a module of another package (a dependency's
     /// root module, which calls itself `lib`) by the path this module
     /// imports it by (`dep`).
-    pub(super) fn module_name_here(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    pub(super) fn module_name_here(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         let package = |m| self.tables.module_packages.get(&m);
         if package(module) != package(self.module)
             && let Some(path) = self.import_paths.get(&module)
@@ -237,9 +237,9 @@ impl TypeChecker {
 
     /// The module that declares the type `r`: a builtin module's
     /// pseudo-module, or a module of the graph. None for the prelude.
-    pub(super) fn module_of_type(&self, r: TypeRef) -> Option<crate::session::ModuleId> {
+    pub(super) fn module_of_type(&self, r: TypeRef) -> Option<crate::defs::ModuleId> {
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, module)) => crate::session::ModuleId::builtin(module.as_ref()?),
+            Some((_, module)) => crate::defs::ModuleId::builtin(module.as_ref()?),
             None => self.def(r.id.0).map(|def| def.module),
         }
     }
@@ -252,7 +252,7 @@ impl TypeChecker {
     /// one rule for every help that writes a name of another module.
     pub(super) fn spelling_in_reach(
         &self,
-        module: crate::session::ModuleId,
+        module: crate::defs::ModuleId,
         name: &str,
     ) -> Option<String> {
         let by_name = (self.spelled.iter()).find(|(id, _)| {
@@ -271,7 +271,7 @@ impl TypeChecker {
     /// of a module of the same package. None for any other module (a
     /// module of another package that is not imported here: no import
     /// written here reaches it by the name it calls itself).
-    pub(super) fn import_path(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    pub(super) fn import_path(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         if let Some(path) = self.import_paths.get(&module) {
             return Some(*path);
         }

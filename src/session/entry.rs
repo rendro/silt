@@ -6,23 +6,9 @@ use std::collections::HashMap;
 use crate::ast::{Decl, ExprKind, FnDecl, PatternKind, Program, Stmt};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-use crate::program::{TestFn, TestKind};
+use crate::program::{ENTRY_POINT, TestFn, TestKind, test_kind};
 use crate::source::{FileId, Span};
 use crate::types::Type;
-
-/// The name of the function a program starts from.
-pub const ENTRY_POINT: &str = "main";
-
-/// Classify a top-level function name. `None`: not a test.
-pub fn test_kind(name: &str) -> Option<TestKind> {
-    if name.starts_with("skip_test_") {
-        Some(TestKind::Skip)
-    } else if name.starts_with("test_") {
-        Some(TestKind::Run)
-    } else {
-        None
-    }
-}
 
 /// The test functions that `program` declares, in source order.
 pub fn test_functions(program: &Program) -> Vec<(String, TestKind)> {

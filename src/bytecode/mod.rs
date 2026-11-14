@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
-use crate::builtins::registry::BuiltinId;
+use crate::defs::BuiltinId;
 use crate::defs::{DefId, ImplArgs, TraitId, TypeId};
 use crate::layers::{Layers, Rows};
 use crate::source::Span;

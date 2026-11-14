@@ -2680,7 +2680,7 @@ impl TypeChecker {
     /// Whether the module checked imports `module`, the builtin module
     /// of the trait `t`, by any import (`import json.{ stringify }`
     /// too), or names the trait by an import.
-    fn imports_builtin_trait(&self, t: TraitKey, module: crate::session::ModuleId) -> bool {
+    fn imports_builtin_trait(&self, t: TraitKey, module: crate::defs::ModuleId) -> bool {
         self.builtin_imports.contains(&module) || self.seen_traits.contains(&t.id.0)
     }
 

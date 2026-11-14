@@ -62,7 +62,7 @@
 use std::marker::PhantomData;
 
 use super::{Const, Label, Segment, UpvalueDesc};
-use crate::builtins::registry::BuiltinId;
+use crate::defs::BuiltinId;
 
 // ── What a row is made of ──────────────────────────────────────────
 

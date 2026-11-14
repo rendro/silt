@@ -7,7 +7,8 @@ use std::process;
 use crate::diagnostic::Diagnostic;
 use crate::disassemble::disassemble_function;
 use crate::intern::intern;
-use crate::session::{ENTRY_POINT, Entry, LockPolicy};
+use crate::program::ENTRY_POINT;
+use crate::session::{Entry, LockPolicy};
 
 use crate::cli::help::{asks_for_help, disasm_usage_banner};
 use crate::cli::package::{

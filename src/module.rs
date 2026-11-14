@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use crate::builtins::registry::{TypeShape, registry};
 
 /// The builtin modules, built or not, in the order of their ids
-/// ([`crate::session::ModuleId::builtin`]): their functions
+/// ([`crate::defs::ModuleId::builtin`]): their functions
 /// (`module.func`) are builtins, not loaded from files.
 pub fn builtin_modules() -> &'static [&'static str] {
     static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();

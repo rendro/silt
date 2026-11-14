@@ -855,7 +855,7 @@ impl HostShape {
                 all(declared.iter().zip(fields), witnesses, budget, Some(&inner))
             }
             (HostShape::Opaque { id, .. }, value) => {
-                yes(crate::types::canonical::dispatch_type_for_value(value) == *id)
+                yes(crate::value::dispatch_type_for_value(value) == *id)
             }
             (HostShape::Param(at), value) => match env {
                 Some(frame) => match frame.args.get(usize::from(*at)) {

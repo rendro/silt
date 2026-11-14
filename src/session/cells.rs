@@ -34,7 +34,8 @@ use crate::compiler::EarlierCells;
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, Span};
 
-use super::graph::{ModuleId, cell_name};
+use crate::defs::ModuleId;
+use crate::program::cell_name;
 
 /// What a top-level name of a cell is.
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -12,11 +12,11 @@ use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
 use crate::builtins::registry::docs::signature_block;
-use crate::defs::DefTable;
+use crate::defs::{DefTable, ModuleId};
 use crate::diagnostic::{Diagnostic, Located, SourceView, render_human};
 use crate::intern;
 use crate::lexer::Lexer;
-use crate::session::{Config, Entry, LockPolicy, ModuleId, ProjectSetup, Session};
+use crate::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
 use crate::source::{FileId, SourceMap, SourceName, Span};
 use crate::typechecker::names::{Binding, Exports, ModuleScope};
 use crate::types::{Pred, RigidId, Scheme, TyVar, Type, substitute_vars};

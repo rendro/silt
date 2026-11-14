@@ -23,7 +23,7 @@ use crate::package_graph::PackageId;
 
 use super::packages::Packages;
 
-pub use crate::defs::ModuleId;
+use crate::defs::ModuleId;
 
 /// One module: a `.silt` file of a package.
 pub struct Module {
@@ -152,7 +152,7 @@ fn parse_module(
         parser = parser.with_signatures().for_host();
     }
     let (program, errors) = match cell {
-        Some(n) => parser.parse_cell(intern(&cell_name(n))),
+        Some(n) => parser.parse_cell(intern(&crate::program::cell_name(n))),
         None => parser.parse_program_recovering(),
     };
     let incomplete = cut_short || parser.skipped_a_declaration();
@@ -1018,19 +1018,6 @@ impl ModuleGraph {
         }
         found
     }
-}
-
-/// The name of the `n`th REPL entry: its module, its file, and the
-/// function that holds its statements.
-pub(super) fn cell_name(n: usize) -> String {
-    format!("<repl:{n}>")
-}
-
-/// Whether `name` is that of a REPL entry (see [`cell_name`]): of the
-/// function that holds the statements of an entry, whose value the REPL
-/// shows.
-pub(crate) fn is_cell_name(name: &str) -> bool {
-    name.starts_with("<repl:")
 }
 
 /// The `import` declarations of `program` in their one order

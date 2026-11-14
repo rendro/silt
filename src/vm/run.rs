@@ -933,7 +933,7 @@ impl Vm {
                                 Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
                                     val.kind().to_string()
                                 }
-                                _ => crate::types::canonical::dispatch_type_name(&val),
+                                _ => crate::value::dispatch_type_name(&val),
                             };
                             fail!(VmError::type_confusion(format!(
                                 "type '{name}' does not implement Display \
@@ -2066,7 +2066,7 @@ impl Vm {
         // is found by its type alone. It is the argument `at`, the
         // first of the method's of type `Self`.)
         let receiver = &self.stack[receiver_slot + at];
-        let receiver_type = crate::types::canonical::dispatch_type_for_value(receiver);
+        let receiver_type = crate::value::dispatch_type_for_value(receiver);
         // Descriptor-as-receiver (e.g. `Int.default()`,
         // `body.decode(Todo)` where the descriptor is piped in) is
         // a dispatch key, not a value argument. The method's
@@ -2211,7 +2211,7 @@ impl Vm {
             None => {
                 return Err(VmError::type_confusion(format!(
                     "no method '{method_name}' for type '{}'",
-                    crate::types::canonical::dispatch_type_name(&receiver)
+                    crate::value::dispatch_type_name(&receiver)
                 )));
             }
         }

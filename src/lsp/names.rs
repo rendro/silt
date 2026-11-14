@@ -15,9 +15,9 @@ use crate::ast::{
     Decl, Expr, ExprKind, FnDecl, ImportTarget, ListElem, Pattern, PatternKind, Program, Selection,
     Stmt, StringPart, TraitRef, TypeBody, TypeExpr, TypeExprKind, WhereClause,
 };
-use crate::defs::{DefId, DefKind, DefTable, Res};
+use crate::defs::{DefId, DefKind, DefTable, ModuleId, Res};
 use crate::intern::{Symbol, resolve as resolve_sym};
-use crate::session::{ImportResolution, ModuleId, Session};
+use crate::session::{ImportResolution, Session};
 use crate::source::Span;
 
 use super::local_bindings::{find_local_binding_at_offset, nearest_local_binding_for};

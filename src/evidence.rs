@@ -64,7 +64,7 @@ pub enum Evidence {
 /// the session) and the predicate's place among its evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Late {
-    pub cell: crate::session::ModuleId,
+    pub cell: crate::defs::ModuleId,
     pub id: u32,
 }
 

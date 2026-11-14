@@ -9,6 +9,33 @@ use std::sync::Arc;
 use crate::bytecode::{Function, Globals};
 use crate::source::Span;
 
+/// The name of the function a program starts from.
+pub const ENTRY_POINT: &str = "main";
+
+/// Classify a top-level function name. `None`: not a test.
+pub fn test_kind(name: &str) -> Option<TestKind> {
+    if name.starts_with("skip_test_") {
+        Some(TestKind::Skip)
+    } else if name.starts_with("test_") {
+        Some(TestKind::Run)
+    } else {
+        None
+    }
+}
+
+/// The name of the `n`th REPL entry: its module, its file, and the
+/// function that holds its statements.
+pub(crate) fn cell_name(n: usize) -> String {
+    format!("<repl:{n}>")
+}
+
+/// Whether `name` is that of a REPL entry (see [`cell_name`]): of the
+/// function that holds the statements of an entry, whose value the REPL
+/// shows.
+pub(crate) fn is_cell_name(name: &str) -> bool {
+    name.starts_with("<repl:")
+}
+
 /// What the VM runs: the compiled functions, the first of which is the
 /// script that installs the program's globals (and, for
 /// [`crate::session::Entry::Main`], calls `main`).

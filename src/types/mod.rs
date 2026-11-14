@@ -626,7 +626,7 @@ pub enum Asked {
 /// A route of `Asked::Through`: the modules of the definitions of other
 /// modules on it, and the functions and methods it passes the type
 /// through.
-pub type ThroughRoute = (Vec<crate::session::ModuleId>, Vec<Symbol>);
+pub type ThroughRoute = (Vec<crate::defs::ModuleId>, Vec<Symbol>);
 
 impl Asked {
     /// The routes of `Through`.
@@ -636,7 +636,7 @@ impl Asked {
                 let (owners, links) = route.split_once(';').unwrap_or(("", route));
                 let owners = (owners.split(','))
                     .filter_map(|n| n.parse().ok())
-                    .map(crate::session::ModuleId)
+                    .map(crate::defs::ModuleId)
                     .collect();
                 let links = (links.split(' '))
                     .filter(|name| !name.is_empty())

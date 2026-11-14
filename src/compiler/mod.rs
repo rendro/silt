@@ -311,7 +311,7 @@ fn any_expr_in(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool, closures: boo
 /// parsed and typechecked, with what each of its imports names.
 pub struct ModuleUnit {
     /// The module, as the session knows it.
-    pub id: crate::session::ModuleId,
+    pub id: crate::defs::ModuleId,
     /// The module's declarations, after the typechecker filled them in.
     pub program: Arc<Program>,
     /// The module's top-level `let`s, by the span of each, in the order
@@ -386,7 +386,7 @@ pub struct Compiler<'a> {
     globals: Globals,
     /// The slot of each top-level function, `let` and host function of
     /// the modules compiled now, by module and name.
-    own_slots: HashMap<(crate::session::ModuleId, Symbol), u16>,
+    own_slots: HashMap<(crate::defs::ModuleId, Symbol), u16>,
     /// The name a local `let` gives the closure compiled next, its
     /// value.
     closure_name: Option<Symbol>,
@@ -534,7 +534,7 @@ impl<'a> Compiler<'a> {
     fn assign_slots(
         &self,
         globals: &mut Globals,
-    ) -> Result<HashMap<(crate::session::ModuleId, Symbol), u16>, Diagnostic> {
+    ) -> Result<HashMap<(crate::defs::ModuleId, Symbol), u16>, Diagnostic> {
         let mut own = HashMap::new();
         for (index, unit) in self.units.modules.iter().enumerate() {
             if self.units.earlier.installed.contains(&index) {
@@ -640,7 +640,7 @@ impl<'a> Compiler<'a> {
     /// The trait the module `module` declares as `name`.
     fn declared_trait(
         &self,
-        module: crate::session::ModuleId,
+        module: crate::defs::ModuleId,
         name: Symbol,
     ) -> Option<crate::defs::TraitId> {
         self.units.defs.named(module, name).iter().find_map(|&id| {
@@ -3596,7 +3596,7 @@ mod tests {
     }
 
     /// The names of a program's global slots, in slot order.
-    fn global_names(program: &crate::session::Program) -> Vec<String> {
+    fn global_names(program: &crate::program::Program) -> Vec<String> {
         (0..program.globals.len())
             .map(|slot| {
                 program

@@ -60,7 +60,7 @@ pub enum Method {
     Global(u16),
     /// A builtin: the method of a built-in impl (`list.map` is List's
     /// `Functor.map`), which takes no dictionary.
-    Builtin(crate::builtins::registry::BuiltinId),
+    Builtin(crate::defs::BuiltinId),
 }
 
 /// How a dictionary is made from the dictionaries of an impl's header.

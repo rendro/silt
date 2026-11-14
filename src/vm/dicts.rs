@@ -113,7 +113,7 @@ impl Vm {
             )));
         };
         if at != usize::from(u8::MAX)
-            && crate::types::canonical::dispatch_type_for_value(&self.stack[first + at]) != ty
+            && crate::value::dispatch_type_for_value(&self.stack[first + at]) != ty
         {
             return Err(self.wrong_receiver(first - 1, at + 1));
         }
@@ -141,7 +141,7 @@ impl Vm {
         VmError::type_confusion(format!(
             "a call through the dictionary of {} has a receiver of type '{}'",
             name.unwrap_or_default(),
-            crate::types::canonical::dispatch_type_name(&self.stack[first + at])
+            crate::value::dispatch_type_name(&self.stack[first + at])
         ))
     }
 
@@ -155,7 +155,7 @@ impl Vm {
             self.see_template(index)?;
             return self.check_receiver(template, at);
         };
-        if crate::types::canonical::dispatch_type_for_value(&self.stack[at]) == found.ty {
+        if crate::value::dispatch_type_for_value(&self.stack[at]) == found.ty {
             return Ok(());
         }
         Err(self.wrong_impl_receiver(index, at))
@@ -171,7 +171,7 @@ impl Vm {
         VmError::type_confusion(format!(
             "a call of a method of {} has a receiver of type '{}'",
             name.unwrap_or_default(),
-            crate::types::canonical::dispatch_type_name(&self.stack[at])
+            crate::value::dispatch_type_name(&self.stack[at])
         ))
     }
 

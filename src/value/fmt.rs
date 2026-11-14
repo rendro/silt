@@ -19,8 +19,8 @@ use std::fmt;
 
 use super::list::Runs;
 use super::{List, MapIter, Record, SetIter, TooLong, Value};
-use crate::builtins::data::{Date, Time};
 use crate::typeinfo::{FieldType, ty};
+use crate::value::{Date, Time};
 
 impl Value {
     /// Whether the value can be written out: `Err` if a list in it

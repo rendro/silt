@@ -106,7 +106,7 @@ impl Server {
             // (A type of the prelude named as a value the checker
             // rejects, `Option` in `(Option, 1)`, has none.)
             let prelude = crate::typechecker::names::builtin_def(ty.0)
-                .is_some_and(|def| def.module == crate::session::ModuleId::PRELUDE);
+                .is_some_and(|def| def.module == crate::defs::ModuleId::PRELUDE);
             if prelude && rejected_type_value_at(program, cursor) {
                 return None;
             }

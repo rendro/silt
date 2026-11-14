@@ -12,9 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use crate::defs::ModuleId;
 use crate::diagnostic::Diagnostic;
 use crate::manifest::Manifest;
-use crate::session::{Config, LockPolicy, ModuleId, ProjectSetup, Session};
+use crate::session::{Config, LockPolicy, ProjectSetup, Session};
 
 /// The project directory of the file at `path`: the directory of the
 /// nearest `silt.toml` above it, else the file's own directory.

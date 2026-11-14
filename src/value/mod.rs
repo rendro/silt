@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use crate::builtins::registry::BuiltinId;
 use crate::bytecode;
+use crate::defs::BuiltinId;
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{Tag, TypeInfo};
 
 mod convert;
+mod dates;
 mod deep;
 mod float;
 mod fmt;
@@ -14,8 +15,10 @@ mod key;
 mod list;
 mod map;
 mod obj;
+mod regex;
 mod thin;
 mod tuple;
+mod type_of;
 
 #[cfg(test)]
 mod map_tests;
@@ -26,6 +29,7 @@ pub use convert::{
     FromValue, HostCall, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep,
     HostTemplates, HostTypes, HostVar, IntoValue, Witness, Witnesses, given_type, witness_type,
 };
+pub(crate) use dates::{Date, Time};
 pub(crate) use deep::drop_held;
 pub use float::Float;
 pub use fmt::{Shown, Written};
@@ -37,7 +41,9 @@ pub(crate) use list::{MAX_COLLECTION_LEN, MAX_TEXT_LEN};
 pub use map::copies as map_copies;
 pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
 pub use obj::{Record, Variant};
+pub use regex::Compiled;
 pub use tuple::Tuple;
+pub use type_of::{dispatch_type_for_value, dispatch_type_name, kind_name};
 
 #[derive(Clone)]
 pub enum Value {
@@ -88,7 +94,7 @@ pub enum Value {
     TcpStream(Arc<TcpStreamHandle>),
     /// A compiled regex pattern (`regex.compile`): equal to another of
     /// the same pattern text.
-    Regex(Arc<crate::builtins::regex::Compiled>),
+    Regex(Arc<crate::value::Compiled>),
     /// A dictionary (`bytecode::dict`): no program value is one; the
     /// code passes it, hidden, to what has bounds of a program's trait.
     Dict(bytecode::dict::Dict),
@@ -230,7 +236,7 @@ impl Value {
     /// variant.
     ///
     /// Not for method dispatch: that is
-    /// `crate::types::canonical::dispatch_type_for_value`.
+    /// `crate::value::dispatch_type_for_value`.
     pub fn kind(&self) -> &'static str {
         match self {
             Value::Int(_) => "Int",

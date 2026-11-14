@@ -57,9 +57,8 @@ fn a_dropped_trait_not_yet_checked_leaves_no_row() {
 /// that is entered".)
 #[test]
 fn a_cleared_definition_is_found_as_nothing() {
-    use silt::defs::{BuiltinDefs, Def, DefKind, DefTable, Vis};
+    use silt::defs::{BuiltinDefs, Def, DefKind, DefTable, ModuleId, Vis};
     use silt::intern::intern;
-    use silt::session::ModuleId;
     use silt::source::Span;
     use std::sync::Arc;
 
