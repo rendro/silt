@@ -1325,6 +1325,11 @@ impl TypeChecker {
             if !m.is_signature_only {
                 self.refuse_past_bounds(m, m.params.len(), self.written_bounds(m));
             }
+            // (A default body's names are checked with the body; a
+            // method without one names its parameters once all the same.)
+            if m.is_signature_only {
+                self.check_fn_params_duplicate_bindings(&m.params);
+            }
             let applied = self.check_signature_kinds(m);
             let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
             let mut param_types = Vec::new();
