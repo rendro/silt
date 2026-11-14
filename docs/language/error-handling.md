@@ -350,6 +350,38 @@ fn main() {
 }
 ```
 
+A value that never is decides no type. Where a trait the program
+declares, or `Number`, is asked of its type and nothing else decides
+that type, the use is refused: which impl it means is not known. The
+help says how to give the value the type it stands for: an annotated
+`let`, `let v: Int = todo()`, or a stub of that type,
+`fn todo_int() -> Int { todo() }`. silt's own traits (`Display`,
+`Equal`, `Compare`, `Hash`) ask nothing of such a value.
+
+```silt
+trait Size {
+  fn size(self) -> Int
+}
+
+trait Size for Int {
+  fn size(self) -> Int {
+    self
+  }
+}
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn total(x: a) -> Int where a: Size {
+  Size.size(x)
+}
+
+fn main() {
+  println(total(todo())) -- error: cannot infer the type this use of 'total' needs to implement trait 'Size'
+}
+```
+
 ## Result and Option Utilities
 
 ```silt

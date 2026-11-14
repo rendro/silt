@@ -634,6 +634,12 @@ impl TypeChecker {
             (Type::Var(v), Type::Error) | (Type::Error, Type::Var(v)) => {
                 self.bind(*v, Type::Error, out);
             }
+            // A value that never is meets a type still unknown without
+            // deciding it; that it met one is kept for the help of a
+            // bound nothing decides (`met_never`).
+            (Type::Var(v), Type::Never) | (Type::Never, Type::Var(v)) => {
+                self.met_never.insert(*v);
+            }
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)

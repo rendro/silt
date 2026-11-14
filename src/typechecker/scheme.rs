@@ -787,13 +787,28 @@ impl TypeChecker {
                     Some(callee) => format!("this use of '{callee}'"),
                     None => "this".to_string(),
                 };
+                // A value that never is (`tg(todo())`) decides no type,
+                // whatever is written of it later: it is given one by an
+                // annotated `let`, or by a stub of that type.
+                let help = match self.met_never_var(subject) {
+                    true => {
+                        let ty = self.never_example(*tr);
+                        let lower = ty.to_lowercase();
+                        format!(
+                            "a value that never is decides no type: give it the type it stands \
+                             for, as in `let v: {ty} = todo()`, or use a stub of that type, as in \
+                             `fn todo_{lower}() -> {ty} {{ todo() }}`"
+                        )
+                    }
+                    false => "annotate the value it is given".to_string(),
+                };
                 self.errors.push(
                     Diagnostic::error(
                         Code::AmbiguousType,
                         wanted.origin.span,
                         format!("cannot infer the type {what} needs to implement trait '{bound}'"),
                     )
-                    .with_help("annotate the value it is given"),
+                    .with_help(help),
                 );
             }
         }
@@ -1483,4 +1498,42 @@ fn in_full_head(message: &str) -> Option<String> {
     let (_, rest) = message.split_once("needs the type `")?;
     let (head, _) = rest.split_once('(')?;
     (!head.contains('`')).then(|| head.to_string())
+}
+
+impl TypeChecker {
+    /// Whether the type variable `subject` stands for met a value that
+    /// never is (`met_never`).
+    fn met_never_var(&self, subject: &Type) -> bool {
+        let Type::Var(root) = self.apply(subject) else {
+            return false;
+        };
+        (self.met_never.iter()).any(|v| self.apply(&Type::Var(*v)) == Type::Var(root))
+    }
+
+    /// A type that implements `tr`, as a program writes it, for the help
+    /// of a value that never is given where `tr` is asked: `Int` when it
+    /// does, else a primitive type that does, else the first by name of
+    /// the declared types without parameters that do. (`Int` when none
+    /// does: any type the program then writes is refused by name.)
+    fn never_example(&self, tr: TraitKey) -> String {
+        let impls = &self.tables.trait_impl_set;
+        for ty in [Type::Int, Type::Float, Type::String, Type::Bool] {
+            let head = TypeRef::builtin(&ty.to_string());
+            if impls.contains(&(tr, head)) {
+                return ty.to_string();
+            }
+        }
+        let mut declared: Vec<String> = (impls.iter())
+            .filter(|(t, head)| {
+                *t == tr
+                    && (self.tables.records.get(head)).map_or_else(
+                        || (self.tables.enums.get(head)).is_some_and(|e| e.params.is_empty()),
+                        |r| r.params.is_empty(),
+                    )
+            })
+            .map(|(_, head)| self.show_type(&Type::Generic(*head, Vec::new())))
+            .collect();
+        declared.sort();
+        declared.into_iter().next().unwrap_or_else(|| "Int".to_string())
+    }
 }
