@@ -325,6 +325,28 @@ fn main() {
 declared with `fn` (not of a trait's method): anywhere else in an
 annotation it is an error.
 
+A value of type `Never` is accepted where a value of any type is asked,
+and a `let` with a type annotation gives its names the written type,
+whatever the value: `let port: Int = todo()` makes `port` an `Int`. So a
+stub stands for the value it will be, and the code after it is checked
+as for that value:
+
+```silt
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn port() -> Int {
+  let port: Int = todo()
+  let name: String = port -- error: type mismatch: expected String, got Int
+  port
+}
+
+fn main() {
+  println(port())
+}
+```
+
 ## Result and Option Utilities
 
 ```silt
