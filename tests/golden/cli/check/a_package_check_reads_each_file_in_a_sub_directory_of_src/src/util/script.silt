@@ -1,0 +1,5 @@
+import shapes
+
+fn main() {
+  println(shapes.area(3))
+}

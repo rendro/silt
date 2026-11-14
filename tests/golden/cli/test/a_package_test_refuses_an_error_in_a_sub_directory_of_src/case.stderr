@@ -1,0 +1,6 @@
+error[type]: type mismatch: expected Int, got String
+ --> src/util/helper.silt:2:3
+   |
+ 2 |   "no"
+   |   ^^^^ type mismatch: expected Int, got String
+error: silt test: the package has errors (see above), so no test was run

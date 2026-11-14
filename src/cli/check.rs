@@ -76,9 +76,10 @@ pub(crate) fn dispatch(args: &[String]) {
             println!();
             println!("Each file is checked as a program of its own; '-' reads the");
             println!("program from stdin. A package's directory is checked as a package:");
-            println!("every module of it and its test files. Another directory stands for");
-            println!("the .silt files under it. With no path, inside a silt package, the");
-            println!("package is checked.");
+            println!("every module of it, its test files, and each other .silt file under");
+            println!("src/ as a program of its own. Another directory stands for the .silt");
+            println!("files under it. With no path, inside a silt package, the package is");
+            println!("checked.");
             process::exit(0);
         } else if args[i] == "-" {
             files.push(args[i].clone());
@@ -179,7 +180,10 @@ pub(crate) struct PackageFiles {
     /// `src/main.silt`, or `src/lib.silt` in a library; the file named,
     /// or `-` for stdin.
     pub(crate) entry: String,
-    /// Every other `.silt` file directly in `src/`, imported or not.
+    /// Every other `.silt` file of `src/` but for the test files,
+    /// imported or not: the modules (the files directly in `src/`), then
+    /// the files in its sub-directories, which are no modules and are
+    /// each checked as a program of their own, as `silt check src` does.
     pub(crate) modules: Vec<String>,
     /// The test files of the package.
     pub(crate) tests: Vec<String>,
@@ -222,26 +226,36 @@ fn is_loaded(session: &Session, path: &Path) -> bool {
     })
 }
 
-/// The modules of the package at `root` other than its entry file
-/// `entry`: every `.silt` file directly in `src/`, sorted, but for the
-/// test files `tests` (checked as tests).
+/// The files of `src/` of the package at `root` that the package check
+/// checks besides its entry file `entry` and its test files `tests`
+/// (checked as tests): every `.silt` file directly in `src/` (a module),
+/// sorted, then every `.silt` file in a sub-directory of `src/`, sorted,
+/// as `silt check src` finds them (not those of a package kept inside).
+/// Such a file is no module, and no import reaches it: it is checked as
+/// a program of its own, its imports the package's modules.
 fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
-    let Ok(dir) = std::fs::read_dir(root.join("src")) else {
+    let src = root.join("src");
+    let Ok(dir) = std::fs::read_dir(&src) else {
         return Vec::new();
     };
     let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     };
+    let checked = |p: &Path| !same(p, entry) && !tests.iter().any(|t| same(p, Path::new(t)));
     let mut modules: Vec<String> = dir
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "silt") && p.is_file())
-        .filter(|p| !same(p, entry))
-        .filter(|p| !tests.iter().any(|t| same(p, Path::new(t))))
+        .filter(|p| checked(p))
         .map(unicode_path)
         .collect();
     modules.sort();
+    let below = find_silt_files(&src).into_iter().filter(|file| {
+        let path = Path::new(file);
+        path.parent().is_some_and(|dir| dir != src) && checked(path)
+    });
+    modules.extend(below);
     modules
 }
 

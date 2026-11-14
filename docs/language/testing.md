@@ -61,8 +61,9 @@ fn test_parse() {
 ```
 
 `silt test` in the package's directory runs both files. In a package,
-`silt check` checks every module of the package and its test files,
-without running them. `silt test` checks the package first, as
+`silt check` checks every module of the package, the other `.silt` files
+of `src/` (each in a sub-directory, as a program of its own) and its test
+files, without running them. `silt test` checks the package first, as
 `silt check` does, with no path and also when the path it is given is
 in the package: when a module has an error, it shows the
 errors and runs no test, even where no test file imports that module.

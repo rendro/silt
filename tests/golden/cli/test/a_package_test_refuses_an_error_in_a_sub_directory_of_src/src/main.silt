@@ -1,0 +1,8 @@
+-- cmd: test
+-- exit: 1
+-- The test command checks the package first as the package check does,
+-- the .silt files in sub-directories of src/ too: an error in one stops
+-- the run before a test runs, though no test imports it.
+fn main() {
+  println("hi")
+}
