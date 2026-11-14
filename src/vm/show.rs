@@ -170,11 +170,7 @@ impl Deliver {
     }
 
     /// Deliver the text `write` writes.
-    fn deliver(
-        self,
-        vm: &mut Vm,
-        write: &dyn Fn(&mut dyn std::fmt::Write) -> std::fmt::Result,
-    ) -> Result<Step, VmError> {
+    fn deliver(self, vm: &mut Vm, write: Writer) -> Result<Step, VmError> {
         match self {
             Deliver::Text(limit, then) => {
                 let text = written(limit, |out| write(out))?;
@@ -189,17 +185,33 @@ impl Deliver {
     }
 }
 
-/// Print the text `write` writes to `stream`: made whole and printed as
-/// any print is, when it is no longer than [`PRINTED_WHOLE`]; else
-/// written out in pieces as it is made, so that a text of any length
-/// takes no more memory than a piece.
+/// What writes the text of a shown value, as often as it is asked: a
+/// print in pieces writes it on a thread of its own.
+pub(crate) type Writer = Arc<dyn Fn(&mut dyn std::fmt::Write) -> std::fmt::Result + Send + Sync>;
+
+/// Print the text `write` writes to `stream`.
+///
+/// To an embedder's outputs, and in a build for WebAssembly, a print is
+/// one write: its text is made whole, as long as a string may be (a
+/// longer one is an error of the print). To the process's stdout and
+/// stderr, a text no longer than [`PRINTED_WHOLE`] is made whole and
+/// printed as any print is; a longer one goes in pieces as it is made
+/// ([`crate::builtins::prelude::print_in_pieces`]), so that a text of
+/// any length takes no more memory than a few pieces.
 fn print_shown(
     vm: &mut Vm,
     stream: super::Stream,
     call: &'static str,
     newline: bool,
-    write: &dyn Fn(&mut dyn std::fmt::Write) -> std::fmt::Result,
+    write: Writer,
 ) -> Result<Step, VmError> {
+    if !vm.runtime.io.streams() {
+        let mut text = written(Limit::Refuse(call), |out| write(out))?;
+        if newline {
+            text.push('\n');
+        }
+        return crate::builtins::prelude::print_to(vm, stream, text, call);
+    }
     let mut whole = Whole {
         text: String::new(),
         most: PRINTED_WHOLE,
@@ -214,19 +226,7 @@ fn print_shown(
         return crate::builtins::prelude::print_to(vm, stream, text, call);
     }
     drop(whole);
-    let failed = vm.runtime.io.print_streamed(stream, &|out| {
-        write(out)?;
-        match newline {
-            true => out.write_str("\n"),
-            false => Ok(()),
-        }
-    });
-    match (failed, stream) {
-        (Some(why), super::Stream::Stdout) => {
-            Err(VmError::new(format!("cannot write to stdout: {why}")))
-        }
-        _ => Ok(Step::Done(Value::Unit)),
-    }
+    crate::builtins::prelude::print_in_pieces(vm, stream, call, newline, write)
 }
 
 /// Write the text of `value` to `out` if it is a String, an Int, a
@@ -299,7 +299,6 @@ impl Native for Showing {
             let display = vm.own.value(*slot, display.clone());
             return Ok(vm.call(display, [part.clone()]));
         }
-        let next = Cell::new(0);
         let texts = std::mem::take(&mut self.texts);
         let table = self.table.clone();
         let value = self.value.clone();
@@ -307,17 +306,20 @@ impl Native for Showing {
             VmError::new("internal VM error: a shown value was finished twice".into())
         })?;
         // (Written again from the start each time: a print may write it
-        // twice.)
-        deliver.deliver(vm, &|out| {
-            next.set(0);
-            let shown = Shown(&value, &|part, f| {
-                written_slot(&table, part)?;
-                let text = texts.get(next.get())?;
-                next.set(next.get() + 1);
-                Some(f.write_str(text))
-            });
-            write!(out, "{shown}")
-        })
+        // twice, the second time on a thread of its own.)
+        deliver.deliver(
+            vm,
+            Arc::new(move |out| {
+                let next = Cell::new(0);
+                let shown = Shown(&value, &|part, f| {
+                    written_slot(&table, part)?;
+                    let text = texts.get(next.get())?;
+                    next.set(next.get() + 1);
+                    Some(f.write_str(text))
+                });
+                write!(out, "{shown}")
+            }),
+        )
     }
 }
 
@@ -490,13 +492,17 @@ impl Vm {
                 .then(|| self.wider_table(Globals::any_shown))
                 .flatten();
             if wider.is_none() {
-                return deliver.deliver(self, &|out| match value {
-                    Value::String(s, _) => out.write_str(s),
-                    Value::Int(n) => write!(out, "{n}"),
-                    Value::Float(f) => write!(out, "{f}"),
-                    Value::Bool(b) => out.write_str(if *b { "true" } else { "false" }),
-                    _ => write!(out, "{value}"),
-                });
+                let value = value.clone();
+                return deliver.deliver(
+                    self,
+                    Arc::new(move |out| match &value {
+                        Value::String(s, _) => out.write_str(s),
+                        Value::Int(n) => write!(out, "{n}"),
+                        Value::Float(f) => write!(out, "{f}"),
+                        Value::Bool(b) => out.write_str(if *b { "true" } else { "false" }),
+                        value => write!(out, "{value}"),
+                    }),
+                );
             }
         }
         // What the formatter writes, with nothing for the parts a
@@ -513,7 +519,10 @@ impl Vm {
         if parts.is_empty() {
             return match deliver {
                 Deliver::Text(_, then) => then(self, text),
-                print => print.deliver(self, &|out| write!(out, "{value}")),
+                print => {
+                    let value = value.clone();
+                    print.deliver(self, Arc::new(move |out| write!(out, "{value}")))
+                }
             };
         }
         Ok(Step::Run(Box::new(Showing {

@@ -43,6 +43,7 @@ mod numeric_defaulting_tests;
 mod port_file;
 mod postgres_hardening_tests;
 mod postgres_poisoned_mutex_tests;
+mod print_in_pieces_tests;
 mod property_tests;
 mod qualified_type_paths_tests;
 #[path = "../support/quiet.rs"]

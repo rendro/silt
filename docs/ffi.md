@@ -409,9 +409,14 @@ impl Output for Lines {
 
 `write` is called once for each `print`, `println`, `io.eprint`,
 `io.eprintln` or report, from the thread that runs the program and from
-the scheduler's threads. An error it returns for a `print` or `println`
-is a runtime error of the program (`cannot write to stdout: ...`), and so
-is a panic inside it; for a write to stderr both are dropped.
+the scheduler's threads. A print's text is at most as long as a string
+may be (10,000,000 bytes; 1,000,000 in WebAssembly): a longer one is a
+runtime error of the print (`println: result would exceed maximum string
+size ...`). (The process's stdout and stderr, which `silt run` writes,
+take a text of any length, in pieces.) An error `write` returns for a
+`print` or `println` is a runtime error of the program (`cannot write to
+stdout: ...`), and so is a panic inside it; for a write to stderr both are
+dropped.
 
 The report of tasks that failed and that nobody joined is written when
 `run_program` returns, for the tasks that have failed by then. It does
@@ -688,7 +693,9 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   a `process.exit` there (or the step budget used up) is the error
   instead; if it fails otherwise, the payload is shown by its structure.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
-  message carries the panicked string.
+  message carries the panicked string: its first 100,000 bytes, and
+  `… (N more bytes)` past them. The text of a `main` that returns `Err`
+  is cut so too where its `Display` fails and its structure is shown.
 - **An `Err` from a host function** becomes a runtime error whose message
   starts with the function's name: `mylib.parse: bad input`. So does a
   result whose checked parts (see "Functions on values") are not of the
