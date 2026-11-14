@@ -35,6 +35,10 @@ tcp-tls = ["tcp", "dep:rustls", "dep:webpki-roots"]
 # writes. Always enabled under `cfg(test)`; the tests, benches and the
 # fuzz crate turn it on.
 test-hooks = []
+# What the playground (playground/) takes of silt beyond the embedding
+# API: the colours of tokens, completions, formatting, and the names of
+# the diagnostic types (`silt::playground`). No part of the promise.
+playground = []
 
 [[bench]]
 name = "vm_bench"

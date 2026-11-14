@@ -66,6 +66,8 @@ pub mod manifest;
 pub mod module;
 pub mod package_graph;
 pub mod parser;
+#[cfg(feature = "playground")]
+pub mod playground;
 pub(crate) mod program;
 #[cfg(feature = "repl")]
 pub mod repl;
