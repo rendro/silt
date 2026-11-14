@@ -1006,12 +1006,25 @@ fn do_http_request_on(
         let own = headers
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("authorization"));
-        let basic = (!own).then(|| basic_of_url(&url)).flatten();
+        let basic = match own {
+            true => None,
+            false => match basic_of_url(&url) {
+                Ok(basic) => basic,
+                Err(()) => {
+                    let url = redact_url(&url);
+                    let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)]);
+                    return Value::variant(bv::ERR, [invalid]);
+                }
+            },
+        };
         let mut sent = headers.clone();
         if let Some(basic) = &basic {
             sent.push(("authorization", basic));
         }
-        let result = send_request(agent, method, &url, body, &sent);
+        // (Without its user and password: they are the authorization
+        // above, or none. The library would send its own of an empty
+        // one, `http://@host/`: `Basic Og==`.)
+        let result = send_request(agent, method, &without_userinfo(&url), body, &sent);
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
@@ -1055,22 +1068,51 @@ fn do_http_request_on(
 /// (`http://user:pa%20ss@host/`): `Basic` with `user:pa ss`, each
 /// percent-decoded first (RFC 3986 writes a `@`, `:`, `/` or a space in
 /// them so, RFC 7617 sends them as they are). The user ends at the first
-/// `:`, the password at the last `@`, as ureq reads them. `None` for a
-/// URL without them.
+/// `:`, the password at the last `@`, as ureq reads them. `Ok(None)` for
+/// a URL without them, and for one whose user and password are both
+/// empty (`http://@host/`). `Err(())` for a user that has a colon once
+/// decoded (`us%3Aer`): RFC 7617 has none in it, and a server would read
+/// the user up to it and the rest as the password.
 #[cfg(feature = "http")]
-fn basic_of_url(url: &str) -> Option<String> {
+fn basic_of_url(url: &str) -> Result<Option<String>, ()> {
     use base64::Engine;
-    let uri = url.parse::<ureq::http::Uri>().ok()?;
-    let authority = uri.authority()?.as_str();
-    let (userinfo, _) = authority.rsplit_once('@')?;
-    let (user, password) = userinfo.split_once(':').unwrap_or((userinfo, ""));
-    let mut pair: Vec<u8> = percent_encoding::percent_decode_str(user).collect();
+    let Some(userinfo) = url
+        .parse::<ureq::http::Uri>()
+        .ok()
+        .and_then(|uri| Some(uri.authority()?.as_str().rsplit_once('@')?.0.to_string()))
+    else {
+        return Ok(None);
+    };
+    let (user, password) = userinfo.split_once(':').unwrap_or((&userinfo, ""));
+    if user.is_empty() && password.is_empty() {
+        return Ok(None);
+    }
+    let user: Vec<u8> = percent_encoding::percent_decode_str(user).collect();
+    if user.contains(&b':') {
+        return Err(());
+    }
+    let mut pair = user;
     pair.push(b':');
     pair.extend(percent_encoding::percent_decode_str(password));
-    Some(format!(
+    Ok(Some(format!(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(pair)
-    ))
+    )))
+}
+
+/// `url` without the user and password in its authority, if it has
+/// them (`http://u:p@h/x` is `http://h/x`).
+#[cfg(feature = "http")]
+fn without_userinfo(url: &str) -> std::borrow::Cow<'_, str> {
+    let authority = url.parse::<ureq::http::Uri>().ok().and_then(|uri| {
+        let authority = uri.authority()?.as_str();
+        let (_, host) = authority.rsplit_once('@')?;
+        Some((authority.to_string(), host.to_string()))
+    });
+    match authority {
+        Some((authority, host)) => url.replacen(&authority, &host, 1).into(),
+        None => url.into(),
+    }
 }
 
 /// Send one request of `http.request`, following no redirect. Every
@@ -3059,6 +3101,24 @@ mod http_error_tests {
         let done = do_http_request("GET", &url, &[], headers);
         assert!(failure(&done).starts_with("no error"), "{}", failure(&done));
         rx.recv_timeout(Duration::from_secs(10)).expect("the head")
+    }
+
+    /// A user with a colon once decoded (`us%3Aer`) is refused before
+    /// anything is sent: it was sent as `us:er:pw`, which a server reads
+    /// as the user `us`. A URL whose user and password are both empty
+    /// (`http://@host/`) sends no `authorization` (it sent `Basic Og==`).
+    #[test]
+    fn a_colon_in_the_user_is_refused_and_no_user_sends_nothing() {
+        for url in ["http://@{}/x", "http://:@{}/x"] {
+            let head = head_sent(url, &[]);
+            assert!(!head.contains("uthorization"), "{url}: {head}");
+        }
+        // (No connection is made: nothing listens at port 9.)
+        let done = do_http_request("GET", "http://us%3Aer:pw@127.0.0.1:9/x", &[], &[]);
+        assert_eq!(failure(&done), "InvalidUrl(http://***@127.0.0.1:9/x)");
+        // A password may have one.
+        let head = head_sent("http://user:p%3Aw@{}/x", &[]);
+        assert!(head.contains("authorization: Basic "), "{head}");
     }
 
     /// The user and password of a URL are sent as `Basic`, each

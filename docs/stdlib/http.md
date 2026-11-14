@@ -216,8 +216,10 @@ A user and password in the URL (`https://user:pa%20ss@host/`) are sent
 as `authorization: Basic ...` (RFC 7617), unless `headers` has an
 `authorization` of its own, for `http.get` too. They are percent-decoded
 first: write a `@`, `:`, `/` or a space in them encoded (`pa%20ss` is the
-password `pa ss`). No error shows them: the URL of an `InvalidUrl` has
-`***` in their place.
+password `pa ss`). A user that has a colon once decoded (`us%3Aer`) is
+an `InvalidUrl`: RFC 7617 has none in it. A URL whose user and password
+are both empty (`http://@host/`) sends no `authorization`. No error
+shows them: the URL of an `InvalidUrl` has `***` in their place.
 
 A redirect is followed, up to ten of them: after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
