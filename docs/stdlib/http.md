@@ -359,8 +359,9 @@ dropped); `req.body` is the body's bytes, whichever way they came. A client that
 close` closes the connection after the response.
 
 A response is sent with `Content-Length`, `Date` and, where the
-connection ends with it, `Connection: close`. Those three are the
-server's: headers of these names in `Response.headers` are left out, and
+connection ends with it, `Connection: close`. Those three, and
+`Transfer-Encoding`, are the server's: headers of these names in
+`Response.headers` are left out (the body is sent whole, with its length), and
 so is a header whose name or value could not stand in one header line.
 The body is the bytes of `Response.body`, as they are, and what they are
 is the handler's to say: a response has the `Content-Type` that
