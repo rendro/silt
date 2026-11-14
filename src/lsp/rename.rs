@@ -72,10 +72,11 @@ impl Server {
             Response::new_err(request_id.clone(), ErrorCode::InvalidParams as i32, message)
         };
 
-        if !is_valid_silt_ident(&new_name) {
-            return Err(invalid(format!(
-                "`{new_name}` is not a valid silt identifier"
-            )));
+        // (A keyword names a field, `e.type`, but nothing else.)
+        let keyword = is_silt_keyword(&new_name);
+        let not_ident = || invalid(format!("`{new_name}` is not a valid silt identifier"));
+        if !is_valid_silt_ident(&new_name) && !keyword {
+            return Err(not_ident());
         }
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -84,6 +85,9 @@ impl Server {
         let Some((span, target)) = self.target_at(uri, cursor) else {
             return Ok(None);
         };
+        if keyword && !matches!(target, Target::Field { .. }) {
+            return Err(not_ident());
+        }
         let old_name = doc.source.text[span.start as usize..span.end as usize].to_string();
         if let Some(why) = self.not_renameable(uri, &target) {
             return Err(invalid(format!("`{old_name}` {why}")));
@@ -172,6 +176,23 @@ impl Server {
         // walk is kept until the next analysis.)
         self.field_places_unknown(record, *name)
     }
+}
+
+/// Whether `name` is one keyword to the lexer (`type`, `match`): what a
+/// rename may give a field, and nothing else.
+fn is_silt_keyword(name: &str) -> bool {
+    let Ok(lexed) = lexer::Lexer::new(crate::source::FileId::default(), name)
+        .tokenize()
+        .checked()
+    else {
+        return false;
+    };
+    let mut tokens = lexed.tokens.iter().map(|tok| &tok.kind);
+    lexed.comments.is_empty()
+        && matches!(
+            (tokens.next(), tokens.next()),
+            (Some(kw), Some(lexer::Token::Eof)) if kw.keyword() == Some(name)
+        )
 }
 
 /// Whether `name` is one identifier to the lexer: what a rename may give
