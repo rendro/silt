@@ -308,7 +308,8 @@ pub(crate) struct Checked {
     pub(crate) session: Session,
     /// The files that could not be read, each with why.
     pub(crate) unreadable: Vec<(String, std::io::Error)>,
-    /// What was found, each diagnostic once, in the order found.
+    /// What was found, each diagnostic once: the files in path order,
+    /// whichever was checked first, each file's in source order.
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
@@ -323,7 +324,9 @@ impl Checked {
 /// and the modules `modules` of its package in one session. A module
 /// that the entry or a test imports is checked there, as an import (its
 /// errors show where it is imported); only the others are opened as files
-/// of their own. `Err` when the entry file cannot be read.
+/// of their own. What is found is in path order of the files (the entry
+/// and the tests among the others), as `silt check src` reports the
+/// same files. `Err` when the entry file cannot be read.
 pub(crate) fn check_package(
     path: &str,
     modules: &[String],
@@ -367,6 +370,13 @@ pub(crate) fn check_package(
             Err(e) => unreadable.push((module.clone(), e)),
         }
     }
+    // (A stable sort: a file's diagnostics keep their source order.)
+    let sources = session.sources();
+    let path_of = |d: &Diagnostic| {
+        (sources.get(d.span.file))
+            .and_then(|file| silt::diagnostic::source_name_for_display(&file.path))
+    };
+    diagnostics.sort_by_cached_key(path_of);
     Ok(Checked {
         session,
         unreadable,
@@ -376,16 +386,20 @@ pub(crate) fn check_package(
 
 /// Check each of `programs`, as a program of its own, and report what
 /// was found: each diagnostic once, also where two programs import one
-/// module; under `--format json` all of it as one JSON array.
+/// module; under `--format json` all of it as one JSON array. The files
+/// come in path order, whichever program found what (a package's entry
+/// and test files among its other files, as `silt check src` lists
+/// them), each file's diagnostics in source order.
 fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: bool) {
     let mut failed = false;
     let mut warnings = 0;
-    let mut json: Vec<serde_json::Value> = Vec::new();
+    // Each diagnostic as it is shown, with the name of its file.
+    let mut found: Vec<(String, Shown)> = Vec::new();
+    let mut json_unreadable: Vec<serde_json::Value> = Vec::new();
     // What was shown, as rendered with each file named by its canonical
     // path: a file reached by two spellings of its path (in two
     // programs) is one file.
     let mut shown: HashSet<String> = HashSet::new();
-    let mut printed = false;
     for program in programs {
         let path = match program.entry.as_str() {
             "-" => STDIN_NAME,
@@ -398,7 +412,7 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
                 failed = true;
                 let unreadable = [(path.to_string(), e)];
                 match format {
-                    OutputFormat::Json => json.extend(json_errors(
+                    OutputFormat::Json => json_unreadable.extend(json_errors(
                         &silt::source::SourceMap::new(),
                         &unreadable,
                         &[],
@@ -422,19 +436,37 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
             .cloned()
             .collect();
         warnings += diagnostics.iter().filter(|d| d.is_warning()).count();
+        let file_of =
+            |d: &Diagnostic| (files.locate(d.span)).map_or(String::new(), |located| located.file);
         match format {
             OutputFormat::Json => {
-                json.extend(json_errors(&files, &checked.unreadable, &diagnostics))
+                json_unreadable.extend(json_errors(&files, &checked.unreadable, &[]));
+                found.extend(diagnostics.iter().map(|d| {
+                    let entry = silt::diagnostic::render_json(&files, d);
+                    (file_of(d), Shown::Json(entry))
+                }));
             }
             OutputFormat::Human => {
                 report_unreadable(&checked.unreadable);
-                // F14: separate diagnostics with blank lines, also those
-                // of two programs.
-                if printed && !diagnostics.is_empty() {
+                found.extend(diagnostics.iter().map(|d| {
+                    let text = render_human(&files, d);
+                    (file_of(d), Shown::Human(text))
+                }));
+            }
+        }
+    }
+    // (A stable sort: a file's diagnostics keep their source order.)
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut json = json_unreadable;
+    for (i, (_, shown)) in found.into_iter().enumerate() {
+        match shown {
+            Shown::Json(entry) => json.push(entry),
+            // F14: diagnostics are separated by blank lines.
+            Shown::Human(text) => {
+                if i > 0 {
                     eprintln!();
                 }
-                printed |= !diagnostics.is_empty();
-                silt::diagnostic::eprint_all(&files, &diagnostics);
+                eprintln!("{text}");
             }
         }
     }
@@ -456,6 +488,12 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         eprintln!("error: silt check: {warnings} {noun}, denied by --deny-warnings");
         process::exit(1);
     }
+}
+
+/// A diagnostic of `check_files` as it is shown.
+enum Shown {
+    Human(String),
+    Json(serde_json::Value),
 }
 
 /// The files that could not be read, each with why: "error reading
