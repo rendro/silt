@@ -25,13 +25,18 @@
 //! `silt::session::LockPolicy`, `silt::session::Program`,
 //! `silt::session::ProjectSetup` and `silt::session::Session`, with
 //! what they hand out (a `Value`'s variants, an analysis, a
-//! diagnostic). Every other `pub` item is the crate's own: the
-//! `silt` command, the language server, the playground and the tests
-//! use it, and it changes without notice. The test API
-//! (`silt::session::testing`, `silt::fuzz_invariants`,
-//! `silt::scheduler::test_support`) is built with the `test-hooks`
-//! feature only. (tests/meta/public_api_tests.rs keeps this list and
-//! the guide one.)
+//! diagnostic). (tests/meta/public_api_tests.rs keeps this list and the
+//! guide one.)
+//!
+//! Every module but `session` is the crate's own. Three more roots are
+//! public, and none of them is promised: `silt::cli::main`, what the
+//! `silt` binary runs; `silt::playground`, what the playground
+//! (playground/) takes beyond the embedding API, with the `playground`
+//! feature; and `silt::testing`, the one door of the tests, benches and
+//! fuzz targets to the inside, with the `test-hooks` feature. A `pub`
+//! item of the crate is one that outside code reaches by one of these:
+//! a build with the test API reports any other (`unreachable_pub`), and
+//! tests/meta/public_items.txt lists them all.
 
 #![allow(clippy::mutable_key_type)]
 #![cfg_attr(any(test, feature = "test-hooks"), warn(unreachable_pub))]
