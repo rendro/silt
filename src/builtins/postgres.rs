@@ -2471,12 +2471,12 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>, wanted: 
         target,
         wanted,
         |conn| conn.wait(conn.client().prepare(&sql)),
-        |conn, statement, last| match {
+        |conn, statement, last| {
             conn.closes_after(&sql);
-            finish(conn, last, conn.client().execute(&statement, &bind))
-        } {
-            Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
-            Err(e) => Err(pg_error_to_variant(&e)),
+            match finish(conn, last, conn.client().execute(&statement, &bind)) {
+                Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+                Err(e) => Err(pg_error_to_variant(&e)),
+            }
         },
     )
 }
