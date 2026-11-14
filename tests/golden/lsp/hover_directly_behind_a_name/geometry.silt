@@ -1,0 +1,1 @@
+pub fn area(n: Int) -> Int { n * n }

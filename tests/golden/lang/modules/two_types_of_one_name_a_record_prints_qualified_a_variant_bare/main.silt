@@ -1,0 +1,11 @@
+-- A record of one of two types of one name prints with its module; a
+-- variant prints by its own name (docs/language/modules.md says both).
+import a
+import b
+fn main() {
+  println(a.Pt { x: 1 })
+  println(b.Pt { x: 2 })
+  println(a.V("s"))
+  println(b.W)
+  println([a.W])
+}

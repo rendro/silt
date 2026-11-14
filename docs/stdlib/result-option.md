@@ -230,6 +230,20 @@ fn main() {
 Functions for transforming and querying `Option(a)` values without pattern
 matching.
 
+Options are ordered as any enum is, by their variants in the order they
+are declared and then by their payloads: every `Some(x)` comes before
+`None`, so a sort puts the `None`s last. (So do results: `Ok(x)` before
+`Err(e)`.)
+
+```silt
+import list
+
+fn main() {
+  println(list.sort([None, Some(2), Some(1)])) -- [Some(1), Some(2), None]
+  println(Some(1) < None) -- true
+}
+```
+
 ## Summary
 
 | Function | Signature | Description |

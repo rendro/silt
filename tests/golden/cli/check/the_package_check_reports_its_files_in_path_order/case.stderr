@@ -1,0 +1,17 @@
+error[type]: type mismatch: expected Int, got String
+ --> src/alpha.silt:2:3
+   |
+ 2 |   "b"
+   |   ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> src/util/aaa.silt:2:3
+   |
+ 2 |   "a"
+   |   ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> src/zeta.silt:2:3
+   |
+ 2 |   "z"
+   |   ^^^ type mismatch: expected Int, got String

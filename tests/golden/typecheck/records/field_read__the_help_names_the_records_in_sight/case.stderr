@@ -1,3 +1,17 @@
+warning[type]: unused import 'shapes'
+ --> main.silt:7:1
+   |
+ 7 | import shapes
+   | ^^^^^^^^^^^^^ unused import 'shapes'
+  = help: remove the line `import shapes`
+
+warning[type]: unused import 'time'
+ --> main.silt:8:1
+   |
+ 8 | import time
+   | ^^^^^^^^^^^ unused import 'time'
+  = help: remove the line `import time`
+
 error[type]: cannot infer the record type whose field 'radius' this reads
  --> main.silt:14:3
     |
@@ -25,17 +39,3 @@ error[type]: cannot infer the record type whose field 'y' this reads
  27 |     Some(a) -> a.y
     |                ^^^ cannot infer the record type whose field 'y' this reads
   = help: annotate the value `a` comes from with its record type, `B`
-
-warning[type]: unused import 'shapes'
- --> main.silt:7:1
-   |
- 7 | import shapes
-   | ^^^^^^^^^^^^^ unused import 'shapes'
-  = help: remove the line `import shapes`
-
-warning[type]: unused import 'time'
- --> main.silt:8:1
-   |
- 8 | import time
-   | ^^^^^^^^^^^ unused import 'time'
-  = help: remove the line `import time`

@@ -1,0 +1,14 @@
+> hover 13:3
+(nothing)
+> hover 13:6
+(nothing)
+> hover 14:3
+(nothing)
+> hover 10:1
+(nothing)
+> hover 12:1
+(nothing)
+> hover 14:11
+```silt
+type: String
+```

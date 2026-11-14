@@ -389,6 +389,11 @@ string.join(xs: List(String), sep: String) -> String
 
 Joins a list of strings with a separator between each pair.
 
+To build a long string from many parts, collect the parts in a list and
+join them once. Adding a part to a string at each step of a loop or a
+fold (`"{acc}{part}"`) copies the text built so far each time, so the
+work grows with the square of the length.
+
 ```silt
 import string
 

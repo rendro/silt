@@ -1,0 +1,20 @@
+-- cmd: lsp
+-- lsp: rename 10:26 type
+-- lsp: rename 13:7 match
+-- lsp: rename 8:6 fn
+-- A field may be renamed to a keyword, as a field may be named by one
+-- (`p.type`); a field written alone becomes `type: x`. Any other name may
+-- not.
+type Pt { x: Int, y: Int }
+
+fn get(p: Pt) -> Int { p.x }
+
+fn main() {
+  let y = 2
+  let x = 1
+  let p = Pt { x, y }
+  let q = p.{ x: 3 }
+  match q {
+    Pt { x, .. } -> println("{get(p)} {x}")
+  }
+}

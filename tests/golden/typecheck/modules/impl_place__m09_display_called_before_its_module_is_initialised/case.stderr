@@ -2,4 +2,4 @@ error[type]: the impl of trait 'Display' for type 'types.Tag' is written in modu
  --> main.silt:11:1
     |
  11 | trait Display for Tag {
-    | ^^^^^^^^^^^^^^^^^^^^^^^ the impl of trait 'Display' for type 'types.Tag' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'types', which declares the type
+    | ^^^^^^^^^^^^^^^^^^^^^^^ here

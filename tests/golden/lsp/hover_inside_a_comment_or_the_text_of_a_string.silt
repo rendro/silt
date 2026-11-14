@@ -1,0 +1,19 @@
+-- cmd: lsp
+-- lsp: hover 15:23
+-- lsp: hover 15:28
+-- lsp: hover 15:13
+-- lsp: hover 15:16
+-- lsp: hover 17:12
+-- lsp: hover 17:16
+-- lsp: hover 17:26
+-- lsp: hover 16:11
+-- Hover in a comment, in the space between tokens and in the text of a
+-- string has nothing to describe; the code of an interpolation in a string
+-- is code (`name`), and so is a name outside a string (`json`).
+import json
+fn main() {
+  let name = "Ada" -- json.Value
+  let v = json.Null
+  println("hi {name} and json.Value")
+  println(v)
+}
