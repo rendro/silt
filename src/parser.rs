@@ -276,6 +276,11 @@ enum Foreign<'a> {
 /// shape.
 pub(crate) const NO_IF: &str =
     "silt has no `if`; a `match` without a scrutinee branches on conditions";
+/// The help of a line that starts with `+` behind a line that ends a
+/// value.
+const LINE_START_PLUS: &str =
+    "a line cannot start with `+`; to add to the line above, end that line with the `+`";
+
 /// The hint for `while` or `for`, a loop of another language.
 pub(crate) const NO_WHILE_FOR: &str =
     "silt has no `while` or `for`: a loop is a `loop`, or `list.each` / `list.map` over a list";
@@ -4392,10 +4397,7 @@ impl<'src> Parser<'src> {
                 // A `+` that starts a statement: it was meant to go on
                 // with the line above, outside any bracket.
                 if self.at(&Token::Plus) && self.nl_before() && self.prev_ends_value() {
-                    return Err(d.with_help(
-                        "a line cannot start with `+`; to add to the line above, end that \
-                         line with the `+`",
-                    ));
+                    return Err(d.with_help(LINE_START_PLUS));
                 }
                 Err(self.with_line_start_help(d))
             }
@@ -4513,11 +4515,20 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 _ => {
-                    return Err(Diagnostic::error(
+                    // (`"{x⏎+ 1}"`: as outside a string, a line that
+                    // starts with an operator is no going on of the line
+                    // above.)
+                    let d = Diagnostic::error(
                         Code::ExpectedExpression,
                         self.span(),
                         "invalid expression in string interpolation; use \\{ for a literal brace",
-                    ));
+                    );
+                    return Err(
+                        match self.at(&Token::Plus) && self.nl_before() && self.prev_ends_value() {
+                            true => d.with_help(LINE_START_PLUS),
+                            false => self.with_line_start_help(d),
+                        },
+                    );
                 }
             }
         }
