@@ -938,10 +938,11 @@ impl<'src> Parser<'src> {
             None => "P".to_string(),
         };
         let field = self.source.get(span.start as usize..span.end as usize);
+        // (`{ name = "a" }`: a field is given with `:`.)
+        let after = self.tokens.get(self.pos + 2).map(|t| &t.kind);
+        let given_with_eq = after == Some(&Token::Eq);
         let example = match field {
-            Some(field)
-                if self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Colon) =>
-            {
+            Some(field) if after == Some(&Token::Colon) || given_with_eq => {
                 format!("{ty} {{ {field}: ... }}")
             }
             Some(field) => format!("{ty} {{ {field}, ... }}"),
@@ -951,6 +952,10 @@ impl<'src> Parser<'src> {
             Some(name) => format!(
                 "'{name}' is no type name: a record literal starts with the name of its type, \
                  which starts with an uppercase letter, `{example}`"
+            ),
+            None if given_with_eq => format!(
+                "a record literal starts with the name of its type and gives each field with \
+                 `:`, `{example}`; braces alone hold a block"
             ),
             None => format!(
                 "a record literal starts with the name of its type, `{example}`; braces alone \
@@ -4318,6 +4323,22 @@ impl<'src> Parser<'src> {
                 {
                     // `{ x: ...` or `{ x, ...` starts no block and no
                     // closure: the fields of a record, without its type.
+                    Err(self.record_without_a_name(first.span))
+                } else if let Some(first) = self.tokens.get(self.pos + 1)
+                    && matches!(first.kind, Token::Ident(_))
+                    && self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Eq)
+                    // (`{ x => x + 1 }`: an arrow of another language.)
+                    && self.fat_arrow_at(self.pos + 2).is_none()
+                    && (self.pos.checked_sub(1)).is_some_and(|at| {
+                        matches!(
+                            self.tokens[at].kind,
+                            Token::Eq | Token::LParen | Token::Comma | Token::LBracket
+                        )
+                    })
+                {
+                    // `let u = { name = "a" }`: braces given as a value,
+                    // whose first statement would assign a name, hold the
+                    // fields of a record as other languages write them.
                     Err(self.record_without_a_name(first.span))
                 } else if let Some(dots) = self.tokens.get(self.pos + 1)
                     && dots.kind == Token::DotDot

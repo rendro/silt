@@ -1,0 +1,5 @@
+error[parse]: a record literal starts with the name of its type and gives each field with `:`, `P { name: ... }`; braces alone hold a block
+ --> record_without_a_name__fields_given_with_eq_are_refused.silt:7:13
+   |
+ 7 |   let u = { name = "a", age = 3 }
+   |             ^^^^ a record literal starts with the name of its type and gives each field with `:`, `P { name: ... }`; braces alone hold a block
