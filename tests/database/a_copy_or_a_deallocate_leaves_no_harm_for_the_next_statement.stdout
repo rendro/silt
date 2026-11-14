@@ -1,0 +1,13 @@
+COPY silt_database_copy FROM STDIN: postgres: COPY ... FROM STDIN cannot run: the module sends and reads no COPY data; insert the rows with INSERT, or have the server read a file it can reach with COPY ... FROM 'path'
+copy silt_database_copy (n) from stdin with (format csv): postgres: COPY ... FROM STDIN cannot run: the module sends and reads no COPY data; insert the rows with INSERT, or have the server read a file it can reach with COPY ... FROM 'path'
+COPY (SELECT ')' AS n) TO STDOUT: postgres: COPY ... TO STDOUT cannot run: the module sends and reads no COPY data; read the rows with postgres.query or postgres.stream, or have the server write a file with COPY ... TO 'path'
+query: postgres: COPY ... TO STDOUT cannot run: the module sends and reads no COPY data; read the rows with postgres.query or postgres.stream, or have the server write a file with COPY ... TO 'path'
+the same connection after them: true
+inside: postgres: COPY ... FROM STDIN cannot run: the module sends and reads no COPY data; insert the rows with INSERT, or have the server read a file it can reach with COPY ... FROM 'path'
+the transaction goes on and commits: Ok
+a type looked up: Ok
+its look-up dropped: Ok
+another type looked up: Ok
+its look-up dropped in a DO block: Ok
+the statement that finds it gone: Err [26000]
+the statement after it: Ok

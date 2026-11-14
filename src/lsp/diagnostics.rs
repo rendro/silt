@@ -92,15 +92,71 @@ fn dependency_manifest_with_errors(
     if manifests.clone().any(|path| in_own(&path)) {
         return None;
     }
-    let path = manifests.next()?;
-    let shown = match path_key(&path).strip_prefix(path_key(dir)) {
+    Some(shown_manifest(dir, &manifests.next()?))
+}
+
+/// The manifest at `path` as a note names it: inside the project in
+/// `dir` as a path relative to it, written with `/`.
+fn shown_manifest(dir: &std::path::Path, path: &std::path::Path) -> String {
+    match path_key(path).strip_prefix(path_key(dir)) {
         Ok(inside) => (inside.components())
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("/"),
         Err(_) => path.display().to_string(),
+    }
+}
+
+/// The places in the project's own `silt.toml` (in `dir`) of the
+/// dependency lines that lead to the package errors `found`, which are
+/// in the manifests of dependencies: the labels the resolver put there
+/// (`` `app` depends on `geom` here ``), each with the manifest of the
+/// error it leads to, as a note names it.
+fn own_lines_leading_there(
+    dir: &std::path::Path,
+    sources: &SourceMap,
+    found: &[crate::diagnostic::Diagnostic],
+) -> Vec<(crate::source::Span, String, String)> {
+    let own = path_key(&dir.join("silt.toml"));
+    let is_own = |file: FileId| match sources.get(file).map(|f| &f.path) {
+        Some(SourceName::Manifest(path) | SourceName::Path(path)) => path_key(path) == own,
+        _ => false,
     };
-    Some(shown)
+    let mut lines = Vec::new();
+    for d in found.iter().filter(|d| !is_own(d.span.file)) {
+        let manifest = match sources.get(d.span.file).map(|f| &f.path) {
+            Some(SourceName::Manifest(path) | SourceName::Path(path)) => shown_manifest(dir, path),
+            _ => continue,
+        };
+        for (span, label) in d.labels.iter().filter(|(span, _)| is_own(span.file)) {
+            if !lines.iter().any(|(s, ..): &(_, _, _)| s == span) {
+                lines.push((*span, label.clone(), manifest.clone()));
+            }
+        }
+    }
+    lines
+}
+
+/// The note published on the project's own dependency line at `span`,
+/// labelled `label` by the resolver, that leads to the errors in the
+/// dependency's manifest `manifest`.
+fn leading_line_note(
+    sources: &SourceMap,
+    span: crate::source::Span,
+    label: &str,
+    manifest: &str,
+) -> Diagnostic {
+    let range = match sources.get(span.file) {
+        Some(file) => Range::new(file.lsp_position(span.start), file.lsp_position(span.end)),
+        None => Range::default(),
+    };
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        source: Some("silt".to_string()),
+        message: format!("{label}, and the silt.toml of a dependency has errors (see {manifest})"),
+        ..Diagnostic::default()
+    }
 }
 
 /// The text of the file at `path` and the document made of it, indexed
@@ -362,8 +418,31 @@ impl Server {
                     // The cascade an unresolved project causes is not
                     // shown; its errors are in the manifest.
                     found.retain(|d| d.phase() == Phase::Package);
-                    let elsewhere =
-                        dependency_manifest_with_errors(dir, project.session.sources(), &found);
+                    let sources = project.session.sources();
+                    let elsewhere = dependency_manifest_with_errors(dir, sources, &found);
+                    // The project's own lines that lead to that manifest.
+                    if elsewhere.is_some() {
+                        let own = dir.join("silt.toml");
+                        let own_uri = (uris_by_key.get(&path_key(&own)).cloned())
+                            .or_else(|| super::path_to_file_uri(&own));
+                        for (span, label, manifest) in own_lines_leading_there(dir, sources, &found)
+                        {
+                            let Some(own_uri) = own_uri.clone() else {
+                                break;
+                            };
+                            let note = leading_line_note(sources, span, &label, &manifest);
+                            let r = note.range;
+                            let key = (
+                                own_uri.as_str().to_string(),
+                                (r.start.line, r.start.character, r.end.line, r.end.character),
+                                note.message.clone(),
+                                format!("{:?}{:?}", note.severity, note.code),
+                            );
+                            if seen.insert(key) {
+                                diagnostics.entry(own_uri).or_default().push(note);
+                            }
+                        }
+                    }
                     diagnostics
                         .entry(uri.clone())
                         .or_default()

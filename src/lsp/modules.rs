@@ -291,11 +291,13 @@ fn import_module_at(doc: &Document, cursor: usize, alias: bool) -> Option<Symbol
             .strip_prefix("import")?;
         let start = span.start as usize + "import".len() + rest.len() - rest.trim_start().len();
         let end = start + crate::intern::resolve(module).len();
+        // (Directly behind a name is on it, as for every other name.)
         let written_alias = match target {
-            ImportTarget::Alias(_, _, at) if alias => at.start as usize..at.end as usize,
-            _ => 0..0,
+            ImportTarget::Alias(_, _, at) if alias => Some(at.start as usize..=at.end as usize),
+            _ => None,
         };
-        ((start..end).contains(&cursor) || written_alias.contains(&cursor)).then_some(module)
+        ((start..=end).contains(&cursor) || written_alias.is_some_and(|at| at.contains(&cursor)))
+            .then_some(module)
     })
 }
 

@@ -777,7 +777,7 @@ impl Vm {
     /// restored to the depths recorded at entry so subsequent calls
     /// (e.g. successive REPL evaluations sharing the same persistent VM)
     /// don't render phantom call-stack frames from prior entries. See
-    /// `tests/cli/repl_frame_leak_tests.rs` for the regression lock.
+    /// the goldens `tests/golden/cli/repl/repl_frame_leak_tests__*`.
     ///
     /// Once the program has called `process.exit` and that ended the
     /// run ([`Exit::EndsRun`]), the run's result is the exit's, whatever
@@ -986,7 +986,6 @@ impl Vm {
                 | Value::Handle(_)
                 | Value::TcpListener(_)
                 | Value::TcpStream(_)
-                | Value::Regex(_)
                 | Value::TypeDescriptor(_)
                 | Value::PrimitiveDescriptor(_)
         )

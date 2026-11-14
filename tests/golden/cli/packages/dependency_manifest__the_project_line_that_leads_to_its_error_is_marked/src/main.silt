@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: error[package]: dependency `nope`: path `../does-not-exist` does not exist
+-- stderr-contains: --> geom/silt.toml:6:8
+-- stderr-contains: `app` depends on `geom` here
+-- An error in the silt.toml of a dependency is shown there, with the line
+-- of the project's own silt.toml that leads to it.
+import geom
+
+fn main() { println(geom.two()) }

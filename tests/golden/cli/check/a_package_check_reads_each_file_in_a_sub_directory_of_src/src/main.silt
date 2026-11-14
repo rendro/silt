@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- The package check also checks each .silt file in a sub-directory of
+-- src/ that is no test, as a program of its own whose imports are the
+-- package's modules, as `silt check src` does: such a file is no module
+-- (no import reaches it), and its error is not passed over. A script
+-- there that imports a module checks clean.
+import shapes
+
+fn main() {
+  println(shapes.area(2))
+}

@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: expected declaration, found struct
+-- stderr-contains: error[type]: undefined variable 'nothere'
+-- stderr-not-contains: undefined variable 'f'
+-- stderr-not-contains: did you mean
+-- Several declarations of another language in a row fail as one item:
+-- the names each would have bound (`P`, `C` and its variants, `f`) are
+-- unknown, so a use of one is no error, and no "did you mean" offers one
+-- for a name that is really undefined (`fo` is close to `f`).
+struct P { x: Int }
+enum C { A, B }
+def f(x) { x }
+fn main() {
+  println(A)
+  println(f(1))
+  println(nothere)
+  println(fo)
+}

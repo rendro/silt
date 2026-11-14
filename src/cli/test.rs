@@ -136,8 +136,8 @@ fn report_diagnostics(
 }
 
 /// A `silt test` in a package checks the package first as `silt check`
-/// does (its manifest, its lock and every module of `src/`; the test
-/// files are checked as they are run): a package that does not check
+/// does (its manifest, its lock, every module of `src/` and each other
+/// `.silt` file under `src/`; the test files are checked as they are run): a package that does not check
 /// fails the run before a test runs, also where no test file imports
 /// what is broken. The package is the one the directory `dir` is in:
 /// the working directory's, or that of the path given. Its errors are

@@ -158,43 +158,71 @@ const CONSTANT_OPERANDS: &[(&str, usize)] = &[
 /// use, or away from one another field keeps, numbers the pool anew and
 /// is the same program. So a string constant's number is left out (its
 /// text is behind the `;`), and every other constant is written as its
-/// rank among the other constants of its function, in the order they
-/// first appear (`k0`, `k1`): adding or dropping a string does not move
-/// those, and two that print alike (two closures of one function, two
-/// types `Pt` of two modules) keep two ranks. Every other operand (a
-/// global's slot, a count, a jump) is compared as it is.
+/// rank among the other constants its function names, by number (`k0`
+/// for the lowest): adding or dropping a string shifts the numbers but
+/// not their order, and two that print alike (two closures of one
+/// function, two types `Pt` of two modules) keep two ranks, which a swap
+/// of the two changes. Every other operand (a global's slot, a count, a
+/// jump) is compared as it is.
 fn without_constant_numbers(disasm: &str) -> String {
     let mut out = String::with_capacity(disasm.len());
-    let mut ranks: BTreeMap<String, usize> = BTreeMap::new();
+    // The pool is the function's: each function is ranked on its own.
+    let mut block: Vec<&str> = Vec::new();
     for line in disasm.lines() {
-        // The pool is the function's: ranks start again at each one.
         if line.starts_with("== ") {
-            ranks.clear();
+            rank_constants(&block, &mut out);
+            block.clear();
         }
-        let Some((code, comment)) = line.split_once(" ; ") else {
+        block.push(line);
+    }
+    rank_constants(&block, &mut out);
+    out
+}
+
+/// The words of `line` and how many operands after its instruction's
+/// name are constants, with whether the one constant is a string, if it
+/// names any.
+fn constant_operands(line: &str) -> Option<(Vec<String>, usize, bool, &str)> {
+    let (code, comment) = line.split_once(" ; ")?;
+    let words: Vec<String> = code.split_whitespace().map(str::to_string).collect();
+    let operands = match words.get(..2) {
+        Some([bar, label]) if bar == "|" && ["field", "exclude", "literal"].contains(&&**label) => {
+            1
+        }
+        Some([_, name]) => (CONSTANT_OPERANDS.iter())
+            .find(|(op, _)| op == name)
+            .map_or(0, |(_, n)| *n),
+        _ => 0,
+    };
+    let string = operands == 1 && comment.starts_with('"');
+    Some((words, operands, string, comment))
+}
+
+/// The lines of one function's disassembly into `out`, with the
+/// constants rewritten as [`without_constant_numbers`] says.
+fn rank_constants(lines: &[&str], out: &mut String) {
+    // The numbers of the constants that are no string, lowest first.
+    let mut numbers: BTreeSet<u64> = BTreeSet::new();
+    for line in lines {
+        if let Some((words, operands, false, _)) = constant_operands(line) {
+            for word in words.iter().skip(2).take(operands) {
+                if let Ok(number) = word.parse() {
+                    numbers.insert(number);
+                }
+            }
+        }
+    }
+    for line in lines {
+        let Some((mut words, operands, string, comment)) = constant_operands(line) else {
             out.push_str(line);
             out.push('\n');
             continue;
         };
-        let mut words: Vec<String> = code.split_whitespace().map(str::to_string).collect();
-        let operands = match words.get(..2) {
-            Some([bar, label])
-                if bar == "|" && ["field", "exclude", "literal"].contains(&&**label) =>
-            {
-                1
-            }
-            Some([_, name]) => (CONSTANT_OPERANDS.iter())
-                .find(|(op, _)| op == name)
-                .map_or(0, |(_, n)| *n),
-            _ => 0,
-        };
-        let string = operands == 1 && comment.starts_with('"');
         for at in 2..(2 + operands).min(words.len()) {
-            words[at] = if string {
-                "#".to_string()
-            } else {
-                let next = ranks.len();
-                format!("k{}", ranks.entry(words[at].clone()).or_insert(next))
+            words[at] = match words[at].parse::<u64>() {
+                _ if string => "#".to_string(),
+                Ok(number) => format!("k{}", numbers.range(..number).count()),
+                Err(_) => continue,
             };
         }
         out.push_str(&words.join(" "));
@@ -202,7 +230,38 @@ fn without_constant_numbers(disasm: &str) -> String {
         out.push_str(comment);
         out.push('\n');
     }
-    out
+}
+
+/// Two constants that print alike and are named once each, swapped:
+/// the comparison sees the swap, and a string added to the pool before
+/// them is no difference.
+#[test]
+fn a_swap_of_two_constants_that_print_alike_is_a_difference() {
+    let before = "== main (arity 0) ==\n\
+                  0000 MakeClosure 3 0 ; <fn:closure in main>\n\
+                  0003 MakeClosure 4 0 ; <fn:closure in main>\n\
+                  0006 Constant 2 ; \"x\"\n";
+    let swapped = "== main (arity 0) ==\n\
+                   0000 MakeClosure 4 0 ; <fn:closure in main>\n\
+                   0003 MakeClosure 3 0 ; <fn:closure in main>\n\
+                   0006 Constant 2 ; \"x\"\n";
+    let shifted = "== main (arity 0) ==\n\
+                   0000 MakeClosure 4 0 ; <fn:closure in main>\n\
+                   0003 MakeClosure 5 0 ; <fn:closure in main>\n\
+                   0006 Constant 1 ; \"x\"\n";
+    let (before, swapped, shifted) = (
+        without_constant_numbers(before),
+        without_constant_numbers(swapped),
+        without_constant_numbers(shifted),
+    );
+    assert_ne!(
+        before, swapped,
+        "a swap of two closures is not seen:\n{before}"
+    );
+    assert_eq!(
+        before, shifted,
+        "a string added before them is seen as a change"
+    );
 }
 
 /// What is compared: the check of every file, the disasm of the entry,

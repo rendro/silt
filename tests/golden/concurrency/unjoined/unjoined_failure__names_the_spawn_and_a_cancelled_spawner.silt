@@ -5,7 +5,9 @@
 -- task that spawned it was cancelled: here the worker, cancelled after
 -- its children had failed. (A cancel of the worker cancels the children
 -- that still run; one that has failed keeps its failure, which is
--- reported.)
+-- reported.) Each child says when it is at the send that fails, which
+-- is its next step: main waits for both, not for a guessed time, and
+-- then gives that one step time.
 import channel
 import list
 import task
@@ -16,10 +18,12 @@ fn main() {
   let gate = channel.new(0)
   let ready = channel.new(1)
   let never = channel.new(0)
+  let failing = channel.new(2)
   let worker = task.spawn { ->
     let kids = list.map(1..2) { i ->
       task.spawn { ->
         let _ = channel.receive(gate)
+        channel.send(failing, i)
         channel.send(cmds, i)
       }
     }
@@ -31,6 +35,8 @@ fn main() {
   channel.close(cmds)
   channel.close(gate)
   -- The children fail at once on the closed channel.
+  let _ = channel.receive(failing)
+  let _ = channel.receive(failing)
   time.sleep(time.ms(50))
   task.cancel(worker)
   println("stopped")

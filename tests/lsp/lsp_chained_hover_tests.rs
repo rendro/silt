@@ -5,15 +5,15 @@
 //! The typechecker annotates intermediate field-access nodes with
 //! `Type::Generic(<record_name>, [])` (see
 //! `typechecker::inference::type_from_name`) rather than the fully
-//! expanded `Type::Record(...)`. Prior to the fix, `get_field_type` in
-//! `src/lsp.rs` only handled `Type::Record` / `Type::Tuple`, so hovering
+//! expanded `Type::Record(...)`. Prior to the fix, `get_field_type` (now in
+//! `src/lsp/fields.rs`) only handled `Type::Record` / `Type::Tuple`, so hovering
 //! any field past the leftmost dot (e.g. `o.inner.val`) silently fell
 //! back to the receiver's own type.
 //!
 //! This test drives the real parse + typecheck + LSP hover pipeline via
 //! the stdio transport, exactly as a client (VS Code etc.) would, so it
 //! locks the behaviour end-to-end — the synthetic-Type::Record unit
-//! tests in src/lsp.rs cannot catch this regression because they never
+//! tests in src/lsp/ cannot catch this regression because they never
 //! run the typechecker.
 
 use std::sync::atomic::{AtomicU64, Ordering};

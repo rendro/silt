@@ -1,0 +1,5 @@
+error[runtime]: assertion failed: <regex:a+> != <regex:b+>
+ --> a_failed_assert_eq_of_two_regexes_writes_both.silt:10:3
+    |
+ 10 |   test.assert_eq(a, b)
+    |   ^^^^^^^^^^^^^^^^^^^^ assertion failed: <regex:a+> != <regex:b+>

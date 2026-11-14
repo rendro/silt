@@ -42,7 +42,7 @@ fn test_initialize_returns_capabilities() {
         .expect("result.capabilities must be present");
 
     // The Silt LSP advertises hover, definition, completion, and document
-    // formatting per src/lsp.rs::run(). Assert each one is present and
+    // formatting (src/lsp/mod.rs). Assert each one is present and
     // truthy (lsp-types may serialize `true` or `{"workDoneProgress":...}`).
     assert!(
         caps.get("hoverProvider").is_some(),
@@ -337,7 +337,7 @@ fn test_completion_returns_keywords() {
     );
 
     // The server always emits keyword completions from the KEYWORDS table
-    // (see src/lsp.rs completion handler). `fn` and `let` are core keywords
+    // (see src/lsp/completion.rs). `fn` and `let` are core keywords
     // that should always be offered.
     let labels: Vec<&str> = items
         .iter()
@@ -631,7 +631,7 @@ fn test_goto_definition_on_local_variable() {
 
 // ── 11. textDocument/formatting returns edits for unformatted source ─
 //
-// Regression: guards `fn format()` in src/lsp.rs (the `Formatting::METHOD`
+// Regression: guards src/lsp/formatting.rs (the `Formatting::METHOD`
 // dispatch). If the formatting handler ever stopped running the formatter,
 // stopped computing the full-document replacement edit, or started
 // returning `None`/`[]` for clearly-unformatted input, this test would
@@ -718,7 +718,7 @@ fn test_formatting_returns_edits() {
 
 // ── 12. textDocument/signatureHelp returns a signature with parameters ─
 //
-// Regression: guards `fn signature_help()` in src/lsp.rs (the
+// Regression: guards `fn signature_help()` in src/lsp/signature_help.rs (the
 // `SignatureHelpRequest::METHOD` dispatch). If the handler ever stopped
 // locating the enclosing call, stopped looking up the definition, or
 // stopped building a SignatureInformation label from `DefInfo`, this test
@@ -827,7 +827,7 @@ fn test_signature_help_returns_arity() {
 
 // ── 13. textDocument/documentSymbol lists top-level declarations ───
 //
-// Regression: guards `fn document_symbols()` in src/lsp.rs (the
+// Regression: guards `fn document_symbols()` in src/lsp/document_symbols.rs (the
 // `DocumentSymbolRequest::METHOD` dispatch). If the handler ever stopped
 // walking the program's declarations, stopped including Fn/Type decls, or
 // regressed on the serialization shape, this test would fail. The snippet
@@ -1032,7 +1032,7 @@ fn test_lsp_unknown_method_returns_error_response() {
 
 // ── 19. textDocument/formatting range.end is in UTF-16 code units, not bytes ─
 //
-// Regression: guards `fn format()` in src/lsp.rs. Per the LSP spec,
+// Regression: guards src/lsp/formatting.rs. Per the LSP spec,
 // `Position.character` is measured in UTF-16 code units, not UTF-8 bytes and
 // not Rust `char`s. A previous implementation computed the whole-document
 // replacement range using `str::lines().count()` for the end line (which is

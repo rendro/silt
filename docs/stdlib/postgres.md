@@ -595,31 +595,35 @@ only when a statement needs it. A statement that finds no free connection in the
 pool, which has opened as many as `max_pool_size` allows, waits 30
 seconds for one, and is then `Timeout`.
 
-A connection is reset when it goes back to the pool: what a statement
-or a transaction set in its session is undone, as `DISCARD ALL` does.
-The reset goes to the server with the statement's last message (or with
-the `COMMIT` or `ROLLBACK` of `postgres.transact`), and the statement
-does not wait for its answer, which the next statement that takes the
-connection reads first. So a `SET` (or `set_config`), a `SET ROLE`,
-a temporary table, function or type, a session's advisory lock, a
-`LISTEN` or a cursor `WITH HOLD` lasts to the end of the statement on a
-pool, and to the end of the transaction inside `postgres.transact`: it
-never reaches the next statement that takes the connection. What the
+A connection is reset when it goes back to the pool: what a statement or
+a transaction set in its session is undone, as `DISCARD ALL` does. The
+reset goes to the server with the statement's last message (or with the
+`COMMIT` or `ROLLBACK` of `postgres.transact`), and the statement does
+not wait for its answer, which the next statement that takes the
+connection reads first. So a `SET` (or `set_config`), a `SET ROLE`, a
+temporary table, function or type, a session's advisory lock, a `LISTEN`
+or a cursor `WITH HOLD` lasts to the end of the statement on a pool, and
+to the end of the transaction inside `postgres.transact`: it never
+reaches the next statement that takes the connection. What the
 connection string sets (`application_name`, `options=-c name=value`)
-stays. What `DISCARD ALL` leaves, the reset leaves too: a library loaded
-with `LOAD`, the session data of PL/Perl or PL/Python, a `dblink`
-connection, and the seed of `random()`: after `SELECT setseed(0.42)`, the
-next statement that takes the connection, whoever runs it, draws the same
-numbers. A connection is not used again, but closed by the next statement
-that takes it, which takes another (a new login), when its session holds
-a statement prepared with SQL's `PREPARE`, or a `DEALLOCATE ALL` or
-`DISCARD ALL` dropped the statements the connection keeps prepared for
-itself, or the reset's answer does not come within a second (a server
-that stalls so costs each statement on the pool that second and a new
-login). Each connection keeps one statement prepared through SQL for its
-reset, which a pooler between silt and the server that hands out a
-connection per transaction (PgBouncer's transaction mode) does not keep:
-there every connection is closed after one statement.
+stays. What `DISCARD ALL` leaves, the reset leaves too: the session data
+of PL/Perl or PL/Python, a `dblink` connection, and the seed of
+`random()`: after `SELECT setseed(0.42)`, the next statement that takes
+the connection, whoever runs it, draws the same numbers. A connection is
+not used again, but closed by the next statement that takes it, which
+takes another (a new login), when its session holds a statement prepared
+with SQL's `PREPARE`, or a `DEALLOCATE ALL` or `DISCARD ALL` dropped the
+statements the connection keeps prepared for itself, or the reset's
+answer does not come within a second (a server that stalls so costs each
+statement on the pool that second and a new login). A connection that
+ran a `LOAD` (a library stays loaded) or a `DEALLOCATE` (it may have
+dropped one of the statements the connection keeps prepared), or whose
+statement found one of those gone (a `DEALLOCATE` in a `DO` block or a
+function), is closed when its statement or transaction ends. Each
+connection keeps one statement prepared through SQL for its reset, which
+a pooler between silt and the server that hands out a connection per
+transaction (PgBouncer's transaction mode) does not keep: there every
+connection is closed after one statement.
 
 ## Cooperative I/O
 
@@ -655,6 +659,10 @@ inside `postgres.transact`, and `SAVEPOINT`, `RELEASE` and
 `Err(Other(msg))`, and the statement is not sent. Inside a transaction
 a refused statement aborts nothing, and the savepoint statements work.
 `COMMIT PREPARED` and `ROLLBACK PREPARED` run on a pool as they are.
+`COPY ... FROM STDIN` and `COPY ... TO STDOUT` are refused the same way,
+on a pool and inside a transaction: the module sends and reads no `COPY`
+data. A `COPY` of a file or a program the server reaches runs as any
+other statement.
 
 A statement of the transaction that fails aborts it in the server:
 the transaction's later statements are `Err(TxnAborted)`, and if the
