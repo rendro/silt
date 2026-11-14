@@ -69,7 +69,7 @@ fn operators() -> Bool {
 fn as_an_annotated_record() -> Int {
   let v = boom()
   let w: A = v.q
-  w.x.y
+  w.x + w.y
 }
 
 fn patterns() -> Int {
