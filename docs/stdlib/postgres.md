@@ -50,6 +50,317 @@ call of a function or method that passes its own parameter on as the
 connection:
 ``the connection of `postgres.query` must be a postgres.PgPool or a postgres.PgTx``.
 
+## `postgres.connect`
+
+```
+postgres.connect(url: String) -> Result(PgPool, PostgresError)
+```
+
+Opens a pool of connections to the server `url` names (a `postgresql://` URL or `key=value` text) and makes its first connection, so a server that cannot be reached, a role it refuses or a failed TLS handshake is an `Err` here. See [Connecting](#connecting) and [TLS](#tls-secure-by-default).
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let n = postgres.execute(pool, "SELECT 1", ())?
+  println("connected ({n} row)")
+  postgres.close(pool)
+  Ok(())
+}
+```
+
+
+## `postgres.connect_with`
+
+```
+postgres.connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PostgresError)
+```
+
+As `postgres.connect`, with the options of [Connect options](#connect-options) in a map: `#{"max_pool_size": 32}`. A key that is no option, or a value it cannot have, is `Err(Connect(msg))`, and nothing is sent.
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect_with("postgresql://app@localhost/app", #{ "max_pool_size": 32 })?
+  postgres.close(pool)
+  Ok(())
+}
+```
+
+
+## `postgres.query`
+
+```
+postgres.query(conn: a, sql: String, params: p, type r) -> Result(List(r), PostgresError)
+```
+
+Runs `sql` with `params` (a tuple, `$1` its first element) on a pool or in a transaction, and decodes each row into `type r`: a record whose fields are the columns, or `json.Value`. See [Parameters and rows](#parameters-and-rows).
+
+```silt
+import list
+import postgres
+
+type User {
+  id: Int,
+  name: String,
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let users = postgres.query(pool, "SELECT id, name FROM users WHERE id > $1", (10,), User)?
+  users |> list.each { u -> println("{u.id} {u.name}") }
+  Ok(())
+}
+```
+
+
+## `postgres.execute`
+
+```
+postgres.execute(conn: a, sql: String, params: p) -> Result(Int, PostgresError)
+```
+
+Runs `sql` with `params` on a pool or in a transaction and gives the number of rows it changed, or, for a `SELECT`, returned (0 for a statement that changes none).
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let n = postgres.execute(
+    pool,
+    "UPDATE users SET active = $1 WHERE last_seen < now() - interval '1 year'",
+    (false,),
+  )?
+  println("{n} users made inactive")
+  Ok(())
+}
+```
+
+
+## `postgres.transact`
+
+```
+postgres.transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)
+```
+
+Runs `f` in a transaction on one connection: `BEGIN`, then `COMMIT` when `f` returns `Ok`, `ROLLBACK` when it returns `Err` or fails. The statements of the transaction go through the `PgTx` that `f` is given. See [Transactions](#transactions).
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let moved = postgres.transact(pool) { tx ->
+    let a = postgres.execute(
+      tx,
+      "UPDATE accounts SET balance = balance - $1 WHERE id = $2",
+      (100, 1),
+    )?
+    let b = postgres.execute(
+      tx,
+      "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+      (100, 2),
+    )?
+    Ok(a + b)
+  }?
+  println("{moved} rows")
+  Ok(())
+}
+```
+
+
+## `postgres.close`
+
+```
+postgres.close(pool: PgPool) -> ()
+```
+
+Closes the pool: its connections are closed, and a statement on it afterwards is an `Err`.
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  postgres.close(pool)
+  Ok(())
+}
+```
+
+
+## `postgres.stream`
+
+```
+postgres.stream(conn: a, sql: String, params: p, type r) -> Result(Channel(Result(r, PostgresError)), PostgresError)
+```
+
+Runs `sql` and gives a channel of its rows, each `Ok(row)` decoded into `type r` or the `Err` that ends it; the channel is closed after the last row. A worker reads the rows as the channel has room. See [Streaming and cursors](#streaming-and-cursors).
+
+```silt
+import channel
+import postgres
+
+type Event {
+  id: Int,
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let rows = postgres.stream(pool, "SELECT id FROM events ORDER BY id", (), Event)?
+  channel.each(rows) { row ->
+    match row {
+      Ok(e) -> println(e.id)
+      Err(e) -> println("{e}")
+    }
+  }
+  Ok(())
+}
+```
+
+
+## `postgres.cursor`
+
+```
+postgres.cursor(tx: PgTx, sql: String, params: p, batch_size: Int, type r) -> Result(PgCursor(r), PostgresError)
+```
+
+Declares a cursor for `sql` in the transaction `tx`, which `postgres.cursor_next` reads `batch_size` rows at a time, decoded into `type r`. Its columns are checked against `r` here.
+
+```silt
+import list
+import postgres
+
+type Row {
+  n: Int,
+}
+
+fn count(tx: postgres.PgTx) -> Result(Int, postgres.PostgresError) {
+  let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 1000) AS n", (), 100, Row)?
+  let total = loop total = 0 {
+    match postgres.cursor_next(c)? {
+      [] -> total
+      batch -> loop(total + list.length(batch))
+    }
+  }
+  postgres.cursor_close(c)?
+  Ok(total)
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  println(postgres.transact(pool, count)?)
+  Ok(())
+}
+```
+
+
+## `postgres.cursor_next`
+
+```
+postgres.cursor_next(cursor: PgCursor(r)) -> Result(List(r), PostgresError)
+```
+
+The next rows of the cursor, at most its batch size; an empty list once every row has been read. A batch that cannot be decoded, or that the server fails, is an `Err` and ends the cursor: every later call gives the same `Err`. The example of `postgres.cursor` reads a cursor to its end.
+
+```silt
+import postgres
+
+type Row {
+  n: Int,
+}
+
+fn first_batch(tx: postgres.PgTx) -> Result(List(Row), postgres.PostgresError) {
+  let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 10) AS n", (), 3, Row)?
+  postgres.cursor_next(c)
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  println(postgres.transact(pool, first_batch)?)
+  Ok(())
+}
+```
+
+
+## `postgres.cursor_close`
+
+```
+postgres.cursor_close(cursor: PgCursor(r)) -> Result((), PostgresError)
+```
+
+Closes the cursor before its transaction ends. The end of the transaction closes it too.
+
+```silt
+import list
+import postgres
+
+type Row {
+  n: Int,
+}
+
+fn peek(tx: postgres.PgTx) -> Result(Int, postgres.PostgresError) {
+  let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 10) AS n", (), 2, Row)?
+  let batch = postgres.cursor_next(c)?
+  postgres.cursor_close(c)?
+  Ok(list.length(batch))
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  println(postgres.transact(pool, peek)?)
+  Ok(())
+}
+```
+
+
+## `postgres.listen`
+
+```
+postgres.listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PostgresError)
+```
+
+Listens on the PostgreSQL channel `channel` and gives a channel that receives a `Notification` (`channel`, `payload`, and `pid`, the session that sent it) for each `NOTIFY` on it. The listener holds one of the pool's connections until its channel is closed. See [LISTEN / NOTIFY](#listen--notify).
+
+```silt
+import channel
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let events = postgres.listen(pool, "orders")?
+  postgres.notify(pool, "orders", "order 42 paid")?
+  match channel.receive(events) {
+    Some(n) -> println("{n.channel}: {n.payload}")
+    None -> println("the listener ended")
+  }
+  channel.close(events)
+  Ok(())
+}
+```
+
+
+## `postgres.notify`
+
+```
+postgres.notify(conn: a, channel: String, payload: String) -> Result((), PostgresError)
+```
+
+Sends `payload` to the listeners of the PostgreSQL channel `channel`, on a pool or in a transaction (where it is sent when the transaction commits). The example of `postgres.listen` sends and receives one.
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  postgres.notify(pool, "cache", "users")?
+  Ok(())
+}
+```
+
+
 ## Parameters and rows
 
 ```text
@@ -284,31 +595,35 @@ only when a statement needs it. A statement that finds no free connection in the
 pool, which has opened as many as `max_pool_size` allows, waits 30
 seconds for one, and is then `Timeout`.
 
-A connection is reset when it goes back to the pool: what a statement
-or a transaction set in its session is undone, as `DISCARD ALL` does.
-The reset goes to the server with the statement's last message (or with
-the `COMMIT` or `ROLLBACK` of `postgres.transact`), and the statement
-does not wait for its answer, which the next statement that takes the
-connection reads first. So a `SET` (or `set_config`), a `SET ROLE`,
-a temporary table, function or type, a session's advisory lock, a
-`LISTEN` or a cursor `WITH HOLD` lasts to the end of the statement on a
-pool, and to the end of the transaction inside `postgres.transact`: it
-never reaches the next statement that takes the connection. What the
+A connection is reset when it goes back to the pool: what a statement or
+a transaction set in its session is undone, as `DISCARD ALL` does. The
+reset goes to the server with the statement's last message (or with the
+`COMMIT` or `ROLLBACK` of `postgres.transact`), and the statement does
+not wait for its answer, which the next statement that takes the
+connection reads first. So a `SET` (or `set_config`), a `SET ROLE`, a
+temporary table, function or type, a session's advisory lock, a `LISTEN`
+or a cursor `WITH HOLD` lasts to the end of the statement on a pool, and
+to the end of the transaction inside `postgres.transact`: it never
+reaches the next statement that takes the connection. What the
 connection string sets (`application_name`, `options=-c name=value`)
-stays. What `DISCARD ALL` leaves is left too: the seed `setseed()` set,
-a connection of `dblink`, what a PL/Perl or PL/Python function keeps in
-its session. A connection is not used again, but closed by the next statement
-that takes it, which takes another (a new login), when its session holds
-a statement prepared with SQL's `PREPARE`, or a `DEALLOCATE ALL` or
-`DISCARD ALL` dropped the statements the connection keeps prepared for
-itself, or the reset's answer does not come within a second (a server
-that stalls so costs each statement on the pool that second and a new
-login). A connection that ran a `LOAD` (a library stays loaded) or a
-`DEALLOCATE` (it may have dropped one of the statements the connection
-keeps prepared) is closed when its statement or transaction ends. Each connection keeps one statement prepared through SQL for its
-reset, which a pooler between silt and the server that hands out a
-connection per transaction (PgBouncer's transaction mode) does not keep:
-there every connection is closed after one statement.
+stays. What `DISCARD ALL` leaves, the reset leaves too: the session data
+of PL/Perl or PL/Python, a `dblink` connection, and the seed of
+`random()`: after `SELECT setseed(0.42)`, the next statement that takes
+the connection, whoever runs it, draws the same numbers. A connection is
+not used again, but closed by the next statement that takes it, which
+takes another (a new login), when its session holds a statement prepared
+with SQL's `PREPARE`, or a `DEALLOCATE ALL` or `DISCARD ALL` dropped the
+statements the connection keeps prepared for itself, or the reset's
+answer does not come within a second (a server that stalls so costs each
+statement on the pool that second and a new login). A connection that
+ran a `LOAD` (a library stays loaded) or a `DEALLOCATE` (it may have
+dropped one of the statements the connection keeps prepared), or whose
+statement found one of those gone (a `DEALLOCATE` in a `DO` block or a
+function), is closed when its statement or transaction ends. Each
+connection keeps one statement prepared through SQL for its reset, which
+a pooler between silt and the server that hands out a connection per
+transaction (PgBouncer's transaction mode) does not keep: there every
+connection is closed after one statement.
 
 ## Cooperative I/O
 
@@ -327,8 +642,13 @@ callback, issues `BEGIN` up-front, and either `COMMIT`s on `Ok(_)` or
 handle; queries that should participate in the transaction must go
 through that handle — calling `postgres.query(pool, ...)` with the
 enclosing pool would pick a different connection and miss the
-transaction entirely. Nested `postgres.transact` calls are rejected;
-use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
+transaction entirely. A transaction does not nest: `postgres.transact`
+takes a pool, not a `PgTx`, and `postgres.transact(pool, ...)` called
+inside the callback takes another connection and runs a second
+transaction of its own, which commits or rolls back apart from the first
+(with `max_pool_size` 1 it waits the pool's 30 seconds and is `Timeout`).
+For a part of a transaction that may fail alone, use a savepoint through
+the handle: `postgres.execute(tx, "SAVEPOINT a", ())`.
 
 `postgres.transact` is the one way into a transaction. A statement that
 begins or ends one (`BEGIN`, `START TRANSACTION`, `COMMIT`, `END`,

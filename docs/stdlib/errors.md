@@ -101,7 +101,7 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `Connect(String)` | message | no connection was made: refused, no route, no such host |
 | `Tls(String)` | message | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed |
-| `InvalidUrl(String)` | url | the URL cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none |
+| `InvalidUrl(String)` | url | the URL cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none; or a redirect leads to a location with such a scheme |
 | `InvalidResponse(String)` | message | what the server sent is no HTTP, or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete |
 | `Other(String)` | message | unclassified transport error |
@@ -257,5 +257,4 @@ A `?` that ends a pipeline applies to the whole pipeline, so the pipeline
 is a single expression terminated by `?`. See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
 for a longer walkthrough. A program can name each conversion once, in an impl of a `From` trait it
 declares, and pass it to `result.map_err` (`result.map_err(r, AppError.from)`):
-see [Traits — Parameterized Traits](../language/traits.md#parameterized-traits)
-and [`error-from-trait.md`](../proposals/error-from-trait.md).
+see [Traits — Parameterized Traits](../language/traits.md#parameterized-traits).

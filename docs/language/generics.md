@@ -128,10 +128,10 @@ variable that appears only in the results of the return type and that a
 bound names, or only in a `where` clause, is a compile-time error:
 
 ```silt
--- ERROR: 'a' only appears in the return type, and a bound names it
+-- ERROR: type variable 'a' in return type is not introduced by any parameter
 fn zero() -> a where a: Monoid { ... }
 
--- ERROR: 'a' only appears in a where clause
+-- ERROR: type variable 'a' in the where clause of 'parse' is not in its signature
 fn parse(s: String) -> Int where a: Parse { ... }
 ```
 

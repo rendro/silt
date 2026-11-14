@@ -47,6 +47,406 @@ elements when they are printed or walked.
 | `to_string` | `(Bytes) -> Result(String, BytesError)` | UTF-8 decode (errors on invalid UTF-8) |
 | `to_string_lossy` | `(Bytes) -> String` | UTF-8 decode, each invalid sequence as U+FFFD |
 
+## `bytes.concat`
+
+```
+bytes.concat(a: Bytes, b: Bytes) -> Bytes
+```
+
+The bytes of `a` followed by the bytes of `b`.
+
+```silt
+import bytes
+
+fn main() {
+  let b = bytes.concat(bytes.from_string("ab"), bytes.from_string("cd"))
+  println(bytes.to_hex(b)) -- 61626364
+}
+```
+
+
+## `bytes.concat_all`
+
+```
+bytes.concat_all(parts: List(Bytes)) -> Bytes
+```
+
+The bytes of every element of `parts`, in order; an empty list gives empty `Bytes`.
+
+```silt
+import bytes
+
+fn main() {
+  let b = bytes.concat_all([bytes.from_string("a"), bytes.from_string("b"), bytes.from_string("c")])
+  println(bytes.to_string_lossy(b)) -- abc
+  println(bytes.length(bytes.concat_all([]))) -- 0
+}
+```
+
+
+## `bytes.contains`
+
+```
+bytes.contains(b: Bytes, needle: Bytes) -> Bool
+```
+
+Whether `needle` appears anywhere in `b`. An empty `needle` is in every value.
+
+```silt
+import bytes
+
+fn main() {
+  let msg = bytes.from_string("key=value")
+  println(bytes.contains(msg, bytes.from_string("="))) -- true
+  println(bytes.contains(msg, bytes.from_string("#"))) -- false
+}
+```
+
+
+## `bytes.empty`
+
+```
+bytes.empty() -> Bytes
+```
+
+`Bytes` of length 0.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.length(bytes.empty())) -- 0
+  println(bytes.is_empty(bytes.empty())) -- true
+}
+```
+
+
+## `bytes.ends_with`
+
+```
+bytes.ends_with(b: Bytes, suffix: Bytes) -> Bool
+```
+
+Whether `b` ends with `suffix`. An empty `suffix` is the end of every value.
+
+```silt
+import bytes
+
+fn main() {
+  let file = bytes.from_string("report.csv")
+  println(bytes.ends_with(file, bytes.from_string(".csv"))) -- true
+  println(bytes.ends_with(file, bytes.from_string(".txt"))) -- false
+}
+```
+
+
+## `bytes.from_base64`
+
+```
+bytes.from_base64(s: String) -> Result(Bytes, BytesError)
+```
+
+Decodes base64 text (the standard alphabet, with its `=` padding). Malformed text, or text without its padding, is `Err(InvalidBase64(msg))`.
+
+```silt
+import bytes
+import result
+
+fn main() {
+  println(bytes.from_base64("aGk=") |> result.map(bytes.to_string_lossy)) -- Ok("hi")
+  match bytes.from_base64("aGk") {
+    Ok(_) -> println("decoded")
+    Err(e) -> println("{e}") -- invalid base64: Invalid padding
+  }
+}
+```
+
+
+## `bytes.from_hex`
+
+```
+bytes.from_hex(s: String) -> Result(Bytes, BytesError)
+```
+
+Decodes hex text, two digits a byte, in either case. An odd number of digits, or a character that is no hex digit, is `Err(InvalidHex(msg))`.
+
+```silt
+import bytes
+import result
+
+fn main() {
+  println(bytes.from_hex("DEADbeef") |> result.map(bytes.to_list)) -- Ok([222, 173, 190, 239])
+  match bytes.from_hex("abc") {
+    Ok(_) -> println("decoded")
+    Err(e) -> println("{e}") -- invalid hex: hex string must have even length, got 3 chars
+  }
+}
+```
+
+
+## `bytes.from_list`
+
+```
+bytes.from_list(xs: List(Int)) -> Result(Bytes, BytesError)
+```
+
+`Bytes` from a list of byte values. An element below 0 or above 255 is `Err(ByteOutOfRange(value))`.
+
+```silt
+import bytes
+import result
+
+fn main() {
+  println(bytes.from_list([104, 105]) |> result.map(bytes.to_string_lossy)) -- Ok("hi")
+  match bytes.from_list([1, 256]) {
+    Ok(_) -> println("built")
+    Err(e) -> println("{e}") -- byte value out of range (expected 0..=255): 256
+  }
+}
+```
+
+
+## `bytes.from_string`
+
+```
+bytes.from_string(s: String) -> Bytes
+```
+
+The UTF-8 encoding of `s`: one byte a character of ASCII, two to four for others.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.length(bytes.from_string("abc"))) -- 3
+  println(bytes.to_hex(bytes.from_string("é"))) -- c3a9
+}
+```
+
+
+## `bytes.get`
+
+```
+bytes.get(b: Bytes, i: Int) -> Option(Int)
+```
+
+The byte at `i` (from 0), as an `Int` from 0 to 255, or `None` when there is no byte there.
+
+```silt
+import bytes
+
+fn main() {
+  let b = bytes.from_string("hi")
+  println(bytes.get(b, 1)) -- Some(105)
+  println(bytes.get(b, 2)) -- None
+}
+```
+
+
+## `bytes.index_of`
+
+```
+bytes.index_of(b: Bytes, needle: Bytes) -> Option(Int)
+```
+
+The offset of the first place `needle` appears in `b`, or `None`. An empty `needle` is at `Some(0)`.
+
+```silt
+import bytes
+
+fn main() {
+  let line = bytes.from_string("GET /index.html")
+  println(bytes.index_of(line, bytes.from_string(" "))) -- Some(3)
+  println(bytes.index_of(line, bytes.from_string("POST"))) -- None
+}
+```
+
+
+## `bytes.is_empty`
+
+```
+bytes.is_empty(b: Bytes) -> Bool
+```
+
+Whether `b` has no bytes.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.is_empty(bytes.from_string(""))) -- true
+  println(bytes.is_empty(bytes.from_string("x"))) -- false
+}
+```
+
+
+## `bytes.length`
+
+```
+bytes.length(b: Bytes) -> Int
+```
+
+The number of bytes in `b`.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.length(bytes.from_string("héllo"))) -- 6
+}
+```
+
+
+## `bytes.slice`
+
+```
+bytes.slice(b: Bytes, start: Int, end: Int) -> Bytes
+```
+
+The bytes from `start` up to, not including, `end`. Both are cut to the bytes there are: a negative index counts as 0, one past the end as the end, and `start` after `end` gives empty `Bytes`.
+
+```silt
+import bytes
+
+fn main() {
+  let b = bytes.from_string("hello world")
+  println(bytes.to_string_lossy(bytes.slice(b, 6, 11))) -- world
+  println(bytes.to_string_lossy(bytes.slice(b, 6, 99))) -- world
+  println(bytes.length(bytes.slice(b, 8, 2))) -- 0
+}
+```
+
+
+## `bytes.split`
+
+```
+bytes.split(b: Bytes, sep: Bytes) -> List(Bytes)
+```
+
+The pieces of `b` between the places `sep` appears, as `string.split` cuts a string; an empty `sep` gives the single bytes.
+
+```silt
+import bytes
+import list
+
+fn main() {
+  let parts = bytes.split(bytes.from_string("a,b,,c"), bytes.from_string(","))
+  println(list.map(parts, bytes.to_string_lossy)) -- ["a", "b", "", "c"]
+}
+```
+
+
+## `bytes.starts_with`
+
+```
+bytes.starts_with(b: Bytes, prefix: Bytes) -> Bool
+```
+
+Whether `b` begins with `prefix`. An empty `prefix` is the start of every value.
+
+```silt
+import bytes
+
+fn main() {
+  let b = bytes.from_string("%PDF-1.7")
+  println(bytes.starts_with(b, bytes.from_string("%PDF"))) -- true
+}
+```
+
+
+## `bytes.to_base64`
+
+```
+bytes.to_base64(b: Bytes) -> String
+```
+
+`b` as base64 text: the standard alphabet, with `=` padding.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.to_base64(bytes.from_string("hi"))) -- aGk=
+}
+```
+
+
+## `bytes.to_hex`
+
+```
+bytes.to_hex(b: Bytes) -> String
+```
+
+`b` as hex text, two lowercase digits a byte.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.to_hex(bytes.from_string("hi"))) -- 6869
+}
+```
+
+
+## `bytes.to_list`
+
+```
+bytes.to_list(b: Bytes) -> List(Int)
+```
+
+The bytes of `b` as a list of `Int`s from 0 to 255.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.to_list(bytes.from_string("hi"))) -- [104, 105]
+}
+```
+
+
+## `bytes.to_string`
+
+```
+bytes.to_string(b: Bytes) -> Result(String, BytesError)
+```
+
+Decodes `b` as UTF-8. Bytes that are no UTF-8 are `Err(InvalidUtf8(offset))`, with the offset of the first bad byte.
+
+```silt
+import bytes
+
+fn main() {
+  println(bytes.to_string(bytes.from_string("ok"))) -- Ok("ok")
+  match bytes.from_list([104, 255]) {
+    Ok(b) -> println(bytes.to_string(b)) -- Err(invalid UTF-8 at byte 1)
+    Err(e) -> println("{e}")
+  }
+}
+```
+
+
+## `bytes.to_string_lossy`
+
+```
+bytes.to_string_lossy(b: Bytes) -> String
+```
+
+Decodes `b` as UTF-8 as `bytes.to_string` does, but never fails: each sequence that is no UTF-8 becomes `\u{FFFD}`, shown as `�`.
+
+```silt
+import bytes
+import string
+
+fn main() {
+  match bytes.from_list([104, 105, 255]) {
+    Ok(b) -> println(string.length(bytes.to_string_lossy(b))) -- 3
+    Err(e) -> println("{e}")
+  }
+}
+```
+
+
 ## Examples
 
 ```silt

@@ -5,7 +5,9 @@
 -- with "memory allocation of 9223372036854775807 bytes failed").
 -- `tcp.read` gives the bytes that are there, `tcp.read_exact` the error
 -- of a connection that ended too early, and a chunk of a stream is no
--- larger than what was read.
+-- larger than what was read. (`tcp.read_exact` takes at most 10,000,000
+-- bytes, a larger number is refused before any read: it asks for that
+-- most, of which only what arrives is held.)
 import bytes
 import fs
 import io
@@ -40,7 +42,7 @@ fn main() {
   when let Ok(a) = tcp.connect(addr) else { panic("no connection") }
   println("read: {text(tcp.read(a, huge))}")
   when let Ok(b) = tcp.connect(addr) else { panic("no connection") }
-  println("read_exact: {text(tcp.read_exact(b, huge))}")
+  println("read_exact: {text(tcp.read_exact(b, 10000000))}")
   when let Ok(c) = tcp.connect(addr) else { panic("no connection") }
   let chunks = stream.collect(stream.tcp_chunks(c, huge))
   println("tcp_chunks: {list.map(chunks) { chunk -> text(chunk) }}")

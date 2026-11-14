@@ -74,11 +74,14 @@ struct Part {
 /// [`MATCHED`] when it matched the last.
 const MATCHED: usize = usize::MAX;
 
-/// What is still to be looked at, the next one last.
-type Todo = Vec<Result<(Found, usize), std::io::Error>>;
+/// A directory that could not be listed, and why.
+pub(super) type Unlisted = (PathBuf, std::io::Error);
 
-/// The paths `pattern` matches, in the glob crate's order, or why a
-/// directory could not be listed.
+/// What is still to be looked at, the next one last.
+type Todo = Vec<Result<(Found, usize), Unlisted>>;
+
+/// The paths `pattern` matches, in the glob crate's order, or the
+/// directory that could not be listed and why.
 pub(super) struct Matches {
     parts: Vec<Part>,
     /// The pattern ends in a separator: only directories match.
@@ -160,7 +163,7 @@ fn unsupported_verbatim(_: &Path) -> bool {
 }
 
 impl Iterator for Matches {
-    type Item = Result<PathBuf, std::io::Error>;
+    type Item = Result<PathBuf, Unlisted>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(scope) = self.scope.take()
@@ -198,7 +201,8 @@ impl Iterator for Matches {
                     index = next + 1;
                 }
             }
-            // (A name that is no UTF-8 is not matched, as by the crate.)
+            // (A listing with a name that is no UTF-8 failed; a path the
+            // pattern named is text, and `..` has no name to match.)
             let Some(name) = found.path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
@@ -243,13 +247,16 @@ fn fill_todo(todo: &mut Todo, parts: &[Part], index: usize, found: &Found) {
             let listing = fs::read_dir(&found.path).and_then(|entries| {
                 entries
                     .map(|entry| {
-                        entry.map(|entry| {
-                            let path = match here {
-                                true => PathBuf::from(entry.file_name()),
-                                false => entry.path(),
-                            };
-                            Found::listed(path, &entry)
-                        })
+                        let entry = entry?;
+                        // A name that is no UTF-8 fails the listing.
+                        if entry.file_name().to_str().is_none() {
+                            return Err(super::name_not_utf8(&found.path, &entry.file_name()));
+                        }
+                        let path = match here {
+                            true => PathBuf::from(entry.file_name()),
+                            false => entry.path(),
+                        };
+                        Ok(Found::listed(path, &entry))
                     })
                     .collect::<Result<Vec<_>, _>>()
             });
@@ -267,7 +274,7 @@ fn fill_todo(todo: &mut Todo, parts: &[Part], index: usize, found: &Found) {
                         }
                     }
                 }
-                Err(e) => todo.push(Err(e)),
+                Err(e) => todo.push(Err((found.path.clone(), e))),
             }
         }
     }

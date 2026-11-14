@@ -5,7 +5,7 @@
 //! Each test here pins one of the gaps called out in round 26:
 //!
 //! - G1: `silt disasm` usage banner single-source-of-truth
-//!       (three drifting banners canonicalized to `Usage: silt disasm [<file.silt>]`
+//!       (three drifting banners canonicalized to `Usage: silt disasm [--watch] [<file.silt>]`
 //!       via a `disasm_usage_banner()` helper, mirroring the round-23 pattern for
 //!       `silt run`).
 //! - G2: top-level `silt --help` rows advertise key subcommand flags
@@ -53,7 +53,7 @@ fn desc_column(row: &str) -> Option<usize> {
 // ── G1: `silt disasm` usage banner single-source-of-truth ───────────
 
 /// `silt disasm` outside a package with no file argument should print
-/// the canonical `Usage: silt disasm [<file.silt>]` banner on stderr.
+/// the canonical `Usage: silt disasm [--watch] [<file.silt>]` banner on stderr.
 ///
 /// Mutation reasoning: reverting G1 (restoring the literal
 /// `"Usage: silt disasm <file.silt>"` without optional brackets) makes
@@ -74,7 +74,7 @@ fn test_silt_disasm_no_file_outside_package_prints_canonical_banner() {
     // The error line, then the banner.
     let banner = stderr.lines().nth(1).unwrap_or("");
     assert_eq!(
-        banner, "Usage: silt disasm [<file.silt>]",
+        banner, "Usage: silt disasm [--watch] [<file.silt>]",
         "expected canonical disasm banner, got stderr: {stderr}"
     );
     assert!(
@@ -99,7 +99,7 @@ fn test_silt_disasm_watch_no_file_outside_package_prints_canonical_banner() {
     // The error line, then the banner.
     let banner = stderr.lines().nth(1).unwrap_or("");
     assert_eq!(
-        banner, "Usage: silt disasm [<file.silt>]",
+        banner, "Usage: silt disasm [--watch] [<file.silt>]",
         "expected canonical disasm banner via watch path, got stderr: {stderr}"
     );
     assert!(
@@ -120,7 +120,7 @@ fn test_silt_disasm_help_contains_canonical_banner() {
     assert!(
         stdout
             .lines()
-            .any(|l| l == "Usage: silt disasm [<file.silt>]"),
+            .any(|l| l == "Usage: silt disasm [--watch] [<file.silt>]"),
         "expected canonical Usage line in `silt disasm --help`, got:\n{stdout}"
     );
 }

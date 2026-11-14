@@ -1,4 +1,4 @@
--- From as docs/proposals/error-from-trait.md writes it: a trait the program
+-- From as docs/language/traits.md (Parameterized Traits) writes it: a trait the program
 -- declares, an impl for each source, `AppError.from` passed to
 -- result.map_err (the impl its trait argument says), called and taken as
 -- a value; `?` only propagates.
