@@ -71,7 +71,7 @@ impl Server {
             let fixed = self.dot_completion_fixup(uri, &pos);
             let doc = self.documents.get(uri)?;
             let checked = fixed.or_else(|| self.checked_facts(doc));
-            let items = self.dot_completions(checked.as_ref(), &prefix, builtin, cursor);
+            let items = self.dot_completions(doc, checked.as_ref(), &prefix, builtin, cursor);
             return Some(CompletionResponse::Array(items));
         }
         let doc = self.documents.get(uri);
@@ -175,7 +175,7 @@ impl Server {
                 // (A generic function by its signature.)
                 let detail = match &def.signature {
                     Some(signature) => Some(signature.text.clone()),
-                    None => def.ty.as_ref().map(|t| format!("{t}")),
+                    None => (def.ty.as_ref()).map(|t| format!("{}", self.written_here(doc, t))),
                 };
                 let documentation = def.doc.as_ref().map(|d| {
                     Documentation::MarkupContent(MarkupContent {
@@ -203,7 +203,9 @@ impl Server {
                             continue;
                         };
                         if let Some((_, kind)) = view.members.iter().find(|(m, _)| m == item) {
-                            items.push(member_item(&view, *item, *kind));
+                            items.push(member_item(&view, *item, *kind, &|t| {
+                                self.written_here(doc, t)
+                            }));
                         }
                     }
                 }
@@ -213,7 +215,8 @@ impl Server {
             if let Some(program) = &doc.program {
                 let cursor = position_to_offset(&doc.source, &pos);
                 for local in locals_at_offset(program, cursor) {
-                    let detail = local.ty.as_ref().map(|t| format!("{t}"));
+                    let detail =
+                        (local.ty.as_ref()).map(|t| format!("{}", self.written_here(doc, t)));
                     items.push(CompletionItem {
                         label: local.name,
                         kind: Some(CompletionItemKind::VARIABLE),
@@ -234,6 +237,7 @@ impl Server {
     /// is offered there (they are offered after the trait's name).
     fn dot_completions(
         &self,
+        doc: &Document,
         checked: Option<&Checked>,
         prefix: &str,
         builtin: Option<&str>,
@@ -345,7 +349,7 @@ impl Server {
                 items.push(CompletionItem {
                     label: name.clone(),
                     kind: Some(CompletionItemKind::FIELD),
-                    detail: Some(format!("{field_ty}")),
+                    detail: Some(format!("{}", self.written_here(doc, field_ty))),
                     ..CompletionItem::default()
                 });
             }
@@ -548,7 +552,9 @@ impl Server {
         let mut items: Vec<CompletionItem> = view
             .members
             .iter()
-            .map(|(member, kind)| member_item(&view, *member, *kind))
+            .map(|(member, kind)| {
+                member_item(&view, *member, *kind, &|t| self.written_here(doc, t))
+            })
             .collect();
         items.sort_by(|a, b| a.label.cmp(&b.label));
         items.dedup_by(|a, b| a.label == b.label);
@@ -641,7 +647,12 @@ impl Server {
 
 /// The completion item of the member `member` of the imported module
 /// `view`.
-fn member_item(view: &ModuleView, member: Symbol, kind: MemberKind) -> CompletionItem {
+fn member_item(
+    view: &ModuleView,
+    member: Symbol,
+    kind: MemberKind,
+    written: &dyn Fn(&Type) -> Type,
+) -> CompletionItem {
     let def = view.definitions.get(&member);
     CompletionItem {
         label: resolve(member),
@@ -653,7 +664,7 @@ fn member_item(view: &ModuleView, member: Symbol, kind: MemberKind) -> Completio
         }),
         detail: def.and_then(|d| match &d.signature {
             Some(signature) => Some(signature.text.clone()),
-            None => d.ty.as_ref().map(|t| format!("{t}")),
+            None => d.ty.as_ref().map(|t| format!("{}", written(t))),
         }),
         documentation: def.and_then(|d| d.doc.clone()).map(|d| {
             Documentation::MarkupContent(MarkupContent {

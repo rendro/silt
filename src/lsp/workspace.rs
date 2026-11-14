@@ -1350,10 +1350,12 @@ impl Server {
         }
         let places = self.places_of(uri, target, true);
         // One of silt's own names, visible in every module: a builtin
-        // function, type, trait or constructor.
+        // function, type, trait or constructor. (A type of a builtin
+        // module, `regex.Regex` or `time.Weekday`, reserves no name: a
+        // program may declare its own; an import of it by name is a
+        // top-level name, below.)
         let own = crate::module::builtin_free_function_names().contains(&new)
-            || crate::types::builtins::iter_all().any(|ty| ty.name == new)
-            || crate::module::builtin_module_types().contains(&new)
+            || crate::types::builtins::is_prelude_name(new)
             || crate::module::all_builtin_constructor_names().any(|name| name == new)
             || crate::defs::PRELUDE_TRAITS.contains(&new)
             || self.projects.values().any(|project| {

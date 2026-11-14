@@ -11,6 +11,7 @@ use crate::ast::{Decl, ImportTarget, Program};
 use crate::intern::Symbol;
 use crate::lexer::{Tok, Token};
 use crate::session::{ImportResolution, ModuleAnalysis};
+use crate::types::{Type, TypeRef};
 
 use super::Server;
 use super::definitions::build_definitions;
@@ -117,6 +118,49 @@ impl Server {
     pub(super) fn checked_tables(&self, doc: &Document) -> Option<&crate::typechecker::Tables> {
         let module = doc.module.as_ref()?;
         Some(self.projects.get(&module.project)?.session.tables())
+    }
+
+    /// `ty` as the open document `doc` writes it: a type of a builtin
+    /// module whose bare name the document gives another type (its own
+    /// `type Regex` beside `regex.Regex`, `type Weekday` beside
+    /// `time.Weekday`) with its module, as the checker's messages and the
+    /// REPL's `:type` write it; any other type by its name.
+    pub(super) fn written_here(&self, doc: &Document, ty: &Type) -> Type {
+        let scope = doc.module.as_ref().and_then(|module| {
+            let session = &self.projects.get(&module.project)?.session;
+            Some(&session.module_analysis(module.id)?.scope)
+        });
+        let Some(scope) = scope else {
+            return ty.clone();
+        };
+        crate::types::map_refs(ty, &|r: TypeRef| {
+            let Some((_, Some(module))) = crate::defs::builtin_types().get(r.id.0.0 as usize)
+            else {
+                return r;
+            };
+            match scope.types.get(&r.name) {
+                Some(crate::typechecker::names::Binding::Def(id)) if *id != r.id.0 => TypeRef {
+                    id: r.id,
+                    name: crate::intern::intern(&format!("{module}.{}", r.name)),
+                },
+                _ => r,
+            }
+        })
+    }
+
+    /// The definition `def` with its types as [`Server::written_here`]
+    /// writes them in `doc`.
+    pub(super) fn written_def(&self, doc: &Document, def: &DefInfo) -> DefInfo {
+        DefInfo {
+            ty: def.ty.as_ref().map(|ty| self.written_here(doc, ty)),
+            signature: (def.signature.as_ref()).map(|s| crate::typechecker::Signature {
+                text: s.text.clone(),
+                ty: self.written_here(doc, &s.ty),
+            }),
+            params: def.params.clone(),
+            fields: def.fields.clone(),
+            doc: def.doc.clone(),
+        }
     }
 
     /// The module the name `name` stands for in the open document `doc`:

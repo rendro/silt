@@ -1,13 +1,23 @@
 -- cmd: lsp
 -- A program's own `Regex` and `regex.Regex`: hover and definition tell
--- them apart, and the references of the program's are its own.
--- lsp: hover 12:15
--- lsp: hover 12:39
--- lsp: definition 12:15
--- lsp: references 10:6
+-- them apart, and the references of the program's are its own. Where the
+-- file gives a bare name to a type of its own, the builtin type of that
+-- name is written with its module, in hover and in signature help
+-- (`time.Weekday` beside a program's `Weekday` as well).
+-- lsp: hover 22:15
+-- lsp: hover 22:39
+-- lsp: definition 22:15
+-- lsp: references 18:6
+-- lsp: hover 22:4
+-- lsp: hover 30:7
+-- lsp: hover 31:7
+-- lsp: signature 33:16
 import regex
+import time
 
 type Regex { n: Int }
+
+type Weekday { d: Int }
 
 fn both(mine: Regex, compiled: regex.Regex) -> Int {
   match regex.is_match("a", compiled) {
@@ -17,6 +27,11 @@ fn both(mine: Regex, compiled: regex.Regex) -> Int {
 }
 
 fn main() -> Result((), regex.RegexError) {
-  println(both(Regex { n: 1 }, regex.compile("a")?))
+  let c = regex.compile("a")?
+  let day = time.Monday
+  let w = Weekday { d: 1 }
+  println(both(Regex { n: 1 }, c))
+  println([w.d])
+  println(day == time.Tuesday)
   Ok(())
 }

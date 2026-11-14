@@ -242,6 +242,14 @@ pub enum HostShape {
         name: String,
         args: Vec<HostShape>,
     },
+    /// An opaque type of a builtin module whose values are a kind of
+    /// their own (`regex.Regex`, `task.Handle(a)`, `tcp.TcpStream`), as
+    /// written: a value of it is of that kind. (What a task gives is
+    /// not shown by its handle.)
+    Opaque {
+        id: TypeId,
+        name: String,
+    },
     /// In the declared fields of a type ([`HostTemplates`]): the type
     /// argument at that place of the type the field is of.
     Param(u16),
@@ -846,6 +854,9 @@ impl HostShape {
                 let inner = Frame { args, up: env };
                 all(declared.iter().zip(fields), witnesses, budget, Some(&inner))
             }
+            (HostShape::Opaque { id, .. }, value) => {
+                yes(crate::types::canonical::dispatch_type_for_value(value) == *id)
+            }
             (HostShape::Param(at), value) => match env {
                 Some(frame) => match frame.args.get(usize::from(*at)) {
                     Some(arg) => arg.check_in(value, witnesses, budget, frame.up),
@@ -899,7 +910,9 @@ impl fmt::Display for HostShape {
             HostShape::Result(ok, err) => list(f, "Result", &[ok, err]),
             HostShape::Tuple(items) => list(f, "", &items.iter().collect::<Vec<_>>()),
             HostShape::Channel(item) => list(f, "Channel", &[item]),
-            HostShape::Var(_, name) | HostShape::Named { name, .. } => write!(f, "{name}"),
+            HostShape::Var(_, name)
+            | HostShape::Named { name, .. }
+            | HostShape::Opaque { name, .. } => write!(f, "{name}"),
             HostShape::Param(at) => write!(f, "_{at}"),
         }
     }

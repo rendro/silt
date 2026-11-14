@@ -1,0 +1,12 @@
+> rename 14:6 Regex
+rename_to_a_module_type_name.silt:14:6-14:13 => Regex
+rename_to_a_module_type_name.silt:16:12-16:19 => Regex
+rename_to_a_module_type_name.silt:24:16-24:23 => Regex
+> rename 14:6 Weekday
+error: `Pattern` cannot be renamed to `Weekday`: `Weekday` is already a top-level name of rename_to_a_module_type_name.silt, and the rename would change what a name means
+> rename 14:6 Bytes
+error: `Pattern` cannot be renamed to `Bytes`: `Bytes` is one of silt's own names, and the rename would change what a name means
+> rename 14:6 TcpStream
+rename_to_a_module_type_name.silt:14:6-14:13 => TcpStream
+rename_to_a_module_type_name.silt:16:12-16:19 => TcpStream
+rename_to_a_module_type_name.silt:24:16-24:23 => TcpStream
