@@ -523,17 +523,37 @@ impl SourceView for SourceMap {
 /// 1. `NO_COLOR` set to any non-empty value → never color (per <https://no-color.org/>).
 ///    This is the kill-switch and wins over every other signal, including
 ///    `FORCE_COLOR` and a real tty.
-/// 2. `FORCE_COLOR` set to any non-empty value → always color, even when
-///    stderr is redirected (matches cargo's behavior).
-/// 3. Otherwise: isatty(stderr).
+/// 2. `FORCE_COLOR` set to `0` → never color; to any other non-empty
+///    value → always color, even when stderr is redirected.
+/// 3. `TERM=dumb` (a terminal that shows no escapes) → no color.
+/// 4. Otherwise: isatty(stderr).
 pub(crate) fn use_color() -> bool {
-    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    color_from(
+        var("NO_COLOR").is_some(),
+        var("FORCE_COLOR").as_deref().and_then(std::ffi::OsStr::to_str),
+        var("TERM").as_deref().and_then(std::ffi::OsStr::to_str),
+        || std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )
+}
+
+/// [`use_color`] of a `NO_COLOR` that is set or not, the non-empty values
+/// of `FORCE_COLOR` and `TERM` (`None`: unset or empty), and whether
+/// stderr is a terminal.
+fn color_from(
+    no_color: bool,
+    force_color: Option<&str>,
+    term: Option<&str>,
+    terminal: impl FnOnce() -> bool,
+) -> bool {
+    if no_color {
         return false;
     }
-    if std::env::var_os("FORCE_COLOR").is_some_and(|v| !v.is_empty()) {
-        return true;
+    match force_color {
+        Some("0") => false,
+        Some(_) => true,
+        None => term != Some("dumb") && terminal(),
     }
-    std::io::IsTerminal::is_terminal(&std::io::stderr())
 }
 
 pub(crate) struct Colors {
@@ -1097,6 +1117,21 @@ pub fn to_lsp(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `FORCE_COLOR=0` turns color off, and `TERM=dumb` keeps it off on a
+    /// terminal unless `FORCE_COLOR` forces it. FAILS on the base:
+    /// `FORCE_COLOR=0` forced color, `TERM` was not read.
+    #[test]
+    fn force_color_zero_and_a_dumb_terminal_have_no_color() {
+        let tty = || true;
+        assert!(!color_from(false, Some("0"), None, tty));
+        assert!(!color_from(false, Some("0"), Some("xterm"), tty));
+        assert!(!color_from(false, None, Some("dumb"), tty));
+        assert!(color_from(false, Some("1"), Some("dumb"), || false));
+        assert!(color_from(false, None, Some("xterm"), tty));
+        assert!(!color_from(false, None, None, || false));
+        assert!(!color_from(true, Some("1"), None, tty));
+    }
 
     fn sources(text: &str) -> SourceMap {
         let mut map = SourceMap::new();
