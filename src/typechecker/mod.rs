@@ -1895,14 +1895,12 @@ impl TypeChecker {
             // `let` that generalises is general in it, like a function
             // in its signature's.)
             let (declared, _) = self.resolve_let_annotation(te);
-            let reported = self.errors.len();
             self.unify(&val_ty, &declared, span);
-            // A value of unknown type (from a module that failed to
-            // load) takes the declared type, and so does a value that
-            // is not of it (see `infer_stmt`).
-            if self.errors.len() > reported || matches!(self.apply(&val_ty), Type::Error) {
-                val_ty = declared;
-            }
+            // The names are of the declared type, whatever the value's:
+            // a value that never is, a value of unknown type and one not
+            // of the declared type (reported here) alike (see
+            // `infer_stmt`).
+            val_ty = declared;
         }
         if let PatternKind::Ident(name) = &pattern.kind {
             env.define(*name, Scheme::mono(self.apply(&val_ty)));

@@ -1,0 +1,35 @@
+-- cmd: check
+-- A top-level `let` with a type annotation gives its names the written
+-- type, also when the value never is: a function that asks a trait of
+-- the program is given an `Int`, `?` is applied to a `Result`. (Checked
+-- only: run, the program would stop at the first `todo()`.)
+trait T {
+  fn go(self) -> Int
+}
+
+trait T for Int {
+  fn go(self) -> Int {
+    1
+  }
+}
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn tg(x: a) -> Int where a: T {
+  T.go(x)
+}
+
+let v: Int = todo()
+
+let (t, k): (Result(Int, String), Int) = todo()
+
+fn uses() -> Result(Int, String) {
+  let n = t?
+  Ok(tg(v) + tg(k) + n)
+}
+
+fn main() {
+  println("ok")
+}

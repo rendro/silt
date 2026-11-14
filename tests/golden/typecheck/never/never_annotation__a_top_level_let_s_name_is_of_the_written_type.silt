@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- A top-level `let` with a type annotation gives its names the written
+-- type, also when the value never is: each use below is refused.
+fn todo() -> Never {
+  panic("todo")
+}
+
+let v: Int = todo()
+
+let (a, b): (Int, String) = todo()
+
+let r: Result(Int, String) = todo()
+
+fn uses() -> Int {
+  let _s: String = v
+  let _t: String = a
+  let _n: Int = b
+  let _u: Int = r
+  0
+}
+
+fn main() {
+  println("ok")
+}

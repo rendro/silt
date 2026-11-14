@@ -1,0 +1,50 @@
+-- A `let` with a type annotation gives its names the written type, also
+-- when the value never is: a function that asks a trait of the program
+-- is given an `Int`, `?` is applied to a `Result`, and the program checks
+-- and runs (the functions that hold the stubs are never called).
+trait T {
+  fn go(self) -> Int
+}
+
+trait T for Int {
+  fn go(self) -> Int {
+    1
+  }
+}
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn tg(x: a) -> Int where a: T {
+  T.go(x)
+}
+
+fn a_trait() -> Int {
+  let v: Int = todo()
+  tg(v) + T.go(v)
+}
+
+fn a_question_mark() -> Result(Int, String) {
+  let t: Result(Int, String) = todo()
+  let n = t?
+  Ok(n + 1)
+}
+
+fn a_pattern() -> Result(Int, String) {
+  let (t, k): (Result(Int, String), Int) = todo()
+  let n = t?
+  Ok(tg(k) + n)
+}
+
+fn matched() -> Int {
+  let o: Option(Int) = todo()
+  when let Some(k) = o else {
+    return 0
+  }
+  tg(k)
+}
+
+fn main() {
+  println("ok")
+}
