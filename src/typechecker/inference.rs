@@ -6011,16 +6011,18 @@ impl TypeChecker {
                 if let Some(te) = &ty {
                     let (declared, introduced) = self.resolve_let_annotation(te);
                     own = introduced;
-                    let reported = self.errors.len();
                     self.unify(&val_ty, &declared, value_span);
-                    // A value of unknown type (from a module that failed
-                    // to load) takes the declared type: `let y: Int = x`
-                    // makes `y` an Int. So does a value that is not of
-                    // the declared type: that is reported here, and what
-                    // follows reads the name as it is declared.
-                    if self.errors.len() > reported || matches!(self.apply(&val_ty), Type::Error) {
-                        val_ty = declared;
-                    }
+                    // The name is of the declared type, whatever the
+                    // value's: a value that never is (`todo()`, of type
+                    // `Never`, alone or inside: `(todo(), 1)`, `panic`
+                    // as a `Fn(String) -> Int`) meets the annotation
+                    // without taking its type, and the name must not
+                    // stay of every type. The same for a value of
+                    // unknown type (from a module that failed to load)
+                    // and for one that is not of the declared type: that
+                    // is reported here, and what follows reads the name
+                    // as it is declared.
+                    val_ty = declared;
                 }
 
                 // A call may return a type with shared mutable state (a
