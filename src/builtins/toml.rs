@@ -371,8 +371,9 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
 
 /// The TOML text of `data`, a table, as the `toml` crate writes a
 /// document (each value that holds tables as a `[table]` or
-/// `[[array]]` of its own), but that in the `pretty` form an array of
-/// two or more values has a line for each,
+/// `[[array]]` of its own), but for two things: a Float is written as
+/// `json.stringify` writes it (`1e+300`, not 301 digits), and in the
+/// `pretty` form an array of two or more values has a line for each,
 /// indented one level deeper than the array it is in (the crate
 /// indents every one by four spaces, an array in an array too). An
 /// array in an inline table stays on its line: an inline table is one
@@ -429,6 +430,12 @@ impl toml_edit::visit_mut::VisitMut for Layout {
     }
 
     fn visit_value_mut(&mut self, node: &mut toml_edit::Value) {
+        if let toml_edit::Value::Float(f) = node
+            && let Some(written) = json_float(*f.value())
+            && let Ok(value) = written.parse::<toml_edit::Value>()
+        {
+            *node = value;
+        }
         node.decor_mut().clear();
         toml_edit::visit_mut::visit_value_mut(self, node);
     }
@@ -460,6 +467,13 @@ impl toml_edit::visit_mut::VisitMut for Layout {
             }
         }
     }
+}
+
+/// The text `json.stringify` writes of the Float `f` where it is not
+/// the crate's (an exponent: `1e+300`, `1e-7`); None where it is.
+fn json_float(f: f64) -> Option<String> {
+    let text = serde_json::to_string(&f).ok()?;
+    (f.is_finite() && text.contains('e')).then_some(text)
 }
 
 /// The TOML text `s` decoded by `r` as `top` says, read once
