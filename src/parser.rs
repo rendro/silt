@@ -915,6 +915,64 @@ impl<'src> Parser<'src> {
             )
     }
 
+    /// Whether the `{` at the cursor holds the fields of a record as
+    /// other languages write them: everything in the braces is `name =
+    /// value` items, apart by commas or line breaks, and no value names
+    /// one of the items' names (`{ n = n + 1 }`, a variable changed,
+    /// is an assignment: the block's error says a `let` is immutable).
+    fn braces_hold_assigned_fields(&self) -> bool {
+        let kind = |i: usize| self.tokens.get(i).map(|t| &t.kind);
+        let mut names = Vec::new();
+        let mut used = Vec::new();
+        let mut at = self.pos + 1;
+        loop {
+            // An item: `name =` (not `=>`, `==`), then its value.
+            let Some(Token::Ident(name)) = kind(at) else {
+                return false;
+            };
+            if kind(at + 1) != Some(&Token::Eq) || self.fat_arrow_at(at + 1).is_some() {
+                return false;
+            }
+            names.push(*name);
+            at += 2;
+            let mut depth = 0usize;
+            let mut empty = true;
+            loop {
+                let Some(tok) = self.tokens.get(at) else {
+                    return false;
+                };
+                match &tok.kind {
+                    Token::Eof => return false,
+                    Token::RBrace if depth == 0 => {
+                        return !empty && !used.iter().any(|u| names.contains(u));
+                    }
+                    Token::Comma if depth == 0 => {
+                        at += 1;
+                        // (A comma before the `}`.)
+                        if kind(at) == Some(&Token::RBrace) {
+                            return !empty && !used.iter().any(|u| names.contains(u));
+                        }
+                        break;
+                    }
+                    _ if depth == 0 && !empty && tok.newlines_before > 0 => break,
+                    Token::LParen | Token::LBracket | Token::LBrace | Token::StringStart(_) => {
+                        depth += 1
+                    }
+                    Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => {
+                        depth = depth.saturating_sub(1)
+                    }
+                    Token::Ident(used_name) => used.push(*used_name),
+                    _ => {}
+                }
+                empty = false;
+                at += 1;
+            }
+            if empty {
+                return false;
+            }
+        }
+    }
+
     /// The error for a field named by the keyword at `span`, written
     /// alone, where `what` (a value or a pattern) belongs behind it.
     fn keyword_field_alone(span: Span, keyword: &str, what: &str, example: &str) -> Diagnostic {
@@ -4334,20 +4392,17 @@ impl<'src> Parser<'src> {
                     // closure: the fields of a record, without its type.
                     Err(self.record_without_a_name(first.span))
                 } else if let Some(first) = self.tokens.get(self.pos + 1)
-                    && matches!(first.kind, Token::Ident(_))
-                    && self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Eq)
-                    // (`{ x => x + 1 }`: an arrow of another language.)
-                    && self.fat_arrow_at(self.pos + 2).is_none()
                     && (self.pos.checked_sub(1)).is_some_and(|at| {
                         matches!(
                             self.tokens[at].kind,
                             Token::Eq | Token::LParen | Token::Comma | Token::LBracket
                         )
                     })
+                    && self.braces_hold_assigned_fields()
                 {
-                    // `let u = { name = "a" }`: braces given as a value,
-                    // whose first statement would assign a name, hold the
-                    // fields of a record as other languages write them.
+                    // `let u = { name = "a" }`: braces given as a value
+                    // that hold only `name = value` items, the fields of
+                    // a record as other languages write them.
                     Err(self.record_without_a_name(first.span))
                 } else if let Some(dots) = self.tokens.get(self.pos + 1)
                     && dots.kind == Token::DotDot
