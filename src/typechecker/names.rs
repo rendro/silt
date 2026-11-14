@@ -183,25 +183,15 @@ pub struct BuiltinScopes {
     pub modules: HashMap<ModuleId, Exports>,
 }
 
-thread_local! {
-    static BUILTINS: RefCell<Option<(u64, Arc<BuiltinDefs>, Arc<BuiltinScopes>)>> =
-        const { RefCell::new(None) };
-}
-
-/// The builtin definitions and scopes, built once per thread (and again
-/// after each `intern::reset`).
+/// The builtin definitions and scopes, built once for the process.
 pub fn builtins() -> (Arc<BuiltinDefs>, Arc<BuiltinScopes>) {
-    let generation = crate::intern::generation();
-    if let Some(found) = BUILTINS.with(|cell| match &*cell.borrow() {
-        Some((built, defs, scopes)) if *built == generation => Some((defs.clone(), scopes.clone())),
-        _ => None,
-    }) {
-        return found;
-    }
-    let (defs, scopes) = build_builtins();
-    let (defs, scopes) = (Arc::new(defs), Arc::new(scopes));
-    BUILTINS.with(|cell| *cell.borrow_mut() = Some((generation, defs.clone(), scopes.clone())));
-    (defs, scopes)
+    static BUILTINS: std::sync::OnceLock<(Arc<BuiltinDefs>, Arc<BuiltinScopes>)> =
+        std::sync::OnceLock::new();
+    let (defs, scopes) = BUILTINS.get_or_init(|| {
+        let (defs, scopes) = build_builtins();
+        (Arc::new(defs), Arc::new(scopes))
+    });
+    (defs.clone(), scopes.clone())
 }
 
 /// The builtin definition `id`; `None` for the id of a module's
@@ -550,8 +540,9 @@ fn declare(
             }
             Decl::Type(td) => {
                 let placeholder = DefKind::TypeAlias;
-                // (A REPL entry's types are every later entry's.)
-                let type_vis = match td.is_opaque && kind == ModuleKind::File {
+                // (A REPL entry's types are every later entry's. A host
+                // module's opaque type is built by its functions only.)
+                let type_vis = match td.is_opaque && kind != ModuleKind::Cell {
                     true => Vis::Opaque,
                     false => vis(td.is_pub),
                 };
@@ -2175,9 +2166,16 @@ impl Resolver<'_> {
             );
             return Some(Res::Error);
         };
-        let target = match self.top_value(module.name) {
-            Some(Binding::Module(id)) => *id,
-            Some(Binding::Poisoned) => return Some(Res::Error),
+        // A host module's signatures name the types of the builtin
+        // modules without an import: they have no file to write one in.
+        let builtin = (self.kind == ModuleKind::Host)
+            .then(|| ModuleId::builtin(&resolve(module.name)))
+            .flatten()
+            .filter(|id| self.module_exports(*id).is_some());
+        let target = match (builtin, self.top_value(module.name)) {
+            (Some(id), _) => id,
+            (None, Some(Binding::Module(id))) => *id,
+            (None, Some(Binding::Poisoned)) => return Some(Res::Error),
             _ => {
                 self.not_a_module(module, &[name], what);
                 return Some(Res::Error);
@@ -2247,15 +2245,21 @@ impl Resolver<'_> {
                 .with_help(self.import_help(&module_str)),
             );
         } else {
-            let mut d = Diagnostic::error(
-                Code::UndefinedType,
-                module.span,
-                format!(
+            // (A host module has no imports: its signatures see the
+            // builtin modules.)
+            let message = match self.kind {
+                ModuleKind::Host => format!(
+                    "undefined {what} '{}': a host module names its own types and those of \
+                     builtin modules",
+                    written(&segments)
+                ),
+                _ => format!(
                     "undefined {what} '{}' — no module '{module_str}' in scope; import it with \
                      `import {module_str}`",
                     written(&segments)
                 ),
-            );
+            };
+            let mut d = Diagnostic::error(Code::UndefinedType, module.span, message);
             if what == "trait" {
                 d.code = Code::UnknownTrait;
             }

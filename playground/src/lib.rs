@@ -12,7 +12,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -22,7 +22,7 @@ use silt::intern::resolve;
 use silt::lexer::{KEYWORD_LITERALS, KEYWORDS, Lexer, Tok, Token};
 use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::source::{FileId, SourceMap, SourceName, Span};
-use silt::{Buffer, Clock, HostIo, Vm, module};
+use silt::{Clock, HostIo, Output, Vm, module};
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
@@ -34,12 +34,43 @@ const FILE: &str = "main.silt";
 /// one thread, and a program that loops for ever would hold it for ever.
 pub const STEP_BUDGET: u64 = 200_000_000;
 
+/// The most bytes of output a run keeps: past it, a `print` or a
+/// `println` is a runtime error, and what goes to stderr is dropped. A
+/// program that prints in a loop would otherwise fill the page's
+/// memory before its steps run out.
+pub const OUTPUT_LIMIT: usize = 1_000_000;
+
+/// What a run prints, to stdout and to stderr, as far as
+/// [`OUTPUT_LIMIT`] goes. Its clones share the text.
+#[derive(Clone, Default)]
+struct PageOutput(Arc<Mutex<String>>);
+
+impl PageOutput {
+    fn take(&self) -> String {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl Output for PageOutput {
+    fn write(&self, text: &str) -> std::io::Result<()> {
+        let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if kept.len().saturating_add(text.len()) > OUTPUT_LIMIT {
+            return Err(std::io::Error::other(format!(
+                "the playground shows at most {OUTPUT_LIMIT} bytes of output"
+            )));
+        }
+        kept.push_str(text);
+        Ok(())
+    }
+}
+
 /// A session with the text `source` as its only file.
 fn open(source: &str) -> (Session, FileId) {
     let mut session = Session::new(Config {
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: Vec::new(),
+        builtins: silt::session::Builtins::All,
     });
     let file = session.set_overlay(Path::new(FILE), source.to_string());
     (session, file)
@@ -113,8 +144,8 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
             };
         }
     };
-    let out = Buffer::new();
-    let mut vm = Vm::new(HostIo::buffer(&out).clock(clock));
+    let out = PageOutput::default();
+    let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()).clock(clock));
     vm.set_step_budget(steps);
     // A `process.exit` ends the run with its code: 0 is a program that
     // ended well, any other code one that failed.

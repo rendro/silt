@@ -4,8 +4,8 @@
 //! the declared signatures and run the Rust closure.
 
 use silt::diagnostic::{Code, Diagnostic};
-use silt::session::HostModule;
 use silt::session::testing::{check_with_host, run_with_host};
+use silt::session::{Builtins, HostCall, HostModule};
 use silt::typeinfo::bv;
 use silt::value::{IntoValue, Value};
 use silt::vm::VmError;
@@ -127,8 +127,8 @@ fn generic_and_option_signatures() {
         .fn1("fn range_up_to(n: Int) -> List(Int)", |n: i64| {
             (0..n).map(Value::Int).collect::<Vec<Value>>()
         })
-        .function("fn first(xs: List(a)) -> Option(a)", |args: &[Value]| {
-            let Value::List(xs) = &args[0] else {
+        .function("fn first(xs: List(a)) -> Option(a)", |call: &HostCall| {
+            let Value::List(xs) = &call.args[0] else {
                 return Err(VmError::new("expected a list".into()));
             };
             xs.first().into_value().map_err(VmError::new)
@@ -172,7 +172,7 @@ import host
 
 #[test]
 fn host_function_error_names_the_function() {
-    let host = HostModule::new("h").function("fn fail(x: Int) -> Int", |_: &[Value]| {
+    let host = HostModule::new("h").function("fn fail(x: Int) -> Int", |_: &HostCall| {
         Err(VmError::new("no".into()))
     });
     let err = run(
@@ -271,7 +271,7 @@ fn bad_signatures_are_reported() {
         ),
     ];
     for (signature, expected) in cases {
-        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
+        let host = HostModule::new("h").function(signature, |_: &HostCall| Ok(Value::Unit));
         // Reported whether or not the program imports the module.
         let errors = errors("fn main() { let _ = 1 }", host);
         assert!(
@@ -291,7 +291,7 @@ fn bad_signatures_are_reported() {
 /// error, so that no program is checked against it.
 #[test]
 fn a_return_only_type_variable_is_refused() {
-    let any = HostModule::new("h").function("fn any() -> a", |_: &[Value]| Ok(Value::Int(5)));
+    let any = HostModule::new("h").function("fn any() -> a", |_: &HostCall| Ok(Value::Int(5)));
     let errors = errors(
         "import h\nfn main() { let s: String = h.any()\n let _ = s }",
         any,
@@ -317,7 +317,7 @@ fn type_variables_a_parameter_introduces_are_accepted() {
         "fn pair(x: a, y: b) -> (b, a)",
         "fn pick(s: String, type a) -> Option(a)",
     ] {
-        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
+        let host = HostModule::new("h").function(signature, |_: &HostCall| Ok(Value::Unit));
         let errors = errors("fn main() { let _ = 1 }", host);
         assert!(errors.is_empty(), "{signature}: {errors:?}");
     }
@@ -333,12 +333,13 @@ fn a_type_of_around_more_than_a_variable_is_refused() {
     for (signature, written) in [
         ("fn oft(v: b, t: TypeOf(List(a))) -> a", "TypeOf(List(a))"),
         ("fn opt(t: Option(TypeOf(List(a)))) -> a", "TypeOf(List(a))"),
+        ("fn lst(ts: List(TypeOf(List(a)))) -> a", "TypeOf(List(a))"),
         (
             "fn pair(t: (Int, TypeOf(Map(k, v)))) -> Int",
             "TypeOf(Map(k, v))",
         ),
     ] {
-        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Int(1)));
+        let host = HostModule::new("h").function(signature, |_: &HostCall| Ok(Value::Int(1)));
         let errors = errors("fn main() { let _ = 1 }", host);
         assert_eq!(errors.len(), 1, "{signature}: {errors:?}");
         assert_eq!(
@@ -360,7 +361,7 @@ fn a_type_of_around_more_than_a_variable_is_refused() {
         "fn otcast(v: b, t: Option(TypeOf(a))) -> a",
         "fn pick(v: b, type a) -> a",
     ] {
-        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Int(1)));
+        let host = HostModule::new("h").function(signature, |_: &HostCall| Ok(Value::Int(1)));
         let errors = errors("fn main() { let _ = 1 }", host);
         assert!(errors.is_empty(), "{signature}: {errors:?}");
     }
@@ -368,7 +369,7 @@ fn a_type_of_around_more_than_a_variable_is_refused() {
 
 #[test]
 fn a_signature_that_does_not_parse_is_reported_once() {
-    let host = HostModule::new("h").function("fn (", |_: &[Value]| Ok(Value::Unit));
+    let host = HostModule::new("h").function("fn (", |_: &HostCall| Ok(Value::Unit));
     let errors = errors("fn main() { let _ = 1 }", host);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(!errors[0].message.contains("no body"), "{errors:?}");
@@ -391,16 +392,16 @@ fn typed_function_arity_must_match_the_signature() {
 #[test]
 fn a_result_of_the_wrong_type_names_the_host_function() {
     let host = HostModule::new("mylib")
-        .function("fn count() -> Int", |_: &[Value]| {
+        .function("fn count() -> Int", |_: &HostCall| {
             Ok(Value::string("three"))
         })
-        .function("fn evens() -> List(Int)", |_: &[Value]| {
+        .function("fn evens() -> List(Int)", |_: &HostCall| {
             Ok(Value::list(vec![Value::Int(2), Value::string("four")]))
         })
-        .function("fn maybe() -> Option(String)", |_: &[Value]| {
+        .function("fn maybe() -> Option(String)", |_: &HostCall| {
             Ok(Value::variant(bv::SOME, [Value::Int(1)]))
         })
-        .function("fn pair() -> (Int, Bool)", |_: &[Value]| {
+        .function("fn pair() -> (Int, Bool)", |_: &HostCall| {
             Ok(Value::tuple(vec![Value::Int(1), Value::Bool(true)]))
         });
     let err = run(
@@ -445,9 +446,9 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
 #[test]
 fn a_host_function_returning_never_can_only_fail() {
     let host = HostModule::new("h")
-        .function("fn f() -> Never", |_: &[Value]| Ok(Value::string("x")))
-        .function("fn fail(msg: String) -> Never", |args: &[Value]| {
-            Err(VmError::new(format!("failed: {}", args[0])))
+        .function("fn f() -> Never", |_: &HostCall| Ok(Value::string("x")))
+        .function("fn fail(msg: String) -> Never", |call: &HostCall| {
+            Err(VmError::new(format!("failed: {}", call.args[0])))
         });
     let program = "import h\nfn main() { let b: Bool = h.f()\n match b { true -> host.give(1)\n false -> host.give(2) } }\nimport host";
     let err = run(program, host.clone()).unwrap_err();
@@ -474,7 +475,8 @@ fn returned_error(host: HostModule, call: &str) -> String {
 /// of the type its argument has at the call; another is an error.
 #[test]
 fn a_result_of_a_type_variable_is_of_its_argument_s_type() {
-    let host = HostModule::new("h").function("fn same(x: a) -> a", |_: &[Value]| Ok(Value::Int(5)));
+    let host =
+        HostModule::new("h").function("fn same(x: a) -> a", |_: &HostCall| Ok(Value::Int(5)));
     let err = returned_error(host, r#"h.same("x")"#);
     assert!(
         err.contains(
@@ -490,7 +492,7 @@ fn a_result_of_a_type_variable_is_of_its_argument_s_type() {
 #[test]
 fn an_element_of_a_list_argument_shows_the_variable() {
     let host = HostModule::new("h")
-        .function("fn first(xs: List(a)) -> Option(a)", |_: &[Value]| {
+        .function("fn first(xs: List(a)) -> Option(a)", |_: &HostCall| {
             Ok(Value::variant(bv::SOME, [Value::string("s")]))
         });
     let err = returned_error(host, "h.first([1, 2])");
@@ -508,7 +510,7 @@ fn an_element_of_a_list_argument_shows_the_variable() {
 #[test]
 fn a_variable_no_argument_shows_stays_unchecked() {
     let host = HostModule::new("h")
-        .function("fn first(xs: List(a)) -> Option(a)", |_: &[Value]| {
+        .function("fn first(xs: List(a)) -> Option(a)", |_: &HostCall| {
             Ok(Value::variant(bv::SOME, [Value::string("s")]))
         });
     let source = "import h\nfn main() {\n  let xs: List(Int) = []\n  let _ = h.first(xs)\n  host.give(1)\n}\nimport host";
@@ -518,10 +520,10 @@ fn a_variable_no_argument_shows_stays_unchecked() {
 /// A `type a` parameter shows the variable as the type itself.
 #[test]
 fn a_type_parameter_shows_the_variable() {
-    let host = HostModule::new("h").function(
-        "fn pick(s: String, type a) -> Option(a)",
-        |_: &[Value]| Ok(Value::variant(bv::SOME, [Value::Int(1)])),
-    );
+    let host = HostModule::new("h")
+        .function("fn pick(s: String, type a) -> Option(a)", |_: &HostCall| {
+            Ok(Value::variant(bv::SOME, [Value::Int(1)]))
+        });
     let err = returned_error(host.clone(), r#"h.pick("x", String)"#);
     assert!(
         err.contains(
@@ -537,7 +539,7 @@ fn a_type_parameter_shows_the_variable() {
 /// A Channel result is a channel; what it carries is not shown.
 #[test]
 fn a_channel_result_is_a_channel() {
-    let host = HostModule::new("h").function("fn open(n: Int) -> Channel(Int)", |_: &[Value]| {
+    let host = HostModule::new("h").function("fn open(n: Int) -> Channel(Int)", |_: &HostCall| {
         Ok(Value::Int(1))
     });
     let err = returned_error(host, "h.open(1)");
@@ -558,11 +560,11 @@ fn a_deep_result_of_a_variable_s_type_is_checked_in_bounded_steps() {
     for cells in [30_000, 1_000_000] {
         let outcome = std::thread::spawn(move || {
             let host = HostModule::new("h")
-                .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()))
+                .function("fn same(x: a) -> a", |call: &HostCall| Ok(call.args[0].clone()))
                 // (Two lists of the type, not one shared: their parts are
                 // compared.)
-                .function("fn second(x: a, y: a) -> a", |args: &[Value]| {
-                    Ok(args[1].clone())
+                .function("fn second(x: a, y: a) -> a", |call: &HostCall| {
+                    Ok(call.args[1].clone())
                 });
             let source = format!(
                 "import h\ntype L {{ Nil, Cons(Int, L) }}\n\
@@ -584,10 +586,12 @@ fn a_deep_result_of_a_variable_s_type_is_checked_in_bounded_steps() {
 #[test]
 fn later_elements_of_a_collection_are_compared() {
     let host = HostModule::new("h")
-        .function("fn hetero(x: a) -> a", |_: &[Value]| {
+        .function("fn hetero(x: a) -> a", |_: &HostCall| {
             Ok(Value::list(vec![Value::Int(1), Value::string("x")]))
         })
-        .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()));
+        .function("fn same(x: a) -> a", |call: &HostCall| {
+            Ok(call.args[0].clone())
+        });
     let err = returned_error(host.clone(), "h.hetero([7])");
     assert!(
         err.contains(
@@ -615,12 +619,12 @@ fn later_elements_of_a_collection_are_compared() {
 /// result is refused.
 #[test]
 fn a_later_argument_shows_the_variable_past_a_long_one() {
-    let wrong = |_: &[Value]| Ok(Value::string("s"));
+    let wrong = |_: &HostCall| Ok(Value::string("s"));
     let host = HostModule::new("h")
         .function("fn f(xs: List(Option(a)), w: a) -> a", wrong)
         .function(
             "fn g(xs: List(Option(a)), ys: List(Option(a))) -> Option(a)",
-            |_: &[Value]| Ok(Value::variant(bv::SOME, [Value::string("s")])),
+            |_: &HostCall| Ok(Value::variant(bv::SOME, [Value::string("s")])),
         );
     let nones = vec!["None"; 200].join(", ");
     let err = returned_error(host.clone(), &format!("h.f([Some(1), {nones}], 1)"));
@@ -645,8 +649,8 @@ fn a_later_argument_shows_the_variable_past_a_long_one() {
 /// `Box(Int)`.
 #[test]
 fn a_wrong_part_within_the_bound_is_refused() {
-    let host = HostModule::new("h").function("fn same(x: a) -> a", |args: &[Value]| {
-        let Value::Record(record) = &args[0] else {
+    let host = HostModule::new("h").function("fn same(x: a) -> a", |call: &HostCall| {
+        let Value::Record(record) = &call.args[0] else {
             return Err(VmError::new("expected a record".into()));
         };
         Ok(Value::record(record.ty().clone(), vec![Value::string("s")]))
@@ -670,37 +674,39 @@ fn a_wrong_part_within_the_bound_is_refused() {
 #[test]
 fn results_of_the_type_the_signature_returns_pass() {
     let host = HostModule::new("h")
-        .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()))
-        .function("fn first(xs: List(a)) -> Option(a)", |args: &[Value]| {
-            let Value::List(xs) = &args[0] else {
+        .function("fn same(x: a) -> a", |call: &HostCall| {
+            Ok(call.args[0].clone())
+        })
+        .function("fn first(xs: List(a)) -> Option(a)", |call: &HostCall| {
+            let Value::List(xs) = &call.args[0] else {
                 return Err(VmError::new("expected a list".into()));
             };
             xs.first().into_value().map_err(VmError::new)
         })
-        .function("fn swap(p: (a, b)) -> (b, a)", |args: &[Value]| {
-            let Value::Tuple(parts) = &args[0] else {
+        .function("fn swap(p: (a, b)) -> (b, a)", |call: &HostCall| {
+            let Value::Tuple(parts) = &call.args[0] else {
                 return Err(VmError::new("expected a tuple".into()));
             };
             Ok(Value::tuple(vec![parts[1].clone(), parts[0].clone()]))
         })
-        .function("fn keys(m: Map(k, v)) -> List(k)", |args: &[Value]| {
-            let Value::Map(m) = &args[0] else {
+        .function("fn keys(m: Map(k, v)) -> List(k)", |call: &HostCall| {
+            let Value::Map(m) = &call.args[0] else {
                 return Err(VmError::new("expected a map".into()));
             };
             Ok(Value::list(m.iter().map(|(k, _)| k.clone()).collect()))
         })
-        .function("fn get(o: Option(a), d: a) -> a", |args: &[Value]| {
-            Ok(match &args[0] {
+        .function("fn get(o: Option(a), d: a) -> a", |call: &HostCall| {
+            Ok(match &call.args[0] {
                 Value::Variant(v) if v.is(bv::SOME) => v.fields()[0].clone(),
-                _ => args[1].clone(),
+                _ => call.args[1].clone(),
             })
         })
-        .function("fn pick(s: String, type a) -> List(a)", |_: &[Value]| {
+        .function("fn pick(s: String, type a) -> List(a)", |_: &HostCall| {
             Ok(Value::list(Vec::new()))
         })
         .function(
             "fn pass(c: Channel(Int)) -> Channel(Int)",
-            |args: &[Value]| Ok(args[0].clone()),
+            |call: &HostCall| Ok(call.args[0].clone()),
         );
     let source = r#"
 import h
@@ -730,11 +736,12 @@ import host
 
 #[test]
 fn compile_without_analyze_returns_the_analysis_errors() {
-    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
     let mut session = Session::new(Config {
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: vec![mylib()],
+        builtins: Builtins::All,
     });
     let file = session.set_overlay(
         std::path::Path::new("main.silt"),
@@ -765,7 +772,7 @@ fn host_module_name_must_be_an_identifier() {
 
 #[test]
 fn host_module_named_like_a_dependency_key_is_rejected_at_the_import() {
-    use silt::session::{Config, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, LockPolicy, ProjectSetup, Session};
     let dir = std::env::temp_dir().join(format!("silt_host_dep_collision_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let dep = dir.join("dep");
@@ -792,6 +799,7 @@ fn host_module_named_like_a_dependency_key_is_rejected_at_the_import() {
         project: ProjectSetup::Discover(dir.join("src")),
         lock: LockPolicy::Update,
         host: vec![mylib()],
+        builtins: Builtins::All,
     });
     let file = session.open(&main).unwrap();
     let errors: Vec<Diagnostic> = session
@@ -840,7 +848,7 @@ fn host_module_named_like_a_module_file_is_rejected_at_the_import() {
 /// The Quick Start of docs/ffi.md, as written there.
 #[test]
 fn docs_ffi_quick_start() {
-    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
     use silt::{Buffer, HostIo, Vm};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
@@ -861,6 +869,7 @@ fn docs_ffi_quick_start() {
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: vec![mylib],
+        builtins: Builtins::All,
     });
     let source = "import mylib\nfn main() { mylib.give(mylib.double(21)) }";
     let file = session.set_overlay(Path::new("main.silt"), source.to_string());
@@ -884,13 +893,13 @@ fn docs_ffi_quick_start() {
 /// another type), an element of one (`pick`), or the value of a type
 /// argument (`cast`), and functions of maps, sets, channels.
 fn probe() -> HostModule {
-    let at = |i: usize| move |args: &[Value]| Ok(args[i].clone());
+    let at = |i: usize| move |call: &HostCall| Ok(call.args[i].clone());
     HostModule::new("h")
         .function("fn same(x: a) -> a", at(0))
         .function("fn second(x: a, y: a) -> a", at(1))
         .function("fn other(x: a, y: b) -> a", at(1))
-        .function("fn pick(xs: List(a), i: Int) -> a", |args: &[Value]| {
-            let (Value::List(xs), Value::Int(i)) = (&args[0], &args[1]) else {
+        .function("fn pick(xs: List(a), i: Int) -> a", |call: &HostCall| {
+            let (Value::List(xs), Value::Int(i)) = (&call.args[0], &call.args[1]) else {
                 return Err(VmError::new("expected a list and an index".into()));
             };
             Ok(xs.get(*i as usize).unwrap_or(Value::Unit))
@@ -903,8 +912,8 @@ fn probe() -> HostModule {
             "fn chan2(c: Channel(a), d: Channel(a)) -> Channel(a)",
             at(1),
         )
-        .function("fn swap(p: (a, b)) -> (b, a)", |args: &[Value]| {
-            let Value::Tuple(parts) = &args[0] else {
+        .function("fn swap(p: (a, b)) -> (b, a)", |call: &HostCall| {
+            let Value::Tuple(parts) = &call.args[0] else {
                 return Err(VmError::new("expected a tuple".into()));
             };
             Ok(Value::tuple(vec![parts[1].clone(), parts[0].clone()]))
@@ -912,17 +921,17 @@ fn probe() -> HostModule {
         .function("fn noswap(p: (a, b)) -> (b, a)", at(0))
         .function(
             "fn wrapres(x: a) -> Result(a, String)",
-            |args: &[Value]| Ok(Value::variant(bv::OK, [args[0].clone()])),
+            |call: &HostCall| Ok(Value::variant(bv::OK, [call.args[0].clone()])),
         )
-        .function("fn rep(x: a, n: Int) -> List(a)", |args: &[Value]| {
-            let Value::Int(n) = args[1] else {
+        .function("fn rep(x: a, n: Int) -> List(a)", |call: &HostCall| {
+            let Value::Int(n) = call.args[1] else {
                 return Err(VmError::new("expected a count".into()));
             };
-            Ok(Value::list(vec![args[0].clone(); n as usize]))
+            Ok(Value::list(vec![call.args[0].clone(); n as usize]))
         })
         .function("fn otherl(xs: List(a), ys: List(b)) -> List(a)", at(1))
-        .function("fn vals(m: Map(k, v)) -> List(v)", |args: &[Value]| {
-            let Value::Map(m) = &args[0] else {
+        .function("fn vals(m: Map(k, v)) -> List(v)", |call: &HostCall| {
+            let Value::Map(m) = &call.args[0] else {
                 return Err(VmError::new("expected a map".into()));
             };
             Ok(Value::list(m.iter().map(|(_, v)| v.clone()).collect()))
@@ -957,7 +966,8 @@ fn run_probe(body: &str, g: Option<(&str, usize)>) -> Result<Value, String> {
     let mut hosts = vec![probe()];
     if let Some((signature, ret)) = g {
         hosts.push(
-            HostModule::new("g").function(signature, move |args: &[Value]| Ok(args[ret].clone())),
+            HostModule::new("g")
+                .function(signature, move |call: &HostCall| Ok(call.args[ret].clone())),
         );
     }
     let import_g = if g.is_some() { "import g\n" } else { "" };
@@ -1161,6 +1171,140 @@ fn a_parameter_written_as_a_pattern_is_named_by_its_place() {
     }
 }
 
+/// The errors of the program `files` (the first is the entry) in a
+/// session whose programs may import only the builtin modules
+/// `builtins`.
+fn errors_with_builtins(files: &[(&str, &str)], builtins: Builtins) -> Vec<Diagnostic> {
+    use silt::session::{Config, LockPolicy, ProjectSetup, Session};
+    let dir = std::path::PathBuf::from("/silt-test");
+    let mut session = Session::new(Config {
+        project: ProjectSetup::Script(dir.clone()),
+        lock: LockPolicy::ReadOnly,
+        host: vec![mylib()],
+        builtins,
+    });
+    let mut entry = None;
+    for (name, text) in files {
+        let file = session.set_overlay(&dir.join(name), (*text).to_string());
+        entry.get_or_insert(file);
+    }
+    let entry = entry.expect("a program has a file");
+    (session.analyze(entry).diagnostics.iter())
+        .filter(|d| d.is_error())
+        .cloned()
+        .collect()
+}
+
+/// A host chooses the builtin modules a program may import: an import
+/// of any other is an error when the program is checked, in each of its
+/// modules; the prelude and the host modules stay the program's.
+#[test]
+fn a_host_chooses_the_builtin_modules_a_program_may_import() {
+    let only = || Builtins::Only(vec!["list".to_string(), "string".to_string()]);
+    let allowed = "import list\nimport string\nimport mylib\nfn main() { println(list.length([string.length(\"ab\"), mylib.double(1)])) }";
+    let errors = errors_with_builtins(&[("main.silt", allowed)], only());
+    assert!(errors.is_empty(), "{errors:?}");
+    for (files, module) in [
+        (
+            vec![(
+                "main.silt",
+                "import fs\nfn main() { let _ = fs.exists(\"x\") }",
+            )],
+            "fs",
+        ),
+        (
+            vec![
+                ("main.silt", "import helper\nfn main() { helper.go() }"),
+                (
+                    "helper.silt",
+                    "import env\npub fn go() { let _ = env.get(\"HOME\") }",
+                ),
+            ],
+            "env",
+        ),
+    ] {
+        let errors = errors_with_builtins(&files, only());
+        assert_eq!(errors.len(), 1, "{files:?}: {errors:?}");
+        assert_eq!(errors[0].code, Code::ModuleNotFound, "{errors:?}");
+        assert_eq!(
+            errors[0].message,
+            format!(
+                "the builtin module '{module}' is not offered to this program: the application \
+                 that runs it lets it import only list, string"
+            )
+        );
+    }
+    let errors = errors_with_builtins(
+        &[("main.silt", "import tcp\nfn main() { println(\"hi\") }")],
+        Builtins::Only(Vec::new()),
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0]
+            .message
+            .ends_with("the application that runs it lets it import no builtin module"),
+        "{errors:?}"
+    );
+    // (Every builtin module is the program's by default.)
+    let errors = errors_with_builtins(
+        &[(
+            "main.silt",
+            "import fs\nfn main() { let _ = fs.exists(\"x\") }",
+        )],
+        Builtins::All,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// A session made and analysed on one thread is compiled on another,
+/// and a program compiled there runs here: a name means the same on
+/// every thread (AR-1: the interner was per thread, and the second
+/// thread panicked or read other names).
+#[test]
+fn a_session_is_used_on_another_thread() {
+    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use std::path::Path;
+    let mut session = Session::new(Config {
+        project: ProjectSetup::None,
+        lock: LockPolicy::ReadOnly,
+        host: vec![mylib()],
+        builtins: Builtins::All,
+    });
+    let source = "import mylib\nimport list\nfn main() { println(list.map([1, 2]) { x -> mylib.double(x) }) }";
+    let file = session.set_overlay(Path::new("main.silt"), source.to_string());
+    assert!(!session.analyze(file).has_errors());
+    let program = std::thread::spawn(move || {
+        // (Names of this thread's own first.)
+        let other = "type Weekday2 { Mon }\nfn main() { let _ = Mon }";
+        let mut elsewhere = Session::new(Config {
+            project: ProjectSetup::None,
+            lock: LockPolicy::ReadOnly,
+            host: vec![],
+            builtins: Builtins::All,
+        });
+        let other = elsewhere.set_overlay(Path::new("other.silt"), other.to_string());
+        assert!(!elsewhere.analyze(other).has_errors());
+        // A second file with one type error: the analysis says that one only.
+        let wrong = session.set_overlay(
+            Path::new("wrong.silt"),
+            "import mylib\nfn main() { let _ = mylib.double(\"x\") }".to_string(),
+        );
+        let messages: Vec<String> = (session.analyze(wrong).diagnostics.iter())
+            .filter(|d| d.is_error())
+            .map(|d| d.message.clone())
+            .collect();
+        assert_eq!(messages, ["type mismatch: expected Int, got String"]);
+        session.compile(file, Entry::Main).expect("compiles")
+    })
+    .join()
+    .expect("the other thread compiles");
+    let out = silt::Buffer::new();
+    silt::Vm::new(silt::HostIo::buffer(&out))
+        .run_program(&program)
+        .unwrap();
+    assert_eq!(out.contents(), "[2, 4]\n");
+}
+
 /// A host function that builds a record or a variant its type does not
 /// allow (a record with another number of fields than its type declares,
 /// a variant without its field, a variant at a place its enum has none)
@@ -1172,22 +1316,26 @@ fn a_parameter_written_as_a_pattern_is_named_by_its_place() {
 fn a_host_function_that_builds_a_malformed_value_fails_in_every_build() {
     use silt::typeinfo::Tag;
     let host = HostModule::new("h")
-        .function("fn first_field(x: a) -> a", |args: &[Value]| {
-            match &args[0] {
+        .function("fn first_field(x: a) -> a", |call: &HostCall| {
+            match &call.args[0] {
                 Value::Record(r) => Ok(Value::record(r.ty().clone(), vec![r.fields()[0].clone()])),
                 other => Ok(other.clone()),
             }
         })
-        .function("fn no_fields(x: a) -> a", |args: &[Value]| match &args[0] {
-            Value::Variant(v) => Ok(Value::variant(v.tag(), [])),
-            other => Ok(other.clone()),
+        .function("fn no_fields(x: a) -> a", |call: &HostCall| {
+            match &call.args[0] {
+                Value::Variant(v) => Ok(Value::variant(v.tag(), [])),
+                other => Ok(other.clone()),
+            }
         })
-        .function("fn far(x: a) -> List(a)", |args: &[Value]| match &args[0] {
-            Value::Variant(v) => Ok(Value::list(vec![
-                args[0].clone(),
-                Value::variant(Tag::new(v.ty().clone(), 9), []),
-            ])),
-            other => Ok(Value::list(vec![other.clone()])),
+        .function("fn far(x: a) -> List(a)", |call: &HostCall| {
+            match &call.args[0] {
+                Value::Variant(v) => Ok(Value::list(vec![
+                    call.args[0].clone(),
+                    Value::variant(Tag::new(v.ty().clone(), 9), []),
+                ])),
+                other => Ok(Value::list(vec![other.clone()])),
+            }
         });
     let run = |body: &str| {
         let source = format!(

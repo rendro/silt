@@ -234,6 +234,10 @@ impl Clock for SystemClock {
 /// goes when nothing else waits.)
 const QUEUED_MAX: usize = 64 * 1024;
 
+/// The size of a piece of a print that goes in pieces: what the writer's
+/// queue holds.
+pub(crate) const PIECE: usize = QUEUED_MAX;
+
 /// How long the writer thread of a lane made for a test waits for more
 /// before it ends. (Those of the process's outputs live with the
 /// process, asleep while there is nothing to write.)
@@ -308,6 +312,12 @@ struct LaneState {
     /// How many batches have been written: a drain that sees it move
     /// knows the reader takes them.
     written: u64,
+    /// The print whose text goes in pieces now ([`Lane::print_piece`]):
+    /// the texts of other prints wait until its last piece is in, or
+    /// until it ends otherwise (a deadline, a cancel).
+    stream: Option<u64>,
+    /// The number the next such print gets.
+    next_stream: u64,
     /// The first failure of a write to stdout, which every later print
     /// to stdout gives. (One to stderr is dropped: there is nowhere left
     /// to report it.)
@@ -320,6 +330,8 @@ struct LaneState {
 struct Waiting {
     stream: Stream,
     text: String,
+    /// For a piece of a print in pieces: that print.
+    of: Option<u64>,
     room: Arc<Cell<()>>,
     /// Who wakes the print, and what keeps its program from being seen
     /// as stuck meanwhile: the writer completes the wait from outside
@@ -368,6 +380,20 @@ impl Lane {
         text: String,
         room: Option<&Arc<crate::scheduler::Scheduler>>,
     ) -> Printed {
+        self.print_of(stream, text, room, None)
+    }
+
+    /// [`Lane::print`] of a text that is a piece of the print `of`, if
+    /// one: its first piece waits behind the texts before it, and makes
+    /// the texts after it wait until its last piece is in; each other
+    /// piece goes before the texts that wait.
+    fn print_of(
+        self: &Arc<Self>,
+        stream: Stream,
+        text: String,
+        room: Option<&Arc<crate::scheduler::Scheduler>>,
+        of: Option<u64>,
+    ) -> Printed {
         if !self.queued || cfg!(target_arch = "wasm32") {
             let mut failed = None;
             self.write_one(stream, &text, &mut failed);
@@ -384,13 +410,21 @@ impl Lane {
             state.raised = true;
             return Printed::Failed(failed);
         }
-        let fits = state.queued == 0 || state.queued + text.len() <= QUEUED_MAX;
+        let room_for = state.queued == 0 || state.queued + text.len() <= QUEUED_MAX;
+        // (A print goes now if nothing waits before it and no print in
+        // pieces is under way, or if it is a piece of the one that is.)
+        let goes = match (state.stream, of) {
+            (Some(current), Some(of)) => current == of && room_for,
+            (Some(_), None) => false,
+            (None, _) => state.waiting.is_empty() && room_for,
+        };
         match room {
-            Some(scheduler) if !(state.waiting.is_empty() && fits) => {
+            Some(scheduler) if !goes => {
                 let cell = Cell::new();
                 state.waiting.push_back(Waiting {
                     stream,
                     text,
+                    of,
                     room: cell.clone(),
                     scheduler: scheduler.clone(),
                     external: scheduler.external(),
@@ -398,11 +432,41 @@ impl Lane {
                 Printed::Waits(cell)
             }
             _ => {
+                if of.is_some() && room.is_some() {
+                    state.stream = of;
+                }
                 state.queued += text.len();
                 state.queue.push_back((stream, text));
                 self.start(&mut state);
                 Printed::Queued
             }
+        }
+    }
+
+    /// A number for a print whose text goes in pieces.
+    fn stream_number(&self) -> u64 {
+        let mut state = self.state.lock();
+        state.next_stream += 1;
+        state.next_stream
+    }
+
+    /// The print in pieces `of` has given its last piece, or has ended
+    /// otherwise: the texts that waited behind it go in.
+    fn end_stream(self: &Arc<Self>, of: u64) {
+        let mut state = self.state.lock();
+        // (Its pieces that still wait are not written: it has ended.)
+        state.waiting.retain(|waiting| waiting.of != Some(of));
+        if state.stream == Some(of) {
+            state.stream = None;
+        }
+        let given = Self::admit(&mut state);
+        if !state.queue.is_empty() {
+            self.start(&mut state);
+        }
+        drop(state);
+        for (room, scheduler, external) in given {
+            let _ = room.complete((), scheduler.wake());
+            drop(external);
         }
     }
 
@@ -471,30 +535,7 @@ impl Lane {
             }
             // The texts that waited go in, oldest first, as far as there
             // is room.
-            let mut given = Vec::new();
-            while let Some(next) = state.waiting.front() {
-                // One whose print has stopped waiting is not written.
-                if Arc::strong_count(&next.room) == 1 {
-                    let _ = state.waiting.pop_front();
-                    continue;
-                }
-                if state.queued != 0 && state.queued + next.text.len() > QUEUED_MAX {
-                    break;
-                }
-                let Some(next) = state.waiting.pop_front() else {
-                    break;
-                };
-                let Waiting {
-                    stream,
-                    text,
-                    room,
-                    scheduler,
-                    external,
-                } = next;
-                state.queued += text.len();
-                state.queue.push_back((stream, text));
-                given.push((room, scheduler, external));
-            }
+            let given = Self::admit(&mut state);
             drop(state);
             // Woken outside the lock; each print goes on, and only then
             // does its program count without it.
@@ -503,6 +544,56 @@ impl Lane {
                 drop(external);
             }
         }
+    }
+
+    /// Put the texts that wait for room in the queue, oldest first, as
+    /// far as there is room, and none while a print streams: the prints
+    /// to wake, each with its scheduler.
+    #[allow(clippy::type_complexity)]
+    fn admit(
+        state: &mut LaneState,
+    ) -> Vec<(
+        Arc<Cell<()>>,
+        Arc<crate::scheduler::Scheduler>,
+        crate::scheduler::External,
+    )> {
+        let mut given = Vec::new();
+        loop {
+            // (One whose print has stopped waiting is not written.)
+            state
+                .waiting
+                .retain(|waiting| Arc::strong_count(&waiting.room) > 1);
+            // While a print goes in pieces, only its pieces go in.
+            let at = match state.stream {
+                Some(current) => state.waiting.iter().position(|w| w.of == Some(current)),
+                None => (!state.waiting.is_empty()).then_some(0),
+            };
+            let Some(at) = at else {
+                break;
+            };
+            let len = state.waiting[at].text.len();
+            if state.queued != 0 && state.queued + len > QUEUED_MAX {
+                break;
+            }
+            let Some(next) = state.waiting.remove(at) else {
+                break;
+            };
+            let Waiting {
+                stream,
+                text,
+                of,
+                room,
+                scheduler,
+                external,
+            } = next;
+            if of.is_some() {
+                state.stream = of;
+            }
+            state.queued += text.len();
+            state.queue.push_back((stream, text));
+            given.push((room, scheduler, external));
+        }
+        given
     }
 
     /// The failure of a write to stdout that no print has given yet.
@@ -537,6 +628,21 @@ impl Lane {
                 }
             }
         }
+    }
+}
+
+/// A print whose text goes in pieces ([`HostIo::begin_stream`]): when
+/// it is dropped, at the end of the print or when its wait ends
+/// otherwise (a deadline, a cancel), the texts that wait behind it go
+/// in.
+pub(crate) struct StreamEnd {
+    lane: Arc<Lane>,
+    of: u64,
+}
+
+impl Drop for StreamEnd {
+    fn drop(&mut self) {
+        self.lane.end_stream(self.of);
     }
 }
 
@@ -649,6 +755,37 @@ impl HostIo {
         scheduler: &Arc<crate::scheduler::Scheduler>,
     ) -> Printed {
         self.lane.print(stream, text, Some(scheduler))
+    }
+
+    /// Whether a print's text may go to the outputs in pieces: where
+    /// one thread writes the queue (the process's stdout and stderr). An
+    /// embedder's outputs, and the outputs of a build for WebAssembly,
+    /// are written by the print itself, one write a print.
+    pub(crate) fn streams(&self) -> bool {
+        self.lane.queued && !cfg!(target_arch = "wasm32")
+    }
+
+    /// A number for a print whose text goes in pieces
+    /// ([`HostIo::print_piece`]), and what ends it when dropped.
+    pub(crate) fn begin_stream(&self) -> StreamEnd {
+        StreamEnd {
+            lane: self.lane.clone(),
+            of: self.lane.stream_number(),
+        }
+    }
+
+    /// [`HostIo::print`] of `text`, a piece of the print `of`: its
+    /// pieces go to the writer whole and in order, with no other print's
+    /// text between them; each waits for room as a print does.
+    pub(crate) fn print_piece(
+        &self,
+        of: &StreamEnd,
+        stream: Stream,
+        text: String,
+        scheduler: &Arc<crate::scheduler::Scheduler>,
+    ) -> Printed {
+        self.lane
+            .print_of(stream, text, Some(scheduler), Some(of.of))
     }
 
     /// Write `text` to stderr: a report of the runtime's for the

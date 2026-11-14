@@ -18,7 +18,7 @@ use super::decode::{self, Decoder, Numbers, Rules};
 use super::registry::decoding::Family;
 use super::typed::{self, Type, builtins, unsound};
 use crate::typeinfo::{FieldType, bv};
-use crate::value::{MAX_COLLECTION_LEN, Value};
+use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::{Source, Step, Vm, VmError};
 
 /// How `CsvError` shows the variant `tag` with `fields`:
@@ -558,7 +558,7 @@ builtins! {
                 .collect::<Result<Vec<String>, VmError>>()?;
             write_line(&mut out, cells.iter().map(String::as_str));
             out.push('\n');
-            if out.len() > MAX_COLLECTION_LEN {
+            if out.len() > MAX_TEXT_LEN {
                 return Err(too_long_text("csv.stringify", out.len()));
             }
         }
@@ -577,7 +577,7 @@ builtins! {
         }
         let mut out = String::new();
         write_line(&mut out, texts.iter().map(|text| &**text));
-        if out.len() > MAX_COLLECTION_LEN {
+        if out.len() > MAX_TEXT_LEN {
             return Err(too_long_text("csv.join_line", out.len()));
         }
         Ok(out)

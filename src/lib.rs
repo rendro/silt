@@ -13,20 +13,40 @@
 //! Supporting modules: `format` (source formatting), `module` (module
 //! resolution), `intern` (string interning), `disassemble` (bytecode
 //! inspection). Optional features: `lsp`, `repl`, `watch`.
+//!
+//! ## What the crate promises
+//!
+//! An embedder (docs/ffi.md) gets these names, and only these are
+//! promised: `silt::Buffer`, `silt::Clock`, `silt::Exit`,
+//! `silt::FromValue`, `silt::HostIo`, `silt::IntoValue`, `silt::Output`,
+//! `silt::Value`, `silt::Vm`, `silt::VmError`, `silt::session::Builtins`,
+//! `silt::session::Config`, `silt::session::Entry`,
+//! `silt::session::HostCall`, `silt::session::HostModule`,
+//! `silt::session::LockPolicy`, `silt::session::Program`,
+//! `silt::session::ProjectSetup` and `silt::session::Session`, with
+//! what they hand out (a `Value`'s variants, an analysis, a
+//! diagnostic). Every other `pub` item is the crate's own: the
+//! `silt` command, the language server, the playground and the tests
+//! use it, and it changes without notice. The test API
+//! (`silt::session::testing`, `silt::fuzz_invariants`,
+//! `silt::scheduler::test_support`) is built with the `test-hooks`
+//! feature only. (tests/meta/public_api_tests.rs keeps this list and
+//! the guide one.)
 
 #![allow(clippy::mutable_key_type)]
 
 pub mod ast;
 pub mod builtins;
 pub mod bytecode;
-pub mod compiler;
+pub(crate) mod compiler;
 pub mod defs;
 pub mod diagnostic;
 pub mod disassemble;
-pub mod evidence;
+pub(crate) mod evidence;
 pub mod feature_stub;
 pub mod file_discovery;
 pub mod format;
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod fuzz_invariants;
 pub mod git;
 #[cfg(feature = "http")]
@@ -41,6 +61,7 @@ pub mod manifest;
 pub mod module;
 pub mod package_graph;
 pub mod parser;
+pub(crate) mod program;
 #[cfg(feature = "repl")]
 pub mod repl;
 pub mod scheduler;

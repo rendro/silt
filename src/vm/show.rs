@@ -21,24 +21,212 @@ use crate::builtins::common::Bounded;
 use crate::bytecode::Globals;
 use crate::value::{Shown, Value};
 
-/// The text `write` writes: all of it, or, with `limit` (the name of
-/// the builtin that asks for it), no more than a string may hold.
+/// How long the text of a shown value may be.
+#[derive(Clone, Copy)]
+pub(crate) enum Limit {
+    /// No longer than a string may be: a longer one is an error of the
+    /// builtin named (interpolation, `string.from`).
+    Refuse(&'static str),
+    /// The first that many bytes, and how many more there were: a
+    /// message that must be given whatever its length (a panic's, the
+    /// text of `main`'s `Err`).
+    Cut(usize),
+    /// None kept: only the parts written impls show are wanted (a print,
+    /// which writes the text out itself).
+    Discard,
+    /// All of it (a REPL entry's value, as the released REPL shows it).
+    Whole,
+}
+
+/// The most of a message a panic, or the `Err` of `main` or of a test,
+/// gives; the rest is said by its length.
+pub(crate) const MESSAGE_MOST: usize = 100_000;
+
+/// The most of a print's text that is made whole: a longer one is
+/// written out in pieces as it is made ([`HostIo::print_streamed`]).
+///
+/// [`HostIo::print_streamed`]: super::HostIo::print_streamed
+const PRINTED_WHOLE: usize = 1_000_000;
+
+/// The text `write` writes, as `limit` lets it be.
 fn written(
-    limit: Option<&str>,
+    limit: Limit,
     write: impl FnOnce(&mut dyn std::fmt::Write) -> std::fmt::Result,
 ) -> Result<String, VmError> {
     match limit {
-        None => {
-            let mut text = String::new();
-            let _ = write(&mut text);
-            Ok(text)
-        }
-        Some(name) => {
+        Limit::Refuse(name) => {
             let mut text = Bounded::default();
             let _ = write(&mut text);
             text.text(name, None)
         }
+        Limit::Cut(most) => {
+            let mut text = Cut::new(most);
+            let _ = write(&mut text);
+            Ok(text.text())
+        }
+        Limit::Whole => {
+            let mut text = String::new();
+            let _ = write(&mut text);
+            Ok(text)
+        }
+        Limit::Discard => {
+            struct Nothing;
+            impl std::fmt::Write for Nothing {
+                fn write_str(&mut self, _: &str) -> std::fmt::Result {
+                    Ok(())
+                }
+            }
+            let _ = write(&mut Nothing);
+            Ok(String::new())
+        }
     }
+}
+
+/// A text kept to its first `most` bytes (at a character's end), with
+/// how many more were written.
+pub(crate) struct Cut {
+    kept: String,
+    most: usize,
+    more: usize,
+}
+
+impl Cut {
+    pub(crate) fn new(most: usize) -> Cut {
+        Cut {
+            kept: String::new(),
+            most,
+            more: 0,
+        }
+    }
+
+    /// The text: whole, or its first part and `… (N more bytes)`.
+    pub(crate) fn text(self) -> String {
+        match self.more {
+            0 => self.kept,
+            more => format!("{}… ({more} more bytes)", self.kept),
+        }
+    }
+}
+
+impl std::fmt::Write for Cut {
+    fn write_str(&mut self, part: &str) -> std::fmt::Result {
+        if self.more == 0 {
+            let room = self.most - self.kept.len();
+            if part.len() <= room {
+                self.kept.push_str(part);
+                return Ok(());
+            }
+            let mut end = room;
+            while !part.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.kept.push_str(&part[..end]);
+            self.more = part.len() - end;
+            return Ok(());
+        }
+        self.more += part.len();
+        Ok(())
+    }
+}
+
+/// A text kept whole as long as it is no longer than `most`: a longer
+/// one stops the writing.
+struct Whole {
+    text: String,
+    most: usize,
+    over: bool,
+}
+
+impl std::fmt::Write for Whole {
+    fn write_str(&mut self, part: &str) -> std::fmt::Result {
+        if self.text.len() + part.len() > self.most {
+            self.over = true;
+            return Err(std::fmt::Error);
+        }
+        self.text.push_str(part);
+        Ok(())
+    }
+}
+
+/// What is done with a shown value: its text given to `then`, as long
+/// as `Limit` lets it be; or printed to `stream` (with a line end when
+/// `newline`), by the builtin `call`, whatever its length.
+pub(crate) enum Deliver {
+    Text(Limit, Then),
+    Print {
+        stream: super::Stream,
+        call: &'static str,
+        newline: bool,
+    },
+}
+
+impl Deliver {
+    /// The limit of the text made before it is delivered.
+    fn limit(&self) -> Limit {
+        match self {
+            Deliver::Text(limit, _) => *limit,
+            Deliver::Print { .. } => Limit::Discard,
+        }
+    }
+
+    /// Deliver the text `write` writes.
+    fn deliver(self, vm: &mut Vm, write: Writer) -> Result<Step, VmError> {
+        match self {
+            Deliver::Text(limit, then) => {
+                let text = written(limit, |out| write(out))?;
+                then(vm, text)
+            }
+            Deliver::Print {
+                stream,
+                call,
+                newline,
+            } => print_shown(vm, stream, call, newline, write),
+        }
+    }
+}
+
+/// What writes the text of a shown value, as often as it is asked: a
+/// print in pieces writes it on a thread of its own.
+pub(crate) type Writer = Arc<dyn Fn(&mut dyn std::fmt::Write) -> std::fmt::Result + Send + Sync>;
+
+/// Print the text `write` writes to `stream`.
+///
+/// To an embedder's outputs, and in a build for WebAssembly, a print is
+/// one write: its text is made whole, as long as a string may be (a
+/// longer one is an error of the print). To the process's stdout and
+/// stderr, a text no longer than [`PRINTED_WHOLE`] is made whole and
+/// printed as any print is; a longer one goes in pieces as it is made
+/// ([`crate::builtins::prelude::print_in_pieces`]), so that a text of
+/// any length takes no more memory than a few pieces.
+fn print_shown(
+    vm: &mut Vm,
+    stream: super::Stream,
+    call: &'static str,
+    newline: bool,
+    write: Writer,
+) -> Result<Step, VmError> {
+    if !vm.runtime.io.streams() {
+        let mut text = written(Limit::Refuse(call), |out| write(out))?;
+        if newline {
+            text.push('\n');
+        }
+        return crate::builtins::prelude::print_to(vm, stream, text, call);
+    }
+    let mut whole = Whole {
+        text: String::new(),
+        most: PRINTED_WHOLE,
+        over: false,
+    };
+    let _ = write(&mut whole);
+    if !whole.over {
+        let mut text = whole.text;
+        if newline {
+            text.push('\n');
+        }
+        return crate::builtins::prelude::print_to(vm, stream, text, call);
+    }
+    drop(whole);
+    crate::builtins::prelude::print_in_pieces(vm, stream, call, newline, write)
 }
 
 /// Write the text of `value` to `out` if it is a String, an Int, a
@@ -83,10 +271,8 @@ struct Showing {
     texts: Vec<String>,
     /// Whether a call is under way.
     calling: bool,
-    /// The builtin whose text this is, if its text is bounded
-    /// ([`Vm::shown_within`]).
-    limit: Option<&'static str>,
-    then: Option<Then>,
+    /// What is done with the text.
+    deliver: Option<Deliver>,
 }
 
 impl Native for Showing {
@@ -113,19 +299,27 @@ impl Native for Showing {
             let display = vm.own.value(*slot, display.clone());
             return Ok(vm.call(display, [part.clone()]));
         }
-        let next = Cell::new(0);
-        let texts = &self.texts;
-        let shown = Shown(&self.value, &|part, f| {
-            written_slot(&self.table, part)?;
-            let text = &texts[next.get()];
-            next.set(next.get() + 1);
-            Some(f.write_str(text))
-        });
-        let text = written(self.limit, |out| write!(out, "{shown}"))?;
-        let then = self.then.take().ok_or_else(|| {
+        let texts = std::mem::take(&mut self.texts);
+        let table = self.table.clone();
+        let value = self.value.clone();
+        let deliver = self.deliver.take().ok_or_else(|| {
             VmError::new("internal VM error: a shown value was finished twice".into())
         })?;
-        then(vm, text)
+        // (Written again from the start each time: a print may write it
+        // twice, the second time on a thread of its own.)
+        deliver.deliver(
+            vm,
+            Arc::new(move |out| {
+                let next = Cell::new(0);
+                let shown = Shown(&value, &|part, f| {
+                    written_slot(&table, part)?;
+                    let text = texts.get(next.get())?;
+                    next.set(next.get() + 1);
+                    Some(f.write_str(text))
+                });
+                write!(out, "{shown}")
+            }),
+        )
     }
 }
 
@@ -175,7 +369,7 @@ impl Vm {
         &self,
         table: &Globals,
         value: &Value,
-        limit: Option<&str>,
+        limit: Limit,
     ) -> Result<(String, Parts, bool), VmError> {
         let parts: RefCell<Parts> = RefCell::new(Vec::new());
         let unset: RefCell<Option<VmError>> = RefCell::new(None);
@@ -229,27 +423,57 @@ impl Vm {
         any(&self.view.entry).then(|| self.view.entry.clone())
     }
 
-    /// Show `value` and go on with `then`, which gets its text: at once
-    /// when no written `Display` impl has a part in it, else as a frame
-    /// that calls the impls first.
+    /// Show `value` as a message (a panic's): cut at [`MESSAGE_MOST`]
+    /// bytes, and go on with `then`, which gets its text.
     pub(crate) fn show(
         &mut self,
         value: &Value,
         then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
-        self.show_within(value, None, then)
+        self.show_to(
+            value,
+            Deliver::Text(Limit::Cut(MESSAGE_MOST), Box::new(then)),
+        )
     }
 
-    /// [`Vm::show`], with a text no longer than a string may hold when
-    /// `limit` names the builtin that makes it (`string.from`, string
-    /// interpolation): an error of that builtin's if it would be.
+    /// Print `value` to `stream` for the builtin `call` (`println`,
+    /// `io.eprint`), with a line end when `newline`: its whole text,
+    /// whatever its length.
+    pub(crate) fn print_value(
+        &mut self,
+        value: &Value,
+        stream: super::Stream,
+        call: &'static str,
+        newline: bool,
+    ) -> Result<Step, VmError> {
+        self.show_to(
+            value,
+            Deliver::Print {
+                stream,
+                call,
+                newline,
+            },
+        )
+    }
+
+    /// [`Vm::show`], with a text no longer than a string may hold: an
+    /// error of the builtin `limit` names (`string.from`, string
+    /// interpolation) if it would be.
     pub(crate) fn show_within(
         &mut self,
         value: &Value,
-        limit: Option<&'static str>,
+        limit: &'static str,
         then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
+        self.show_to(value, Deliver::Text(Limit::Refuse(limit), Box::new(then)))
+    }
+
+    /// Show `value` and deliver its text: at once when no written
+    /// `Display` impl has a part in it, else as a frame that calls the
+    /// impls first.
+    fn show_to(&mut self, value: &Value, deliver: Deliver) -> Result<Step, VmError> {
         value.writable()?;
+        let limit = deliver.limit();
         // The table the value is shown by, where it is not this VM's.
         let mut wider = None;
         if !self.view.table.any_shown() {
@@ -268,16 +492,17 @@ impl Vm {
                 .then(|| self.wider_table(Globals::any_shown))
                 .flatten();
             if wider.is_none() {
-                let text = match (limit, value) {
-                    (None, _) | (Some(_), Value::String(_, _)) => self.display_value(value),
-                    (Some(_), _) => written(limit, |out| match value {
+                let value = value.clone();
+                return deliver.deliver(
+                    self,
+                    Arc::new(move |out| match &value {
+                        Value::String(s, _) => out.write_str(s),
                         Value::Int(n) => write!(out, "{n}"),
                         Value::Float(f) => write!(out, "{f}"),
                         Value::Bool(b) => out.write_str(if *b { "true" } else { "false" }),
-                        _ => write!(out, "{value}"),
-                    })?,
-                };
-                return then(self, text);
+                        value => write!(out, "{value}"),
+                    }),
+                );
             }
         }
         // What the formatter writes, with nothing for the parts a
@@ -292,7 +517,13 @@ impl Vm {
             wider = Some(table);
         }
         if parts.is_empty() {
-            return then(self, text);
+            return match deliver {
+                Deliver::Text(_, then) => then(self, text),
+                print => {
+                    let value = value.clone();
+                    print.deliver(self, Arc::new(move |out| write!(out, "{value}")))
+                }
+            };
         }
         Ok(Step::Run(Box::new(Showing {
             value: value.clone(),
@@ -300,8 +531,7 @@ impl Vm {
             parts,
             texts: Vec::new(),
             calling: false,
-            limit,
-            then: Some(Box::new(then)),
+            deliver: Some(deliver),
         })))
     }
 
@@ -313,7 +543,7 @@ impl Vm {
     /// waits for something that never comes), the text is the value's
     /// plain structure.
     pub fn show_text(&mut self, value: &Value) -> String {
-        self.show_or_fail(value)
+        self.show_or_fail(value, Limit::Whole)
             .unwrap_or_else(|_| value.to_string())
     }
 
@@ -323,33 +553,35 @@ impl Vm {
     /// program. Any other failure of it shows the value's structure,
     /// as [`Vm::show_text`] does.
     pub(crate) fn show_text_of_err(&mut self, value: &Value) -> Result<String, VmError> {
-        match self.show_or_fail(value) {
+        match self.show_or_fail(value, Limit::Cut(MESSAGE_MOST)) {
             Err(e) if e.exit.is_some() || e.exit_in_a_test || e.out_of_steps => Err(e),
-            Err(_) => Ok(value.to_string()),
+            Err(_) => Ok(message_of(value)),
             Ok(text) => Ok(text),
         }
     }
 
-    fn show_or_fail(&mut self, value: &Value) -> Result<String, VmError> {
+    fn show_or_fail(&mut self, value: &Value, limit: Limit) -> Result<String, VmError> {
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
-        match self.shown(value)? {
+        let shown = self.show_to(
+            value,
+            Deliver::Text(
+                limit,
+                Box::new(|_, text| Ok(Step::Done(Value::string(text)))),
+            ),
+        )?;
+        match shown {
             Step::Done(Value::String(text, _)) => Ok(text.to_string()),
             Step::Run(showing) => {
                 self.push_native_frame(showing);
                 let run = self.run_thread(floor, |vm| vm.run_frames(floor, vm.own_slice()));
                 match self.finish_run(run, floor, stack_floor)? {
                     Value::String(text, _) => Ok(text.to_string()),
-                    _ => Ok(value.to_string()),
+                    _ => Ok(message_of(value)),
                 }
             }
-            _ => Ok(value.to_string()),
+            _ => Ok(message_of(value)),
         }
-    }
-
-    /// [`Vm::show`] for what gives the text as its value.
-    pub(crate) fn shown(&mut self, value: &Value) -> Result<Step, VmError> {
-        self.show(value, |_, text| Ok(Step::Done(Value::string(text))))
     }
 
     /// [`Vm::shown`] for the builtin `name`, whose text is a string a
@@ -359,8 +591,13 @@ impl Vm {
         value: &Value,
         name: &'static str,
     ) -> Result<Step, VmError> {
-        self.show_within(value, Some(name), |_, text| {
-            Ok(Step::Done(Value::string(text)))
-        })
+        self.show_within(value, name, |_, text| Ok(Step::Done(Value::string(text))))
     }
+}
+
+/// The structure of `value` as a message: cut at [`MESSAGE_MOST`] bytes.
+fn message_of(value: &Value) -> String {
+    let mut text = Cut::new(MESSAGE_MOST);
+    let _ = write!(text, "{value}");
+    text.text()
 }

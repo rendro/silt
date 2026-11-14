@@ -351,7 +351,7 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
         Err(e) => return Ok(toml_unknown_err(e.message)),
     };
     let least = least_len(&data);
-    if least > crate::value::MAX_COLLECTION_LEN {
+    if least > crate::value::MAX_TEXT_LEN {
         return Err(super::common::too_long_text(caller, least));
     }
     let text = match pretty {
@@ -359,7 +359,7 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
         false => ::toml::to_string(&Toml(&data)),
     };
     match text {
-        Ok(s) if s.len() > crate::value::MAX_COLLECTION_LEN => {
+        Ok(s) if s.len() > crate::value::MAX_TEXT_LEN => {
             Err(super::common::too_long_text(caller, s.len()))
         }
         Ok(s) => Ok(Value::variant(bv::OK, [Value::string(s)])),

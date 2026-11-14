@@ -164,12 +164,9 @@ fn on_own_stack(
         static WORKER: Worker = Worker::start();
     }
 
-    // The tree and its symbols stay on that thread (the interner is per
-    // thread, and each run starts with an empty one); text and
-    // diagnostics, which hold no symbol, come back.
+    // The tree stays on that thread; text and diagnostics come back.
     let source = source.to_string();
     let job: Job = Box::new(move || {
-        crate::intern::reset();
         let run = std::panic::AssertUnwindSafe(|| format_here(file, &source, tamper));
         std::panic::catch_unwind(run)
     });
