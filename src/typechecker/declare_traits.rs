@@ -441,17 +441,38 @@ impl TypeChecker {
         (names, named, mapping)
     }
 
-    /// The help for a trait name `name` that names no trait: the declared
-    /// or prelude trait it is closest to, as an unknown value gets.
+    /// The help for a trait name `name` that names no trait: the trait
+    /// it is closest to, of those an impl can name: the program's own,
+    /// the prelude's but the sealed ones (`Equal`, `Compare`, `Hash`,
+    /// `Number` are derived), and a module's, written with its module
+    /// (`json.Decode`).
     fn similar_trait_help(&self, name: Symbol) -> Option<String> {
         let written = resolve(name);
-        let candidates: Vec<String> = (self.tables.traits.keys().map(|t| resolve(t.name)))
-            .chain(crate::defs::PRELUDE_TRAITS.iter().map(|t| t.to_string()))
-            .filter(|candidate| *candidate != written)
-            .collect();
+        // (Each candidate: the name compared, and how the help writes it.)
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        for key in self.tables.traits.keys() {
+            let shown = resolve(key.name);
+            match crate::defs::builtin_trait_of_id(key.id.0) {
+                Some((_, None)) => {}
+                Some((builtin, Some(module))) => candidates.push((
+                    builtin.to_string(),
+                    format!("`{module}.{builtin}` (a trait of module `{module}`, after `import {module}`)"),
+                )),
+                None => candidates.push((shown.clone(), format!("`{shown}`"))),
+            }
+        }
+        for prelude in crate::defs::PRELUDE_TRAITS {
+            if !super::SEALED_TRAIT_NAMES.contains(prelude) {
+                candidates.push((prelude.to_string(), format!("`{prelude}`")));
+            }
+        }
+        candidates.retain(|(candidate, _)| *candidate != written);
+        candidates.sort();
+        candidates.dedup();
+        let names: Vec<&String> = candidates.iter().map(|(n, _)| n).collect();
         // (Two neighbouring letters swapped, `Shwo` for `Show`, is one
         // slip, which the edit distance counts as two.)
-        let swapped = |candidate: &&String| {
+        let swapped = |candidate: &&&String| {
             let (a, b): (Vec<char>, Vec<char>) =
                 (written.chars().collect(), candidate.chars().collect());
             a.len() == b.len()
@@ -462,9 +483,10 @@ impl TypeChecker {
                         && a[i + 2..] == b[i + 2..]
                 })
         };
-        super::suggest::suggest_similar(&written, candidates.iter())
-            .or_else(|| candidates.iter().filter(swapped).min().cloned())
-            .map(|name| format!("did you mean `{name}`?"))
+        let found = super::suggest::suggest_similar(&written, names.iter().map(|n| n.as_str()))
+            .or_else(|| names.iter().filter(swapped).min().map(|n| n.to_string()))?;
+        let (_, shown) = candidates.iter().find(|(n, _)| *n == found)?;
+        Some(format!("did you mean {shown}?"))
     }
 
     /// The innermost part of `ty` (itself, or a type argument of it at
