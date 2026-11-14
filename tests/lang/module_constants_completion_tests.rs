@@ -8,8 +8,8 @@
 //!
 //! G5 — LSP dot-completion (`textDocument/completion` after `math.` / `float.`)
 //!      must surface those constants as completion items alongside the
-//!      module's functions. Before the fix, `dot_completions` in
-//!      `src/lsp.rs` only enumerated `builtin_module_functions` and never
+//!      module's functions. Before the fix, `dot_completions` (now in
+//!      `src/lsp/completion.rs`) only enumerated `builtin_module_functions` and never
 //!      consulted `builtin_module_constants`, so editor autocompletion
 //!      failed to suggest `math.pi`, `float.max_value`, etc.
 //!

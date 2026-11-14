@@ -1,0 +1,5 @@
+1:1 info this file is not checked: the silt.toml of a dependency has errors (see bad/silt.toml)
+bad/silt.toml:1:9 error invalid manifest: invalid table header\nnote: expected `.`, `]`
+geom/silt.toml:6:8 error dependency `nope`: path `../does-not-exist` does not exist\nnote: the path is relative to the directory of this silt.toml and resolves to does-not-exist
+silt.toml:6:1 info `app` depends on `geom` here, and the silt.toml of a dependency has errors (see geom/silt.toml)
+silt.toml:7:1 info `app` depends on `bad` here, and the silt.toml of a dependency has errors (see bad/silt.toml)

@@ -284,6 +284,12 @@ struct Conn {
     /// back. (One for which a cancel request was sent does not go back
     /// either: `Canceller::sent`.)
     broken: bool,
+    /// A statement left in its session what the reset does not undo (a
+    /// library `LOAD` loaded), or dropped a statement the connection
+    /// keeps prepared for itself (`DEALLOCATE`, also of one of the
+    /// client's own by its name): it is closed, not given back
+    /// ([`control::closes_session`]).
+    closes: std::sync::atomic::AtomicBool,
     /// Where its reset is ([`Conn::reset`]): `RESET_DUE`, `RESET_DONE`,
     /// `RESET_SENT`, `RESET_FAILED` (then it is broken).
     reset: std::sync::atomic::AtomicU8,
@@ -352,9 +358,33 @@ impl r2d2::ManageConnection for Manager {
 }
 
 impl Conn {
+    /// The statement `sql` is about to run: if it leaves in the session
+    /// what the reset does not undo, the connection is closed once it is
+    /// given back ([`control::closes_session`]). (So no reset goes with
+    /// its last operation.)
+    fn closes_after(&self, sql: &str) {
+        if control::closes_session(sql) {
+            self.closes.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// `e`, an error of an operation on the connection, says that a
+    /// statement the connection prepared is gone from the session
+    /// (SQLSTATE 26000: one of the client's own, a type look-up, dropped
+    /// by a `DEALLOCATE` in a `DO` block or a function, which the first
+    /// word of a statement does not show): every later statement that
+    /// needs it would fail the same way, so the connection is closed, not
+    /// given back.
+    fn lost_a_statement(&self, e: &tokio_postgres::Error) {
+        if e.code() == Some(&tokio_postgres::error::SqlState::INVALID_SQL_STATEMENT_NAME) {
+            self.closes.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     /// It must not go back to the pool.
     fn is_broken(&self) -> bool {
         self.broken
+            || self.closes.load(std::sync::atomic::Ordering::SeqCst)
             || self.canceller.was_sent()
             || self.client.is_closed()
             || self.reset.load(std::sync::atomic::Ordering::SeqCst) == RESET_FAILED
@@ -1680,14 +1710,31 @@ fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
 /// The `PostgresError` of the statement `sql` on `conn`, if it is one
 /// the program may not send there ([`control`]): one that begins or
 /// ends a transaction, and on a pool one that works only inside a
-/// transaction. It is not sent; inside a transaction, the transaction
-/// goes on.
+/// transaction; and anywhere a `COPY` of standard input or output, whose
+/// data the module does not send or read. It is not sent; inside a
+/// transaction, the transaction goes on.
 fn refused_control(conn: &Value, sql: &str) -> Option<Value> {
     let in_tx = match (PoolHandle::take(conn), TxHandle::take(conn)) {
         (Some(_), _) => false,
         (None, Some(_)) => true,
         (None, None) => return None,
     };
+    if let Some(copy) = control::copy_stream(sql) {
+        let instead = match copy {
+            control::Copy::FromStdin => {
+                "insert the rows with INSERT, or have the server read a file it can reach \
+                 with COPY ... FROM 'path'"
+            }
+            control::Copy::ToStdout => {
+                "read the rows with postgres.query or postgres.stream, or have the server \
+                 write a file with COPY ... TO 'path'"
+            }
+        };
+        return Some(other_error(format!(
+            "postgres: {} cannot run: the module sends and reads no COPY data; {instead}",
+            copy.name()
+        )));
+    }
     let why = match (control::control(sql)?, in_tx) {
         (Control::Savepoint(_), true) => return None,
         (Control::Ends(name), true) => format!(
@@ -2146,6 +2193,7 @@ fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, Conn
         },
         told,
         broken: false,
+        closes: std::sync::atomic::AtomicBool::new(false),
         reset: std::sync::atomic::AtomicU8::new(RESET_DUE),
         pending: Mutex::new(None),
     })
@@ -2243,7 +2291,10 @@ fn with_conn<A>(
                 let mut first = first;
                 match first(conn.conn()) {
                     Ok(given) => rest(conn.conn(), given, Last::Plain),
-                    Err(e) => Err(pg_error_to_variant(&e)),
+                    Err(e) => {
+                        conn.conn().lost_a_statement(&e);
+                        Err(pg_error_to_variant(&e))
+                    }
                 }
             }
             Err(e) => Err(e),
@@ -2299,7 +2350,10 @@ fn live<A>(
                 conn.discard();
                 conn = took(pool)?;
             }
-            Err(e) => return Err(pg_error_to_variant(&e)),
+            Err(e) => {
+                conn.lost_a_statement(&e);
+                return Err(pg_error_to_variant(&e));
+            }
         }
     }
 }
@@ -2325,9 +2379,10 @@ fn prepare(
     (row, rt, impls): &Decoding,
     sql: &str,
 ) -> Result<(tokio_postgres::Statement, Plan), Value> {
-    let statement = conn
-        .wait(conn.client().prepare(sql))
-        .map_err(|e| pg_error_to_variant(&e))?;
+    let statement = conn.wait(conn.client().prepare(sql)).map_err(|e| {
+        conn.lost_a_statement(&e);
+        pg_error_to_variant(&e)
+    })?;
     let plan = Plan::new(rt, impls.clone(), row, statement.columns())?;
     Ok((statement, plan))
 }
@@ -2423,8 +2478,12 @@ fn do_query(
         |conn| conn.wait(conn.client().prepare(&sql)),
         |conn, statement, last| {
             let plan = Plan::new(rt, impls.clone(), row, statement.columns())?;
+            conn.closes_after(&sql);
             let rows = finish(conn, last, conn.client().query(&statement, &bind));
-            let rows = rows.map_err(|e| pg_error_to_variant(&e))?;
+            let rows = rows.map_err(|e| {
+                conn.lost_a_statement(&e);
+                pg_error_to_variant(&e)
+            })?;
             let rows = plan.rows(rt, rows.iter())?;
             Ok(to_fill.give(rt, &plan, rows, None))
         },
@@ -2438,9 +2497,15 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>, wanted: 
         target,
         wanted,
         |conn| conn.wait(conn.client().prepare(&sql)),
-        |conn, statement, last| match finish(conn, last, conn.client().execute(&statement, &bind)) {
-            Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
-            Err(e) => Err(pg_error_to_variant(&e)),
+        |conn, statement, last| {
+            conn.closes_after(&sql);
+            match finish(conn, last, conn.client().execute(&statement, &bind)) {
+                Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+                Err(e) => {
+                    conn.lost_a_statement(&e);
+                    Err(pg_error_to_variant(&e))
+                }
+            }
         },
     )
 }
@@ -4524,8 +4589,8 @@ mod tests {
         );
     }
 
-    /// Behavioural companion to the source-grep lock in
-    /// tests/meta/postgres_poisoned_lock_tests.rs. Force-poisons each of the
+    /// The registry mutexes recover from poisoning (every `lock()` of them
+    /// takes `unwrap_or_else(|e| e.into_inner())`). Force-poisons each of the
     /// three module-private registry mutexes (pool / tx / cursor) by
     /// panicking a background thread while it holds the guard, then
     /// exercises the recovery-pattern call sites and asserts they

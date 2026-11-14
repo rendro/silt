@@ -708,8 +708,8 @@ impl Server {
 
     /// Why the fields of the record type `record`, found in the open
     /// document `uri`, cannot be renamed, if they cannot: the type is
-    /// one of silt's own, or a type of another package (a dependency),
-    /// whose files a rename does not edit.
+    /// one of silt's own, or a type of another package (a dependency):
+    /// its field is renamed from a file of that package.
     fn field_not_renameable(&self, uri: &Uri, record: &DefKey) -> Option<String> {
         if matches!(record, DefKey::Builtin(_)) {
             return Some("is a field of a builtin type and cannot be renamed".to_string());
@@ -721,8 +721,8 @@ impl Server {
         let home = graph.module(def.module);
         (home.package != graph.module(module.id).package).then(|| {
             format!(
-                "is a field of `{}`, a type of the package `{}`: a rename edits the files of \
-                 this package only",
+                "is a field of `{}`, a type of the package `{}`: rename it in a file of that \
+                 package",
                 resolve_sym(def.name),
                 resolve_sym(home.package_name)
             )

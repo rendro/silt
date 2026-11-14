@@ -1,0 +1,8 @@
+-- cmd: lsp
+-- Two dependencies whose silt.toml have errors: the note on each line of
+-- the project's own silt.toml names the manifest that line leads to.
+import geom
+
+fn main() {
+  println(geom.two())
+}

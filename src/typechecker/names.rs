@@ -3294,7 +3294,14 @@ impl Resolver<'_> {
             .iter()
             .flatten()
             .map(|local| &local.name)
-            .chain(self.scope.values.keys())
+            // (Not a name whose meaning is unknown: one a declaration
+            // that did not parse would have bound, or an import that
+            // failed.)
+            .chain(
+                (self.scope.values.iter())
+                    .filter(|(_, binding)| !matches!(binding, Binding::Poisoned))
+                    .map(|(name, _)| name),
+            )
             .chain(self.scope.implied.keys())
             .chain(self.builtins.prelude.values.keys())
             .map(|n| resolve(*n))

@@ -1281,8 +1281,12 @@ fn names_a_variable(ty: &TypeExpr) -> bool {
 /// parameter typed, `-> ()` completes the signature, which lets the
 /// body call the function at other types (`f(1)` and `f("s")` in `f`'s
 /// own body): left out, that program would be refused. The body's
-/// value is `()` with `-> ()` and without it, so a `return` or a `?`
-/// in the body meets the same return type `()` either way.
+/// value is `()` with `-> ()` and without it, so a `?` or a `return ()`
+/// in the body meets the same return type `()` either way. A `return`
+/// of another value does not: with `-> ()` it is the error ("expected
+/// (), got Int" at the `return`), without it the first such `return`
+/// sets the result's type and the error moves to the last line. So
+/// `-> ()` stays over a body that has one.
 pub(super) fn unit_return_dropped(f: &FnDecl) -> bool {
     let unit = matches!(
         &f.return_type,
@@ -1293,7 +1297,20 @@ pub(super) fn unit_return_dropped(f: &FnDecl) -> bool {
         && f.params.iter().all(|p| {
             p.kind == ParamKind::Data && p.ty.as_ref().is_some_and(|ty| !names_a_variable(ty))
         });
-    unit && !f.is_signature_only && unit_by_form(&f.body) && (untyped || no_variable)
+    unit && !f.is_signature_only
+        && unit_by_form(&f.body)
+        && (untyped || no_variable)
+        && !returns_a_value(&f.body)
+}
+
+/// Whether `body` holds a `return` of a value that is not `()` written
+/// as such. A `return` in a closure ends the closure, not the function:
+/// it is not looked at.
+fn returns_a_value(body: &Expr) -> bool {
+    crate::compiler::any_expr_outside_closures(
+        body,
+        &mut |e| matches!(&e.kind, ExprKind::Return(Some(value)) if !matches!(value.kind, ExprKind::Unit)),
+    )
 }
 
 /// A stage of a pipeline as it is compared: `f()`, a call of a name
@@ -1565,6 +1582,12 @@ mod tests {
             "fn f() {\n  let x = 1\n  return ()\n}\n",
             "fn f() {\n  let x = 1\n}\n",
         );
+        // (A `return` in a closure ends the closure: the function's
+        // `-> ()` is left out as without it.)
+        ok(
+            "fn f(n: Int) -> () {\n  let g = { x -> return 5 }\n  ()\n}\n",
+            "fn f(n: Int) {\n  let g = { x -> return 5 }\n}\n",
+        );
         for (before, after) in [
             ("fn f() -> () {\n  g()\n}\n", "fn f() {\n  g()\n}\n"),
             ("fn f(x: a) -> () {\n  ()\n}\n", "fn f(x: a) {\n  ()\n}\n"),
@@ -1577,6 +1600,16 @@ mod tests {
                 "fn f(x: Int) where a: D {\n  ()\n}\n",
             ),
             ("fn f() {\n  g()\n  ()\n}\n", "fn f() {\n  g()\n}\n"),
+            // (A `return` of a value: without `-> ()` it sets the
+            // result's type, and the error moves.)
+            (
+                "fn f(n: Int) -> () {\n  match n {\n    0 -> return 5\n    _ -> ()\n  }\n  ()\n}\n",
+                "fn f(n: Int) {\n  match n {\n    0 -> return 5\n    _ -> ()\n  }\n  ()\n}\n",
+            ),
+            (
+                "fn f() -> () {\n  let x = return 5\n}\n",
+                "fn f() {\n  let x = return 5\n}\n",
+            ),
         ] {
             let message = refusal(before, after);
             assert!(message.contains("function `f`"), "{before}: {message}");

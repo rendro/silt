@@ -1,0 +1,16 @@
+-- `Fun` is an ordinary name: a record type may be called `Fun`, and an
+-- impl for it stands beside an impl for `Fn`, each used for its own
+-- values.
+type Fun { name: String, arity: Int }
+trait Show { fn show(self) -> String }
+trait Show for Fn { fn show(self) -> String { "a function" } }
+trait Show for Fun { fn show(self) -> String { "the record {self.name}/{self.arity}" } }
+fn named(x: Int) -> Int { x + 1 }
+fn main() {
+  let f = Fun { name: "a", arity: 1 }
+  println(Show.show(f))
+  println(Show.show(named))
+  println(Show.show({ x -> x }))
+  let kept: Option(Fun) = Some(f)
+  println(kept)
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A bound the piped value does not meet is shown at that value, in both
+-- forms of the pipe: `x |> f` is `x |> f()`, which fmt writes `x |> f`,
+-- and the error stays where it was.
+trait Showable { fn show(self) -> String }
+trait Showable for Int { fn show(self) -> String { "int" } }
+fn display(x: a) -> String where a: Showable { Showable.show(x) }
+fn main() {
+  println("called" |> display())
+  println("bare" |> display)
+}

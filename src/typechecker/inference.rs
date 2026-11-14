@@ -93,7 +93,7 @@ pub(super) fn format_symbol_set(set: &BTreeSet<Symbol>) -> String {
 /// passes the suggest-similar threshold, we emit the plain error.
 ///
 /// See `src/typechecker/suggest.rs`.
-/// Lock: tests/lang/diagnostic_suggestion_tests.rs.
+/// Lock: the goldens tests/golden/lang/errors/diagnostic_suggestion__*.
 pub(super) fn format_undefined_variable_message(
     name: Symbol,
     env: &TypeEnv,
@@ -3669,7 +3669,9 @@ impl TypeChecker {
                         .skip(implicit_self)
                         .position(|param| free_vars_in(param).contains(v))
                         .and_then(|i| args.get(i));
-                    if let (Some(arg), CallForm::Call) = (at, form) {
+                    // (In both forms: `x |> f` is `x |> f()`, and what the
+                    // piped value fails is shown at it.)
+                    if let Some(arg) = at {
                         if self.decode_places.contains(&self.wanted[k].origin.span) {
                             self.decode_places.insert(arg.span);
                         }
@@ -3729,7 +3731,7 @@ impl TypeChecker {
                         .skip(implicit_self)
                         .position(|param| free_vars_in(param).contains(&v))
                         .and_then(|i| args.get(i));
-                    if let (Some(arg), CallForm::Call) = (at, form) {
+                    if let Some(arg) = at {
                         let alias = self.alias_named(arg);
                         let use_ = &mut self.given_waiting[k];
                         if self.decode_places.contains(&use_.origin.span) {

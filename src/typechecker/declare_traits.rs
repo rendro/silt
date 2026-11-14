@@ -1871,6 +1871,13 @@ impl TypeChecker {
             return false;
         }
         if !constructor {
+            // (`trait Q for Box()`: the parser refused the empty
+            // parentheses, which is the one error; the header then ends
+            // behind them, not at the type's name.)
+            let empty_parens = ti.header_span.end > ti.target_type_span.end;
+            if ti.target_type_args.is_empty() && empty_parens {
+                return false;
+            }
             if ti.target_type_args.is_empty() {
                 let shown = Qualifier::written(ti.target_module, ti.target_type);
                 return !self.bare_generic(&shown, written, ti.target_type_span);

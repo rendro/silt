@@ -1,0 +1,20 @@
+-- `Fun` is an ordinary name: an enum may be called `Fun`, with a variant
+-- of that name, beside an impl for `Fn`.
+type Fun { Fun(Int), Other }
+trait Show { fn show(self) -> String }
+trait Show for Fn { fn show(self) -> String { "a function" } }
+trait Show for Fun {
+  fn show(self) -> String {
+    match self {
+      Fun(n) -> "Fun {n}"
+      Other -> "Other"
+    }
+  }
+}
+fn main() {
+  println(Show.show(Fun(3)))
+  println(Show.show(Other))
+  println(Show.show(Fun))
+  let xs: List(Fun) = [Fun(1), Other]
+  println(xs)
+}

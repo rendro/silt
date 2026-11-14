@@ -3,9 +3,7 @@
 //!
 //! Background: round-66 converted every `Mutex::lock().unwrap()` site
 //! in `src/builtins/postgres.rs` to the recovery form
-//! `.lock().unwrap_or_else(|e| e.into_inner())` — see
-//! `tests/meta/postgres_poisoned_lock_tests.rs` for the lock on that
-//! refactor. **One site was missed**: the COMMIT/ROLLBACK finalizer's
+//! `.lock().unwrap_or_else(|e| e.into_inner())`. **One site was missed**: the COMMIT/ROLLBACK finalizer's
 //! `Ok(mutex)` arm at line 2046 used `mutex.into_inner().unwrap()`
 //! instead of `mutex.into_inner().unwrap_or_else(|e| e.into_inner())`.
 //!
@@ -29,8 +27,7 @@
 //! `transact`'s `finalise` closure are all private module-level state
 //! with no public test hook. Adding a test-only hook would widen the
 //! public surface for what is otherwise a single-line refactor that's
-//! perfectly captured by the grep lock — same trade-off the round-52
-//! `postgres_poisoned_lock_tests.rs` made.
+//! perfectly captured by the grep lock below.
 
 use std::fs;
 use std::path::PathBuf;

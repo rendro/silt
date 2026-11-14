@@ -1,6 +1,7 @@
 -- cmd: lsp
 -- A dependency whose silt.toml has an error: the note on the file names
--- that manifest, not the project's own, which has no error.
+-- that manifest, not the project's own, which has no error; the line of
+-- the project's own silt.toml that leads to it gets a note too.
 import geom
 
 fn main() {
