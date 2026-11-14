@@ -14,4 +14,4 @@ program is best.
 ## Supported versions
 
 Fixes go into the next release. Only the latest release is supported;
-`silt update` installs it.
+`silt self-update` installs it.

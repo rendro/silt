@@ -37,6 +37,167 @@ beforehand if length privacy matters for your protocol.
 | `random_bytes` | `(Int) -> Result(Bytes, CryptoError)` | OS CSPRNG, `0..=1_048_576` bytes |
 | `constant_time_eq` | `(Bytes, Bytes) -> Bool` | Timing-safe comparison (lengths leak) |
 
+## `crypto.sha256`
+
+```
+crypto.sha256(data: Bytes) -> Bytes
+```
+
+The SHA-256 digest of `data`: 32 bytes.
+
+```silt
+import bytes
+import crypto
+
+fn main() {
+  let d = crypto.sha256(bytes.from_string("abc"))
+  println(bytes.length(d)) -- 32
+  println(bytes.to_hex(d)) -- ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+}
+```
+
+
+## `crypto.sha512`
+
+```
+crypto.sha512(data: Bytes) -> Bytes
+```
+
+The SHA-512 digest of `data`: 64 bytes.
+
+```silt
+import bytes
+import crypto
+import string
+
+fn main() {
+  let d = crypto.sha512(bytes.from_string("abc"))
+  println(bytes.length(d)) -- 64
+  println(string.slice(bytes.to_hex(d), 0, 16)) -- ddaf35a193617aba
+}
+```
+
+
+## `crypto.md5`
+
+```
+crypto.md5(data: Bytes) -> Bytes
+```
+
+The MD5 digest of `data`: 16 bytes. MD5 is not collision-resistant: use it only to match a system that asks for it, never for a security decision.
+
+```silt
+import bytes
+import crypto
+
+fn main() {
+  println(bytes.to_hex(crypto.md5(bytes.from_string("abc")))) -- 900150983cd24fb0d6963f7d28e17f72
+}
+```
+
+
+## `crypto.blake2b`
+
+```
+crypto.blake2b(data: Bytes) -> Bytes
+```
+
+The BLAKE2b-512 digest of `data` (RFC 7693): 64 bytes.
+
+```silt
+import bytes
+import crypto
+import string
+
+fn main() {
+  let d = crypto.blake2b(bytes.from_string("abc"))
+  println(bytes.length(d)) -- 64
+  println(string.slice(bytes.to_hex(d), 0, 16)) -- ba80a53f981c4d0d
+}
+```
+
+
+## `crypto.hmac_sha256`
+
+```
+crypto.hmac_sha256(key: Bytes, msg: Bytes) -> Bytes
+```
+
+The HMAC-SHA256 of `msg` under `key`: 32 bytes. Compare a tag with `crypto.constant_time_eq`.
+
+```silt
+import bytes
+import crypto
+
+fn main() {
+  let tag = crypto.hmac_sha256(bytes.from_string("key"), bytes.from_string("message"))
+  println(bytes.to_hex(tag)) -- 6e9ef29b75fffc5b7abae527d58fdadb2fe42e7219011976917343065f58ed4a
+}
+```
+
+
+## `crypto.hmac_sha512`
+
+```
+crypto.hmac_sha512(key: Bytes, msg: Bytes) -> Bytes
+```
+
+The HMAC-SHA512 of `msg` under `key`: 64 bytes.
+
+```silt
+import bytes
+import crypto
+
+fn main() {
+  let tag = crypto.hmac_sha512(bytes.from_string("key"), bytes.from_string("message"))
+  println(bytes.length(tag)) -- 64
+}
+```
+
+
+## `crypto.random_bytes`
+
+```
+crypto.random_bytes(n: Int) -> Result(Bytes, CryptoError)
+```
+
+`n` bytes from the operating system's secure random number generator. `n` from 0 to 1,048,576; another is `Err(InvalidLength(n))`, and a failure of the generator `Err(Other(msg))`.
+
+```silt
+import bytes
+import crypto
+
+fn main() {
+  match crypto.random_bytes(16) {
+    Ok(token) -> println(bytes.to_hex(token))
+    Err(e) -> println("{e}")
+  }
+}
+```
+
+
+## `crypto.constant_time_eq`
+
+```
+crypto.constant_time_eq(a: Bytes, b: Bytes) -> Bool
+```
+
+Whether `a` and `b` hold the same bytes, in a time that does not depend on where they differ. Values of two lengths are `false` at once, so the length can show in the time; the contents cannot.
+
+```silt
+import bytes
+import crypto
+
+fn main() {
+  let key = bytes.from_string("key")
+  let expected = crypto.hmac_sha256(key, bytes.from_string("order 42"))
+  let received = crypto.hmac_sha256(key, bytes.from_string("order 42"))
+  println(crypto.constant_time_eq(expected, received)) -- true
+  println(crypto.constant_time_eq(expected, bytes.from_string("x"))) -- false
+}
+```
+
+
 ## Examples
 
 ```silt

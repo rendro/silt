@@ -69,7 +69,9 @@ mechanism.
 
 ## 2. Channels
 
-A channel is a conduit for passing values between tasks.
+A channel is a conduit for passing values between tasks. This section shows
+how the operations fit together; what each function returns and when it
+fails is in the reference, [channel / task](stdlib/channel-task.md).
 
 ### Creating channels
 
@@ -81,50 +83,28 @@ let ch = channel.new(0)
 let ch = channel.new(10)
 ```
 
-`channel.new(n)` takes the channel's capacity. `channel.new(0)` creates a
-rendezvous channel, where the sender blocks until a receiver is ready and
-vice versa. A capacity above 0 creates a buffered channel that holds that
-many values.
+`channel.new(n)` takes the channel's capacity: 0 makes a rendezvous channel,
+more makes a buffer of that many values. Channels carry any value type,
+even other channels; the type is inferred from usage.
+([`channel.new`](stdlib/channel-task.md#channelnew))
 
-Channels carry any value type -- integers, strings, lists, tuples, records,
-even other channels. The type is inferred from usage.
-
-### Sending: `channel.send(ch, value)`
+### Sending and receiving
 
 ```silt
 channel.send(ch, "hello")
-channel.send(ch, 42)
-channel.send(ch, [1, 2, 3])
-```
 
-`channel.send` places a value into the channel's buffer. If the buffer is full,
-the current task is parked until space opens up. The OS thread is not blocked --
-it runs other tasks in the meantime. If the channel is closed, sending is an
-error.
-
-Returns `()`.
-
-### Receiving: `channel.receive(ch)`
-
-```silt
 when let Some(msg) = channel.receive(ch) else {
   return
 }
 ```
 
-`channel.receive` takes one value from the channel's buffer. It returns an
-`Option(a)`:
-
-- `Some(value)` -- a value was available.
-- `None` -- the channel is closed and the buffer is empty. No more values
-  will ever arrive.
-
-If the buffer is empty but the channel is still open, the current task is
-parked until a value arrives. The OS thread is not blocked -- it runs other
-tasks in the meantime.
-
-Before attempting to receive, the scheduler yields to other tasks so that
-competing receivers get a fair turn (round-robin fan-out).
+A send into a full channel, and a receive from an empty one, park the task
+until the other side comes; the OS thread runs other tasks meanwhile.
+`channel.receive` gives `Some(value)`, or `None` once the channel is closed
+and its buffer is empty. Before it receives, the scheduler gives competing
+receivers their turn, so values fan out round-robin.
+([`channel.send`](stdlib/channel-task.md#channelsend),
+[`channel.receive`](stdlib/channel-task.md#channelreceive))
 
 ### Closing: `channel.close(ch)`
 
@@ -132,56 +112,26 @@ competing receivers get a fair turn (round-robin fan-out).
 channel.close(ch)
 ```
 
-Signals that no more values will be sent on this channel. After closing:
+Closing says that no more values will come. Receivers still get what is in
+the buffer, then `None`. A send on a closed channel is a runtime error, so a
+channel is closed by the side that sends on it, or after the senders are
+done. ([`channel.close`](stdlib/channel-task.md#channelclose))
 
-- **A send on the closed channel is a runtime error**, `send on closed
-  channel N`, whichever function was to send: `channel.send`,
-  `channel.try_send`, or a `channel.select` that has a `Send` arm on the
-  channel. A send that was waiting when the channel was closed fails the
-  same way. So a channel is closed by the side that sends on it, or after
-  the senders are done.
-- **Receives** drain any remaining buffered values. Once the buffer is
-  empty, `channel.receive` returns `None` (and `channel.try_receive`
-  `Closed`).
-
-Returns `()`.
-
-### Non-blocking send: `channel.try_send(ch, value)`
+### Without waiting: `channel.try_send` and `channel.try_receive`
 
 ```silt
 let ch = channel.new(2)
 println(channel.try_send(ch, "a")) -- true
 println(channel.try_send(ch, "b")) -- true
 println(channel.try_send(ch, "c")) -- false (buffer full)
+
+println(channel.try_receive(ch)) -- Message("a")
 ```
 
-Attempts to send without blocking. Returns `true` if the value was placed in
-the buffer (or handed to a receiver that waits), or `false` if there is no
-room for it now. Never yields to the scheduler. On a closed channel it is the
-runtime error of every send on one, not `false`.
-
-### Non-blocking receive: `channel.try_receive(ch)`
-
-```silt
-let ch = channel.new(10)
-channel.send(ch, 42)
-
-println(channel.try_receive(ch)) -- Message(42)
-println(channel.try_receive(ch)) -- Empty
-```
-
-Attempts to receive without blocking. Returns a `ChannelResult(a)`, which
-has three variants:
-
-- `Message(value)` -- a value was available.
-- `Empty` -- no data yet, but the channel is still open.
-- `Closed` -- no data and the channel is closed.
-
-This lets you distinguish "nothing right now" from "nothing ever again."
-
-On a rendezvous channel, `try_receive` takes the value of a sender that is
-parked on it: the sender waits with its value until somebody takes it (see
-[Unbuffered channels](#unbuffered-channels-true-rendezvous)).
+The `try_` forms never park: `try_send` says whether the value went in, and
+`try_receive` gives `Message(value)`, `Empty` (nothing now) or `Closed`
+(nothing ever again). ([`channel.try_send`](stdlib/channel-task.md#channeltry_send),
+[`channel.try_receive`](stdlib/channel-task.md#channeltry_receive))
 
 ### Iterating: `channel.each(ch) { val -> ... }`
 
@@ -197,14 +147,11 @@ channel.each(ch) { msg -> println("got: {msg}") }
 --   got: world
 ```
 
-`channel.each` calls a function for each value received from the channel and
-returns `()` when the channel closes. It is the channel equivalent of
-`list.each`. When the channel is empty, the task is parked until new data
-arrives.
-
-After processing each message, `channel.each` yields to the scheduler so that
-other tasks waiting on the same channel get a fair turn. This is the mechanism
-behind round-robin fan-out (see Section 5).
+`channel.each` is the channel's `list.each`: it calls the function for each
+value and returns when the channel is closed and empty. After each value it
+gives the other tasks that wait on the channel their turn, which is what
+spreads work over workers in Section 5.
+([`channel.each`](stdlib/channel-task.md#channeleach))
 
 ### Unbuffered channels (true rendezvous)
 
@@ -238,11 +185,13 @@ when let Some(msg) = channel.receive(ch) else {
 println(msg) -- hello
 ```
 
-### Timeout channels
+### Waiting with a time limit
 
-`channel.timeout(dur)` creates a channel that automatically closes after the
-given `Duration`. It is useful for adding deadlines to `channel.select`
-operations.
+`channel.timeout(dur)` makes a channel that closes after `dur`; a `Recv` arm
+on it in a `channel.select` puts a time limit on the select.
+`channel.receive_timeout(ch, dur)` is that race for one channel in one call:
+it gives `Message(value)`, `Empty` when the time ran out, or `Closed`, and a
+value that is already there wins over the timer.
 
 ```silt
 let ch = channel.new(10)
@@ -253,24 +202,6 @@ match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
   channel.Received(^timer, None) -> println("timed out after 5s")
   _ -> ()
 }
-```
-
-The timeout channel carries no values -- it simply closes when the duration
-elapses. Receiving from it will block until closure, at which point it
-returns `None`. For the common case of a *single* receive with a deadline,
-prefer `channel.receive_timeout` (next section) -- it does the same race in one
-call.
-
-### Receive with timeout: `channel.receive_timeout(ch, dur)`
-
-`channel.receive_timeout` is a blocking receive with a deadline. It is the
-direct form of the `channel.timeout` + `channel.select` pattern above when
-you only need to wait on one channel:
-
-```silt
-let ch = channel.new(10)
-
-let _ = task.spawn { -> channel.send(ch, 42) }
 
 match channel.receive_timeout(ch, time.ms(500)) {
   channel.Message(val) -> println("got: {val}")
@@ -279,47 +210,19 @@ match channel.receive_timeout(ch, time.ms(500)) {
 }
 ```
 
-Like `channel.try_receive`, it returns a `ChannelResult(a)`:
-
-- `Message(val)` -- a value was delivered within `dur`.
-- `Empty` -- `dur` elapsed with no value and no close: what
-  `channel.try_receive` gives when nothing is there now.
-- `Closed` -- the channel is closed and its buffer is empty.
-
-A value that is there wins over an expired timer: one in the buffer, or one
-held by a sender that waits on a rendezvous channel. The non-blocking path
-is always tried first, so a ready value is never preempted by the deadline.
-A `Duration` of zero or less gives try-receive semantics (no timer is
-scheduled): it returns such a value, and `Empty` when there is none.
-Positive sub-millisecond durations are
-rounded up to one millisecond, so the caller always waits at least one timer
-tick.
-
-The `dur` argument is a `Duration` built with `time.ms` / `time.seconds`
-(the same shape `task.deadline` takes).
-
-Signature: `channel.receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)`.
+([`channel.timeout`](stdlib/channel-task.md#channeltimeout),
+[`channel.receive_timeout`](stdlib/channel-task.md#channelreceive_timeout))
 
 
 ## 3. Tasks
 
 ### Spawning: `task.spawn(fn)`
 
-```silt
-let handle = task.spawn { ->
-  let result = compute_something()
-  channel.send(ch, result)
-}
-```
-
-`task.spawn` takes a zero-argument function and submits it as a lightweight task
-to the thread pool. Spawning is cheap -- it allocates a stack and frames, not an
-OS thread. It returns a `task.Handle` value immediately.
-
-The function is a closure: it captures variables from the surrounding scope.
-Since all values in silt are immutable, sharing captured variables between the
-spawning task and the spawned task is safe. Under the hood, captured values are
-shared via `Arc` (atomic reference counting).
+`task.spawn` runs a function of no arguments as a lightweight task on the
+thread pool and returns its `task.Handle` at once. Spawning is cheap: a
+stack and frames, no OS thread. The function is a closure; since every value
+is immutable, what it captures is shared with the task that spawned it
+safely, by reference counting. ([`task.spawn`](stdlib/channel-task.md#taskspawn))
 
 ```silt
 let multiplier = 10
@@ -343,19 +246,12 @@ let h = task.spawn { -> 42 }
 let result = task.join(h) -- result = 42
 ```
 
-`task.join` parks the current task until the spawned task completes, then
-returns its result -- the value of the last expression in the spawned function's
-body. While waiting, the OS thread runs other tasks.
-
-If the spawned task panicked, errored, or was cancelled, `task.join` does
-**not** return an `Err` value. It raises the failure in the joining task as
-a runtime error of the form `joined task failed: <msg>`. The error points at
-where the task failed, and its call stack goes on, below the task's own
-calls, with the calls that led to the `task.join` (a cancelled task failed
-nowhere: its error points at the join). Silt has no
-`try`/`catch`, so a joined failure is terminal for the joining task — design
-cancellation-aware code to signal completion through a channel handshake or
-sentinel value when cancellation is an expected outcome rather than an error.
+`task.join` parks until the task has ended and gives what its function
+returned. A task that failed or was cancelled makes the join fail in turn,
+with the runtime error `joined task failed: <msg>`: it is not an `Err`
+value, and silt has no `try`/`catch`. Where a task may be cancelled as a
+matter of course, let it signal its end over a channel instead.
+([`task.join`](stdlib/channel-task.md#taskjoin))
 
 ### Cancelling: `task.cancel(handle)`
 
@@ -406,107 +302,25 @@ fn main() {
 }
 ```
 
-`task.cancel(h)` sets the handle's result to `Err("cancelled")` using
-first-writer-wins semantics: if the task has already completed with some other
-result, `task.cancel` leaves that result on the handle. Cancelling counts as
-handling the task, though: if the task had already failed, the cancel
-dismisses the failure, so it is not reported as a failure that nobody joined
-and does not make the program exit with status 1 (see
-[Failures that nobody joins](#failures-that-nobody-joins)). A failure
-the task took with a `task.join` (`joined task failed: ...`) is not its
-own: the cancel hands it back to the task that failed, which is then
-reported as never joined. So a failure is never lost to a cancel of the
-task that joins, whether the cancel comes before the join takes it or
-after. A task that was cancelled itself has nothing handed back: its
-cancellation is no failure, and a cancel of it dismissed what it had. A later
-`task.join(h)` still raises the task's own error, because the handle keeps
-the result that came first. Its effect on the task
-depends on where that task is at the moment of cancellation:
+What a cancel does to the task depends on where the task is. A task that
+waits (in a receive, a send, a `channel.select`, a `task.join`, a sleep or
+I/O) is ended there, without taking or sending anything; a task that has
+not run yet never runs. A task that is running, or whose wait has just
+ended, goes on for a bounded amount of further work: **after a cancel a
+task takes nothing new; it may still give what it holds**, so a worker that
+has just received an item can still put its result into a channel with
+room. It is ended at its next operation that would take something, wait or
+start I/O, or after 2,000 steps. A cancel is no orderly shutdown: where
+nothing may be lost, tell the task to stop over a channel (a stop message,
+or the close of its input), let it finish what it has, and join it.
 
-- **The task is waiting** (parked in a channel receive or send, a
-  `channel.select`, a `task.join`, a `time.sleep`, I/O, or similar): its
-  wait ends without taking or sending anything, and the task is ended
-  there. A value sent afterwards goes to the next receiver, not to it.
-- **The task has never run** (spawned, and not yet picked up by a
-  worker): it is dropped without running.
-- **The task is not waiting**: it is running, or its time slice ran out
-  and it is to run again, or **its wait has just ended** (a sender
-  handed it a value, a receiver took the value it waited to send, the
-  operation it waited for gave its result) and it has not run again. The
-  task goes on with what it holds, for a bounded amount of further
-  work. **After a cancel a task takes nothing new; it may still give
-  what it holds.** It is ended:
-  - at its next operation that would take something, whether or not
-    the thing is there: a `channel.receive`, `channel.try_receive` or
-    `channel.receive_timeout`, the next message of a `channel.each`,
-    the next element of a stream, `tcp.accept` (the connection stays
-    with the listener), a `task.join`, also of a task that has ended
-    (what that task returned or failed with stays with it: a failure
-    of it is reported as never joined), and a `channel.select` of which
-    no `Send` arm can be done at once (its `Recv` arms, timeouts among
-    them, are not tried);
-  - at its next operation that would have to wait, with nothing sent;
-    and at one that would start something which waits for the outside:
-    reading or writing a file's contents, the network, a database,
-    standard input. Nothing is started: a file it was about to write is
-    not written;
-  - at a call that would start a task to take in its place:
-    `task.deadline` (its function runs as a task of its own) and every
-    stream function that starts a stage (`stream.map`, `stream.take`
-    and the other transforms, and the sources: `stream.from_list`,
-    `stream.tcp_lines`, ...). No task is started, so nothing is taken
-    from the channel a stream would have been built over;
-  - when it has run 2,000 steps (about 2,000 instructions, a few
-    hundred rounds of a small loop), if it reaches none of these
-    before. The steps are counted from the first time slice that begins
-    after the cancel, so a task that was computing when the cancel came
-    is ended at most one time slice and 2,000 steps later.
-
-  What is done in those steps is what gives: a `channel.send` into a
-  channel with room or to a receiver that waits, `channel.try_send`, a
-  `Send` arm of a `channel.select` that can be done at once,
-  and `channel.close`. A task it starts with `task.spawn` is cancelled
-  at once and never runs. A `time.sleep` of no time is
-  done, since it waits for nothing; any longer one is a wait. (The `fs`
-  functions, which never wait, are done too: `fs.exists`, `fs.remove`,
-  `fs.rename` and the others.) The side effects of those steps happen.
-  What the task returns or fails with in them changes nothing: the
-  handle keeps the cancellation, and a failure is not reported.
-
-  This is the rule of a function that is past its `task.deadline`,
-  and the same count: a task that is past its deadline and cancelled has
-  2,000 steps in all, not twice that.
-
-**What the further work is for, and what it does not give.** A task that
-was just given something has the steps to pass it on by an operation
-that does not wait: a worker that receives an item and puts it, or its
-result, into a channel with room does not lose the item to a cancel,
-and takes no further one. A cancel is still no orderly shutdown. A
-worker that receives an item, computes, and then has to *wait* to send
-its result (its output channel is full, or is a rendezvous channel
-whose receiver is not there yet) is ended in that send, and the item is
-gone; so is the item of a worker that computes on it for more than
-2,000 steps, or that has to read or write a file for it. Where nothing
-may be lost when the work stops, tell the task to stop over a channel
-(a stop message, or the close of its input), let it finish what it has,
-and join it.
-
-**`task.cancel` returns when the task has ended**, and every task below
-it that the cancel reached: the last steps above have run, theirs too.
-What comes after the cancel (closing the channel the task sent on,
-counting what it sent, removing a file it wrote) sees everything they
-did. The wait is short: a cancelled task ends at its next wait or after
-at most 2,000 steps. (A step that is one long call, such as a sort of a
-long list or a function of the host, runs to its end first.) A task cannot wait for its own end: one that is
-cancelled itself (it cancels itself, or a task it was spawned by, whose
-cancel reaches it) does not wait, its call returns at once, and it has
-the last steps of a cancelled task.
-
-In every case a `task.join(h)` on the cancelled handle raises `joined task
-failed: cancelled` as a runtime error, at once: the handle has its result
-as soon as the cancel is made. A task you cancel is not joined: the cancel
-is the wait for it. This matches the `task.cancel` section of
-`docs/stdlib/channel-task.md`; the two are kept in sync deliberately.
+`task.cancel` returns when the task, and every task below it that the
+cancel reached, has ended, so what comes after it sees everything they did.
+A `task.join` of a cancelled handle raises `joined task failed: cancelled`,
+unless the task had already ended with another result, which the handle
+keeps; a failure of a cancelled task is not reported. The whole rule, step
+by step, is in the reference:
+[`task.cancel`](stdlib/channel-task.md#taskcancel).
 
 Returns `()`.
 
@@ -644,114 +458,16 @@ let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log")
 ```
 
 `task.deadline(dur, f)` runs `f` and gives `Ok` of what it returns, or
-`Err(Timeout)` if `f` was ended because `dur` had passed.
-
-The function runs as a task of its own, and the deadline is that task's:
-when `dur` has passed, its time is over. From then on the function
-**takes nothing new; it may still give what it holds**, for a small,
-fixed amount of further work. It is ended where it would take something
-or would have to wait, and a function that does neither is ended after
-that work. That is one rule for everything `f` does, whatever it waits
-for: I/O (see [Blocking operations](#blocking-operations)), a
-`time.sleep`, a `channel.receive` or `channel.send`, a `channel.select`,
-a `task.join`, a wait deep inside the callback of a `list.fold`, or the
-read of a stream. A `channel.receive` that nobody will ever answer is no
-deadlock inside a deadline: it ends when the deadline has passed. It is
-the rule of a task that was cancelled (see
-[Cancelling](#cancelling-taskcancelhandle)), which lists what takes and
-what gives.
-
-- **A wait ends one way or the other, never both.** Either the wait got
-  what it waited for (the value was received, the send was done, the
-  operation gave its result), and the function goes on with it; or the
-  deadline ended the wait, nothing was received and nothing was sent, and
-  the function is ended there: no further instruction of it runs. So a
-  receive under a deadline that answers `Err(Timeout)` took no value, and
-  a send that answers `Err(Timeout)` sent none: a loop that tries again
-  after a timeout loses nothing and sends nothing twice.
-- **`task.deadline` answers when the function has ended**, and says how:
-  it returned (`Ok`), it was ended by its deadline (`Err(Timeout)`), or
-  it failed. A function that got its value just in time and returns it is
-  `Ok`, even though the clock has moved past the deadline meanwhile: the
-  answer never contradicts what the function did. It comes at most two
-  time slices of the function after the deadline.
-- **When the time is over the function takes nothing new.** An
-  operation that would take something ends it there, `Err(Timeout)`,
-  whether or not the thing is there: a `channel.receive`,
-  `channel.try_receive` or `channel.receive_timeout`, the next message of
-  a `channel.each`, the next element of a stream, `tcp.accept`, a
-  `channel.select` of which no `Send` arm can be done at once (its `Recv`
-  arms are not tried). So a receive begun when the time is over is a
-  timeout, every time, and the value stays in its channel. (The
-  function's time is over from the first time slice that begins after
-  it; in the slice in which it passes, a receive of a value that is
-  there may still complete.) Nor does the
-  function start anything that would take or wait in its place: an
-  operation that waits for the outside (a file's contents, the network,
-  a database, standard input) is not started, a stream function that
-  would start a stage starts none, and a `task.deadline` it calls ends
-  it there, before the inner function is started.
-- **It may still give what it holds.** A `channel.send` into a channel
-  with room or to a receiver that waits, `channel.try_send`, a `Send`
-  arm of a `channel.select` that can be done at once and
-  `channel.close` are done; so are the `task.join` of a task that has
-  ended and `task.spawn`. That is what a function that got its value
-  just in time has to hand it on.
-- **A duration of zero or less is a time that is over from the start**,
-  and the rule is the same: `task.deadline(time.ms(0), { -> 1 })` is
-  `Ok(1)`, a function that sends into a channel with room is `Ok`, and a
-  function that receives is `Err(Timeout)` whether the channel is empty
-  or not.
-- **The work past the time is bounded in all.** A function whose time is
-  over runs on for at most 2,000 steps: about 2,000 instructions, a few
-  hundred rounds of a small loop. That is what a function which got its
-  value just in time has to return it, or to hand it on. Every step
-  counts, whatever the function does with it: computing, sends that are
-  done at once. When the steps are used up the function is ended: after
-  the step that used them up, or at the next wait it begins, of which
-  nothing is done then. (The steps are counted from the first time slice
-  that begins when the time is over, so a function that computes is
-  ended at most 2,000 steps and one time slice past its time. One call
-  of a builtin that is under way, the sort of a large list, runs to its
-  end first.) So a function that received a value and, instead of
-  returning it or handing it on, goes on working past its time is ended
-  with the value in hand: a worker that needs more than those steps for
-  the item it holds, or has to wait to send it, loses that item, as
-  after a cancel.
-- **A failure of the function is the caller's**: a runtime error inside
-  `f` is raised by `task.deadline` as it is, at the place in `f` where it
-  happened, whatever the clock says. A function that fails is never
-  reported as timed out.
-- **I/O that was given up may have happened.** An I/O operation in flight
-  when the function is ended is given up as for a cancelled task (see
-  [the I/O pool](#the-io-pool-and-operations-that-nobody-waits-for)): a
-  TCP connection it was reading or writing is shut down, and what the
-  read had taken off the wire is gone with it; a file write, an HTTP
-  request or a database statement that had started may complete all the
-  same, and a line that an `io.read_line` reads after it was given up is
-  nobody's. `Err(Timeout)` says that the function did not finish, not
-  that nothing of it reached the outside. A connection that reaches a
-  `tcp.accept` which was given up is not lost: the listener keeps it for
-  the next accept.
-- **Deadlines nest**: the function of an inner `task.deadline` has the
-  outer time too, if that is earlier, and is ended by the same rule. When
-  the inner time passes first, the outer function goes on with the inner
-  `Err(Timeout)` as a value; when the outer time does, both functions are
-  over and the outer `task.deadline` gives `Err(Timeout)`. The steps
-  past that time are one count for the two. (A function whose time is
-  already over cannot begin an inner deadline: the call ends it.)
-- **A deadline ends its function and what it spawned.** The tasks that
-  the function started and that still run, with `task.spawn` or as the
-  stages of a stream it built, are cancelled when the function is ended,
-  and the tasks those spawned, as `task.cancel` cancels the tasks a task
-  spawned (see [Cancelling](#cancelling-taskcancelhandle)). A task the
-  function was joining and did not spawn goes on: the join is ended, the
-  task is not. A task that goes on and fails later, with nobody left to
-  join it, is a failure that nobody joined (see
-  [Failures that nobody joins](#failures-that-nobody-joins)).
-- The value of `f` is inside the `Ok`, so a function that returns a
-  `Result` gives two layers: `Ok(Err(io.NotFound(path)))` is a read that
-  failed in time, `Err(task.Timeout)` one that did not finish.
+`Err(Timeout)` if `f` was ended because `dur` had passed. The function runs
+as a task of its own, and when its time is over it is treated as a task
+that was cancelled: it **takes nothing new, and may still give what it
+holds**, for a bounded amount of further work. A wait it is in ends one way
+or the other, never both: a receive that answers `Err(Timeout)` took no
+value, so a loop that tries again loses nothing. Whatever `f` waits for
+(I/O, a sleep, a channel, a join, a stream), the deadline ends it, and what
+`f` spawned is cancelled with it. The value of `f` is inside the `Ok`, so a
+function that returns a `Result` gives two layers. The rule, step by step,
+is in the reference: [`task.deadline`](stdlib/channel-task.md#taskdeadline).
 
 `SILT_IO_TIMEOUT` is another thing: it bounds each single wait for I/O,
 for the whole process, and gives the module's own timeout error
@@ -778,22 +494,16 @@ A task with a deadline is the two together:
 `Result`. That is the shape for fan-out where each child must bound its
 own run time, such as racing replicas and dropping the stragglers.
 
-Signature: `task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, task.TaskError)`.
-
 
 ## 4. Select
 
 ### `channel.select(ops)`
 
-`channel.select` lets a task wait on multiple channel operations at once. It
-takes a list of `ChannelOp(a)` values and returns a `Selected(a)` for
-whichever operation can make progress first. Each op is built with one of
-two constructors:
-
-- `Recv(ch)` — a receive arm that becomes ready when `ch` has data, has a
-  rendezvous sender parked on it, or is closed.
-- `Send(ch, value)` — a send arm that becomes ready when `ch` has buffer
-  capacity or a rendezvous receiver parked on it.
+`channel.select` lets a task wait on several channel operations at once and
+does the first that can be done: a `Recv(ch)` arm or a `Send(ch, value)`
+arm. It gives `Received(channel, Some(value))`, `Received(channel, None)`
+for a channel that is closed and drained, or `Sent(channel)`, naming the
+channel of the arm that was done. ([`channel.select`](stdlib/channel-task.md#channelselect))
 
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
@@ -803,15 +513,6 @@ match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
   _ -> ()
 }
 ```
-
-The return value is one of:
-
-- `Received(channel, Some(value))` — a `Recv` arm received `value`.
-- `Received(channel, None)` — a `Recv` arm's channel is closed and drained.
-- `Sent(channel)` — a `Send` arm completed (the value was handed off).
-
-The channel in it is the one of the arm that completed. A received value is
-an `Option`, as the result of `channel.receive` is.
 
 ### The pin operator `^`
 
@@ -1621,26 +1322,16 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
   value is still buffered, the channel and everything in its buffer stay
   in memory until the program ends. Receive what is buffered before the
   last use of such a channel, or send a value that does not hold it.
+- **At most 100,000 tasks at once.** A `task.spawn` while 100,000 tasks
+  have not ended is a runtime error, "task limit exceeded: 100000 tasks
+  running (max 100000)". The tasks that the `stream` functions,
+  `task.deadline` and `http.serve` start count too.
 
 
 ## Quick Reference
 
-| Operation | Syntax | Returns |
-|---|---|---|
-| Create channel | `channel.new(0)` / `channel.new(n)` | `Channel` |
-| Send (blocking) | `channel.send(ch, val)` | `()` |
-| Receive (blocking) | `channel.receive(ch)` | `Option(a)` -- `Some(val)`, or `None` once the channel is closed and empty |
-| Close | `channel.close(ch)` | `()` |
-| Try send | `channel.try_send(ch, val)` | `true` or `false` |
-| Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` |
-| Iterate | `channel.each(ch) { val -> ... }` | `()` (when closed) |
-| Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `channel.Selected(a)` -- `channel.Received(channel, Some(val))`, `channel.Received(channel, None)`, or `channel.Sent(channel)` |
-| Timeout channel | `channel.timeout(dur)` | `Channel` (closes after the `Duration`) |
-| Receive with timeout | `channel.receive_timeout(ch, dur)` | `channel.Message(val)`, `channel.Empty` (nothing came in time), or `channel.Closed`; a buffered value wins over an expired timer |
-| Spawn task | `task.spawn({ -> ... })` | `task.Handle(a)` |
-| Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
-| Cancel task | `task.cancel(handle)` | `()` (a failure of the task is then not reported) |
-| Deadline | `task.deadline(dur, { -> ... })` | `Ok(value)` of the function, or `Err(task.Timeout)` if it was ended because its time was over |
+Every function of `channel` and `task`, with its signature and what it
+returns, is in the tables of the reference: [channel / task](stdlib/channel-task.md).
 
 The mental model: tasks are independent workers, channels are the pipes between
 them, `channel.select` is a multiplexer, and `task.join` is a synchronization

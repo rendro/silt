@@ -145,11 +145,9 @@ filter that matches no test at all is a mistake, a typo say, and fails the run:
 
 ## Assertions
 
-The `test` module provides assertion functions. Hover over any
-`test.*` call in your editor for the full signature and per-function
-documentation (the LSP surfaces it from the inlined builtin docs);
-the LSP's completion popup on `test.` also enumerates every assertion
-entry point.
+The `test` module provides assertion functions. The
+[test reference](../stdlib/test.md) has each one with its signature and an
+example; an editor shows the same text when you hover a `test.*` name.
 
 | Function | Description |
 |----------|-------------|

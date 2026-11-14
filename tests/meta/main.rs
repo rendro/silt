@@ -12,6 +12,7 @@ mod docs_no_builtin_trait_redeclared_tests;
 mod docs_primitive_descriptor_list_tests;
 mod docs_readme_tooling_and_postgres_tests;
 mod docs_site_tests;
+mod docs_stdlib_index_tests;
 mod docs_supervisor_snippet_runs_tests;
 mod docs_top_level_order_tests;
 mod editor_grammar_builtins_tests;

@@ -45,12 +45,10 @@ search where the result type differs from state, use `loop`.
 
 ## Integer Overflow
 
-Silt uses 64-bit signed integers. Arithmetic that overflows (e.g.
-`9223372036854775807 + 1`) is a **runtime error**, not silent wrapping.
-This matches the "explicit over implicit" philosophy -- silent wrong answers
-are worse than crashes. `int.abs` also errors on the single unrepresentable
-value: `int.abs(-9223372036854775808)` raises
-`integer overflow: abs(-9223372036854775808)`.
+Silt uses 64-bit signed integers, and arithmetic that overflows is a
+**runtime error**, not silent wrapping. This matches the "explicit over
+implicit" philosophy: a silent wrong answer is worse than a crash. The rule
+and its messages are in [Types: Integer overflow](types.md#integer-overflow).
 
 ## What `main` Returns
 
@@ -69,29 +67,12 @@ hands its values to the host through a host function it calls;
 
 ## Float Safety
 
-Silt has one float type, `Float`, and a `Float` is always finite: never NaN,
-never infinite. An operation whose result would be NaN or infinite is a
-**runtime error**, the same rule as integer overflow:
-
-```silt
-println(1.0 / 0.0) -- error: float division by zero
-println(float.max_value * 2.0) -- error: float overflow
-println(math.sqrt(-4.0)) -- error: math.sqrt of a negative number: -4.0
-println(math.log(0.0)) -- error: math.log of a number that is not positive: 0.0
-```
-
-Where an input can be out of range, guard it explicitly:
-
-```silt
-let ratio = match total {
-  0.0 -> 0.0
-  _ -> part / total
-}
-```
-
-Because every `Float` is finite, `==`, ordering, hashing, sets and maps all
-treat floats as ordinary totally ordered values, and `-0.0` is the same value
-as `0.0` (`0.0 * -1.0` prints `0.0`).
+Silt has one float type, and a `Float` is always finite: an operation whose
+result would be NaN or infinite is a **runtime error**, the same rule as
+integer overflow. So floats compare, sort and hash as ordinary numbers, with
+no NaN that is unequal to itself, and work as map keys and set elements. The
+rule, its messages and how to guard an input are in
+[Types: Finite floats](types.md#finite-floats).
 
 ## No Negative Indexing
 
@@ -139,29 +120,10 @@ verbose, but enables concurrency safety and reasoning guarantees.
 
 ## Newline Sensitivity
 
-Postfix operators (function call, `?`, trailing closure) do **not**
-cross newlines. Infix operators (`|>`, `.`, `==`, `*`, etc.) do. `+` and `-`
-do not cross newlines -- `-` is ambiguous with unary negation, and `+` is
-treated symmetrically even though silt has no unary plus -- place them at
-the end of the line to continue:
-
-```silt
-let x = 10 +
-  20            -- OK: + at end of line
-
-let y = 10
-  + 20          -- NOT a continuation -- parse error (no unary plus)
-```
-
-(Bracket indexing `xs[i]` is reserved syntax but is not a real postfix
-operator -- silt's parser rejects it. Use `list.get(xs, i)`,
-`map.get(m, k)`, or `string.slice(s, i, i + 1)` instead.)
-
-Trailing closures must start on the same line as the function call:
-
-```silt
-let ys = xs |> list.map { x -> x + 1 } -- OK
-let zs = xs |> list.map { x ->        -- OK: { on same line
-  x + 1
-}
-```
+A newline ends a statement, so silt needs no semicolons. A line continues
+the one before it only where that cannot be misread: an infix operator such
+as `|>`, `.`, `==` or `*` at the start of a line continues it, while `+` and
+`-` must end the line they continue (`-` at the start of a line is a
+negation), and a call, `?` or trailing closure must stay on the line of what
+it applies to. The full rule, with examples, is in
+[Operators: Newline Sensitivity](operators.md#newline-sensitivity).
