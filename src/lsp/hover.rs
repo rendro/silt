@@ -48,6 +48,12 @@ impl Server {
             });
         }
 
+        // A keyword (`let`, `match`) is no name and has no type; one that
+        // names a field (`r.type`, `type: 1`) is the field's name.
+        if on_keyword(doc.tokens(), cursor) {
+            return None;
+        }
+
         // If the cursor is sitting on the BINDING (LHS) identifier of a local
         // let / param / match binding, prefer that binding's type over the
         // enclosing expression's type. Otherwise `hover` on `x` in `let x = 42`
@@ -268,6 +274,22 @@ impl Server {
             range: None,
         })
     }
+}
+
+/// Whether byte `cursor` is on a keyword of `tokens` that is no field's
+/// name: not after a dot, not before a colon.
+fn on_keyword(tokens: &[crate::lexer::Tok], cursor: usize) -> bool {
+    use crate::lexer::Token;
+    let Some(at) = tokens
+        .iter()
+        .position(|tok| (tok.span.start as usize..tok.span.end as usize).contains(&cursor))
+    else {
+        return false;
+    };
+    let kind = |i: usize| tokens.get(i).map(|tok| &tok.kind);
+    tokens[at].kind.keyword().is_some()
+        && !(at > 0 && kind(at - 1) == Some(&Token::Dot))
+        && kind(at + 1) != Some(&Token::Colon)
 }
 
 /// A hover of the markdown `value`.
