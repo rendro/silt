@@ -1,0 +1,14 @@
+-- repeat: 3
+-- A stream that nothing can read any more is closed, as by
+-- channel.close: its stages stop, and a failure one of them had is
+-- dismissed with it, whether it came before the stream was left or not.
+-- (Here `stream.buffered` reads ahead and fails with the map's second
+-- value; main returns, and nobody holds the stream.)
+import stream
+
+fn main() {
+  let src = stream.from_list([1, 2, 3])
+  let a = stream.map(src) { x -> 10 / (x - 2) }
+  let _b = stream.buffered(a, 4)
+  println("done")
+}

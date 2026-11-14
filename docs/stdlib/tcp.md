@@ -162,14 +162,22 @@ blocked operation, and its thread, end. So a read that timed out cannot
 be tried again: the next call on that connection gives `Err(Closed)`.
 So is the connection of an operation whose result arrives in the very
 moment in which its task stops waiting: what the read had taken is gone
-with the connection. The same holds for the
-`stream.tcp_*` sources and sink when their pipeline is cut short or
-their I/O times out. A `tcp.accept` that nobody waits
-for is woken and gives up; the listener stays usable. A handshake of
-`tcp.connect_tls` or `tcp.tls_server` that nobody waits for any more
-ends its connection the same way. (The TCP connect of `tcp.connect_tls`,
-before its handshake, cannot be interrupted, as `tcp.connect` cannot: it
-runs to its end, and its connection is then shut down.) (The whole rule, for every module:
+with the connection. The same holds for `stream.write_to_tcp` when its
+task is cancelled or its I/O times out. A `stream.tcp_lines` or
+`stream.tcp_chunks` source is different: it holds the connection as any
+other name does, and when its stream is stopped it lets go of the
+connection without shutting it (a read of it that times out shuts it, as
+above); the connection closes when its last holder is gone (see
+[stream](stream.md)). A `tcp.accept` that nobody waits
+for is woken and gives up; the listener stays usable. A `tcp.connect`,
+and a connect or handshake of `tcp.connect_tls` or `tcp.tls_server`,
+that nobody waits for any more ends its connection the same way. A
+connect that still waits for the peer to answer is shut down: on Linux
+that ends it at once; elsewhere it may run on to the system's connect
+time, counted until then among the I/O operations that cannot be
+interrupted, whose number is bounded. (The name lookup of a connect to
+a host name cannot be interrupted: it ends by the system's own time,
+and the connect gives up after it.) (The whole rule, for every module:
 [the I/O pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for).)
 
 ## Listener lifetime

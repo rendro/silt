@@ -92,6 +92,9 @@ pub struct Channel {
     /// not hold the channel; a channel that is dropped before its time
     /// takes its entry out.
     timer: OnceLock<(Weak<Timer>, TimerId)>,
+    /// The stream function whose stage feeds it (`stream.map`, ...):
+    /// a stream's channel is only read ([`Channel::fed_by`]).
+    fed_by: OnceLock<&'static str>,
     pub(super) state: Mutex<State>,
 }
 
@@ -255,6 +258,14 @@ impl Drop for Channel {
         {
             timer.disarm(*id);
         }
+        // The output of a feeder (a stream's stage, which holds it
+        // weakly) that every reader has let go of: the feeder is told
+        // to stop, as by `abandon`. Not here: a channel is dropped
+        // wherever its last holder lets it go, maybe under a lock that
+        // the stop takes (`scheduler::run_deferred`).
+        if let Some(stop) = self.on_abandon.take() {
+            crate::scheduler::defer(stop);
+        }
     }
 }
 
@@ -289,6 +300,7 @@ impl Channel {
             on_abandon: OnceLock::new(),
             on_drain: OnceLock::new(),
             timer: OnceLock::new(),
+            fed_by: OnceLock::new(),
             state: Mutex::new(State {
                 capacity,
                 buf: VecDeque::new(),
@@ -306,6 +318,18 @@ impl Channel {
 
     pub fn id(&self) -> usize {
         self.id
+    }
+
+    /// The channel is the output of a stage of the stream function
+    /// `name`: the program reads it and sends nothing into it. Set once,
+    /// when the stage is made.
+    pub fn set_fed_by(&self, name: &'static str) {
+        let _ = self.fed_by.set(name);
+    }
+
+    /// The stream function whose stage feeds the channel, if one does.
+    pub fn fed_by(&self) -> Option<&'static str> {
+        self.fed_by.get().copied()
     }
 
     pub fn capacity(&self) -> usize {
@@ -419,7 +443,7 @@ impl Channel {
 
     /// How many feeders wait here to be asked for a value.
     #[cfg(test)]
-    pub(super) fn feeders(&self) -> usize {
+    pub(crate) fn feeders(&self) -> usize {
         self.state.lock().demandq.len()
     }
 
