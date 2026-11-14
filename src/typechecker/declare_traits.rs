@@ -453,12 +453,9 @@ impl TypeChecker {
         // imported by name, by its module's name or alias when the module
         // is imported, else with the import it needs.)
         let spelled = |module: Symbol, name: &str| -> String {
-            let item =
-                (self.imported_items.iter()).any(|(m, i)| *m == module && resolve(*i) == name);
-            match (item, self.import_spellings.get(&module)) {
-                (true, _) => format!("`{name}`"),
-                (false, Some(written)) => format!("`{written}.{name}`"),
-                (false, None) => {
+            match self.spelling_in_reach(module, name) {
+                Some(written) => format!("`{written}`"),
+                None => {
                     format!(
                         "`{module}.{name}` (a trait of module `{module}`, after `import {module}`)"
                     )

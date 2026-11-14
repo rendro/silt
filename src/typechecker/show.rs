@@ -199,11 +199,36 @@ impl TypeChecker {
     /// with its module where the enum is another module's (`json.Bool`,
     /// `shapes.Circle`), bare otherwise (`Some`, a variant of the
     /// module's own).
+    /// Where the module's imports put a name of another module in
+    /// reach, what follows; the module's own name where none does.
     pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
         match self.other_module(enum_ty) {
-            Some(module) => format!("{module}.{name}"),
+            Some(module) => (self.spelling_in_reach(module, &resolve(name)))
+                .unwrap_or_else(|| format!("{module}.{name}")),
             None => name.to_string(),
         }
+    }
+
+    /// The variant `name` of `enum_ty` as this module can write it, or
+    /// None where its imports put it in no reach (`import errs.{
+    /// AppError }` names no `Io`): for a help that offers code to write.
+    pub(super) fn variant_in_reach(&self, enum_ty: TypeRef, name: Symbol) -> Option<String> {
+        match self.other_module(enum_ty) {
+            Some(module) => self.spelling_in_reach(module, &resolve(name)),
+            None => Some(name.to_string()),
+        }
+    }
+
+    /// How this module writes the name `name` of the module `module`:
+    /// bare where an import item brings it in (`import m.{ name }`), by
+    /// the module's alias or name where the module is imported (`e.Io`,
+    /// `errs.Io`); None where no import puts it in reach. The one rule
+    /// for every help that writes a name of another module.
+    pub(super) fn spelling_in_reach(&self, module: Symbol, name: &str) -> Option<String> {
+        if (self.imported_items.iter()).any(|(m, item)| *m == module && resolve(*item) == name) {
+            return Some(name.to_string());
+        }
+        (self.import_spellings.get(&module)).map(|written| format!("{written}.{name}"))
     }
 
     /// Whether another type the session knows has the name of `r`.

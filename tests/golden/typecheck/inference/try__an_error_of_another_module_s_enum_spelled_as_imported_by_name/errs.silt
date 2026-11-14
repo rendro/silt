@@ -1,0 +1,2 @@
+import io
+pub type AppError { Io(io.IoError), Other(String) }

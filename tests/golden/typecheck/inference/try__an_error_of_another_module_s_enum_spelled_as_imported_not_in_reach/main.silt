@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A variant no import puts in reach is not written in the help: it converts by a closure.
+-- stderr-contains: help: `?` converts nothing: turn the `io.IoError` into the function's
+-- stderr-contains: `|> result.map_err { e -> ... }`
+-- stderr-not-contains: result.map_err(errs.Io)
+import errs.{ AppError }
+import io
+fn load(p: String) -> Result(String, AppError) {
+  let t = io.read_file(p)?
+  Ok(t)
+}
+fn main() { println(load("x")) }

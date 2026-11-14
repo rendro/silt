@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- The help of a `?` of another error type writes the variant by the module's alias, the spelling that works here.
+-- stderr-contains: help: `?` converts nothing: add `|> result.map_err(e.Io)` before the `?`
+-- stderr-not-contains: errs.Io
+import errs as e
+import io
+fn load(p: String) -> Result(String, e.AppError) {
+  let t = io.read_file(p)?
+  Ok(t)
+}
+fn main() { println(load("x")) }
