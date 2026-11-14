@@ -458,8 +458,8 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
     }
 }
 
-/// The files that could not be read, each with why: "error reading
-/// <file>: <why>" lines.
+/// The files that could not be read, each with why: `error reading
+/// <file>: <why>` lines.
 fn report_unreadable(unreadable: &[(String, std::io::Error)]) {
     for (path, e) in unreadable {
         eprintln!(
