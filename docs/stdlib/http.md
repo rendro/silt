@@ -228,7 +228,12 @@ also when it leads to the same host: the `authorization`,
 `proxy-authorization` and `cookie` headers, and the user and password of
 the URL. Every other header among `headers` is, and so is the body after
 a 307 or 308, also to another host, as curl and Go send them. A location that is no full URL is resolved against
-the URL that answered: `?y=2` on its path, `//host/x` on its scheme. A
+the URL that answered: `?y=2` on its path, `//host/x` on its scheme. An
+empty location, or one that is a fragment alone (`#top`), is the URL that
+answered itself, as RFC 3986 reads it: after a 303 that is a `GET` of the
+same URL, and a server that answers it so every time ends in
+`Err(Other("too many redirects"))`. A response without a location is
+handed back as it is, its status 3xx. A
 location with a scheme other than `http` and `https` (`file:///x`,
 `ftp://host/x`, `mailto:a@b`) is not followed: it is
 `Err(InvalidUrl(location))`. A byte of a location that a URL cannot hold
