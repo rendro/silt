@@ -16,10 +16,6 @@ mod run;
 mod runtime;
 mod show;
 
-use std::fmt::Write as _;
-
-use show::write_plain;
-
 pub(crate) use decode::Source;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
@@ -926,12 +922,16 @@ impl Vm {
 
     // ── Value display ─────────────────────────────────────────────
 
+    /// The text of `val` as a print shows it, without the `Display`
+    /// impls of the program (the http server's own messages).
+    #[cfg(feature = "http")]
     pub(crate) fn display_value(&self, val: &Value) -> String {
+        use std::fmt::Write as _;
         match val {
             Value::String(s, _) => s.to_string(),
             _ => {
                 let mut text = String::new();
-                if !write_plain(&mut text, val) {
+                if !show::write_plain(&mut text, val) {
                     let _ = write!(text, "{val}");
                 }
                 text
