@@ -19,8 +19,8 @@
 //! An embedder (docs/ffi.md) gets these names, and only these are
 //! promised: `silt::Buffer`, `silt::Clock`, `silt::Exit`,
 //! `silt::FromValue`, `silt::HostIo`, `silt::IntoValue`, `silt::Output`,
-//! `silt::Value`, `silt::Vm`, `silt::VmError`, `silt::session::Builtins`,
-//! `silt::session::Config`, `silt::session::Entry`,
+//! `silt::Tag`, `silt::Value`, `silt::Vm`, `silt::VmError`,
+//! `silt::session::Builtins`, `silt::session::Config`, `silt::session::Entry`,
 //! `silt::session::HostCall`, `silt::session::HostModule`,
 //! `silt::session::LockPolicy`, `silt::session::Program`,
 //! `silt::session::ProjectSetup` and `silt::session::Session`, with
@@ -106,6 +106,7 @@ mod vm;
 mod watch;
 
 // The names an embedder uses (see "What the crate promises" above).
+pub use typeinfo::Tag;
 pub use value::{FromValue, IntoValue, Value};
 pub use vm::{Buffer, Clock, Exit, HostIo, Output, Vm, VmError};
 

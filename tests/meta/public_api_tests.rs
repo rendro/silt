@@ -15,7 +15,7 @@ use silt::session::{
     Builtins, Config, Entry, HostCall, HostModule, LockPolicy, Program, ProjectSetup, Session,
 };
 #[allow(unused_imports)]
-use silt::{Buffer, Clock, Exit, FromValue, HostIo, IntoValue, Output, Value, Vm, VmError};
+use silt::{Buffer, Clock, Exit, FromValue, HostIo, IntoValue, Output, Tag, Value, Vm, VmError};
 
 /// The crate's promise to an embedder, by path.
 const PROMISED: &[&str] = &[
@@ -26,6 +26,7 @@ const PROMISED: &[&str] = &[
     "silt::HostIo",
     "silt::IntoValue",
     "silt::Output",
+    "silt::Tag",
     "silt::Value",
     "silt::Vm",
     "silt::VmError",
@@ -149,6 +150,7 @@ const ROOTS: &[&str] = &[
     "#[cfg(not(target_arch = \"wasm32\"))] #[doc(hidden)] pub mod cli;",
     "#[cfg(feature = \"playground\")] pub mod playground;",
     "pub mod session;",
+    "pub use typeinfo::Tag;",
     "pub use value::{FromValue, IntoValue, Value};",
     "pub use vm::{Buffer, Clock, Exit, HostIo, Output, Vm, VmError};",
     "#[cfg(any(test, feature = \"test-hooks\"))] #[doc(hidden)] pub mod testing {",
@@ -370,5 +372,139 @@ fn the_reader_of_public_items_skips_strings_and_comments() {
             "pub struct S",
             "pub mod m"
         ]
+    );
+}
+
+// ── The guide, as an embedder reads it ────────────────────────────────
+
+/// The code spans of the guide's prose (outside its fenced blocks).
+fn prose_code_spans(text: &str) -> Vec<String> {
+    let mut prose = String::new();
+    let mut fenced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            prose.push_str(line);
+            prose.push('\n');
+        }
+    }
+    let mut spans = Vec::new();
+    let mut rest = prose.as_str();
+    while let Some(at) = rest.find('`') {
+        let ticks = rest[at..].chars().take_while(|c| *c == '`').count();
+        let open = &rest[at..at + ticks];
+        let after = &rest[at + ticks..];
+        match after.find(open) {
+            Some(end) => {
+                spans.push(after[..end].trim().to_string());
+                rest = &after[end + ticks..];
+            }
+            None => break,
+        }
+    }
+    spans
+}
+
+/// The Rust paths a code span names by a type: `Tag::new` names `Tag`,
+/// `vm.set_exit(Exit::EndsProcess)` names `Exit`. (A lowercase head,
+/// `std::env` or `silt::session`, is a module: the paths that start with
+/// `silt::` are checked with the guide's imports.)
+fn type_heads(span: &str) -> Vec<String> {
+    let mut heads = Vec::new();
+    let bytes = span.as_bytes();
+    let mut i = 0;
+    while let Some(at) = span[i..].find("::") {
+        let end = i + at;
+        let start = span[..end]
+            .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .map_or(0, |p| p + 1);
+        let head = &span[start..end];
+        let qualified = start >= 2 && &bytes[start - 2..start] == b"::";
+        if !qualified && head.starts_with(|c: char| c.is_ascii_uppercase()) {
+            heads.push(head.to_string());
+        }
+        i = end + 2;
+    }
+    heads
+}
+
+#[test]
+fn every_type_the_guide_s_prose_names_is_promised() {
+    let promised: Vec<&str> = (PROMISED.iter())
+        .map(|path| path.rsplit("::").next().unwrap_or(path))
+        .collect();
+    let spans = prose_code_spans(&guide());
+    assert!(spans.len() > 100, "{} spans", spans.len());
+    let unpromised: Vec<(String, String)> = (spans.iter())
+        .flat_map(|span| type_heads(span).into_iter().map(move |h| (h, span.clone())))
+        .filter(|(head, _)| !promised.contains(&head.as_str()))
+        .collect();
+    assert!(
+        unpromised.is_empty(),
+        "docs/ffi.md's prose names types the crate does not promise (promise each, in \
+         PROMISED, src/lib.rs's list and a re-export at its path, or reword the guide): \
+         {unpromised:?}"
+    );
+}
+
+#[test]
+fn the_heads_of_a_code_span_are_read() {
+    assert_eq!(type_heads("vm.set_exit(Exit::EndsProcess)"), ["Exit"]);
+    assert_eq!(type_heads("HostIo::buffer(&buffer)"), ["HostIo"]);
+    assert_eq!(type_heads("std::panic::catch_unwind"), Vec::<String>::new());
+    assert_eq!(
+        type_heads("silt::session::Session::new"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        prose_code_spans("a `Tag::new` b\n```rust\nlet x = `y`;\n```\n``a `b` c``"),
+        ["Tag::new", "a `b` c"]
+    );
+}
+
+/// The guide's Rust blocks are held, each with what it needs around it,
+/// in tests/lang/ffi_doc_blocks_tests.rs (whose own test fails when the
+/// guide has a block it does not hold). Built there, they see the test
+/// API, which the crate's tests always have. Here that file is checked
+/// as the code of a crate of its own that depends on silt as an embedder
+/// does: by path, with the default features and no `test-hooks`. A name
+/// a block uses that is not promised does not resolve.
+#[test]
+fn the_guide_s_blocks_build_against_silt_as_an_embedder_sees_it() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = root.join("target").join("guide-as-an-embedder");
+    std::fs::create_dir_all(dir.join("src")).expect("the crate's directory is made");
+    let manifest = format!(
+        "[package]\nname = \"silt-guide-as-an-embedder\"\nversion = \"0.0.0\"\n\
+         edition = \"2024\"\npublish = false\n\n[dependencies]\nsilt = {{ path = '{}' }}\n\n\
+         [workspace]\n",
+        root.display()
+    );
+    std::fs::write(dir.join("Cargo.toml"), manifest).expect("Cargo.toml is written");
+    // The versions of silt's dependencies are the root's.
+    std::fs::copy(root.join("Cargo.lock"), dir.join("Cargo.lock")).expect("the lock is copied");
+    std::fs::write(
+        dir.join("src/lib.rs"),
+        source("tests/lang/ffi_doc_blocks_tests.rs"),
+    )
+    .expect("the blocks are written");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let out = std::process::Command::new(cargo)
+        .args(["check", "--tests", "--offline", "--quiet", "-j", "2"])
+        .arg("--manifest-path")
+        .arg(dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .env("CARGO_TERM_COLOR", "never")
+        .env_remove("RUSTFLAGS")
+        .output()
+        .expect("cargo runs");
+    assert!(
+        out.status.success(),
+        "the guide's blocks do not build for an embedder (silt with its default features, \
+         no test-hooks):\n{}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
