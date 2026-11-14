@@ -902,7 +902,7 @@ fn read_item<'s>(
     rest: &'s str,
     item: &chrono::format::Item<'_>,
 ) -> chrono::ParseResult<&'s str> {
-    use chrono::format::{Fixed, Item, Numeric};
+    use chrono::format::{Fixed, Item, Numeric, parse_and_remainder};
     match item {
         Item::Fixed(Fixed::TimezoneOffsetDoubleColon) => {
             let (offset, behind) = offset_with_seconds(rest.trim_start())?;
@@ -921,11 +921,16 @@ fn read_item<'s>(
             if n == 0 {
                 return Err(chrono_error(digits.is_empty()));
             }
-            let seconds: i64 = digits[..n].parse().map_err(|_| chrono_error(false))?;
+            let Ok(seconds) = digits[..n].parse::<i64>() else {
+                // (Too many digits: chrono's own error of them, that the
+                // count is out of range, as without the sign.)
+                let theirs = parse_and_remainder(&mut Parsed::new(), digits, std::iter::once(item));
+                return theirs.and(Err(chrono_error(false)));
+            };
             parsed.set_timestamp(-seconds)?;
             Ok(&digits[n..])
         }
-        other => chrono::format::parse_and_remainder(parsed, rest, std::iter::once(other)),
+        other => parse_and_remainder(parsed, rest, std::iter::once(other)),
     }
 }
 
