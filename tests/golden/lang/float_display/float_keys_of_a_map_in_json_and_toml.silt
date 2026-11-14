@@ -26,7 +26,8 @@ fn main() {
   toml_of(#{[1.0]: "list"})
   println(json.stringify(#{Some(1.0): "some"}))
   toml_of(#{Some(1.0): "some"})
-  -- A Float that is a value is written as each format writes a float.
+  -- A Float that is a value is written as json.stringify writes it, in
+  -- both formats: a large one with an exponent.
   println(json.stringify([1.0, 2.5, 1.0e21]))
   toml_of(#{"whole": 1.0, "large": 1.0e21})
 }
