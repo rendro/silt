@@ -64,6 +64,13 @@ pub fn selected_tests<'a>(
     })
 }
 
+/// Whether the file at `path` is a test file: its name ends with
+/// `_test.silt`, as the files `silt test` looks for do.
+pub(super) fn is_test_file(path: &std::path::Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().ends_with("_test.silt"))
+}
+
 /// Is `program` a test file: does it declare a test function, or import
 /// the `test` module? Such a file has no `main` on purpose; it is run
 /// with `silt test`.

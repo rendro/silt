@@ -62,6 +62,13 @@ pub enum Entry {
     /// `filter`, each of the type `() -> ()` or `() -> Result((), e)`.
     /// The program calls nothing; the test runner calls each test.
     Tests { filter: Option<String> },
+    /// A module checked on its own (`silt check`, the language server):
+    /// its declarations, with nothing called. A `main` it binds must be
+    /// able to start. Its functions named `test_*` and `skip_test_*` are
+    /// tests, held to the signature of one, only in a test file, whose
+    /// name ends with `_test.silt`; in any other file such a function is
+    /// an ordinary one, as `silt run` takes it.
+    Module,
     /// A REPL cell, added by [`Session::add_cell`]: its declarations are
     /// installed, and a cell of statements runs them; the script returns
     /// their value. Any other file: its declarations, with nothing
@@ -819,20 +826,30 @@ impl Session {
                     span: entry::main_span(&analysis.ast),
                 }
             }
-            Entry::Tests { filter } => {
+            Entry::Tests { .. } | Entry::Module => {
                 // A file checked or run for its tests that binds `main`
                 // must have a `main` that can start.
                 if let Some(ty) = analysis.top_level.get(&main) {
                     entry_errors.extend(entry::check_main(&analysis.ast, ty));
                     entry_errors.extend(analysis.entry_display.get(&main).cloned());
                 }
-                let (tests, errors) =
-                    entry::select_tests(&analysis.ast, &analysis.top_level, filter.as_deref());
-                entry_errors.extend(errors);
-                // (A test whose error type has no Display: also one
-                // whose signature is refused above.)
-                for (f, _, _) in entry::selected_tests(&analysis.ast, filter.as_deref()) {
-                    entry_errors.extend(analysis.entry_display.get(&f.name).cloned());
+                // (A module checked on its own has tests only when it is
+                // a test file.)
+                let filter = match &target {
+                    Entry::Tests { filter } => Some(filter.as_deref()),
+                    _ => entry::is_test_file(&self.graph.module(id).path).then_some(None),
+                };
+                let mut tests = Vec::new();
+                if let Some(filter) = filter {
+                    let (selected, errors) =
+                        entry::select_tests(&analysis.ast, &analysis.top_level, filter);
+                    tests = selected;
+                    entry_errors.extend(errors);
+                    // (A test whose error type has no Display: also one
+                    // whose signature is refused above.)
+                    for (f, _, _) in entry::selected_tests(&analysis.ast, filter) {
+                        entry_errors.extend(analysis.entry_display.get(&f.name).cloned());
+                    }
                 }
                 EntryPoint::Tests(tests)
             }
@@ -851,7 +868,7 @@ impl Session {
         };
         let compiled = match target {
             Entry::Main => compiler.compile_program(&program, self.top_level_def(id, ENTRY_POINT)),
-            Entry::Tests { .. } => compiler.compile_declarations(&program),
+            Entry::Tests { .. } | Entry::Module => compiler.compile_declarations(&program),
             Entry::Cell if !self.cells.info.contains_key(&id) => {
                 compiler.compile_declarations(&program)
             }

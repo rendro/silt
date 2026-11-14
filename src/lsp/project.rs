@@ -181,7 +181,7 @@ impl Project {
             let file = self.file(id);
             let errors = match self
                 .session
-                .compile(file, crate::session::Entry::Tests { filter: None })
+                .compile(file, crate::session::Entry::Module)
             {
                 Ok(_) => Vec::new(),
                 Err(errors) => errors,

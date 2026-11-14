@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 0
+-- In a file that is no test file (its name does not end in `_test.silt`)
+-- a function named like a test is an ordinary one: `check` holds it to
+-- no rule of a test, as `run` does not, neither its parameters, nor
+-- what it returns, nor the Display of its error.
+type Bad { f: Fn(Int) -> Int }
+
+fn test_connection(host: String) -> Int {
+  3
+}
+
+fn test_probe() -> Result((), Bad) {
+  Err(Bad { f: { x -> x } })
+}
+
+fn skip_test_me() -> Int {
+  1
+}
+
+fn main() {
+  println(test_connection("h"))
+  match test_probe() {
+    Ok(_) -> println("ok")
+    Err(_) -> println("err {skip_test_me()}")
+  }
+}

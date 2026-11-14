@@ -78,6 +78,10 @@ Within a test file, functions are recognized by their name prefix:
 - `skip_test_*` -- shown as skipped, not executed
 - Any other function name -- ignored by the test runner (available as helpers)
 
+In any other file a function with such a name is an ordinary one, for
+`silt check` and the editor as for `silt run`; only a file given to
+`silt test` by its path has its `test_*` functions run whatever its name.
+
 A test function takes no arguments and returns `()` or `Result((), e)`, as
 `main` does (see [What `main` Returns](design-decisions.md#what-main-returns)).
 One that returns `Err(e)`, typically from a `?`, fails; a value it computes

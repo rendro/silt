@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+-- A helper named like a test in the modules of a package (`src/main.silt`,
+-- `src/net.silt`) is no test: the package checks, as it runs. Its test
+-- file's functions named like tests are tests, and are checked as such.
+import net
+
+fn test_connection(host: String) -> Int {
+  3
+}
+
+fn main() {
+  println(test_connection("h") + net.test_port(1))
+}
