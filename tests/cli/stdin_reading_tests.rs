@@ -1,8 +1,10 @@
 //! Reading stdin to its end: `io.read_stdin`, `io.read_stdin_bytes`,
 //! `stream.stdin_lines` and the `None` that `io.read_line` gives at the
-//! end. What a golden case cannot feed is here: `\r\n` line ends, bytes
-//! that are no UTF-8, more than one read of input, and a stdin held open
-//! (a line typed at a terminal comes before the input ends).
+//! end. What a golden case cannot feed is here: bytes that are no UTF-8,
+//! more than one read of input, and a stdin held open (a line typed at a
+//! terminal comes before the input ends). (A golden feeds `\r\n` line
+//! ends with the `\r` escape of `-- stdin:`; the cases with them stay
+//! here beside the other readers of the same input.)
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;

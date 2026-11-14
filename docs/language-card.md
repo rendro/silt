@@ -573,6 +573,8 @@ regex.compile(pattern: String) -> Result(Regex, RegexError)
 regex.escape(text: String) -> String
 regex.find(text: String, re: Regex) -> Option(String)
 regex.find_all(text: String, re: Regex) -> List(String)
+regex.find_all_at(text: String, re: Regex) -> List((Int, Int))
+regex.find_at(text: String, re: Regex) -> Option((Int, Int))
 regex.is_match(text: String, re: Regex) -> Bool
 regex.replace(text: String, re: Regex, replacement: String) -> String
 regex.replace_first(text: String, re: Regex, replacement: String) -> String

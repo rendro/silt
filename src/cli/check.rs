@@ -76,9 +76,10 @@ pub(crate) fn dispatch(args: &[String]) {
             println!();
             println!("Each file is checked as a program of its own; '-' reads the");
             println!("program from stdin. A package's directory is checked as a package:");
-            println!("every module of it and its test files. Another directory stands for");
-            println!("the .silt files under it. With no path, inside a silt package, the");
-            println!("package is checked.");
+            println!("every module of it, its test files, and each other .silt file under");
+            println!("src/ as a program of its own. Another directory stands for the .silt");
+            println!("files under it. With no path, inside a silt package, the package is");
+            println!("checked.");
             process::exit(0);
         } else if args[i] == "-" {
             files.push(args[i].clone());
@@ -179,7 +180,10 @@ pub(crate) struct PackageFiles {
     /// `src/main.silt`, or `src/lib.silt` in a library; the file named,
     /// or `-` for stdin.
     pub(crate) entry: String,
-    /// Every other `.silt` file directly in `src/`, imported or not.
+    /// Every other `.silt` file of `src/` but for the test files,
+    /// imported or not: the modules (the files directly in `src/`), then
+    /// the files in its sub-directories, which are no modules and are
+    /// each checked as a program of their own, as `silt check src` does.
     pub(crate) modules: Vec<String>,
     /// The test files of the package.
     pub(crate) tests: Vec<String>,
@@ -212,37 +216,90 @@ pub(crate) fn package_files_in(dir: &Path) -> Result<Option<PackageFiles>, ()> {
     }))
 }
 
-/// Whether the session has read the file at `path` (as an import of a
-/// file checked before).
-fn is_loaded(session: &Session, path: &Path) -> bool {
-    let path = silt::source::canonical_path(path);
-    session.sources().files().any(|file| match &file.path {
-        silt::source::SourceName::Path(p) => silt::source::canonical_path(p) == path,
-        _ => false,
-    })
+/// The files a session has read, by their canonical paths. The session
+/// only adds files, so each one is made canonical once, when it is first
+/// seen: asking about every module of a large package costs one call per
+/// file, not one per pair of a module and a file read.
+#[derive(Default)]
+struct Loaded {
+    /// How many of the session's files are in `paths`.
+    seen: usize,
+    paths: HashSet<std::path::PathBuf>,
 }
 
-/// The modules of the package at `root` other than its entry file
-/// `entry`: every `.silt` file directly in `src/`, sorted, but for the
-/// test files `tests` (checked as tests).
+impl Loaded {
+    /// Whether the session has read the file at `path` (as an import of
+    /// a file checked before).
+    fn has(&mut self, session: &Session, path: &Path) -> bool {
+        let names = session.sources().files().map(|file| &file.path);
+        self.has_in(names, path, &mut silt::source::canonical_path)
+    }
+
+    /// [`Loaded::has`] of the session whose files are named `names`, in
+    /// the order read, with `canonical` making a path canonical.
+    fn has_in<'a>(
+        &mut self,
+        names: impl Iterator<Item = &'a silt::source::SourceName>,
+        path: &Path,
+        canonical: &mut impl FnMut(&Path) -> std::path::PathBuf,
+    ) -> bool {
+        for name in names.skip(self.seen) {
+            self.seen += 1;
+            if let silt::source::SourceName::Path(p) = name {
+                self.paths.insert(canonical(p));
+            }
+        }
+        self.paths.contains(&canonical(path))
+    }
+}
+
+/// The files of `src/` of the package at `root` that the package check
+/// checks besides its entry file `entry` and its test files `tests`
+/// (checked as tests): every `.silt` file directly in `src/` (a module),
+/// sorted, then every `.silt` file in a sub-directory of `src/`, sorted,
+/// as `silt check src` finds them (not those of a package kept inside).
+/// Such a file is no module, and no import reaches it: it is checked as
+/// a program of its own, its imports the package's modules.
 fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
-    let Ok(dir) = std::fs::read_dir(root.join("src")) else {
+    let src = root.join("src");
+    let Ok(dir) = std::fs::read_dir(&src) else {
         return Vec::new();
     };
-    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
-    };
-    let mut modules: Vec<String> = dir
+    let mut files: Vec<String> = dir
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "silt") && p.is_file())
-        .filter(|p| !same(p, entry))
-        .filter(|p| !tests.iter().any(|t| same(p, Path::new(t))))
         .map(unicode_path)
         .collect();
-    modules.sort();
-    modules
+    files.sort();
+    let below = find_silt_files(&src).into_iter().filter(|file| {
+        let path = Path::new(file);
+        path.parent().is_some_and(|dir| dir != src)
+    });
+    files.extend(below);
+    without_entry_and_tests(files, entry, tests, silt::source::canonical_path)
+}
+
+/// `files`, in their order, but for the entry file `entry` and the test
+/// files `tests`, told apart by their canonical paths (`canonical`). Each
+/// path is made canonical once: the entry and the tests into a set, then
+/// one look-up for each file, so a package with many files and many tests
+/// costs one call per file, not one per pair of them.
+fn without_entry_and_tests(
+    files: Vec<String>,
+    entry: &Path,
+    tests: &[String],
+    mut canonical: impl FnMut(&Path) -> std::path::PathBuf,
+) -> Vec<String> {
+    let mut apart: HashSet<std::path::PathBuf> = tests
+        .iter()
+        .map(|test| canonical(Path::new(test)))
+        .collect();
+    apart.insert(canonical(entry));
+    files
+        .into_iter()
+        .filter(|file| !apart.contains(&canonical(Path::new(file))))
+        .collect()
 }
 
 /// What checking a program found.
@@ -300,8 +357,9 @@ pub(crate) fn check_package(
             Err(e) => unreadable.push((test.clone(), e)),
         }
     }
+    let mut loaded = Loaded::default();
     for module in modules {
-        if is_loaded(&session, Path::new(module)) {
+        if loaded.has(&session, Path::new(module)) {
             continue;
         }
         match session.open(Path::new(module)) {
@@ -448,4 +506,74 @@ fn json_errors(
                 .map(|d| silt::diagnostic::render_json(files, d)),
         )
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use silt::source::SourceName;
+
+    use super::{Loaded, without_entry_and_tests};
+
+    /// The files a session has read are made canonical once each, as
+    /// the session reads them: asking about 400 modules of a session
+    /// that grows to 800 files makes 800 + 400 calls, not one per pair.
+    #[test]
+    fn a_file_read_is_made_canonical_once() {
+        let mut names: Vec<SourceName> = Vec::new();
+        let mut loaded = Loaded::default();
+        let mut calls = 0;
+        let mut canonical = |path: &Path| {
+            calls += 1;
+            path.to_path_buf()
+        };
+        let mut found = 0;
+        for n in 0..400 {
+            // Each module checked reads it and one import of its own.
+            names.push(SourceName::Path(PathBuf::from(format!("src/d/i{n}.silt"))));
+            let module = PathBuf::from(format!("src/d/m{n}.silt"));
+            found += usize::from(loaded.has_in(names.iter(), &module, &mut canonical));
+            names.push(SourceName::Path(module));
+            let import = PathBuf::from(format!("src/d/i{n}.silt"));
+            found += usize::from(loaded.has_in(names.iter(), &import, &mut canonical));
+        }
+        assert_eq!(
+            found, 400,
+            "each import is found, no module before it is read"
+        );
+        assert_eq!(calls, 800 + 800, "one call per file read and per question");
+    }
+
+    /// The entry and the test files are left out, the rest keep their
+    /// order, and each path is made canonical once: as many calls as
+    /// paths, however many files and tests there are (the walk was
+    /// once one call per pair of a file and a test).
+    #[test]
+    fn each_path_is_made_canonical_once() {
+        let files: Vec<String> = (0..400)
+            .map(|n| format!("src/d{}/f{n}.silt", n % 20))
+            .chain((0..400).map(|n| format!("src/d{}/f{n}_test.silt", n % 20)))
+            .chain(["src/main.silt".to_string()])
+            .collect();
+        let tests: Vec<String> = (0..400)
+            .map(|n| format!("./src/d{}/f{n}_test.silt", n % 20))
+            .collect();
+        let mut calls = 0;
+        // (The canonical path of `./x` is `x` here.)
+        let canonical = |path: &Path| {
+            calls += 1;
+            PathBuf::from(path.to_string_lossy().trim_start_matches("./"))
+        };
+        let kept = without_entry_and_tests(files, Path::new("./src/main.silt"), &tests, canonical);
+        let expected: Vec<String> = (0..400)
+            .map(|n| format!("src/d{}/f{n}.silt", n % 20))
+            .collect();
+        assert_eq!(kept, expected);
+        assert_eq!(
+            calls,
+            801 + 400 + 1,
+            "one call per file, test file and the entry"
+        );
+    }
 }

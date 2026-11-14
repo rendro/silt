@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected String, got Int
+ --> src/util/deeper/uses_shapes.silt:4:3
+   |
+ 4 |   shapes.area(1)
+   |   ^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected Int, got String
+ --> src/util/helper.silt:2:3
+   |
+ 2 |   "no"
+   |   ^^^^ type mismatch: expected Int, got String

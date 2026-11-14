@@ -1,0 +1,9 @@
+-- cmd: lsp
+-- A file in a sub-directory of src/ that the editor opens is checked as
+-- a program of its own, its imports the package's modules, as the
+-- package check checks it: its error is published for it.
+import shapes
+
+fn main() {
+  println(shapes.area(2))
+}

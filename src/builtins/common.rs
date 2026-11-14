@@ -103,8 +103,8 @@ pub(crate) fn ok(v: Value) -> Value {
 /// preserved at every existing call site.
 ///
 /// `pub(crate)` so internal callers (and any future in-crate test) can
-/// reference the helper. The integration-test lock in
-/// `tests/lang/builtin_nibble_to_hex_helper_tests.rs` proves the deletion was
+/// reference the helper. The goldens
+/// `tests/golden/lang/builtins/builtin_nibble_to_hex_helper__*` prove the deletion was
 /// a semantic no-op by driving both call paths through the public
 /// builtin API (`bytes.to_hex` and `encoding.form_encode`).
 pub(crate) fn nibble_to_hex(n: u8, uppercase: bool) -> char {

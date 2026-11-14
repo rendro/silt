@@ -688,10 +688,8 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         // of a walker arm becomes a compile error rather than a
         // silent functional regression in LSP find-references /
         // hover / inlay-hints / selection-range / folding. There is
-        // no wildcard catch-all arm; the
-        // source-grep parity-lock in
-        // `tests/meta/round85_visit_expr_children_parity_lock_tests.rs`
-        // is now belt-and-suspenders behind compiler exhaustiveness.
+        // no wildcard catch-all arm: the compiler's exhaustiveness
+        // check holds every kind of expression here.
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)

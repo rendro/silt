@@ -291,8 +291,11 @@ the import.
 with a first test (see [Testing](testing.md#tests-of-a-package)).
 The entry point is `src/main.silt`, and every `.silt` file directly in
 `src/` is a module of the package, imported by its file name. A file in a
-sub-directory of `src/` is no module: it cannot be imported, and
-`silt check` does not read it. Test files (`*_test.silt`) are found
+sub-directory of `src/` is no module: it cannot be imported. `silt check`
+of the package checks it all the same, as a program of its own whose
+imports are the package's modules, as `silt check src` and a check of the
+file itself do, so a script kept there (run by its path) is checked too.
+Test files (`*_test.silt`) are found
 anywhere under the package, in `src/`, its sub-directories or a `tests/`
 directory beside it, and import the package's modules by name.
 

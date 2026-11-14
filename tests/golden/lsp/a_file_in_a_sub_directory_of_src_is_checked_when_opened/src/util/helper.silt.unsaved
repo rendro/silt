@@ -1,0 +1,5 @@
+import shapes
+
+pub fn wrong() -> String {
+  shapes.area(1)
+}

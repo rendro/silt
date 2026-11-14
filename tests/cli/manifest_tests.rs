@@ -1,6 +1,6 @@
 //! Integration tests for the `silt::manifest` module.
 //!
-//! Mirrors the temp-dir pattern used in `tests/lang/modules.rs`.
+//! Each test writes its manifest into a temporary directory of its own.
 
 use std::fs;
 use std::path::{Path, PathBuf};

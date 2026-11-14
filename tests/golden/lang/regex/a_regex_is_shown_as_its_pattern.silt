@@ -1,0 +1,31 @@
+-- A Regex is shown as its pattern, the text its `==` compares: by
+-- println, interpolation and string.from, inside a list, a record and a
+-- Result too, and through a `Display` bound. io.inspect writes it as
+-- `<regex:PATTERN>`, so it does not read as a String there.
+import io
+import regex
+import string
+import test
+
+type Rule { name: String, re: regex.Regex }
+
+fn show(x: a) -> String where a: Display {
+  "<{x}>"
+}
+
+fn main() -> Result((), regex.RegexError) {
+  let re = regex.compile("a+")?
+  let re2 = regex.compile("a+")?
+  println(re)
+  println("pattern {re}")
+  println(string.from(re))
+  println([re, re2])
+  println(Rule { name: "as", re: re })
+  println(regex.compile("""\d+"""))
+  println(show(re))
+  test.assert_eq(re, re2)
+  println(re == re2)
+  println(io.inspect(re))
+  println(io.inspect([re]))
+  Ok(())
+}
