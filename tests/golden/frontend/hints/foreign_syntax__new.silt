@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: silt has no `new`
+type P { x: Int }
+fn main() {
+  let p = new P { x: 1 }
+  println(p)
+}

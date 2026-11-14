@@ -1,20 +1,20 @@
-error[parse]: expected declaration, found const
+error[parse]: silt has no `const`: a constant is `let x = 1`
  --> damaged_declaration__one_mistake_one_error.silt:9:1
    |
  9 | const X = 1
-   | ^^^^^ expected declaration, found const
+   | ^^^^^ silt has no `const`: a constant is `let x = 1`
 
-error[parse]: expected declaration, found |
+error[parse]: a type with variants is written in braces: `type C { A, B }`
  --> damaged_declaration__one_mistake_one_error.silt:11:12
     |
  11 | type C = A | B
-    |            ^ expected declaration, found |
+    |            ^ a type with variants is written in braces: `type C { A, B }`
 
-error[parse]: expected declaration, found <
+error[parse]: type arguments are written in parentheses: `Result(Int, String)`
  --> damaged_declaration__one_mistake_one_error.silt:13:17
     |
  13 | fn f() -> Result<Int, String> { Ok(1) }
-    |                 ^ expected declaration, found <
+    |                 ^ type arguments are written in parentheses: `Result(Int, String)`
 
 error[parse]: expected '}' or ',' to continue enum variant list, found Rect
  --> damaged_declaration__one_mistake_one_error.silt:15:26

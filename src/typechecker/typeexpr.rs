@@ -706,6 +706,10 @@ impl TypeChecker {
                     );
                     return Type::Error;
                 };
+                if let Some(message) = impl_only_type_message(ty) {
+                    self.error(Code::UnknownType, message, te.span);
+                    return Type::Error;
+                }
                 if self.bare_generic(&type_expr_text(te), ty, te.span) {
                     return Type::Error;
                 }
@@ -773,6 +777,10 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 let ty = self.named_type(te.res, *name);
+                if let Some(message) = ty.and_then(impl_only_type_message) {
+                    self.error(Code::UnknownType, message, te.span);
+                    return Type::Error;
+                }
                 let shown = Qualifier::written(*module, *name);
                 if let Some(builtin) = ty.and_then(builtin_type_name) {
                     let n = resolved_args.len();
@@ -864,6 +872,22 @@ impl TypeChecker {
             },
         }
     }
+}
+
+/// What is wrong with a builtin type name that names a kind of type
+/// only in the header of an impl (`trait T for Tuple`, `trait T for
+/// Fn`), written in a type: a tuple type and a function type are
+/// written with their parts.
+fn impl_only_type_message(ty: TypeRef) -> Option<String> {
+    let written = match builtin_type_name(ty)? {
+        "Tuple" => "a tuple type is written with its parts: `(Int, String)`",
+        "Fn" => "a function type is written with its parts: `Fn(Int) -> String`",
+        _ => return None,
+    };
+    let name = builtin_type_name(ty)?;
+    Some(format!(
+        "`{name}` names a type only in the header of an impl (`trait Show for {name}`): {written}"
+    ))
 }
 
 /// The number of type arguments of the builtin type `name` when it is

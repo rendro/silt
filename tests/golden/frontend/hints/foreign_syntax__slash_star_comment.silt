@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: a block comment is written `{- ... -}`
+fn main() {
+  /* a comment */
+  println(1)
+}

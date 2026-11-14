@@ -4,5 +4,4 @@ Err(json syntax error at byte 19: trailing characters)
 Err(json syntax error at byte 37: trailing comma)
 Err(toml type mismatch: expected Int, got string at a)
 Err(toml type mismatch: expected Int, got string at j)
-Err(toml syntax error at byte 18: invalid string
-expected `"`, `'`)
+Err(toml syntax error at byte 18: invalid string: expected `"`, `'`)

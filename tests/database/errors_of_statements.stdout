@@ -12,4 +12,4 @@ the statement after it, and the transaction: postgres transaction aborted; rollb
 rows of that transaction in the table: 0
 the table dropped: Ok
 an unknown sslmode: postgres connect failed: postgres: invalid URL: unknown sslmode: maybe
-a closed pool: postgres connect failed: postgres: pool handle 1 is not registered (closed or never opened)
+a closed pool: postgres connection closed

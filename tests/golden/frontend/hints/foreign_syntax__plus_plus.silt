@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: silt has no `++`
+fn main() {
+  let x = 1
+  println(x++)
+}

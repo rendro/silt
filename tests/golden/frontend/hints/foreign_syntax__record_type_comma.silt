@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: the fields of a record type are separated by commas
+type User {
+  name: String
+  age: Int
+}
+fn main() {}

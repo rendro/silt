@@ -47,7 +47,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("Connect", [Value::String(m, _)]) => format!("tcp connect failed: {m}"),
         ("Bind", [Value::String(m, _)]) => format!("tcp listen failed: {m}"),
         ("Tls", [Value::String(m, _)]) => format!("tcp TLS error: {m}"),
-        ("Closed", []) => "tcp connection closed".to_string(),
+        ("Closed", []) => "tcp connection or listener closed".to_string(),
         ("Timeout", []) => "tcp operation timed out".to_string(),
         ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
@@ -327,7 +327,7 @@ mod tls {
     /// connection type (e.g. a future Quic/0-RTT variant) is one
     /// invocation; before this round it was ~50 LOC of copy-paste.
     macro_rules! stream_wrapper {
-        ($name:ident, $conn:ty) => {
+        ($name:ident, $conn:ty, $peer:literal) => {
             struct $name {
                 inner: rustls::StreamOwned<$conn, NoSigpipe>,
             }
@@ -341,7 +341,10 @@ mod tls {
                         self.inner
                             .conn
                             .complete_io(&mut self.inner.sock)
-                            .map_err(|e| format!("tls handshake: {e}"))?;
+                            .map_err(|e| {
+                                let raw = e.to_string();
+                                crate::builtins::common::tls_reason(&raw, $peer)
+                            })?;
                     }
                     Ok(())
                 }
@@ -430,8 +433,8 @@ mod tls {
         }
     }
 
-    stream_wrapper!(ClientStreamWrapper, ClientConnection);
-    stream_wrapper!(ServerStreamWrapper, ServerConnection);
+    stream_wrapper!(ClientStreamWrapper, ClientConnection, "the server");
+    stream_wrapper!(ServerStreamWrapper, ServerConnection, "the client");
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A type with no impl of a supertrait that has arguments: the text names the supertrait with them.
+-- stderr-contains: type 'Z' implements 'Sup' but does not implement supertrait 'Conv(Int)'
+trait Conv(r) { fn conv(self) -> (String, r) }
+type Box(a) { item: a }
+type Z(a) { z: a }
+trait Conv(Int) for Int { fn conv(self) -> (String, Int) { ("i", self) } }
+type W(a) { w: a }
+trait Conv(Int) for W(a) where a: Conv(Int) { fn conv(self) -> (String, Int) { Conv.conv(self.w) } }
+trait Sup: Conv(Int) { fn sup(self) -> Int { let (_, n) = Conv.conv(self)
+  n + 1 } }
+trait Sup for W(a) {}
+trait Sup for Z(Int) {}
+fn main() { println(Sup.sup(W { w: true })) }

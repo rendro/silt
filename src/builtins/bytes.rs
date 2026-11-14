@@ -81,6 +81,34 @@ fn err_base64(msg: impl Into<Arc<str>>) -> Value {
     ))
 }
 
+/// Why `s` is no base64, in the words of `from_hex`'s errors: the
+/// character and where it is (the crate writes the byte's value,
+/// "Invalid symbol 10, offset 4.").
+fn base64_reason(s: &str, error: &base64::DecodeError) -> String {
+    use base64::DecodeError;
+    let character = |at: usize| match s.get(at..).and_then(|rest| rest.chars().next()) {
+        Some(c) => format!("{c:?}"),
+        None => format!("byte {}", s.as_bytes().get(at).copied().unwrap_or(0)),
+    };
+    match *error {
+        DecodeError::InvalidByte(at, _) => {
+            format!("invalid character at position {at}: {}", character(at))
+        }
+        DecodeError::InvalidLastSymbol(at, _) => format!(
+            "invalid last character at position {at}: {}: its unused bits are not zero",
+            character(at)
+        ),
+        DecodeError::InvalidLength(len) => {
+            format!("{len} characters, which is no whole number of groups of 4")
+        }
+        DecodeError::InvalidPadding => {
+            "invalid padding: a base64 text must be padded with `=` to a whole number of groups \
+             of 4 characters"
+                .to_string()
+        }
+    }
+}
+
 fn err_byte_range(value: i64) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_BYTE_OUT_OF_RANGE,
@@ -177,7 +205,7 @@ builtins! {
     fn from_base64(s: &str) -> Value {
         match base64::engine::general_purpose::STANDARD.decode(s.as_bytes()) {
             Ok(decoded) => ok(bytes(decoded)),
-            Err(e) => err_base64(e.to_string()),
+            Err(e) => err_base64(base64_reason(s, &e)),
         }
     }
 

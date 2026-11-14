@@ -188,9 +188,20 @@ impl TypeChecker {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let found = match found.is_empty() {
-                        true => "there is no impl of it".to_string(),
-                        false => format!("found {}", found.join(" and ")),
+                    // (The innermost part that lacks it, where it is a
+                    // part of the argument: the impl of the argument's own
+                    // head fits, `Box(a)` inside does not.)
+                    let part = self
+                        .lacking_part(*bound, &bound_args, &self.apply(arg), 0)
+                        .filter(|part| *part != self.apply(arg));
+                    let found = match (part, found.is_empty()) {
+                        (Some(part), _) => format!(
+                            "its part '{}' has no impl of '{}'",
+                            self.show_type(&substitute_vars(&part, &mapping)),
+                            self.show_bound(*bound, &shown(&bound_args, &mapping))
+                        ),
+                        (None, true) => "there is no impl of it".to_string(),
+                        (None, false) => format!("found {}", found.join(" and ")),
                     };
                     let message = format!(
                         "type '{}' implements '{}', whose argument '{arg_shown}' must implement \
@@ -430,6 +441,116 @@ impl TypeChecker {
         (names, named, mapping)
     }
 
+    /// The help for a trait name `name` that names no trait: the trait
+    /// it is closest to, of those an impl can name: the program's own,
+    /// the prelude's but the sealed ones (`Equal`, `Compare`, `Hash`,
+    /// `Number` are derived), and a module's, written with its module
+    /// (`json.Decode`).
+    fn similar_trait_help(&self, name: Symbol) -> Option<String> {
+        let written = resolve(name);
+        // (Each candidate: the name compared, and how the help writes it.)
+        // (A trait of another module, as this one writes it: bare when
+        // imported by name, by its module's name or alias when the module
+        // is imported, else with the import it needs.)
+        // (A trait of another module, as this one writes it
+        // (`spelling_in_reach`), else with the import to add where one
+        // written here can reach the module; else not offered.)
+        let spelled = |module: crate::session::ModuleId, name: &str| -> Option<String> {
+            match self.spelling_in_reach(module, name) {
+                Some(written) => Some(format!("`{written}`")),
+                None => {
+                    let path = self.import_path(module)?;
+                    Some(format!(
+                        "`{path}.{name}` (a trait of module `{path}`, after `import {path}`)"
+                    ))
+                }
+            }
+        };
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        for key in self.tables.traits.keys() {
+            let shown = resolve(key.name);
+            match crate::defs::builtin_trait_of_id(key.id.0) {
+                Some((_, None)) => {}
+                Some((builtin, Some(module))) => {
+                    let spelling = crate::session::ModuleId::builtin(module)
+                        .and_then(|id| spelled(id, builtin));
+                    if let Some(spelling) = spelling {
+                        candidates.push((builtin.to_string(), spelling));
+                    }
+                }
+                None => {
+                    let Some(def) = self.def(key.id.0) else {
+                        continue;
+                    };
+                    if def.module == self.module {
+                        candidates.push((shown.clone(), format!("`{shown}`")));
+                    } else if def.vis != crate::defs::Vis::Private
+                        && let Some(spelling) = spelled(def.module, &shown)
+                    {
+                        candidates.push((shown.clone(), spelling));
+                    }
+                }
+            }
+        }
+        for prelude in crate::defs::PRELUDE_TRAITS {
+            if !super::SEALED_TRAIT_NAMES.contains(prelude) {
+                candidates.push((prelude.to_string(), format!("`{prelude}`")));
+            }
+        }
+        candidates.retain(|(candidate, _)| *candidate != written);
+        candidates.sort();
+        candidates.dedup();
+        let names: Vec<&String> = candidates.iter().map(|(n, _)| n).collect();
+        // (Two neighbouring letters swapped, `Shwo` for `Show`, is one
+        // slip, which the edit distance counts as two.)
+        let swapped = |candidate: &&&String| {
+            let (a, b): (Vec<char>, Vec<char>) =
+                (written.chars().collect(), candidate.chars().collect());
+            a.len() == b.len()
+                && (0..a.len().saturating_sub(1)).any(|i| {
+                    a[i] == b[i + 1]
+                        && a[i + 1] == b[i]
+                        && a[..i] == b[..i]
+                        && a[i + 2..] == b[i + 2..]
+                })
+        };
+        let found = super::suggest::suggest_similar(&written, names.iter().map(|n| n.as_str()))
+            .or_else(|| names.iter().filter(swapped).min().map(|n| n.to_string()))?;
+        let (_, shown) = candidates.iter().find(|(n, _)| *n == found)?;
+        Some(format!("did you mean {shown}?"))
+    }
+
+    /// The innermost part of `ty` (itself, or a type argument of it at
+    /// any depth) that lacks the trait `tr` at `args` (`trait_needs`),
+    /// for a message to name it. None where `ty` has it.
+    fn lacking_part(&self, tr: TraitKey, args: &[Type], ty: &Type, depth: usize) -> Option<Type> {
+        if depth > 16 || self.trait_needs(tr, args, ty, 0, &mut Vec::new()) {
+            return None;
+        }
+        // (A part is looked into only where the impl of the type's head
+        // asks something of its parts, by its header or by structure:
+        // `Box(Int)` lacks `Conv(a)` itself when `Conv(a) for Box(a)` asks
+        // nothing of `Int`.)
+        let asks_parts = self.type_name_for_impl(ty).is_some_and(|head| {
+            self.by_structure(tr, head)
+                || (self.tables.impl_args_of(tr, head).iter()).any(|at| {
+                    (self.tables.impl_preds.get(&(tr, head, *at))).is_some_and(|p| !p.is_empty())
+                })
+        });
+        if !asks_parts {
+            return Some(ty.clone());
+        }
+        let parts: Vec<&Type> = match ty {
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => vec![&**t],
+            Type::Map(k, v) => vec![&**k, &**v],
+            Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().collect(),
+            _ => Vec::new(),
+        };
+        (parts.into_iter())
+            .find_map(|part| self.lacking_part(tr, args, &self.apply(part), depth + 1))
+            .or_else(|| Some(ty.clone()))
+    }
+
     /// What the trait `tr` at the trait arguments `args` asks of the
     /// type variables of `ty` for `ty` to have it, gathered into
     /// `needs`: the variable itself; a part of a type that has the trait
@@ -602,9 +723,10 @@ impl TypeChecker {
 
             // Check that the trait exists first.
             let Some(trait_info) = self.tables.traits.get(trait_name).cloned() else {
-                self.error(
+                let help = self.similar_trait_help(trait_name.name);
+                self.error_help(
                     Code::UnknownTrait,
-                    format!("trait '{trait_name}' is not declared"),
+                    (format!("trait '{trait_name}' is not declared"), help),
                     diag_span,
                 );
                 continue;
@@ -654,11 +776,27 @@ impl TypeChecker {
                     continue;
                 }
                 if !self.head_has_trait(*supertrait, *type_name) {
-                    let (ty, tr, sup) = (
-                        self.impl_type_shown(impl_key),
-                        self.show_trait(*trait_name),
-                        self.show_trait(*supertrait),
-                    );
+                    // (The supertrait with its arguments, `Conv(Int)`, as
+                    // the trait declares it for this impl.)
+                    let sup_args: Vec<Type> = (trait_info.supertrait_args.get(i))
+                        .into_iter()
+                        .flatten()
+                        .map(|te| {
+                            crate::typechecker::inference::resolve_supertrait_arg(
+                                te,
+                                &trait_info,
+                                &enclosing_args,
+                            )
+                        })
+                        .collect();
+                    let (ty, tr, sup) = {
+                        let named = self.impl_args_named(*impl_key);
+                        (
+                            self.impl_type_shown(impl_key),
+                            self.show_bound(*trait_name, &named(&enclosing_args)),
+                            self.show_bound(*supertrait, &named(&sup_args)),
+                        )
+                    };
                     self.error(Code::MissingTraitImpl,
                         format!(
                             "type '{ty}' implements '{tr}' but does not implement supertrait '{sup}'"
@@ -1911,6 +2049,13 @@ impl TypeChecker {
                     ),
                 }
             });
+            // (A trait name mistyped: the trait it is closest to, of the
+            // module's own and the prelude's, as an unknown value gets.)
+            let help = help.or_else(|| {
+                (ti.trait_module.is_none())
+                    .then(|| self.similar_trait_help(ti.trait_name))
+                    .flatten()
+            });
             self.error_help(Code::UnknownTrait, (message, help), ti.span);
             return;
         };
@@ -2022,29 +2167,51 @@ impl TypeChecker {
         // then carries the type in full, `Box(Int)`, which the decoder
         // builds. An instance, `Box(Int)`, is the decoder's to judge
         // (`decode_impl_refusal`).)
-        let each_decoded = (ti.target_param_names.iter()).all(|param| {
-            (ti.where_clauses.iter()).any(|wc| {
-                wc.type_param == *param
-                    && self
-                        .named_trait(wc.trait_res, wc.trait_name)
-                        .is_some_and(Self::is_decode)
+        let undecoded: Vec<String> = (ti.target_param_names.iter())
+            .filter(|param| {
+                !(ti.where_clauses.iter()).any(|wc| {
+                    wc.type_param == **param
+                        && self
+                            .named_trait(wc.trait_res, wc.trait_name)
+                            .is_some_and(Self::is_decode)
+                })
             })
-        });
+            .map(|param| resolve(*param))
+            .collect();
         if self.generic_for_decode(target_type)
             && self.implies_decode(trait_key)
             && !free_vars_in(&self.apply(&self_type)).is_empty()
-            && !each_decoded
+            && !undecoded.is_empty()
         {
-            self.error(
-                Code::InvalidTraitImpl,
-                format!(
-                    "trait `{}` cannot be implemented for the generic type `{}`: it has \
-                     `json.Decode` as a supertrait, and a decoder builds a value of one type",
-                    self.impl_trait_name(ti),
-                    target_type.name
-                ),
-                ti.span,
+            // (Named: the parameters without the bound, and the bounds
+            // that are the fix.)
+            let trait_name = self.impl_trait_name(ti);
+            let header = format!(
+                "{}({})",
+                Qualifier::written(ti.target_module, ti.target_type),
+                (ti.target_type_args.iter())
+                    .map(type_expr_text)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
+            let missing = (undecoded.iter())
+                .map(|param| format!("`{param}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let bounds = (undecoded.iter())
+                .map(|param| format!("{param}: json.Decode"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let message = format!(
+                "trait `{trait_name}` for `{header}` needs `json.Decode` of each type parameter, \
+                 as `{trait_name}` has `json.Decode` as a supertrait: {missing} {} not bounded by it",
+                if undecoded.len() == 1 { "is" } else { "are" }
+            );
+            let help = match ti.where_clauses.is_empty() {
+                true => format!("write `trait {trait_name} for {header} where {bounds}`"),
+                false => format!("add `{bounds}` to the impl's `where` clause"),
+            };
+            self.error_help(Code::InvalidTraitImpl, (message, Some(help)), ti.span);
             return;
         }
 

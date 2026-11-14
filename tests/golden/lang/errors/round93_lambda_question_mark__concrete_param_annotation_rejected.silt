@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: note: the ?-ed expression is Result(Int, String), but the enclosing function returns Int
+-- stderr-contains: note: the ?-ed expression is Result(Int, String), but the closure it is in returns Int
 -- A lambda with a concretely typed Result parameter: `?` is checked
 -- against the lambda's own body (Int), not main's: the lambda returns
 -- neither a Result nor an Option.

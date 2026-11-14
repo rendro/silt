@@ -1,0 +1,7 @@
+-- An impl for `Fn` is still written with the bare name.
+trait Show2 { fn show2(self) -> String }
+trait Show2 for Fn { fn show2(self) -> String { "a function" } }
+fn main() {
+  let f = { x: Int -> x }
+  println(Show2.show2(f))
+}

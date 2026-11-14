@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Closures nested past the parser's limit are expressions nested too deep, not patterns (the first parameter past it is where the limit is met).
+-- stderr-contains: expression nesting exceeds maximum depth
+-- stderr-not-contains: pattern nesting
+fn main() {
+  let _ = { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> { x -> 1 } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }
+}

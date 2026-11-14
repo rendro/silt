@@ -113,7 +113,7 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `Connect(String)` | message | `tcp.connect` made no connection (refused, unreachable, no such host) |
 | `Bind(String)` | message | `tcp.listen` bound no listener (address in use, not this machine's, no address) |
 | `Tls(String)` | message | TLS handshake failure |
-| `Closed` | — | connection closed, by this end or the other (also a reset, an abort, a broken pipe) |
+| `Closed` | — | connection closed, by this end or the other (also a reset, an abort, a broken pipe); for `tcp.accept`, the listener closed |
 | `Timeout` | — | op exceeded its deadline |
 | `Other(String)` | message | unclassified socket failure |
 

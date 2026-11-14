@@ -430,6 +430,17 @@ pub struct TypeChecker {
     /// of leaving a bare header-located mismatch. Saved/restored around
     /// each fn body and lambda body, like `current_return_type`.
     pub(super) current_qmark_spans: Vec<Span>,
+    /// The `return`s of each closure whose body is being checked, the
+    /// innermost last: a closure's `return` ends the closure.
+    pub(super) closure_returns: Vec<Vec<(Span, Type)>>,
+    /// The closures with a `return`: the closure, its first `return`
+    /// and the type it returns, and the mismatches of the closure's body
+    /// with it. At the end of the function a mismatch of that type at
+    /// the closure is one error, at the `return`
+    /// (`settle_closure_returns`).
+    pub(super) closure_return_misfits: Vec<(Span, Span, String, Vec<Span>)>,
+    /// The function whose body is being checked.
+    pub(super) current_fn: Option<Symbol>,
     /// The `?` uses that decided an open return type (an unannotated
     /// function's or a closure's), with the operand's type: a body that
     /// gives no Result or Option is then the `?`'s error.
@@ -715,6 +726,10 @@ pub struct TypeChecker {
     pub(super) own_types: HashMap<Symbol, TypeRef>,
     /// The traits the module's own declarations declare, by name.
     pub(super) own_traits: HashMap<Symbol, TraitKey>,
+    /// The path each module this one imports anything of is imported
+    /// by here (`dep` for a dependency's root module, whatever the
+    /// module calls itself), for a help that says which import to add.
+    pub(super) import_paths: HashMap<crate::session::ModuleId, Symbol>,
     /// The module's type declarations that are rejected (a reserved or
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
@@ -881,6 +896,9 @@ impl TypeChecker {
             tuple_spelling: None,
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
+            closure_returns: Vec::new(),
+            closure_return_misfits: Vec::new(),
+            current_fn: None,
             qmark_decided: HashMap::new(),
             open_bound_uses: Vec::new(),
             recovery_stub_names: std::collections::HashSet::new(),
@@ -961,6 +979,7 @@ impl TypeChecker {
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
+            import_paths: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
@@ -1474,6 +1493,29 @@ impl TypeChecker {
     /// resolver wrote on each name what it names.
     pub(super) fn check_program_in(&mut self, program: &mut Program, mut env: TypeEnv) -> TypeEnv {
         self.enter_own_types();
+        // (Each import's path by the module it names: by the module's
+        // binding, or by the definitions of its items.)
+        for decl in &program.decls {
+            let Decl::Import(target, _) = decl else {
+                continue;
+            };
+            let (path, bound): (Symbol, Vec<Symbol>) = match target {
+                crate::ast::ImportTarget::Module(module) => (*module, vec![*module]),
+                crate::ast::ImportTarget::Alias(module, alias, _) => (*module, vec![*alias]),
+                crate::ast::ImportTarget::Items(module, items) => {
+                    (*module, items.iter().map(|(item, _)| *item).collect())
+                }
+            };
+            let of_module = (self.module_spelled.iter())
+                .filter(|(_, binding)| bound.contains(binding))
+                .map(|(id, _)| *id);
+            let of_items = (self.spelled.iter())
+                .filter(|(_, binding)| bound.contains(binding))
+                .filter_map(|(id, _)| self.def(*id).map(|def| def.module));
+            for module in of_module.chain(of_items).collect::<Vec<_>>() {
+                self.import_paths.entry(module).or_insert(path);
+            }
+        }
 
         // First pass: pre-register every type name with a placeholder
         // body. This makes recursive type references (e.g.
@@ -1710,6 +1752,9 @@ impl TypeChecker {
                     let owed_from = self.wanted.len();
                     let is_value =
                         self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
+                    // (A `return` in a closure of a top-level `let` is
+                    // settled here, not at the next function.)
+                    self.settle_closure_returns();
                     // A closure whose decode only its parameters' values
                     // decide is of one type, which its later use decides,
                     // as in a function's body (`infer_stmt`).
@@ -2222,6 +2267,9 @@ enum EntryWho {
 pub struct ModuleContext<'a> {
     /// The module checked.
     pub module: crate::session::ModuleId,
+    /// The package it is of: a help offers an import of a module of the
+    /// same package by its name.
+    pub package: crate::package_graph::PackageId,
     /// Its name, for diagnostics.
     pub module_name: Symbol,
     /// A file, a REPL cell, or an embedder's host module, whose
@@ -2251,6 +2299,7 @@ pub struct ModuleContext<'a> {
 pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
     let ModuleContext {
         module,
+        package,
         module_name,
         kind,
         reach,
@@ -2265,6 +2314,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     tables.begin_rows();
     let (mut checker, mut env) = builtin_env().start();
     tables.module_names.insert(module, module_name);
+    tables.module_packages.insert(module, package);
     checker.tables = std::mem::take(tables);
     // A REPL cell that binds a name an earlier cell binds reads the
     // earlier value where its own is not bound yet (`let n = n + 1`):

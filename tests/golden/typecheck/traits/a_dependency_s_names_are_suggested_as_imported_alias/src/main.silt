@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A dependency's root module (`dep/src/lib.silt`) is named in helps and messages by the name this package imports it by, never by the name the module calls itself (`lib`): the trait suggestion and the `?` help write `d.Shown` and `d.Io`, which work here.
+-- stderr-contains: help: did you mean `d.Shown`?
+-- stderr-contains: help: `?` converts nothing: add `|> result.map_err(d.Io)` before the `?`
+-- stderr-not-contains: lib.
+import dep as d
+import io
+type P { x: Int }
+trait Shwon for P { fn shown(self) -> String { "p" } }
+fn load(p: String) -> Result(String, d.AppError) {
+  let t = io.read_file(p)?
+  Ok(t)
+}
+fn main() { println(load("x")) }

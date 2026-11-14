@@ -1,0 +1,46 @@
+-- The hints for syntax of other languages fire only where the parser already errs: the nearest valid forms of each still parse and run. (An arm whose value on the next line holds a function type's `->`; `?` then a statement on the next line; `r??` on a Result of a Result; `|`-free `||` and `int.bit_or`; `.` paths; a closure `{ -> 42 }` and a block `{ -1 }`; names `in` and `not`.)
+import int
+import list
+
+type Color { Red, Green }
+
+fn inner() -> Result(Result(Int, String), String) { Ok(Ok(3)) }
+
+fn twice() -> Result(Int, String) {
+  let n = inner()??
+  Ok(n)
+}
+
+fn step() -> Result(Int, String) {
+  let a = twice()?
+  println("step {a}")
+  Ok(a + 1)
+}
+
+fn main() {
+  let g = { x: Int -> x + 1 }
+  let h = match 1 {
+    1 ->
+      g as Fn(Int) -> Int
+    _ -> g
+  }
+  println(h(1))
+  println(step())
+  let x = 6
+  println(x > 1 || x < 0)
+  println(int.bit_or(x, 1))
+  println(int.bit_and(x, 3))
+  println(match {
+    x > 1 || x < 0 -> "outside"
+    _ -> "inside"
+  })
+  println(list.length([1, 2]))
+  println(Color.Red)
+  let f = { -> 42 }
+  println(f())
+  let m = { -1 }
+  println(m)
+  let in = 3
+  let not = true
+  println("{in} {!not}")
+}

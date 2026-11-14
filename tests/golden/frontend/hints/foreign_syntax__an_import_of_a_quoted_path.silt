@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- `import "list"` gets `import list`; a quoted text that is no module name gets what a module name is, not an import that does not parse.
+-- stderr-contains: a module is imported by its name, without quotes, as in `import list`: a module name is lowercase letters, digits and `_`
+-- stderr-not-contains: `import ./utils`
+import "./utils"
+fn main() {}

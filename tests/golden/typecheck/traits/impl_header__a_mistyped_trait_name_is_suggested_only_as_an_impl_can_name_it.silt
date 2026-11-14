@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- The "did you mean" of a mistyped trait name in an impl header names only a trait the impl could name: no sealed trait (`Equal` is derived), and a module's trait with its module and import.
+-- stderr-contains: trait 'Eqaul' is not declared
+-- stderr-not-contains: did you mean `Equal`
+-- stderr-contains: help: did you mean `json.Decode` (a trait of module `json`, after `import json`)?
+-- stderr-not-contains: did you mean `Decode`
+-- stderr-contains: help: did you mean `Functor`?
+type P { x: Int }
+trait Eqaul for P {}
+trait Decod for P {}
+trait Fucntor for P {}
+fn main() {}

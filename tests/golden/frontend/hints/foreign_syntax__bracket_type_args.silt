@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: type arguments are written in parentheses
+fn main() {
+  let xs: List[Int] = []
+  println(xs)
+}

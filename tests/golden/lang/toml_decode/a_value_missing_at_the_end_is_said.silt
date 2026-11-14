@@ -1,0 +1,9 @@
+-- A toml text that ends where a value is missing (`a = `) says so, not that a character is not allowed.
+import json
+import toml
+type A { a: Int }
+fn main() {
+  println(toml.parse("a = ", A))
+  println(toml.parse("a = ", json.Value))
+  println(toml.parse("# a\u{1}b\na = 1", A))
+}

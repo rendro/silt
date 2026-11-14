@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- An argument built of parts whose own head has an impl that fits: the text names the part inside that lacks the bound, not the impl that fits.
+-- stderr-contains: but its part 'Box(a)' has no impl of 'Conv(Int)'
+-- stderr-not-contains: but found impl
+trait Conv(r) { fn conv(self) -> (String, r) }
+type Box(a) { item: a }
+type Z(a) { z: a }
+trait Conv(a) for Box(a) { fn conv(self) -> (String, a) { ("gen", self.item) } }
+trait Tbl(k) where k: Conv(Int) { fn key(self) -> k
+  fn show(self) -> (String, Int) { Conv.conv(Tbl.key(self)) } }
+fn sh(x: t, type k) -> (String, Int) where t: Tbl(k) { Tbl.show(x) }
+trait Tbl(List(Box(a))) for Z(a) { fn key(self) -> List(Box(a)) { [] } }
+trait Conv(Int) for List(e) where e: Conv(Int) { fn conv(self) -> (String, Int) { match self { 
+  [x, ..] -> Conv.conv(x)
+  _ -> ("e", 0) } } }
+fn main() { println(1) }

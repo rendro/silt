@@ -948,7 +948,11 @@ for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
 order the type declares them. A string inside a structure
 is written as a program writes it, in quotes and escaped:
 `["a", "b, c"]`, `Some("x")`, `(1, "a\nb")`, `#{"k": "v"}`, so the
-parts can be told apart. A string shown by itself (`println(s)`,
+parts can be told apart. So that two strings that differ look
+different, a control character, a character that shows nothing or
+turns the text around (a zero-width space, a direction mark, a
+byte-order mark, the line separator) and a private-use character are
+written as `\u{..}`: `["a\u{200b}"]`. A string shown by itself (`println(s)`,
 `"{s}"`) is its text. Write your own
 `trait Display for T` to replace it, in the module that declares `T`
 (see [Where an Impl Is Written](#where-an-impl-is-written)): a

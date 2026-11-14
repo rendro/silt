@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A `?` of a Result whose error is another type than the function's: one text that says what `?` returns from what, and a help that converts it, naming the variant of the function's error enum that holds it.
+-- stderr-contains: `?` returns this `io.IoError` from the function, which returns `Result(String, AppError)`
+-- stderr-contains: help: `?` converts nothing: add `|> result.map_err(Io)` before the `?`
+-- stderr-contains: `?` returns this `int.IntError` from the function, which returns `Result(Int, String)`
+-- stderr-contains: help: `?` converts nothing: turn the `int.IntError` into the function's `String` before the `?`, `|> result.map_err { e -> ... }`
+-- stderr-not-contains: expected io.IoError, got AppError
+import int
+import io
+type AppError { Io(io.IoError), Num(int.IntError) }
+fn load(path: String) -> Result(String, AppError) {
+  let text = io.read_file(path)?
+  Ok(text)
+}
+fn count(text: String) -> Result(Int, String) {
+  let n = int.parse(text)?
+  Ok(n)
+}
+fn main() {
+  println(load("x"))
+  println(count("1"))
+}

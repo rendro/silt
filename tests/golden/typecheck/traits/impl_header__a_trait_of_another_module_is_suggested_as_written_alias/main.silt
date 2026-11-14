@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A mistyped trait of a module imported under an alias is suggested by the alias: `o.Shown`.
+-- stderr-contains: help: did you mean `o.Shown`?
+import other as o
+type P { x: Int }
+trait Shwon for P { fn shown(self) -> String { "p" } }
+fn main() {}

@@ -993,7 +993,12 @@ impl TypeChecker {
                 .collect(),
             None => Vec::new(),
         };
-        if let Some(instance) = instances.first() {
+        // (The help's example: an impl at written types where one is, so
+        // that the annotation it gives is one a program can write.)
+        let closed = instances
+            .iter()
+            .find(|instance| free_vars_in(instance).is_empty());
+        if let Some(instance) = closed.or(instances.first()) {
             let message = format!(
                 "cannot decide which impl of '{}' for '{}' {what} means: the type's arguments \
                  are not decided here",
@@ -1007,6 +1012,15 @@ impl TypeChecker {
                 let ty = self.apply(ty);
                 !free_vars_in(&ty).is_empty() && free_vars_in(&ty).iter().all(|v| open.contains(v))
             });
+            // (An argument the impl leaves open is written as an example
+            // type, `Int`: a `_` is no annotation a program can write.)
+            let example = |ty: &Type| {
+                let open: HashMap<_, _> = free_vars_in(ty)
+                    .into_iter()
+                    .map(|v| (v, Type::Int))
+                    .collect();
+                crate::types::substitute_vars(ty, &open)
+            };
             let help = match param {
                 Some((_, name, ty)) => {
                     let mut mapping = HashMap::new();
@@ -1014,12 +1028,12 @@ impl TypeChecker {
                     let at = crate::types::substitute_vars(&self.apply(ty), &mapping);
                     format!(
                         "annotate the value it is given, `{name}: {}`",
-                        self.show_type(&at)
+                        self.show_type(&example(&at))
                     )
                 }
                 None => format!(
                     "annotate the value it is given, `let x: {} = ...`",
-                    self.show_type(instance)
+                    self.show_type(&example(instance))
                 ),
             };
             let diagnostic =
@@ -1027,8 +1041,11 @@ impl TypeChecker {
             // (A closure no `let` keeps for its later use to decide, as
             // one a function returns: a type the closure takes picks the
             // impl.)
+            // (Only a decoder is given its type as a value; the impl of
+            // any other trait is picked by what the closure is given.)
+            let decodes = Self::is_decode(tr) || self.implies_decode(tr);
             return match param {
-                Some((at, ..)) if !self.decided_closures.contains(at) => {
+                Some((at, ..)) if decodes && !self.decided_closures.contains(at) => {
                     let example = match &subject_ty {
                         Type::Generic(head, args) if args.len() == 1 => {
                             format!("{}(t)", self.show_type(&Type::Generic(*head, Vec::new())))

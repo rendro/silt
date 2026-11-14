@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- The error names the mistake that was made, not another one.
+-- stderr-contains: silt writes `->`, not `=>`
+-- stderr-not-contains: immutable
+fn main() {
+  let f = { x => x + 1 }
+}

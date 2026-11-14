@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: a function's body is a block
+fn add(x: Int, y: Int) = x + y
+fn main() {}

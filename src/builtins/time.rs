@@ -384,13 +384,13 @@ fn int(fields: &Record, name: &str) -> Option<i64> {
 /// is no `i32`. (A cast would truncate: the year `u32::MAX + 1999`
 /// would be 1999.)
 fn as_i32(name: &str, what: &str, n: i64) -> Result<i32, VmError> {
-    i32::try_from(n).map_err(|_| VmError::new(format!("{name}: {what} {n} out of range for i32")))
+    i32::try_from(n).map_err(|_| VmError::new(format!("{name}: {what} {n} is out of range")))
 }
 
 /// The same for the parts that are a `u32` (month, day, hour, minute,
 /// second, nanosecond).
 fn as_u32(name: &str, what: &str, n: i64) -> Result<u32, VmError> {
-    u32::try_from(n).map_err(|_| VmError::new(format!("{name}: {what} {n} out of range for u32")))
+    u32::try_from(n).map_err(|_| VmError::new(format!("{name}: {what} {n} is out of range")))
 }
 
 /// A `Date` argument: its fields, which a program can set to what is
@@ -414,12 +414,14 @@ impl<'a> Arg<'a> for Date {
 }
 
 impl Date {
-    fn naive(self) -> Result<NaiveDate, VmError> {
-        let y = as_i32("time", "year", self.year)?;
-        let m = as_u32("time", "month", self.month)?;
-        let d = as_u32("time", "day", self.day)?;
+    /// The date, or the runtime error of `name`, the function given it,
+    /// for a hand-built `Date` that is none (`day: 31` of February).
+    fn naive(self, name: &str) -> Result<NaiveDate, VmError> {
+        let y = as_i32(name, "year", self.year)?;
+        let m = as_u32(name, "month", self.month)?;
+        let d = as_u32(name, "day", self.day)?;
         NaiveDate::from_ymd_opt(y, m, d)
-            .ok_or_else(|| VmError::new(format!("invalid date: {y}-{m}-{d}")))
+            .ok_or_else(|| VmError::new(format!("{name}: invalid date: {y}-{m}-{d}")))
     }
 }
 
@@ -445,13 +447,14 @@ impl<'a> Arg<'a> for Time {
 }
 
 impl Time {
-    fn naive(self) -> Result<NaiveTime, VmError> {
-        let h = as_u32("time", "hour", self.hour)?;
-        let m = as_u32("time", "minute", self.minute)?;
-        let s = as_u32("time", "second", self.second)?;
-        let ns = as_u32("time", "ns", self.ns)?;
+    /// The time, or the runtime error of `name`, as for a `Date`.
+    fn naive(self, name: &str) -> Result<NaiveTime, VmError> {
+        let h = as_u32(name, "hour", self.hour)?;
+        let m = as_u32(name, "minute", self.minute)?;
+        let s = as_u32(name, "second", self.second)?;
+        let ns = as_u32(name, "ns", self.ns)?;
         NaiveTime::from_hms_nano_opt(h, m, s, ns)
-            .ok_or_else(|| VmError::new(format!("invalid time: {h}:{m}:{s}.{ns}")))
+            .ok_or_else(|| VmError::new(format!("{name}: invalid time: {h}:{m}:{s}.{ns}")))
     }
 }
 
@@ -473,8 +476,11 @@ impl<'a> Arg<'a> for DateTime {
 }
 
 impl DateTime {
-    fn naive(self) -> Result<NaiveDateTime, VmError> {
-        Ok(NaiveDateTime::new(self.date.naive()?, self.time.naive()?))
+    fn naive(self, name: &str) -> Result<NaiveDateTime, VmError> {
+        Ok(NaiveDateTime::new(
+            self.date.naive(name)?,
+            self.time.naive(name)?,
+        ))
     }
 }
 
@@ -1089,7 +1095,7 @@ builtins! {
     }
 
     fn datetime(date: Date, time: Time) -> Result<Value, VmError> {
-        Ok(make_datetime(NaiveDateTime::new(date.naive()?, time.naive()?)))
+        Ok(make_datetime(NaiveDateTime::new(date.naive("time.datetime")?, time.naive("time.datetime")?)))
     }
 
     fn to_datetime(instant: Instant, offset_minutes: i64) -> Result<Value, VmError> {
@@ -1118,7 +1124,7 @@ builtins! {
     }
 
     fn to_instant(datetime: DateTime, offset_minutes: i64) -> Result<Value, VmError> {
-        let local = datetime.naive()?;
+        let local = datetime.naive("time.to_instant")?;
         let offset = chrono::Duration::try_minutes(offset_minutes).ok_or_else(|| {
             VmError::new(format!(
                 "time.to_instant: offset {offset_minutes} minutes out of range"
@@ -1139,7 +1145,7 @@ builtins! {
     // of a time zone) is `Err(InvalidFormat(why))`, for a format and
     // for its parse alike ([`fits`]).
     fn format(datetime: DateTime, pattern: &str) -> Result<Value, VmError> {
-        let datetime = datetime.naive()?;
+        let datetime = datetime.naive("time.format")?;
         Ok(match &*ready(pattern, Use::Format(Of::DateTime)) {
             Ok(ready) => written(datetime.format_with_items(ready.items.iter()), pattern),
             Err(why) => invalid_format_err(why.clone()),
@@ -1147,7 +1153,7 @@ builtins! {
     }
 
     fn format_date(date: Date, pattern: &str) -> Result<Value, VmError> {
-        let date = date.naive()?;
+        let date = date.naive("time.format_date")?;
         Ok(match &*ready(pattern, Use::Format(Of::Date)) {
             Ok(ready) => written(date.format_with_items(ready.items.iter()), pattern),
             Err(why) => invalid_format_err(why.clone()),
@@ -1216,7 +1222,7 @@ builtins! {
     }
 
     fn add_days(date: Date, days: i64) -> Result<Value, VmError> {
-        let date = date.naive()?;
+        let date = date.naive("time.add_days")?;
         // chrono::Duration::days panics when `days * 86_400_000` overflows
         // i64 milliseconds (i.e. for inputs beyond roughly ±106_751_991 days).
         // We reject such values up front so the panic can never escape
@@ -1239,7 +1245,7 @@ builtins! {
     }
 
     fn add_months(date: Date, months: i64) -> Result<Value, VmError> {
-        let date = date.naive()?;
+        let date = date.naive("time.add_months")?;
         // Calculate target year and month using checked arithmetic so
         // extreme `months` inputs (e.g. i64::MAX) don't panic in debug
         // builds or silently wrap in release builds.
@@ -1309,7 +1315,7 @@ builtins! {
     }
 
     fn weekday(date: Date) -> Result<Value, VmError> {
-        let day = match date.naive()?.weekday() {
+        let day = match date.naive("time.weekday")?.weekday() {
             Weekday::Mon => bv::MONDAY,
             Weekday::Tue => bv::TUESDAY,
             Weekday::Wed => bv::WEDNESDAY,
@@ -1322,7 +1328,7 @@ builtins! {
     }
 
     fn days_between(from: Date, to: Date) -> Result<i64, VmError> {
-        let (from, to) = (from.naive()?, to.naive()?);
+        let (from, to) = (from.naive("time.days_between")?, to.naive("time.days_between")?);
         Ok(to.signed_duration_since(from).num_days())
     }
 
