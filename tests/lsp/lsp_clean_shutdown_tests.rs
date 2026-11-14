@@ -116,7 +116,11 @@ fn an_exit_without_a_shutdown_ends_the_server_with_one() {
     let mut client = LspClient::spawn();
     client.send_raw(&json!({"jsonrpc": "2.0", "method": "exit"}));
     let status = wait_for_exit(&mut client);
-    assert_eq!(status.code(), Some(1), "exit without a shutdown: {status:?}");
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "exit without a shutdown: {status:?}"
+    );
 }
 
 /// A message that cannot be read is answered with a JSON-RPC error and

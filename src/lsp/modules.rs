@@ -72,8 +72,9 @@ fn program_module_name(
     }
     let (this, that) = (graph.module(here), graph.module(module));
     if this.package != that.package
-        && let Some(import) = (this.imports.iter())
-            .find(|import| matches!(import.resolution, ImportResolution::Module(id) if id == module))
+        && let Some(import) = (this.imports.iter()).find(
+            |import| matches!(import.resolution, ImportResolution::Module(id) if id == module),
+        )
     {
         return Some(import.name);
     }
@@ -154,7 +155,11 @@ impl Server {
     pub(super) fn written_here(&self, doc: &Document, ty: &Type) -> Type {
         let found = doc.module.as_ref().and_then(|module| {
             let session = &self.projects.get(&module.project)?.session;
-            Some((module.id, session, &session.module_analysis(module.id)?.scope))
+            Some((
+                module.id,
+                session,
+                &session.module_analysis(module.id)?.scope,
+            ))
         });
         let Some((here, session, scope)) = found else {
             return ty.clone();
