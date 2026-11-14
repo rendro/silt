@@ -37,6 +37,7 @@ mod manifest_git_url_security_tests;
 mod manifest_tests;
 mod manifest_unknown_fields_rejected_tests;
 mod not_unicode_tests;
+mod output_order_tests;
 mod package_graph_lock_tests;
 mod process_exit_tests;
 mod repl_completion_scope_tests;
