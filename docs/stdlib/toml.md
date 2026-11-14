@@ -54,7 +54,7 @@ names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `toml.parse` | a record type, `json.Value`, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse` | a record type, `json.Value`, an enum type that has a variant with fields, or a type with a `json.Decode` impl |
 | `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 | `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 
@@ -90,8 +90,9 @@ impl that decodes its type parameter inside an `Option` (a record field
 `v: Option(t)`), given an `Option` that way, decodes an `Option` in an
 `Option`. Nothing crashes. In a field of a record or a variant, or anywhere
 inside a field's type (`v: Option(t)`, `items: List(Option(t))`), the
-decoder refuses the field when it runs: `Err(Other(...))`, "a value of
-type Option(Option(Int)) cannot be decoded". Outside every field, as the
+decoder refuses that record or enum type when it runs, whatever the document
+holds (the key left out, another variant of the enum): `Err(Other(...))`,
+"a value of type Option(Option(Int)) cannot be decoded". Outside every field, as the
 element type of `toml.parse_list` or the value type of `toml.parse_map`, a
 value reads as `Some(Some(...))`; an array or a table of TOML leaves no
 value out there.
