@@ -930,6 +930,21 @@ fn report_private_in_public(
     }
 }
 
+/// The help for a type of the prelude written through a module
+/// (`channel.Channel`, `time.Int`, `result.Result`):
+/// a builtin type that no builtin module declares, or `Option` and
+/// `Result`. The bare name is the type.
+fn prelude_type_help(name: &str) -> Option<String> {
+    let declared_by_a_module = (crate::builtins::registry::registry().modules.iter()).any(|m| {
+        m.type_decls.iter().any(|ty| ty.name == name) || m.opaque.iter().any(|(o, _)| *o == name)
+    });
+    let in_prelude = matches!(name, "Option" | "Result")
+        || (crate::types::builtins::lookup(name).is_some()
+            && !declared_by_a_module
+            && name != "()");
+    in_prelude.then(|| format!("`{name}` is in the prelude: write `{name}` without a module"))
+}
+
 /// `import m.{ item }` where `m` does not offer `item`.
 fn missing_item(
     module: Symbol,
@@ -970,7 +985,9 @@ fn missing_item(
         span,
         format!("module '{module}' has no member '{item}'"),
     );
-    if let Some(similar) = suggest_similar(&resolve(item), candidates.iter()) {
+    if let Some(help) = prelude_type_help(&resolve(item)) {
+        d = d.with_help(help);
+    } else if let Some(similar) = suggest_similar(&resolve(item), candidates.iter()) {
         d = d.with_help(format!("did you mean `{similar}`?"));
     }
     d
@@ -2187,16 +2204,9 @@ impl Resolver<'_> {
                         format!("module '{}' has no {what} '{name}'", module.name),
                     );
                     let name_str = resolve(name);
-                    // A type of the prelude (`channel.Channel`, `list.List`,
-                    // `result.Result`): no module has it, the bare name is it.
-                    let in_prelude = !is_trait
-                        && (matches!(name_str.as_str(), "Option" | "Result")
-                            || (crate::types::builtins::lookup(&name_str).is_some()
-                                && self.elsewhere(name).is_empty()));
-                    if in_prelude {
-                        d = d.with_help(format!(
-                            "`{name}` is in the prelude: write `{name}` without a module"
-                        ));
+                    if let Some(help) = (!is_trait).then(|| prelude_type_help(&name_str)).flatten()
+                    {
+                        d = d.with_help(help);
                     } else if let Some(c) = suggest_similar(&name_str, candidates.iter()) {
                         d = d.with_help(format!("did you mean `{c}`?"));
                     }
