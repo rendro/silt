@@ -4875,10 +4875,12 @@ impl TypeChecker {
                             result
                         }
                     }
-                    Type::Error | Type::Never => {
-                        // Prior error — propagate to prevent cascading false positives
-                        Type::Error
-                    }
+                    // Prior error — propagate to prevent cascading false positives
+                    Type::Error => Type::Error,
+                    // A value that never is (`panic("a").x`): its field
+                    // never is either, and meets every type, as the
+                    // value does (`v.x.y`, `let w = v.x` then `w.y`).
+                    Type::Never => Type::Never,
                     // Any other type has no fields.
                     _ => {
                         self.no_field(&obj_ty, field, Some(obj), &[], span);
@@ -5030,6 +5032,9 @@ impl TypeChecker {
                     // An operand already reported (or from a module that
                     // failed to load): nothing more to say.
                     Type::Error => Type::Error,
+                    // An operand that never is (`panic("a")?`): the `?`
+                    // never runs, and gives what never is.
+                    Type::Never => Type::Never,
                     Type::Var(_) => {
                         // The operand's type is unknown: the `?` waits
                         // for it (`Goal::Try`).

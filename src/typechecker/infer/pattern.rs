@@ -149,10 +149,21 @@ impl TypeChecker {
         // What is matched has no type (it comes from a module that failed
         // to load, or an expression already reported): neither has what
         // the pattern binds, so that nothing is asked of it.
-        if matches!(self.apply(expected), Type::Error) {
-            for name in collect_pattern_vars(pattern) {
-                env.define(name, Scheme::mono(Type::Error));
+        // What is matched never is (`let (a, b) = panic("x")`, `match
+        // v.x { .. }` of a `v` that never is): neither is what the
+        // pattern binds, which meets every type as the value does.
+        match self.apply(expected) {
+            Type::Error => {
+                for name in collect_pattern_vars(pattern) {
+                    env.define(name, Scheme::mono(Type::Error));
+                }
             }
+            Type::Never => {
+                for name in collect_pattern_vars(pattern) {
+                    env.define(name, Scheme::mono(Type::Never));
+                }
+            }
+            _ => {}
         }
         if let PatternMode::Binding(site) = mode {
             // Irrefutability is judged for a pattern that type checked:
