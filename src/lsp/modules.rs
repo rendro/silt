@@ -56,11 +56,10 @@ pub(super) fn visible_fields(
     record_fields
 }
 
-/// The name the module `here` knows the program module `module` by, as
-/// the checker's messages write it: its own name (`shapes`), a module of
-/// another package (a dependency's root module, which calls itself `lib`)
-/// by the path `here` imports it by. None for `here` itself and for a
-/// module that is not of the graph.
+/// The name the module `here` knows the program module `module` by, by
+/// the checker's own rule (`typechecker::module_name_in`): its own name
+/// (`shapes`), a module of another package by the path `here` imports it
+/// by. None for `here` itself and for a module that is not of the graph.
 fn program_module_name(
     session: &crate::session::Session,
     here: crate::session::ModuleId,
@@ -70,15 +69,37 @@ fn program_module_name(
     if module == here || module.index() >= graph.modules().len() {
         return None;
     }
-    let (this, that) = (graph.module(here), graph.module(module));
-    if this.package != that.package
-        && let Some(import) = (this.imports.iter()).find(
-            |import| matches!(import.resolution, ImportResolution::Module(id) if id == module),
-        )
-    {
-        return Some(import.name);
+    let path = (graph.module(here).imports.iter())
+        .find(|import| matches!(import.resolution, ImportResolution::Module(id) if id == module))
+        .map(|import| import.name);
+    crate::typechecker::module_name_in(session.tables(), here, module, path)
+}
+
+/// Whether another type than `r` has `r`'s name among the types the
+/// module of `scope` can name: one its bare name stands for, or one of a
+/// module it imports (`a.Regex` beside `b.Regex`).
+fn shares_its_name(
+    session: &crate::session::Session,
+    scope: &crate::typechecker::names::ModuleScope,
+    r: TypeRef,
+) -> bool {
+    use crate::typechecker::names::Binding;
+    let other =
+        |binding: Option<&Binding>| matches!(binding, Some(Binding::Def(id)) if *id != r.id.0);
+    if other(scope.types.get(&r.name)) {
+        return true;
     }
-    Some(that.name)
+    let builtins = crate::typechecker::names::builtins().1;
+    scope.values.values().any(|binding| {
+        let Binding::Module(module) = binding else {
+            return false;
+        };
+        let exports = match module.is_builtin() {
+            true => builtins.modules.get(module),
+            false => session.module_analysis(*module).map(|a| &a.scope.exports),
+        };
+        exports.is_some_and(|exports| other(exports.types.get(&r.name)))
+    })
 }
 
 /// The exported members of `program`.
@@ -145,13 +166,12 @@ impl Server {
         Some(self.projects.get(&module.project)?.session.tables())
     }
 
-    /// `ty` as the open document `doc` writes it: a type of a builtin
-    /// module whose bare name the document gives another type (its own
-    /// `type Regex` beside `regex.Regex`, `type Weekday` beside
-    /// `time.Weekday`), or of another module of the program (`shapes.Regex`
-    /// beside the file's own `type Regex`), with its module, as the
-    /// checker's messages and the REPL's `:type` write it; any other type
-    /// by its name.
+    /// `ty` as the open document `doc` writes it: a type of another module
+    /// whose name another type the document can name shares (its own `type
+    /// Regex` beside `regex.Regex`, `type Weekday` beside `time.Weekday`,
+    /// `a.Regex` beside `b.Regex`) with its module, as the checker's
+    /// messages and the REPL's `:type` tell two such types apart; any
+    /// other type, and the document's own, by its name.
     pub(super) fn written_here(&self, doc: &Document, ty: &Type) -> Type {
         let found = doc.module.as_ref().and_then(|module| {
             let session = &self.projects.get(&module.project)?.session;
@@ -165,10 +185,7 @@ impl Server {
             return ty.clone();
         };
         crate::types::map_refs(ty, &|r: TypeRef| {
-            // (Only where the bare name is another type's here.)
-            if !matches!(scope.types.get(&r.name),
-                Some(crate::typechecker::names::Binding::Def(id)) if *id != r.id.0)
-            {
+            if !shares_its_name(session, scope, r) {
                 return r;
             }
             let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {

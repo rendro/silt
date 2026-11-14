@@ -200,13 +200,8 @@ impl TypeChecker {
     /// root module, which calls itself `lib`) by the path this module
     /// imports it by (`dep`).
     pub(super) fn module_name_here(&self, module: crate::session::ModuleId) -> Option<Symbol> {
-        let package = |m| self.tables.module_packages.get(&m);
-        if package(module) != package(self.module)
-            && let Some(path) = self.import_paths.get(&module)
-        {
-            return Some(*path);
-        }
-        self.tables.module_names.get(&module).copied()
+        let path = self.import_paths.get(&module).copied();
+        module_name_in(&self.tables, self.module, module, path)
     }
 
     /// The variant `name` of the enum `enum_ty` as a program writes it:
@@ -531,4 +526,24 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
         }
         _ => {}
     }
+}
+
+/// The name the module `here` knows the module `module` by in a message,
+/// of the session's `tables`: its own name, but a module of another
+/// package (a dependency's root module, which calls itself `lib`) by
+/// `import_path`, the path `here` imports it by (`dep`). The one rule the
+/// checker's messages and the editor's hover write a module by.
+pub(crate) fn module_name_in(
+    tables: &Tables,
+    here: crate::session::ModuleId,
+    module: crate::session::ModuleId,
+    import_path: Option<Symbol>,
+) -> Option<Symbol> {
+    let package = |m| tables.module_packages.get(&m);
+    if package(module) != package(here)
+        && let Some(path) = import_path
+    {
+        return Some(path);
+    }
+    tables.module_names.get(&module).copied()
 }

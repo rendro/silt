@@ -34,6 +34,8 @@ mod structural;
 mod tables;
 pub(crate) mod typeexpr;
 #[cfg(feature = "lsp")]
+pub(crate) use show::module_name_in;
+#[cfg(feature = "lsp")]
 pub(crate) use typeexpr::type_expr_text;
 mod unify;
 mod unused;

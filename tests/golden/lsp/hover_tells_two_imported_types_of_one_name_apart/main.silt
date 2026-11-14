@@ -1,0 +1,21 @@
+-- cmd: lsp
+-- lsp: hover 16:7
+-- lsp: hover 17:7
+-- lsp: hover 13:4
+-- lsp: signature 18:16
+-- lsp: hover 19:7
+-- Two types of one name from two modules the file imports, neither its
+-- own: each is written with its module, as the messages write them; a
+-- type no other one shares the name of stays bare.
+import a
+import b as bee
+
+fn both(x: a.Regex, y: bee.Regex) -> Int { x.a + y.b }
+
+fn main() {
+  let x = a.mk()
+  let y = bee.mk()
+  println(both(x, y))
+  let o = bee.Only { o: 1 }
+  println(o.o)
+}
