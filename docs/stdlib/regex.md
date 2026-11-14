@@ -105,6 +105,8 @@ many of them it keeps.
 | `escape` | `(String) -> String` | The text as a pattern that matches it and nothing else |
 | `find` | `(String, Regex) -> Option(String)` | First match |
 | `find_all` | `(String, Regex) -> List(String)` | All matches |
+| `find_all_at` | `(String, Regex) -> List((Int, Int))` | Where each match is: (start, end) in characters |
+| `find_at` | `(String, Regex) -> Option((Int, Int))` | Where the first match is: (start, end) in characters |
 | `is_match` | `(String, Regex) -> Bool` | Test if pattern matches |
 | `replace` | `(String, Regex, String) -> String` | Replace all matches |
 | `replace_first` | `(String, Regex, String) -> String` | Replace first match |
@@ -282,6 +284,62 @@ import regex
 fn main() -> Result((), regex.RegexError) {
   let digits = regex.compile("\\d+")?
   println(regex.find_all("a1 b22 c333", digits)) -- ["1", "22", "333"]
+  Ok(())
+}
+```
+
+
+## `regex.find_all_at`
+
+```
+regex.find_all_at(text: String, re: Regex) -> List((Int, Int))
+```
+
+Where each match of `re` in `text` is, in order, as `regex.find_at` gives
+the first one: `(start, end)` in characters, the end not in the match. A
+match of nothing is `(n, n)`, at a place between two characters.
+
+```silt
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  let word = regex.compile("""\bab""")?
+  println(regex.find_all_at("ab ab", word)) -- [(0, 2), (3, 5)]
+  let digits = regex.compile("""\d+""")?
+  println(regex.find_all_at("é1 ü22", digits)) -- [(1, 2), (4, 6)]
+  Ok(())
+}
+```
+
+
+## `regex.find_at`
+
+```
+regex.find_at(text: String, re: Regex) -> Option((Int, Int))
+```
+
+Where the first match of `re` in `text` is: `Some((start, end))`, or `None`.
+Both are counted in characters from 0, as `string.slice` and
+`string.index_of` count, and the end is the first character after the
+match, so `string.slice(text, start, end)` is the match. `string.index_of`
+of the matched text finds where that text first occurs, which is not always
+the match: in `"cab ab"`, `\bab` (an `ab` at the start of a word) matches at
+4, and `string.index_of` finds the `ab` of `cab` at 1.
+
+```silt
+import regex
+import string
+
+fn main() -> Result((), regex.RegexError) {
+  let text = "cab ab"
+  let word = regex.compile("""\bab""")?
+  println(regex.find_at(text, word)) -- Some((4, 6))
+  println(string.index_of(text, "ab")) -- Some(1)
+  match regex.find_at(text, word) {
+    Some((start, end)) -> println(string.slice(text, start, end)) -- ab
+    None -> println("no match")
+  }
+  println(regex.find_at("none", word)) -- None
   Ok(())
 }
 ```

@@ -4,10 +4,11 @@ use regex_automata::PatternID;
 use regex_automata::meta::{BuildError, Regex};
 use regex_automata::util::captures::Captures;
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use super::common::{ok, too_long_text};
-use super::typed::{self, builtins, unsound};
+use super::typed::{self, Text, builtins, unsound};
 use crate::typeinfo::bv;
 use crate::value::{MAX_COLLECTION_LEN, Value};
 use crate::vm::{Step, VmError, iterate, next};
@@ -155,6 +156,33 @@ fn pieces<'t>(re: &Regex, text: &'t str) -> Vec<&'t str> {
     pieces
 }
 
+/// Where each of `matches`, byte ranges of `text` in order and not
+/// overlapping, is: `(start, end)` in characters, as `string.slice` and
+/// `string.index_of` count, the end not in the match. In ASCII text a
+/// byte offset is the character offset; in other text the characters
+/// are counted from one match to the next, so the text is walked once.
+fn positions(text: Text, matches: impl Iterator<Item = Range<usize>>) -> Vec<Value> {
+    let bytes = text.text.as_bytes();
+    // (A character starts at each byte that is not a continuation byte,
+    // 0b10xx_xxxx.)
+    let (mut byte, mut chars) = (0, 0);
+    let mut at = |offset: usize| -> i64 {
+        if text.ascii {
+            return offset as i64;
+        }
+        chars += bytes[byte..offset].iter().filter(|b| (**b as i8) >= -0x40).count();
+        byte = offset;
+        chars as i64
+    };
+    matches
+        .map(|m| {
+            let start = at(m.start);
+            let end = at(m.end);
+            Value::tuple(vec![Value::Int(start), Value::Int(end)])
+        })
+        .collect()
+}
+
 // `compile` checks a pattern once; every other function takes the text
 // first and the compiled pattern second, and gives its value bare.
 builtins! {
@@ -184,6 +212,15 @@ builtins! {
 
     fn find_all(text: &str, re: typed::Regex) -> Value {
         Value::list(re.re.find_iter(text).map(|m| string(&text[m.range()])).collect())
+    }
+
+    fn find_at(text: Text, re: typed::Regex) -> Value {
+        let first = re.re.find(text.text).map(|m| m.range());
+        option(positions(text, first.into_iter()).pop())
+    }
+
+    fn find_all_at(text: Text, re: typed::Regex) -> Value {
+        Value::list(positions(text, re.re.find_iter(text.text).map(|m| m.range())))
     }
 
     fn split(text: &str, re: typed::Regex) -> Value {
@@ -299,5 +336,61 @@ builtins! {
             Some((string(name), string(&text[m])))
         });
         option(Some(Value::map(named)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The positions of every match of `pattern` in `text`, with the
+    /// text marked as ASCII or not.
+    fn at(pattern: &str, text: &str, ascii: bool) -> Vec<(i64, i64)> {
+        let re = Regex::new(pattern).expect("the pattern compiles");
+        let found = positions(Text { text, ascii }, re.find_iter(text).map(|m| m.range()));
+        found
+            .iter()
+            .map(|pair| match pair {
+                Value::Tuple(ends) => match &ends[..] {
+                    [Value::Int(start), Value::Int(end)] => (*start, *end),
+                    _ => panic!("not a pair of Ints: {pair:?}"),
+                },
+                _ => panic!("not a tuple: {pair:?}"),
+            })
+            .collect()
+    }
+
+    /// A position counts characters, as `string.slice` does: the bytes
+    /// of a character outside ASCII before a match count once.
+    #[test]
+    fn a_match_position_counts_characters() {
+        assert_eq!(at("ab", "éé ab", false), [(3, 5)]);
+        assert_eq!(at("b+", "日本 bb 語 b", false), [(3, 5), (8, 9)]);
+        assert_eq!(at("é+", "aéé", false), [(1, 3)]);
+        assert_eq!(at("x", "日本", false), []);
+    }
+
+    /// A match of nothing has its start as its end, at each character
+    /// boundary, never inside a character.
+    #[test]
+    fn an_empty_match_is_a_position_between_characters() {
+        assert_eq!(at("", "aé", false), [(0, 0), (1, 1), (2, 2)]);
+        assert_eq!(at("", "", true), [(0, 0)]);
+    }
+
+    /// The ASCII path (byte offsets taken as they are) gives the numbers
+    /// the counting path gives, on text that is ASCII.
+    #[test]
+    fn the_ascii_path_gives_what_counting_gives() {
+        for (pattern, text) in [
+            ("ab", "cab ab"),
+            (r"\bab", "cab ab"),
+            ("", "abc"),
+            (r"\d+", "a1 b22 c333"),
+            ("z", "abc"),
+        ] {
+            assert_eq!(at(pattern, text, true), at(pattern, text, false), "{pattern} in {text}");
+        }
+        assert_eq!(at(r"\bab", "cab ab", true), [(4, 6)]);
     }
 }
