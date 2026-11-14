@@ -20,8 +20,8 @@
 //! Since audit R9 (FE-8) a number has one spelling: the prefixes
 //! `0x`/`0b` and the exponent `e` in lower case, no `+` in an
 //! exponent, a `_` only between two digits, no leading zero in a
-//! decimal number or in an exponent (zeros at the end of a fraction
-//! stay: `1.50`). The other spellings are lex errors, and the
+//! decimal number or in an exponent, no exponent of zero (zeros at the
+//! end of a fraction stay: `1.50`). The other spellings are lex errors, and the
 //! grammars match only the one.
 //!
 //! ## What this test locks
@@ -77,7 +77,7 @@ const ACCEPTED: &[(&str, Kind)] = &[
     ("0e1", Kind::Float),
     ("9e-2", Kind::Float),
     ("1e1_0", Kind::Float),
-    ("1e0", Kind::Float),
+    ("1e-1", Kind::Float),
     ("1e10", Kind::Float),
     ("2.5e-10", Kind::Float),
     // Zeros at the end of a fraction stay (audit R9 NUM-2).
@@ -106,6 +106,8 @@ const REJECTED: &[&str] = &[
     "0XFF", "0B10", "1E5", "1.5E-3", "1e+5", "1_", "1__0", "0x_F", "0b_1", "1_.5", "1.5_", "007",
     "00.5", "01e3", // No leading zero in an exponent (audit R9 NUM-2).
     "1e007", "1e-07", "1e00", "1.5e01", "1e0_7",
+    // No exponent of zero (audit R9 NUM-3).
+    "1e0", "1e-0", "1.5e0", "0e0", "1.50e-0", "1e0_0",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

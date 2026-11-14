@@ -1,0 +1,2 @@
+error: Plan {steps: [Step {n: 1}, Step {n: 2}, Step {n: 3}], name: "p"}
+note: the Display impl of Step failed: division by zero (main_err__the_note_names_the_impl_that_failed_inside_a_value.silt:11:10)

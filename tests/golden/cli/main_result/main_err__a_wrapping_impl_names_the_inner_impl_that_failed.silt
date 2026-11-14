@@ -1,0 +1,26 @@
+-- exit: 1
+-- An impl that shows a part whose own impl fails: the note names the
+-- inner one, where the failure is.
+type Inner {
+  a: Int,
+}
+
+trait Display for Inner {
+  fn display(self) -> String {
+    panic("inner {self.a}")
+  }
+}
+
+type Outer {
+  inner: Inner,
+}
+
+trait Display for Outer {
+  fn display(self) -> String {
+    "outer of {self.inner}"
+  }
+}
+
+fn main() -> Result((), Outer) {
+  Err(Outer { inner: Inner { a: 7 } })
+}

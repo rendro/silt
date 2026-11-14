@@ -1,0 +1,34 @@
+error[type]: cannot infer the type this use of 'list.sum' needs to implement trait 'Number'
+ --> never_value__a_bound_nothing_else_decides_names_a_typed_stub.silt:56:20
+    |
+ 56 |   println(list.sum([todo()]))
+    |                    ^^^^^^^^ cannot infer the type this use of 'list.sum' needs to implement trait 'Number'
+  = help: a value that never is decides no type: give it the type it stands for, as in `let v: Int = todo()`, or use a stub of that type, as in `fn todo_int() -> Int { todo() }`
+
+error[type]: cannot infer the type this use of 'is_warm' needs to implement trait 'Warm'
+ --> never_value__a_bound_nothing_else_decides_names_a_typed_stub.silt:57:19
+    |
+ 57 |   println(is_warm(todo()))
+    |                   ^^^^^^ cannot infer the type this use of 'is_warm' needs to implement trait 'Warm'
+  = help: a value that never is decides no type: give it the type it stands for, as in `let v: Celsius = todo()`, or use a stub of that type, as in `fn todo_celsius() -> Celsius { todo() }`
+
+error[type]: cannot infer the type this use of 'total' needs to implement trait 'Size'
+ --> never_value__a_bound_nothing_else_decides_names_a_typed_stub.silt:58:9
+    |
+ 58 |   total(todo()) + Size.size(todo())
+    |         ^^^^^^ cannot infer the type this use of 'total' needs to implement trait 'Size'
+  = help: a value that never is decides no type: give it the type it stands for, as in `let v: Int = todo()`, or use a stub of that type, as in `fn todo_int() -> Int { todo() }`
+
+error[type]: cannot infer the type this use of 'size' needs to implement trait 'Size'
+ --> never_value__a_bound_nothing_else_decides_names_a_typed_stub.silt:58:29
+    |
+ 58 |   total(todo()) + Size.size(todo())
+    |                             ^^^^^^ cannot infer the type this use of 'size' needs to implement trait 'Size'
+  = help: a value that never is decides no type: give it the type it stands for, as in `let v: Int = todo()`, or use a stub of that type, as in `fn todo_int() -> Int { todo() }`
+
+error[type]: cannot infer the type this use of 'total' needs to implement trait 'Size'
+ --> never_value__a_bound_nothing_else_decides_names_a_typed_stub.silt:63:22
+    |
+ 63 |     Some(x) -> total(x)
+    |                      ^ cannot infer the type this use of 'total' needs to implement trait 'Size'
+  = help: annotate the value it is given

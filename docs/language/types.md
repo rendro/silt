@@ -25,9 +25,11 @@ A `_` between two digits is a visual separator: `1_000_000`, `0xFF_FF`.
 A number has one spelling. The prefixes `0x` and `0b` and the exponent
 `e` are written in lower case (the digits of a hex number may be of
 either case), an exponent has no `+`, a `_` stands only between two
-digits, and neither a decimal number nor an exponent has a leading
-zero: `7`, not `007`, and `1e7`, not `1e007`. Any other spelling is an
-error that writes the number in its one spelling. The one exception:
+digits, neither a decimal number nor an exponent has a leading
+zero (`7`, not `007`, and `1e7`, not `1e007`), and an exponent is not
+zero, which says nothing: `1.0` and `1.5`, not `1e0`, `1e-0` or
+`1.5e0`. Any other spelling is an error that writes the number in its
+one spelling. The one exception:
 a fraction may end in zeros, so `1.50` can say it is a price. It is the
 Float `1.5`, and prints as `1.5`.
 

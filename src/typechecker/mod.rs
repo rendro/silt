@@ -207,6 +207,15 @@ pub struct TypeChecker {
     /// The type variables a scope's end fixed to `()` because nothing
     /// decided them (`println([])`): no decoder is given such a part.
     pub(super) defaulted_vars: std::collections::HashSet<TyVar>,
+    /// The type variables a value that never is met (`tg(todo())`):
+    /// nothing decides them by it, and the refusal of a bound on one
+    /// says how to give the value a type.
+    pub(super) met_never: std::collections::HashSet<TyVar>,
+    /// The type variables of names a pattern bound to a value whose
+    /// type was still unknown and that no value that never is had met
+    /// (`Some(x)` of `none()`): an open value of the program, which a
+    /// type nothing decides may come from instead (`never_alone`).
+    pub(super) open_bindings: Vec<TyVar>,
     /// Each decoder's use, kept before the types are final: its place,
     /// the decoder, and the types of the names of types alone and the
     /// held type variables of what it is given
@@ -835,6 +844,8 @@ impl TypeChecker {
             closure_params: Vec::new(),
             decided_closures: Vec::new(),
             defaulted_vars: std::collections::HashSet::new(),
+            met_never: std::collections::HashSet::new(),
+            open_bindings: Vec::new(),
             decoder_uses: Vec::new(),
             decode_places: std::collections::HashSet::new(),
             bare_written: HashMap::new(),

@@ -351,11 +351,12 @@ them too: `import channel.{ Message }`.
 
 The **prelude** needs no import: the primitive and container types (`Int`,
 `Float`, `Bool`, `String`, `()`, `Bytes`, `List`, `Map`, `Set`, `Channel`, `Fn`),
+`Never` (the type of what never returns),
 `TypeOf(a)` (the type of a type used as a value, like `Int` or a
 `type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
-`panic`. The primitive and container types and `TypeOf` cannot be declared
+`panic`. The primitive and container types, `Never` and `TypeOf` cannot be declared
 again: `type List { ... }` is an error, "type 'List' shadows builtin type
-'List'". A type of a built-in module reserves no name: a module may declare
+'List'", and so is `type Never { ... }`. A type of a built-in module reserves no name: a module may declare
 its own `type Regex` or `type Weekday`, a type apart from `regex.Regex` and
 `time.Weekday`, and use both; with `import regex.{ Regex }` as well, the name is
 bound twice. The other names of the prelude can be declared again: a module's

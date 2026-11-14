@@ -1,0 +1,36 @@
+import float
+import json
+import list
+import toml
+
+-- A number literal of a program has no exponent of zero (`1e0` is a lex
+-- error that says to write `1.0`), but data keeps its own rules:
+-- float.parse, json and toml read an exponent of zero, with or without
+-- a minus and with leading zeros, as their formats allow.
+type Config {
+  x: Float,
+}
+
+fn main() {
+  ["1e0", "1e-0", "1.5e0", "1E0", "1e00", "0e0"]
+    |> list.each { s ->
+      match float.parse(s) {
+        Ok(f) -> println("float {s}: {f}")
+        Err(e) -> println("float {s}: {e}")
+      }
+    }
+  ["1e0", "1e-0", "1.5E0", "1e+0"]
+    |> list.each { s ->
+      match json.parse(s, Float) {
+        Ok(f) -> println("json {s}: {f}")
+        Err(e) -> println("json {s}: {e}")
+      }
+    }
+  ["1e0", "1.5e-0", "2E+0"]
+    |> list.each { s ->
+      match toml.parse("x = {s}", Config) {
+        Ok(c) -> println("toml {s}: {c.x}")
+        Err(e) -> println("toml {s}: {e}")
+      }
+    }
+}

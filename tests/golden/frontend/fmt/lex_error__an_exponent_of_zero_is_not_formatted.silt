@@ -1,0 +1,9 @@
+-- cmd: fmt
+-- exit: 2
+-- stderr-contains: error[lex]: an exponent of zero says nothing: write `1.5`
+-- The formatter never writes a number in a spelling the lexer refuses:
+-- a file with an exponent of zero is left as it is, badly spaced lines
+-- and all.
+fn   main(  ) {
+  println( 1.5e0 )
+}

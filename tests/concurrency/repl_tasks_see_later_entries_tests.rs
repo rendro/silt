@@ -749,7 +749,7 @@ fn a_session_sets_no_slot_twice() {
             .map(|d| d.message.clone())
             .collect();
         match (evaluation.committed, evaluation.value) {
-            (true, Some(value)) => Ok(repl.show(&value)),
+            (true, Some(value)) => Ok(repl.show(&value).0),
             _ => Err(errors.join("; ")),
         }
     };
