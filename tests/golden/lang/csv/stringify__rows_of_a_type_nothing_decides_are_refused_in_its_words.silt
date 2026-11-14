@@ -1,14 +1,17 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: cannot infer the type of the rows this use of 'csv.stringify' writes
+-- stderr-contains: error[type]: cannot infer the type of the rows this use of 'c.stringify' writes
+-- stderr-contains: --> stringify__rows_of_a_type_nothing_decides_are_refused_in_its_words.silt:16:11
 -- stderr-contains: help: annotate the list it is given
 -- stderr-not-contains: json.Decode
 -- Rows whose type a use leaves undecided (the parameter of `Ph` here) are
--- refused in the words of a writer: csv.stringify decodes nothing.
+-- refused in the words of a writer: csv.stringify decodes nothing. The use
+-- is named as the program writes it.
 import csv as c
 
 type Ph(a) { n: Int }
 
 fn main() {
   println(c.stringify([Ph { n: 1 }]))
+  println([Ph { n: 1 }] |> c.stringify)
 }

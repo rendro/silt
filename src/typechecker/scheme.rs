@@ -868,8 +868,10 @@ impl TypeChecker {
                 let callee = (self.use_callees.get(&span).map(|callee| resolve(*callee)))
                     .or_else(|| in_full_callee(&error.message));
                 // (A builtin that writes what a decoder reads back,
-                // `csv.stringify`, decodes nothing: it writes rows.)
-                let writer = callee.as_deref().is_some_and(super::builtin_checks::writes);
+                // `csv.stringify`, decodes nothing: it writes rows. The
+                // refusal names it by its own name; the use as written.)
+                let writer = (in_full_callee(&error.message).as_deref())
+                    .is_some_and(super::builtin_checks::writes);
                 let what = match callee {
                     Some(callee) => format!("this use of '{callee}'"),
                     None => "this".to_string(),
