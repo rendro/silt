@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- A declaration that a syntax error cut short is skipped by the
+-- checker: each mistake below is one error, with nothing said about
+-- what the damaged declaration would have bound (`X`, `C`, `f`'s
+-- `Result`, the variant `Rect`), and nothing said to be never used
+-- while the file has syntax errors. A real type error elsewhere in the
+-- file is still said.
+const X = 1
+
+type C = A | B
+
+fn f() -> Result<Int, String> { Ok(1) }
+
+type Shape { Circle(Int) Rect(Int, Int) }
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) -> r
+    Rect(w, h) -> w * h
+  }
+}
+
+fn wrong() -> Int {
+  let unused = 1
+  "not an Int"
+}
+
+fn main() {
+  println(X)
+  println(area(Circle(1)))
+  println(f())
+  println(wrong())
+}

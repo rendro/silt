@@ -71,3 +71,11 @@ threads-required = 2
 filter = 'binary(=database)'
 test-group = 'database'
 success-output = 'immediate'
+
+# The unit tests of the crate's library (src/**, `cargo test --lib`) are
+# quick; one that hangs (a deadlock verdict that never comes: the
+# scheduler's tests wait for one) is ended after 5 minutes and fails,
+# instead of holding its CI job until the job's own limit.
+[[profile.default.overrides]]
+filter = 'kind(lib)'
+slow-timeout = { period = "60s", terminate-after = 5 }

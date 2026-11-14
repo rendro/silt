@@ -1,0 +1,17 @@
+error[type]: `Flat` takes no type arguments: write `Flat`
+ --> type_args__a_wrong_count_has_one_form.silt:16:9
+    |
+ 16 | fn e(x: Flat(Int)) -> Int { 0 }
+    |         ^^^^^^^^^ `Flat` takes no type arguments: write `Flat`
+
+error[type]: `Bytes` takes no type arguments: write `Bytes`
+ --> type_args__a_wrong_count_has_one_form.silt:18:9
+    |
+ 18 | fn f(x: Bytes(Int)) -> Int { 0 }
+    |         ^^^^^^^^^^ `Bytes` takes no type arguments: write `Bytes`
+
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> type_args__a_wrong_count_has_one_form.silt:20:9
+    |
+ 20 | fn g(x: Box(Int, Int)) -> Int { 0 }
+    |         ^^^^^^^^^^^^^ `Box` takes 1 type argument here: write `Box(a)`

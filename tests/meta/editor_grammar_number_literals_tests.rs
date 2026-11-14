@@ -17,6 +17,12 @@
 //!   went unhighlighted, and its exponent digits (`\d+`) rejected
 //!   the lexer-legal `1e1_0`.
 //!
+//! Since audit R9 (FE-8) a number has one spelling: the prefixes
+//! `0x`/`0b` and the exponent `e` in lower case, no `+` in an
+//! exponent, a `_` only between two digits, no leading zero in a
+//! decimal number. The other spellings are lex errors, and the
+//! grammars match only the one.
+//!
 //! ## What this test locks
 //!
 //! A table of literal forms is anchored to the REAL lexer (each
@@ -43,36 +49,31 @@ use std::path::PathBuf;
 /// the token kind it produces. Anchored to the real lexer in
 /// `accepted_table_matches_lexer`.
 const ACCEPTED: &[(&str, Kind)] = &[
-    // Decimal integers, with `_` separators (lexer allows trailing `_`).
+    // Decimal integers, with `_` between two digits.
     ("0", Kind::Int),
     ("42", Kind::Int),
     ("1_000", Kind::Int),
     ("1_000_000", Kind::Int),
-    ("1_", Kind::Int),
-    // Hex — both prefix cases, mixed digit case, `_` separators
-    // (including directly after the prefix).
+    // Hex: the prefix in lower case, digits of either case, `_`
+    // between two digits.
     ("0xFF", Kind::Int),
-    ("0XFF", Kind::Int),
     ("0xff", Kind::Int),
     ("0x1_F", Kind::Int),
-    ("0x_F", Kind::Int),
-    // Binary — both prefix cases, `_` separators.
+    // Binary.
     ("0b10", Kind::Int),
-    ("0B10", Kind::Int),
     ("0b1010", Kind::Int),
     ("0b1_0", Kind::Int),
     // Floats with a fractional part, `_` separators in either half.
+    ("0.5", Kind::Float),
     ("1.5", Kind::Float),
     ("3.14", Kind::Float),
     ("1_000.5", Kind::Float),
     ("1.5_5", Kind::Float),
-    // Exponents — with/without fraction, either case, optional sign,
-    // `_` separators after the first exponent digit.
+    // Exponents: with or without a fraction, `e`, an optional `-`.
     ("1.5e-3", Kind::Float),
-    ("1.5E+3", Kind::Float),
+    ("1.5e3", Kind::Float),
     ("1e5", Kind::Float),
-    ("1E5", Kind::Float),
-    ("2e+10", Kind::Float),
+    ("0e1", Kind::Float),
     ("9e-2", Kind::Float),
     ("1e1_0", Kind::Float),
 ];
@@ -93,6 +94,9 @@ const REJECTED: &[&str] = &[
     "1.5e", //
     "1e_5", // exponent must START with a digit, not `_`
     "_1",   // identifier, not a number
+    // Other spellings of a number (audit R9 FE-8).
+    "0XFF", "0B10", "1E5", "1.5E-3", "1e+5", "1_", "1__0", "0x_F", "0b_1", "1_.5", "1.5_", "007",
+    "00.5", "01e3",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -273,6 +277,7 @@ fn vim_to_rust_regex(vim: &str) -> String {
             'd' => out.push_str("[0-9]"),
             '+' => out.push('+'),
             '=' => out.push('?'),
+            '|' => out.push('|'),
             '(' => out.push_str("(?:"),
             ')' => out.push(')'),
             '.' => out.push_str(r"\."),

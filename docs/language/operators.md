@@ -99,7 +99,7 @@ let a = list.map(xs, { n -> n * 2 })
 let b = xs |> list.map { n -> n * 2 }
 ```
 
-Pipe binds tighter than comparison and boolean operators, so `x |> f == y` parses as `(x |> f) == y`. It binds looser than range, so `1..10 |> list.sum()` works without parentheses.
+Pipe binds tighter than comparison and boolean operators, so `x |> f == y` parses as `(x |> f) == y`. It binds looser than range, so `1..10 |> list.sum` works without parentheses.
 
 ## Newline Sensitivity
 
@@ -176,7 +176,7 @@ Both have precedence 90 — tighter than any binary arithmetic, looser than `as`
 range is a list, and works anywhere a list does:
 
 ```silt
-println(1..100 |> list.sum())     -- 5050
+println(1..100 |> list.sum)       -- 5050
 (1..n) |> list.each { i -> ... }
 let xs: List(Int) = 1..10
 ```
@@ -192,7 +192,7 @@ an `Int` counts (`0..9223372036854775807`); `list.length` of such a
 range is a runtime error, and so is the range of all the Ints there
 are.
 
-Range binds tighter than `|>` so `1..10 |> list.sum()` needs no parens, and looser than arithmetic so `a+1..b-1` works.
+Range binds tighter than `|>` so `1..10 |> list.sum` needs no parens, and looser than arithmetic so `a+1..b-1` works.
 
 ## Type Ascription (`as`)
 

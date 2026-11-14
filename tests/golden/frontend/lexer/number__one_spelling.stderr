@@ -1,0 +1,53 @@
+error[lex]: a `_` in a number stands between two digits: write `1`
+ --> number__one_spelling.silt:7:11
+   |
+ 7 |   let a = 1_
+   |           ^^ a `_` in a number stands between two digits: write `1`
+
+error[lex]: a `_` in a number stands between two digits: write `0xF`
+ --> number__one_spelling.silt:8:11
+   |
+ 8 |   let b = 0x_F
+   |           ^^^^ a `_` in a number stands between two digits: write `0xF`
+
+error[lex]: the prefix of a number is written in lower case: write `0xFF`
+ --> number__one_spelling.silt:9:11
+   |
+ 9 |   let c = 0XFF
+   |           ^^^^ the prefix of a number is written in lower case: write `0xFF`
+
+error[lex]: the prefix of a number is written in lower case: write `0b11`
+ --> number__one_spelling.silt:10:11
+    |
+ 10 |   let d = 0B11
+    |           ^^^^ the prefix of a number is written in lower case: write `0b11`
+
+error[lex]: the exponent of a number is written with a lower-case `e`: write `1e3`
+ --> number__one_spelling.silt:11:11
+    |
+ 11 |   let e = 1E3
+    |           ^^^ the exponent of a number is written with a lower-case `e`: write `1e3`
+
+error[lex]: an exponent is written without `+`: write `1e3`
+ --> number__one_spelling.silt:12:11
+    |
+ 12 |   let f = 1e+3
+    |           ^^^^ an exponent is written without `+`: write `1e3`
+
+error[lex]: a number has no leading zero: write `7`
+ --> number__one_spelling.silt:13:11
+    |
+ 13 |   let g = 007
+    |           ^^^ a number has no leading zero: write `7`
+
+error[lex]: a number has no leading zero: write `0.5`
+ --> number__one_spelling.silt:14:11
+    |
+ 14 |   let h = 00.5
+    |           ^^^^ a number has no leading zero: write `0.5`
+
+error[lex]: a `_` in a number stands between two digits: write `1_0`
+ --> number__one_spelling.silt:15:11
+    |
+ 15 |   let i = 1__0
+    |           ^^^^ a `_` in a number stands between two digits: write `1_0`

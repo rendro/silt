@@ -24,6 +24,7 @@ pub(crate) use decode::Source;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
+pub(crate) use io::{Printed, Stream, drain_process_output, unraised_process_stdout_failure};
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
@@ -403,6 +404,13 @@ impl Vm {
     /// collects them (`scheduler::collect_unjoined_failures`).
     fn report_unjoined_failures(&self) {
         self.runtime.scheduler.report_unjoined_failures();
+        // What the tasks printed, and the report, are written out before
+        // whoever settled says more; where a task failed, as at any end
+        // by a failure, only while the reader takes some of it.
+        match self.runtime.io.is_failing() || self.runtime.scheduler.has_unhandled_failures() {
+            true => self.runtime.io.drain_failing(crate::scheduler::LAST_WORDS),
+            false => self.runtime.io.drain(),
+        }
     }
 
     /// Run a compiled program: take in its tables, then run its script.
@@ -449,6 +457,14 @@ impl Vm {
             })?;
         let result = self.run(Arc::new(script));
         self.report_unjoined_failures();
+        // A write to stdout that failed after the print that made it had
+        // returned (the process's stdout is written by its writer) is the
+        // program's error, as the print's own would have been.
+        if result.is_ok()
+            && let Some(why) = self.runtime.io.unraised_stdout_failure()
+        {
+            return Err(VmError::new(format!("cannot write to stdout: {why}")));
+        }
         result
     }
 
@@ -492,6 +508,9 @@ impl Vm {
     /// The tasks waited for are those of the current owner
     /// ([`Vm::set_task_owner`]).
     pub fn settle(&mut self) {
+        // The streams that the code left as it returned are closed
+        // first, as they would be by the next step of a task.
+        crate::scheduler::run_deferred();
         self.runtime.scheduler.settle();
         self.report_unjoined_failures();
     }
@@ -530,6 +549,7 @@ impl Vm {
     /// where the process ends; `silt test` calls this after a test
     /// that failed, since the VM goes on to the next test.
     pub fn stop_tasks(&mut self) {
+        crate::scheduler::run_deferred();
         self.runtime.scheduler.stop_tasks();
         self.report_unjoined_failures();
     }
@@ -540,6 +560,7 @@ impl Vm {
     /// tasks of which may serve the file's tests
     /// ([`Vm::set_task_owner_within`]).
     pub fn wait_until_idle(&mut self) {
+        crate::scheduler::run_deferred();
         self.runtime.scheduler.wait_until_idle();
         self.report_unjoined_failures();
     }

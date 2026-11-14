@@ -171,6 +171,41 @@ pub(crate) fn running_below(handle: &TaskHandle) -> Vec<Arc<TaskHandle>> {
     running
 }
 
+/// The tasks below `handle` in its tree that have not ended
+/// ([`TaskHandle::has_stopped`]): after a cancel of `handle`, those that
+/// `task.cancel` waits for.
+pub(crate) fn not_stopped_below(handle: &TaskHandle) -> Vec<Arc<TaskHandle>> {
+    let Some((tree, key)) = handle.family().0.get() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    // As in `running_below`: the handles of the others are dropped once
+    // the lock is released.
+    let mut ended = Vec::new();
+    {
+        let nodes = tree.lock();
+        let mut todo: Vec<u64> = match nodes.get(key) {
+            Some(node) => node.kids.iter().copied().collect(),
+            None => Vec::new(),
+        };
+        while let Some(key) = todo.pop() {
+            let Some(node) = nodes.get(&key) else {
+                continue;
+            };
+            todo.extend(node.kids.iter().copied());
+            let Some(task) = node.handle.upgrade() else {
+                continue;
+            };
+            match task.has_stopped() {
+                true => ended.push(task),
+                false => found.push(task),
+            }
+        }
+    }
+    drop(ended);
+    found
+}
+
 /// The handle of the node `key` has been dropped: its children go to
 /// its parent.
 fn forget(tree: &Tree, key: u64) {

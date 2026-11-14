@@ -551,6 +551,13 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// Skip the next source token, whatever it is, as `skip` does: a
+    /// token of a spelling the printer leaves out (`-> ()`, a last line
+    /// `()`).
+    pub fn skip_any(&mut self) {
+        self.skip_one();
+    }
+
     /// Skip the next source token; its comments are carried to the next
     /// token that is written.
     fn skip_one(&mut self) {

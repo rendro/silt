@@ -3,8 +3,11 @@
 -- tcp.close_listener drains http.serve: a request in flight is answered
 -- (with Connection: close), a kept-alive connection that waits for its
 -- next request is closed, and serve returns when all are done. A deadline
--- around serve still cuts a request in flight: 503.
+-- around serve still cuts a request in flight: 503. Each listener is
+-- closed once its handler has been called, not after a time: a slow
+-- machine does not change what is in flight.
 import bytes
+import channel
 import http
 import map
 import option
@@ -43,8 +46,12 @@ fn main() {
     panic("cannot listen")
   }
   let port = tcp.local_port(l)
+  let called = channel.new(1)
   let server = task.spawn { ->
-    http.serve(l, slow)
+    http.serve(l) { req ->
+      channel.send(called, ())
+      slow(req)
+    }
     "serve returned"
   }
   let client = task.spawn { ->
@@ -53,7 +60,7 @@ fn main() {
       Err(e) -> "{e}"
     }
   }
-  time.sleep(time.ms(100))
+  let _ = channel.receive(called)
   tcp.close_listener(l)
   println(task.join(client))
   println(task.join(server))
@@ -88,14 +95,23 @@ fn main() {
     panic("cannot listen")
   }
   let dport = tcp.local_port(d)
-  let cut = task.spawn { -> task.deadline(time.ms(300)) { -> http.serve(d, slow) } }
+  let dcalled = channel.new(1)
+  let cut = task.spawn { ->
+    task.deadline(time.ms(1000)) { ->
+      http.serve(d) { _req ->
+        channel.send(dcalled, ())
+        time.sleep(time.ms(10_000))
+        http.Response { status: 200, body: bytes.from_string("not cut"), headers: #{} }
+      }
+    }
+  }
   let dclient = task.spawn { ->
     match http.get("http://127.0.0.1:{dport}/") {
       Ok(r) -> "{r.status}"
       Err(e) -> "{e}"
     }
   }
-  time.sleep(time.ms(100))
+  let _ = channel.receive(dcalled)
   tcp.close_listener(d)
   println(task.join(dclient))
   println(task.join(cut))

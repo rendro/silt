@@ -539,6 +539,7 @@ pub(crate) fn parse(text: &str) -> ast::Program {
         .checked()
         .unwrap_or_else(|e| panic!("the builtin registry does not lex: {}\n{text}", e.message));
     Parser::new(tokens, text)
+        .with_signatures()
         .parse_program()
         .unwrap_or_else(|e| panic!("the builtin registry does not parse: {}\n{text}", e.message))
 }

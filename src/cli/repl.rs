@@ -48,6 +48,7 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
+    crate::cli::refuse_bad_settings("repl");
     silt::repl::run_repl();
 }
 

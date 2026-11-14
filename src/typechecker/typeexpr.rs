@@ -733,6 +733,11 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 let name_str = resolve(*name);
+                // `W()`: empty parentheses, which the parser refused. What
+                // type was meant is not known, and nothing more is said.
+                if args.is_empty() {
+                    return Type::Error;
+                }
                 // `Never(..)`: `Never` takes no arguments, and is no type
                 // where it has them (unless a type of that name is
                 // declared). One error: its arguments are not looked at.
@@ -769,15 +774,6 @@ impl TypeChecker {
                 }
                 let ty = self.named_type(te.res, *name);
                 let shown = Qualifier::written(*module, *name);
-                // (`Bytes()`, `Box()`: empty parentheses are no spelling
-                // of a type.)
-                if let Some(ty) = ty
-                    && args.is_empty()
-                {
-                    let message = self.type_arguments_message(&shown, ty);
-                    self.error(Code::ArityMismatch, message, te.span);
-                    return Type::Error;
-                }
                 if let Some(builtin) = ty.and_then(builtin_type_name) {
                     let n = resolved_args.len();
                     let mut it = resolved_args.clone().into_iter();

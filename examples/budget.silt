@@ -296,7 +296,6 @@ fn print_running_balance(transactions: List(Transaction)) {
       println("{c1}{c2}{c3}{c4}")
       new_bal
     }
-  ()
 }
 
 -- ============================================================

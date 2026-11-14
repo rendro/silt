@@ -71,6 +71,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // Publish the forwarded args before compile/run so `io.args()`
     // sees them. Always set (even when empty) so a stale snapshot
     // from a prior in-process invocation doesn't leak through.
+    crate::cli::refuse_bad_settings("run");
     silt::builtins::io::set_program_args(program_args);
     // No explicit file → look for an enclosing silt package and use
     // its `src/main.silt`. Outside a package, the usage line says that

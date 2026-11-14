@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: cannot send into a stream: channel
+-- stderr-contains: is the output of stream.from_range
+-- A stream's channel is only read: a send into it is refused, whether
+-- or not its stage has run. (It went ahead of what the stage gives, or,
+-- where the stage had ended, was refused as a send on a closed channel.)
+import channel
+import stream
+
+fn main() {
+  let q = stream.from_range(1, 3)
+  let _ = channel.select([channel.Send(q, 99)])
+  println("not reached: {stream.collect(q)}")
+}

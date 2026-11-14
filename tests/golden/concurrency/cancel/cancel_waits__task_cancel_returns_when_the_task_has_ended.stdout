@@ -1,0 +1,6 @@
+results after the cancel: 1
+results of the child after the cancel: 1
+joined: 7
+cancelled a task that had ended
+cancels itself
+went on after its own cancel

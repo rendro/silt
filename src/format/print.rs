@@ -30,6 +30,7 @@ pub fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mi
         closure_alternatives: false,
         hold_closure: false,
         closure_held: false,
+        stage_call: None,
     };
     let doc = printer.program(program);
     match printer.cur.error {
@@ -385,12 +386,19 @@ fn ends_in_stage(expr: &Expr) -> bool {
 }
 
 /// Whether the last operand of `expr` is a stage of a pipeline written as
-/// a bare name (`list.first` of `xs |> list.first`), not called.
+/// a bare name (`list.first` of `xs |> list.first`), not called. A call
+/// of a name with no arguments, `xs |> list.first()`, is one: the
+/// pipeline writes it so.
 fn ends_in_bare_stage(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Pipe(_, stage) => {
-            matches!(stage.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
-        }
+        ExprKind::Pipe(_, stage) => match &stage.kind {
+            ExprKind::Ident(_) | ExprKind::FieldAccess(..) => true,
+            ExprKind::Call(callee, args) => {
+                args.is_empty()
+                    && matches!(callee.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+            }
+            _ => false,
+        },
         // (An operator that binds looser than `|>`: the pipeline is
         // printed without parentheses behind it. A tighter one, `-` or
         // `..`, has them around the pipeline.)
@@ -623,6 +631,10 @@ struct Printer<'a> {
     /// says in `closure_held` that it did (see `chain`).
     hold_closure: bool,
     closure_held: bool,
+    /// The place of the stage of a pipeline being printed, whose call
+    /// with no arguments `call_args` writes without its parentheses
+    /// (`xs |> f()` as `xs |> f`; see `pipeline`).
+    stage_call: Option<crate::source::Span>,
 }
 
 /// Whether the parser reads `pattern`, without parentheses around it,
@@ -851,7 +863,7 @@ impl Printer<'_> {
 
     fn decl(&mut self, decl: &Decl) -> Doc {
         match decl {
-            Decl::Fn(f) => self.fn_decl(f),
+            Decl::Fn(f) => self.fn_decl(f, true),
             Decl::Type(t) => self.type_decl(t),
             Decl::Trait(t) => self.trait_decl(t),
             Decl::TraitImpl(t) => self.trait_impl(t),
@@ -888,7 +900,9 @@ impl Printer<'_> {
         Doc::concat(docs)
     }
 
-    fn fn_decl(&mut self, f: &FnDecl) -> Doc {
+    /// A function declaration; `top_level`: not a method of a trait or
+    /// an impl.
+    fn fn_decl(&mut self, f: &FnDecl, top_level: bool) -> Doc {
         let mut docs = Vec::new();
         if f.is_pub {
             docs.push(self.tok(Token::Pub));
@@ -905,6 +919,19 @@ impl Printer<'_> {
             |p, param| p.param(param, false),
         );
         let returns = match &f.return_type {
+            // `-> ()` of a function at the top level whose body has `()`
+            // as its value by its form, and whose signature names no
+            // type variable, is not written: the checker reads the
+            // function the same with it and without it (see
+            // `check::unit_return_dropped`). Its comments are carried to
+            // the `{`: the choice is the tree's alone, so it is the same
+            // on the result.
+            Some(ty) if top_level && super::check::unit_return_dropped(f) => {
+                while self.cur.offset() < ty.span.end {
+                    self.cur.skip_any();
+                }
+                Doc::Nil
+            }
             Some(ty) => Doc::concat(vec![
                 space(),
                 self.tok(Token::Arrow),
@@ -920,9 +947,83 @@ impl Printer<'_> {
             // (A comment between the signature and its `{` belongs to
             // the signature, indented as a `where` clause is.)
             docs.push(Doc::nest(self.dangling()));
-            docs.push(self.block(&f.body));
+            docs.push(self.fn_body(&f.body));
         }
         Doc::concat(docs)
+    }
+
+    /// The body of a function. A `return` on its last line is not
+    /// written: the last line is the function's value either way, so
+    /// `return x` there has one spelling, `x`. Nor is a last line `()`
+    /// behind a `let`: the body's value is `()` with it and without it
+    /// (see `check::value_is_unit_after_let`); its comments stay, in
+    /// front of the `}`. (A `return` with a comment between it and its
+    /// value stays.)
+    fn fn_body(&mut self, body: &Expr) -> Doc {
+        let ExprKind::Block(stmts) = &body.kind else {
+            return self.block(body);
+        };
+        let Some((Stmt::Expr(last), front)) = stmts.split_last() else {
+            return self.block(body);
+        };
+        // The value the last line is written as: behind its `return`, if
+        // that is not written.
+        let (value, returned) = match &last.kind {
+            ExprKind::Return(Some(value))
+                if !matches!(value.kind, ExprKind::Return(_))
+                    && !self.cur.comments_between(last.span.start, value.span.start) =>
+            {
+                (&**value, true)
+            }
+            _ => (last, false),
+        };
+        // (Whatever comments stand around it: the printer moves a
+        // comment, and the choice must be the same on the result.)
+        let dropped = super::check::value_is_unit_after_let(value, front);
+        if !returned && !dropped {
+            return self.block(body);
+        }
+        let open = self.tok(Token::LBrace);
+        let count = stmts.len();
+        let mut at = 0;
+        let lines = self.lines(|p| {
+            let i = at;
+            at += 1;
+            if i + 1 < count {
+                return Some(p.stmt(&front[i], i == 0));
+            }
+            if i + 1 == count {
+                if dropped {
+                    // Its tokens are passed: their comments stand in
+                    // front of the `}`, as they do on the result.
+                    while p.cur.offset() < last.span.end {
+                        let kind = p.cur.peek().clone();
+                        p.cur.pass(&kind);
+                    }
+                    return None;
+                }
+                // (The comments above the `return` stay above the line.)
+                let leading = p.cur.leading();
+                // Parentheses around the whole line, `(return x)`, group
+                // nothing: they go with the `return`.
+                let around = p.cur.wrappers(last.span.end);
+                p.cur.skip_n(&Token::LParen, around);
+                let skipped = p.cur.skip(&Token::Return);
+                let value = p.expr(
+                    value,
+                    Ctx {
+                        line_start: i > 0,
+                        ..Ctx::top()
+                    },
+                );
+                p.cur.skip_n(&Token::RParen, around);
+                let behind = p.cur.carried();
+                return Some(Doc::concat(vec![leading, skipped, value, behind]));
+            }
+            None
+        });
+        let close = self.tok(Token::RBrace);
+        Doc::concat(vec![open, lines, close])
     }
 
     /// A parameter. `in_closure`: a closure is recognised by the tokens
@@ -1133,7 +1234,7 @@ impl Printer<'_> {
             Doc::text("{")
         });
         let mut methods = t.methods.iter();
-        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?))));
+        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?, false))));
         if methods.next().is_some() {
             self.cur.fail("a trait member is not where the tree has it");
         }
@@ -1171,7 +1272,7 @@ impl Printer<'_> {
         docs.push(space());
         docs.push(self.tok(Token::LBrace));
         let mut methods = t.methods.iter();
-        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?))));
+        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?, false))));
         if methods.next().is_some() {
             self.cur.fail("an impl member is not where the tree has it");
         }
@@ -1740,7 +1841,11 @@ impl Printer<'_> {
             } else {
                 ctx.stage()
             };
+            // `xs |> f()` is written `xs |> f` (`call_args` leaves the
+            // parentheses out), whatever parentheses stand around it.
+            let outer = self.stage_call.replace(stage.span);
             rest.push(self.expr(stage, stage_ctx));
+            self.stage_call = outer;
             if closes > 0 {
                 self.cur.skip_n(&Token::RParen, closes);
                 rest.push(self.cur.carried());
@@ -2039,7 +2144,16 @@ impl Printer<'_> {
         // How many arguments stand between the parentheses of the result.
         let inside = if trailing { count - 1 } else { count };
         // `f({ x -> x })` becomes `f { x -> x }`: no parentheses.
-        let bare = inside == 0 && trailing && !at_open;
+        // `xs |> f()`, the stage of a pipeline that calls a name with the
+        // piped value alone, has one spelling, `xs |> f`: the pipe gives
+        // the value as the first argument to the call either way. (Not a
+        // call of a call, `f()()`, whose `()` is the stage's call; nor
+        // one with a comment between its parentheses.)
+        let empty_stage = count == 0
+            && self.stage_call == Some(call.span)
+            && matches!(callee.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+            && !self.cur.comments_between(callee.span.end, call.span.end);
+        let bare = (inside == 0 && trailing && !at_open) || empty_stage;
         // Whether the source's `)` is behind the cursor (or there is
         // none).
         let mut closed = !has_open;

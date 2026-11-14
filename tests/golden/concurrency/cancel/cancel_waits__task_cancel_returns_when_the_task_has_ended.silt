@@ -1,0 +1,75 @@
+-- task.cancel returns when the task has ended, and every task below it
+-- that the cancel reached: what a cancelled task does in its last steps
+-- is done when the cancel returns, so a close after it loses nothing.
+-- A task cannot wait for its own end: one that cancels itself goes on
+-- with the last steps of a cancelled task.
+import channel
+import list
+import task
+
+-- A few hundred steps of work: fewer than a cancelled task has.
+fn work(n: Int) -> Int {
+  list.fold(1..100, n) { acc, i -> acc + i % 3 }
+}
+
+-- How many values a closed channel still holds.
+fn count(ch: Channel(Int)) -> Int {
+  loop n = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+fn main() {
+  -- A worker that was handed an item when the cancel came still puts its
+  -- result into the output channel, which has room: the cancel waits for
+  -- that.
+  let input = channel.new(0)
+  let out = channel.new(10)
+  let worker = task.spawn { ->
+    channel.each(input) { item -> channel.send(out, work(item)) }
+  }
+  channel.send(input, 1)
+  task.cancel(worker)
+  channel.close(out)
+  println("results after the cancel: {count(out)}")
+
+  -- The same for a child of the task: a cancel waits for the tasks it
+  -- reaches too.
+  let handed = channel.new(0)
+  let out2 = channel.new(10)
+  let parent = task.spawn { ->
+    let _child = task.spawn { ->
+      channel.each(handed) { item -> channel.send(out2, work(item)) }
+    }
+    channel.receive(channel.new(0))
+  }
+  channel.send(handed, 2)
+  task.cancel(parent)
+  channel.close(out2)
+  println("results of the child after the cancel: {count(out2)}")
+
+  -- A task that has ended: the cancel returns at once.
+  let ended = task.spawn { -> 7 }
+  println("joined: {task.join(ended)}")
+  task.cancel(ended)
+  println("cancelled a task that had ended")
+
+  -- A task that cancels itself does not wait: the cancel returns at once,
+  -- and the task goes on to its next take, the receive. (It runs after main
+  -- has returned: the program ends when it has.)
+  let own = channel.new(1)
+  let itself = task.spawn { ->
+    when let Some(me) = channel.receive(own) else {
+      return ()
+    }
+    println("cancels itself")
+    task.cancel(me)
+    println("went on after its own cancel")
+    let _ = channel.receive(own)
+    println("took after its own cancel")
+  }
+  channel.send(own, itself)
+}
