@@ -283,7 +283,7 @@ const LINE_START_PLUS: &str =
 
 /// The hint for `while` or `for`, a loop of another language.
 pub(crate) const NO_WHILE_FOR: &str =
-    "silt has no `while` or `for`: a loop is a `loop`, or `list.each` / `list.map` over a list";
+    "silt has no `while` or `for`: write a `loop`, or `list.each` / `list.map` over a list";
 /// The hint for `break` or `continue`.
 pub(crate) const NO_BREAK: &str =
     "silt has no `break` or `continue`: return early, or restructure the recursion";
