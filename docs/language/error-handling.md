@@ -145,9 +145,20 @@ and it is how a tool fails: the `Err` is the program's message to its user.
 
 The payload is shown as `println` shows it, so a tool's own error type
 with a `Display` impl reads as the tool writes it. Where that impl itself
-fails (a `panic` in it, a division by zero), the payload is shown by its
-structure, as `E {a: 1}`, and the failure of the impl is not reported;
-a `process.exit` in it still ends the program. Its type must have
+fails (a `panic` in it, a division by zero, a failed `task.join`), the
+payload is shown by its structure, and one line under it says which
+impl failed, what its failure said and where:
+
+```text
+error: E {a: 1}
+note: the Display impl of E failed: panic: display panics (main.silt:3:32)
+```
+
+The note names the impl the failure was raised in, also of a part of
+the payload (a record's field, an item of a list), and gives the first
+line of the failure's message, at most 1,000 bytes of it. A test that
+returns such an `Err` has the same note in its report. A `process.exit`
+in the impl still ends the program. Its type must have
 `Display`: a function, a channel, or a type that holds one and has no
 `Display` impl, is refused when the program is checked (and so is the
 error type of a test function).

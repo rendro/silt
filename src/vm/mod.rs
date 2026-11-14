@@ -17,7 +17,7 @@ mod runtime;
 pub(crate) mod show;
 
 pub(crate) use decode::Source;
-pub use error::VmError;
+pub use error::{DisplayFailure, VmError};
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
 pub(crate) use io::{
@@ -482,8 +482,8 @@ impl Vm {
             let payload = variant.fields().first().unwrap_or(&value).clone();
             // (A `process.exit` in a `Display` of the payload ends the
             // run there.)
-            let shown = self.show_text_of_err(&payload)?;
-            return Err(VmError::of_a_returned_err(function, &shown, at));
+            let (shown, failure) = self.show_text_of_err(&payload)?;
+            return Err(VmError::of_a_returned_err(function, &shown, at, failure));
         }
         Ok(())
     }

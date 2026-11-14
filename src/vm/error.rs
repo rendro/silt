@@ -53,6 +53,10 @@ pub struct VmError {
     /// `error: <text>`: it is the program's message to its user, not
     /// silt's.
     pub returned: Option<String>,
+    /// With [`VmError::returned`]: the `Display` impl that showed the
+    /// `Err` failed, and the text is the payload's structure. What
+    /// failed, for the note after the text.
+    pub display_failure: Option<Box<DisplayFailure>>,
     /// The task whose failure this is, when a `task.join` took it from
     /// that task: a cancel that dismisses it hands it back to the task,
     /// whose failure is then reported as never joined
@@ -75,6 +79,7 @@ impl VmError {
             exit: None,
             exit_in_a_test: false,
             returned: None,
+            display_failure: None,
             taken_from: None,
             span: None,
             call_stack: Vec::new(),
@@ -137,10 +142,17 @@ impl VmError {
     }
 
     /// `function` (`main`, a test function), named at `at`, returned
-    /// `Err(payload)`; `shown` is the payload as `println` writes it.
-    pub(crate) fn of_a_returned_err(function: &str, shown: &str, at: Span) -> Self {
+    /// `Err(payload)`; `shown` is the payload as `println` writes it, or
+    /// its structure where its `Display` impl failed (`failure`).
+    pub(crate) fn of_a_returned_err(
+        function: &str,
+        shown: &str,
+        at: Span,
+        failure: Option<DisplayFailure>,
+    ) -> Self {
         VmError {
             returned: Some(shown.to_string()),
+            display_failure: failure.map(Box::new),
             span: Some(at),
             ..VmError::new(format!("{function} returned Err: {shown}"))
         }
@@ -180,6 +192,9 @@ impl VmError {
         };
         let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));
+        if let Some(failure) = &self.display_failure {
+            d = failure.noted(d);
+        }
         d.help = self.help.clone();
         d.help_at = self.help_at.clone().into_boxed_slice();
         d.labels = self
@@ -187,6 +202,57 @@ impl VmError {
             .iter()
             .map(|(name, span)| (*span, name.clone()))
             .collect();
+        d
+    }
+}
+
+/// A `Display` impl that failed while a value was shown where its
+/// structure is shown instead (the `Err` that `main` or a test returned,
+/// a REPL entry's value): the type whose impl it was, as values of it
+/// are shown, what its failure said, and where.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayFailure {
+    pub type_name: String,
+    /// The failure's message: its first line, cut at
+    /// [`DisplayFailure::MOST`] bytes, and `…` where more is left out.
+    pub message: String,
+    pub span: Option<Span>,
+}
+
+impl DisplayFailure {
+    /// The most of the failure's message a note gives: it is one line
+    /// under the text it is about.
+    pub const MOST: usize = 1_000;
+
+    /// The note, with the place as `view` shows it: `the Display impl
+    /// of E failed: panic: display panics (main.silt:3:32)`.
+    pub fn note(&self, view: &dyn crate::diagnostic::SourceView) -> String {
+        let place = (self.span)
+            .filter(|span| *span != Span::BUILTIN)
+            .map(|span| view.frame(span));
+        let head = format!(
+            "the Display impl of {} failed: {}",
+            self.type_name, self.message
+        );
+        match place {
+            Some(place) => format!("{head} ({place})"),
+            None => head,
+        }
+    }
+
+    /// `d` with the note, whose place the view that shows it fills in.
+    pub(crate) fn noted(&self, mut d: Diagnostic) -> Diagnostic {
+        let head = format!(
+            "the Display impl of {} failed: {}",
+            self.type_name, self.message
+        );
+        match self.span.filter(|span| *span != Span::BUILTIN) {
+            Some(span) => {
+                d.note_at.push((d.notes.len(), span));
+                d.notes.push(format!("{head} ({{at}})"));
+            }
+            None => d.notes.push(head),
+        }
         d
     }
 }

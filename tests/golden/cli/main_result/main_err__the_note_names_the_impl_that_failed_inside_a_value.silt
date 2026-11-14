@@ -1,0 +1,27 @@
+-- exit: 1
+-- The note names the impl that failed, inside the payload too: here the
+-- impl of the second `Step` of a list in a record without an impl of its
+-- own. The failure stops the showing, so one note says what failed
+-- first; its place is where it was raised, in a function the impl calls.
+type Step {
+  n: Int,
+}
+
+fn shown(n: Int) -> String {
+  "step {10 / (n - 2)}"
+}
+
+trait Display for Step {
+  fn display(self) -> String {
+    shown(self.n)
+  }
+}
+
+type Plan {
+  steps: List(Step),
+  name: String,
+}
+
+fn main() -> Result((), Plan) {
+  Err(Plan { steps: [Step { n: 1 }, Step { n: 2 }, Step { n: 3 }], name: "p" })
+}

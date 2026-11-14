@@ -1,0 +1,9 @@
+pub type Point {
+  x: Int,
+}
+
+trait Display for Point {
+  fn display(self) -> String {
+    panic("geo point {self.x}")
+  }
+}

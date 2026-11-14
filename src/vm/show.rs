@@ -15,6 +15,7 @@ use std::fmt::Write as _;
 
 use std::sync::Arc;
 
+use super::error::DisplayFailure;
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
 use crate::builtins::common::Bounded;
@@ -541,22 +542,59 @@ impl Vm {
     /// included. The impls run here, on this thread, as a call of the
     /// VM's own. If one of them fails, or cannot run to its end (it
     /// waits for something that never comes), the text is the value's
-    /// plain structure.
-    pub fn show_text(&mut self, value: &Value) -> String {
-        self.show_or_fail(value, Limit::Whole)
-            .unwrap_or_else(|_| value.to_string())
+    /// plain structure, and what failed is given with it.
+    pub fn show_text(&mut self, value: &Value) -> (String, Option<DisplayFailure>) {
+        match self.show_or_fail(value, Limit::Whole) {
+            Ok(text) => (text, None),
+            Err(e) => (value.to_string(), Some(self.display_failure(&e, value))),
+        }
     }
 
     /// [`Vm::show_text`] for the `Err` that `main` or a test returned,
     /// but what ends the run in a `Display` impl (a `process.exit`, the
     /// step budget used up) is the result: that impl is code of the
     /// program. Any other failure of it shows the value's structure,
-    /// as [`Vm::show_text`] does.
-    pub(crate) fn show_text_of_err(&mut self, value: &Value) -> Result<String, VmError> {
+    /// cut as a message is, and what failed, as [`Vm::show_text`] does.
+    pub(crate) fn show_text_of_err(
+        &mut self,
+        value: &Value,
+    ) -> Result<(String, Option<DisplayFailure>), VmError> {
         match self.show_or_fail(value, Limit::Cut(MESSAGE_MOST)) {
             Err(e) if e.exit.is_some() || e.exit_in_a_test || e.out_of_steps => Err(e),
-            Err(_) => Ok(message_of(value)),
-            Ok(text) => Ok(text),
+            Err(e) => Ok((message_of(value), Some(self.display_failure(&e, value)))),
+            Ok(text) => Ok((text, None)),
+        }
+    }
+
+    /// What failed when `value` was shown, from the error `e` it ended
+    /// with: the innermost written `display` the failure was raised
+    /// under (its frame is named `<type>.display`, the type as values
+    /// of it are shown, and no module function is named so: a type's
+    /// name starts with a capital letter), else the type of `value`;
+    /// the message, its first line and at most [`DisplayFailure::MOST`]
+    /// bytes of it, with `…` where more is left out; its place.
+    fn display_failure(&self, e: &VmError, value: &Value) -> DisplayFailure {
+        let of_an_impl = |name: &str| {
+            let ty = name.strip_suffix(".display")?;
+            let last = ty.rsplit('.').next()?;
+            last.starts_with(char::is_uppercase).then(|| ty.to_string())
+        };
+        let type_name = (e.call_stack.iter())
+            .find_map(|(name, _)| of_an_impl(name))
+            .unwrap_or_else(|| self.user_facing_type_name(value));
+        let first = e.message.lines().next().unwrap_or_default();
+        let mut end = first.len().min(DisplayFailure::MOST);
+        while !first.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut message = first[..end].to_string();
+        if end < e.message.trim_end().len() {
+            message.push('…');
+        }
+        DisplayFailure {
+            type_name,
+            message,
+            span: e.span,
         }
     }
 

@@ -1,6 +1,7 @@
 -- exit: 1
 -- Where the Display impl of the `Err` a `main` returns fails itself,
--- the value is shown by its structure: the message is the Err.
+-- the value is shown by its structure: the message is the Err, and a
+-- note under it says what failed.
 type Code {
   n: Int,
 }

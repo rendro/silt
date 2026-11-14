@@ -176,8 +176,10 @@ pub(crate) fn vm_run_file(path: &str) {
     // `main`'s error: raised, with its full diagnostic, or returned as
     // `Err(e)`, which is the program's message to its user: the one line
     // `error: <e>`, with no place of silt's (see `Vm::run_program`).
+    // A `Display` impl of the `Err` that failed is told in a note under
+    // the line.
     let main_text = (run_result.as_ref().err()).map(|e| match &e.returned {
-        Some(text) => format!("error: {text}"),
+        Some(text) => returned_err_text(e, text, &ProgramFiles::new(path, &sources)),
         None => render_runtime_error(e, path, &sources),
     });
     let failed = tasks_failed || main_text.is_some();
@@ -195,6 +197,20 @@ pub(crate) fn vm_run_file(path: &str) {
     silt::scheduler::report_on_stderr(&report);
     if failed {
         silt::scheduler::exit_with_status(1);
+    }
+}
+
+/// The `Err` that `main` returned, as `silt run` writes it: the line
+/// `error: <text>`, and where the payload's `Display` impl failed and
+/// `text` is its structure, the line `note: <what failed>`.
+pub fn returned_err_text(
+    e: &VmError,
+    text: &str,
+    view: &dyn silt::diagnostic::SourceView,
+) -> String {
+    match &e.display_failure {
+        Some(failure) => format!("error: {text}\nnote: {}", failure.note(view)),
+        None => format!("error: {text}"),
     }
 }
 
