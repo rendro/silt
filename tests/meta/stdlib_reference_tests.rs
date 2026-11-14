@@ -129,19 +129,21 @@ fn every_signature_block_of_a_page_is_the_registry_s() {
 fn every_function_has_a_section_of_its_own() {
     let mut missing = Vec::new();
     for module in &registry().modules {
-        let keys: HashSet<String> = (iter_sections(module.page).into_iter())
-            .flat_map(|(keys, _)| keys)
-            .collect();
+        let sections: Vec<(Vec<String>, String)> = iter_sections(module.page);
         for row in &module.rows {
             let name = format!("{}.{}", module.name, row.name);
-            if !keys.contains(&name) {
-                missing.push(format!("{name} ({})", module.page_file));
+            match sections.iter().find(|(keys, _)| keys.contains(&name)) {
+                None => missing.push(format!("{name} ({}): no section", module.page_file)),
+                Some((_, body)) if !body.contains("```silt") => {
+                    missing.push(format!("{name} ({}): no example", module.page_file))
+                }
+                Some(_) => {}
             }
         }
     }
     assert!(
         missing.is_empty(),
-        "{} builtin(s) have no `## `module.name`` section on their page: {missing:?}",
+        "{} builtin(s) have no `## `module.name`` section with a ```silt example on their page: {missing:?}",
         missing.len()
     );
 }

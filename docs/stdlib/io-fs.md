@@ -81,6 +81,16 @@ says, without a newline. A write to stderr that fails (a closed stderr) is
 ignored: there is nowhere left to say it. Each call writes its whole text at
 once, so the texts of two tasks never mix inside one call's text.
 
+```silt
+import io
+
+fn main() {
+  io.eprint("loading... ")
+  io.eprintln("done")
+  println("the output")
+}
+```
+
 
 ## `io.eprintln`
 

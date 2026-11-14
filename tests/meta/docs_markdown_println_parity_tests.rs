@@ -43,9 +43,9 @@
 //! ## Illustrative annotations
 //!
 //! Annotations that contain `approximately`, start with `e.g.`, or
-//! contain `...` are treated as illustrative — we still require the
-//! corresponding println produced *some* non-empty output, but we
-//! don't byte-compare.
+//! contain `...` are treated as illustrative: the corresponding println
+//! must still have printed a line that is not empty, which is not
+//! compared.
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -272,8 +272,10 @@ fn extract_println_pairs(src: &str) -> Vec<PrintlnPair> {
         if trimmed.starts_with("--") || trimmed.starts_with("//") {
             continue;
         }
-        let println_pos = trimmed.find("println(").unwrap();
-        if trimmed[..println_pos].contains("->") {
+        // A `println` in a match arm or a closure (`Ok(v) -> println(v)
+        // -- 1`) is compared like any other; one in a one-line function's
+        // header and body is not (its function may never be called).
+        if trimmed.starts_with("fn ") || trimmed.starts_with("pub fn ") {
             continue;
         }
         let expected = find_expected_comment(trimmed);
@@ -386,7 +388,9 @@ fn diff_println_pairs(pairs: &[PrintlnPair], stdout: &str) -> DiffOutcome {
                     found_at = Some(idx);
                     break;
                 }
-            } else if got == want {
+            } else if got == want || got == expected.trim() {
+                // The comment as written, or without a remark in
+                // parentheses after it (`42 (the answer)`).
                 found_at = Some(idx);
                 break;
             }
@@ -397,9 +401,6 @@ fn diff_println_pairs(pairs: &[PrintlnPair], stdout: &str) -> DiffOutcome {
                 matched += 1;
             }
             None => {
-                if illustrative {
-                    continue;
-                }
                 let preview = stdout_lines
                     .get(cursor..search_end)
                     .map(|lines| lines.join("\n"))
@@ -440,6 +441,8 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
     struct Job {
         doc_path: PathBuf,
         opener_line: usize,
+        /// Which of the runs of a fence with several `-- error:` lines.
+        variant: usize,
         /// The program run: the fence, or a fragment wrapped in `main`.
         src: String,
         /// Whether `src` is a wrapped fragment, which is run only when it
@@ -482,14 +485,44 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                 .and_then(|s| s.to_str())
                 .unwrap_or("doc")
                 .to_string();
-            jobs.push(Job {
-                doc_path: doc_path.clone(),
-                opener_line,
-                src: program,
-                fragment,
-                file_stem,
-                pairs,
-            });
+            // A line annotated `-- error: ...` ends the program, so a fence
+            // with several is run once for each: without the error lines
+            // before it, which are statements of their own.
+            let errors: Vec<usize> = (pairs.iter().enumerate())
+                .filter(|(_, p)| p.expected.as_deref().and_then(error_annotation).is_some())
+                .map(|(i, _)| i)
+                .collect();
+            for variant in 0..errors.len().max(1) {
+                let dropped: Vec<usize> = errors[..variant].to_vec();
+                let src: String = (program.lines().enumerate())
+                    .map(|(i, line)| {
+                        let gone = dropped.iter().any(|&d| pairs[d].block_line == i + 1);
+                        if gone {
+                            String::new()
+                        } else {
+                            line.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n";
+                let kept: Vec<PrintlnPair> = (pairs.iter().enumerate())
+                    .filter(|(i, _)| !dropped.contains(i))
+                    .map(|(_, p)| PrintlnPair {
+                        block_line: p.block_line,
+                        expected: p.expected.clone(),
+                    })
+                    .collect();
+                jobs.push(Job {
+                    doc_path: doc_path.clone(),
+                    opener_line,
+                    variant,
+                    src,
+                    fragment,
+                    file_stem: file_stem.clone(),
+                    pairs: kept,
+                });
+            }
         }
     }
 
@@ -528,9 +561,10 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                     // name such as `channel-task` is no module name: `-`
                     // becomes `_`.)
                     let name = format!(
-                        "{}_line{}",
+                        "{}_line{}_{}",
                         job.file_stem.to_lowercase().replace('-', "_"),
-                        job.opener_line
+                        job.opener_line,
+                        job.variant
                     );
                     let dir = tmp_dir_ref.join(&name);
                     std::fs::create_dir_all(&dir).expect("create the fence's directory");
@@ -561,7 +595,8 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                     // A line annotated `-- error: <message>` (or `--
                     // runtime error: ...`) ends the program: the lines
                     // before it are compared with stdout, and the message
-                    // must be in stderr. The lines after it never run.
+                    // must be that of the error the run ends with. The
+                    // lines after it are run without it (a run of their own).
                     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
                     let first_error = job
                         .pairs
@@ -572,7 +607,13 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                             let message = (job.pairs[k].expected.as_deref())
                                 .and_then(error_annotation)
                                 .unwrap_or_default();
-                            if output.status.success() || !stderr.contains(message) {
+                            // The message is that of the diagnostic's
+                            // header, `error[runtime]: <message>`, not of
+                            // the source line it echoes with its comment.
+                            let reported = stderr.lines().any(|l| {
+                                l.trim_start().starts_with("error") && l.contains(message)
+                            });
+                            if output.status.success() || !reported {
                                 failures_ref.lock().unwrap().push(format!(
                                     "{place} (```silt fence, line {} of the program run): \
                                      expected the run to end with the error `{message}`; \
