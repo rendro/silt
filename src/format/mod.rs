@@ -90,7 +90,6 @@ pub fn format(file: FileId, source: &str) -> Result<String, Diagnostic> {
 /// `format`, with `tamper` applied to the printer's result before the
 /// oracle sees it: the way to test that a wrong result is refused and
 /// not returned. Not part of a release build.
-#[doc(hidden)]
 #[cfg(any(test, debug_assertions))]
 pub fn format_with(
     file: FileId,

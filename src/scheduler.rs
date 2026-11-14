@@ -79,7 +79,6 @@ use crate::value::Value;
 use crate::vm::{HostIo, Vm, VmError};
 
 #[cfg(any(test, feature = "test-hooks"))]
-#[doc(hidden)]
 pub mod test_support;
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.

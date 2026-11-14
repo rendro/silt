@@ -672,7 +672,6 @@ impl Tables {
     /// that compares two states of a session (what an entry that failed
     /// leaves behind is nothing).
     #[cfg(any(test, feature = "test-hooks"))]
-    #[doc(hidden)]
     pub fn fingerprint(&self) -> Vec<String> {
         fn keys<K: std::fmt::Debug>(table: &str, keys: impl Iterator<Item = K>) -> Vec<String> {
             keys.map(|key| format!("{table} {key:?}")).collect()

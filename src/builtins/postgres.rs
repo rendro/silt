@@ -1263,7 +1263,6 @@ fn err(v: Value) -> Value {
 /// Rust callers that need the full un-redacted error can still call
 /// `tokio_postgres::Error::as_db_error()` directly on the original error.
 /// The scrub only applies to strings destined for silt-side `PostgresError`.
-#[doc(hidden)] // Exposed for integration tests (tests/lang/postgres_hardening_tests.rs).
 pub fn redact_pg_message(s: &str) -> String {
     // Drop follow-on lines that Postgres uses for user-data callouts.
     let mut out = String::with_capacity(s.len());
@@ -1959,7 +1958,7 @@ fn only_sockets(_cfg: &Config) -> bool {
 }
 
 /// Test-only: [`connect_limit`], for a test without a server.
-#[doc(hidden)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn connect_limit_for_tests(url: &str) -> Result<Duration, String> {
     connect_limit(url).map_err(str::to_string)
 }
@@ -1967,7 +1966,6 @@ pub fn connect_limit_for_tests(url: &str) -> Result<Duration, String> {
 /// Effective `sslmode` once we've parsed both `postgres`-crate-native
 /// values (`Disable` / `Prefer` / `Require`) and the extended modes
 /// (`verify-ca` / `verify-full`) that we detect manually.
-#[doc(hidden)] // public so integration tests can verify the default mode resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectiveSslMode {
     Disable,
@@ -1981,7 +1979,7 @@ pub enum EffectiveSslMode {
 /// given URL, WITHOUT actually opening a connection. Integration tests
 /// use this to lock the HIGH-4 fix: a URL that omits `sslmode=`
 /// resolves to `VerifyFull`, NOT the libpq-default `Prefer`.
-#[doc(hidden)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn resolve_effective_sslmode_for_tests(url: &str) -> Result<EffectiveSslMode, String> {
     let (_, ext) = without_ssl_options(url)?;
     Ok(match ext.mode {
@@ -3317,7 +3315,7 @@ fn mend(expected: &str, actual: &str) -> Mend {
 /// lock the typed-timeout shape without needing a live DB. Returns the
 /// exact `Value` a postgres operation gives when the time of its wait
 /// (`SILT_IO_TIMEOUT`) is over.
-#[doc(hidden)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn pg_timeout_err_for_tests(msg: &str) -> Value {
     pg_timeout_err(crate::vm::IoFailure::Timeout(msg))
 }
@@ -3328,7 +3326,7 @@ pub fn pg_timeout_err_for_tests(msg: &str) -> Value {
 /// `connect_with` is; else `Ok(Some(n))` if the map carries a valid
 /// `max_pool_size` key, `Ok(None)` if the key is absent, `Err` if its
 /// value is none a pool can have.
-#[doc(hidden)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn read_max_pool_size_for_tests(opts: &Value) -> Option<Result<Option<u32>, String>> {
     let opts = Opts::take(opts)?;
     Some(parse_connect_opts(&opts).map(|parsed| parsed.max_pool_size))

@@ -72,10 +72,8 @@ pub trait Completion: Send + Sync {
     /// What the cell is, if it says.
     fn label(&self) -> Option<&str>;
 
-    #[doc(hidden)]
     fn enqueue(&self, waiter: Waiter, wakes: &mut Wakes);
 
-    #[doc(hidden)]
     fn forget(&self, token: &Arc<Token>);
 }
 
