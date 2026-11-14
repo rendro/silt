@@ -401,7 +401,8 @@ every offset also reads `Z` (or `z`) for UTC:
 `%z` and `%:z` want hours and minutes: `+02` by them is
 `Err(ParseFormat(...))` that says so (`the UTC offset at byte 19 needs hours
 and minutes (+hh:mm or +hhmm)`). `%+` reads RFC 3339 whole, and `%s`
-(seconds since the epoch) names an instant without an offset.
+(seconds since the epoch, `-1` for the second before it) names an
+instant without an offset.
 `time.to_datetime(i, 0)` gives the UTC date and time of the instant.
 
 A pattern without an offset is `Err(InvalidFormat(why))` whatever the

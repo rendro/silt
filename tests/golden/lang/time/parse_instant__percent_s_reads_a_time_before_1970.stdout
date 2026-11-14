@@ -1,0 +1,7 @@
+1969-12-31T23:59:59
+1969-12-31T00:00:00
+1970-01-01T00:00:00
+1970-01-02T00:00:00
+time parse error: invalid instant '-' for '%s': expected the timestamp at byte 0
+time parse error: invalid instant '--1' for '%s': expected the timestamp at byte 0
+Ok(1969-12-31T23:59:59)

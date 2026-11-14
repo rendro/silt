@@ -914,6 +914,17 @@ fn read_item<'s>(
             parsed.set_nanosecond(nanos)?;
             Ok(behind)
         }
+        // (chrono reads `%s` with no sign: no time before 1970 was read.)
+        Item::Numeric(Numeric::Timestamp, _) if rest.trim_start().starts_with('-') => {
+            let digits = &rest.trim_start()[1..];
+            let n = digits.bytes().take_while(u8::is_ascii_digit).count();
+            if n == 0 {
+                return Err(chrono_error(digits.is_empty()));
+            }
+            let seconds: i64 = digits[..n].parse().map_err(|_| chrono_error(false))?;
+            parsed.set_timestamp(-seconds)?;
+            Ok(&digits[n..])
+        }
         other => chrono::format::parse_and_remainder(parsed, rest, std::iter::once(other)),
     }
 }
