@@ -264,3 +264,50 @@ fn f12_redactor_hides_all_that_the_old_one_hid_and_what_the_client_sends() {
     }
     assert_eq!(checked, 4 * 15 * 5 * 6 * 4 * 4);
 }
+
+/// Credentials are hidden after any scheme, a misspelt one and none: an
+/// `InvalidUrl` that quotes `ftp://u:p@h` (a redirect's location),
+/// `htp://u:p@h` or `//u:p@h` showed the user and the password.
+#[cfg(feature = "http")]
+#[test]
+fn a_message_hides_the_credentials_of_any_scheme() {
+    for (input, expected) in [
+        ("fail: ftp://u:pw@h/x", "fail: ftp://***@h/x"),
+        ("fail: htp://u:pw@h/x", "fail: htp://***@h/x"),
+        ("fail: //u:pw@h/x", "fail: //***@h/x"),
+        ("fail: svn+ssh://u:pw@h", "fail: svn+ssh://***@h"),
+        ("a // comment with no host", "a // comment with no host"),
+    ] {
+        assert_eq!(redact_http_url_userinfo(input), expected, "{input}");
+    }
+}
+
+/// A text that is one URL, as the program wrote it, has its userinfo
+/// hidden however the URL is spelt: one slash after the scheme, none, no
+/// scheme, a raw space or tab in the password (it ended the authority of
+/// a message, and the rest of the password and the user were shown).
+#[cfg(feature = "http")]
+#[test]
+fn a_url_hides_its_credentials_however_it_is_spelt() {
+    use silt::builtins::http::redact_url;
+    for (input, expected) in [
+        ("http://u:pw@h/x", "http://***@h/x"),
+        ("http:/u:pw@h/x", "http:/***@h/x"),
+        ("http:u:pw@h/x", "***@h/x"),
+        ("//u:pw@h/x", "//***@h/x"),
+        ("u:pw@h/x", "***@h/x"),
+        ("ftp://u:pw@h/", "ftp://***@h/"),
+        ("http://u:p w@h/", "http://***@h/"),
+        ("http://u:p\tw@h/", "http://***@h/"),
+        ("http://u:p@w@h/", "http://***@h/"),
+        (
+            "http://h/?next=ftp://u:pw@x/",
+            "http://h/?next=ftp://***@x/",
+        ),
+        ("http://@h/", "http://@h/"),
+        ("http://h/a@b", "http://h/a@b"),
+        ("http://h", "http://h"),
+    ] {
+        assert_eq!(redact_url(input), expected, "{input}");
+    }
+}

@@ -240,14 +240,13 @@ pub(crate) fn ureq_response_to_value(
 /// the caller embedded credentials in the URL (`https://user:tok@h`),
 /// those credentials leak into the `Err` string that's handed back
 /// to the silt program (F12). Replace the userinfo segment with
-/// `***@` for any `http://` / `https://` substring that carries one.
-///
-/// The authority is read as the client reads it (`basic_of_url`): the
-/// scheme in any case (`HTTP://` is sent as `http://` is), and the
-/// userinfo up to the LAST `@` before the end of the authority (a `/`,
-/// `?`, `#`, a space, a tab or a line feed), so a password with a raw `@`
-/// in it is scrubbed whole. `scheme://@host` stays as it is. One pass
-/// over the text.
+/// `***@` for any authority that carries one: whatever stands after a
+/// `//`, of any scheme or of none (`ftp://u:p@h`, `htp://u:p@h`,
+/// `//u:p@h`), up to the LAST `@` before the end of the authority (a
+/// `/`, `?`, `#`, a space, a tab or a line feed), so a password with a
+/// raw `@` in it is scrubbed whole. `scheme://@host` stays as it is.
+/// One pass over the text. A text that is one URL, as the program wrote
+/// it, is scrubbed with [`redact_url`].
 #[cfg(feature = "http")]
 pub fn redact_http_url_userinfo(msg: &str) -> String {
     redact_counting(msg, &mut 0)
@@ -257,26 +256,14 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// at (what a test asks: no more than a few times the text's length).
 #[cfg(feature = "http")]
 fn redact_counting(msg: &str, looked: &mut usize) -> String {
-    // (ASCII lower case keeps every byte where it is.)
-    let lower = msg.to_ascii_lowercase();
     let mut out = String::with_capacity(msg.len());
-    // What of `msg` is in `out`, and where the search for a scheme goes
-    // on: never back, so each byte is looked at a bounded number of times.
+    // What of `msg` is in `out`, and where the search for an authority
+    // goes on: never back, so each byte is looked at a bounded number
+    // of times.
     let (mut copied, mut at) = (0, 0);
-    while let Some(found) = lower[at..].find("http") {
-        let start = at + found;
-        *looked += found + 4;
-        let rest = &lower[start + 4..];
-        let scheme_len = match (rest.starts_with("://"), rest.starts_with("s://")) {
-            (true, _) => 7,
-            (_, true) => 8,
-            // (No `http` begins inside `http`.)
-            _ => {
-                at = start + 4;
-                continue;
-            }
-        };
-        let host_start = start + scheme_len;
+    while let Some(found) = msg[at..].find("//") {
+        *looked += found + 2;
+        let host_start = at + found + 2;
         let authority = &msg[host_start..];
         let end = authority
             .find(['/', '?', '#', ' ', '\t', '\n'])
@@ -294,6 +281,36 @@ fn redact_counting(msg: &str, looked: &mut usize) -> String {
     }
     out.push_str(&msg[copied..]);
     out
+}
+
+/// Scrub the userinfo of `url`, a text that is one URL as the program
+/// wrote it (or a server's `Location`), for an `InvalidUrl` that quotes
+/// it. Its authority begins after its scheme ([`scheme_of`]) and the
+/// slashes that follow (`http:/u:p@h` has one too), or after the
+/// slashes it begins with when no slash follows a scheme of it
+/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too), and ends at
+/// a `/`, `?` or `#`: a space, a tab or a line feed in it is part of the
+/// password the program wrote. Everything before its last `@` is hidden.
+/// The rest of the URL is scrubbed as a message is.
+#[cfg(feature = "http")]
+pub fn redact_url(url: &str) -> String {
+    let slashes_from = |at: usize| url.len() - url[at..].trim_start_matches('/').len();
+    // (`u:p@h` has no scheme `u`: what stands before a colon that no
+    // slash follows may be the user's name.)
+    let host_start = match scheme_of(url) {
+        Some(scheme) if url[scheme.len() + 1..].starts_with('/') => slashes_from(scheme.len() + 1),
+        _ => slashes_from(0),
+    };
+    let authority = &url[host_start..];
+    let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    match authority[..end].rfind('@') {
+        Some(last @ 1..) => format!(
+            "{}***{}",
+            &url[..host_start],
+            redact_http_url_userinfo(&authority[last..])
+        ),
+        _ => redact_http_url_userinfo(url),
+    }
 }
 
 /// The error of an `http` function whose operation has no value of
@@ -364,7 +381,7 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
         )
     };
     let invalid_url = || {
-        let url = redact_http_url_userinfo(url);
+        let url = redact_url(url);
         Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)])
     };
     let https = url
@@ -460,7 +477,7 @@ fn refuse_port(url: &str) -> Option<Value> {
     if digits && matches!(port.parse::<u16>(), Ok(1..)) {
         return None;
     }
-    let url = redact_http_url_userinfo(url);
+    let url = redact_url(url);
     let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)]);
     Some(Value::variant(bv::ERR, [invalid]))
 }
@@ -1003,7 +1020,7 @@ fn do_http_request_on(
         if !scheme_of(&next).is_some_and(|scheme| {
             scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
         }) {
-            let next = redact_http_url_userinfo(&next);
+            let next = redact_url(&next);
             let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(next)]);
             return Value::variant(bv::ERR, [invalid]);
         }
@@ -2948,7 +2965,6 @@ mod http_error_tests {
             "http://",
             "http://127.0.0.1/a b",
             "ftp://127.0.0.1/file",
-            "mailto:someone@example.com",
         ] {
             let expected = format!("InvalidUrl({url})");
             assert_eq!(failure(&do_http_get(url)), expected);
@@ -2957,6 +2973,11 @@ mod http_error_tests {
                 expected
             );
         }
+        // What stands before an `@` where no slash follows the colon may
+        // be a user and a password (`u:pw@host`): it is hidden, a
+        // `mailto:` too.
+        let mailto = "mailto:someone@example.com";
+        assert_eq!(failure(&do_http_get(mailto)), "InvalidUrl(***@example.com)");
         // A password in an http URL is not handed back.
         assert_eq!(
             failure(&do_http_get("http://user:secret@127.0.0.1/a b")),
