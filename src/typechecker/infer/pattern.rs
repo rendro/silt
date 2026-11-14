@@ -151,16 +151,25 @@ impl TypeChecker {
         // the pattern binds, so that nothing is asked of it.
         // What is matched never is (`let (a, b) = panic("x")`, `match
         // v.x { .. }` of a `v` that never is): neither is what the
-        // pattern binds, which meets every type as the value does.
+        // pattern binds and leaves undecided, which meets every type as
+        // the value does.
         match self.apply(expected) {
             Type::Error => {
                 for name in collect_pattern_vars(pattern) {
                     env.define(name, Scheme::mono(Type::Error));
                 }
             }
+            // (A name whose type the pattern gives keeps it: the field
+            // of `Cfg { port, .. }` is an Int. Only a name the pattern
+            // leaves undecided, `p` of `(p, q)` or of `Some(p)`, is.)
             Type::Never => {
                 for name in collect_pattern_vars(pattern) {
-                    env.define(name, Scheme::mono(Type::Never));
+                    let undecided = env
+                        .lookup(name)
+                        .is_some_and(|scheme| matches!(self.apply(&scheme.ty), Type::Var(_)));
+                    if undecided {
+                        env.define(name, Scheme::mono(Type::Never));
+                    }
                 }
             }
             _ => {}

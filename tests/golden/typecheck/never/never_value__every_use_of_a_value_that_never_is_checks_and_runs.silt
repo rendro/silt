@@ -1,8 +1,8 @@
 -- A value that never is (a panic, a return, a loop without end) is of
 -- every type, and so is each step taken from it: a field read of it, a
 -- call of its field, an update of it, its `?`, what a pattern binds of
--- it, one step after another and through a `let`. None of these steps
--- runs; each checks and compiles, and the program runs.
+-- it and leaves undecided, one step after another and through a `let`. None
+-- of these steps runs; each checks and compiles, and the program runs.
 import task
 
 type A { x: Int, y: Int }
@@ -84,7 +84,7 @@ fn patterns() -> Int {
   when let Some(z) = v.o else {
     return 0
   }
-  p.a + q.b + x.c + z.d
+  p.a + q.b + x + z.d
 }
 
 fn match_on_a_field() -> Int {
