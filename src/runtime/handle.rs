@@ -602,6 +602,14 @@ enum TcpIo {
         /// one `CancelIoEx` must name on Windows), and is the one its
         /// handshake was ended with.
         shutter: Shutter,
+        /// Held by the task whose read is in flight: readers take turns,
+        /// and a write does not wait behind them
+        /// ([`TcpStreamHandle::read_tls`]).
+        reading: Mutex<()>,
+        /// Ends a read's wait for the socket when the connection is shut
+        /// down. `None` when the system gave no descriptor for it: a read
+        /// then waits in the TLS library, under the lock of `both`.
+        shut: Option<ReadWake>,
     },
 }
 
@@ -641,6 +649,8 @@ impl TcpStreamHandle {
                 both: Mutex::new(both),
                 socket: other,
                 shutter: shutter.clone(),
+                reading: Mutex::new(()),
+                shut: ReadWake::new().ok(),
             },
             closed: AtomicBool::new(false),
             handed_over: AtomicBool::new(false),
@@ -732,7 +742,44 @@ impl TcpStreamHandle {
                     }
                 }
             }
-            TcpIo::Tls { both, .. } => both.lock().read(buf),
+            TcpIo::Tls { .. } => self.read_tls(buf),
+        }
+    }
+
+    /// A read of a TLS connection. What is decrypted already is read at
+    /// once; else the read waits for the socket outside the connection's
+    /// lock, so that a write on the connection (another task's) does not
+    /// wait behind it, and then takes the socket's bytes into the TLS
+    /// library under the lock, one read at a time. Two readers take
+    /// turns. A shutdown ends the wait (`NotConnected`). Without a socket
+    /// to wait on, or a wake for the shutdown, the read waits in the TLS
+    /// library, under the lock.
+    fn read_tls(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::Read;
+        let TcpIo::Tls {
+            both,
+            reading,
+            shut,
+            ..
+        } = &self.io
+        else {
+            return Err(std::io::ErrorKind::Unsupported.into());
+        };
+        let (Some(raw), Some(shut)) = (self.wait_socket, shut) else {
+            return both.lock().read(buf);
+        };
+        if !both.lock().reads_in_parts() {
+            return both.lock().read(buf);
+        }
+        let _turn = reading.lock();
+        loop {
+            if let Some(read) = both.lock().read_buffered(buf)? {
+                return Ok(read);
+            }
+            if self.is_closed() || !shut.wait(raw) {
+                return Err(std::io::ErrorKind::NotConnected.into());
+            }
+            both.lock().read_socket()?;
         }
     }
 
@@ -811,8 +858,19 @@ impl TcpStreamHandle {
                 }
                 Read::take(socket, most).read_to_end(&mut buf)?;
             }
-            TcpIo::Tls { both, .. } => {
-                (&mut *both.lock()).take(most).read_to_end(&mut buf)?;
+            TcpIo::Tls { .. } => {
+                // (In reads of the connection, which do not hold its lock
+                // while they wait.)
+                let mut chunk = vec![0u8; n.min(16 * 1024)];
+                while buf.len() < n {
+                    let want = (n - buf.len()).min(chunk.len());
+                    match self.read_tls(&mut chunk[..want]) {
+                        Ok(0) => break,
+                        Ok(got) => buf.extend_from_slice(&chunk[..got]),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(e) => return Err(e),
+                    }
+                }
             }
         }
         match buf.len() == n {
@@ -1013,7 +1071,13 @@ impl TcpStreamHandle {
                 both,
                 socket,
                 shutter,
+                shut,
+                ..
             } => {
+                // A read that waits for the socket ends.
+                if let Some(shut) = shut {
+                    shut.wake();
+                }
                 // What the TLS writer still buffers, if nobody is in
                 // it: a blocked read or write holds the lock, and
                 // waiting for it here would wait for the very thing
@@ -2306,6 +2370,118 @@ mod tests {
             Accepted::Served
         ));
         listener.served_no_more(token);
+    }
+
+    /// A connection that reads in two parts, as a TLS one does, over a
+    /// plain socket; it tells `entered` when a read first comes to it.
+    struct Parts {
+        sock: TcpStream,
+        got: Vec<u8>,
+        ended: bool,
+        entered: Option<std::sync::mpsc::Sender<()>>,
+    }
+
+    impl Parts {
+        fn enter(&mut self) {
+            if let Some(entered) = self.entered.take() {
+                let _ = entered.send(());
+            }
+        }
+    }
+
+    impl std::io::Read for Parts {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.enter();
+            self.sock.read(buf)
+        }
+    }
+
+    impl std::io::Write for Parts {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.sock.write(buf)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.sock.flush()
+        }
+    }
+
+    impl ReadWrite for Parts {
+        fn raw_socket(&self) -> Option<usize> {
+            self.sock.raw_socket()
+        }
+        fn reads_in_parts(&self) -> bool {
+            true
+        }
+        fn read_buffered(&mut self, buf: &mut [u8]) -> std::io::Result<Option<usize>> {
+            self.enter();
+            if self.got.is_empty() && !self.ended {
+                return Ok(None);
+            }
+            let n = buf.len().min(self.got.len());
+            buf[..n].copy_from_slice(&self.got[..n]);
+            self.got.drain(..n);
+            Ok(Some(n))
+        }
+        fn read_socket(&mut self) -> std::io::Result<()> {
+            let mut chunk = [0u8; 64];
+            let n = self.sock.read(&mut chunk)?;
+            self.ended = n == 0;
+            self.got.extend_from_slice(&chunk[..n]);
+            Ok(())
+        }
+    }
+
+    use std::io::{Read as _, Write as _};
+
+    /// A read of a TLS connection that waits for the peer does not hold
+    /// the connection's lock while it waits: a write of another thread
+    /// goes out meanwhile, and the read gets the answer to it. (The read
+    /// held the lock in the TLS library: the write waited behind it, here
+    /// for ever, since the peer answers only the write.) A shutdown ends
+    /// the read's wait.
+    #[test]
+    fn a_tls_read_that_waits_lets_a_write_of_the_connection_through() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (sock, _) = listener.accept().expect("accept");
+        let other = sock.try_clone().expect("clone");
+        let shutter = Shutter::default();
+        assert!(shutter.set(&sock));
+        let (entered, in_the_read) = std::sync::mpsc::channel();
+        let parts = Parts {
+            sock,
+            got: Vec::new(),
+            ended: false,
+            entered: Some(entered),
+        };
+        let conn = TcpStreamHandle::whole(0, &other, &shutter, move || {
+            Ok(Box::new(parts) as Box<dyn ReadWrite>)
+        })
+        .expect("a connection");
+        let reader = conn.clone();
+        let read = std::thread::spawn(move || {
+            let mut buf = [0u8; 4];
+            let n = reader.read(&mut buf).expect("the read");
+            buf[..n].to_vec()
+        });
+        in_the_read.recv().expect("the read has begun");
+        let (writer, (wrote, written)) = (conn.clone(), std::sync::mpsc::channel());
+        std::thread::spawn(move || {
+            let _ = wrote.send(writer.write_all(b"ping").is_ok());
+        });
+        // (Only what fails waits for the bound.)
+        let went = written.recv_timeout(std::time::Duration::from_secs(20));
+        assert_eq!(went, Ok(true), "the write waited behind the read");
+        let mut ping = [0u8; 4];
+        peer.read_exact(&mut ping).expect("the peer reads");
+        assert_eq!(&ping, b"ping");
+        peer.write_all(b"pong").expect("the peer answers");
+        assert_eq!(read.join().expect("joined"), b"pong");
+        // A read that waits is ended by a shutdown.
+        let reader = conn.clone();
+        let read = std::thread::spawn(move || reader.read(&mut [0u8; 4]).is_err());
+        conn.shut_down();
+        assert!(read.join().expect("joined"));
     }
 
     /// A connection that is one object (TLS) is shut down while a read
