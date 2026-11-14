@@ -16,15 +16,24 @@ use base64::Engine;
 use super::common::{cut, nibble_to_hex, ok};
 use super::typed::{Bytes, List, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{MAX_COLLECTION_LEN, Value};
+use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::VmError;
 
-/// Refuses Bytes of `size` that `name` would make: more than a list
-/// may hold elements ([`MAX_COLLECTION_LEN`]).
+/// Refuses a string of `len` bytes that `name` would make: more than a
+/// string may hold ([`MAX_TEXT_LEN`]).
+fn text_fits(name: &str, len: usize) -> Result<(), VmError> {
+    match len > MAX_TEXT_LEN {
+        true => Err(super::common::too_long_text(name, len)),
+        false => Ok(()),
+    }
+}
+
+/// Refuses Bytes of `size` that `name` would make: more than a string
+/// or a `Bytes` may hold ([`MAX_TEXT_LEN`]).
 fn fits(name: &str, size: usize) -> Result<(), VmError> {
-    match size > MAX_COLLECTION_LEN {
+    match size > MAX_TEXT_LEN {
         true => Err(VmError::new(format!(
-            "{name}: result would exceed maximum size ({size} bytes > {MAX_COLLECTION_LEN} limit)"
+            "{name}: result would exceed maximum size ({size} bytes > {MAX_TEXT_LEN} limit)"
         ))),
         false => Ok(()),
     }
@@ -125,8 +134,10 @@ builtins! {
 
     // Each sequence that is no UTF-8 (a byte that starts no character,
     // or a character cut short) is one U+FFFD, as Unicode recommends.
-    fn to_string_lossy(b: Bytes) -> Value {
-        Value::string(String::from_utf8_lossy(b).as_ref())
+    fn to_string_lossy(b: Bytes) -> Result<Value, VmError> {
+        let text = String::from_utf8_lossy(b);
+        text_fits("bytes.to_string_lossy", text.len())?;
+        Ok(Value::string(text.as_ref()))
     }
 
     fn from_hex(s: &str) -> Value {
@@ -153,13 +164,14 @@ builtins! {
         ok(bytes(out))
     }
 
-    fn to_hex(b: Bytes) -> String {
+    fn to_hex(b: Bytes) -> Result<String, VmError> {
+        text_fits("bytes.to_hex", b.len().saturating_mul(2))?;
         let mut s = String::with_capacity(b.len() * 2);
         for byte in b.iter() {
             s.push(nibble_to_hex(byte >> 4, false));
             s.push(nibble_to_hex(byte & 0x0f, false));
         }
-        s
+        Ok(s)
     }
 
     fn from_base64(s: &str) -> Value {
@@ -169,8 +181,9 @@ builtins! {
         }
     }
 
-    fn to_base64(b: Bytes) -> String {
-        base64::engine::general_purpose::STANDARD.encode(b.as_slice())
+    fn to_base64(b: Bytes) -> Result<String, VmError> {
+        text_fits("bytes.to_base64", b.len().div_ceil(3).saturating_mul(4))?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(b.as_slice()))
     }
 
     fn from_list(xs: List) -> Result<Value, VmError> {

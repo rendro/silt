@@ -1,7 +1,7 @@
 //! Shared helper functions used by several builtin modules.
 
 use crate::typeinfo::bv;
-use crate::value::{MAX_COLLECTION_LEN, Value};
+use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::VmError;
 
 /// The most bytes one read of a connection takes (`tcp.read`, a chunk
@@ -18,7 +18,7 @@ pub(crate) fn cut(n: i64) -> usize {
 }
 
 /// A text that a builtin writes, which holds at most
-/// [`MAX_COLLECTION_LEN`] bytes: a write that would make it longer
+/// [`MAX_TEXT_LEN`] bytes: a write that would make it longer
 /// fails, and the text says how long it would have been at least. As
 /// [`std::fmt::Write`] for what a formatter writes, as
 /// [`std::io::Write`] for an encoder that writes bytes (which must be
@@ -32,7 +32,7 @@ pub(crate) struct Bounded {
 impl Bounded {
     fn take(&mut self, part: &[u8]) -> bool {
         let len = self.bytes.len().saturating_add(part.len());
-        if len > MAX_COLLECTION_LEN {
+        if len > MAX_TEXT_LEN {
             self.over = Some(len);
             return false;
         }
@@ -82,11 +82,11 @@ impl std::io::Write for Bounded {
 
 /// What `name` says of a string of `len` bytes, more than a string may
 /// hold: `<name>: result would exceed maximum string size (N bytes >
-/// 10000000 limit)`. (Where the text was stopped as it was written,
+/// 10000000 limit)` (1000000 in WebAssembly). (Where the text was stopped as it was written,
 /// `len` is as far as it had come: it would have been longer.)
 pub(crate) fn too_long_text(name: &str, len: usize) -> VmError {
     VmError::new(format!(
-        "{name}: result would exceed maximum string size ({len} bytes > {MAX_COLLECTION_LEN} limit)"
+        "{name}: result would exceed maximum string size ({len} bytes > {MAX_TEXT_LEN} limit)"
     ))
 }
 

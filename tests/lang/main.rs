@@ -17,12 +17,16 @@ mod disabled_feature_help_tests;
 mod env_switch;
 mod error_tests;
 mod examples_check;
+// (The blocks are the guide's, as written there: not reformatted.)
+#[rustfmt::skip]
+mod ffi_doc_blocks_tests;
 mod fs_walk_stat_tests;
 mod fuzz_corpus_presence_tests;
 mod fuzz_target_invariants_tests;
 mod hardening;
 mod host_io_tests;
 mod host_module_tests;
+mod host_type_tests;
 mod http_bind_address_tests;
 mod http_hardening_tests;
 mod http_server_tests;
@@ -39,6 +43,7 @@ mod numeric_defaulting_tests;
 mod port_file;
 mod postgres_hardening_tests;
 mod postgres_poisoned_mutex_tests;
+mod print_in_pieces_tests;
 mod property_tests;
 mod qualified_type_paths_tests;
 #[path = "../support/quiet.rs"]
@@ -50,6 +55,7 @@ mod tcp_module_tests;
 mod tcp_mtls_tests;
 mod tcp_shutdown_tests;
 mod tcp_tls_tests;
+mod text_limit_tests;
 mod time_builtin_bounds_tests;
 mod time_sleep_cooperative_tests;
 mod url_credentials_redacted_tests;

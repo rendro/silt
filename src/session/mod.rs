@@ -18,6 +18,7 @@ mod entry;
 mod graph;
 mod host;
 mod packages;
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod testing;
 
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::ast;
-use crate::bytecode::{Function, Globals};
+use crate::bytecode::Globals;
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
 use crate::defs::DefTable;
 use crate::diagnostic::{Code, Diagnostic};
@@ -36,7 +37,9 @@ use crate::typechecker::{self, ModuleContext, Tables};
 use crate::types::Type;
 use crate::value::HostFn;
 
-pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
+pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
+pub use crate::value::HostCall;
+pub use entry::{ENTRY_POINT, selected_tests, test_functions, test_kind};
 pub(crate) use graph::is_cell_name;
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
 pub use host::{HostFunction, HostModule};
@@ -49,6 +52,61 @@ pub struct Config {
     pub lock: LockPolicy,
     /// The modules of Rust functions an embedder offers the program.
     pub host: Vec<HostModule>,
+    /// The builtin modules the program may import.
+    pub builtins: Builtins,
+}
+
+/// The builtin modules a program may import: an `import` of any other
+/// is an error when the program is checked. The prelude (`println`,
+/// `Option`, ...) is every program's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Builtins {
+    /// Every builtin module of the build.
+    #[default]
+    All,
+    /// Only these (`["list", "string", "math"]`): a host that runs
+    /// programs it did not write keeps `fs`, `io`, `env`, `process`,
+    /// `tcp`, `http` and `postgres` from them so.
+    Only(Vec<String>),
+}
+
+impl Builtins {
+    /// Whether a program may import the builtin module `name`.
+    pub fn allows(&self, name: &str) -> bool {
+        match self {
+            Builtins::All => true,
+            Builtins::Only(names) => names.iter().any(|allowed| allowed == name),
+        }
+    }
+
+    /// The error for an `import` (at `span`) of the builtin module
+    /// `name`, which the program may not import.
+    fn refusal(&self, name: Symbol, span: crate::source::Span) -> Diagnostic {
+        let allowed = match self {
+            Builtins::All => Vec::new(),
+            Builtins::Only(names) => {
+                let mut names: Vec<&str> = (names.iter())
+                    .map(String::as_str)
+                    .filter(|name| crate::module::is_builtin_module(name))
+                    .collect();
+                names.sort_unstable();
+                names.dedup();
+                names
+            }
+        };
+        let offered = match allowed.as_slice() {
+            [] => "no builtin module".to_string(),
+            names => format!("only {}", names.join(", ")),
+        };
+        Diagnostic::error(
+            Code::ModuleNotFound,
+            span,
+            format!(
+                "the builtin module '{name}' is not offered to this program: the application \
+                 that runs it lets it import {offered}"
+            ),
+        )
+    }
 }
 
 /// What a program is compiled for.
@@ -117,39 +175,6 @@ pub struct ModuleAnalysis {
     pub entry_display: HashMap<crate::intern::Symbol, Diagnostic>,
 }
 
-/// What the VM runs: the compiled functions, the first of which is the
-/// script that installs the program's globals (and, for
-/// [`Entry::Main`], calls `main`).
-pub struct Program {
-    pub functions: Vec<Function>,
-    /// The types its values are of, which the VM is given
-    /// ([`crate::vm::Vm::run_program`]).
-    pub types: crate::typeinfo::TypeTable,
-    /// Its global slots, which the VM is given too.
-    pub globals: Arc<Globals>,
-    /// The part of `globals` that stands whatever becomes of the
-    /// program's run. For a REPL entry: the slots, impl methods and
-    /// `Display` impls of the entries before it that ran to their end,
-    /// without the entry's own, which the session takes back if the
-    /// entry fails. For any other program: all of `globals`. (The VM
-    /// of a task keeps this table, see `Vm::look_again`.)
-    pub settled: Arc<Globals>,
-    pub entry: EntryPoint,
-}
-
-/// What a [`Program`] was compiled for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EntryPoint {
-    /// `main`, bound at `span` (its name): where a `main` that returns
-    /// `Err` is reported.
-    Main {
-        span: crate::source::Span,
-    },
-    /// The selected tests, in source order.
-    Tests(Vec<TestFn>),
-    Cell,
-}
-
 /// What the imports of `module` name, as the compiler looks them up:
 /// by the module name written after `import`, each mapped to the unit
 /// of the imported module.
@@ -201,7 +226,7 @@ pub struct Session {
 impl Session {
     pub fn new(config: Config) -> Session {
         let mut sources = SourceMap::new();
-        let mut graph = ModuleGraph::default();
+        let mut graph = ModuleGraph::new(config.builtins.clone());
         for (index, host) in config.host.iter().enumerate() {
             graph.enter_host(index, host, &mut sources);
         }
@@ -937,16 +962,15 @@ impl Session {
                         id: *m,
                         program: self.analyses[m].ast.clone(),
                         let_order: self.analyses[m].let_order.clone(),
-                        name: resolve(module.name),
+                        // (A host module is imported by its name alone.)
                         qualifier: match (module.package == entry_package, resolve(module.name)) {
+                            (_, name) if module.host.is_some() => name,
                             (true, name) => name,
                             (false, name) if name == "lib" => resolve(module.package_name),
                             (false, name) => format!("{}.{name}", module.package_name),
                         },
                         imports: unit_imports(module, &index),
-                        host: module
-                            .host
-                            .map_or_else(HashMap::new, |host| self.host_functions(module, host)),
+                        host: (module.host).map(|host| self.host_functions(module, host)),
                     }
                 })
                 .collect(),
@@ -978,24 +1002,63 @@ impl Session {
     /// configuration, by name, as the program installs them.
     fn host_functions(&self, module: &Module, host: usize) -> HashMap<Symbol, Arc<HostFn>> {
         let decls = module.ast.as_ref().map_or(&[][..], |ast| &ast.decls[..]);
-        decls
-            .iter()
-            .zip(&self.config.host[host].fns)
-            .filter_map(|(decl, f)| match decl {
-                ast::Decl::Fn(decl) => {
-                    let (returns, vars) = host::returns(decl);
-                    Some((
-                        decl.name,
-                        Arc::new(HostFn {
-                            name: format!("{}.{}", module.name, decl.name),
-                            call: f.call.clone(),
-                            returns,
-                            vars,
-                            arity: decl.params.len(),
-                        }),
-                    ))
-                }
+        let scope = self
+            .analyses
+            .get(&module.id)
+            .map(|analysis| &analysis.scope);
+        // The types the signatures name: the module's own, and the
+        // builtin ones (`Int`, `time.Date`).
+        let lookup = |qualifier: Option<Symbol>, name: Symbol| {
+            if qualifier.is_none()
+                && let Some(names::Binding::Def(def)) = scope.and_then(|s| s.types.get(&name))
+                && self.defs.get(*def).module == module.id
+            {
+                let decl = decls.iter().find_map(|decl| match decl {
+                    ast::Decl::Type(t) if t.name == name => Some(t),
+                    _ => None,
+                })?;
+                return Some(host::Named {
+                    id: crate::defs::TypeId(*def),
+                    decl: Some(decl),
+                });
+            }
+            let id = crate::defs::builtin_type_id(&resolve(name))?;
+            let home = crate::defs::builtin_types()[id.0.0 as usize].1;
+            if home != qualifier.map(resolve).as_deref() {
+                return None;
+            }
+            Some(host::Named { id, decl: None })
+        };
+        let mut templates = crate::value::HostTemplates::new();
+        let mut shapes = host::Shapes {
+            lookup: &lookup,
+            tables: &self.tables,
+            templates: &mut templates,
+        };
+        let signed: Vec<_> = (decls.iter())
+            .filter_map(|decl| match decl {
+                ast::Decl::Fn(decl) => Some(decl),
                 _ => None,
+            })
+            .zip(&self.config.host[host].fns)
+            .map(|(decl, f)| (decl, f, host::returns(decl, &mut shapes)))
+            .collect();
+        // (One table of the types' fields for the module's functions.)
+        let templates = Arc::new(templates);
+        (signed.into_iter())
+            .map(|(decl, f, (returns, vars))| {
+                (
+                    decl.name,
+                    Arc::new(HostFn {
+                        name: format!("{}.{}", module.name, decl.name),
+                        call: f.call.clone(),
+                        returns,
+                        vars,
+                        arity: decl.params.len(),
+                        types: Default::default(),
+                        templates: templates.clone(),
+                    }),
+                )
             })
             .collect()
     }

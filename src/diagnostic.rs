@@ -229,7 +229,8 @@ codes! {
     /// A host module an embedder declared that a builtin module, a
     /// dependency or a module file of the same name hides or is hidden by.
     HostModuleCollision = "E0411", Compile;
-    /// A host function whose signature is not one `fn` header.
+    /// A host function whose signature is not one `fn` header, or a host
+    /// type that is not one record or enum declaration.
     HostSignature = "E0412", Compile;
     // ── entry point ──
     MissingMain = "E0501", Compile;

@@ -7,7 +7,7 @@ use crate::bytecode::dict::Dict;
 use crate::bytecode::{Chunk, Instr, Op, Segment, Segments, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::{TypeInfo, bv};
-use crate::value::{Float, List, MAX_COLLECTION_LEN, Record, Value};
+use crate::value::{Float, List, MAX_TEXT_LEN, Record, Value};
 
 use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
@@ -369,9 +369,9 @@ fn interpolate(
             }
         }
     }
-    // A string is as long as a list may be: the parts are there already,
-    // so what is written is at most what they hold.
-    if buffer.len() > MAX_COLLECTION_LEN {
+    // A string is as long as the text limit lets it be: the parts are
+    // there already, so what is written is at most what they hold.
+    if buffer.len() > MAX_TEXT_LEN {
         return Err(Unwritten::TooLong(buffer.len()));
     }
     stack.truncate(start);
@@ -962,7 +962,7 @@ impl Vm {
                         Err(Unwritten::TooLong(len)) => {
                             fail!(VmError::new(format!(
                                 "string interpolation: result would exceed maximum string \
-                                 size ({len} bytes > {MAX_COLLECTION_LEN} limit)"
+                                 size ({len} bytes > {MAX_TEXT_LEN} limit)"
                             )));
                         }
                     }
