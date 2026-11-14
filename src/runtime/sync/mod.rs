@@ -25,16 +25,19 @@
 //! # What the holder of a parked task must do
 //!
 //! (`Parking` is that holder; this is its contract with the rest.)
-//! A worker that runs a task into a wait calls `wait::park`. On
-//! `Park::Ready` the task goes on. On `Park::Parked` the worker
-//! puts the task where a wake can find it, counts it as not runnable,
-//! and then calls `Parked::commit`. `true` means the task is parked
-//! and exactly one `Wake::wake` will name it, when its token fires or
-//! is cancelled. `false` means the token was fired or cancelled in the
-//! meantime: no wake comes, and the worker takes the task back. Either
-//! way `Parked::finish` gives what happened. Dropping a `Parked`
-//! takes the task off every queue and disarms its deadline, so a task
-//! that is dropped while it waits leaves nothing behind.
+//! A worker that runs a task into a wait calls `Parking::park`, which
+//! calls `wait::park`. On `Park::Ready` the task goes on. On
+//! `Park::Parked` the holder puts the task where a wake can find it
+//! (its entry in the registry, not yet committed) and then commits
+//! the wait's token (`Token::commit`, on `Parked::token`). `true`
+//! means the task is parked: the entry is marked committed and
+//! counted, and exactly one `Wake::wake` will name it, when its token
+//! fires or is cancelled. `false` means the token was fired or
+//! cancelled in the meantime: no wake comes, and the worker takes the
+//! task back. Either way `Parked::finish` gives what happened.
+//! Dropping a `Parked` takes the task off every queue and disarms its
+//! deadline, so a task that is dropped while it waits leaves nothing
+//! behind.
 //!
 //! `Wake::wake` is never called under a lock of this module.
 //!

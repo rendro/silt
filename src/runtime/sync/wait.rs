@@ -507,19 +507,6 @@ impl Parked {
         self.timer.as_ref().map(|(_, id)| id.deadline())
     }
 
-    /// Give the task up. `true`: it is parked, and one
-    /// [`Wake::wake`] will name it when its wait ends. `false`: the
-    /// wait has ended already and no wake comes; the caller still has
-    /// the task and goes on with [`Parked::finish`].
-    ///
-    /// The caller has already put the task where a wake finds it and
-    /// counted it as not runnable: the wake can come before `commit`
-    /// returns.
-    #[cfg(test)]
-    pub(crate) fn commit(&self) -> bool {
-        self.token.commit()
-    }
-
     /// How the wait ended. While it is still open the `Parked` comes
     /// back.
     pub(crate) fn finish(self) -> Result<Resumed, Parked> {
