@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- An interpolation with nothing inside (`"{}"`) is refused in its own words,
+-- not as `found }"`, a token the program did not write.
+fn main() {
+  println("{}")
+}

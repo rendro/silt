@@ -4491,7 +4491,7 @@ impl<'src> Parser<'src> {
         }
 
         // Parse expression inside interpolation
-        let expr = self.parse_expr()?;
+        let expr = self.parse_interpolated()?;
         parts.push(StringPart::Expr(expr));
 
         // Now we should see StringMiddle or StringEnd
@@ -4502,7 +4502,7 @@ impl<'src> Parser<'src> {
                     if !text.is_empty() {
                         parts.push(StringPart::Literal(text));
                     }
-                    let expr = self.parse_expr()?;
+                    let expr = self.parse_interpolated()?;
                     parts.push(StringPart::Expr(expr));
                 }
                 Token::StringEnd(text) => {
@@ -4523,6 +4523,21 @@ impl<'src> Parser<'src> {
         }
 
         Ok(self.mk_expr(ExprKind::StringInterp(parts), span))
+    }
+
+    /// The expression of an interpolation, behind its `{`. An empty one
+    /// (`"{}"`) is refused in its own words: the token that ends it,
+    /// `}"`, is no expression a program wrote.
+    fn parse_interpolated(&mut self) -> Result<Expr> {
+        if matches!(self.peek(), Token::StringMiddle(_) | Token::StringEnd(_)) {
+            return Err(Diagnostic::error(
+                Code::ExpectedExpression,
+                self.span(),
+                "an interpolation `{}` holds no expression: write the value inside, `{name}`, \
+                 or `\\{` for a literal brace",
+            ));
+        }
+        self.parse_expr()
     }
 
     // ── Function calls ───────────────────────────────────────────────
