@@ -531,7 +531,9 @@ pub(crate) fn use_color() -> bool {
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     color_from(
         var("NO_COLOR").is_some(),
-        var("FORCE_COLOR").as_deref().and_then(std::ffi::OsStr::to_str),
+        var("FORCE_COLOR")
+            .as_deref()
+            .and_then(std::ffi::OsStr::to_str),
         var("TERM").as_deref().and_then(std::ffi::OsStr::to_str),
         || std::io::IsTerminal::is_terminal(&std::io::stderr()),
     )
@@ -1155,11 +1157,17 @@ mod tests {
     fn a_long_message_is_not_repeated_under_the_caret() {
         let map = sources("let x = 1");
         let long = "x".repeat(CARET_LABEL_MAX + 1);
-        let out = render_human(&map, &Diagnostic::error(Code::CompileLimit, span(4, 5), &long));
+        let out = render_human(
+            &map,
+            &Diagnostic::error(Code::CompileLimit, span(4, 5), &long),
+        );
         assert_eq!(out.matches(&long).count(), 1, "{out}");
         assert!(out.contains("^ here"), "{out}");
         let short = "x".repeat(CARET_LABEL_MAX);
-        let out = render_human(&map, &Diagnostic::error(Code::CompileLimit, span(4, 5), &short));
+        let out = render_human(
+            &map,
+            &Diagnostic::error(Code::CompileLimit, span(4, 5), &short),
+        );
         assert_eq!(out.matches(&short).count(), 2, "{out}");
     }
 
