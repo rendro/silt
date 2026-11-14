@@ -154,9 +154,12 @@ error: E {a: 1}
 note: the Display impl of E failed: panic: display panics (main.silt:3:32)
 ```
 
-The note names the impl the failure was raised in, also of a part of
-the payload (a record's field, an item of a list), and gives the first
-line of the failure's message, at most 1,000 bytes of it. A test that
+The note names the innermost `Display` impl that showing the payload
+ran when it failed: the payload's own, or that of a part of it (a
+record's field, an item of a list), also of a part an impl shows in an
+interpolation. A function or another trait's method that the impl calls
+is that impl's code. The note gives the first line of the failure's
+message, at most 1,000 bytes of it. A test that
 returns such an `Err` has the same note in its report. A `process.exit`
 in the impl still ends the program. Its type must have
 `Display`: a function, a channel, or a type that holds one and has no

@@ -1,0 +1,2 @@
+error: E {i: In {n: 1}}
+note: the Display impl of E failed: panic: Show of In fails (main_err__a_method_named_display_of_another_trait_is_not_the_impl_named.silt:16:5)

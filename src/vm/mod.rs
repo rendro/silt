@@ -163,6 +163,11 @@ pub struct Vm {
     /// The value the builtin's frame on top is resumed with, when a
     /// slice ended between the value and the frame.
     pending_input: Option<Value>,
+    /// The type, as its values are shown, of the value whose written
+    /// `display` a showing frame was running when an error passed
+    /// through it: the innermost one, set as the frames are dropped
+    /// ([`Vm::show_text`] reads it).
+    pub(crate) display_failed: Option<String>,
     /// The second part of the instruction before the `ip` of the
     /// function's frame on top, when a slice ended between the two
     /// parts of an instruction that fuses two (`run::Half`).
@@ -291,6 +296,7 @@ impl Vm {
             owns_runtime: true,
             frames: Vec::new(),
             pending_input: None,
+            display_failed: None,
             half: None,
             native_frames: 0,
             stack: Vec::new(),
@@ -718,6 +724,7 @@ impl Vm {
             owns_runtime: false,
             frames: Vec::new(),
             pending_input: None,
+            display_failed: None,
             half: None,
             native_frames: 0,
             stack: Vec::new(),

@@ -281,6 +281,18 @@ impl Native for Showing {
         "display"
     }
 
+    /// An error passes through while the written `display` of a part
+    /// runs: that is the impl that failed, unless one dropped before
+    /// (further in) was.
+    fn abandon(&mut self, vm: &mut Vm) {
+        if self.calling
+            && vm.display_failed.is_none()
+            && let Some((part, ..)) = self.parts.get(self.texts.len())
+        {
+            vm.display_failed = Some(vm.user_facing_type_name(part));
+        }
+    }
+
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if self.calling {
             match input {
@@ -567,21 +579,15 @@ impl Vm {
     }
 
     /// What failed when `value` was shown, from the error `e` it ended
-    /// with: the innermost written `display` the failure was raised
-    /// under (its frame is named `<type>.display`, the type as values
-    /// of it are shown, and no module function is named so: a type's
-    /// name starts with a capital letter), else the type of `value`;
-    /// the message, its first line and at most [`DisplayFailure::MOST`]
-    /// bytes of it, with `…` where more is left out; its place.
-    fn display_failure(&self, e: &VmError, value: &Value) -> DisplayFailure {
-        let of_an_impl = |name: &str| {
-            let ty = name.strip_suffix(".display")?;
-            let last = ty.rsplit('.').next()?;
-            last.starts_with(char::is_uppercase).then(|| ty.to_string())
-        };
-        let type_name = (e.call_stack.iter())
-            .find_map(|(name, _)| of_an_impl(name))
-            .unwrap_or_else(|| self.user_facing_type_name(value));
+    /// with: the innermost written `display` the showing ran (a part's,
+    /// also one an impl shows in an interpolation), by the type it was
+    /// run for, as values of it are shown ([`Vm::display_failed`]), else
+    /// the type of `value`; the message, its first line and at most
+    /// [`DisplayFailure::MOST`] bytes of it, with `…` where more is
+    /// left out; its place.
+    fn display_failure(&mut self, e: &VmError, value: &Value) -> DisplayFailure {
+        let type_name =
+            (self.display_failed.take()).unwrap_or_else(|| self.user_facing_type_name(value));
         let first = e.message.lines().next().unwrap_or_default();
         let mut end = first.len().min(DisplayFailure::MOST);
         while !first.is_char_boundary(end) {
@@ -599,6 +605,8 @@ impl Vm {
     }
 
     fn show_or_fail(&mut self, value: &Value, limit: Limit) -> Result<String, VmError> {
+        // (What an earlier error left there is not this showing's.)
+        self.display_failed = None;
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
         let shown = self.show_to(
