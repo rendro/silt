@@ -157,6 +157,11 @@ pub(crate) fn vm_run_file(path: &str) {
     vm.set_exit(Exit::EndsProcess);
     #[cfg(feature = "test-hooks")]
     panic_where_a_test_says(&vm);
+    // (A build with `test-hooks`: tests/cli/end_race_tests.rs.)
+    #[cfg(feature = "test-hooks")]
+    if std::env::var_os("SILT_TEST_END_RACE").is_some() {
+        silt::scheduler::force_the_end_race();
+    }
     let run_result = vm.run_program(&program);
     // `main` has returned; the program ends when its tasks can do no
     // more. After an error of `main`, raised or returned as `Err`,

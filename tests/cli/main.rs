@@ -25,6 +25,7 @@ mod cli_test_rendering_tests;
 mod cli_watch_subcommand_gate_tests;
 mod docs_watch_subcommands_parity_tests;
 mod empty_file_tests;
+mod end_race_tests;
 #[path = "../support/env_switch.rs"]
 mod env_switch;
 mod git_module_tests;

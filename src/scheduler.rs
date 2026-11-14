@@ -900,6 +900,11 @@ impl Scheduler {
         // The flag first: a task on its way into a wait reads it.
         group.stopped.store(true, Ordering::SeqCst);
         self.drop_waiting(&group);
+        #[cfg(any(test, feature = "test-hooks"))]
+        if END_RACE.swap(false, Ordering::SeqCst) {
+            run_deferred();
+            eprintln!("silt test hook: the deferred stops ran after the end");
+        }
         let _ = self.wait_for(MainWaits::Stopping);
         group.stopped.store(false, Ordering::SeqCst);
     }
@@ -3091,6 +3096,24 @@ pub(crate) fn run_deferred() {
             stop();
         }
     }
+}
+
+/// Test-only: [`force_the_end_race`] was called.
+#[cfg(any(test, feature = "test-hooks"))]
+static END_RACE: AtomicBool = AtomicBool::new(false);
+
+/// Test-only (`SILT_TEST_END_RACE` in a build with `test-hooks`): at the
+/// next end of the program, what was deferred is run right after the
+/// program's thread has dropped the tasks that still wait (the stops of
+/// the streams they held are deferred then), before the failures are
+/// taken. A worker that has just ended the last task may do that at
+/// that moment, after its slice; it once made such a stop dismiss a
+/// failure in a stream that a task held to the end. Forced so, the order
+/// needs no time; the hook says on stderr that it ran.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn force_the_end_race() {
+    END_RACE.store(true, Ordering::SeqCst);
 }
 
 /// The schedulers whose workers a thread has started.
