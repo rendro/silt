@@ -190,9 +190,23 @@ impl TypeChecker {
             None => self
                 .def(r.id.0)
                 .filter(|def| def.module != self.module)
-                .and_then(|def| self.tables.module_names.get(&def.module).copied())
+                .and_then(|def| self.module_name_here(def.module))
                 .filter(|module| !resolve(*module).starts_with('<')),
         }
+    }
+
+    /// The name this module knows the module `module` by in a message:
+    /// its own name, but a module of another package (a dependency's
+    /// root module, which calls itself `lib`) by the path this module
+    /// imports it by (`dep`).
+    pub(super) fn module_name_here(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+        let package = |m| self.tables.module_packages.get(&m);
+        if package(module) != package(self.module)
+            && let Some(path) = self.import_paths.get(&module)
+        {
+            return Some(*path);
+        }
+        self.tables.module_names.get(&module).copied()
     }
 
     /// The variant `name` of the enum `enum_ty` as a program writes it:
@@ -200,10 +214,12 @@ impl TypeChecker {
     /// `shapes.Circle`), bare otherwise (`Some`, a variant of the
     /// module's own).
     /// Where the module's imports put a name of another module in
-    /// reach, what follows; the module's own name where none does.
+    /// reach, as they spell it (`spelling_in_reach`); the module's own
+    /// name where none does.
     pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
         match self.other_module(enum_ty) {
-            Some(module) => (self.spelling_in_reach(module, &resolve(name)))
+            Some(module) => (self.module_of_type(enum_ty))
+                .and_then(|id| self.spelling_in_reach(id, &resolve(name)))
                 .unwrap_or_else(|| format!("{module}.{name}")),
             None => name.to_string(),
         }
@@ -214,21 +230,59 @@ impl TypeChecker {
     /// AppError }` names no `Io`): for a help that offers code to write.
     pub(super) fn variant_in_reach(&self, enum_ty: TypeRef, name: Symbol) -> Option<String> {
         match self.other_module(enum_ty) {
-            Some(module) => self.spelling_in_reach(module, &resolve(name)),
+            Some(_) => self.spelling_in_reach(self.module_of_type(enum_ty)?, &resolve(name)),
             None => Some(name.to_string()),
+        }
+    }
+
+    /// The module that declares the type `r`: a builtin module's
+    /// pseudo-module, or a module of the graph. None for the prelude.
+    pub(super) fn module_of_type(&self, r: TypeRef) -> Option<crate::session::ModuleId> {
+        match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, module)) => crate::session::ModuleId::builtin(module.as_ref()?),
+            None => self.def(r.id.0).map(|def| def.module),
         }
     }
 
     /// How this module writes the name `name` of the module `module`:
     /// bare where an import item brings it in (`import m.{ name }`), by
-    /// the module's alias or name where the module is imported (`e.Io`,
-    /// `errs.Io`); None where no import puts it in reach. The one rule
-    /// for every help that writes a name of another module.
-    pub(super) fn spelling_in_reach(&self, module: Symbol, name: &str) -> Option<String> {
-        if (self.imported_items.iter()).any(|(m, item)| *m == module && resolve(*item) == name) {
-            return Some(name.to_string());
+    /// the name the module is bound to where it is imported (its alias,
+    /// `e.Io`; `dep.Shown` for a dependency's root module, whatever that
+    /// module calls itself); None where no import puts it in reach. The
+    /// one rule for every help that writes a name of another module.
+    pub(super) fn spelling_in_reach(
+        &self,
+        module: crate::session::ModuleId,
+        name: &str,
+    ) -> Option<String> {
+        let by_name = (self.spelled.iter()).find(|(id, _)| {
+            self.def(**id)
+                .is_some_and(|def| def.module == module && resolve(def.name) == name)
+        });
+        if let Some((_, binding)) = by_name {
+            return Some(binding.to_string());
         }
-        (self.import_spellings.get(&module)).map(|written| format!("{written}.{name}"))
+        (self.module_spelled.get(&module)).map(|binding| format!("{binding}.{name}"))
+    }
+
+    /// The path an import of `module` would write here, for a help that
+    /// names the import to add: the path an import of the module uses
+    /// already (`import dep.{ T }`), a builtin module's name, or the name
+    /// of a module of the same package. None for any other module (a
+    /// module of another package that is not imported here: no import
+    /// written here reaches it by the name it calls itself).
+    pub(super) fn import_path(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+        if let Some(path) = self.import_paths.get(&module) {
+            return Some(*path);
+        }
+        if let Some(name) = module.builtin_name() {
+            return Some(intern(name));
+        }
+        let package = |m| self.tables.module_packages.get(&m);
+        (package(module).is_some() && package(module) == package(self.module))
+            .then(|| self.tables.module_names.get(&module).copied())
+            .flatten()
+            .filter(|name| !resolve(*name).starts_with('<'))
     }
 
     /// Whether another type the session knows has the name of `r`.
@@ -255,7 +309,7 @@ impl TypeChecker {
                         && self.cells.contains(&def.module)
                         && self.named_types.contains(&r.id.0))
                 })
-                .and_then(|def| self.tables.module_names.get(&def.module).copied()),
+                .and_then(|def| self.module_name_here(def.module)),
         };
         match module {
             Some(module) => format!("{module}.{}", r.name),
@@ -330,7 +384,7 @@ impl TypeChecker {
         } else {
             self.def(t.id.0)
                 .filter(|def| def.module != self.module)
-                .and_then(|def| self.tables.module_names.get(&def.module).copied())
+                .and_then(|def| self.module_name_here(def.module))
         };
         match module {
             Some(module) => format!("{module}.{}", t.name),

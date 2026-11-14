@@ -620,6 +620,7 @@ impl Session {
             &mut ast,
             ModuleContext {
                 module: id,
+                package: module.package,
                 module_name: module.name,
                 kind,
                 reach,

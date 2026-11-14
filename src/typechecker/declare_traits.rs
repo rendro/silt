@@ -452,13 +452,17 @@ impl TypeChecker {
         // (A trait of another module, as this one writes it: bare when
         // imported by name, by its module's name or alias when the module
         // is imported, else with the import it needs.)
-        let spelled = |module: Symbol, name: &str| -> String {
+        // (A trait of another module, as this one writes it
+        // (`spelling_in_reach`), else with the import to add where one
+        // written here can reach the module; else not offered.)
+        let spelled = |module: crate::session::ModuleId, name: &str| -> Option<String> {
             match self.spelling_in_reach(module, name) {
-                Some(written) => format!("`{written}`"),
+                Some(written) => Some(format!("`{written}`")),
                 None => {
-                    format!(
-                        "`{module}.{name}` (a trait of module `{module}`, after `import {module}`)"
-                    )
+                    let path = self.import_path(module)?;
+                    Some(format!(
+                        "`{path}.{name}` (a trait of module `{path}`, after `import {path}`)"
+                    ))
                 }
             }
         };
@@ -468,7 +472,11 @@ impl TypeChecker {
             match crate::defs::builtin_trait_of_id(key.id.0) {
                 Some((_, None)) => {}
                 Some((builtin, Some(module))) => {
-                    candidates.push((builtin.to_string(), spelled(intern(module), builtin)));
+                    let spelling = crate::session::ModuleId::builtin(module)
+                        .and_then(|id| spelled(id, builtin));
+                    if let Some(spelling) = spelling {
+                        candidates.push((builtin.to_string(), spelling));
+                    }
                 }
                 None => {
                     let Some(def) = self.def(key.id.0) else {
@@ -477,10 +485,9 @@ impl TypeChecker {
                     if def.module == self.module {
                         candidates.push((shown.clone(), format!("`{shown}`")));
                     } else if def.vis != crate::defs::Vis::Private
-                        && let Some(module) = self.tables.module_names.get(&def.module).copied()
-                        && !resolve(module).starts_with('<')
+                        && let Some(spelling) = spelled(def.module, &shown)
                     {
-                        candidates.push((shown.clone(), spelled(module, &shown)));
+                        candidates.push((shown.clone(), spelling));
                     }
                 }
             }

@@ -726,12 +726,10 @@ pub struct TypeChecker {
     pub(super) own_types: HashMap<Symbol, TypeRef>,
     /// The traits the module's own declarations declare, by name.
     pub(super) own_traits: HashMap<Symbol, TraitKey>,
-    /// The module's imports, for a help that writes a name of another
-    /// module as this one can: each imported module with the name it is
-    /// written by here (itself, or its alias), and each item imported by
-    /// name with its module.
-    pub(super) import_spellings: HashMap<Symbol, Symbol>,
-    pub(super) imported_items: std::collections::HashSet<(Symbol, Symbol)>,
+    /// The path each module this one imports anything of is imported
+    /// by here (`dep` for a dependency's root module, whatever the
+    /// module calls itself), for a help that says which import to add.
+    pub(super) import_paths: HashMap<crate::session::ModuleId, Symbol>,
     /// The module's type declarations that are rejected (a reserved or
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
@@ -981,8 +979,7 @@ impl TypeChecker {
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
-            import_spellings: HashMap::new(),
-            imported_items: std::collections::HashSet::new(),
+            import_paths: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
@@ -1496,18 +1493,27 @@ impl TypeChecker {
     /// resolver wrote on each name what it names.
     pub(super) fn check_program_in(&mut self, program: &mut Program, mut env: TypeEnv) -> TypeEnv {
         self.enter_own_types();
+        // (Each import's path by the module it names: by the module's
+        // binding, or by the definitions of its items.)
         for decl in &program.decls {
-            match decl {
-                Decl::Import(crate::ast::ImportTarget::Module(module), _) => {
-                    self.import_spellings.insert(*module, *module);
+            let Decl::Import(target, _) = decl else {
+                continue;
+            };
+            let (path, bound): (Symbol, Vec<Symbol>) = match target {
+                crate::ast::ImportTarget::Module(module) => (*module, vec![*module]),
+                crate::ast::ImportTarget::Alias(module, alias, _) => (*module, vec![*alias]),
+                crate::ast::ImportTarget::Items(module, items) => {
+                    (*module, items.iter().map(|(item, _)| *item).collect())
                 }
-                Decl::Import(crate::ast::ImportTarget::Alias(module, alias, _), _) => {
-                    self.import_spellings.insert(*module, *alias);
-                }
-                Decl::Import(crate::ast::ImportTarget::Items(module, items), _) => {
-                    (self.imported_items).extend(items.iter().map(|(item, _)| (*module, *item)));
-                }
-                _ => {}
+            };
+            let of_module = (self.module_spelled.iter())
+                .filter(|(_, binding)| bound.contains(binding))
+                .map(|(id, _)| *id);
+            let of_items = (self.spelled.iter())
+                .filter(|(_, binding)| bound.contains(binding))
+                .filter_map(|(id, _)| self.def(*id).map(|def| def.module));
+            for module in of_module.chain(of_items).collect::<Vec<_>>() {
+                self.import_paths.entry(module).or_insert(path);
             }
         }
 
@@ -2262,6 +2268,9 @@ enum EntryWho {
 pub struct ModuleContext<'a> {
     /// The module checked.
     pub module: crate::session::ModuleId,
+    /// The package it is of: a help offers an import of a module of the
+    /// same package by its name.
+    pub package: crate::package_graph::PackageId,
     /// Its name, for diagnostics.
     pub module_name: Symbol,
     /// A file, a REPL cell, or an embedder's host module, whose
@@ -2291,6 +2300,7 @@ pub struct ModuleContext<'a> {
 pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
     let ModuleContext {
         module,
+        package,
         module_name,
         kind,
         reach,
@@ -2305,6 +2315,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     tables.begin_rows();
     let (mut checker, mut env) = builtin_env().start();
     tables.module_names.insert(module, module_name);
+    tables.module_packages.insert(module, package);
     checker.tables = std::mem::take(tables);
     // A REPL cell that binds a name an earlier cell binds reads the
     // earlier value where its own is not bound yet (`let n = n + 1`):

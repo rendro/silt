@@ -517,6 +517,8 @@ pub struct Tables {
     /// The name of each module checked, to tell two types of one name
     /// apart in a message (`a.Pt`, `b.Pt`).
     pub(super) module_names: HashMap<crate::session::ModuleId, Symbol>,
+    /// The package of each module checked.
+    pub(super) module_packages: HashMap<crate::session::ModuleId, crate::package_graph::PackageId>,
 }
 
 /// The checks a REPL cell made on a type still unknown when its check
