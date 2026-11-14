@@ -24,7 +24,7 @@ const MAP_KEY: &str = "a decoded map's key type must be String";
 /// Whether the builtin `builtin_name` writes what a decoder reads back
 /// (`csv.stringify`): its refusals say "write" where a decoder's say
 /// "decode".
-fn writes(builtin_name: &str) -> bool {
+pub(super) fn writes(builtin_name: &str) -> bool {
     crate::builtins::registry::registry()
         .named(builtin_name)
         .is_some_and(|row| row.writes.is_some())

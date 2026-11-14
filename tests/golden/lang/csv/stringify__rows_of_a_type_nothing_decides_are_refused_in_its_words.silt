@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot infer the type of the rows this use of 'csv.stringify' writes
+-- stderr-contains: help: annotate the list it is given
+-- stderr-not-contains: json.Decode
+-- Rows whose type a use leaves undecided (the parameter of `Ph` here) are
+-- refused in the words of a writer: csv.stringify decodes nothing.
+import csv as c
+
+type Ph(a) { n: Int }
+
+fn main() {
+  println(c.stringify([Ph { n: 1 }]))
+}

@@ -867,13 +867,22 @@ impl TypeChecker {
                 // (Named by what the use calls, as written.)
                 let callee = (self.use_callees.get(&span).map(|callee| resolve(*callee)))
                     .or_else(|| in_full_callee(&error.message));
+                // (A builtin that writes what a decoder reads back,
+                // `csv.stringify`, decodes nothing: it writes rows.)
+                let writer = callee.as_deref().is_some_and(super::builtin_checks::writes);
                 let what = match callee {
                     Some(callee) => format!("this use of '{callee}'"),
                     None => "this".to_string(),
                 };
+                error.code = Code::AmbiguousType;
+                if writer {
+                    error.message = format!("cannot infer the type of the rows {what} writes");
+                    error.help = vec!["annotate the list it is given".to_string()];
+                    kept.push(error);
+                    continue;
+                }
                 error.message =
                     format!("cannot infer the type {what} needs to implement trait 'json.Decode'");
-                error.code = Code::AmbiguousType;
                 error.help = vec!["annotate the value it is given".to_string()];
                 if closure.is_some() && !decided {
                     let example = head.map_or_else(|| "Box(t)".to_string(), |h| format!("{h}(t)"));
