@@ -563,9 +563,10 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                     // before it are compared with stdout, and the message
                     // must be in stderr. The lines after it never run.
                     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-                    let first_error = job.pairs.iter().position(|p| {
-                        p.expected.as_deref().and_then(error_annotation).is_some()
-                    });
+                    let first_error = job
+                        .pairs
+                        .iter()
+                        .position(|p| p.expected.as_deref().and_then(error_annotation).is_some());
                     let pairs = match first_error {
                         Some(k) => {
                             let message = (job.pairs[k].expected.as_deref())
@@ -635,11 +636,7 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                                  annotated value in remaining stdout.\n  \
                                  searched: {:?}\n\
                                  full stdout:\n{}",
-                                if job.fragment {
-                                    " wrapped in main"
-                                } else {
-                                    ""
-                                },
+                                if job.fragment { " wrapped in main" } else { "" },
                                 pointer,
                                 expected,
                                 searched,
