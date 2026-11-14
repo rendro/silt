@@ -28,6 +28,13 @@ impl Server {
         // character, so there is nothing to describe.
         let cursor = char_offset_at(&doc.source, &pos)?;
 
+        // A comment, the space between tokens and the text of a string
+        // are no code: nothing to describe (an interpolation's code, `{x}`
+        // in a string, is).
+        if !on_code(doc.tokens(), cursor) {
+            return None;
+        }
+
         // Check if cursor is on a field name in a field access expression.
         // e.g., for `data.response`, hovering on `response` shows the field type.
         let records = self
@@ -273,6 +280,27 @@ impl Server {
             }),
             range: None,
         })
+    }
+}
+
+/// Whether byte `cursor` is on a token of `tokens` that is code: not in a
+/// comment or the space between tokens (on no token), not in the text of
+/// a string (a string literal, or a part of one around its
+/// interpolations).
+fn on_code(tokens: &[crate::lexer::Tok], cursor: usize) -> bool {
+    use crate::lexer::Token;
+    let at = tokens
+        .iter()
+        .find(|tok| (tok.span.start as usize..tok.span.end as usize).contains(&cursor));
+    match at.map(|tok| &tok.kind) {
+        None => false,
+        Some(
+            Token::StringLit(_)
+            | Token::StringStart(_)
+            | Token::StringMiddle(_)
+            | Token::StringEnd(_),
+        ) => false,
+        Some(_) => true,
     }
 }
 
