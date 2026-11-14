@@ -1121,14 +1121,16 @@ fn without_userinfo(url: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// `url` with each byte of its path, query and fragment that is no ASCII
-/// percent-encoded (`/h%C3%A9llo` for `/héllo`), as a redirect's
-/// location is ([`redirect`]): such a byte was sent raw, which no URL may
-/// hold. The scheme and the host are left as they are.
+/// `url` with each byte of its path, query and fragment that is no ASCII,
+/// and DEL, percent-encoded (`/h%C3%A9llo` for `/héllo`, `%7F`), as a
+/// redirect's location is ([`redirect`]): such a byte was sent raw, which
+/// no URL may hold. The scheme and the host are left as they are. (The
+/// other control bytes, and a space, make the URL an `InvalidUrl`.)
 #[cfg(feature = "http")]
 fn path_in_ascii(url: &str) -> std::borrow::Cow<'_, str> {
     use std::fmt::Write;
-    if url.is_ascii() {
+    let sent_raw = |byte: u8| byte >= 0x7f;
+    if !url.bytes().any(sent_raw) {
         return url.into();
     }
     let host_start = url.find("//").map_or(0, |at| at + 2);
@@ -1137,9 +1139,9 @@ fn path_in_ascii(url: &str) -> std::borrow::Cow<'_, str> {
     let mut text = String::with_capacity(url.len() + 16);
     text.push_str(&url[..path_start]);
     for &byte in &url.as_bytes()[path_start..] {
-        match byte.is_ascii() {
-            true => text.push(byte as char),
-            false => {
+        match sent_raw(byte) {
+            false => text.push(byte as char),
+            true => {
                 let _ = write!(text, "%{byte:02X}");
             }
         }
@@ -3167,6 +3169,18 @@ mod http_error_tests {
             head.starts_with("GET /h%C3%A9llo?q=%C3%BC HTTP/1.1\r\n"),
             "{head}"
         );
+        // DEL too (it went out raw); the other control bytes are no URL.
+        let head = head_sent("http://{}/del\u{7f}x", &[]);
+        assert!(head.starts_with("GET /del%7Fx HTTP/1.1\r\n"), "{head}");
+        for control in ["\u{1}", "\u{1f}", "\t", "\r\nX-Evil: 1"] {
+            let url = format!("http://127.0.0.1:9/a{control}b");
+            let done = do_http_request("GET", &url, &[], &[]);
+            assert!(
+                failure(&done).starts_with("InvalidUrl("),
+                "{control:?}: {}",
+                failure(&done)
+            );
+        }
     }
 
     /// A user with a colon once decoded (`us%3Aer`) is refused before
