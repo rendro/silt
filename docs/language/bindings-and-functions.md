@@ -306,7 +306,10 @@ use(a, b, c)
 rest) and useful for documentation. One place needs one: a function that
 reads a field of a parameter names the parameter's record type,
 `fn age(u: User) -> Int { u.age }`, since no field name tells the
-record's type.
+record's type. The names of a `let` with an annotation are of the
+written type, whatever the value: a stub, `let port: Int = todo()` with
+a `fn todo() -> Never`, makes `port` an `Int` (see
+[the `Never` type](error-handling.md#never-type)).
 
 ```silt
 let x: Int = 42

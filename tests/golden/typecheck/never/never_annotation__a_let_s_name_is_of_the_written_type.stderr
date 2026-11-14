@@ -1,0 +1,47 @@
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:13:20
+    |
+ 13 |   let _s: String = v
+    |                    ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:19:20
+    |
+ 19 |   let _s: String = a
+    |                    ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected Int, got String
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:20:17
+    |
+ 20 |   let _n: Int = b
+    |                 ^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:27:20
+    |
+ 27 |   let _s: String = p
+    |                    ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:33:20
+    |
+ 33 |   let _s: String = f("x")
+    |                    ^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:42:20
+    |
+ 42 |   let _s: String = k
+    |                    ^ type mismatch: expected String, got Int
+
+error[type]: type 'Int' has no field 'port'
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:44:16
+    |
+ 44 |     Some(m) -> m.port
+    |                ^^^^^^ type 'Int' has no field 'port'
+
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:52:22
+    |
+ 52 |     let _s: String = i
+    |                      ^ type mismatch: expected String, got Int

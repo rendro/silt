@@ -1,0 +1,24 @@
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_top_level_let_s_name_is_of_the_written_type.silt:16:20
+    |
+ 16 |   let _s: String = v
+    |                    ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> never_annotation__a_top_level_let_s_name_is_of_the_written_type.silt:17:20
+    |
+ 17 |   let _t: String = a
+    |                    ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected Int, got String
+ --> never_annotation__a_top_level_let_s_name_is_of_the_written_type.silt:18:17
+    |
+ 18 |   let _n: Int = b
+    |                 ^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got Result(Int, String)
+ --> never_annotation__a_top_level_let_s_name_is_of_the_written_type.silt:19:17
+    |
+ 19 |   let _u: Int = r
+    |                 ^ type mismatch: expected Int, got Result(Int, String)
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
