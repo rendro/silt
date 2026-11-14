@@ -23,8 +23,9 @@ impl Server {
         let doc = self.documents.get(uri)?;
         let program = doc.program.as_ref()?;
 
-        // A position after the end of its line, or past the last line, is
-        // on no character, so there is nothing to describe.
+        // A position directly behind a name is on the name; one after
+        // the end of its line, or past the last line, is on no
+        // character, so there is nothing to describe.
         let cursor = char_offset_at(&doc.source, &pos)?;
 
         // Check if cursor is on a field name in a field access expression.

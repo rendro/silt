@@ -1,0 +1,19 @@
+-- cmd: lsp
+-- lsp: hover 13:16
+-- lsp: definition 13:16
+-- lsp: hover 17:13
+-- lsp: definition 17:13
+-- lsp: hover 18:12
+-- lsp: hover 18:17
+-- lsp: hover 18:18
+-- lsp: hover 16:25
+-- Hover directly behind a name (at the end of its line, before a space or
+-- a parenthesis) is on the name, as definition is; behind no name it is
+-- on nothing.
+import geometry
+
+fn main() {
+  let yy = geometry.area(2)
+  let z = yy
+  println(z + yy)
+}
