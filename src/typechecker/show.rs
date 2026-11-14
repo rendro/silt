@@ -518,14 +518,53 @@ impl TypeChecker {
     /// The "unknown type" error for `name`, with a hint when it is a
     /// known type in the wrong case (see `case_mismatched_type_name`).
     pub(super) fn unknown_type_message(&self, name: &str, applied: bool) -> String {
-        match self.case_mismatched_type_name(name, applied) {
+        match (self.case_mismatched_type_name(name, applied)).and_then(|t| self.type_offered(&t)) {
             Some(type_name) => format!(
-                "unknown type '{name}' — did you mean `{type_name}`? (type names are \
+                "unknown type '{name}' — did you mean {type_name}? (type names are \
                  case-sensitive and start with a capital letter; a lowercase name in a \
                  type is a type variable)"
             ),
             None => format!("unknown type '{name}'"),
         }
+    }
+
+    /// The type named `name` as this module can write it, for a "did
+    /// you mean": bare for the module's own and the prelude's, as an
+    /// import here puts it in reach (`regex.Regex` under `import regex`),
+    /// else with the import to add (`regex.Regex` (a type of module
+    /// `regex`, after `import regex`)). Of several types of that name the
+    /// first of those, in that order. None where no import written here
+    /// reaches any of them.
+    fn type_offered(&self, name: &str) -> Option<String> {
+        let builtin = crate::defs::builtin_type_id(name).map(|id| TypeRef {
+            id,
+            name: intern(name),
+        });
+        let declared = (self.tables.records.keys())
+            .chain(self.tables.enums.keys())
+            .chain(self.tables.type_aliases.iter())
+            .filter(|r| resolve(r.name) == name)
+            .copied();
+        builtin
+            .into_iter()
+            .chain(declared)
+            .filter_map(|r| match self.module_of_type(r) {
+                None => Some((0, format!("`{name}`"))),
+                Some(module) if module == self.module => Some((0, format!("`{name}`"))),
+                Some(module) => match self.spelling_in_reach(module, name) {
+                    Some(written) => Some((1, format!("`{written}`"))),
+                    None => self.import_path(module).map(|path| {
+                        (
+                            2,
+                            format!(
+                                "`{path}.{name}` (a type of module `{path}`, after `import {path}`)"
+                            ),
+                        )
+                    }),
+                },
+            })
+            .min()
+            .map(|(_, shown)| shown)
     }
 }
 
