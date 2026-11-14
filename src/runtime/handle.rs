@@ -1900,7 +1900,7 @@ impl TaskHandle {
     /// had one, at once, whatever the task still does (what it returns
     /// or fails with later changes nothing). A failure it had is
     /// dismissed, unless the code of its owner has ended with it
-    /// ([`TaskHandle::keep_failure`]). The caller ends the task's
+    /// (`TaskHandle::keep_failure`). The caller ends the task's
     /// wait, if it waits (`Scheduler::cancel`).
     ///
     /// A failure the task had taken from a task it joined is not its

@@ -285,7 +285,7 @@ fn redact_counting(msg: &str, looked: &mut usize) -> String {
 
 /// Scrub the userinfo of `url`, a text that is one URL as the program
 /// wrote it (or a server's `Location`), for an `InvalidUrl` that quotes
-/// it. Its authority begins after its scheme ([`scheme_of`]) and the
+/// it. Its authority begins after its scheme (`scheme_of`) and the
 /// slashes that follow (`http:/u:p@h` has one too), or after the
 /// slashes it begins with when no slash follows a scheme of it
 /// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too), and ends at
