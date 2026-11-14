@@ -6,7 +6,7 @@ src/main.silt:22:13-22:14
 > prepare-rename 22:13
 (nothing)
 > rename 22:13 left
-error: `x` is a field of `Pt`, a type of the package `geom`: a rename edits the files of this package only
+error: `x` is a field of `Pt`, a type of the package `geom`: rename it in a file of that package
 > references 23:22
 src/main.silt:17:19-17:25
 src/main.silt:23:22-23:28

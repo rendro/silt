@@ -1,0 +1,11 @@
+error[type]: type 'String' does not implement trait 'Showable'
+ --> bound__a_pipe_into_a_name_shows_the_piped_value.silt:10:11
+    |
+ 10 |   println("called" |> display())
+    |           ^^^^^^^^ type 'String' does not implement trait 'Showable'
+
+error[type]: type 'String' does not implement trait 'Showable'
+ --> bound__a_pipe_into_a_name_shows_the_piped_value.silt:11:11
+    |
+ 11 |   println("bare" |> display)
+    |           ^^^^^^ type 'String' does not implement trait 'Showable'

@@ -83,6 +83,153 @@ pub(super) fn control(sql: &str) -> Option<Control> {
     })
 }
 
+/// A `COPY` of standard input or output: the copy protocol, whose data
+/// the module does not send or read. (The client answers its first
+/// message with "unexpected message from server" and closes the
+/// connection.) A `COPY` of a file or a program the server reaches
+/// runs as any other statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Copy {
+    FromStdin,
+    ToStdout,
+}
+
+impl Copy {
+    /// The statement as a message names it.
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Copy::FromStdin => "COPY ... FROM STDIN",
+            Copy::ToStdout => "COPY ... TO STDOUT",
+        }
+    }
+}
+
+/// What `sql` is, if it is a `COPY` of standard input or output: a
+/// `COPY` whose words outside parentheses, strings and quoted names
+/// hold `FROM STDIN` or `TO STDOUT` (the table's columns and a query
+/// are in parentheses, a file's name in a string).
+pub(super) fn copy_stream(sql: &str) -> Option<Copy> {
+    let (first, mut rest) = word(skip(sql, true))?;
+    if !first.eq_ignore_ascii_case("copy") {
+        return None;
+    }
+    let mut depth = 0usize;
+    // The word before, outside parentheses.
+    let mut before: Option<&str> = None;
+    loop {
+        rest = skip(rest, false);
+        if let Some((w, after)) = word(rest) {
+            // `E'...'`, a string in which a backslash escapes a quote.
+            if w.eq_ignore_ascii_case("e") && after.starts_with('\'') {
+                rest = after_escaped_string(after);
+                if depth == 0 {
+                    before = None;
+                }
+                continue;
+            }
+            if depth == 0 {
+                let after_word = |want: &str| before.is_some_and(|b| b.eq_ignore_ascii_case(want));
+                if after_word("from") && w.eq_ignore_ascii_case("stdin") {
+                    return Some(Copy::FromStdin);
+                }
+                if after_word("to") && w.eq_ignore_ascii_case("stdout") {
+                    return Some(Copy::ToStdout);
+                }
+                before = Some(w);
+            }
+            rest = after;
+            continue;
+        }
+        let mut chars = rest.chars();
+        let c = chars.next()?;
+        if depth == 0 {
+            before = None;
+        }
+        rest = match c {
+            '(' => {
+                depth += 1;
+                chars.as_str()
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                chars.as_str()
+            }
+            '\'' | '"' => after_quoted(rest, c),
+            '$' => after_dollar_quote(rest),
+            _ => chars.as_str(),
+        };
+    }
+}
+
+/// Whether `sql` leaves in the session what the reset of a connection
+/// does not undo, or drops what the connection keeps for itself, so that
+/// its connection is closed instead of given back: `LOAD` (a library
+/// stays loaded, as `DISCARD ALL` leaves it), `DEALLOCATE` (of one of
+/// the statements the client keeps prepared, by its name, the next
+/// statement that needs it fails).
+pub(super) fn closes_session(sql: &str) -> bool {
+    word(skip(sql, true)).is_some_and(|(w, _)| {
+        w.eq_ignore_ascii_case("load") || w.eq_ignore_ascii_case("deallocate")
+    })
+}
+
+/// `s`, which starts with the quote `quote` (`'` of a string, `"` of a
+/// name), after the quoted text: a doubled quote is one inside it. An
+/// unterminated one runs to the end.
+fn after_quoted(s: &str, quote: char) -> &str {
+    let mut rest = &s[quote.len_utf8()..];
+    loop {
+        match rest.find(quote) {
+            None => return "",
+            Some(at) => {
+                rest = &rest[at + quote.len_utf8()..];
+                match rest.strip_prefix(quote) {
+                    Some(more) => rest = more,
+                    None => return rest,
+                }
+            }
+        }
+    }
+}
+
+/// `s`, which starts with the `'` of an `E'...'` string, after it: a
+/// backslash escapes the character behind it, a doubled quote is one
+/// quote. An unterminated one runs to the end.
+fn after_escaped_string(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'\'' if bytes.get(i + 1) == Some(&b'\'') => i += 2,
+            b'\'' => return &s[i + 1..],
+            _ => i += 1,
+        }
+    }
+    ""
+}
+
+/// `s`, which starts with `$`, after a dollar-quoted string (`$$...$$`,
+/// `$tag$...$tag$`); after the `$` alone if it starts none (`$1`). An
+/// unterminated one runs to the end.
+fn after_dollar_quote(s: &str) -> &str {
+    let body = &s[1..];
+    let tag_len = body
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii()))
+        .unwrap_or(body.len());
+    let opens = body[tag_len..].starts_with('$')
+        && !body[..tag_len].starts_with(|c: char| c.is_ascii_digit());
+    if !opens {
+        return body;
+    }
+    let delimiter = &s[..tag_len + 2];
+    let inside = &s[delimiter.len()..];
+    match inside.find(delimiter) {
+        Some(at) => &inside[at + delimiter.len()..],
+        None => "",
+    }
+}
+
 /// `s` after the white space and comments it starts with, and, at the
 /// start of a statement (`empty`), the empty commands too. An
 /// unterminated `/*` comment runs to the end.
@@ -240,6 +387,79 @@ mod tests {
             "ÄBEGIN",
         ] {
             assert_eq!(control(sql), None, "{sql:?}");
+        }
+    }
+
+    /// A `COPY` of standard input or output is found in each way the
+    /// server reads one, and only then.
+    #[test]
+    fn a_copy_of_standard_input_or_output_is_found() {
+        for (sql, copy) in [
+            ("COPY t FROM STDIN", Copy::FromStdin),
+            ("copy t from stdin with (format csv)", Copy::FromStdin),
+            ("COPY t (a, b) FROM STDIN", Copy::FromStdin),
+            ("COPY public.t FROM STDIN CSV HEADER", Copy::FromStdin),
+            ("COPY \"t x\" FROM /* c */ STDIN", Copy::FromStdin),
+            ("-- c\nCOPY t FROM\nSTDIN", Copy::FromStdin),
+            ("COPY t TO STDOUT", Copy::ToStdout),
+            (
+                "COPY (SELECT 'FROM STDIN', ')' FROM t) TO STDOUT",
+                Copy::ToStdout,
+            ),
+            (
+                "COPY (SELECT $$ ) TO STDOUT $$) TO stdout (FORMAT binary)",
+                Copy::ToStdout,
+            ),
+            ("COPY (SELECT $a$x$a$, $1) TO STDOUT", Copy::ToStdout),
+            ("COPY (SELECT E'\\'') TO STDOUT", Copy::ToStdout),
+            ("COPY (SELECT e'a\\' FROM STDIN') TO STDOUT", Copy::ToStdout),
+        ] {
+            assert_eq!(copy_stream(sql), Some(copy), "{sql:?}");
+        }
+        for sql in [
+            "COPY t FROM '/tmp/x.csv'",
+            "COPY t FROM 'stdin'",
+            "COPY t TO E'\\' TO STDOUT'",
+            "COPY t TO '/tmp/stdout'",
+            "COPY t FROM PROGRAM 'cat stdin'",
+            "COPY (SELECT 1 FROM stdin) TO '/tmp/x'",
+            "COPY stdin FROM '/tmp/x'",
+            "COPY t (\"from\", stdin) FROM '/x'",
+            "SELECT 'COPY t FROM STDIN'",
+            "-- COPY t FROM STDIN\nSELECT 1",
+            "COPYING t FROM STDIN",
+            "COPY t FROM",
+            "COPY (SELECT ')",
+            "COPY $$",
+            "",
+        ] {
+            assert_eq!(copy_stream(sql), None, "{sql:?}");
+        }
+    }
+
+    /// `LOAD` and `DEALLOCATE` close their connection; nothing else does
+    /// by its first word.
+    #[test]
+    fn load_and_deallocate_close_their_session() {
+        for sql in [
+            "LOAD 'auto_explain'",
+            "load '$libdir/plugins/x'",
+            "DEALLOCATE s3",
+            "deallocate prepare s3",
+            "DEALLOCATE ALL",
+            "/* c */ DEALLOCATE s0",
+        ] {
+            assert!(closes_session(sql), "{sql:?}");
+        }
+        for sql in [
+            "SELECT 'LOAD'",
+            "PREPARE p AS SELECT 1",
+            "loading",
+            "-- LOAD 'x'\nSELECT 1",
+            "DISCARD PLANS",
+            "",
+        ] {
+            assert!(!closes_session(sql), "{sql:?}");
         }
     }
 }

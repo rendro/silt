@@ -1,0 +1,12 @@
+-- `Fun` is an ordinary name: a trait may be called `Fun`, implemented for
+-- `Fn` and for `Int`, and asked as a bound.
+trait Fun { fn call_it(self) -> String }
+trait Fun for Fn { fn call_it(self) -> String { "a function" } }
+trait Fun for Int { fn call_it(self) -> String { "an Int" } }
+fn go(x: a) -> String where a: Fun { Fun.call_it(x) }
+fn named() -> Int { 1 }
+fn main() {
+  println(go(3))
+  println(go(named))
+  println(go({ -> 1 }))
+}

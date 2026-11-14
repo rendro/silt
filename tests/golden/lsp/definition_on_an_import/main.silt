@@ -1,13 +1,15 @@
 -- cmd: lsp
--- lsp: definition 11:8
--- lsp: definition 12:8
--- lsp: definition 12:19
--- lsp: definition 14:8
--- lsp: definition 14:18
 -- lsp: definition 13:8
+-- lsp: definition 13:16
+-- lsp: definition 14:8
+-- lsp: definition 14:19
+-- lsp: definition 16:8
+-- lsp: definition 16:18
+-- lsp: definition 16:20
+-- lsp: definition 15:8
 -- Definition on the module an import names opens its file, also before
--- `as` and before the items; on an item of `import m.{ f }` it goes to
--- `f`. One of silt's own modules has no file.
+-- `as`, before the items and directly behind the name; on an item of
+-- `import m.{ f }` it goes to `f`. One of silt's own modules has no file.
 import geometry
 import geometry.{ double }
 import list

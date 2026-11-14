@@ -232,10 +232,25 @@ fn reads_local(expr: &Expr, name: Symbol) -> bool {
 
 /// Whether `found` holds of `expr` or of an expression in it.
 pub(super) fn any_expr(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool) -> bool {
+    any_expr_in(expr, found, true)
+}
+
+/// Whether `found` holds of `expr` or of an expression in it that is
+/// not in a closure's body: what belongs to the function itself (a
+/// closure's `return` ends the closure).
+pub(super) fn any_expr_outside_closures(
+    expr: &Expr,
+    found: &mut impl FnMut(&Expr) -> bool,
+) -> bool {
+    any_expr_in(expr, found, false)
+}
+
+/// `any_expr`, into closures' bodies when `closures`.
+fn any_expr_in(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool, closures: bool) -> bool {
     if found(expr) {
         return true;
     }
-    let mut inner = |e: &Expr| any_expr(e, found);
+    let mut inner = |e: &Expr| any_expr_in(e, found, closures);
     match &expr.kind {
         ExprKind::Ident(_)
         | ExprKind::Int(_)
@@ -261,7 +276,7 @@ pub(super) fn any_expr(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool) -> bo
             inner(a) || inner(b)
         }
         ExprKind::Call(callee, args) => inner(callee) || args.iter().any(&mut inner),
-        ExprKind::Lambda { body, .. } => inner(body),
+        ExprKind::Lambda { body, .. } => closures && inner(body),
         ExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| inner(e)),
         ExprKind::RecordUpdate { expr, fields, .. } => {
             inner(expr) || fields.iter().any(|(_, e)| inner(e))
