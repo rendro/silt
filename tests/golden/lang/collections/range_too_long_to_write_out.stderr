@@ -58,7 +58,7 @@
      --> range_too_long_to_write_out.silt:63:11
         |
      63 |   let _ = -9223372036854775807 - 1..9223372036854775807
-        |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: a list has at most 18446744073709551615
+        |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
   FAIL range_too_long_to_write_out.silt::test_length_of_more_than_an_int_counts
     error[runtime]: list.length overflow: the list has more elements than an Int counts
      --> range_too_long_to_write_out.silt:67:11

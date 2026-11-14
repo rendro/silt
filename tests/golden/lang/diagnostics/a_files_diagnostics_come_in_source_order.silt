@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A file's errors and warnings come in source order, whatever pass of the
+-- check found them: the syntax error, the import, the operator, the name;
+-- on one line the error before the warning.
+fn broken( {
+}
+
+import nosuch
+
+fn main() {
+  let x = 1 + "a"
+  let y = undefined_name
+}

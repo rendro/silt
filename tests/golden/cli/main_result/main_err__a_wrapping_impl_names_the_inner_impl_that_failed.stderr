@@ -1,0 +1,2 @@
+error: Outer {inner: Inner {a: 7}}
+note: the Display impl of Inner failed: panic: inner 7 (main_err__a_wrapping_impl_names_the_inner_impl_that_failed.silt:10:5)

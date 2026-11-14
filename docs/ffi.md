@@ -692,7 +692,12 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   host may do the same.
   The payload is shown by its `Display`, which is code of the program:
   a `process.exit` there (or the step budget used up) is the error
-  instead; if it fails otherwise, the payload is shown by its structure.
+  instead; if it fails otherwise, the payload is shown by its structure,
+  and `display_failure` says what failed: the type whose impl it was
+  (`type_name`), the first line of the failure's message (`message`)
+  and its place (`span`). `failure.note(session.sources())` is the line
+  `silt run` writes under `error: <text>` after `note: `, `the Display
+  impl of E failed: panic: display panics (main.silt:3:32)`.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
   message carries the panicked string: its first 100,000 bytes, and
   `… (N more bytes)` past them. The text of a `main` that returns `Err`

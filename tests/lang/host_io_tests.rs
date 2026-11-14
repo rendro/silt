@@ -1085,3 +1085,52 @@ fn main() {
     Vm::new(io).run_program(&program).unwrap();
     assert_eq!(out.contents(), "started\n13:30\n");
 }
+
+// ── The Err of main ─────────────────────────────────────────────────
+
+/// A host gets what failed where the `Display` impl of `main`'s `Err`
+/// fails: the error's text is the payload's structure, and
+/// `display_failure` says which impl failed, what it said and where,
+/// with the note the command writes under the line. An impl that works
+/// leaves it empty.
+#[test]
+fn a_display_impl_of_mains_err_that_fails_is_given_to_the_host() {
+    use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
+    let mut session = Session::new(Config {
+        project: ProjectSetup::None,
+        lock: LockPolicy::ReadOnly,
+        host: vec![],
+        builtins: Builtins::All,
+    });
+    let source = "type E { a: Int }\n\
+                  trait Display for E {\n  fn display(self) -> String { panic(\"display panics\") }\n}\n\
+                  fn main() -> Result((), E) {\n  Err(E { a: 1 })\n}\n";
+    let file = session.set_overlay(std::path::Path::new("main.silt"), source.to_string());
+    let program = session.compile(file, Entry::Main).expect("compiles");
+    let out = Buffer::new();
+    let e = Vm::new(HostIo::buffer(&out))
+        .run_program(&program)
+        .expect_err("main returned Err");
+    assert_eq!(e.returned.as_deref(), Some("E {a: 1}"));
+    let failure = e.display_failure.as_deref().expect("the impl failed");
+    assert_eq!(failure.type_name, "E");
+    assert_eq!(failure.message, "panic: display panics");
+    assert_eq!(
+        failure.note(session.sources()),
+        "the Display impl of E failed: panic: display panics (main.silt:3:32)"
+    );
+    // Nothing of it is printed: the host says what it wants to.
+    assert_eq!(out.contents(), "");
+
+    let working = compile_str(
+        "type E { a: Int }\n\
+         trait Display for E {\n  fn display(self) -> String { \"E number {self.a}\" }\n}\n\
+         fn main() -> Result((), E) {\n  Err(E { a: 1 })\n}\n",
+    )
+    .unwrap_or_else(|errors| panic!("{errors:?}"));
+    let e = Vm::new(HostIo::buffer(&Buffer::new()))
+        .run_program(&working)
+        .expect_err("main returned Err");
+    assert_eq!(e.returned.as_deref(), Some("E number 1"));
+    assert!(e.display_failure.is_none());
+}

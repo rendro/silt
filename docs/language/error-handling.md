@@ -145,9 +145,23 @@ and it is how a tool fails: the `Err` is the program's message to its user.
 
 The payload is shown as `println` shows it, so a tool's own error type
 with a `Display` impl reads as the tool writes it. Where that impl itself
-fails (a `panic` in it, a division by zero), the payload is shown by its
-structure, as `E {a: 1}`, and the failure of the impl is not reported;
-a `process.exit` in it still ends the program. Its type must have
+fails (a `panic` in it, a division by zero, a failed `task.join`), the
+payload is shown by its structure, and one line under it says which
+impl failed, what its failure said and where:
+
+```text
+error: E {a: 1}
+note: the Display impl of E failed: panic: display panics (main.silt:3:32)
+```
+
+The note names the innermost `Display` impl that showing the payload
+ran when it failed: the payload's own, or that of a part of it (a
+record's field, an item of a list), also of a part an impl shows in an
+interpolation. A function or another trait's method that the impl calls
+is that impl's code. The note gives the first line of the failure's
+message, at most 1,000 bytes of it. A test that
+returns such an `Err` has the same note in its report. A `process.exit`
+in the impl still ends the program. Its type must have
 `Display`: a function, a channel, or a type that holds one and has no
 `Display` impl, is refused when the program is checked (and so is the
 error type of a test function).
@@ -299,7 +313,7 @@ fn get_or_die(opt) {
 A function may say that it never returns: `-> Never` as its return type.
 Its body must not end: it ends in `panic`, in a call of another function
 that returns `Never`, or in a `loop` that never stops, and neither a
-`return` nor a `?` may stand in it (each returns from the function). A call of it then never returns either, so it can end a
+`return` nor a `?` of a Result or an Option may stand in it (each returns from the function). A call of it then never returns either, so it can end a
 block that must leave, as `panic` can:
 
 ```silt
@@ -326,8 +340,9 @@ declared with `fn` (not of a trait's method): anywhere else in an
 annotation it is an error.
 
 A value of type `Never` is accepted where a value of any type is asked,
-and a `let` with a type annotation gives its names the written type,
-whatever the value: `let port: Int = todo()` makes `port` an `Int`. So a
+and what is taken from it never is either: a call of it, a field read of
+it, its `?` (which never runs, in any function). A `let` with a type
+annotation gives its names the written type, whatever the value: `let port: Int = todo()` makes `port` an `Int`. So a
 stub stands for the value it will be, and the code after it is checked
 as for that value:
 
@@ -346,6 +361,38 @@ fn port() -> Int {
 
 fn main() {
   println(port())
+}
+```
+
+A value that never is decides no type. Where a trait the program
+declares, or `Number`, is asked of its type and nothing else decides
+that type, the use is refused: which impl it means is not known. The
+help says how to give the value the type it stands for: an annotated
+`let`, `let v: Int = todo()`, or a stub of that type,
+`fn todo_int() -> Int { todo() }`. silt's own traits (`Display`,
+`Equal`, `Compare`, `Hash`) ask nothing of such a value.
+
+```silt
+trait Size {
+  fn size(self) -> Int
+}
+
+trait Size for Int {
+  fn size(self) -> Int {
+    self
+  }
+}
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn total(x: a) -> Int where a: Size {
+  Size.size(x)
+}
+
+fn main() {
+  println(total(todo())) -- error: cannot infer the type this use of 'total' needs to implement trait 'Size'
 }
 ```
 

@@ -15,8 +15,8 @@
 -- lsp: hover 40:22
 -- lsp: hover 30:15
 -- lsp: hover 30:22
--- A module's name in a string or a comment is text, and the dot is no
--- name: neither shows the module.
+-- A module's name in a string or a comment is text: it has no hover. The
+-- dot directly behind a name is on the name, as for definition.
 -- In a type the name before the dot is a module whatever local is
 -- spelled like it (`json` of `let json`); in an expression it is the
 -- local (`list.w`, `f(json)`).

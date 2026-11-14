@@ -255,9 +255,9 @@ impl Loaded {
 
 /// The files of `src/` of the package at `root` that the package check
 /// checks besides its entry file `entry` and its test files `tests`
-/// (checked as tests): every `.silt` file directly in `src/` (a module),
-/// sorted, then every `.silt` file in a sub-directory of `src/`, sorted,
-/// as `silt check src` finds them (not those of a package kept inside).
+/// (checked as tests): every `.silt` file directly in `src/` (a module)
+/// and every `.silt` file in a sub-directory of `src/` (not those of a
+/// package kept inside), sorted by path as `silt check src` sorts them.
 /// Such a file is no module, and no import reaches it: it is checked as
 /// a program of its own, its imports the package's modules.
 fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
@@ -271,12 +271,12 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
         .filter(|p| p.extension().is_some_and(|x| x == "silt") && p.is_file())
         .map(unicode_path)
         .collect();
-    files.sort();
     let below = find_silt_files(&src).into_iter().filter(|file| {
         let path = Path::new(file);
         path.parent().is_some_and(|dir| dir != src)
     });
     files.extend(below);
+    files.sort();
     without_entry_and_tests(files, entry, tests, silt::source::canonical_path)
 }
 
@@ -471,18 +471,18 @@ fn report_unreadable(unreadable: &[(String, std::io::Error)]) {
 
 /// A file that could not be read as an entry of the JSON array: the
 /// fields of a diagnostic (`diagnostic::render_json`), with the file as
-/// its place and no position in it.
+/// its place, at its line 1, column 1 (it has no position in it).
 fn unreadable_json(path: &str, e: &std::io::Error) -> serde_json::Value {
     serde_json::json!({
         "code": silt::diagnostic::Code::ModuleNotFound.id(),
-        "col": 0,
-        "end_col": 0,
-        "end_line": 0,
+        "col": 1,
+        "end_col": 1,
+        "end_line": 1,
         "file": path,
         "help": [],
         "kind": "compile",
         "labels": [],
-        "line": 0,
+        "line": 1,
         "message": format!("error reading {path}: {}", silt::diagnostic::io_error_text(e)),
         "notes": [],
         "severity": "error",

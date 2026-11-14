@@ -1,0 +1,42 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: panic: todo
+-- stderr-contains: --> never_value__a_question_mark_on_it_never_runs.silt:12:3
+-- stderr-not-contains: error[type]
+-- stderr-not-contains: compiler bug
+-- `?` of a value that never is, or of a field read of one, gives a value
+-- that never is, as a call or a field read of it does, whatever the
+-- function returns, also one that never returns: the `?` never runs.
+-- Running it stops at the panic of the stub.
+fn todo() -> Never {
+  -- the place the run stops at
+  panic("todo")
+}
+
+fn direct() -> Result(Int, String) {
+  let t = todo()
+  t?
+}
+
+fn of_a_field() -> Result(Int, String) {
+  let v = todo()
+  Ok(v.x? + v.y.z?)
+}
+
+fn in_an_int() -> Int {
+  todo()? + 1
+}
+
+fn in_a_never() -> Never {
+  todo()?
+}
+
+fn main() {
+  println("ok")
+  match direct() {
+    Ok(n) -> println(n)
+    Err(e) -> println(e)
+  }
+  println(of_a_field())
+  println(in_an_int())
+  in_a_never()
+}

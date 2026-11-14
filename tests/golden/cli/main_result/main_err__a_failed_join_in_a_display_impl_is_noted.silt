@@ -1,0 +1,19 @@
+-- exit: 1
+-- A failure an impl gets from elsewhere is its failure too: the join of
+-- a task that panicked.
+import task
+
+type Joined {
+  a: Int,
+}
+
+trait Display for Joined {
+  fn display(self) -> String {
+    let h = task.spawn({ -> panic("in a task") })
+    task.join(h)
+  }
+}
+
+fn main() -> Result((), Joined) {
+  Err(Joined { a: 1 })
+}

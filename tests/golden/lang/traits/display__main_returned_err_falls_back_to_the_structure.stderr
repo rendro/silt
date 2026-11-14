@@ -1,1 +1,2 @@
 error: Code {n: 0}
+note: the Display impl of Code failed: division by zero (display__main_returned_err_falls_back_to_the_structure.silt:11:12)

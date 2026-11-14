@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: type U { U(Int) }\ntrait Display for U { fn display(self) -> String { panic("no text") } }\nU(1)\n[U(2)]\n:quit\n
+-- An entry's value whose Display impl fails is shown by its structure,
+-- with the note of what failed on stderr.

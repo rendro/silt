@@ -2,14 +2,14 @@ error[type]: 'f' returns `Result(List(_), json.JsonError)`, and no parameter dec
  --> full_type__a_type_nothing_decides_where_no_parameter_can_take_it.silt:28:1
     |
  28 | fn f(s) {
-    | ^^^^^^^^^ 'f' returns `Result(List(_), json.JsonError)`, and no parameter decides its `_`: trait 'Dec' needs it, and each caller could mean another impl
+    | ^^^^^^^^^ here
   = help: annotate 'f': add a `type` parameter for that type, or take a value of it as a parameter
 
 error[type]: 'g' returns `Result(List(_), json.JsonError)`, and no parameter decides its `_`: trait 'Dec' needs it, and each caller could mean another impl
  --> full_type__a_type_nothing_decides_where_no_parameter_can_take_it.silt:32:1
     |
  32 | fn g(s) {
-    | ^^^^^^^^^ 'g' returns `Result(List(_), json.JsonError)`, and no parameter decides its `_`: trait 'Dec' needs it, and each caller could mean another impl
+    | ^^^^^^^^^ here
   = help: annotate 'g': add a `type` parameter for that type, or take a value of it as a parameter
 
 error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'

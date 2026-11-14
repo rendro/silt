@@ -227,11 +227,12 @@ types, kept apart by their qualifiers: `a.Pt` and `b.Pt`, or a module's
 own `Pt` and an imported `b.Pt`. A value of one is not a value of the
 other, and each has its own trait impls.
 
-A value of such a type prints qualified, as the program names the
+A record of such a type prints qualified, as the program names the
 module: `a.Pt {x: 1}` for a module `a` of the program, `db.Pt {x: 1}`
 for the library of a dependency `db`, and `db.util.Pt {x: 1}` for its
-module `util`. A type whose name no other type of the program has
-prints bare: `Pt {x: 1}`.
+module `util`. A record type whose name no other type of the program has
+prints bare: `Pt {x: 1}`. A variant prints by its own name, whichever
+enum it is of: `a.V("s")` prints `V("s")`.
 
 Two modules may also each declare a trait of one name, say `Show` with
 a method `show`, and implement it for one type. A call names the trait
@@ -351,11 +352,12 @@ them too: `import channel.{ Message }`.
 
 The **prelude** needs no import: the primitive and container types (`Int`,
 `Float`, `Bool`, `String`, `()`, `Bytes`, `List`, `Map`, `Set`, `Channel`, `Fn`),
+`Never` (the type of what never returns),
 `TypeOf(a)` (the type of a type used as a value, like `Int` or a
 `type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
-`panic`. The primitive and container types and `TypeOf` cannot be declared
+`panic`. The primitive and container types, `Never` and `TypeOf` cannot be declared
 again: `type List { ... }` is an error, "type 'List' shadows builtin type
-'List'". A type of a built-in module reserves no name: a module may declare
+'List'", and so is `type Never { ... }`. A type of a built-in module reserves no name: a module may declare
 its own `type Regex` or `type Weekday`, a type apart from `regex.Regex` and
 `time.Weekday`, and use both; with `import regex.{ Regex }` as well, the name is
 bound twice. The other names of the prelude can be declared again: a module's

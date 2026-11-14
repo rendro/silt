@@ -15,7 +15,8 @@
 //!
 //! Precedence the tests assert:
 //!   1. `NO_COLOR=<nonempty>` → no escapes, regardless of `FORCE_COLOR`.
-//!   2. `NO_COLOR` unset/empty + `FORCE_COLOR=<nonempty>` → escapes present.
+//!   2. `NO_COLOR` unset/empty + `FORCE_COLOR=<nonempty>` → escapes present,
+//!      but `FORCE_COLOR=0` → none.
 //!   3. Both unset → fallthrough to isatty (which is false under `cargo test`
 //!      since stderr is captured); we don't assert a specific value here,
 //!      just that the call succeeds and the output is a valid render.
@@ -108,6 +109,15 @@ fn use_color_honors_no_color_and_force_color_env_vars() {
     assert!(
         has_ansi(&rendered),
         "FORCE_COLOR=1 (NO_COLOR unset) must produce escapes, got:\n{rendered}"
+    );
+
+    // ── Case 3b: FORCE_COLOR=0 turns color off ────────────────────────
+    // (It forced color before: any non-empty value did.)
+    set("FORCE_COLOR", "0");
+    let rendered = make_error();
+    assert!(
+        !has_ansi(&rendered),
+        "FORCE_COLOR=0 must not produce escapes, got:\n{rendered}"
     );
 
     // ── Case 4: NO_COLOR wins over FORCE_COLOR ────────────────────────

@@ -1,0 +1,22 @@
+> hover 15:23
+(nothing)
+> hover 15:28
+(nothing)
+> hover 15:13
+(nothing)
+> hover 15:16
+(nothing)
+> hover 17:12
+(nothing)
+> hover 17:16
+```silt
+String
+```
+> hover 17:26
+(nothing)
+> hover 16:11
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.

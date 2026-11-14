@@ -1,3 +1,10 @@
+warning[type]: unused import 'json'
+ --> main.silt:9:1
+   |
+ 9 | import json
+   | ^^^^^^^^^^^ unused import 'json'
+  = help: remove the line `import json`
+
 error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
  --> main.silt:19:30
     |
@@ -21,10 +28,3 @@ error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`,
     |                        ^^^^^^ `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
   = note: `util.hm` passes it to `bridge.hmixed`, which passes it to `mail.load`, which passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
-
-warning[type]: unused import 'json'
- --> main.silt:9:1
-   |
- 9 | import json
-   | ^^^^^^^^^^^ unused import 'json'
-  = help: remove the line `import json`
