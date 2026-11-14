@@ -1,0 +1,21 @@
+-- cmd: lsp
+-- lsp: hover 17:7
+-- lsp: hover 18:7
+-- lsp: hover 14:4
+-- lsp: hover 19:11
+-- lsp: hover 20:13
+-- lsp: signature 19:22
+-- Two program types of one name, the file's own `Regex` and `s.Regex`:
+-- the other module's is written with its module, as the messages write it.
+import shapes as s
+
+type Regex { n: Int }
+
+fn both(mine: Regex, theirs: s.Regex) -> String { "{mine.n} {theirs.pattern}" }
+
+fn main() {
+  let mine = Regex { n: 1 }
+  let theirs = s.Regex { pattern: "ab" }
+  println(both(mine, theirs))
+  println(s.pair(theirs))
+}
