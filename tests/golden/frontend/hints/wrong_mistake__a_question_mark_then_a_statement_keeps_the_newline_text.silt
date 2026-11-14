@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A `?` followed on its line by another statement is the "newline" mistake, not `cond ? a : b` (no `:` follows).
+-- stderr-contains: expected a newline before 'println': each statement must start on its own line
+-- stderr-not-contains: condition ? a : b
+fn g() -> Result(Int, String) { Ok(1) }
+fn f() -> Result(Int, String) {
+  g()? println("done")
+  Ok(1)
+}
+fn main() { println(f()) }

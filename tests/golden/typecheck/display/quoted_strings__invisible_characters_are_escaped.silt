@@ -1,0 +1,9 @@
+-- exit: 1
+-- A string shown quoted (in a structure, in a failed assertion) writes what shows nothing, turns the text around or is private use as `\u{..}`, so that two strings that differ look different; a variation selector after its character stays.
+-- stdout-contains: ["\u{202e}abc", "a\u{200b}", "\u{feff}", "\u{2028}", "\u{85}", "\u{ad}", "\u{e000}", "❤️", "日本"]
+-- stderr-contains: assertion failed: "a" != "a\u{200b}"
+import test
+fn main() {
+  println(["\u{202e}abc", "a\u{200b}", "\u{feff}", "\u{2028}", "\u{85}", "\u{ad}", "\u{e000}", "\u{2764}\u{fe0f}", "日本"])
+  test.assert_eq("a", "a\u{200b}")
+}

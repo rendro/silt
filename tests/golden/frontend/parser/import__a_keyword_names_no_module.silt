@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- `import match`: a keyword names no module; one error that says so.
+-- stderr-contains: `match` is a keyword of silt, so no module is named by it
+-- stderr-not-contains: expected identifier
+import match
+fn main() {}

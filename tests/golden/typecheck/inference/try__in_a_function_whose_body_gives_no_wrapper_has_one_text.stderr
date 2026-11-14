@@ -10,7 +10,8 @@ error[type]: ? operator can only be used inside a function that returns Result o
     |
  15 |   let f = { -> Some(1)? }
     |                ^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
-  = note: the ?-ed expression is Option(Int), but the enclosing function returns Int
+  = note: the ?-ed expression is Option(Int), but the closure it is in returns Int
+  = help: a `?` in a closure ends the closure, not the function; over a list, `list.traverse(xs) { x -> ... }?` stops at the first `None`
 
 error[type]: type mismatch: expected Result(Int, String), got Int
  --> try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:21:3

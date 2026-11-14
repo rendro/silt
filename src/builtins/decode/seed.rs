@@ -1028,7 +1028,12 @@ impl<'s> Seed<'s> {
             FieldType::Int => match scalar {
                 Scalar::Int(n) => Ok(Value::Int(n)),
                 Scalar::Float(f) if self.cx.rules.numbers == Numbers::Values => {
+                    // (A whole `json.Float` of a `json.Value`: a JSON text
+                    // holds a whole number in range as an `Int`.)
+                    let json =
+                        self.cx.rules.family == crate::builtins::registry::decoding::Family::Json;
                     let what = match f.abs() < I64_MAX_PLUS_ONE {
+                        true if json && f.fract() == 0.0 => "a json.Float",
                         true => "a number with a fraction",
                         false => "a number out of Int's range",
                     };

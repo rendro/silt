@@ -1,8 +1,9 @@
-error[type]: trait `Dec` cannot be implemented for the generic type `Map`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+error[type]: trait `Dec` for `Map(k, a)` needs `json.Decode` of each type parameter, as `Dec` has `json.Decode` as a supertrait: `k` is not bounded by it
  --> a_builtin_container_through_a_supertrait_impl.silt:16:1
     |
  16 | trait Dec for Map(k, a) where a: json.Decode {}
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Map`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` for `Map(k, a)` needs `json.Decode` of each type parameter, as `Dec` has `json.Decode` as a supertrait: `k` is not bounded by it
+  = help: add `k: json.Decode` to the impl's `where` clause
 
 error[type]: `via` cannot decode `Map(Int, Int)`: a decoded map's key type must be String
  --> a_builtin_container_through_a_supertrait_impl.silt:32:30

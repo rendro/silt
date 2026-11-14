@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- The error names the mistake that was made, not another one.
+-- stderr-contains: silt has no null
+-- stderr-not-contains: uuid
+fn main() {
+  let x = nil
+  println(x)
+}

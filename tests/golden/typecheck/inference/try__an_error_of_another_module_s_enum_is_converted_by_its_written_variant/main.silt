@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- The help of a `?` of another error type names the variant of another module's enum as the program writes it: `errs.Io`.
+-- stderr-contains: help: `?` converts nothing: add `|> result.map_err(errs.Io)` before the `?`
+import errs
+import io
+fn load(p: String) -> Result(String, errs.AppError) {
+  let t = io.read_file(p)?
+  Ok(t)
+}
+fn main() { println(load("x")) }

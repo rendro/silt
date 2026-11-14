@@ -1,6 +1,6 @@
 -- exit: 1
--- stderr-contains: time: year
--- stderr-contains: out of range for i32
+-- stderr-contains: time.format_date: year
+-- stderr-contains: is out of range
 import time
 import result
 fn main() {

@@ -256,6 +256,21 @@ const MAX_DEPTH: usize = 128;
 /// both inside the reserve.
 const MAX_EXPR_OPERATIONS: usize = 2048;
 
+/// Where the parser found what it cannot read, for the hints of
+/// [`Parser::foreign_syntax`]: at the start of a declaration, of an
+/// expression, of a pattern, in place of a token it expected, in a
+/// comma-separated list (named as its error names it), or behind a
+/// complete statement on its line.
+#[derive(Clone, Copy, PartialEq)]
+enum Foreign<'a> {
+    Decl,
+    Expr,
+    Pattern,
+    Expect(&'a Token),
+    List(&'a str),
+    NextStatement,
+}
+
 /// The error for an `if`, wherever one is met: silt branches on a
 /// condition with a `match` without a scrutinee, and the help shows its
 /// shape.
@@ -404,6 +419,8 @@ pub struct Parser<'src> {
     /// (`Program::unknown`).
     unknown: Vec<Symbol>,
     depth: usize,
+    /// How many of the `depth` levels are patterns.
+    pattern_depth: usize,
     /// The comments of the source, when the parser is asked to attach
     /// documentation (see `with_docs`): each top-level declaration and
     /// each trait or impl method gets its `doc` from the comments in
@@ -499,6 +516,7 @@ impl<'src> Parser<'src> {
             statements: StatementMarks::default(),
             errors: Vec::new(),
             depth: 0,
+            pattern_depth: 0,
             docs: None,
             host: false,
             top_level_item: "declaration",
@@ -802,6 +820,9 @@ impl<'src> Parser<'src> {
         if self.at(expected) {
             Ok(self.advance())
         } else {
+            if let Some(d) = self.foreign_syntax(Foreign::Expect(expected)) {
+                return Err(d);
+            }
             let d = Diagnostic::error(
                 Code::ExpectedToken,
                 self.found_span(),
@@ -1072,9 +1093,24 @@ impl<'src> Parser<'src> {
         self.semicolons.get(at).is_some_and(|s| *s < to)
     }
 
+    /// The error for the body of a trait or an impl (`what`), opened by
+    /// the `{` at `open`, that the text ends in: its `}` is missing (the
+    /// next `fn` was read as one of its methods).
+    fn unclosed_body_err(&self, what: &str, open: Span) -> Diagnostic {
+        Diagnostic::error(
+            Code::UnclosedDelimiter,
+            self.span(),
+            format!("expected `}}` to close the {what}, found {}", self.found()),
+        )
+        .with_label(open, format!("the {what} starts here"))
+    }
+
     /// The error for a comma-separated list that is not closed; see
     /// `comma_list`.
     fn unclosed_list_err(&self, what: &str, open: Span, close: &Token) -> Diagnostic {
+        if let Some(d) = self.foreign_syntax(Foreign::List(what)) {
+            return d;
+        }
         let d = Diagnostic::error(
             Code::UnclosedDelimiter,
             self.found_span(),
@@ -1775,6 +1811,9 @@ impl<'src> Parser<'src> {
                         Self::DOUBLE_SLASH_HINT,
                     ));
                 }
+                if let Some(d) = self.foreign_syntax(Foreign::Decl) {
+                    return Err(d);
+                }
                 Err(Diagnostic::error(
                     Code::ExpectedDeclaration,
                     self.found_span(),
@@ -2426,9 +2465,10 @@ impl<'src> Parser<'src> {
             // `trait Foo(a) where a: Display { ... }`. Each impl must
             // supply a concrete type arg satisfying the bounds.
             let param_where_clauses = self.parse_where_clauses_opt()?;
-            if self.at(&Token::LBrace) {
-                self.advance();
-            }
+            let open = match self.at(&Token::LBrace) {
+                true => Some(self.advance().span),
+                false => None,
+            };
             // Trait body: methods (`fn ...`).
             let mut methods = Vec::new();
             let mut closed = true;
@@ -2436,6 +2476,11 @@ impl<'src> Parser<'src> {
                 self.skip_rejected();
                 if self.at(&Token::RBrace) {
                     break;
+                }
+                if let Some(open) = open
+                    && self.at(&Token::Eof)
+                {
+                    return Err(self.unclosed_body_err("trait body", open));
                 }
                 if !self.parse_method(&mut methods, FnBody::Optional)? {
                     closed = false;
@@ -2544,7 +2589,7 @@ impl<'src> Parser<'src> {
             // (appended to each method's scheme during register_trait_impl).
             // Multi-trait bounds via `+` are supported: `where a: Show + Hash`.
             let where_clauses = self.parse_where_clauses_opt()?;
-            self.expect(&Token::LBrace)?;
+            let open = self.expect(&Token::LBrace)?.span;
             // Impl body: methods (`fn ...`).
             let mut methods = Vec::new();
             let mut closed = true;
@@ -2552,6 +2597,9 @@ impl<'src> Parser<'src> {
                 self.skip_rejected();
                 if self.at(&Token::RBrace) {
                     break;
+                }
+                if self.at(&Token::Eof) {
+                    return Err(self.unclosed_body_err("impl body", open));
                 }
                 if !self.parse_method(&mut methods, FnBody::NeededInImpl)? {
                     closed = false;
@@ -2587,6 +2635,37 @@ impl<'src> Parser<'src> {
 
     fn parse_import(&mut self) -> Result<Decl> {
         let import_span = self.expect(&Token::Import)?.span;
+        // `import "list"`: the module is named, not quoted.
+        if let Token::StringLit(text) = self.peek() {
+            // (The text echoed only where it is a module name.)
+            let is_name = |part: &str| {
+                part.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                    && part
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            };
+            let message = match !text.is_empty() && text.split('.').all(is_name) {
+                true => {
+                    format!("a module is imported by its name, without quotes: `import {text}`")
+                }
+                false => "a module is imported by its name, without quotes, as in `import list`: \
+                          a module name is lowercase letters, digits and `_`"
+                    .to_string(),
+            };
+            return Err(Diagnostic::error(
+                Code::UnsupportedSyntax,
+                self.span(),
+                message,
+            ));
+        }
+        // `import match`: a keyword names no module.
+        if let Some(keyword) = self.peek().keyword() {
+            return Err(Diagnostic::error(
+                Code::ExpectedIdentifier,
+                self.span(),
+                format!("`{keyword}` is a keyword of silt, so no module is named by it"),
+            ));
+        }
         let (name, _) = self.expect_ident()?;
 
         // `.{ ... }` and `as` may continue the import on the next line;
@@ -2755,6 +2834,19 @@ impl<'src> Parser<'src> {
                 "expected a type, found {",
             )
             .with_help("a record type is declared with a name, `type P { x: Int }`, and written by it, `P`"));
+        }
+        // (Where a type is needed and something else stands: `x: )`,
+        // `type A = "s"`, `[Int]`.)
+        if !matches!(self.peek(), Token::Ident(_)) {
+            let d = Diagnostic::error(
+                Code::ExpectedType,
+                self.span(),
+                format!("expected a type, found {}", self.found()),
+            );
+            return Err(match self.peek() {
+                Token::LBracket => d.with_help("a list type is written `List(Int)`"),
+                _ => d,
+            });
         }
         let (module, name, name_span) = self.parse_qualified_name("type name")?;
         if module.is_none() && name == intern::intern("Self") {
@@ -2929,6 +3021,9 @@ impl<'src> Parser<'src> {
     /// by a newline, so `let a = 1 let b = 2` and `let t = price quantity`
     /// are rejected here instead of being read as two statements.
     fn same_line_err(&self, what: &str) -> Diagnostic {
+        if let Some(d) = self.foreign_syntax(Foreign::NextStatement) {
+            return d;
+        }
         // `let r = if x { ... }`: the statement ended at a foreign keyword
         // read as an identifier, so point at the silt equivalent instead.
         if let Some(Tok {
@@ -2936,7 +3031,13 @@ impl<'src> Parser<'src> {
             span: prev_span,
             ..
         }) = self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
-            && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev))
+            && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev)).or_else(|| {
+                // (A `{` behind the name is the parser's own error, of a
+                // block that starts a line: `case {`.)
+                (!self.at(&Token::LBrace))
+                    .then(|| Self::newline_keyword_hint(&intern::resolve(*prev)))
+                    .flatten()
+            })
         {
             return Self::with_no_if_help(Diagnostic::error(
                 Code::UnsupportedSyntax,
@@ -2967,6 +3068,518 @@ impl<'src> Parser<'src> {
             ),
             _ => None,
         }
+    }
+
+    /// The hint for a word of another language that ended a statement
+    /// (`new P { .. }`, `case x { .. }`, `switch x { .. }`): given only
+    /// where the parser already refuses what follows on the line
+    /// (`same_line_err`), never at the start of a statement, where each
+    /// is a name a program may bind (`let new = ...`).
+    fn newline_keyword_hint(text: &str) -> Option<&'static str> {
+        match text {
+            "new" => Some("silt has no `new`: a record is built by its type's name, `P { x: 1 }`"),
+            "case" | "switch" => Some(
+                "silt has no `case` or `switch`: write `match x {`, then one `pattern -> value` arm \
+                 per line",
+            ),
+            _ => None,
+        }
+    }
+
+    /// The error for a `=>` whose `=` is at `at`, if one is there: silt
+    /// writes `->`.
+    fn fat_arrow_at(&self, at: usize) -> Option<Diagnostic> {
+        let eq = self.tokens.get(at)?;
+        let gt = self.tokens.get(at + 1)?;
+        (eq.kind == Token::Eq && gt.kind == Token::Gt && eq.span.end == gt.span.start).then(|| {
+            Diagnostic::error(
+                Code::UnsupportedSyntax,
+                Span {
+                    end: gt.span.end,
+                    ..eq.span
+                },
+                "silt writes `->`, not `=>`",
+            )
+            .with_help("a closure is written `{ x -> x + 1 }`, a match arm `pattern -> value`")
+        })
+    }
+
+    /// Whether the token at `at` is a `{` that opens a closure: a `->`
+    /// stands inside it, outside any inner bracket, before its first
+    /// line ends.
+    fn closure_at(&self, at: usize) -> bool {
+        if self.tokens.get(at).map(|t| &t.kind) != Some(&Token::LBrace) {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (i, tok) in self.tokens.iter().enumerate().skip(at + 1) {
+            if self.starts_line[i] {
+                return false;
+            }
+            match tok.kind {
+                Token::LParen
+                | Token::LBrace
+                | Token::LBracket
+                | Token::HashBrace
+                | Token::HashBracket => depth += 1,
+                Token::RParen | Token::RBracket => depth = depth.saturating_sub(1),
+                Token::RBrace if depth == 0 => return false,
+                Token::RBrace => depth -= 1,
+                Token::Arrow if depth == 0 => return true,
+                Token::Eof => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// The index of the token behind the `)` that closes the `(` at
+    /// `open`, if the text has one.
+    fn after_parens(&self, open: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        for (i, tok) in self.tokens.iter().enumerate().skip(open) {
+            match tok.kind {
+                Token::LParen => depth += 1,
+                Token::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return (i + 1 < self.tokens.len()).then_some(i + 1);
+                    }
+                }
+                Token::Eof => return None,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The error for syntax of another language that silt does not have
+    /// (E0109), at the current token, where the parser found something
+    /// it cannot read in the place `place`: `::`, `===`, `+=`, `**`,
+    /// `and`, `struct`, `fn(x) {..}`, `let mut`, `f(x: 1)` and the like,
+    /// each with what silt writes. None where the token is no such
+    /// shape: the parser's own error stands.
+    fn foreign_syntax(&self, place: Foreign) -> Option<Diagnostic> {
+        let cur = self.tokens.get(self.pos)?;
+        let prev = self.pos.checked_sub(1).and_then(|i| self.tokens.get(i));
+        let prev2 = self.pos.checked_sub(2).and_then(|i| self.tokens.get(i));
+        let next = self.tokens.get(self.pos + 1);
+        let glued = |a: &Tok, b: &Tok| a.span.end == b.span.start;
+        let after = |kind: Token| prev.is_some_and(|p| p.kind == kind && glued(p, cur));
+        let before = |kind: Token| next.is_some_and(|n| n.kind == kind && glued(cur, n));
+        let name = |tok: Option<&Tok>| match tok.map(|t| &t.kind) {
+            Some(Token::Ident(s)) => Some(intern::resolve(*s)),
+            _ => None,
+        };
+        let capital = |tok: Option<&Tok>| {
+            name(tok).is_some_and(|n| n.starts_with(|c: char| c.is_ascii_uppercase()))
+        };
+        // The text the program wrote from `from` to `to`, both tokens.
+        let written = |from: &Tok, to: &Tok| {
+            self.source
+                .get(from.span.start_offset()..to.span.end_offset())
+                .unwrap_or("")
+                .to_string()
+        };
+        // The error, underlined over the foreign tokens (`from` to the
+        // current one).
+        let error_at = |from: &Tok, message: String, help: Option<&str>| {
+            let d = Diagnostic::error(Code::UnsupportedSyntax, from.span.to(cur.span), message);
+            Some(match help {
+                Some(help) => d.with_help(help),
+                None => d,
+            })
+        };
+        let error = |message: &str, help: Option<&str>| error_at(cur, message.to_string(), help);
+        let closure = "a closure is written `{ x -> x + 1 }`";
+        // An operator of two glued tokens, the previous one and this one.
+        let operator = |message: String| error_at(prev.expect("a previous token"), message, None);
+        // (Anywhere: operators of other languages.)
+        match &cur.kind {
+            Token::Colon if before(Token::Colon) => {
+                let to = self
+                    .tokens
+                    .get(self.pos + 2)
+                    .filter(|t| matches!(t.kind, Token::Ident(_)));
+                let example = match (name(prev), to.and_then(|t| name(Some(t)))) {
+                    (Some(left), Some(right)) => format!("`{left}.{right}`"),
+                    _ => "`list.length`".to_string(),
+                };
+                let d = Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    cur.span.to(next.expect("a second colon").span),
+                    format!(
+                        "silt writes `.` between a module or a type and its names, not `::`: {example}"
+                    ),
+                );
+                return Some(d);
+            }
+            Token::Eq if after(Token::EqEq) => {
+                return operator("silt writes `==`, not `===`".into());
+            }
+            Token::Eq if after(Token::NotEq) => {
+                return operator("silt writes `!=`, not `!==`".into());
+            }
+            Token::Gt if after(Token::Lt) => {
+                return operator(
+                    "silt has no `<>`: `!=` is not equal, and strings are joined by \
+                     interpolation, `\"{a}{b}\"`"
+                        .into(),
+                );
+            }
+            Token::Eq if before(Token::Gt) => {
+                return self.fat_arrow_at(self.pos);
+            }
+            Token::Eq
+                if [
+                    Token::Plus,
+                    Token::Minus,
+                    Token::Star,
+                    Token::Slash,
+                    Token::Percent,
+                ]
+                .into_iter()
+                .any(&after) =>
+            {
+                let op = written(prev.expect("an operator"), cur);
+                let sign = &op[..op.len() - 1];
+                return operator(format!(
+                    "silt has no `{op}`: a binding never changes; give the new value a name, \
+                     `let x = x {sign} 1`"
+                ));
+            }
+            Token::Plus if after(Token::Plus) => {
+                return operator(
+                    "silt has no `++`: write `x + 1`, `list.concat(xs, ys)` for two lists and \
+                     `\"{a}{b}\"` for two strings"
+                        .into(),
+                );
+            }
+            Token::Star if after(Token::Star) => {
+                return operator(
+                    "silt has no `**`: write `int.pow(x, 2)` or `math.pow(x, 2.0)`".into(),
+                );
+            }
+            Token::Star if after(Token::Slash) => {
+                return operator("a block comment is written `{- ... -}`".into());
+            }
+            Token::Slash if before(Token::Star) => {
+                return error("a block comment is written `{- ... -}`", None);
+            }
+            Token::Lt if after(Token::Lt) => {
+                return operator("silt has no `<<`: write `int.shift_left(x, 2)`".into());
+            }
+            Token::Gt if after(Token::Gt) && !matches!(place, Foreign::Expect(Token::Arrow)) => {
+                return operator("silt has no `>>`: write `int.shift_right(x, 2)`".into());
+            }
+            // `x | 2`: no closure, an operator of another language.
+            Token::Bar if place != Foreign::Decl && self.prev_ends_value() => {
+                return error(
+                    "silt has no `|` operator: `||` is or, and `int.bit_or(a, b)` the bits of \
+                     either",
+                    None,
+                );
+            }
+            _ => {}
+        }
+        if place != Foreign::Decl {
+            match name(Some(cur)).as_deref() {
+                Some("and") if self.prev_ends_value() => {
+                    return error("silt writes `&&`, not `and`", None);
+                }
+                Some("or") if self.prev_ends_value() => {
+                    return error("silt writes `||`, not `or`", None);
+                }
+                _ => {}
+            }
+            if name(prev).as_deref() == Some("not")
+                && prev.is_some_and(|p| !self.starts_line[self.pos] || p.span.end == cur.span.start)
+                && Self::g1_next_starts_expression(&cur.kind)
+            {
+                return error_at(prev?, "silt writes `!x`, not `not x`".into(), None);
+            }
+        }
+        match place {
+            Foreign::Decl => {
+                let word = name(Some(cur));
+                let message = match word.as_deref() {
+                    Some(w @ ("struct" | "class")) => {
+                        format!("silt has no `{w}`: a record type is `type P {{ x: Int, y: Int }}`")
+                    }
+                    Some("enum") => {
+                        "silt has no `enum`: a type with variants is `type Color { Red, Green }`"
+                            .into()
+                    }
+                    Some("const") => "silt has no `const`: a constant is `let x = 1`".into(),
+                    Some(w @ ("def" | "function" | "func" | "fun")) => format!(
+                        "silt has no `{w}`: a function is declared with `fn`, \
+                         `fn add(x: Int, y: Int) -> Int {{ x + y }}`"
+                    ),
+                    Some("use") => "silt has no `use`: write `import list`".into(),
+                    Some(w @ ("mod" | "module")) => format!(
+                        "silt has no `{w}`: a module is a file, which another imports with \
+                         `import name`"
+                    ),
+                    Some("export") => "silt has no `export`: write `pub` before the declaration".into(),
+                    Some("interface") => {
+                        "silt has no `interface`: a trait is `trait Show { fn show(self) -> String }`"
+                            .into()
+                    }
+                    Some("impl") => {
+                        "silt has no `impl`: an implementation is `trait Show for Point { ... }`".into()
+                    }
+                    Some("async") => "silt has no `async`: a task is started with `task.spawn`".into(),
+                    _ => match &cur.kind {
+                        Token::Lt | Token::LBracket
+                            if capital(prev) && prev.is_some_and(|p| glued(p, cur)) =>
+                        {
+                            self.type_arguments_text(prev?)
+                        }
+                        Token::Eq if prev.is_some_and(|p| p.kind == Token::RParen) => {
+                            "a function's body is a block: `fn add(x: Int, y: Int) -> Int { x + y }`"
+                                .into()
+                        }
+                        Token::Bar => {
+                            "a type with variants is written in braces: `type C { A, B }`".into()
+                        }
+                        Token::Colon if prev.is_some_and(|p| p.kind == Token::RParen) => {
+                            "a function's result type follows `->`: `fn add(x: Int) -> Int {`".into()
+                        }
+                        _ => return None,
+                    },
+                };
+                error(&message, None)
+            }
+            Foreign::Expr => match &cur.kind {
+                Token::Fn if next.is_some_and(|n| n.kind == Token::LParen) => {
+                    error("a closure is not written with `fn`", Some(closure))
+                }
+                Token::Bar => error("silt has no `|x| ..` closure", Some(closure)),
+                _ => None,
+            },
+            Foreign::Expect(expected) => match &cur.kind {
+                Token::Lt
+                    if *expected == Token::LParen && prev2.is_some_and(|t| t.kind == Token::Fn) =>
+                {
+                    error(
+                        "silt has no `<T>`: a type parameter is a lowercase name in the signature, \
+                         `fn first(xs: List(a)) -> a`",
+                        None,
+                    )
+                }
+                Token::Lt | Token::LBracket
+                    if capital(prev) && prev.is_some_and(|p| glued(p, cur)) =>
+                {
+                    error(&self.type_arguments_text(prev?), None)
+                }
+                Token::Ident(_)
+                    if *expected == Token::Eq
+                        && name(prev).as_deref() == Some("assert")
+                        && prev2.is_some_and(|t| t.kind == Token::Let) =>
+                {
+                    error_at(
+                        prev?,
+                        "silt has no `let assert`: write `when let Ok(x) = value else { ... }`"
+                            .into(),
+                        None,
+                    )
+                }
+                Token::Ident(_)
+                    if *expected == Token::Arrow && name(Some(cur)).as_deref() == Some("if") =>
+                {
+                    error(
+                        "a guard of a match arm is written `when`: `1 when x > 0 ->`",
+                        None,
+                    )
+                }
+                Token::Ident(_)
+                    if *expected == Token::Eq
+                        && name(prev).as_deref() == Some("mut")
+                        && prev2.is_some_and(|t| t.kind == Token::Let) =>
+                {
+                    let d = Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        prev?.span,
+                        "silt has no `mut`: a binding never changes; give a new value a new `let`",
+                    );
+                    Some(d)
+                }
+                _ => None,
+            },
+            Foreign::List(what) => match &cur.kind {
+                Token::Colon
+                    if what == "function call argument list"
+                        && matches!(prev.map(|p| &p.kind), Some(Token::Ident(_))) =>
+                {
+                    error(
+                        "silt has no named arguments: pass the value alone, `f(1)`",
+                        None,
+                    )
+                }
+                Token::Eq
+                    if what == "record literal"
+                        && matches!(prev.map(|p| &p.kind), Some(Token::Ident(_))) =>
+                {
+                    error("a field is written with `:`: `P { x: 1 }`", None)
+                }
+                Token::Colon
+                    if what == "enum variant field list"
+                        && matches!(prev.map(|p| &p.kind), Some(Token::Ident(_))) =>
+                {
+                    error(
+                        "a variant's fields have no names: `Circle(Int)`; a type with named \
+                         fields is a record type",
+                        None,
+                    )
+                }
+                Token::Ident(_) if what == "record type" && self.nl_before() => error(
+                    "the fields of a record type are separated by commas: `name: String,`",
+                    None,
+                ),
+                _ => None,
+            },
+            Foreign::Pattern => match &cur.kind {
+                Token::Else if next.is_some_and(|n| n.kind == Token::Arrow) => {
+                    error("the arm for every other value is `_ ->`", None)
+                }
+                _ => None,
+            },
+            Foreign::NextStatement
+                if cur.kind == Token::Not
+                    && prev.is_some_and(|p| glued(p, cur))
+                    && name(prev).is_some() =>
+            {
+                error(
+                    "silt has no macros: call a function by its name, `println(x)`, and write a \
+                     list `[1, 2]`",
+                    None,
+                )
+            }
+            Foreign::NextStatement if name(Some(cur)).as_deref() == Some("catch") => error(
+                "silt has no `try`/`catch`: `?` passes an `Err` on, and `match` takes a `Result` \
+                 apart",
+                None,
+            ),
+            Foreign::NextStatement if name(Some(cur)).as_deref() == Some("in") => error(
+                "silt has no `let ... in`: a `let` holds for the rest of its block",
+                None,
+            ),
+            Foreign::NextStatement => {
+                let question = prev.filter(|p| p.kind == Token::Question)?;
+                // `x ?? 1`: two `?` glued, apart from what is before them
+                // (a `?` that ends a value is glued to it, `r??`).
+                let first = prev2.filter(|t| t.kind == Token::Question && glued(t, question));
+                if let Some(first) = first {
+                    let spaced = self
+                        .pos
+                        .checked_sub(3)
+                        .and_then(|i| self.tokens.get(i))
+                        .is_some_and(|t| !glued(t, first));
+                    return spaced.then(|| {
+                        Diagnostic::error(
+                            Code::UnsupportedSyntax,
+                            first.span.to(question.span),
+                            "silt has no `??`: write `option.unwrap_or(value, default)`",
+                        )
+                    });
+                }
+                // `x > 0 ? 1 : 2`: a `:` follows on the line, outside
+                // brackets, and the `?` is followed by no statement
+                // (`g()? let b: Int = 2`).
+                if matches!(cur.kind, Token::Let | Token::Return | Token::When)
+                    || !self.colon_on_line()
+                {
+                    return None;
+                }
+                Some(
+                    Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        question.span,
+                        "silt has no `condition ? a : b`: a `?` passes on an `Err` or a `None`",
+                    )
+                    .with_help(NO_IF_HELP),
+                )
+            }
+        }
+    }
+
+    /// The text for type arguments written in `<..>` or `[..]` behind the
+    /// type name `name`: they are written in parentheses (and a
+    /// declaration's parameters are lowercase names).
+    fn type_arguments_text(&self, name: &Tok) -> String {
+        let written = match &name.kind {
+            Token::Ident(s) => intern::resolve(*s),
+            _ => "List".to_string(),
+        };
+        let declaring = self
+            .tokens
+            .get(self.pos.saturating_sub(2))
+            .is_some_and(|t| t.kind == Token::Type);
+        if declaring {
+            return format!(
+                "a type's parameters are written in parentheses, lowercase: `type {written}(t)`"
+            );
+        }
+        // The arguments as written between the `<` or `[` at hand and its
+        // partner on the line, if it has one there.
+        let (open, close) = match self.peek() {
+            Token::Lt => (Token::Lt, Token::Gt),
+            _ => (Token::LBracket, Token::RBracket),
+        };
+        let mut depth = 0usize;
+        let mut inner = None;
+        for (i, tok) in self.tokens.iter().enumerate().skip(self.pos) {
+            if i > self.pos && self.starts_line[i] {
+                break;
+            }
+            if tok.kind == open {
+                depth += 1;
+            } else if tok.kind == close {
+                depth -= 1;
+                if depth == 0 {
+                    let from = self.tokens[self.pos].span.end_offset();
+                    inner = self
+                        .source
+                        .get(from..tok.span.start_offset())
+                        .map(str::trim);
+                    break;
+                }
+            }
+        }
+        // (Arguments of arguments, `List<List<Int>>`, likewise.)
+        let args = inner
+            .filter(|a| !a.is_empty())
+            .map(|a| a.replace(['<', '['], "(").replace(['>', ']'], ")"));
+        format!(
+            "type arguments are written in parentheses: `{written}({})`",
+            args.as_deref().unwrap_or("Int")
+        )
+    }
+
+    /// Whether a `:` stands on the line from the current token, outside
+    /// brackets.
+    fn colon_on_line(&self) -> bool {
+        let mut depth = 0usize;
+        for (i, tok) in self.tokens.iter().enumerate().skip(self.pos) {
+            if i > self.pos && self.starts_line[i] {
+                return false;
+            }
+            match tok.kind {
+                Token::LParen
+                | Token::LBrace
+                | Token::LBracket
+                | Token::HashBrace
+                | Token::HashBracket => depth += 1,
+                Token::RParen | Token::RBrace | Token::RBracket => match depth.checked_sub(1) {
+                    Some(d) => depth = d,
+                    None => return false,
+                },
+                Token::Colon if depth == 0 => return true,
+                Token::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The `if` hint comes with the shape of the `match` to write.
@@ -3045,6 +3658,32 @@ impl<'src> Parser<'src> {
             // that it doesn't collide with any legitimate construct: a bare
             // `x = y` expression is already a parse error today ("expected
             // expression, found ="), so we're strictly improving the message.
+            // `{ x => x + 1 }`: no assignment, an arrow of another
+            // language.
+            if matches!(next, Token::Eq)
+                && let Some(arrow) = self.fat_arrow_at(self.pos + 1)
+            {
+                return Err(arrow);
+            }
+            // `if (x > 0) return 1`: `if (..)` reads as a call of `if`,
+            // and a statement behind it on the line is the construct.
+            if matches!(next, Token::LParen)
+                && Self::foreign_keyword_hint(&text).is_some()
+                && let Some(after) = self.after_parens(self.pos + 1)
+                && !self.starts_line[after]
+                && (Self::g1_next_starts_expression(&self.tokens[after].kind)
+                    || matches!(self.tokens[after].kind, Token::Return))
+                // (`while(xs) { x -> .. }`: a call of a name `while` with a
+                // trailing closure, which parses.)
+                && !self.closure_at(after)
+            {
+                let msg = Self::foreign_keyword_hint(&text).expect("a foreign keyword");
+                return Err(Self::with_no_if_help(Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    span,
+                    msg,
+                )));
+            }
             if matches!(next, Token::Eq) {
                 return Err(Diagnostic::error(
                     Code::UnsupportedSyntax,
@@ -3687,7 +4326,7 @@ impl<'src> Parser<'src> {
                     Err(Diagnostic::error(
                         Code::UnsupportedSyntax,
                         dots.span,
-                        "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                        "silt has no spread of a record: a record with some fields changed is written `p.{ x: 2 }`",
                     ))
                 } else {
                     self.parse_block()
@@ -3713,6 +4352,9 @@ impl<'src> Parser<'src> {
                         self.span(),
                         Self::DOUBLE_SLASH_HINT,
                     ));
+                }
+                if let Some(d) = self.foreign_syntax(Foreign::Expr) {
+                    return Err(d);
                 }
                 let d = Diagnostic::error(
                     Code::ExpectedExpression,
@@ -4212,8 +4854,8 @@ impl<'src> Parser<'src> {
                 matches!(self.peek(), Token::Ident(name) if *name == intern::intern("_"));
             if is_wildcard {
                 self.advance();
-                self.expect(&Token::Arrow)?;
-                let body = self.parse_expr()?;
+                let arrow = self.expect(&Token::Arrow)?.span;
+                let body = self.arm_body(arrow)?;
                 return Ok(MatchArm {
                     pattern: Pattern::new(PatternKind::Wildcard, arm_start),
                     guard: None,
@@ -4221,8 +4863,8 @@ impl<'src> Parser<'src> {
                 });
             }
             let condition = self.parse_expr()?;
-            self.expect(&Token::Arrow)?;
-            let body = self.parse_expr()?;
+            let arrow = self.expect(&Token::Arrow)?.span;
+            let body = self.arm_body(arrow)?;
             return Ok(MatchArm {
                 pattern: Pattern::new(PatternKind::Wildcard, condition.span),
                 guard: Some(Box::new(condition)),
@@ -4240,14 +4882,32 @@ impl<'src> Parser<'src> {
             None
         };
 
-        self.expect(&Token::Arrow)?;
-        let body = self.parse_expr()?;
+        let arrow = self.expect(&Token::Arrow)?.span;
+        let body = self.arm_body(arrow)?;
 
         Ok(MatchArm {
             pattern,
             guard,
             body,
         })
+    }
+
+    /// The value of a match arm, behind its `->` (at `arrow`). Where the
+    /// arm's line ends at its `->`, and what was read as its value on the
+    /// next line is followed there by a `->` (`2 -> "b"`, which no value
+    /// is followed by), that line is the next arm: this arm has no value,
+    /// which is the error, at its `->`.
+    fn arm_body(&mut self, arrow: Span) -> Result<Expr> {
+        let on_next_line = self.nl_before();
+        let body = self.parse_expr()?;
+        if on_next_line && self.at(&Token::Arrow) && !self.nl_before() {
+            return Err(Diagnostic::error(
+                Code::ExpectedExpression,
+                arrow,
+                "this match arm has no value: write it after the `->`",
+            ));
+        }
+        Ok(body)
     }
 
     // ── Loop expression ──────────────────────────────────────────────
@@ -4313,7 +4973,7 @@ impl<'src> Parser<'src> {
                     return Err(Diagnostic::error(
                         Code::UnsupportedSyntax,
                         p.span(),
-                        "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                        "silt has no spread of a record: a record with some fields changed is written `p.{ x: 2 }`",
                     ));
                 }
                 let keyword = p.peek().keyword();
@@ -4359,13 +5019,18 @@ impl<'src> Parser<'src> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             self.depth -= 1;
-            return Err(Diagnostic::error(
-                Code::NestingTooDeep,
-                self.span(),
-                "pattern nesting exceeds maximum depth",
-            ));
+            // (The depth is the nesting of expressions and patterns
+            // together: the first pattern past it, a closure's parameter
+            // say, is the expressions'.)
+            let what = match self.pattern_depth {
+                0 => "expression nesting exceeds maximum depth",
+                _ => "pattern nesting exceeds maximum depth",
+            };
+            return Err(Diagnostic::error(Code::NestingTooDeep, self.span(), what));
         }
+        self.pattern_depth += 1;
         let result = self.parse_pattern_inner();
+        self.pattern_depth -= 1;
         self.depth -= 1;
         result
     }
@@ -4823,11 +5488,13 @@ impl<'src> Parser<'src> {
                     )),
                 }
             }
-            _ => Err(Diagnostic::error(
-                Code::ExpectedPattern,
-                self.found_span(),
-                format!("expected pattern, found {}", self.found()),
-            )),
+            _ => Err(self.foreign_syntax(Foreign::Pattern).unwrap_or_else(|| {
+                Diagnostic::error(
+                    Code::ExpectedPattern,
+                    self.found_span(),
+                    format!("expected pattern, found {}", self.found()),
+                )
+            })),
         }
     }
 

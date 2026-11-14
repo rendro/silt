@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A mistyped trait brought in by name through an import item is suggested bare: `Shown`.
+-- stderr-contains: help: did you mean `Shown`?
+-- stderr-not-contains: other.Shown
+import other.{ Shown }
+type P { x: Int }
+trait Shwon for P { fn shown(self) -> String { "p" } }
+fn main() {}

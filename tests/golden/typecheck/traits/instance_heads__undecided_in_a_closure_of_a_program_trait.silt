@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A closure whose parameter decides the impl of a program trait: the help annotates the parameter at a type an impl has (`x: Int`, not `x: Box(_)`), and says nothing of json.
+-- stderr-contains: cannot decide which impl of 'T' for 'Box(_)' this use of 't' means
+-- stderr-contains: help: annotate the value it is given, `x: Int`
+-- stderr-not-contains: json
+-- stderr-not-contains: `x: Box(_)`
+type Box(a) { Box(a) }
+trait T { fn t(self) -> Int }
+trait T for Box(Box(a)) { fn t(self) -> Int { 3 } }
+trait T for Box(List(a)) { fn t(self) -> Int { 4 } }
+trait T for Box(Int) { fn t(self) -> Int { 5 } }
+fn main() {
+  let f = { x -> T.t(Box(x)) }
+  println(f(1))
+}

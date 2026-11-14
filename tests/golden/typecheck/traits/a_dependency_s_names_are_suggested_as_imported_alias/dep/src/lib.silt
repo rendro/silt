@@ -1,0 +1,4 @@
+import io
+import int
+pub trait Shown { fn shown(self) -> String }
+pub type AppError { Io(io.IoError), Num(int.IntError) }

@@ -13,24 +13,15 @@ Err(toml syntax error at byte 6: duplicate key `a` in document root)
 a = 1
 [x]
 b = 2
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
-Err(toml syntax error at byte 10: invalid table header
-duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header: duplicate key `x` in document root)
 == [[items]]
 name = "a"
 n = 1
@@ -374,15 +365,15 @@ Err(toml.parse_list(Int): expected a document with exactly one top-level key, an
 Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
 == i = 9223372036854775808
 f = 1
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
-Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
+Err(toml syntax error at byte 4: number too large)
 == b = { v = "Dot", more = ["Dot", { variant = "Circle", fields = [1] }] }
 Err(toml missing field: items)
 Err(toml missing field: s)
@@ -463,13 +454,13 @@ Err(toml.parse_list(Item): expected a document with exactly one top-level key, a
 Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 3 keys)
 Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 3 keys)
 == Object(#{"n": Float(1.0), "name": String("a")})
-Err(json type mismatch: expected Int, got a number with a fraction at n)
-Err(json type mismatch: expected Int, got a number with a fraction at n)
+Err(json type mismatch: expected Int, got a json.Float at n)
+Err(json type mismatch: expected Int, got a json.Float at n)
 Err(json type mismatch: expected List, got object)
 Err(json missing field: variant)
 Err(json missing field: variant)
 Ok(Object(#{"n": Float(1.0), "name": String("a")}))
-Err(json type mismatch: expected Int, got a number with a fraction at n)
+Err(json type mismatch: expected Int, got a json.Float at n)
 == Object(#{"n": Float(1.5), "name": String("a"), "note": Null})
 Err(json type mismatch: expected Int, got a number with a fraction at n)
 Err(json type mismatch: expected Int, got a number with a fraction at n)
@@ -489,7 +480,7 @@ Err(json missing field: name)
 == Array([Int(1), Float(2.0), Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0)])
 Err(json type mismatch: expected object, got array)
 Err(json type mismatch: expected Map, got array)
-Err(json type mismatch: expected Int, got a number with a fraction at [1])
+Err(json type mismatch: expected Int, got a json.Float at [1])
 Err(json type mismatch: expected String or object, got array)
 Err(json type mismatch: expected String or object, got array)
 Ok(Array([Int(1), Float(2.0), Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0)]))
@@ -498,8 +489,8 @@ Err(json type mismatch: expected object, got array)
 Err(json missing field: name)
 Err(json type mismatch: expected Int, got array at fields)
 Err(json type mismatch: expected List, got object)
-Err(json type mismatch: expected Int, got a number with a fraction at fields[1])
-Err(json type mismatch: expected Int, got a number with a fraction at fields[1])
+Err(json type mismatch: expected Int, got a json.Float at fields[1])
+Err(json type mismatch: expected Int, got a json.Float at fields[1])
 Ok(Object(#{"fields": Array([Int(1), Float(2.0)]), "variant": String("Rect")}))
 Err(json missing field: name)
 == String("1979-05-27")

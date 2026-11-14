@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: silt has no named arguments
+fn f(x: Int) -> Int { x }
+fn main() {
+  println(f(x: 1))
+}

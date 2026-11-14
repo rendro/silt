@@ -1,6 +1,6 @@
 -- exit: 1
--- stderr-contains: time: hour
--- stderr-contains: out of range for u32
+-- stderr-contains: time.datetime: hour
+-- stderr-contains: is out of range
 import time
 import result
 fn main() {

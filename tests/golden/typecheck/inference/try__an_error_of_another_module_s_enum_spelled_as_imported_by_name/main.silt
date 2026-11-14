@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A variant imported by name is written bare in the help.
+-- stderr-contains: help: `?` converts nothing: add `|> result.map_err(Io)` before the `?`
+import errs.{ AppError, Io }
+import io
+fn load(p: String) -> Result(String, AppError) {
+  let t = io.read_file(p)?
+  Ok(t)
+}
+fn main() { println(load("x")) }

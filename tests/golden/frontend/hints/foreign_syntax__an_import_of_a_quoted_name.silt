@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- `import "list"`: the module is named, not quoted.
+-- stderr-contains: a module is imported by its name, without quotes: `import list`
+import "list"
+fn main() {}

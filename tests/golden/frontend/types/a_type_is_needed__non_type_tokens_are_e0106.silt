@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Where a type is needed and something else stands, the error says a type is needed (E0106), not a name.
+-- stderr-contains: error[parse]: expected a type, found )
+-- stderr-contains: help: a list type is written `List(Int)`
+-- stderr-not-contains: expected identifier
+fn f(x: ) -> Int { 1 }
+fn g(xs: [Int]) -> Int { 1 }
+fn main() {}

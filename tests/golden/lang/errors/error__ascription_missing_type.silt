@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: expected identifier, found }
+-- stderr-contains: expected a type, found }
 fn main() {
   42 as
 }

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- Syntax of another language gets the text that says what silt writes (E0109).
+-- stderr-contains: silt writes `->`, not `=>`
+fn main() {
+  match 1 {
+    1 => "a"
+    _ -> "b"
+  }
+}

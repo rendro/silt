@@ -74,17 +74,43 @@ fn toml_err_wrap(inner: Value) -> Value {
 /// The `toml` crate exposes a `span()` method that yields a byte range
 /// into the source; we take the start as the offset. For errors that
 /// don't have a span (extremely rare in practice) we fall back to 0.
-pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error) -> Value {
-    let offset = err.span().map(|s| s.start as i64).unwrap_or(0);
+pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error, text: &str) -> Value {
+    let start = err.span().map_or(0, |s| s.start);
+    let offset = start as i64;
     Value::variant(
         bv::TOML_SYNTAX,
-        [Value::string(err.message()), Value::Int(offset)],
+        [
+            Value::string(toml_reason(err.message(), text.get(start..).unwrap_or(""))),
+            Value::Int(offset),
+        ],
     )
 }
 
+/// The reason of a `toml` syntax error in silt's words, from the
+/// crate's message: on one line (the crate writes what it expected on a
+/// second one: "invalid table header\nduplicate key `a` in document
+/// root"), with no reason left empty (a control character in a
+/// comment), and a number too large worded as `int.parse` words it.
+/// `rest` is the text from where the error is: an empty reason there,
+/// with nothing but white space left, is a value missing at the end
+/// (`a = `).
+fn toml_reason(message: &str, rest: &str) -> String {
+    let lines: Vec<&str> = (message.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    match lines.as_slice() {
+        [] if rest.trim().is_empty() => "a value is missing at the end of the text".to_string(),
+        [] => "a character that is not allowed here".to_string(),
+        ["number too large to fit in target type"] => "number too large".to_string(),
+        ["number too small to fit in target type"] => "number too small".to_string(),
+        lines => lines.join(": "),
+    }
+}
+
 /// Build a full `Err(TomlError)` from a `toml::de::Error`.
-pub(crate) fn toml_de_result_err(err: &::toml::de::Error) -> Value {
-    toml_err_wrap(toml_de_error_to_variant(err))
+pub(crate) fn toml_de_result_err(err: &::toml::de::Error, text: &str) -> Value {
+    toml_err_wrap(toml_de_error_to_variant(err, text))
 }
 
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type,
@@ -416,7 +442,9 @@ fn marking<T>(
         match parse(&text) {
             Ok(doc) => {
                 return match first {
-                    Some(e) if marked_in(&doc, &text) != grown.len() => Err(toml_de_result_err(&e)),
+                    Some(e) if marked_in(&doc, &text) != grown.len() => {
+                        Err(toml_de_result_err(&e, &text))
+                    }
                     _ => Ok(doc),
                 };
             }
@@ -434,7 +462,7 @@ fn marking<T>(
                     return Err(toml_err_wrap(Value::variant(
                         bv::TOML_SYNTAX,
                         [
-                            Value::string(e.message()),
+                            Value::string(toml_reason(e.message(), text.get(at..).unwrap_or(""))),
                             Value::Int(at.saturating_sub(growth) as i64),
                         ],
                     )));

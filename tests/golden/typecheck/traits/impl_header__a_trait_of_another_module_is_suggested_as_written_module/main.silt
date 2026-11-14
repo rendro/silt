@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A mistyped trait of another module (imported as a module) is suggested as `other.Shown`, the spelling that works here; a private trait of that module is not suggested.
+-- stderr-contains: help: did you mean `other.Shown`?
+-- stderr-not-contains: did you mean `Shown`?
+-- stderr-not-contains: Hidden
+import other
+type P { x: Int }
+trait Shwon for P { fn shown(self) -> String { "p" } }
+trait Hiddne for P { fn h(self) -> Int { 1 } }
+fn main() {}

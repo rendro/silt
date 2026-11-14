@@ -1,5 +1,5 @@
-Err(tcp connection closed)
-Err(tcp connection closed)
+Err(tcp connection or listener closed)
+Err(tcp connection or listener closed)
 true
 refused
 200

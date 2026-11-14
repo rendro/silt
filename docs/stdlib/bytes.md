@@ -156,7 +156,7 @@ fn main() {
   println(bytes.from_base64("aGk=") |> result.map(bytes.to_string_lossy)) -- Ok("hi")
   match bytes.from_base64("aGk") {
     Ok(_) -> println("decoded")
-    Err(e) -> println("{e}") -- invalid base64: Invalid padding
+    Err(e) -> println("{e}") -- invalid base64: invalid padding: a base64 text must be padded with `=` to a whole number of groups of 4 characters
   }
 }
 ```
