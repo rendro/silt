@@ -2,7 +2,7 @@ error[type]: refutable pattern in `let`: constructor 'Dollars' is only one of 2 
  --> wave1_typechecker__guard_refutable_let_patterns.silt:21:20
     |
  21 |   let Dollars(n) = v
-    |                    ^ refutable pattern in `let`: constructor 'Dollars' is only one of 2 variants of enum 'Money'; use a `match` or `when let ... else` instead
+    |                    ^ here
 
 warning[type]: 'n' is never used
  --> wave1_typechecker__guard_refutable_let_patterns.silt:21:15
@@ -15,7 +15,7 @@ error[type]: refutable pattern in `let`: constructor 'Some' is only one of 2 var
  --> wave1_typechecker__guard_refutable_let_patterns.silt:22:22
     |
  22 |   let (a, Some(b)) = (1, Some(2))
-    |                      ^^^^^^^^^^^^ refutable pattern in `let`: constructor 'Some' is only one of 2 variants of enum 'Option'; use a `match` or `when let ... else` instead
+    |                      ^^^^^^^^^^^^ here
 
 warning[type]: 'a' is never used
  --> wave1_typechecker__guard_refutable_let_patterns.silt:22:8
@@ -55,25 +55,25 @@ error[type]: refutable pattern in `let`: integer literal patterns test a runtime
  --> wave1_typechecker__guard_refutable_let_patterns.silt:24:7
     |
  24 |   let 5 = 5
-    |       ^ refutable pattern in `let`: integer literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^ here
 
 error[type]: refutable pattern in `let`: boolean literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:25:7
     |
  25 |   let true = false
-    |       ^^^^ refutable pattern in `let`: boolean literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^ here
 
 error[type]: refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:26:7
     |
  26 |   let 1..10 = 999
-    |       ^^^^^ refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^^ here
 
 error[type]: refutable pattern in `let`: map patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:27:7
     |
  27 |   let #{ "k": kv } = #{ "k": 1 }
-    |       ^^^^^^^^^^^^ refutable pattern in `let`: map patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^^^^^^^^^ here
 
 warning[type]: 'kv' is never used
  --> wave1_typechecker__guard_refutable_let_patterns.silt:27:15
@@ -86,13 +86,13 @@ error[type]: refutable pattern in `let`: pin patterns test a runtime value and c
  --> wave1_typechecker__guard_refutable_let_patterns.silt:28:7
     |
  28 |   let ^pinned = 99
-    |       ^^^^^^^ refutable pattern in `let`: pin patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^^^^ here
 
 error[type]: refutable pattern in `let`: integer literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:29:15
     |
  29 |   let Pt { x: 0, y: py } = Pt { x: 1, y: 2 }
-    |               ^ refutable pattern in `let`: integer literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |               ^ here
 
 warning[type]: 'py' is never used
  --> wave1_typechecker__guard_refutable_let_patterns.silt:29:21
