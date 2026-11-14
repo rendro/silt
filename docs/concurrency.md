@@ -406,107 +406,25 @@ fn main() {
 }
 ```
 
-`task.cancel(h)` sets the handle's result to `Err("cancelled")` using
-first-writer-wins semantics: if the task has already completed with some other
-result, `task.cancel` leaves that result on the handle. Cancelling counts as
-handling the task, though: if the task had already failed, the cancel
-dismisses the failure, so it is not reported as a failure that nobody joined
-and does not make the program exit with status 1 (see
-[Failures that nobody joins](#failures-that-nobody-joins)). A failure
-the task took with a `task.join` (`joined task failed: ...`) is not its
-own: the cancel hands it back to the task that failed, which is then
-reported as never joined. So a failure is never lost to a cancel of the
-task that joins, whether the cancel comes before the join takes it or
-after. A task that was cancelled itself has nothing handed back: its
-cancellation is no failure, and a cancel of it dismissed what it had. A later
-`task.join(h)` still raises the task's own error, because the handle keeps
-the result that came first. Its effect on the task
-depends on where that task is at the moment of cancellation:
+What a cancel does to the task depends on where the task is. A task that
+waits (in a receive, a send, a `channel.select`, a `task.join`, a sleep or
+I/O) is ended there, without taking or sending anything; a task that has
+not run yet never runs. A task that is running, or whose wait has just
+ended, goes on for a bounded amount of further work: **after a cancel a
+task takes nothing new; it may still give what it holds**, so a worker that
+has just received an item can still put its result into a channel with
+room. It is ended at its next operation that would take something, wait or
+start I/O, or after 2,000 steps. A cancel is no orderly shutdown: where
+nothing may be lost, tell the task to stop over a channel (a stop message,
+or the close of its input), let it finish what it has, and join it.
 
-- **The task is waiting** (parked in a channel receive or send, a
-  `channel.select`, a `task.join`, a `time.sleep`, I/O, or similar): its
-  wait ends without taking or sending anything, and the task is ended
-  there. A value sent afterwards goes to the next receiver, not to it.
-- **The task has never run** (spawned, and not yet picked up by a
-  worker): it is dropped without running.
-- **The task is not waiting**: it is running, or its time slice ran out
-  and it is to run again, or **its wait has just ended** (a sender
-  handed it a value, a receiver took the value it waited to send, the
-  operation it waited for gave its result) and it has not run again. The
-  task goes on with what it holds, for a bounded amount of further
-  work. **After a cancel a task takes nothing new; it may still give
-  what it holds.** It is ended:
-  - at its next operation that would take something, whether or not
-    the thing is there: a `channel.receive`, `channel.try_receive` or
-    `channel.receive_timeout`, the next message of a `channel.each`,
-    the next element of a stream, `tcp.accept` (the connection stays
-    with the listener), a `task.join`, also of a task that has ended
-    (what that task returned or failed with stays with it: a failure
-    of it is reported as never joined), and a `channel.select` of which
-    no `Send` arm can be done at once (its `Recv` arms, timeouts among
-    them, are not tried);
-  - at its next operation that would have to wait, with nothing sent;
-    and at one that would start something which waits for the outside:
-    reading or writing a file's contents, the network, a database,
-    standard input. Nothing is started: a file it was about to write is
-    not written;
-  - at a call that would start a task to take in its place:
-    `task.deadline` (its function runs as a task of its own) and every
-    stream function that starts a stage (`stream.map`, `stream.take`
-    and the other transforms, and the sources: `stream.from_list`,
-    `stream.tcp_lines`, ...). No task is started, so nothing is taken
-    from the channel a stream would have been built over;
-  - when it has run 2,000 steps (about 2,000 instructions, a few
-    hundred rounds of a small loop), if it reaches none of these
-    before. The steps are counted from the first time slice that begins
-    after the cancel, so a task that was computing when the cancel came
-    is ended at most one time slice and 2,000 steps later.
-
-  What is done in those steps is what gives: a `channel.send` into a
-  channel with room or to a receiver that waits, `channel.try_send`, a
-  `Send` arm of a `channel.select` that can be done at once,
-  and `channel.close`. A task it starts with `task.spawn` is cancelled
-  at once and never runs. A `time.sleep` of no time is
-  done, since it waits for nothing; any longer one is a wait. (The `fs`
-  functions, which never wait, are done too: `fs.exists`, `fs.remove`,
-  `fs.rename` and the others.) The side effects of those steps happen.
-  What the task returns or fails with in them changes nothing: the
-  handle keeps the cancellation, and a failure is not reported.
-
-  This is the rule of a function that is past its `task.deadline`,
-  and the same count: a task that is past its deadline and cancelled has
-  2,000 steps in all, not twice that.
-
-**What the further work is for, and what it does not give.** A task that
-was just given something has the steps to pass it on by an operation
-that does not wait: a worker that receives an item and puts it, or its
-result, into a channel with room does not lose the item to a cancel,
-and takes no further one. A cancel is still no orderly shutdown. A
-worker that receives an item, computes, and then has to *wait* to send
-its result (its output channel is full, or is a rendezvous channel
-whose receiver is not there yet) is ended in that send, and the item is
-gone; so is the item of a worker that computes on it for more than
-2,000 steps, or that has to read or write a file for it. Where nothing
-may be lost when the work stops, tell the task to stop over a channel
-(a stop message, or the close of its input), let it finish what it has,
-and join it.
-
-**`task.cancel` returns when the task has ended**, and every task below
-it that the cancel reached: the last steps above have run, theirs too.
-What comes after the cancel (closing the channel the task sent on,
-counting what it sent, removing a file it wrote) sees everything they
-did. The wait is short: a cancelled task ends at its next wait or after
-at most 2,000 steps. (A step that is one long call, such as a sort of a
-long list or a function of the host, runs to its end first.) A task cannot wait for its own end: one that is
-cancelled itself (it cancels itself, or a task it was spawned by, whose
-cancel reaches it) does not wait, its call returns at once, and it has
-the last steps of a cancelled task.
-
-In every case a `task.join(h)` on the cancelled handle raises `joined task
-failed: cancelled` as a runtime error, at once: the handle has its result
-as soon as the cancel is made. A task you cancel is not joined: the cancel
-is the wait for it. This matches the `task.cancel` section of
-`docs/stdlib/channel-task.md`; the two are kept in sync deliberately.
+`task.cancel` returns when the task, and every task below it that the
+cancel reached, has ended, so what comes after it sees everything they did.
+A `task.join` of a cancelled handle raises `joined task failed: cancelled`,
+unless the task had already ended with another result, which the handle
+keeps; a failure of a cancelled task is not reported. The whole rule, step
+by step, is in the reference:
+[`task.cancel`](stdlib/channel-task.md#taskcancel).
 
 Returns `()`.
 
@@ -658,8 +576,8 @@ a `task.join`, a wait deep inside the callback of a `list.fold`, or the
 read of a stream. A `channel.receive` that nobody will ever answer is no
 deadlock inside a deadline: it ends when the deadline has passed. It is
 the rule of a task that was cancelled (see
-[Cancelling](#cancelling-taskcancelhandle)), which lists what takes and
-what gives.
+[`task.cancel`](stdlib/channel-task.md#taskcancel), which lists what takes
+and what gives).
 
 - **A wait ends one way or the other, never both.** Either the wait got
   what it waited for (the value was received, the send was done, the

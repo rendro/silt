@@ -484,7 +484,7 @@ as a value — it raises the failure as a runtime error of the form
 `joined task failed: cancelled`. A task you cancelled is not joined: the
 cancel is the wait for it. See
 [Concurrency: Cancelling](../concurrency.md#cancelling-taskcancelhandle) for
-the canonical treatment.
+an example and how a cancel fits a program.
 
 ```silt
 -- noexec
