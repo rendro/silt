@@ -1817,8 +1817,10 @@ fn may_need_escape(bytes: &[u8]) -> bool {
 /// quoted string, so that two strings that differ look different: a C1
 /// control; a character that shows nothing or turns the text around
 /// (the format characters, the line and paragraph separators, the
-/// fillers of [`crate::git::is_invisible_format_char`]); a private-use
-/// character or a noncharacter, which a reader cannot know. A
+/// fillers of [`crate::git::is_invisible_format_char`]); a space other
+/// than ASCII's (U+00A0, U+1680, U+2000 to U+200A, U+202F, U+205F,
+/// U+3000), which looks like one; a private-use character or a
+/// noncharacter, which a reader cannot know. A
 /// variation selector and the combining grapheme joiner change the
 /// character before them, so they are escaped only where there is none
 /// (`first`), as Rust's `escape_debug` does.
@@ -1832,6 +1834,11 @@ fn escaped_in_quotes(c: char, first: bool) -> bool {
     c.is_control()
         || crate::git::is_invisible_format_char(c)
         || matches!(c, '\u{2028}' | '\u{2029}')
+        || matches!(
+            c,
+            '\u{00A0}' | '\u{1680}' | '\u{2000}'
+                ..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}'
+        )
         || matches!(code, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD)
         || matches!(code, 0xFDD0..=0xFDEF)
         || code & 0xFFFE == 0xFFFE
@@ -1895,9 +1902,10 @@ mod tests {
     }
 
     /// The escapes, by the fast path and the byte walk alike: a C1
-    /// control is escaped, other characters whose UTF-8 starts with
-    /// 0xC2 (U+00A0) and the rest of Unicode are not; and the lexer reads
-    /// every escaped text back as the text.
+    /// control and a space that is not ASCII's are escaped, other
+    /// characters whose UTF-8 starts with 0xC2 (U+00BF) and the rest of
+    /// Unicode are not; and the lexer reads every escaped text back as
+    /// the text.
     #[test]
     fn escape_into_writes_what_the_lexer_reads_back() {
         let cases = [
@@ -1908,7 +1916,12 @@ mod tests {
             ("\n\r\t\0", "\\n\\r\\t\\0"),
             ("\u{1}\u{1f}\u{7f}", "\\u{1}\\u{1f}\\u{7f}"),
             ("x\u{85}y\u{9f}", "x\\u{85}y\\u{9f}"),
-            ("\u{a0}\u{bf}é\"", "\u{a0}\u{bf}é\\\""),
+            ("\u{a0}\u{bf}é\"", "\\u{a0}\u{bf}é\\\""),
+            // A space that looks like ASCII's.
+            (
+                "a\u{2003}b\u{3000}c\u{202f}d\u{1680}",
+                "a\\u{2003}b\\u{3000}c\\u{202f}d\\u{1680}",
+            ),
             // What shows nothing, turns the text around, or is no
             // character a reader can know.
             ("a\u{200b}", "a\\u{200b}"),
