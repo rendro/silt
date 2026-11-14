@@ -104,8 +104,7 @@ const REJECTED: &[&str] = &[
     "_1",   // identifier, not a number
     // Other spellings of a number (audit R9 FE-8).
     "0XFF", "0B10", "1E5", "1.5E-3", "1e+5", "1_", "1__0", "0x_F", "0b_1", "1_.5", "1.5_", "007",
-    "00.5", "01e3",
-    // No leading zero in an exponent (audit R9 NUM-2).
+    "00.5", "01e3", // No leading zero in an exponent (audit R9 NUM-2).
     "1e007", "1e-07", "1e00", "1.5e01", "1e0_7",
 ];
 

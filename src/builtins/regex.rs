@@ -170,7 +170,10 @@ fn positions(text: Text, matches: impl Iterator<Item = Range<usize>>) -> Vec<Val
         if text.ascii {
             return offset as i64;
         }
-        chars += bytes[byte..offset].iter().filter(|b| (**b as i8) >= -0x40).count();
+        chars += bytes[byte..offset]
+            .iter()
+            .filter(|b| (**b as i8) >= -0x40)
+            .count();
         byte = offset;
         chars as i64
     };
@@ -389,7 +392,11 @@ mod tests {
             (r"\d+", "a1 b22 c333"),
             ("z", "abc"),
         ] {
-            assert_eq!(at(pattern, text, true), at(pattern, text, false), "{pattern} in {text}");
+            assert_eq!(
+                at(pattern, text, true),
+                at(pattern, text, false),
+                "{pattern} in {text}"
+            );
         }
         assert_eq!(at(r"\bab", "cab ab", true), [(4, 6)]);
     }

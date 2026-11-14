@@ -815,7 +815,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("d")).unwrap();
         std::fs::write(dir.join("f.txt"), "f").unwrap();
-        for (name, mode) in [("f.txt", 0o644), ("f.txt", 0o4755), ("d", 0o1775), ("d", 0o700)] {
+        for (name, mode) in [
+            ("f.txt", 0o644),
+            ("f.txt", 0o4755),
+            ("d", 0o1775),
+            ("d", 0o700),
+        ] {
             let path = dir.join(name);
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
             let md = std::fs::symlink_metadata(&path).unwrap();
