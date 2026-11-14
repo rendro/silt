@@ -88,11 +88,13 @@ called through a bound, as it can for [`json.parse`](json.md): such a call
 is judged by the trait's signature, which says only `t: json.Decode`, so an
 impl that decodes its type parameter inside an `Option` (a record field
 `v: Option(t)`), given an `Option` that way, decodes an `Option` in an
-`Option`. Nothing crashes. In a field of a record or a variant the decoder
-refuses the field when it runs: `Err(Other(...))`, "a value of type
-Option(Option(Int)) cannot be decoded". As the element type of
-`toml.parse_list` or the value type of `toml.parse_map` a value reads as
-`Some(Some(...))`; an array or a table of TOML leaves no value out there.
+`Option`. Nothing crashes. In a field of a record or a variant, or anywhere
+inside a field's type (`v: Option(t)`, `items: List(Option(t))`), the
+decoder refuses the field when it runs: `Err(Other(...))`, "a value of
+type Option(Option(Int)) cannot be decoded". Outside every field, as the
+element type of `toml.parse_list` or the value type of `toml.parse_map`, a
+value reads as `Some(Some(...))`; an array or a table of TOML leaves no
+value out there.
 
 A `json.Value`, as the type argument or in a field, holds its part of the
 document as a [`json.Decode` impl](#types-with-a-jsondecode-impl) is given

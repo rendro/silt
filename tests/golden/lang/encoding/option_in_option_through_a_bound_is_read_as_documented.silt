@@ -2,8 +2,8 @@
 -- called through a bound: the call is judged by the trait's signature
 -- (`t: json.Decode`), so the check cannot see it. What the decoder does
 -- then is what docs/stdlib/json.md and toml.md say: in a field of a
--- record or a variant, it refuses the field when it runs (`Err(Other)`);
--- elsewhere a json `null` reads as `None`, any other value as
+-- record or a variant, or anywhere inside a field's type, it refuses the
+-- field when it runs (`Err(Other)`); outside every field a json `null` reads as `None`, any other value as
 -- `Some(Some(...))`. Nothing crashes.
 import io
 import json
@@ -13,11 +13,14 @@ type W(a) { v: Option(a) }
 
 type E(a) { Has(Option(a)), Empty }
 
+type L(a) { v: List(Option(a)) }
+
 trait Reader {
   fn top(self, s: String, type t) -> Result(Option(t), json.JsonError) where t: json.Decode
   fn listed(self, s: String, type t) -> Result(List(Option(t)), json.JsonError) where t: json.Decode
   fn field(self, s: String, type t) -> Result(W(t), json.JsonError) where t: json.Decode
   fn variant(self, s: String, type t) -> Result(E(t), json.JsonError) where t: json.Decode
+  fn in_field(self, s: String, type t) -> Result(L(t), json.JsonError) where t: json.Decode
   fn toml_field(self, s: String, type t) -> Result(W(t), toml.TomlError) where t: json.Decode
   fn toml_list(self, s: String, type t) -> Result(List(Option(t)), toml.TomlError) where t: json.Decode
 }
@@ -36,6 +39,9 @@ trait Reader for R {
   }
   fn variant(self, s: String, type t) -> Result(E(t), json.JsonError) where t: json.Decode {
     json.parse(s, E(t))
+  }
+  fn in_field(self, s: String, type t) -> Result(L(t), json.JsonError) where t: json.Decode {
+    json.parse(s, L(t))
   }
   fn toml_field(self, s: String, type t) -> Result(W(t), toml.TomlError) where t: json.Decode {
     toml.parse(s, W(t))
@@ -65,6 +71,11 @@ fn variant(r: a, s: String, type t) -> Result(E(t), json.JsonError)
   Reader.variant(r, s, t)
 }
 
+fn in_field(r: a, s: String, type t) -> Result(L(t), json.JsonError)
+  where a: Reader, t: json.Decode {
+  Reader.in_field(r, s, t)
+}
+
 fn toml_field(r: a, s: String, type t) -> Result(W(t), toml.TomlError)
   where a: Reader, t: json.Decode {
   Reader.toml_field(r, s, t)
@@ -82,6 +93,7 @@ fn main() {
   println(listed(r, "[null, 7]", Option(Int)))
   println(io.inspect(field(r, """{"v": null}""", Option(Int))))
   println(io.inspect(variant(r, """{"variant": "Has", "fields": [7]}""", Option(Int))))
+  println(io.inspect(in_field(r, """{"v": [null, 7]}""", Option(Int))))
   println(io.inspect(toml_field(r, "v = 7", Option(Int))))
   println(toml_list(r, "xs = [7]", Option(Int)))
 }
