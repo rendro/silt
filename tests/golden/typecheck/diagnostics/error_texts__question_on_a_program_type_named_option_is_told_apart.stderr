@@ -3,4 +3,4 @@ error[type]: '?' operator requires Result or Option type, got 'Option(Int)', a t
     |
  15 |   let w = h(1)?
     |           ^^^^^ '?' operator requires Result or Option type, got 'Option(Int)', a type of this program that is not the builtin Option
-  = help: give the type another name
+  = help: `?` takes only the builtin Result and Option: return one of those, or take a value of this type apart with `match`

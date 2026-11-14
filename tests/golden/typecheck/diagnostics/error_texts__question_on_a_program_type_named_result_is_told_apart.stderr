@@ -3,11 +3,11 @@ error[type]: '?' operator requires Result or Option type, got 'Result(Int, Strin
     |
  27 |   let v = get()?
     |           ^^^^^^ here
-  = help: give the type another name
+  = help: `?` takes only the builtin Result and Option: return one of those, or take a value of this type apart with `match`
 
 error[type]: '?' operator requires Result or Option type, got 'Result(Int, String)', a type of this program that is not the builtin Result
  --> error_texts__question_on_a_program_type_named_result_is_told_apart.silt:33:11
     |
  33 |   let v = g(1)?
     |           ^^^^^ here
-  = help: give the type another name
+  = help: `?` takes only the builtin Result and Option: return one of those, or take a value of this type apart with `match`

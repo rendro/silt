@@ -954,7 +954,12 @@ impl TypeChecker {
                 ", a type of this program that is not the builtin {name}"
             ));
         }
-        let help = named.map(|_| "give the type another name".to_string());
+        // (Renaming the type would not do: `?` takes the builtin ones.)
+        let help = named.map(|_| {
+            "`?` takes only the builtin Result and Option: return one of those, or take a value \
+             of this type apart with `match`"
+                .to_string()
+        });
         self.error_help(Code::InvalidQuestion, (message, help), span);
     }
 
