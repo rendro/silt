@@ -241,9 +241,11 @@ pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, File
 }
 
 /// Every diagnostic a door shows for the entry file `file`, in the order
-/// it prints them: the analysis's, then what compiling found (its errors,
-/// or the compiler's warnings). `compiled` is what
-/// [`Session::compile`] returned for it.
+/// it prints them: the analysis's and what compiling found (its errors,
+/// or the compiler's warnings), each file's in source order (the errors
+/// of a line before its warnings), the files in the order the first of
+/// their diagnostics was found. `compiled` is what [`Session::compile`]
+/// returned for it.
 pub(crate) fn door_diagnostics(
     session: &mut Session,
     file: FileId,
@@ -259,7 +261,28 @@ pub(crate) fn door_diagnostics(
         Err(_) if analysed_with_errors => {}
         Err(errors) => diagnostics.extend(errors.iter().cloned()),
     }
+    in_source_order(session.sources(), &mut diagnostics);
     diagnostics
+}
+
+/// Sort `diagnostics`, of files of `sources`, into source order within
+/// each file: by line, the errors of a line before its warnings (`let x =
+/// true / 1`: the operator's error, then "'x' is never used"), then by
+/// place. The files come in the order of the first of their diagnostics;
+/// one place keeps its order of finding.
+fn in_source_order(
+    sources: &silt::source::SourceMap,
+    diagnostics: &mut [silt::diagnostic::Diagnostic],
+) {
+    let mut files: std::collections::HashMap<silt::source::FileId, usize> = Default::default();
+    for d in diagnostics.iter() {
+        let next = files.len();
+        files.entry(d.span.file).or_insert(next);
+    }
+    diagnostics.sort_by_cached_key(|d| {
+        let line = (sources.get(d.span.file)).map(|file| file.line_col(d.span.start).0);
+        (files[&d.span.file], line, !d.is_error(), d.span.start)
+    });
 }
 
 /// `paths` with each file once: two paths of one file (two spellings,

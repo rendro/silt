@@ -13,6 +13,13 @@ error[type]: cannot decide which impl of 'Dec' for 'Box(_)' this use of 'twice' 
     |                            ^^^^^^^^^^^^ cannot decide which impl of 'Dec' for 'Box(_)' this use of 'twice' means: the type's arguments are not decided here
   = help: annotate the value it is given, `x: Int`
 
+warning[type]: 'never' is never used
+ --> instance_impl__a_closure_its_later_use_does_not_decide_is_refused.silt:40:7
+    |
+ 40 |   let never = { x -> twice(Box { v: x }, "0") }
+    |       ^^^^^ 'never' is never used
+  = help: remove it, or name it `_never`
+
 error[type]: cannot decide which impl of 'Dec' for 'Box(Option(_))' this use of 'twice' means: the type's arguments are not decided here
  --> instance_impl__a_closure_its_later_use_does_not_decide_is_refused.silt:41:32
     |
@@ -25,10 +32,3 @@ error[type]: type mismatch: expected Int, got String
     |
  45 |   println(two("s"))
     |               ^^^ type mismatch: expected Int, got String
-
-warning[type]: 'never' is never used
- --> instance_impl__a_closure_its_later_use_does_not_decide_is_refused.silt:40:7
-    |
- 40 |   let never = { x -> twice(Box { v: x }, "0") }
-    |       ^^^^^ 'never' is never used
-  = help: remove it, or name it `_never`
