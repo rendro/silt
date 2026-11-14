@@ -1,4 +1,4 @@
 -- cmd: repl
 -- stdin: :doc toml.parse\n:quit\n
--- stdout-contains: into a record, an enum, a `json.Value` or a type with a `json.Decode` impl
+-- stdout-contains: into a record, an enum that has a variant with fields, a `json.Value` or a type with a `json.Decode` impl
 -- The summary of toml.parse names every kind of type it takes, json.Value too.

@@ -12,7 +12,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(String, type a) -> Result(a, TomlError) where a: json.Decode` | Parse a TOML document (top-level table) into a record, an enum, a `json.Value` or a type with a `json.Decode` impl |
+| `parse` | `(String, type a) -> Result(a, TomlError) where a: json.Decode` | Parse a TOML document (top-level table) into a record, an enum that has a variant with fields, a `json.Value` or a type with a `json.Decode` impl |
 | `parse_list` | `(String, type a) -> Result(List(a), TomlError) where a: json.Decode` | Parse the one array of a document (such as a `[[items]]` section) into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode` | Parse a top-level table into a map |
 | `pretty` | `(a) -> Result(String, TomlError) where a: json.Encode` | Pretty-print a value as TOML |
@@ -219,8 +219,9 @@ that silt itself does not read back.
 toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 ```
 
-Parses a TOML document into a record, or a variant with fields, of type `a`
-(see [Enums](#enums)). The type is passed as a
+Parses a TOML document into a value of type `a`: a record, an enum that has
+a variant with fields (see [Enums](#enums)), a `json.Value`, or a type with a
+`json.Decode` impl. The type is passed as a
 `type` parameter (see [Generics](../language/generics.md) — not a string).
 Fields are matched by name; `Option` fields default to `None` if missing
 from the document.
