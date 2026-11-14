@@ -242,40 +242,57 @@ pub(crate) fn ureq_response_to_value(
 /// to the silt program (F12). Replace the userinfo segment with
 /// `***@` for any `http://` / `https://` substring that carries one.
 ///
-/// The authority is read as the client reads it ([`basic_of_url`]): the
+/// The authority is read as the client reads it (`basic_of_url`): the
 /// scheme in any case (`HTTP://` is sent as `http://` is), and the
 /// userinfo up to the LAST `@` before the end of the authority (a `/`,
-/// `?`, `#` or white space), so a password with a raw `@` in it is
-/// scrubbed whole. `scheme://@host` stays as it is.
+/// `?`, `#`, a space, a tab or a line feed), so a password with a raw `@`
+/// in it is scrubbed whole. `scheme://@host` stays as it is. One pass
+/// over the text.
 #[cfg(feature = "http")]
 pub fn redact_http_url_userinfo(msg: &str) -> String {
+    redact_counting(msg, &mut 0)
+}
+
+/// [`redact_http_url_userinfo`], adding to `looked` the bytes it looked
+/// at (what a test asks: no more than a few times the text's length).
+#[cfg(feature = "http")]
+fn redact_counting(msg: &str, looked: &mut usize) -> String {
     // (ASCII lower case keeps every byte where it is.)
     let lower = msg.to_ascii_lowercase();
     let mut out = String::with_capacity(msg.len());
-    let mut at = 0;
-    loop {
-        let next = ["http://", "https://"]
-            .iter()
-            .filter_map(|scheme| Some((at + lower[at..].find(scheme)?, scheme.len())))
-            .min();
-        let Some((start, scheme_len)) = next else {
-            break;
+    // What of `msg` is in `out`, and where the search for a scheme goes
+    // on: never back, so each byte is looked at a bounded number of times.
+    let (mut copied, mut at) = (0, 0);
+    while let Some(found) = lower[at..].find("http") {
+        let start = at + found;
+        *looked += found + 4;
+        let rest = &lower[start + 4..];
+        let scheme_len = match (rest.starts_with("://"), rest.starts_with("s://")) {
+            (true, _) => 7,
+            (_, true) => 8,
+            // (No `http` begins inside `http`.)
+            _ => {
+                at = start + 4;
+                continue;
+            }
         };
         let host_start = start + scheme_len;
-        out.push_str(&msg[at..host_start]);
         let authority = &msg[host_start..];
         let end = authority
-            .find(|c: char| matches!(c, '/' | '?' | '#') || c.is_whitespace())
+            .find(['/', '?', '#', ' ', '\t', '\n'])
             .unwrap_or(authority.len());
+        *looked += 2 * end;
         at = match authority[..end].rfind('@') {
             Some(last @ 1..) => {
+                out.push_str(&msg[copied..host_start]);
                 out.push_str("***");
-                host_start + last
+                copied = host_start + last;
+                copied
             }
             _ => host_start,
         };
     }
-    out.push_str(&msg[at..]);
+    out.push_str(&msg[copied..]);
     out
 }
 
@@ -3030,6 +3047,28 @@ mod http_error_tests {
         let head = head_sent("http://user:pw@{}/x", &own);
         assert!(head.contains("authorization: Bearer t\r\n"), "{head}");
         assert_eq!(head.matches("uthorization").count(), 1, "{head}");
+    }
+
+    /// The redaction of credentials looks at each byte of a text a
+    /// bounded number of times, however many URLs begin in it: 1 MB of
+    /// `http://` or of `https://a@` (each search for the next scheme went
+    /// over the rest of the text, and such a text did not end in two
+    /// minutes).
+    #[test]
+    fn the_redaction_of_credentials_is_one_pass() {
+        for piece in ["http://", "https://a@", "HTTP://", "httpx"] {
+            let text = piece.repeat(1_000_000 / piece.len());
+            let mut looked = 0;
+            let out = redact_counting(&text, &mut looked);
+            assert!(
+                looked <= 4 * text.len(),
+                "{piece}: {looked} for {}",
+                text.len()
+            );
+            if piece == "https://a@" {
+                assert!(!out.contains("a@"), "{piece}: the user is hidden");
+            }
+        }
     }
 
     /// A scheme is told by its form (RFC 3986), whatever follows its colon.
