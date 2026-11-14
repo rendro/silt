@@ -1,7 +1,7 @@
 error[type]: trait 'Shwon' is not declared
- --> src/main.silt:18:1
+ --> src/main.silt:22:1
     |
- 18 | trait Shwon for T { fn shn(self) -> String { "a" } }
+ 22 | trait Shwon for T { fn shn(self) -> String { "a" } }
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Shwon' is not declared
   = help: did you mean `da.Shown` (a trait of module `da`, after `import da`)?
 
@@ -10,6 +10,18 @@ error[type]: trait 'Loclat' is not declared
    |
  5 | trait Loclat for T { fn loc(self) -> String { "a" } }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Loclat' is not declared
+
+error[type]: unknown type 'localy'
+ --> src/aliased.silt:7:15
+   |
+ 7 | pub fn one(v: localy) -> Int {
+   |               ^^^^^^ unknown type 'localy'
+
+error[type]: unknown type 'apperror'
+ --> src/bound.silt:5:17
+   |
+ 5 | pub fn bound(x: apperror) -> Int { mid.two() + da() }
+   |                 ^^^^^^^^ unknown type 'apperror'
 
 error[type]: non-exhaustive match: missing variants InIo, InOther
  --> src/deep.silt:4:9
@@ -24,6 +36,18 @@ error[type]: non-exhaustive match: missing variants UA, UB
  9 |   match da.u() {
    |         ^^^^^^ non-exhaustive match: missing variants UA, UB
   = help: these are variants of UErr of module util of package da, whose module no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+
+error[type]: non-exhaustive match: missing variants da.Io, da.Other2
+ --> src/reached.silt:4:17
+   |
+ 4 |   let n = match mid.aerr() {
+   |                 ^^^^^^^^^^ non-exhaustive match: missing variants da.Io, da.Other2
+
+error[type]: type mismatch: expected Int, got da.AppError
+ --> src/reached.silt:6:16
+   |
+ 6 |   let a: Int = mid.aerr()
+   |                ^^^^^^^^^^ type mismatch: expected Int, got da.AppError
 
 error[type]: type mismatch: expected Int, got InErr of package inner
  --> src/types.silt:4:16

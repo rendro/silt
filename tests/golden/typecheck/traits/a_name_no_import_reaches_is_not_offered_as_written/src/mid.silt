@@ -6,3 +6,5 @@ pub fn two() -> Int {
     _ -> errs.n()
   }
 }
+
+pub fn aerr() -> da.AppError { da.mk() }

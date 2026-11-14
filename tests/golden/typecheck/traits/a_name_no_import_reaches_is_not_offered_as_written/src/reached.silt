@@ -1,0 +1,8 @@
+import mid
+
+pub fn reached() -> Int {
+  let n = match mid.aerr() {
+  }
+  let a: Int = mid.aerr()
+  n + a
+}

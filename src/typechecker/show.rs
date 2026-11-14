@@ -142,6 +142,7 @@ impl TypeChecker {
             (clash
                 || (session && self.type_name_clashes(r))
                 || self.other_module(r).is_some()
+                || self.described_type(r).is_some()
                 || self.shadowed_cell_type(r))
             .then(|| self.qualified_type(r))
         })
@@ -196,15 +197,16 @@ impl TypeChecker {
     }
 
     /// The name this module knows the module `module` by in a message:
-    /// its own name, but a module of another package (a dependency's
-    /// root module, which calls itself `lib`) by the path this module
-    /// imports it by (`dep`).
+    /// its own name, but a module of another package by the path an
+    /// import here writes for it (`da`, the key of a dependency whose
+    /// library it is, imported here or not), never by the name the
+    /// module calls itself (`lib`); None for another package's module no
+    /// import here can reach (its names are written bare, its types
+    /// described: `described_type`).
     pub(super) fn module_name_here(&self, module: crate::session::ModuleId) -> Option<Symbol> {
         let package = |m| self.tables.module_packages.get(&m);
-        if package(module) != package(self.module)
-            && let Some(path) = self.import_paths.get(&module)
-        {
-            return Some(*path);
+        if package(module) != package(self.module) {
+            return self.import_path(module);
         }
         self.tables.module_names.get(&module).copied()
     }
@@ -233,11 +235,13 @@ impl TypeChecker {
     /// it in reach, and none written here can (a module of a dependency's
     /// dependency, a dependency's module other than its library).
     pub(super) fn variant_out_of_reach(&self, enum_ty: TypeRef, name: Symbol) -> bool {
-        self.other_module(enum_ty).is_some()
-            && self.module_of_type(enum_ty).is_some_and(|module| {
-                self.spelling_in_reach(module, &resolve(name)).is_none()
-                    && self.import_path(module).is_none()
-            })
+        let package = |m| self.tables.module_packages.get(&m);
+        self.def(enum_ty.id.0).is_some_and(|def| {
+            !def.module.is_builtin()
+                && package(def.module) != package(self.module)
+                && self.spelling_in_reach(def.module, &resolve(name)).is_none()
+                && self.import_path(def.module).is_none()
+        })
     }
 
     /// The variant `name` of `enum_ty` as this module can write it, or

@@ -4,7 +4,7 @@ type T { A }
 
 trait Loclat for T { fn loc(self) -> String { "a" } }
 
-pub fn one() -> Int {
+pub fn one(v: localy) -> Int {
   match errs.u() {
     _ -> 1
   }

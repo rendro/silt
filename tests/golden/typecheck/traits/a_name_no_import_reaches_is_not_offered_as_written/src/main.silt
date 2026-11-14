@@ -10,7 +10,11 @@
 -- with a help that an arm `_` matches it (deep.silt). Such a type is written
 -- in one form, which is no code: `InErr of package inner`, `UErr of module
 -- util of package da`, a generic one with its arguments before the
--- description (types.silt).
+-- description (types.silt). No import is offered whose name the file binds
+-- (aliased.silt: no type `errs.Localy` after `import errs`; bound.silt: no
+-- `da.AppError` beside a function `da`), and a type of the dependency `da`,
+-- which an import here could reach, is written by that import's path, never
+-- by the name its library calls itself: `da.Io`, `da.AppError` (reached.silt).
 import mid
 
 type T { A }
