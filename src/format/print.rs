@@ -1094,11 +1094,16 @@ impl Printer<'_> {
                 list.push(self.tok(Token::Comma));
             }
         }
-        Doc::group(Doc::nest(Doc::concat(vec![
+        let clauses = Doc::group(Doc::nest(Doc::concat(vec![
             Doc::Line,
             keyword,
             Doc::nest(Doc::concat(list)),
-        ])))
+        ])));
+        // A comma behind the last clause is not written. It is passed
+        // here, so that a comment between it and the `{` that follows is
+        // the comment in front of that `{`, as it is without the comma,
+        // for what follows the clauses to place.
+        Doc::concat(vec![clauses, self.cur.skip(&Token::Comma)])
     }
 
     /// `Trait`, `m.Trait`, `Trait(Int)`.

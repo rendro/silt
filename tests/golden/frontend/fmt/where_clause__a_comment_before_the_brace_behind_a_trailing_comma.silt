@@ -1,0 +1,25 @@
+-- cmd: fmt
+-- A comment on a line of its own between the last where clause and the
+-- body's `{` is written one level in under the header, whether a comma
+-- follows the clause or not; a second pass keeps it there.
+fn show(x: a) -> String
+where
+  a: Display,
+ -- behind the comma
+ {
+  "{x}"
+}
+
+fn both(x: a, y: b) -> String
+where
+  a: Display,
+  b: Display
+ -- no comma
+ {
+  "{x}{y}"
+}
+
+fn main() {
+  println(show(1))
+  println(both(1, 2))
+}
