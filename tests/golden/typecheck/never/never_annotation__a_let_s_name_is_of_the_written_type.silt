@@ -1,0 +1,59 @@
+-- cmd: check
+-- exit: 1
+-- A `let` with a type annotation gives its names the written type, also
+-- when the value never is: alone, inside a tuple, as the result of a
+-- function taken as a value. Each use below is checked by that type and
+-- refused; none of them may pass as a use of a value of every type.
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn alone() -> Int {
+  let v: Int = todo()
+  let _s: String = v
+  0
+}
+
+fn a_pattern() -> Int {
+  let (a, b): (Int, String) = todo()
+  let _s: String = a
+  let _n: Int = b
+  0
+}
+
+fn inside() -> Int {
+  let t: (Int, Int) = (todo(), 1)
+  let (p, q) = t
+  let _s: String = p
+  q
+}
+
+fn a_function() -> Int {
+  let f: Fn(String) -> Int = panic
+  let _s: String = f("x")
+  0
+}
+
+fn matched() -> Int {
+  let o: Option(Int) = todo()
+  when let Some(k) = o else {
+    return 0
+  }
+  let _s: String = k
+  match o {
+    Some(m) -> m.port
+    None -> 0
+  }
+}
+
+fn looped() -> Int {
+  let start: Int = todo()
+  loop i = start {
+    let _s: String = i
+    0
+  }
+}
+
+fn main() {
+  println("ok")
+}
