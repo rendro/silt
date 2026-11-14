@@ -2801,7 +2801,8 @@ impl TypeChecker {
     /// with its result `ret`, at the value the body gives: a block's tail
     /// expression, where a mismatch is underlined and the Ok-wrap fix
     /// wraps. A block without one is underlined whole and gets no fix.
-    fn unify_body_result(&mut self, body: &Expr, body_type: &Type, ret: &Type) {
+    /// True when the mismatch was a closure's `?`, reported as such.
+    fn unify_body_result(&mut self, body: &Expr, body_type: &Type, ret: &Type) -> bool {
         let from = self.errors.len();
         let tail = match &body.kind {
             ExprKind::Block(stmts) => match stmts.last() {
@@ -2818,7 +2819,7 @@ impl TypeChecker {
                 }
             }
         }
-        self.note_qmark_requirement_on_ret_mismatch(from, body_type, ret);
+        self.note_qmark_requirement_on_ret_mismatch(from, body_type, ret)
     }
 
     /// When the body/return-type unify fails AND the
@@ -2835,18 +2836,19 @@ impl TypeChecker {
     /// Where the `?` itself decided the return type (an unannotated
     /// function, a closure) and the body gives no Result or Option, the
     /// function returns neither: that is the `?`'s error, the one text
-    /// of a `?` in such a function (`try_operand`).
+    /// of a `?` in such a function (`try_operand`). True when that
+    /// function is a closure.
     fn note_qmark_requirement_on_ret_mismatch(
         &mut self,
         err_count_before: usize,
         body_ty: &Type,
         ret_ty: &Type,
-    ) {
+    ) -> bool {
         if self.errors.len() == err_count_before {
-            return;
+            return false;
         }
         let Some(qspan) = self.current_qmark_spans.first().copied() else {
-            return;
+            return false;
         };
         let body_resolved = self.apply(body_ty);
         let wrapper = |t: &Type| matches!(t, Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option"));
@@ -2885,7 +2887,7 @@ impl TypeChecker {
                 ));
             }
             self.errors.push(diagnostic);
-            return;
+            return closure;
         }
         // Only when the return type is actually Result/Option-shaped —
         // i.e. the shape `?` itself unifies into the return type. If the
@@ -2897,7 +2899,7 @@ impl TypeChecker {
             Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option")
         );
         if !is_qmark_shape {
-            return;
+            return false;
         }
         if let Some(err) = self.errors.last_mut() {
             err.labels.push((
@@ -2908,6 +2910,7 @@ impl TypeChecker {
             // in `Ok(...)` would not fix the function.
             err.fixes.clear();
         }
+        false
     }
 
     /// The mismatches of each closure whose `return` did not fit (its
@@ -5253,7 +5256,11 @@ impl TypeChecker {
                 self.fn_frames.pop();
                 env.pop();
                 let before = self.errors.len();
-                self.unify_body_result(body, &body_type, &lambda_ret);
+                // (A `?` that ends the closure with a type its body does
+                // not give is reported at the `?`: the closure's result is
+                // then of no type, which asks nothing more of its place,
+                // `Ok(list.map(xs) { s -> int.parse(s)? + 1 })`.)
+                let question_misfit = self.unify_body_result(body, &body_type, &lambda_ret);
                 let returns = self.closure_returns.pop().unwrap_or_default();
                 if let Some((first, returned)) = returns.first() {
                     let misfits = (self.errors[before..].iter())
@@ -5272,7 +5279,10 @@ impl TypeChecker {
                 // unify above succeeded, and on failure it carries any
                 // `?`-imposed Result/Option constraint, which is the type
                 // the VM actually returns.
-                Type::Fun(param_types, Box::new(lambda_ret))
+                match question_misfit {
+                    true => Type::Fun(param_types, Box::new(Type::Error)),
+                    false => Type::Fun(param_types, Box::new(lambda_ret)),
+                }
             }
 
             ExprKind::RecordCreate { name, fields, .. } => {
