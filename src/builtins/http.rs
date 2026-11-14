@@ -288,10 +288,13 @@ fn redact_counting(msg: &str, looked: &mut usize) -> String {
 /// it. Its authority begins after its scheme (`scheme_of`) and the
 /// slashes that follow (`http:/u:p@h` has one too), or after the
 /// slashes it begins with when no slash follows a scheme of it
-/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too), and ends at
-/// a `/`, `?` or `#`: a space, a tab or a line feed in it is part of the
-/// password the program wrote. Everything before its last `@` is hidden.
-/// The rest of the URL is scrubbed as a message is.
+/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too).
+/// From there everything before the URL's last `@` is hidden: a raw `/`,
+/// `?`, `#`, space or tab in a password ends the authority for the client
+/// (it sends no credential then), but it is the text the program wrote.
+/// So an `@` in a path or a query hides what stands before it too
+/// (`http://h/a@b` is `http://***@b`), which shows less than it could and
+/// never a password. The rest of the URL is scrubbed as a message is.
 #[cfg(feature = "http")]
 pub fn redact_url(url: &str) -> String {
     let slashes_from = |at: usize| url.len() - url[at..].trim_start_matches('/').len();
@@ -302,8 +305,7 @@ pub fn redact_url(url: &str) -> String {
         _ => slashes_from(0),
     };
     let authority = &url[host_start..];
-    let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
-    match authority[..end].rfind('@') {
+    match authority.rfind('@') {
         Some(last @ 1..) => format!(
             "{}***{}",
             &url[..host_start],

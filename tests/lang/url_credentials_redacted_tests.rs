@@ -300,12 +300,15 @@ fn a_url_hides_its_credentials_however_it_is_spelt() {
         ("http://u:p w@h/", "http://***@h/"),
         ("http://u:p\tw@h/", "http://***@h/"),
         ("http://u:p@w@h/", "http://***@h/"),
-        (
-            "http://h/?next=ftp://u:pw@x/",
-            "http://h/?next=ftp://***@x/",
-        ),
+        // A raw `/`, `?` or `#` in the password: hidden too, to the last `@`.
+        ("http://u:p/w@h/x", "http://***@h/x"),
+        ("http://u:p?w@h/x", "http://***@h/x"),
+        ("http://u:p#w@h/x y", "http://***@h/x y"),
+        ("u:p/w@h", "***@h"),
+        // So an `@` in a path or a query hides what stands before it.
+        ("http://h/?next=ftp://u:pw@x/", "http://***@x/"),
+        ("http://h/a@b", "http://***@b"),
         ("http://@h/", "http://@h/"),
-        ("http://h/a@b", "http://h/a@b"),
         ("http://h", "http://h"),
     ] {
         assert_eq!(redact_url(input), expected, "{input}");
