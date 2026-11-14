@@ -6,8 +6,10 @@ import list
 
 fn main() {
   let items = [1, 2, 3]
-  let n = loop xs = {- q -} -- r
-    ({- a -} items |> list.reverse) {
+  let n = loop
+    xs = {- q -} -- r
+      ({- a -} items |> list.reverse)
+  {
     match xs {
       [] -> 0
       [x, ..rest] -> loop(rest)

@@ -39,7 +39,9 @@ fn main() {
       _ -> loop(n - 1)
     }
   }
-  let f = loop n = (xs |> list.length) { -- c
+  let f = loop
+    n = (xs |> list.length) -- c
+  {
     match n {
       0 -> 0
       _ -> loop(n - 1)
