@@ -1,5 +1,5 @@
-error[parse]: 'let' bindings in silt are immutable — rebind with 'let n = ...' in a new scope
+error[parse]: `let` bindings are immutable: rebind with `let n = ...` in a new scope
  --> assignment__in_the_block_of_an_arm_is_told_lets_are_immutable.silt:9:12
    |
  9 |     _ -> { n = 2 }
-   |            ^ 'let' bindings in silt are immutable — rebind with 'let n = ...' in a new scope
+   |            ^ `let` bindings are immutable: rebind with `let n = ...` in a new scope

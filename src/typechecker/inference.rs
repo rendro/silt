@@ -7,7 +7,7 @@ use super::infer::pattern::*;
 use super::names::is_placeholder;
 use super::suggest::suggest_similar;
 use super::*;
-use crate::parser::{NO_IF, NO_IF_HELP};
+use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_WHILE_FOR};
 
 /// Where an expression stands relative to its enclosing `loop`, for the
 /// check that `loop(...)` is in tail position.
@@ -115,12 +115,8 @@ pub(super) fn format_undefined_variable_message(
         return (NO_IF.to_string(), Some(NO_IF_HELP.to_string()));
     }
     let foreign_keyword_hint = match name_str.as_str() {
-        "break" | "continue" => {
-            Some("silt has no 'break'/'continue' — return early or restructure the recursion")
-        }
-        "while" | "for" => Some(
-            "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
-        ),
+        "break" | "continue" => Some(NO_BREAK),
+        "while" | "for" => Some(NO_WHILE_FOR),
         _ => None,
     };
     if let Some(hint) = foreign_keyword_hint {

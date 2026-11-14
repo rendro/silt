@@ -276,6 +276,12 @@ enum Foreign<'a> {
 /// shape.
 pub(crate) const NO_IF: &str =
     "silt has no `if`; a `match` without a scrutinee branches on conditions";
+/// The hint for `while` or `for`, a loop of another language.
+pub(crate) const NO_WHILE_FOR: &str =
+    "silt has no `while` or `for`: a loop is a `loop`, or `list.each` / `list.map` over a list";
+/// The hint for `break` or `continue`.
+pub(crate) const NO_BREAK: &str =
+    "silt has no `break` or `continue`: return early, or restructure the recursion";
 pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> value` arm per \
      line, and last `_ -> value` for when no condition is true";
 
@@ -3068,9 +3074,7 @@ impl<'src> Parser<'src> {
     fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
         match text {
             "if" => Some(NO_IF),
-            "while" | "for" => Some(
-                "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
-            ),
+            "while" | "for" => Some(NO_WHILE_FOR),
             _ => None,
         }
     }
@@ -3694,7 +3698,7 @@ impl<'src> Parser<'src> {
                     Code::UnsupportedSyntax,
                     span,
                     format!(
-                        "'let' bindings in silt are immutable — rebind with 'let {text} = ...' in a new scope"
+                        "`let` bindings are immutable: rebind with `let {text} = ...` in a new scope"
                     ),
                 ));
             }
