@@ -1,6 +1,6 @@
 -- A value that never is (a panic, a return, a loop without end) is of
 -- every type, and so is each step taken from it: a field read of it, a
--- call of its field, an update of it, its `?`, what a pattern binds of
+-- call of its field, an update of it, what a pattern binds of
 -- it and leaves undecided, one step after another and through a `let`. None
 -- of these steps runs; each checks and compiles, and the program runs.
 import task
@@ -56,11 +56,6 @@ fn after_two_returns(c: Bool) -> Int {
     false -> return 2
   }
   v.a.b
-}
-
-fn question_mark() -> Int {
-  let v = boom()
-  v.x? + boom()?
 }
 
 fn operators() -> Bool {

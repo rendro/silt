@@ -5034,9 +5034,6 @@ impl TypeChecker {
                     // An operand already reported (or from a module that
                     // failed to load): nothing more to say.
                     Type::Error => Type::Error,
-                    // An operand that never is (`panic("a")?`): the `?`
-                    // never runs, and gives what never is.
-                    Type::Never => Type::Never,
                     Type::Var(_) => {
                         // The operand's type is unknown: the `?` waits
                         // for it (`Goal::Try`).
