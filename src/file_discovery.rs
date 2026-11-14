@@ -54,6 +54,8 @@ pub(crate) enum Found {
     /// A file `wanted` takes.
     File(PathBuf),
     /// A directory that could not be read: it is skipped.
+    /// (The language server reports it; the command does not.)
+    #[cfg_attr(not(feature = "lsp"), allow(dead_code))]
     Unreadable(PathBuf, std::io::Error),
 }
 

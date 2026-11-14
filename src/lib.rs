@@ -35,6 +35,10 @@
 
 #![allow(clippy::mutable_key_type)]
 #![cfg_attr(any(test, feature = "test-hooks"), warn(unreachable_pub))]
+// On wasm32 the library is the playground's: the command, and what only
+// the command uses (ending the process, the terminal, the files of a
+// package), is not built there. Dead code is judged by the native builds.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 mod ast;
 mod builtins;
@@ -49,6 +53,13 @@ mod defs;
 mod diagnostic;
 mod disassemble;
 mod evidence;
+// What the command prints for a subcommand whose feature is not built.
+#[cfg(any(
+    not(feature = "lsp"),
+    not(feature = "repl"),
+    test,
+    feature = "test-hooks"
+))]
 mod feature_stub;
 mod file_discovery;
 mod format;

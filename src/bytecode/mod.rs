@@ -596,7 +596,7 @@ impl Written {
 // ── Operands the compiler names ────────────────────────────────────
 
 /// A constant of a function, by its index in the function's pool. The
-/// emitter hands them out ([`Emitter::constant`]); the decoder reads
+/// emitter hands them out (`Emitter::constant`); the decoder reads
 /// them back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Const(u16);
@@ -637,7 +637,7 @@ pub enum Segment {
 // ── Chunk ──────────────────────────────────────────────────────────
 
 /// A chunk of bytecode with its constant pool and source mappings. Only
-/// the [`Emitter`] writes one.
+/// the `Emitter` writes one.
 #[derive(Debug, Clone)]
 pub struct Chunk {
     /// The encoded instructions (see [`ops`]).
@@ -806,7 +806,7 @@ impl Chunk {
 // ── Function ───────────────────────────────────────────────────────
 
 /// A compiled function (or the top-level script). Every `Function` has
-/// passed the verifier ([`verify`](mod@verify)): [`Emitter::finish`] is the one way
+/// passed the verifier ([`verify`](mod@verify)): `Emitter::finish` is the one way
 /// to make one, so the VM runs verified code only.
 #[derive(Debug, Clone)]
 pub struct Function {

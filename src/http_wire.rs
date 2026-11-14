@@ -57,7 +57,7 @@ pub(crate) const METHOD_MAX: usize = 32;
 /// fits when no other is held.
 ///
 /// The limit of handlers bounds the bodies beyond this: with every
-/// handler holding a request of the largest size, [`HANDLERS_MAX`]
+/// handler holding a request of the largest size, `HANDLERS_MAX`
 /// times [`BODY_MAX`] more.
 pub const BODIES_MAX: usize = 256 * 1024 * 1024;
 
@@ -149,8 +149,9 @@ pub enum Next {
     End,
     /// The request is refused: answer with the status, then close.
     Refused(Refused),
-    /// Reading failed.
-    Broken(io::Error),
+    /// Reading failed. (Only the fuzz target fuzz_http_request reads
+    /// the error, in its failure message.)
+    Broken(#[cfg_attr(not(feature = "test-hooks"), allow(dead_code))] io::Error),
 }
 
 /// Reads the requests of one connection, one after the other. What it

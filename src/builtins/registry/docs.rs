@@ -22,6 +22,10 @@
 //! from the same pages: a name's own section where a page has one, its
 //! module's page otherwise.
 
+// The pages serve the language server and the REPL: a build with only
+// one of them uses a part.
+#![cfg_attr(not(all(feature = "lsp", feature = "repl")), allow(dead_code))]
+
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
@@ -350,6 +354,7 @@ fn trim_blank_edges(lines: &[&str]) -> String {
 
 /// A row's signature without its parameter names, as a summary table
 /// shows it: `(List(a), Fn(a) -> b) -> List(b)`; a constant's type.
+#[cfg(any(test, feature = "test-hooks"))]
 fn summary_signature(row: &Row) -> String {
     let Some((label, ranges)) = row.qualified_signature("") else {
         return row
@@ -696,6 +701,7 @@ fn table_cells(line: &str) -> Option<Vec<String>> {
 /// module that no table of its page lists, each function a table of
 /// type arguments lists that decodes nothing, and each decoding row of a
 /// module that no table of type arguments of its page lists.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn render_page(page: &str) -> Result<String, Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
@@ -886,15 +892,17 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
 
 /// The line of the language card (`docs/language-card.md`) after which
 /// [`render_card`] writes the card from the registry.
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) const CARD_MARKER: &str = "<!-- Generated from the builtin registry from here on: \
      SILT_BLESS=1 cargo nextest run --test meta language_card -->";
 
 /// The language card `card` with its standard library written from the
-/// registry: the prose up to [`CARD_MARKER`] as it is, then the
+/// registry: the prose up to `CARD_MARKER` as it is, then the
 /// prelude's types and functions and each module's types, traits,
 /// functions and constants, one declaration a line, whether the cargo
 /// feature of a module is built or not. `None` when `card` has no
 /// marker line.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn render_card(card: &str) -> Option<String> {
     let (prose, _) = card.split_once(CARD_MARKER)?;
     let mut out = format!("{prose}{CARD_MARKER}\n");

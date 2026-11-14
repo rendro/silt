@@ -52,7 +52,7 @@ pub enum Value {
     Int(i64),
     Float(Float),
     Bool(bool),
-    /// A string, and whether it is all ASCII ([`Ascii`]): made by
+    /// A string, and whether it is all ASCII (`Ascii`): made by
     /// [`Value::string`], which looks.
     String(Arc<str>, Ascii),
     List(List),
@@ -76,7 +76,7 @@ pub enum Value {
     TypeDescriptor(Arc<TypeInfo>),
     /// The token of a primitive type (`Int`, `Float`, `String`, `Bool`)
     /// passed as a `type a` argument: its name, one of
-    /// [`crate::module::BUILTIN_PRIMITIVE_NAMES`].
+    /// `crate::module::BUILTIN_PRIMITIVE_NAMES`.
     PrimitiveDescriptor(&'static str),
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
@@ -165,8 +165,8 @@ impl Value {
         Value::List(List::from(items))
     }
 
-    /// The variant `tag` (a [`Tag`], or a builtin variant of
-    /// [`crate::typeinfo::bv`]) with the fields `fields`: an array of
+    /// The variant `tag` (a `Tag`, or a builtin variant of
+    /// `crate::typeinfo::bv`) with the fields `fields`: an array of
     /// them (`[x]`, `[]`), which a variant of one field holds without a
     /// list of its own, or a list.
     pub fn variant<F>(tag: impl Into<Tag>, fields: F) -> Value

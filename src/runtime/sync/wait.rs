@@ -515,6 +515,7 @@ impl Parked {
     /// The caller has already put the task where a wake finds it and
     /// counted it as not runnable: the wake can come before `commit`
     /// returns.
+    #[cfg(test)]
     pub(crate) fn commit(&self) -> bool {
         self.token.commit()
     }

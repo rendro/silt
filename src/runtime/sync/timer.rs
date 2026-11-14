@@ -98,6 +98,7 @@ impl Timer {
 
     /// The reading at which a wait of `duration` that starts now ends;
     /// `None` when that is out of the clock's range, which is never.
+    #[cfg(test)]
     pub(crate) fn deadline_after(&self, duration: Duration) -> Option<Duration> {
         self.io.deadline_after(duration)
     }
@@ -158,6 +159,7 @@ impl Timer {
     /// it does is done and its task is woken, so a scheduler that sees
     /// nothing runnable and nothing pending here has not missed a wake
     /// that is on its way.
+    #[cfg(test)]
     pub(crate) fn pending(&self) -> usize {
         self.pending.load(Ordering::SeqCst)
     }

@@ -886,6 +886,7 @@ fn print_help() {
 /// prefix string so integration tests can exercise it without building a
 /// full `rustyline` editor. Intentionally does not re-implement the
 /// word-boundary search — callers pass the already-extracted prefix.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn completion_candidates_for_prefix(prefix: &str) -> Vec<String> {
     if prefix.is_empty() {
         return Vec::new();

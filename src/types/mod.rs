@@ -1059,6 +1059,7 @@ pub(crate) fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type 
 /// `ty` with each named type `r` replaced by `f(r)`: the same type with
 /// another name to show (`regex.Regex` for the builtin `Regex` where the
 /// bare name means a program's type).
+#[cfg(feature = "lsp")]
 pub(crate) fn map_refs(ty: &Type, f: &impl Fn(TypeRef) -> TypeRef) -> Type {
     let each = |ts: &[Type]| ts.iter().map(|t| map_refs(t, f)).collect::<Vec<_>>();
     let boxed = |t: &Type| Box::new(map_refs(t, f));

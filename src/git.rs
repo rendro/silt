@@ -579,20 +579,6 @@ impl<'a, 'b> EscapingWriter<'a, 'b> {
         self.out.write_char('\n')
     }
 
-    /// Write `text` line by line: each line escaped, its line breaks
-    /// kept. Only for text whose line breaks are known not to come
-    /// from an untrusted value; a line break that does would start a
-    /// line of output of its own.
-    pub(crate) fn lines(&mut self, text: &str) -> fmt::Result {
-        for (index, line) in text.lines().enumerate() {
-            if index > 0 {
-                self.line_break()?;
-            }
-            self.write_str(line)?;
-        }
-        Ok(())
-    }
-
     /// Write an error that escapes its own message, keeping the line
     /// breaks that message makes.
     pub(crate) fn nested(&mut self, inner: &dyn EscapedDisplay) -> fmt::Result {
@@ -706,7 +692,7 @@ fn compute_cache_root() -> Result<PathBuf, GitError> {
 /// [`fetch_to_cache`]) handle creation/atomic rename.
 ///
 /// `commit` becomes a path component, and one commit must have one
-/// directory, so only a full commit id ([`is_full_commit_id`]) is
+/// directory, so only a full commit id (`is_full_commit_id`) is
 /// accepted: a value such as `../../../../x` (from a hand-edited
 /// `silt.lock`) would otherwise point the cache path at an arbitrary
 /// directory, and a prefix would give one commit several.
@@ -756,10 +742,10 @@ fn url_hash(url: &str) -> String {
 /// fails loudly later if the commit doesn't exist remotely. A short
 /// `Rev` is resolved in a clone of the repository to the one commit
 /// whose id it starts with; a tag or a branch of the same name is never
-/// taken for it (see [`fetch_rev`]). For `Branch`/`Tag` we run
+/// taken for it (see `fetch_rev`). For `Branch`/`Tag` we run
 /// `git ls-remote -- <url> <ref>` and parse the id out.
 ///
-/// The URL must pass [`validate_git_url`]; the branch or tag name is
+/// The URL must pass `validate_git_url`; the branch or tag name is
 /// only ever sent as `refs/heads/<name>` / `refs/tags/<name>`, which
 /// cannot be option-shaped.
 pub fn resolve_ref(url: &str, ref_spec: &GitRef) -> Result<String, GitError> {
@@ -837,7 +823,7 @@ pub(crate) fn is_full_commit_id(s: &str) -> bool {
 // ── Fetch ──────────────────────────────────────────────────────────────
 
 /// Fetch the repo at the full commit id `commit` into the cache and
-/// return the checkout directory. See [`fetch_rev`].
+/// return the checkout directory. See `fetch_rev`.
 pub fn fetch_to_cache(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     check_url(url)?;
     if !is_full_commit_id(commit) {
@@ -1673,27 +1659,6 @@ mod tests {
             Inline(TwoLines("x")).to_string(),
             "inline: first: x\\nsecond: x"
         );
-    }
-
-    /// An error that writes `text` with [`EscapingWriter::lines`].
-    struct Lines(&'static str);
-
-    impl fmt::Display for Lines {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let mut f = EscapingWriter::new(f);
-            write!(f, "message: ")?;
-            f.lines(self.0)
-        }
-    }
-
-    #[test]
-    fn escaping_writer_keeps_the_lines_of_a_text_and_escapes_each() {
-        assert_eq!(
-            Lines("one\u{1b}\r\ntwo\u{202e}\n\nfour\n").to_string(),
-            "message: one\\u{1b}\ntwo\\u{202e}\n\nfour"
-        );
-        assert_eq!(Lines("one").to_string(), "message: one");
-        assert_eq!(Lines("").to_string(), "message: ");
     }
 
     /// True if `s` holds a character a terminal would act on or hide.

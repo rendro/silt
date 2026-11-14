@@ -299,6 +299,7 @@ impl Lexed {
     /// meant to close. A closer with nothing of its kind open closes
     /// nothing; the end of an interpolation closes what was opened
     /// inside it.
+    #[cfg(any(feature = "repl", test))]
     pub(crate) fn ends_open(&self) -> bool {
         #[derive(PartialEq)]
         enum Open {
@@ -340,6 +341,7 @@ impl Lexed {
     /// value follows: a binary operator, `|>`, `=` or `->`. In a file
     /// the next line goes on from such a token, and the REPL reads
     /// another line of such an input.
+    #[cfg(feature = "repl")]
     pub(crate) fn ends_in_operator(&self) -> bool {
         let last = self.tokens.iter().rev().find(|tok| tok.kind != Token::Eof);
         matches!(

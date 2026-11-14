@@ -82,6 +82,7 @@ pub(super) fn builtin_scheme(def: &crate::defs::Def) -> Option<Scheme> {
 
 /// Return a map of builtin qualified names to their type signature strings.
 /// Used by the LSP to show type info in completions.
+#[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
 pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
     let env = builtin_env();
     let (mut checker, _) = env.start();
@@ -98,6 +99,7 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
 }
 
 /// The part of a qualified name before its first dot.
+#[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
 fn module_of(qualified: &str) -> &str {
     qualified.split('.').next().unwrap_or(qualified)
 }

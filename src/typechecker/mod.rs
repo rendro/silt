@@ -51,11 +51,12 @@ pub(super) use crate::types::*;
 pub(crate) use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
-pub(crate) use builtin_env::*;
+#[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
+pub use builtin_env::builtin_type_signatures;
+use builtin_env::*;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use builtin_env::{
     __builtin_trait_registration_fingerprint, __trait_init_fingerprint_check_program,
-    builtin_type_signatures,
 };
 pub(crate) use builtin_traits::builtin_trait_decls;
 use builtin_traits::*;

@@ -78,6 +78,7 @@ pub use preload::path_to_file_uri;
 /// Whether a rename may give a name: exposed so that the test of the
 /// lexer's keyword list (`tests/meta/lexer_keyword_parity_tests.rs`) can
 /// ask the rename guard about each keyword.
+#[cfg(any(test, feature = "test-hooks"))]
 pub use rename::is_valid_silt_ident;
 
 // ── Server ─────────────────────────────────────────────────────────

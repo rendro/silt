@@ -1957,7 +1957,7 @@ fn only_sockets(_cfg: &Config) -> bool {
     false
 }
 
-/// Test-only: [`connect_limit`], for a test without a server.
+/// Test-only: `connect_limit`, for a test without a server.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn connect_limit_for_tests(url: &str) -> Result<Duration, String> {
     connect_limit(url).map_err(str::to_string)

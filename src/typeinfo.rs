@@ -569,6 +569,12 @@ impl TypeTable {
 /// The ids of the builtin types values are built of: the first
 /// definitions of the builtins ([`crate::defs::builtin_types`] begins
 /// with [`RUNTIME_BUILTIN_TYPES`]).
+// Every builtin type has its id here, also those of features this
+// build leaves out: an id is a place in the table.
+#[cfg_attr(
+    not(all(feature = "http", feature = "postgres", feature = "tcp")),
+    allow(dead_code)
+)]
 pub(crate) mod ty {
     use crate::defs::{DefId, TypeId};
 
@@ -617,6 +623,12 @@ pub(crate) mod ty {
 
 /// The variants of the builtin enums, and of the builtin handle types a
 /// builtin builds as variants (`PgPool(id)`).
+// Every variant of a builtin enum has its id here, also those of features this
+// build leaves out: an id is a place in its enum.
+#[cfg_attr(
+    not(all(feature = "http", feature = "postgres", feature = "tcp")),
+    allow(dead_code)
+)]
 pub mod bv {
     use super::{BuiltinVariant, ty};
 
@@ -729,7 +741,6 @@ pub mod bv {
     pub(crate) const JSON_STRING: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 4);
     pub(crate) const JSON_ARRAY: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 5);
     pub(crate) const JSON_OBJECT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 6);
-    pub(crate) const MAP_ERROR: BuiltinVariant = BuiltinVariant::new(ty::MAP_ERROR, 0);
 }
 
 /// The builtin types whose ids are the constants of [`ty`], in that

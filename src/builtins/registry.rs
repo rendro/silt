@@ -11,7 +11,7 @@
 //! Everything else that knows the builtins reads it here:
 //!
 //! - the checker's builtin environment parses each module's text
-//!   ([`Module::text`]) and elaborates it as it elaborates a host
+//!   (`Module::text`) and elaborates it as it elaborates a host
 //!   module's signatures, so parameter names, `where` bounds and type
 //!   declarations come from the one string;
 //! - the resolver's builtin definitions, the run time's builtin types
@@ -30,6 +30,7 @@
 //! that names the feature.
 
 pub mod decoding;
+#[cfg(any(feature = "lsp", feature = "repl", test, feature = "test-hooks"))]
 pub mod docs;
 mod modules;
 
@@ -79,7 +80,11 @@ pub struct Row {
     /// `pi: Float`.
     pub signature: &'static str,
     /// One line that says what it does: the description column of the
-    /// module's summary table.
+    /// module's summary table. (The docs module reads it.)
+    #[cfg_attr(
+        not(any(feature = "lsp", feature = "repl", feature = "test-hooks")),
+        allow(dead_code)
+    )]
     pub summary: &'static str,
     /// The name, from the signature.
     pub name: &'static str,
@@ -129,6 +134,7 @@ impl Row {
     /// -> String`; with the module `""`, as the prelude's, `fn
     /// println(value: a) -> () where a: Display`; and where each
     /// parameter is in it (byte offsets). `None` for a constant.
+    #[cfg(any(feature = "lsp", feature = "repl", test, feature = "test-hooks"))]
     pub(crate) fn qualified_signature(&self, module: &str) -> Option<(String, Vec<[u32; 2]>)> {
         let rest = self.signature.strip_prefix("fn ")?;
         let label = match module {
@@ -319,10 +325,8 @@ impl RowSpec {
 /// A record or enum type a builtin module declares.
 pub struct TypeDecl {
     pub name: &'static str,
-    /// The number of its type parameters.
-    pub params: usize,
     pub shape: TypeShape,
-    /// The builtin traits the type derives: all four ([`DERIVED`]) unless
+    /// The builtin traits the type derives: all four (`DERIVED`) unless
     /// its module says otherwise (`derives:`).
     pub derives: &'static [&'static str],
 }
@@ -359,8 +363,16 @@ pub struct Module {
     pub enabled: bool,
     /// The file of the module's reference page under `docs/stdlib/`
     /// (`io-fs.md`), and its text: the part under the `# <name>` heading
-    /// is the module's.
+    /// is the module's. (The docs module reads it.)
+    #[cfg_attr(
+        not(any(feature = "lsp", feature = "repl", feature = "test-hooks")),
+        allow(dead_code)
+    )]
     pub page_file: &'static str,
+    #[cfg_attr(
+        not(any(feature = "lsp", feature = "repl", feature = "test-hooks")),
+        allow(dead_code)
+    )]
     pub page: &'static str,
     /// The record and enum types the module declares, as silt `pub type`
     /// declarations.
@@ -373,11 +385,6 @@ pub struct Module {
     pub traits: &'static str,
     /// The names of those traits, in the order of the text.
     pub trait_names: Vec<&'static str>,
-    /// The declared types that do not derive all four builtin traits,
-    /// each with the traits it does derive: `http.Response` holds a
-    /// `Map`, which has no order, so it derives no `Compare`;
-    /// `channel.ChannelOp` holds a channel and derives nothing.
-    pub derives: &'static [(&'static str, &'static [&'static str])],
     /// The module's opaque types, each with the number of its type
     /// arguments (`("Handle", 1)` for `task.Handle(a)`): handles a
     /// program names in a type but that have no fields or variants to
@@ -386,7 +393,7 @@ pub struct Module {
     /// The module's error enum, which is shown as its message.
     pub error: Option<&'static str>,
     /// What each variant of the error enum reads as where it is shown
-    /// (found by the enum's type, [`Registry::error_module`]); none
+    /// (found by the enum's type, `Registry::error_module`); none
     /// where the module is not built.
     pub text: Option<ErrorText>,
     pub rows: Vec<Row>,
@@ -577,7 +584,6 @@ fn type_decls(
             let name = leak(resolve(td.name));
             TypeDecl {
                 name,
-                params: td.params.len(),
                 shape,
                 derives: derives
                     .iter()
@@ -623,7 +629,6 @@ fn build_module(
         type_decls: type_decls(types, derives),
         traits,
         trait_names: trait_names(traits),
-        derives,
         opaque,
         error: error.map(|(error, _)| error),
         text: error.and_then(|(_, text)| text),
@@ -714,7 +719,7 @@ pub type Option(a) { Some(a), None }
 /// Every builtin module, and what is derived from all of them at once.
 pub struct Registry {
     pub modules: Vec<Module>,
-    /// The types of [`PRELUDE_TYPES`].
+    /// The types of `PRELUDE_TYPES`.
     pub prelude_types: Vec<TypeDecl>,
     /// The functions of the prelude, called by their bare names
     /// (`println`): rows of no module.

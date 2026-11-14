@@ -269,10 +269,12 @@ impl<T: Send + Counted> Parking<T> {
     }
 
     /// How many tasks wait.
+    #[cfg(test)]
     pub(crate) fn waiting(&self) -> usize {
         self.waiting.load(Ordering::SeqCst)
     }
 
+    #[cfg(test)]
     pub(crate) fn is_parked(&self, id: TaskId) -> bool {
         let tasks = self.shard(id);
         tasks.get(&id).is_some_and(|entry| entry.committed)

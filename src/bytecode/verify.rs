@@ -2,7 +2,7 @@
 //!
 //! [`verify`] checks the code of one function by abstract
 //! interpretation of the height of its frame, with the effects of the
-//! instruction table ([`ops`](super::ops)). Code that passes cannot make
+//! instruction table (`ops`). Code that passes cannot make
 //! the VM take a value off an empty frame, read a slot, a constant or an
 //! upvalue that is not there, find a constant of the wrong
 //! kind, or continue at a place where no instruction starts; so the VM

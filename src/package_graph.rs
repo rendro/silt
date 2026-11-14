@@ -114,21 +114,6 @@ pub struct PackageGraph {
     pub lock: LockChange,
 }
 
-impl PackageGraph {
-    pub(crate) fn package(&self, id: PackageId) -> &PackageNode {
-        &self.packages[id.0 as usize]
-    }
-
-    /// The package that `key` in `from`'s `[dependencies]` resolves to.
-    pub(crate) fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId> {
-        self.package(from)
-            .deps
-            .iter()
-            .find(|(k, _, _)| *k == key)
-            .map(|(_, id, _)| *id)
-    }
-}
-
 /// How `silt.lock` is used.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum LockPolicy {

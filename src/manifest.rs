@@ -30,8 +30,6 @@ pub struct Manifest {
     /// Keyed by the dependency key: the name the importing package
     /// knows the dependency by (`import <key>`).
     pub dependencies: BTreeMap<Symbol, DependencyEntry>,
-    /// Absolute path to the silt.toml file this manifest was loaded from.
-    pub manifest_path: PathBuf,
     /// The manifest's text in the source map it was loaded into.
     pub file: FileId,
 }
@@ -43,6 +41,9 @@ pub struct PackageMeta {
     /// The value of `name` in the file.
     pub name_span: Span,
     pub version: String,
+    /// What `edition` says, if anything. Nothing in silt reads it but a
+    /// test.
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
     pub edition: Option<String>,
 }
 
@@ -213,7 +214,6 @@ impl Manifest {
                 edition: raw.package.edition,
             },
             dependencies,
-            manifest_path: absolute,
             file,
         })
     }
@@ -238,18 +238,6 @@ impl Manifest {
             current = dir.parent();
         }
         None
-    }
-
-    /// Convenience wrapper: [`find`](Self::find) + [`load`](Self::load).
-    ///
-    /// Returns `Ok(None)` if no manifest is found between `start` and the
-    /// filesystem root; returns `Err` only if a manifest was located but
-    /// failed to load or validate.
-    pub fn discover(start: &Path, sources: &mut SourceMap) -> Result<Option<Manifest>, Diagnostic> {
-        match Self::find(start) {
-            Some(dir) => Self::load(&dir.join("silt.toml"), sources).map(Some),
-            None => Ok(None),
-        }
     }
 }
 

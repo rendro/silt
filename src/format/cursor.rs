@@ -853,35 +853,6 @@ impl<'a> Cursor<'a> {
             .any(|i| !self.tokens[i].comments.is_empty())
     }
 
-    /// Whether the innermost of the `count` nested pairs of parentheses
-    /// at the cursor holds a token of the kind of `kind` that is in no
-    /// other bracket.
-    pub(crate) fn parens_hold(&self, count: usize, kind: &Token) -> bool {
-        if count == 0 || self.pos + count > self.tokens.len() {
-            return false;
-        }
-        let open = self.pos + count - 1;
-        let mut depth = 0;
-        for tok in &self.tokens[open + 1..self.closers[open].max(open + 1)] {
-            match tok.kind {
-                _ if depth == 0
-                    && std::mem::discriminant(&tok.kind) == std::mem::discriminant(kind) =>
-                {
-                    return true;
-                }
-                Token::LParen
-                | Token::LBracket
-                | Token::LBrace
-                | Token::HashBrace
-                | Token::HashBracket
-                | Token::StringStart(_) => depth += 1,
-                Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => depth -= 1,
-                _ => {}
-            }
-        }
-        false
-    }
-
     /// Move to the next source token of the kind of `kind`, over
     /// parentheses and commas the printer does not write. `false`, with
     /// the error recorded, if another token is in the way.

@@ -147,6 +147,7 @@ impl WatchSet {
     }
 
     /// The files of the set.
+    #[cfg(test)]
     pub(crate) fn paths(&self) -> impl Iterator<Item = &Path> {
         self.files.keys().map(PathBuf::as_path)
     }

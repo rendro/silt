@@ -377,11 +377,6 @@ impl TypeChecker {
         }
     }
 
-    /// The one wording of the occurs-check diagnostic.
-    pub(crate) fn infinite_type_message(t: &Type) -> String {
-        format!("infinite type: the type variable appears inside {t}")
-    }
-
     /// Resolve the variable `v` to `t`, unless that would take an
     /// annotation variable out of its declaration: a variable of
     /// something defined outside every declaration being checked (a

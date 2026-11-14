@@ -107,7 +107,7 @@ pub enum LockedSource {
     /// Path-style dependency. `path` is the package's root as the
     /// lockfile writes it: relative to the directory of the `silt.toml`
     /// the lockfile belongs to, with `/` between its parts
-    /// ([`relative_path`]), so that a package that is moved or checked
+    /// (`relative_path`), so that a package that is moved or checked
     /// out elsewhere with its dependencies keeps its lockfile; absolute
     /// only where there is no relative form (another drive).
     Path { path: PathBuf },

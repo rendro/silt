@@ -14,18 +14,18 @@
 //! ## Phase history (A through D — all live)
 //!
 //! Phase A originally shipped this module standalone — exposing
-//! [`canonicalize`], [`types_equal`], and [`canonical_name`] with unit
+//! `canonicalize`, `types_equal`, and `canonical_name` with unit
 //! coverage but no callers. That is no longer true: phase B routed the
 //! unifier (`unify` in `src/typechecker/mod.rs`) and the typechecker's
-//! `resolve_type_expr` / `type_name_for_impl` through [`canonicalize`];
+//! `resolve_type_expr` / `type_name_for_impl` through `canonicalize`;
 //! phase C pointed the VM's runtime dispatch (via
-//! [`crate::value::dispatch_type_for_value`]) and the compiler's keying of impl
-//! methods (via [`canonical_head`]) at the canonical-name oracle;
+//! `crate::value::dispatch_type_for_value`) and the compiler's keying of impl
+//! methods (via `canonical_head`) at the canonical-name oracle;
 //! phase D added the alias registry described below.
 //!
 //! ## Display vs canonical name
 //!
-//! [`canonical_name`] is the runtime-dispatch oracle, not a diagnostic
+//! `canonical_name` is the runtime-dispatch oracle, not a diagnostic
 //! renderer: an alias written in the source is shown as the type it
 //! stands for.
 //!
@@ -39,7 +39,7 @@
 //! internally-inferred types continue to spell themselves out (e.g. `let x:
 //! Bytes = ...; let y = x` infers `y : List(Int)` for diagnostics on `y`).
 //!
-//! Phase A's [`canonicalize`] was a pure function with no shared state.
+//! Phase A's `canonicalize` was a pure function with no shared state.
 //! Phase D adds a compile-session-scoped alias registry — see
 //! [`Resolver::register_alias`] / [`Resolver::lookup_alias`] — that
 //! the typechecker populates at decl-processing time and the
@@ -56,7 +56,7 @@
 //! - Phase A unit tests in this module continue to pass because they
 //!   exercise built-in types only — no aliases registered.
 //! - The substitution helper for parametric aliases is the existing
-//!   [`crate::types::substitute_vars`] keyed on a `TyVar -> Type` map.
+//!   `crate::types::substitute_vars` keyed on a `TyVar -> Type` map.
 //!   The typechecker assigns one fresh `TyVar` per alias parameter at
 //!   registration time so the substitution is straightforward.
 
@@ -252,6 +252,7 @@ fn expand_alias(info: &AliasInfo, args: &[Type]) -> Type {
 /// positions count as equal) is a phase-B+ concern: the unifier will
 /// continue to handle var-binding via its substitution map, and
 /// [`types_equal`] is only consulted on already-substituted types.
+#[cfg(test)]
 pub(crate) fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
     canonicalize(resolver, a) == canonicalize(resolver, b)
 }

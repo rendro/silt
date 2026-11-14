@@ -21,7 +21,7 @@ pub struct VmError {
     pub help: Vec<String>,
     /// The help lines that name a place of the program: the line at the
     /// index has `{at}` where the place of the span is shown (see
-    /// [`Diagnostic::help_at`]).
+    /// `Diagnostic::help_at`).
     pub help_at: Vec<(usize, Span)>,
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
@@ -86,7 +86,7 @@ impl VmError {
     /// the name). The code a VM runs is verified, so the instruction is
     /// well-formed; the value is one the typechecker said could not be
     /// there. Every such error of the instruction loop is made here and
-    /// has its own diagnostic code ([`Code::TypeConfusion`]): it is
+    /// has its own diagnostic code (`Code::TypeConfusion`): it is
     /// reachable exactly when the typechecker is unsound.
     pub fn type_confusion(message: impl Into<String>) -> Self {
         VmError {
@@ -165,7 +165,7 @@ impl VmError {
     /// a builtin's report can go on for several lines), its one note.
     /// The labels are the call stack, innermost frame first. An error
     /// with no span is about no place of the program, and has
-    /// [`Span::BUILTIN`].
+    /// `Span::BUILTIN`.
     pub fn to_diagnostic(&self) -> Diagnostic {
         let (head, rest) = match self.message.split_once('\n') {
             Some((head, rest)) => (head, Some(rest)),

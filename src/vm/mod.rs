@@ -18,6 +18,7 @@ pub(crate) mod show;
 
 pub(crate) use decode::Source;
 pub use error::VmError;
+#[cfg(any(test, feature = "test-hooks"))]
 pub use io::SystemClock;
 pub use io::{Buffer, Clock, HostIo, Output};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
@@ -523,7 +524,7 @@ impl Vm {
     /// The owner is whose tasks the VM asks about: a deadlock is one
     /// of the owner's tasks, [`Vm::settle`] waits for them and no
     /// others, and the report of a task's failure carries the tag
-    /// ([`crate::scheduler::UnjoinedFailure::owner`]). `silt test`
+    /// (`crate::scheduler::UnjoinedFailure::owner`). `silt test`
     /// sets one tag per test, and so judges each test by its own
     /// tasks. The tag is the VM's: two VMs do not see each other's.
     pub fn set_task_owner(&mut self, owner: u64) {

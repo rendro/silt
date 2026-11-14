@@ -24,7 +24,7 @@ use crate::value::{Date, Time};
 
 impl Value {
     /// Whether the value can be written out: `Err` if a list in it
-    /// cannot ([`List::writable`]). Showing a value to a program
+    /// cannot (`List::writable`). Showing a value to a program
     /// (`println`, interpolation, `io.inspect`) asks this first, and
     /// the error is the program's.
     pub fn writable(&self) -> Result<(), TooLong> {

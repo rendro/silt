@@ -102,6 +102,7 @@ pub fn builtin_free_function_names() -> &'static [&'static str] {
 /// uppercase names a program writes in type position (`time.Date`) but
 /// the stdlib owns, which editors highlight and the LSP refuses to
 /// rename.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn builtin_module_types() -> &'static [&'static str] {
     static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();
     NAMES.get_or_init(|| {
@@ -118,6 +119,7 @@ pub fn builtin_module_types() -> &'static [&'static str] {
 /// types and for any other name. A module's types are reached as
 /// `time.Weekday`; their variants as `time.Monday` (see
 /// [`builtin_module_variants`]).
+#[cfg(feature = "lsp")]
 pub(crate) fn builtin_type_module(name: &str) -> Option<&'static str> {
     registry()
         .modules
@@ -130,6 +132,7 @@ pub(crate) fn builtin_type_module(name: &str) -> Option<&'static str> {
 /// are reached as `module.Variant`: `Message` and `Recv` for `channel`,
 /// `Monday` for `time`. Two modules may have a variant of one name
 /// (`tcp.Timeout`, `http.Timeout`). Empty for any other name.
+#[cfg(any(feature = "lsp", feature = "playground"))]
 pub(crate) fn builtin_module_variants(module: &str) -> Vec<&'static str> {
     registry()
         .modules
@@ -180,6 +183,7 @@ pub(crate) fn builtin_prelude_enum_variants_with_arity()
 /// enums (Result, Option) and the enums of the builtin modules. The
 /// compiler finds a builtin variant by its name here in the derived
 /// impls of the builtin types, which name variants unresolved.
+#[cfg(any(feature = "lsp", feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
     static ENUMS: OnceLock<Vec<(&'static str, Vec<&'static str>)>> = OnceLock::new();
     ENUMS.get_or_init(|| {
@@ -193,6 +197,7 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
 
 /// Every builtin enum variant name across all builtin enums, for LSP
 /// rename and completion and for REPL completion.
+#[cfg(any(feature = "lsp", feature = "playground"))]
 pub(crate) fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
     builtin_enum_variants()
         .iter()
@@ -201,6 +206,7 @@ pub(crate) fn all_builtin_constructor_names() -> impl Iterator<Item = &'static s
 
 /// The functions of the builtin module `module` whose features are
 /// built: for "string", `["char_code", "chars", ...]`.
+#[cfg(any(feature = "lsp", feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
     registry().module(module).map_or_else(Vec::new, |m| {
         m.enabled_rows()
@@ -212,6 +218,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
 
 /// The constants (non-function values) of the builtin module `module`:
 /// for "math", `["e", "pi"]`.
+#[cfg(any(feature = "lsp", feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
     registry().module(module).map_or_else(Vec::new, |m| {
         m.enabled_rows()
