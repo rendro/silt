@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: empty parentheses behind `Box`
+-- stderr-not-contains: takes 1 type argument
+-- Empty parentheses behind a generic type in the header of an impl are
+-- one error, as in any other type: the checker does not count the type's
+-- arguments again.
+type Box(a) {
+  v: a,
+}
+
+trait Q {
+  fn q(self) -> Int
+}
+
+trait Q for Box() {
+  fn q(self) -> Int {
+    1
+  }
+}
+
+fn main() {
+  println(1)
+}
