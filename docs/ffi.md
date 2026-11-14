@@ -18,7 +18,7 @@ typechecked against the signature the embedder declared.
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
+use silt::session::{Builtins, Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
 use silt::{Buffer, HostIo, Vm};
 
 // 1. Declare the host module: each function by its silt signature. A
@@ -35,6 +35,7 @@ let mut session = Session::new(Config {
     project: ProjectSetup::None,
     lock: LockPolicy::ReadOnly,
     host: vec![mylib],
+    builtins: Builtins::All,
 });
 let source = "import mylib\nfn main() { mylib.give(mylib.double(21)) }";
 let file = session.set_overlay(Path::new("main.silt"), source.to_string());
@@ -90,18 +91,19 @@ error.
 
 ### Functions on values
 
-`function` takes the arguments as a `&[Value]` and returns
-`Result<Value, VmError>`. Use it for more arguments, or for a generic
-signature:
+`function` takes the call, a `&HostCall`, and returns
+`Result<Value, VmError>`. The arguments are `call.args`, a `&[Value]`.
+Use it for more arguments, for a generic signature, or for a function
+that builds a value of a record or enum type (see "Host types" below):
 
 ```rust
 let lists = HostModule::new("lists").function(
     "fn first(xs: List(a)) -> Option(a)",
-    |args: &[Value]| {
-        let Value::List(xs) = &args[0] else {
+    |call: &HostCall| {
+        let Value::List(xs) = &call.args[0] else {
             return Err(VmError::new("expected a list".into()));
         };
-        xs.first().cloned().into_value().map_err(VmError::new)
+        xs.first().into_value().map_err(VmError::new)
     },
 );
 ```
@@ -113,17 +115,29 @@ parameter (`fn pick(s: String, type a) -> Option(a)`).
 call asks for.
 
 A signature writes a record by the name of its type: braces of fields
-are no type. A host module declares no types of its own, so a record of
-the program reaches a host function through a type variable
-(`fn same(x: a) -> a` given a `Person` gives back a `Person`), and a
-builtin record by its name (`time.Date`).
+are no type. It names the types the host module declares (see "Host
+types"), the types of the prelude, and the types of the builtin
+modules, qualified by the module and without an import (a signature
+has no file to write one in): `time.Date`, `json.Value`,
+`http.Request`, `io.IoError`. A record of the program reaches a host
+function through a type variable (`fn same(x: a) -> a` given a
+`Person` gives back a `Person`): a host module cannot name the
+program's types.
 
 The checker has already made sure the arguments have the declared types
 and number, so a function can rely on its signature. When the function
 returns, its result is checked against its return type, as far as a
 value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
-`List`, `Set`, `Map`, `Option`, `Result` and tuples of them; and a
-`Channel`. A `-> Int` function that returns a
+`List`, `Set`, `Map`, `Option`, `Result` and tuples of them; a
+`Channel`; and a record or enum type, the host module's or a builtin
+one (`time.Date`, `json.Value`): its type, and the types of the fields
+of the record or of the variant it is, as the declaration gives them
+at the type's arguments (`Box(Int)`: its `value: a` is an `Int`),
+inside it as deep as the check goes. A builtin type whose values are
+neither (`regex.Regex`, `tcp.TcpStream`, `postgres.PgPool`) is not
+checked. A value belongs to the program it was made in: one a host keeps
+from another session's program is not told apart from a value of the
+same type id in this one. A `-> Int` function that returns a
 `String` is a runtime error that names it (`mylib.count: its signature
 returns Int, but it returned String "three"`). No value is of `Never`:
 a `-> Never` function that returns a value is that error too, and it
@@ -170,6 +184,98 @@ lies beyond them is the function's to get right.
 A host function cannot take or return a function (`fn f(g: Fn(Int) ->
 Int) -> Int` is an error): a host function has no way to call one.
 
+## Host types
+
+A host module declares record and enum types with `declare_type`, each
+by its silt declaration. Its signatures name them, and a program names
+them as `geo.Point`: it builds, reads, updates and matches them like
+the types of any module.
+
+```rust
+use silt::session::{HostCall, HostModule};
+use silt::{Value, VmError};
+
+// The field `name` of the record `value`, an Int.
+fn int(value: &Value, name: &str) -> Result<i64, VmError> {
+    match value {
+        Value::Record(record) => match record.get(name) {
+            Some(Value::Int(n)) => Ok(*n),
+            _ => Err(VmError::new(format!("no Int field `{name}`"))),
+        },
+        _ => Err(VmError::new("expected a record".into())),
+    }
+}
+
+let geo = HostModule::new("geo")
+    .declare_type("type Point { x: Int, y: Int }")
+    .declare_type("type Shape { Circle(Int), Rect(Point, Point) }")
+    .function("fn origin() -> Point", |call: &HostCall| {
+        call.record("Point", [("x", Value::Int(0)), ("y", Value::Int(0))])
+    })
+    .function("fn norm1(p: Point) -> Int", |call: &HostCall| {
+        let p = &call.args[0];
+        Ok(Value::Int(int(p, "x")?.abs() + int(p, "y")?.abs()))
+    })
+    .function("fn circle(r: Int) -> Shape", |call: &HostCall| {
+        call.variant("Shape", "Circle", vec![call.args[0].clone()])
+    });
+```
+
+From silt:
+
+```silt
+import geo
+
+fn area(s: geo.Shape) -> Int {
+  match s {
+    geo.Circle(r) -> 3 * r * r
+    geo.Rect(a, b) -> (b.x - a.x) * (b.y - a.y)
+  }
+}
+
+fn show() {
+  let p = geo.Point { x: 3, y: -4 }
+  println(geo.norm1(p)) -- 7
+  println(geo.origin() == p.{ x: 0, y: 0 }) -- true
+  println(area(geo.Rect(geo.origin(), p.{ y: 4 }))) -- 12
+  println(area(geo.circle(2))) -- 12
+}
+```
+
+A declaration is one `type` declaration of a record or an enum, with
+type parameters if it has them (`type Box(a) { value: a }`); its
+fields name the module's types, the prelude's and those of the builtin
+modules (`type Stamp { at: time.Date }`). A type is not named like a
+type or trait of the prelude (`Option`, `Never`, `Display`): that is
+an error. Everything a host module declares is public, and no
+declaration says so: `pub` in front of one is an error.
+`opaque type Conn { id: Int }` declares a type a program can pass on
+but not build or read: only the host functions build one and read its
+fields.
+
+A host type is shown by its structure, as every record and enum is:
+`"{p}"` gives `Point {x: 3, y: -4}`, and a `main` that returns
+`Err(geo.circle(2))` fails with `Circle(2)`. That is its `Display`, so
+it can be an error type. A program cannot give it a `Display` of its
+own: an impl lives in the module of its type or of its trait, and a
+host module has no impls.
+
+A function reads a record it is given with `record.get("x")`, and
+builds a value with the call:
+
+- `call.record(type, fields)`: the record of the type with the fields,
+  each given by name, in any order, every field once.
+- `call.variant(type, variant, fields)`: the variant with its fields,
+  in the order the variant declares them.
+
+The type is one the module declares (`"Point"`), or a builtin one,
+qualified by its module where it has one (`"time.Date"`). A type, field
+or variant that is not there, or a field missing or given twice, is a
+runtime error that names the function (`geo.origin: a `Point` has the
+fields x, y, each once; given: x`). The typed functions `fn0`, `fn1`
+and `fn2` take a record as a `Value` and cannot build one: use
+`function` for that.
+
 ## Checking
 
 A host module is checked from its signatures, like a module's `pub fn`s:
@@ -190,7 +296,16 @@ whether or not the program imports it, at `<host:mylib>`:
   introduces (`fn any() -> a`);
 - a typed function (`fn0`, `fn1`, `fn2`) whose signature declares another
   number of parameters;
-- a type the signature names that does not exist;
+- a type the signature names that does not exist, or one of a builtin
+  module this build lacks (`postgres.PgPool` without the `postgres`
+  feature);
+- a type declaration that is not one `type` declaration of a record or
+  an enum (an alias, a function, two types in one `declare_type`), a
+  type with a function in a field, and what is wrong with it as with
+  any module's type: a type it names that does not exist, a field
+  written twice, a type named like another of the module or like a
+  function of it; a type named like a type or trait of the prelude; a
+  declaration written with `pub`;
 - a host module whose name is not an identifier (`my-lib`), one named
   like a builtin module (`list`), or two host modules with one name.
 
@@ -252,6 +367,11 @@ Host functions must be `Send + Sync`, since they may be called from any
 thread in the task scheduler's pool. The type system enforces this. Use
 `Arc<Mutex<T>>` for shared mutable state in a host function.
 
+A `Session` and what it gives (an analysis, a compiled `Program`) can
+be made on one thread and used on another: a session made at start can
+compile in a worker thread, and the program it compiled runs on a
+third. A name means the same on every thread.
+
 ## Output and clock
 
 A `Vm` is made with a `HostIo`: where the program's output goes, and the
@@ -289,9 +409,14 @@ impl Output for Lines {
 
 `write` is called once for each `print`, `println`, `io.eprint`,
 `io.eprintln` or report, from the thread that runs the program and from
-the scheduler's threads. An error it returns for a `print` or `println`
-is a runtime error of the program (`cannot write to stdout: ...`), and so
-is a panic inside it; for a write to stderr both are dropped.
+the scheduler's threads. A print's text is at most as long as a string
+may be (10,000,000 bytes; 1,000,000 in WebAssembly): a longer one is a
+runtime error of the print (`println: result would exceed maximum string
+size ...`). (The process's stdout and stderr, which `silt run` writes,
+take a text of any length, in pieces.) An error `write` returns for a
+`print` or `println` is a runtime error of the program (`cannot write to
+stdout: ...`), and so is a panic inside it; for a write to stderr both are
+dropped.
 
 The report of tasks that failed and that nobody joined is written when
 `run_program` returns, for the tasks that have failed by then. It does
@@ -346,7 +471,7 @@ A program with a clock of its own, whose output is collected:
 use std::path::Path;
 use std::time::Duration;
 
-use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
 use silt::{Buffer, Clock, HostIo, Vm};
 
 // A clock that starts at a fixed time and moves only when the
@@ -370,6 +495,7 @@ let mut session = Session::new(Config {
     project: ProjectSetup::None,
     lock: LockPolicy::ReadOnly,
     host: vec![],
+    builtins: Builtins::All,
 });
 let source = r#"
 import time
@@ -409,6 +535,10 @@ source of randomness of its own, so the embedder supplies them:
   thing to happen is a deadline (a task's sleep, a timeout), the thread
   cannot be put to sleep: it calls the clock's `sleep` for the time that
   is left, and looks at the clock again when the call returns.
+- **Sizes.** A string or a `Bytes` holds at most 1,000,000 bytes
+  there (10,000,000 elsewhere): a builtin or an interpolation that would
+  make a longer one is a runtime error, as one past the larger limit
+  is elsewhere.
 - **Randomness.** `getrandom` and `uuid` refuse to build for the target
   until the embedder's crate picks a source: in a browser, add
   `getrandom = { version = "0.2", features = ["js"] }` and
@@ -486,6 +616,35 @@ several scripts in parallel from Rust, create one `Vm` per thread.
 
 ## Limits
 
+**Builtin modules.** `Config::builtins` says which builtin modules a
+program may import: `Builtins::All` (every one of the build), or
+`Builtins::Only(names)`. An `import` of any other, in any module of
+the program, is an error when the program is checked (`the builtin
+module 'fs' is not offered to this program: the application that runs
+it lets it import only list, string`). The prelude (`println`,
+`Option`, `Result`, ...) and the host modules are every program's.
+A host that runs programs it did not write offers the modules that
+compute (`list`, `string`, `map`, `math`, `json`, ...) and keeps
+the ones that reach out of the program: `fs`, `io` (files, stdin,
+the command line), `stream` (files, stdin), `env`, `process`,
+`tcp`, `http`, `postgres`. What a program prints goes to the
+`Vm`'s `HostIo`, and the time it reads comes from its `Clock`.
+
+```rust
+let session = Session::new(Config {
+    project: ProjectSetup::None,
+    lock: LockPolicy::ReadOnly,
+    host: vec![],
+    builtins: Builtins::Only(vec!["list".into(), "string".into(), "math".into()]),
+});
+```
+
+**Memory.** There is no limit on the memory a program uses: one call
+of a builtin can build a list of millions of elements within a step,
+so the step budget bounds the time a program runs, not its memory. A
+host that runs programs it did not write runs them in a process it can
+end, with the memory limit of the operating system.
+
 **Time slice.** `vm.set_time_slice(steps)` makes the program run in
 slices of that many steps: a task gives way to the other tasks after
 `steps` instructions (the scheduler's own slice is 2000), and the thread
@@ -534,7 +693,9 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   a `process.exit` there (or the step budget used up) is the error
   instead; if it fails otherwise, the payload is shown by its structure.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
-  message carries the panicked string.
+  message carries the panicked string: its first 100,000 bytes, and
+  `… (N more bytes)` past them. The text of a `main` that returns `Err`
+  is cut so too where its `Display` fails and its structure is shown.
 - **An `Err` from a host function** becomes a runtime error whose message
   starts with the function's name: `mylib.parse: bad input`. So does a
   result whose checked parts (see "Functions on values") are not of the
@@ -568,7 +729,8 @@ match vm.run_program(&program) {
 ```
 
 Silt code has no access to the host filesystem, network or environment
-beyond what the stdlib and your host modules provide.
+beyond what the builtin modules it may import (see "Limits") and your
+host modules provide.
 
 **The environment.** `env.set` and `env.remove` change the environment
 of your whole process. A `Vm` refuses them once its program has started

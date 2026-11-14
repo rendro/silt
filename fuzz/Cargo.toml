@@ -14,8 +14,9 @@ libfuzzer-sys = "0.4"
 path = ".."
 default-features = false
 # The readers of HTTP requests and responses are the `http` feature's,
-# the server of the editor's messages the `lsp` feature's.
-features = ["http", "lsp"]
+# the server of the editor's messages the `lsp` feature's; the invariants
+# the targets assert are the test API's (`test-hooks`).
+features = ["http", "lsp", "test-hooks"]
 
 # Disable workspace auto-discovery
 [workspace]

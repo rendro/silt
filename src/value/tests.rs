@@ -2385,3 +2385,14 @@ fn the_kind_of_a_value_is_a_plain_tag() {
     assert_eq!(size_of::<super::Ascii>(), 1);
     assert_eq!(words(size_of::<Value>()), 3);
 }
+
+/// A string or a `Bytes` holds as many bytes as a list holds elements,
+/// and a million in WebAssembly, where silt runs in a browser's page
+/// (TL-13; playground/tests/wasm.mjs runs a program against it).
+#[test]
+fn the_text_limit_is_a_million_bytes_in_webassembly() {
+    use super::list::{MAX_COLLECTION_LEN, MAX_TEXT_LEN, text_limit};
+    assert_eq!(text_limit(true), 1_000_000);
+    assert_eq!(text_limit(false), MAX_COLLECTION_LEN);
+    assert_eq!(MAX_TEXT_LEN, text_limit(cfg!(target_arch = "wasm32")));
+}

@@ -70,6 +70,7 @@ impl Project {
             // Opening a folder runs no git: nothing is fetched.
             lock: LockPolicy::Offline,
             host: Vec::new(),
+            builtins: crate::session::Builtins::All,
         };
         Project {
             session: Session::new(config),

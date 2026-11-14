@@ -16,7 +16,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 use crate::intern::Symbol;
-use crate::session::ModuleId;
 use crate::source::Span;
 
 /// A definition: an index into the [`DefTable`].
@@ -113,6 +112,20 @@ pub enum Res {
     /// Nothing: the resolver reported why, or the name comes from a
     /// module that failed to load, which is reported at its import.
     Error,
+}
+
+/// A module: of a session's module graph, an index into
+/// [`crate::session::ModuleGraph::modules`]; or a builtin pseudo-module
+/// (the prelude, `list`, ...). Defined here, below the session, as the
+/// checker and the compiler name modules too.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub struct ModuleId(pub u32);
+
+impl ModuleId {
+    /// The module's index in its graph.
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 /// The first id of the builtin pseudo-modules: the prelude is

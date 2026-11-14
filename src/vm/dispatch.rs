@@ -4,7 +4,7 @@ use std::panic::AssertUnwindSafe;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::value::{HostFault, HostFn, HostShape, Value, given_type, witness_type};
+use crate::value::{HostCall, HostFault, HostFn, HostShape, Value, given_type, witness_type};
 
 /// Call the host function `host` while catching panics that escape it.
 ///
@@ -16,7 +16,8 @@ use crate::value::{HostFault, HostFn, HostShape, Value, given_type, witness_type
 /// variable of it has at the call where the arguments show it. Every
 /// error names the function.
 pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmError> {
-    match crate::scheduler::catch_as_error(AssertUnwindSafe(|| (host.call)(args))) {
+    let call = HostCall::new(args, &host.types);
+    match crate::scheduler::catch_as_error(AssertUnwindSafe(|| (host.call)(&call))) {
         Ok(Ok(value)) => {
             let witnesses = host.witnesses(args);
             let Err(fault) = host.returns.check(&value, &witnesses) else {

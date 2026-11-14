@@ -23,16 +23,16 @@ mod map_tests;
 mod tests;
 
 pub use convert::{
-    FromValue, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep, HostVar, IntoValue,
-    Witness, Witnesses, given_type, witness_type,
+    FromValue, HostCall, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep,
+    HostTemplates, HostTypes, HostVar, IntoValue, Witness, Witnesses, given_type, witness_type,
 };
 pub(crate) use deep::drop_held;
 pub use float::Float;
 pub use fmt::{Shown, Written};
-pub(crate) use list::MAX_COLLECTION_LEN;
 #[cfg(feature = "test-hooks")]
 pub use list::copies as list_copies;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+pub(crate) use list::{MAX_COLLECTION_LEN, MAX_TEXT_LEN};
 #[cfg(feature = "test-hooks")]
 pub use map::copies as map_copies;
 pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};

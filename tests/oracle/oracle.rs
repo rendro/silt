@@ -821,6 +821,7 @@ fn open(source: &Source) -> Option<(Session, silt::source::FileId)> {
         project,
         lock: LockPolicy::ReadOnly,
         host: Vec::new(),
+        builtins: silt::session::Builtins::All,
     };
     let directory = |file: &Path| file.parent().map(Path::to_path_buf);
     match source {

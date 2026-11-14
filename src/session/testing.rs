@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::ast;
 use crate::diagnostic::Diagnostic;
-use crate::value::Value;
+use crate::value::{HostCall, Value};
 use crate::vm::Vm;
 
 use super::{Config, Entry, HostModule, LockPolicy, Program, ProjectSetup, Session};
@@ -26,6 +26,7 @@ fn session(files: &[(&str, &str)], host: Vec<HostModule>) -> (Session, crate::so
         project: ProjectSetup::Script(dir.clone()),
         lock: LockPolicy::ReadOnly,
         host,
+        builtins: super::Builtins::All,
     });
     let mut entry = None;
     for (name, text) in files {
@@ -67,11 +68,10 @@ pub fn check_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Vec<Dia
 pub fn give_module() -> (HostModule, Given) {
     let given = Given::default();
     let slot = given.clone();
-    let module =
-        HostModule::new("host").function("fn give(x: a) -> ()", move |args: &[Value]| {
-            *slot.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(args[0].clone());
-            Ok(Value::Unit)
-        });
+    let module = HostModule::new("host").function("fn give(x: a) -> ()", move |call: &HostCall| {
+        *slot.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(call.args[0].clone());
+        Ok(Value::Unit)
+    });
     (module, given)
 }
 
