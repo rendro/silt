@@ -22,6 +22,7 @@ mod cli_self_update_flag_tests;
 mod cli_stdin_and_many_files_tests;
 mod cli_test_banner_and_unknown_flag_tests;
 mod cli_test_rendering_tests;
+mod cli_test_shared_module_errors_tests;
 mod cli_watch_subcommand_gate_tests;
 mod docs_watch_subcommands_parity_tests;
 mod empty_file_tests;
