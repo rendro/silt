@@ -460,7 +460,8 @@ fn kind_types() -> &'static KindTypes {
 
 /// Whether `id` is an opaque type of a builtin module whose values are a
 /// kind of their own: `task.Handle`, `tcp.TcpListener`, `tcp.TcpStream`,
-/// `regex.Regex`.
+/// `regex.Regex`, and the handles of `postgres` (`PgPool`, `PgTx`,
+/// `PgCursor`), variants of types of their own that no program can make.
 pub fn is_opaque_value_type(id: TypeId) -> bool {
     let kinds = kind_types();
     [
@@ -468,6 +469,9 @@ pub fn is_opaque_value_type(id: TypeId) -> bool {
         kinds.tcp_listener,
         kinds.tcp_stream,
         kinds.regex,
+        crate::typeinfo::ty::PG_POOL,
+        crate::typeinfo::ty::PG_TX,
+        crate::typeinfo::ty::PG_CURSOR,
     ]
     .contains(&id)
 }
