@@ -608,6 +608,11 @@ impl TypeChecker {
         match &mut pattern.kind {
             PatternKind::Wildcard => Pat::Wild,
             PatternKind::Ident(name) => {
+                if let Type::Var(v) = self.apply(expected)
+                    && !self.met_never_class(v)
+                {
+                    self.open_bindings.push(v);
+                }
                 env.define(*name, Scheme::mono(expected.clone()));
                 Pat::Wild
             }
