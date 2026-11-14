@@ -221,6 +221,10 @@ an `InvalidUrl`: RFC 7617 has none in it. A URL whose user and password
 are both empty (`http://@host/`) sends no `authorization`. No error
 shows them: the URL of an `InvalidUrl` has `***` in their place.
 
+A byte of the URL's path or query that is no ASCII (the bytes of `é`)
+is sent percent-encoded (`/h%C3%A9llo` for `/héllo`), as a redirect's
+location is; a space in it is an `InvalidUrl`.
+
 A redirect is followed, up to ten of them: after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
 the `Content-Type` among `headers` (a `HEAD` stays a `HEAD`); after a 301

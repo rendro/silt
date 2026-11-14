@@ -1024,7 +1024,8 @@ fn do_http_request_on(
         // (Without its user and password: they are the authorization
         // above, or none. The library would send its own of an empty
         // one, `http://@host/`: `Basic Og==`.)
-        let result = send_request(agent, method, &without_userinfo(&url), body, &sent);
+        let sent_url = path_in_ascii(&without_userinfo(&url)).into_owned();
+        let result = send_request(agent, method, &sent_url, body, &sent);
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
@@ -1113,6 +1114,32 @@ fn without_userinfo(url: &str) -> std::borrow::Cow<'_, str> {
         Some((authority, host)) => url.replacen(&authority, &host, 1).into(),
         None => url.into(),
     }
+}
+
+/// `url` with each byte of its path, query and fragment that is no ASCII
+/// percent-encoded (`/h%C3%A9llo` for `/héllo`), as a redirect's
+/// location is ([`redirect`]): such a byte was sent raw, which no URL may
+/// hold. The scheme and the host are left as they are.
+#[cfg(feature = "http")]
+fn path_in_ascii(url: &str) -> std::borrow::Cow<'_, str> {
+    use std::fmt::Write;
+    if url.is_ascii() {
+        return url.into();
+    }
+    let host_start = url.find("//").map_or(0, |at| at + 2);
+    let path_start =
+        (url[host_start..].find(['/', '?', '#'])).map_or(url.len(), |at| host_start + at);
+    let mut text = String::with_capacity(url.len() + 16);
+    text.push_str(&url[..path_start]);
+    for &byte in url[path_start..].as_bytes() {
+        match byte.is_ascii() {
+            true => text.push(byte as char),
+            false => {
+                let _ = write!(text, "%{byte:02X}");
+            }
+        }
+    }
+    text.into()
 }
 
 /// Send one request of `http.request`, following no redirect. Every
@@ -3101,6 +3128,17 @@ mod http_error_tests {
         let done = do_http_request("GET", &url, &[], headers);
         assert!(failure(&done).starts_with("no error"), "{}", failure(&done));
         rx.recv_timeout(Duration::from_secs(10)).expect("the head")
+    }
+
+    /// A path and a query that are no ASCII go out percent-encoded, as a
+    /// redirect's location does (they went out raw: `GET /h\xc3\xa9llo`).
+    #[test]
+    fn a_path_that_is_no_ascii_is_sent_percent_encoded() {
+        let head = head_sent("http://{}/h\u{e9}llo?q=\u{fc}", &[]);
+        assert!(
+            head.starts_with("GET /h%C3%A9llo?q=%C3%BC HTTP/1.1\r\n"),
+            "{head}"
+        );
     }
 
     /// A user with a colon once decoded (`us%3Aer`) is refused before
