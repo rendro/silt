@@ -21,10 +21,10 @@ use crate::vm::HostIo;
 /// An armed entry: its deadline and a number that tells entries of one
 /// deadline apart.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TimerId(Duration, u64);
+pub(crate) struct TimerId(Duration, u64);
 
 impl TimerId {
-    pub fn deadline(self) -> Duration {
+    pub(crate) fn deadline(self) -> Duration {
         self.0
     }
 }
@@ -46,7 +46,7 @@ struct Entries {
     by_deadline: BTreeMap<TimerId, Action>,
 }
 
-pub struct Timer {
+pub(crate) struct Timer {
     io: HostIo,
     entries: Mutex<Entries>,
     /// The entries that are armed or that `fire_due` is carrying out.
@@ -60,7 +60,7 @@ pub struct Timer {
 
 impl Timer {
     /// A timer on the clock of `io`.
-    pub fn new(io: HostIo) -> Arc<Timer> {
+    pub(crate) fn new(io: HostIo) -> Arc<Timer> {
         Arc::new(Timer {
             io,
             entries: Mutex::default(),
@@ -77,7 +77,7 @@ impl Timer {
     /// short wait whose thread was held up before it began would
     /// otherwise never reach the timer.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn fire_every_deadline(&self) {
+    pub(crate) fn fire_every_deadline(&self) {
         self.fires_every_deadline.store(true, Ordering::SeqCst);
     }
 
@@ -92,13 +92,13 @@ impl Timer {
     }
 
     /// The clock's monotonic reading.
-    pub fn now(&self) -> Duration {
+    pub(crate) fn now(&self) -> Duration {
         self.io.monotonic()
     }
 
     /// The reading at which a wait of `duration` that starts now ends;
     /// `None` when that is out of the clock's range, which is never.
-    pub fn deadline_after(&self, duration: Duration) -> Option<Duration> {
+    pub(crate) fn deadline_after(&self, duration: Duration) -> Option<Duration> {
         self.io.deadline_after(duration)
     }
 
@@ -128,14 +128,18 @@ impl Timer {
     /// a wait that will end. If the channel is dropped before then,
     /// the entry goes with it: a timeout that lost its select is not
     /// kept until its time.
-    pub fn close_at(self: &Arc<Self>, deadline: Duration, channel: &Arc<Channel>) -> TimerId {
+    pub(crate) fn close_at(
+        self: &Arc<Self>,
+        deadline: Duration,
+        channel: &Arc<Channel>,
+    ) -> TimerId {
         let id = self.arm(deadline, Action::Close(Arc::downgrade(channel)));
         channel.set_timer(Arc::downgrade(self), id);
         id
     }
 
     /// Take an entry out before its time. `false` when it has fired.
-    pub fn disarm(&self, id: TimerId) -> bool {
+    pub(crate) fn disarm(&self, id: TimerId) -> bool {
         // What the entry held is dropped after the lock is released.
         let removed = self.entries.lock().by_deadline.remove(&id);
         if removed.is_some() {
@@ -146,7 +150,7 @@ impl Timer {
 
     /// How many entries are armed.
     #[cfg(test)]
-    pub fn armed(&self) -> usize {
+    pub(crate) fn armed(&self) -> usize {
         self.entries.lock().by_deadline.len()
     }
 
@@ -154,12 +158,12 @@ impl Timer {
     /// it does is done and its task is woken, so a scheduler that sees
     /// nothing runnable and nothing pending here has not missed a wake
     /// that is on its way.
-    pub fn pending(&self) -> usize {
+    pub(crate) fn pending(&self) -> usize {
         self.pending.load(Ordering::SeqCst)
     }
 
     /// The earliest deadline.
-    pub fn next_deadline(&self) -> Option<Duration> {
+    pub(crate) fn next_deadline(&self) -> Option<Duration> {
         let entries = self.entries.lock();
         entries.by_deadline.keys().next().map(|id| id.0)
     }
@@ -168,7 +172,7 @@ impl Timer {
     /// time, before it calls [`Timer::fire_due`] again; `None` when
     /// nothing is armed. On an embedder's clock that is a short poll,
     /// since only the clock knows when its time has passed.
-    pub fn real_wait(&self) -> Option<Duration> {
+    pub(crate) fn real_wait(&self) -> Option<Duration> {
         let deadline = self.next_deadline()?;
         Some(self.io.real_wait(deadline.saturating_sub(self.now())))
     }
@@ -189,7 +193,7 @@ impl Timer {
     /// give their number. If the clock has panicked
     /// (`HostIo::clock_failure`) its time no longer passes, and every
     /// entry is carried out: no wait is left that would never end.
-    pub fn fire_due(&self, wake: &dyn Wake) -> usize {
+    pub(crate) fn fire_due(&self, wake: &dyn Wake) -> usize {
         let now = self.now();
         let failed = self.io.clock_failure().is_some();
         let due = {

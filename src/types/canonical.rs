@@ -162,7 +162,7 @@ impl Resolver {
 /// Every other variant is rebuilt structurally with each contained
 /// type recursively canonicalised. Primitive variants and type
 /// variables are returned unchanged.
-pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
+pub(crate) fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
     match ty {
         // ── Phase D: user-declared aliases ─────────────────────────
         // A `Type::Generic(name, args)` whose `name` is a registered
@@ -253,7 +253,7 @@ fn expand_alias(info: &AliasInfo, args: &[Type]) -> Type {
 /// positions count as equal) is a phase-B+ concern: the unifier will
 /// continue to handle var-binding via its substitution map, and
 /// [`types_equal`] is only consulted on already-substituted types.
-pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
+pub(crate) fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
     canonicalize(resolver, a) == canonicalize(resolver, b)
 }
 
@@ -274,7 +274,7 @@ pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
 /// `"Point"`, and a parameterised `Type::Generic("Result", [Int, String])`
 /// canonicalises to `"Result"` (parameters are stripped because dispatch
 /// lookup is by head constructor).
-pub fn canonical_name(ty: &Type) -> String {
+pub(crate) fn canonical_name(ty: &Type) -> String {
     match ty {
         // ── Primitives ─────────────────────────────────────────────
         Type::Int => "Int".to_string(),
@@ -325,7 +325,7 @@ pub fn canonical_name(ty: &Type) -> String {
 /// aliases collapse fully via recursion.
 ///
 /// Any other type is its own head.
-pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
+pub(crate) fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
     if let Some(info) = resolver.lookup_alias(ty) {
         let canon_target = canonicalize(resolver, &info.target);
         if let Some(head) = head_of_canon(&canon_target) {
@@ -342,7 +342,7 @@ pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
 ///
 /// Returns `None` for shapes that have no nominal head (raw
 /// type-variables, error / never sentinels).
-pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
+pub(crate) fn head_of_canon(ty: &Type) -> Option<TypeRef> {
     let builtin = match ty {
         Type::Int => "Int",
         Type::Float => "Float",
@@ -420,7 +420,7 @@ pub(crate) fn kind_types() -> &'static KindTypes {
 /// Whether `id` is an opaque type of a builtin module whose values are a
 /// kind of their own: `task.Handle`, `tcp.TcpListener`, `tcp.TcpStream`,
 /// `regex.Regex`.
-pub fn is_opaque_value_type(id: TypeId) -> bool {
+pub(crate) fn is_opaque_value_type(id: TypeId) -> bool {
     let kinds = kind_types();
     [
         kinds.handle,

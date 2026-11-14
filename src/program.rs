@@ -10,10 +10,10 @@ use crate::bytecode::{Function, Globals};
 use crate::source::Span;
 
 /// The name of the function a program starts from.
-pub const ENTRY_POINT: &str = "main";
+pub(crate) const ENTRY_POINT: &str = "main";
 
 /// Classify a top-level function name. `None`: not a test.
-pub fn test_kind(name: &str) -> Option<TestKind> {
+pub(crate) fn test_kind(name: &str) -> Option<TestKind> {
     if name.starts_with("skip_test_") {
         Some(TestKind::Skip)
     } else if name.starts_with("test_") {

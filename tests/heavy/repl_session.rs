@@ -159,8 +159,8 @@ fn a_task_left_waiting_in_every_round_adds_what_it_holds_itself() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn the_last_thousand_entries_copy_what_the_first_thousand_do() {
-    use silt::testing::repl::Repl;
     use silt::session::ProjectSetup;
+    use silt::testing::repl::Repl;
 
     let (entries, _) = session(430, true);
     let mut repl = Repl::new(ProjectSetup::None);

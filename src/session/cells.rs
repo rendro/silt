@@ -81,13 +81,13 @@ pub(super) struct CellInfo {
 impl CellInfo {
     /// The name of the function that holds the cell's statements, when
     /// it is statements.
-    pub fn wrapper(&self) -> String {
+    pub(super) fn wrapper(&self) -> String {
         cell_name(self.n)
     }
 
     /// The cell's declarations as the compiler sees them: without the
     /// imports of the earlier cells, whose code is installed already.
-    pub fn compiled(&self, checked: &ast::Program) -> ast::Program {
+    pub(super) fn compiled(&self, checked: &ast::Program) -> ast::Program {
         ast::Program {
             decls: checked.decls[self.cell_imports..].to_vec(),
             unknown: Vec::new(),
@@ -134,7 +134,7 @@ impl Cells {
     /// one declared is forgotten when the next cell is added. One that
     /// was compiled and failed when it ran keeps its global slots and
     /// loses its definitions (`Globals::without_definitions_since`).
-    pub fn take_dropped(&mut self) -> Vec<ModuleId> {
+    pub(super) fn take_dropped(&mut self) -> Vec<ModuleId> {
         if let Some(failed) = self.compiled.take() {
             self.globals = failed.without_definitions_since(&self.globals);
         }
@@ -142,19 +142,25 @@ impl Cells {
     }
 
     /// The cell being evaluated was compiled into `globals`.
-    pub fn compiled(&mut self, globals: Globals) {
+    pub(super) fn compiled(&mut self, globals: Globals) {
         self.compiled = Some(globals);
     }
 
     /// The cells added.
-    pub fn ids(&self) -> Arc<HashSet<ModuleId>> {
+    pub(super) fn ids(&self) -> Arc<HashSet<ModuleId>> {
         self.ids.clone()
     }
 
     /// Make the parsed cell `id`, the `n`th, see the committed cells: its
     /// own declarations become exported (a later cell imports all of
     /// them), and the imports of what it sees are put before them.
-    pub fn prepare(&mut self, id: ModuleId, n: usize, file: FileId, program: &mut ast::Program) {
+    pub(super) fn prepare(
+        &mut self,
+        id: ModuleId,
+        n: usize,
+        file: FileId,
+        program: &mut ast::Program,
+    ) {
         let wrapper = intern(&cell_name(n));
         let mut own = Vec::new();
         for decl in &mut program.decls {
@@ -260,7 +266,7 @@ impl Cells {
 
     /// Each name that the `let` of a committed cell binds where an
     /// earlier cell imported a module by that name, with the module.
-    pub fn hidden_imports(&self) -> HashMap<Symbol, Symbol> {
+    pub(super) fn hidden_imports(&self) -> HashMap<Symbol, Symbol> {
         (self.scope.iter())
             .filter_map(|(name, binder)| Some((*name, binder.hides?)))
             .collect()
@@ -268,7 +274,7 @@ impl Cells {
 
     /// What the compiler needs to know of the committed cells to compile
     /// a cell; `index` numbers the modules of its program.
-    pub fn earlier(&self, index: &HashMap<ModuleId, usize>) -> EarlierCells {
+    pub(super) fn earlier(&self, index: &HashMap<ModuleId, usize>) -> EarlierCells {
         EarlierCells {
             installed: self
                 .installed
@@ -284,7 +290,7 @@ impl Cells {
     /// [`Cells::prepare`] left them, gives up the names of the import
     /// of the cell before it, which are every name the cell saw. (The
     /// import itself stays: the graph counts a module's imports.)
-    pub fn release(&self, id: ModuleId, program: &mut ast::Program) {
+    pub(super) fn release(&self, id: ModuleId, program: &mut ast::Program) {
         let imported = self.info.get(&id).map_or(0, |info| info.cell_imports);
         for decl in program.decls.iter_mut().take(imported) {
             if let Decl::Import(ImportTarget::Items(_, items), _) = decl {
@@ -297,7 +303,7 @@ impl Cells {
     /// declarations are `checked`; `modules` are the modules of its
     /// program, whose code is installed now. Gives the cell that was
     /// the last committed one until now: no later cell imports it.
-    pub fn commit(
+    pub(super) fn commit(
         &mut self,
         id: ModuleId,
         checked: &ast::Program,

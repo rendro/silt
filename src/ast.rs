@@ -790,7 +790,7 @@ impl ImportTarget {
 /// letters before `_` before small letters, and of one module the
 /// plain import comes before the alias and the alias before the items
 /// (an empty list, `m.{}`, behind the lists that name something).
-pub fn import_order<'a>(imports: impl IntoIterator<Item = &'a ImportTarget>) -> Vec<usize> {
+pub(crate) fn import_order<'a>(imports: impl IntoIterator<Item = &'a ImportTarget>) -> Vec<usize> {
     let mut order: Vec<(String, usize)> = imports
         .into_iter()
         .enumerate()
@@ -802,7 +802,7 @@ pub fn import_order<'a>(imports: impl IntoIterator<Item = &'a ImportTarget>) -> 
 
 /// The `import` declarations among `decls`, in their one order
 /// ([`import_order`]).
-pub fn imports_in_order(decls: &[Decl]) -> Vec<&Decl> {
+pub(crate) fn imports_in_order(decls: &[Decl]) -> Vec<&Decl> {
     let imports: Vec<(&Decl, &ImportTarget)> = decls
         .iter()
         .filter_map(|decl| match decl {
@@ -821,7 +821,7 @@ pub fn imports_in_order(decls: &[Decl]) -> Vec<&Decl> {
 /// others as they are written. Whoever asks which of two declarations
 /// comes first asks here, so the answer does not depend on where the
 /// import lines stand.
-pub fn decls_as_formatted(decls: &[Decl]) -> Vec<&Decl> {
+pub(crate) fn decls_as_formatted(decls: &[Decl]) -> Vec<&Decl> {
     let mut formatted = imports_in_order(decls);
     formatted.extend(
         decls

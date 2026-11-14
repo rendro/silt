@@ -18,14 +18,15 @@ use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
-pub mod dict;
-pub mod emit;
-pub mod ops;
+pub(crate) mod dict;
+pub(crate) mod emit;
+pub(crate) mod ops;
 pub mod verify;
 
-pub use emit::Emitter;
-pub use ops::{Asm, Instr, Op, Operands, Segments, decode};
-pub use verify::{VerifyError, verify};
+pub(crate) use emit::Emitter;
+pub use ops::Instr;
+pub(crate) use ops::{Asm, Op, Segments, decode};
+pub use verify::verify;
 
 /// A dedup key for simple constant types.  Using a dedicated enum avoids
 /// relying on `Value`'s `Hash`/`Eq` and keeps the dedup scope explicit.
@@ -611,7 +612,7 @@ impl Const {
 /// them out ([`Emitter::label`]) and gives each its place
 /// ([`Emitter::bind`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Label(usize);
+pub(crate) struct Label(usize);
 
 /// Describes how to capture an upvalue when creating a closure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

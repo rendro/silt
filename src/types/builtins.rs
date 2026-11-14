@@ -66,7 +66,7 @@ pub struct BuiltinType {
 /// match arm at `src/typechecker/mod.rs::check_trait_impl`), then
 /// containers (matching the `is_builtin_container` match arm at the
 /// same site). The unit type has one name, `()`.
-pub static BUILTIN_TYPES: &[BuiltinType] = &[
+pub(crate) static BUILTIN_TYPES: &[BuiltinType] = &[
     // ── Primitives ─────────────────────────────────────────────────
     BuiltinType {
         name: "Int",
@@ -165,7 +165,7 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
 /// Look up a built-in type entry by surface name. Returns `None` for
 /// names not in [`BUILTIN_TYPES`] (e.g. user-declared records, type
 /// variables, unrecognised text).
-pub fn lookup(name: &str) -> Option<&'static BuiltinType> {
+pub(crate) fn lookup(name: &str) -> Option<&'static BuiltinType> {
     BUILTIN_TYPES.iter().find(|b| b.name == name)
 }
 
@@ -176,12 +176,12 @@ pub fn iter_all() -> impl Iterator<Item = &'static BuiltinType> {
 }
 
 /// Convenience: is `name` a built-in primitive surface name?
-pub fn is_primitive(name: &str) -> bool {
+pub(crate) fn is_primitive(name: &str) -> bool {
     matches!(lookup(name), Some(b) if b.kind == BuiltinKind::Primitive)
 }
 
 /// Convenience: is `name` a built-in container surface name?
-pub fn is_container(name: &str) -> bool {
+pub(crate) fn is_container(name: &str) -> bool {
     matches!(lookup(name), Some(b) if b.kind == BuiltinKind::Container)
 }
 
@@ -190,7 +190,7 @@ pub fn is_container(name: &str) -> bool {
 /// (`regex.Regex`) and reserves no name, as `time.Weekday` does not.
 /// `None` for a type of the prelude (`Int`, `List`, `Bytes`) and for
 /// any other name.
-pub fn module_of(name: &str) -> Option<&'static str> {
+pub(crate) fn module_of(name: &str) -> Option<&'static str> {
     lookup(name)?;
     let id = crate::defs::builtin_type_id(name)?;
     crate::defs::builtin_types()

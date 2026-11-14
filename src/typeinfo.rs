@@ -569,50 +569,50 @@ impl TypeTable {
 /// The ids of the builtin types values are built of: the first
 /// definitions of the builtins ([`crate::defs::builtin_types`] begins
 /// with [`RUNTIME_BUILTIN_TYPES`]).
-pub mod ty {
+pub(crate) mod ty {
     use crate::defs::{DefId, TypeId};
 
-    pub const RESULT: TypeId = TypeId(DefId(0));
-    pub const OPTION: TypeId = TypeId(DefId(1));
-    pub const STEP: TypeId = TypeId(DefId(2));
-    pub const CHANNEL_RESULT: TypeId = TypeId(DefId(3));
-    pub const CHANNEL_OP: TypeId = TypeId(DefId(4));
-    pub const WEEKDAY: TypeId = TypeId(DefId(5));
-    pub const METHOD: TypeId = TypeId(DefId(6));
-    pub const IO_ERROR: TypeId = TypeId(DefId(7));
-    pub const JSON_ERROR: TypeId = TypeId(DefId(8));
-    pub const TOML_ERROR: TypeId = TypeId(DefId(9));
-    pub const INT_ERROR: TypeId = TypeId(DefId(10));
-    pub const HTTP_ERROR: TypeId = TypeId(DefId(11));
-    pub const REGEX_ERROR: TypeId = TypeId(DefId(12));
-    pub const POSTGRES_ERROR: TypeId = TypeId(DefId(13));
-    pub const TCP_ERROR: TypeId = TypeId(DefId(14));
-    pub const TIME_ERROR: TypeId = TypeId(DefId(15));
-    pub const BYTES_ERROR: TypeId = TypeId(DefId(16));
-    pub const PG_POOL: TypeId = TypeId(DefId(17));
-    pub const PG_TX: TypeId = TypeId(DefId(18));
-    pub const PG_CURSOR: TypeId = TypeId(DefId(19));
-    pub const DATE: TypeId = TypeId(DefId(20));
-    pub const TIME: TypeId = TypeId(DefId(21));
-    pub const DATE_TIME: TypeId = TypeId(DefId(22));
-    pub const DURATION: TypeId = TypeId(DefId(23));
-    pub const INSTANT: TypeId = TypeId(DefId(24));
-    pub const FILE_STAT: TypeId = TypeId(DefId(25));
-    pub const RESPONSE: TypeId = TypeId(DefId(26));
-    pub const REQUEST: TypeId = TypeId(DefId(27));
-    pub const NOTIFICATION: TypeId = TypeId(DefId(28));
-    pub const FLOAT_ERROR: TypeId = TypeId(DefId(29));
-    pub const CRYPTO_ERROR: TypeId = TypeId(DefId(30));
-    pub const ENCODING_ERROR: TypeId = TypeId(DefId(31));
-    pub const UUID_ERROR: TypeId = TypeId(DefId(32));
-    pub const TASK_ERROR: TypeId = TypeId(DefId(33));
-    pub const SELECTED: TypeId = TypeId(DefId(34));
-    pub const JSON_VALUE: TypeId = TypeId(DefId(35));
-    pub const CSV_ERROR: TypeId = TypeId(DefId(36));
+    pub(crate) const RESULT: TypeId = TypeId(DefId(0));
+    pub(crate) const OPTION: TypeId = TypeId(DefId(1));
+    pub(crate) const STEP: TypeId = TypeId(DefId(2));
+    pub(crate) const CHANNEL_RESULT: TypeId = TypeId(DefId(3));
+    pub(crate) const CHANNEL_OP: TypeId = TypeId(DefId(4));
+    pub(crate) const WEEKDAY: TypeId = TypeId(DefId(5));
+    pub(crate) const METHOD: TypeId = TypeId(DefId(6));
+    pub(crate) const IO_ERROR: TypeId = TypeId(DefId(7));
+    pub(crate) const JSON_ERROR: TypeId = TypeId(DefId(8));
+    pub(crate) const TOML_ERROR: TypeId = TypeId(DefId(9));
+    pub(crate) const INT_ERROR: TypeId = TypeId(DefId(10));
+    pub(crate) const HTTP_ERROR: TypeId = TypeId(DefId(11));
+    pub(crate) const REGEX_ERROR: TypeId = TypeId(DefId(12));
+    pub(crate) const POSTGRES_ERROR: TypeId = TypeId(DefId(13));
+    pub(crate) const TCP_ERROR: TypeId = TypeId(DefId(14));
+    pub(crate) const TIME_ERROR: TypeId = TypeId(DefId(15));
+    pub(crate) const BYTES_ERROR: TypeId = TypeId(DefId(16));
+    pub(crate) const PG_POOL: TypeId = TypeId(DefId(17));
+    pub(crate) const PG_TX: TypeId = TypeId(DefId(18));
+    pub(crate) const PG_CURSOR: TypeId = TypeId(DefId(19));
+    pub(crate) const DATE: TypeId = TypeId(DefId(20));
+    pub(crate) const TIME: TypeId = TypeId(DefId(21));
+    pub(crate) const DATE_TIME: TypeId = TypeId(DefId(22));
+    pub(crate) const DURATION: TypeId = TypeId(DefId(23));
+    pub(crate) const INSTANT: TypeId = TypeId(DefId(24));
+    pub(crate) const FILE_STAT: TypeId = TypeId(DefId(25));
+    pub(crate) const RESPONSE: TypeId = TypeId(DefId(26));
+    pub(crate) const REQUEST: TypeId = TypeId(DefId(27));
+    pub(crate) const NOTIFICATION: TypeId = TypeId(DefId(28));
+    pub(crate) const FLOAT_ERROR: TypeId = TypeId(DefId(29));
+    pub(crate) const CRYPTO_ERROR: TypeId = TypeId(DefId(30));
+    pub(crate) const ENCODING_ERROR: TypeId = TypeId(DefId(31));
+    pub(crate) const UUID_ERROR: TypeId = TypeId(DefId(32));
+    pub(crate) const TASK_ERROR: TypeId = TypeId(DefId(33));
+    pub(crate) const SELECTED: TypeId = TypeId(DefId(34));
+    pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(35));
+    pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(36));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
-    pub const MAP_ERROR: TypeId = TypeId(DefId(u32::MAX - 1));
+    pub(crate) const MAP_ERROR: TypeId = TypeId(DefId(u32::MAX - 1));
 }
 
 /// The variants of the builtin enums, and of the builtin handle types a
@@ -624,112 +624,117 @@ pub mod bv {
     pub const ERR: BuiltinVariant = BuiltinVariant::new(ty::RESULT, 1);
     pub const SOME: BuiltinVariant = BuiltinVariant::new(ty::OPTION, 0);
     pub const NONE: BuiltinVariant = BuiltinVariant::new(ty::OPTION, 1);
-    pub const STOP: BuiltinVariant = BuiltinVariant::new(ty::STEP, 0);
-    pub const CONTINUE: BuiltinVariant = BuiltinVariant::new(ty::STEP, 1);
-    pub const MESSAGE: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 0);
-    pub const EMPTY: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 1);
-    pub const CLOSED: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 2);
-    pub const RECV: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 0);
-    pub const SEND: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 1);
-    pub const RECEIVED: BuiltinVariant = BuiltinVariant::new(ty::SELECTED, 0);
-    pub const SENT: BuiltinVariant = BuiltinVariant::new(ty::SELECTED, 1);
-    pub const MONDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 0);
-    pub const TUESDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 1);
-    pub const WEDNESDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 2);
-    pub const THURSDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 3);
-    pub const FRIDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 4);
-    pub const SATURDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 5);
-    pub const SUNDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 6);
-    pub const GET: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 0);
-    pub const POST: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 1);
-    pub const PUT: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 2);
-    pub const PATCH: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 3);
-    pub const DELETE: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 4);
-    pub const HEAD: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 5);
-    pub const OPTIONS: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 6);
-    pub const IO_NOT_FOUND: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 0);
-    pub const IO_PERMISSION_DENIED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 1);
-    pub const IO_ALREADY_EXISTS: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 2);
-    pub const IO_INVALID_INPUT: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 3);
-    pub const IO_INTERRUPTED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 4);
-    pub const IO_UNEXPECTED_EOF: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 5);
-    pub const IO_WRITE_ZERO: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 6);
-    pub const IO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
-    pub const JSON_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 0);
-    pub const JSON_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 1);
-    pub const JSON_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 2);
-    pub const JSON_OTHER: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 3);
-    pub const TOML_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 0);
-    pub const TOML_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 1);
-    pub const TOML_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 2);
-    pub const TOML_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 3);
-    pub const INT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 0);
-    pub const INT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 1);
-    pub const INT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 2);
-    pub const INT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 3);
-    pub const FLOAT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 0);
-    pub const FLOAT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 1);
-    pub const FLOAT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 2);
-    pub const FLOAT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 3);
-    pub const FLOAT_NOT_FINITE: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 4);
-    pub const CRYPTO_INVALID_LENGTH: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 0);
-    pub const CRYPTO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 1);
-    pub const ENCODING_INVALID_PERCENT: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 0);
-    pub const ENCODING_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 1);
-    pub const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
-    pub const CSV_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 0);
-    pub const CSV_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 1);
-    pub const CSV_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 2);
-    pub const CSV_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 3);
-    pub const TASK_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 0);
-    pub const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
-    pub const HTTP_TLS: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 1);
-    pub const HTTP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 2);
-    pub const HTTP_INVALID_URL: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 3);
-    pub const HTTP_INVALID_RESPONSE: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 4);
-    pub const HTTP_CLOSED_EARLY: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 5);
-    pub const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 6);
-    pub const REGEX_INVALID_PATTERN: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 0);
-    pub const REGEX_TOO_BIG: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 1);
-    pub const PG_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 0);
-    pub const PG_TLS: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 1);
-    pub const PG_AUTH_FAILED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 2);
-    pub const PG_QUERY: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 3);
-    pub const PG_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 4);
-    pub const PG_NO_SUCH_COLUMN: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 5);
-    pub const PG_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 6);
-    pub const PG_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 7);
-    pub const PG_TXN_ABORTED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 8);
-    pub const PG_OTHER: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 9);
-    pub const TCP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 0);
-    pub const TCP_BIND: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 1);
-    pub const TCP_TLS: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 2);
-    pub const TCP_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 3);
-    pub const TCP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 4);
-    pub const TCP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 5);
-    pub const TIME_PARSE_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 0);
-    pub const TIME_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 1);
-    pub const TIME_INVALID_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 2);
-    pub const BYTES_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 0);
-    pub const BYTES_INVALID_HEX: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 1);
-    pub const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
-    pub const BYTES_BYTE_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 3);
-    pub const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
-    pub const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
-    pub const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
-    pub const JSON_NULL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 0);
-    pub const JSON_BOOL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 1);
-    pub const JSON_INT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 2);
-    pub const JSON_FLOAT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 3);
-    pub const JSON_STRING: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 4);
-    pub const JSON_ARRAY: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 5);
-    pub const JSON_OBJECT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 6);
-    pub const MAP_ERROR: BuiltinVariant = BuiltinVariant::new(ty::MAP_ERROR, 0);
+    pub(crate) const STOP: BuiltinVariant = BuiltinVariant::new(ty::STEP, 0);
+    pub(crate) const CONTINUE: BuiltinVariant = BuiltinVariant::new(ty::STEP, 1);
+    pub(crate) const MESSAGE: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 0);
+    pub(crate) const EMPTY: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 1);
+    pub(crate) const CLOSED: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 2);
+    pub(crate) const RECV: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 0);
+    pub(crate) const SEND: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 1);
+    pub(crate) const RECEIVED: BuiltinVariant = BuiltinVariant::new(ty::SELECTED, 0);
+    pub(crate) const SENT: BuiltinVariant = BuiltinVariant::new(ty::SELECTED, 1);
+    pub(crate) const MONDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 0);
+    pub(crate) const TUESDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 1);
+    pub(crate) const WEDNESDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 2);
+    pub(crate) const THURSDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 3);
+    pub(crate) const FRIDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 4);
+    pub(crate) const SATURDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 5);
+    pub(crate) const SUNDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 6);
+    pub(crate) const GET: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 0);
+    pub(crate) const POST: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 1);
+    pub(crate) const PUT: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 2);
+    pub(crate) const PATCH: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 3);
+    pub(crate) const DELETE: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 4);
+    pub(crate) const HEAD: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 5);
+    pub(crate) const OPTIONS: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 6);
+    pub(crate) const IO_NOT_FOUND: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 0);
+    pub(crate) const IO_PERMISSION_DENIED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 1);
+    pub(crate) const IO_ALREADY_EXISTS: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 2);
+    pub(crate) const IO_INVALID_INPUT: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 3);
+    pub(crate) const IO_INTERRUPTED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 4);
+    pub(crate) const IO_UNEXPECTED_EOF: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 5);
+    pub(crate) const IO_WRITE_ZERO: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 6);
+    pub(crate) const IO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
+    pub(crate) const JSON_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 0);
+    pub(crate) const JSON_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 1);
+    pub(crate) const JSON_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 2);
+    pub(crate) const JSON_OTHER: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 3);
+    pub(crate) const TOML_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 0);
+    pub(crate) const TOML_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 1);
+    pub(crate) const TOML_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 2);
+    pub(crate) const TOML_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 3);
+    pub(crate) const INT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 0);
+    pub(crate) const INT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 1);
+    pub(crate) const INT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 2);
+    pub(crate) const INT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 3);
+    pub(crate) const FLOAT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 0);
+    pub(crate) const FLOAT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 1);
+    pub(crate) const FLOAT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 2);
+    pub(crate) const FLOAT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 3);
+    pub(crate) const FLOAT_NOT_FINITE: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 4);
+    pub(crate) const CRYPTO_INVALID_LENGTH: BuiltinVariant =
+        BuiltinVariant::new(ty::CRYPTO_ERROR, 0);
+    pub(crate) const CRYPTO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 1);
+    pub(crate) const ENCODING_INVALID_PERCENT: BuiltinVariant =
+        BuiltinVariant::new(ty::ENCODING_ERROR, 0);
+    pub(crate) const ENCODING_INVALID_UTF8: BuiltinVariant =
+        BuiltinVariant::new(ty::ENCODING_ERROR, 1);
+    pub(crate) const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
+    pub(crate) const CSV_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 0);
+    pub(crate) const CSV_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 1);
+    pub(crate) const CSV_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 2);
+    pub(crate) const CSV_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 3);
+    pub(crate) const TASK_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 0);
+    pub(crate) const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
+    pub(crate) const HTTP_TLS: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 1);
+    pub(crate) const HTTP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 2);
+    pub(crate) const HTTP_INVALID_URL: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 3);
+    pub(crate) const HTTP_INVALID_RESPONSE: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 4);
+    pub(crate) const HTTP_CLOSED_EARLY: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 5);
+    pub(crate) const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 6);
+    pub(crate) const REGEX_INVALID_PATTERN: BuiltinVariant =
+        BuiltinVariant::new(ty::REGEX_ERROR, 0);
+    pub(crate) const REGEX_TOO_BIG: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 1);
+    pub(crate) const PG_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 0);
+    pub(crate) const PG_TLS: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 1);
+    pub(crate) const PG_AUTH_FAILED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 2);
+    pub(crate) const PG_QUERY: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 3);
+    pub(crate) const PG_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 4);
+    pub(crate) const PG_NO_SUCH_COLUMN: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 5);
+    pub(crate) const PG_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 6);
+    pub(crate) const PG_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 7);
+    pub(crate) const PG_TXN_ABORTED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 8);
+    pub(crate) const PG_OTHER: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 9);
+    pub(crate) const TCP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 0);
+    pub(crate) const TCP_BIND: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 1);
+    pub(crate) const TCP_TLS: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 2);
+    pub(crate) const TCP_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 3);
+    pub(crate) const TCP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 4);
+    pub(crate) const TCP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 5);
+    pub(crate) const TIME_PARSE_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 0);
+    pub(crate) const TIME_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 1);
+    pub(crate) const TIME_INVALID_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 2);
+    pub(crate) const BYTES_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 0);
+    pub(crate) const BYTES_INVALID_HEX: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 1);
+    pub(crate) const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
+    pub(crate) const BYTES_BYTE_OUT_OF_RANGE: BuiltinVariant =
+        BuiltinVariant::new(ty::BYTES_ERROR, 3);
+    pub(crate) const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
+    pub(crate) const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
+    pub(crate) const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
+    pub(crate) const JSON_NULL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 0);
+    pub(crate) const JSON_BOOL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 1);
+    pub(crate) const JSON_INT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 2);
+    pub(crate) const JSON_FLOAT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 3);
+    pub(crate) const JSON_STRING: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 4);
+    pub(crate) const JSON_ARRAY: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 5);
+    pub(crate) const JSON_OBJECT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 6);
+    pub(crate) const MAP_ERROR: BuiltinVariant = BuiltinVariant::new(ty::MAP_ERROR, 0);
 }
 
 /// The builtin types whose ids are the constants of [`ty`], in that
 /// order.
-pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
+pub(crate) const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "Result",
     "Option",
     "Step",
@@ -868,7 +873,7 @@ fn marker_types() -> &'static [Arc<TypeInfo>] {
 
 /// The description of the builtin type `id`. Panics on the id of a type
 /// of a program.
-pub fn builtin_type(id: TypeId) -> &'static Arc<TypeInfo> {
+pub(crate) fn builtin_type(id: TypeId) -> &'static Arc<TypeInfo> {
     let k = id.0.0 as usize;
     builtin_types().get(k).unwrap_or_else(|| {
         marker_types()

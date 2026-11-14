@@ -34,6 +34,7 @@
 //! the guide one.)
 
 #![allow(clippy::mutable_key_type)]
+#![cfg_attr(any(test, feature = "test-hooks"), warn(unreachable_pub))]
 
 mod ast;
 mod builtins;
@@ -127,9 +128,6 @@ pub mod testing {
     }
     pub mod feature_stub {
         pub use crate::feature_stub::*;
-    }
-    pub mod file_discovery {
-        pub use crate::file_discovery::*;
     }
     pub mod format {
         pub use crate::format::*;

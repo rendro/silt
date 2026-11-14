@@ -3,12 +3,12 @@
 //! program imports one like any module; calls are typechecked against
 //! the declared signatures and run the Rust closure.
 
-use silt::testing::diagnostic::{Code, Diagnostic};
-use silt::testing::{check_with_host, run_with_host};
 use silt::session::{Builtins, HostCall, HostModule};
+use silt::testing::diagnostic::{Code, Diagnostic};
 use silt::testing::typeinfo::bv;
 use silt::testing::value::{IntoValue, Value};
 use silt::testing::vm::VmError;
+use silt::testing::{check_with_host, run_with_host};
 
 fn mylib() -> HostModule {
     HostModule::new("mylib")

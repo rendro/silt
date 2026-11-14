@@ -46,7 +46,12 @@ use super::Refusal;
 
 /// Check `output`, the text produced for `source`, whose tokens are
 /// `lexed` and whose tree is `program`.
-pub fn verify(source: &str, lexed: Lexed, program: Program, output: &str) -> Result<(), Refusal> {
+pub(crate) fn verify(
+    source: &str,
+    lexed: Lexed,
+    program: Program,
+    output: &str,
+) -> Result<(), Refusal> {
     // (The source's tokens and tree are done with once its shapes are
     // taken: a large file's two of each are not held at once.)
     let before = decl_shapes(source, &lexed, &program);

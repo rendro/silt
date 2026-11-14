@@ -167,7 +167,7 @@ pub(crate) fn unbuilt_text(name: &str, signature: &str, summary: &str, feature: 
 /// it is reached (`json.Value`, `io.IoError`), where it has any: the
 /// errors page's section on the module's error enum, else the type's
 /// own section of a page.
-pub fn type_docs() -> &'static HashMap<String, String> {
+pub(crate) fn type_docs() -> &'static HashMap<String, String> {
     static DOCS: OnceLock<HashMap<String, String>> = OnceLock::new();
     DOCS.get_or_init(|| {
         let modules: Vec<&Module> = registry().enabled_modules().collect();
@@ -205,7 +205,7 @@ pub fn type_docs() -> &'static HashMap<String, String> {
 /// (`json` in `import json`, in `json.parse`, in `json.Encode`): the
 /// first sentence of the first paragraph of the module's part of its
 /// page (under its `# json` heading), on one line.
-pub fn module_docs() -> &'static HashMap<&'static str, String> {
+pub(crate) fn module_docs() -> &'static HashMap<&'static str, String> {
     static DOCS: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
     DOCS.get_or_init(|| {
         let mut docs = HashMap::new();
@@ -235,7 +235,7 @@ pub fn module_docs() -> &'static HashMap<&'static str, String> {
 /// website, and an editor would render it as a stray rule followed by
 /// raw `title: "…"` text. A page without one, or with an unterminated
 /// one, is returned unchanged.
-pub fn strip_frontmatter(md: &str) -> &str {
+pub(crate) fn strip_frontmatter(md: &str) -> &str {
     let Some(rest) = md.strip_prefix("---\n") else {
         return md;
     };
@@ -399,7 +399,7 @@ pub fn signature_block(module: &str, name: &str) -> Option<String> {
 /// declarations (without `pub`), its opaque types, then each function
 /// and constant in the order of their names, as its signature block
 /// writes it; a row of a cargo feature beyond its module's says so.
-pub fn module_lines(module: &Module) -> Vec<String> {
+pub(crate) fn module_lines(module: &Module) -> Vec<String> {
     let mut lines = declarations(module.types);
     lines.extend(declarations(module.traits));
     lines.extend((module.opaque.iter()).map(|(name, arity)| opaque_line(name, *arity)));
@@ -417,7 +417,7 @@ pub fn module_lines(module: &Module) -> Vec<String> {
 
 /// The lines that state the prelude: its types, its opaque types and
 /// its functions, as [`module_lines`] writes a module's.
-pub fn prelude_lines() -> Vec<String> {
+pub(crate) fn prelude_lines() -> Vec<String> {
     let mut lines = declarations(super::PRELUDE_TYPES);
     lines.extend(
         (super::PRELUDE_OPAQUE.iter())
@@ -495,7 +495,7 @@ fn lines_of(qualified: &str) -> Option<(Vec<String>, &str)> {
 /// The declaration of the builtin type `name` as [`module_lines`]
 /// writes it: a type of the prelude by its bare name (`Option`), a
 /// module's with its module (`json.Value`, `task.Handle`).
-pub fn type_line(name: &str) -> Option<String> {
+pub(crate) fn type_line(name: &str) -> Option<String> {
     let (lines, name) = lines_of(name)?;
     declaring(&lines, "type", name).cloned()
 }
@@ -503,7 +503,7 @@ pub fn type_line(name: &str) -> Option<String> {
 /// The declaration of the builtin trait `name`: a trait of a module
 /// as its module states it (`json.Encode`), one of the prelude
 /// (`Display`) as the checker declares it, on one line.
-pub fn trait_line(name: &str) -> Option<String> {
+pub(crate) fn trait_line(name: &str) -> Option<String> {
     if name.contains('.') {
         let (lines, name) = lines_of(name)?;
         return declaring(&lines, "trait", name).cloned();
@@ -515,7 +515,7 @@ pub fn trait_line(name: &str) -> Option<String> {
 
 /// What the documentation of the prelude's trait `name` says first: its
 /// first sentence.
-pub fn prelude_trait_summary(name: &str) -> Option<String> {
+pub(crate) fn prelude_trait_summary(name: &str) -> Option<String> {
     let decl = (crate::typechecker::builtin_trait_decls().into_iter())
         .find(|t| crate::intern::resolve(t.name) == name)?;
     summary(decl.doc.as_deref()?)
@@ -572,7 +572,7 @@ fn trait_text(decl: &crate::ast::TraitDecl) -> String {
 /// by its bare name (`Some`), a module's with its module
 /// (`channel.Message`) or with its module and its enum
 /// (`time.Weekday.Monday`).
-pub fn variant_enum(name: &str) -> Option<(String, String)> {
+pub(crate) fn variant_enum(name: &str) -> Option<(String, String)> {
     let registry = registry();
     let (module, ty, variant) = match name.split('.').collect::<Vec<_>>()[..] {
         [variant] => (None, None, variant),
@@ -596,14 +596,14 @@ pub fn variant_enum(name: &str) -> Option<(String, String)> {
 
 /// The summary of the builtin type `name` (`json.Value`): the first
 /// sentence of what documents it ([`type_docs`]).
-pub fn type_summary(name: &str) -> Option<String> {
+pub(crate) fn type_summary(name: &str) -> Option<String> {
     summary(type_docs().get(name)?)
 }
 
 /// The summary of the variant `variant` of the builtin enum `ty`
 /// (`io.IoError`, `NotFound`) where its docs are a table of the
 /// variants (an error enum's): the last cell of its row.
-pub fn variant_meaning(ty: &str, variant: &str) -> Option<String> {
+pub(crate) fn variant_meaning(ty: &str, variant: &str) -> Option<String> {
     let body = type_docs().get(ty)?;
     body.lines().find_map(|line| {
         let cells = table_cells(line)?;
@@ -616,7 +616,7 @@ pub fn variant_meaning(ty: &str, variant: &str) -> Option<String> {
 /// The summary of `key` from its own section of a reference page
 /// (`## \`json.Value\``, `## \`Some\``): the first sentence below the
 /// section's signature block.
-pub fn section_summary(key: &str) -> Option<String> {
+pub(crate) fn section_summary(key: &str) -> Option<String> {
     (pages().into_iter())
         .flat_map(|(_, page)| iter_sections(page))
         .find(|(keys, _)| keys.iter().any(|k| k == key))
@@ -886,7 +886,7 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
 
 /// The line of the language card (`docs/language-card.md`) after which
 /// [`render_card`] writes the card from the registry.
-pub const CARD_MARKER: &str = "<!-- Generated from the builtin registry from here on: \
+pub(crate) const CARD_MARKER: &str = "<!-- Generated from the builtin registry from here on: \
      SILT_BLESS=1 cargo nextest run --test meta language_card -->";
 
 /// The language card `card` with its standard library written from the

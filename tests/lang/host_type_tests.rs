@@ -5,11 +5,11 @@
 //! boundary checked: a host function's result against the type its
 //! signature returns, the fields and payloads too.
 
-use silt::testing::diagnostic::{Code, Diagnostic};
-use silt::testing::{check_with_host, run_with_host};
 use silt::session::{HostCall, HostModule};
+use silt::testing::diagnostic::{Code, Diagnostic};
 use silt::testing::value::Value;
 use silt::testing::vm::VmError;
+use silt::testing::{check_with_host, run_with_host};
 
 /// The field `name` of the record `value`, as an `Int`.
 fn int_field(value: &Value, name: &str) -> Result<i64, VmError> {
@@ -610,7 +610,10 @@ fn a_field_of_a_generic_host_type_shows_a_variable() {
             Ok(Value::string("s"))
         })
         .function("fn right(e: Either(a, b)) -> Option(b)", |_: &HostCall| {
-            Ok(Value::variant(silt::testing::typeinfo::bv::SOME, [Value::Int(1)]))
+            Ok(Value::variant(
+                silt::testing::typeinfo::bv::SOME,
+                [Value::Int(1)],
+            ))
         })
         .function("fn same(b: Box(a)) -> a", |call: &HostCall| {
             match &call.args[0] {
@@ -696,7 +699,10 @@ fn a_prelude_name_is_no_host_type_and_the_check_reads_the_prelude_type() {
     let source = "import h\nimport host\nfn main() { host.give(h.f()) }";
     assert_eq!(
         run(source, host),
-        Ok(Value::variant(silt::testing::typeinfo::bv::SOME, [Value::Int(5)]))
+        Ok(Value::variant(
+            silt::testing::typeinfo::bv::SOME,
+            [Value::Int(5)]
+        ))
     );
 }
 

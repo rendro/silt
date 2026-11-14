@@ -12,7 +12,7 @@ use super::token::{Fired, Outcome, Resumed, TaskId, Token, Wake, is_set};
 use crate::value::Value;
 
 /// One thing a wait can end on.
-pub enum Arm {
+pub(crate) enum Arm {
     /// A value from the channel, or its close.
     Recv(Arc<Channel>),
     /// The channel takes the value, or is closed.
@@ -44,7 +44,7 @@ impl Arm {
 /// with one arm; a `select` has several; a sleep has none and a
 /// deadline. With no arm and no deadline the wait ends only by a
 /// cancel.
-pub struct Wait {
+pub(crate) struct Wait {
     pub arms: Vec<Arm>,
     /// A reading of the clock's monotonic time (see
     /// [`Timer::deadline_after`]).
@@ -79,7 +79,7 @@ pub struct Wait {
 }
 
 impl Wait {
-    pub fn new(arms: Vec<Arm>) -> Wait {
+    pub(crate) fn new(arms: Vec<Arm>) -> Wait {
         Wait {
             arms,
             deadline: None,
@@ -94,7 +94,7 @@ impl Wait {
     /// waits for ends by that time itself. The wait of `task.deadline`
     /// for the task of its function is one: that task's time is no
     /// later than the caller's.
-    pub fn unbounded(self) -> Wait {
+    pub(crate) fn unbounded(self) -> Wait {
         Wait {
             bounded: false,
             ..self
@@ -103,7 +103,7 @@ impl Wait {
 
     /// The wait of a task whose time is over at `task_deadline`,
     /// unless the wait is [unbounded](Wait::unbounded).
-    pub fn task_deadline(self, task_deadline: Option<Duration>) -> Wait {
+    pub(crate) fn task_deadline(self, task_deadline: Option<Duration>) -> Wait {
         match self.bounded {
             true => Wait {
                 task_deadline,
@@ -113,22 +113,22 @@ impl Wait {
         }
     }
 
-    pub fn deadline(self, deadline: Option<Duration>) -> Wait {
+    pub(crate) fn deadline(self, deadline: Option<Duration>) -> Wait {
         Wait { deadline, ..self }
     }
 
-    pub fn first(self, first: usize) -> Wait {
+    pub(crate) fn first(self, first: usize) -> Wait {
         Wait { first, ..self }
     }
 
-    pub fn cancel(self, cancel: Option<Arc<AtomicBool>>) -> Wait {
+    pub(crate) fn cancel(self, cancel: Option<Arc<AtomicBool>>) -> Wait {
         Wait { cancel, ..self }
     }
 }
 
 /// An arm without its value: what a parked task is queued on.
 #[derive(Clone)]
-pub enum Source {
+pub(crate) enum Source {
     Recv(Arc<Channel>),
     Send(Arc<Channel>),
     Cell(Arc<dyn Completion>),
@@ -142,7 +142,7 @@ pub enum Source {
 
 impl Source {
     /// Whether this is a wait on a channel that a timer will close.
-    pub fn closes_by_timer(&self) -> bool {
+    pub(crate) fn closes_by_timer(&self) -> bool {
         self.channel()
             .is_some_and(|channel| channel.closes_by_timer())
     }
@@ -159,7 +159,7 @@ impl Source {
 }
 
 /// The result of [`park`].
-pub enum Park {
+pub(crate) enum Park {
     /// The wait ended at once: the task goes on.
     Ready(Fired),
     /// The task is on the queues of its arms.
@@ -193,7 +193,7 @@ pub enum Park {
 /// done and a cell that is complete is found so, and if none of those
 /// ends the wait the task is not queued: [`Park::Cancelled`],
 /// [`Park::Expired`]. The two differ in the name of the refusal only.
-pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
+pub(crate) fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
     let Wait {
         mut arms,
         deadline,
@@ -484,7 +484,7 @@ fn park_one(
 /// A task's place on the queues of its wait. The task owns it while it
 /// waits; dropping it takes the task off every queue and out of the
 /// timer.
-pub struct Parked {
+pub(crate) struct Parked {
     token: Arc<Token>,
     sources: Vec<Source>,
     timer: Option<(Arc<Timer>, TimerId)>,
@@ -493,17 +493,17 @@ pub struct Parked {
 impl Parked {
     /// The wait's token: what a cancel of the task needs
     /// ([`Token::cancel`]).
-    pub fn token(&self) -> &Arc<Token> {
+    pub(crate) fn token(&self) -> &Arc<Token> {
         &self.token
     }
 
     /// What the task is queued on, in the order of the wait's arms.
-    pub fn sources(&self) -> &[Source] {
+    pub(crate) fn sources(&self) -> &[Source] {
         &self.sources
     }
 
     /// The wait's deadline.
-    pub fn deadline(&self) -> Option<Duration> {
+    pub(crate) fn deadline(&self) -> Option<Duration> {
         self.timer.as_ref().map(|(_, id)| id.deadline())
     }
 
@@ -515,13 +515,13 @@ impl Parked {
     /// The caller has already put the task where a wake finds it and
     /// counted it as not runnable: the wake can come before `commit`
     /// returns.
-    pub fn commit(&self) -> bool {
+    pub(crate) fn commit(&self) -> bool {
         self.token.commit()
     }
 
     /// How the wait ended. While it is still open the `Parked` comes
     /// back.
-    pub fn finish(self) -> Result<Resumed, Parked> {
+    pub(crate) fn finish(self) -> Result<Resumed, Parked> {
         match self.token.take() {
             Some(resumed) => Ok(resumed),
             None => Err(self),

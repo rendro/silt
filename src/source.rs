@@ -311,7 +311,7 @@ pub fn canonical_path(path: &Path) -> PathBuf {
 /// existing ancestor made canonical, with the rest of the path appended
 /// as given. Two spellings of one place (on Windows a short `RUNNER~1`
 /// name and its long form, a verbatim prefix or none) come out the same.
-pub fn canonical_path_lenient(path: &Path) -> PathBuf {
+pub(crate) fn canonical_path_lenient(path: &Path) -> PathBuf {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -343,7 +343,7 @@ pub fn canonical_path_lenient(path: &Path) -> PathBuf {
 /// `path` without the `\\?\` (verbatim) prefix of a Windows path, which
 /// no user writes: `\\?\C:\x` is `C:\x`, `\\?\UNC\server\share` is
 /// `\\server\share`. Any other path is returned as it is.
-pub fn without_verbatim_prefix(path: &Path) -> PathBuf {
+pub(crate) fn without_verbatim_prefix(path: &Path) -> PathBuf {
     let text = path.to_string_lossy();
     if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
         PathBuf::from(format!(r"\\{unc}"))

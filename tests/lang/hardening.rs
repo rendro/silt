@@ -11,7 +11,8 @@ use silt::testing::value::Value;
 fn test_float_ord_consistency() {
     // Verify that Value::Float ordering is consistent with equality.
     // Two equal floats must compare as Equal.
-    let float = |f: f64| Value::Float(silt::testing::value::Float::new(f).expect("a finite number"));
+    let float =
+        |f: f64| Value::Float(silt::testing::value::Float::new(f).expect("a finite number"));
     let a = float(1.5);
     let b = float(1.5);
     assert_eq!(a, b);

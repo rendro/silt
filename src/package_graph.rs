@@ -115,12 +115,12 @@ pub struct PackageGraph {
 }
 
 impl PackageGraph {
-    pub fn package(&self, id: PackageId) -> &PackageNode {
+    pub(crate) fn package(&self, id: PackageId) -> &PackageNode {
         &self.packages[id.0 as usize]
     }
 
     /// The package that `key` in `from`'s `[dependencies]` resolves to.
-    pub fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId> {
+    pub(crate) fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId> {
         self.package(from)
             .deps
             .iter()

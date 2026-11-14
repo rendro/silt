@@ -527,7 +527,7 @@ impl<'src> Parser<'src> {
 
     /// Parse a host module's declarations: everything in one is public,
     /// and an opaque type is written `opaque type` (docs/ffi.md).
-    pub fn for_host(mut self) -> Self {
+    pub(crate) fn for_host(mut self) -> Self {
         self.host = true;
         self
     }
@@ -544,7 +544,7 @@ impl<'src> Parser<'src> {
     /// signature: the text is a host module's signatures, or the builtin
     /// registry. Anywhere else only a trait declaration's methods may
     /// leave out the body.
-    pub fn with_signatures(mut self) -> Self {
+    pub(crate) fn with_signatures(mut self) -> Self {
         self.signatures = true;
         self
     }
@@ -564,7 +564,7 @@ impl<'src> Parser<'src> {
     /// `wrapper` (a name no program can write), whose value the REPL
     /// shows. Either way the entry's top-level items are statements, so
     /// two on one line get "each statement must start on its own line".
-    pub fn parse_cell(&mut self, wrapper: Symbol) -> (Program, Vec<Diagnostic>) {
+    pub(crate) fn parse_cell(&mut self, wrapper: Symbol) -> (Program, Vec<Diagnostic>) {
         self.top_level_item = "statement";
         if matches!(
             self.peek(),
@@ -1164,7 +1164,7 @@ impl<'src> Parser<'src> {
     /// Whether the program that was parsed is not all of the text: a
     /// declaration failed and was skipped (it is missing, or a recovery
     /// stub stands in for it).
-    pub fn skipped_a_declaration(&self) -> bool {
+    pub(crate) fn skipped_a_declaration(&self) -> bool {
         self.skipped
     }
 
@@ -1172,7 +1172,7 @@ impl<'src> Parser<'src> {
     /// caller keeps: its tokens are lent to the parser and given back,
     /// not copied (the formatter holds the tokens of a file beside its
     /// tree).
-    pub fn parse_lent(lexed: &mut Lexed, source: &'src str) -> Result<Program> {
+    pub(crate) fn parse_lent(lexed: &mut Lexed, source: &'src str) -> Result<Program> {
         let tokens = std::mem::take(&mut lexed.tokens);
         let mut parser = Parser::new(
             Lexed {

@@ -182,7 +182,7 @@ impl Lockfile {
     /// the same versions and sources. Checksums are not compared: a git
     /// checkout's is compared when it is loaded, and content drift in a
     /// path dep is what `silt update` is for.
-    pub fn same_pins(&self, other: &Lockfile) -> bool {
+    pub(crate) fn same_pins(&self, other: &Lockfile) -> bool {
         let key = |lock: &Lockfile| {
             let mut entries: Vec<(String, String, LockedSource)> = lock
                 .packages
@@ -199,7 +199,7 @@ impl Lockfile {
     /// directory it names from `base` (the directory of the lock):
     /// `same_pins` but for how a path is written (an old lockfile that
     /// wrote it absolute).
-    pub fn same_places(&self, other: &Lockfile, base: &Path) -> bool {
+    pub(crate) fn same_places(&self, other: &Lockfile, base: &Path) -> bool {
         let sorted = |lock: &Lockfile| {
             let mut entries: Vec<LockedPackage> = lock.packages.clone();
             entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -216,7 +216,7 @@ impl Lockfile {
 impl LockedSource {
     /// Whether `self` and `other` are one source: a path entry by the
     /// directory it names from `base`, however it is written.
-    pub fn same_place(&self, other: &LockedSource, base: &Path) -> bool {
+    pub(crate) fn same_place(&self, other: &LockedSource, base: &Path) -> bool {
         match (self, other) {
             (LockedSource::Path { path: a }, LockedSource::Path { path: b }) => {
                 normalize_path(&base.join(a)) == normalize_path(&base.join(b))
@@ -331,7 +331,7 @@ pub fn normalize_path(p: &Path) -> PathBuf {
 /// stores it (`silt.toml`, `silt.lock`) reads the same everywhere;
 /// `None` when there is no relative form: one of the two is absolute
 /// and the other is not, or they are on two drives.
-pub fn relative_path(base: &Path, target: &Path) -> Option<String> {
+pub(crate) fn relative_path(base: &Path, target: &Path) -> Option<String> {
     use std::path::Component;
     if base.is_absolute() != target.is_absolute() {
         return None;

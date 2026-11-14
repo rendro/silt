@@ -8,7 +8,7 @@ pub(crate) mod decode;
 mod dicts;
 pub(crate) mod dispatch;
 mod encode;
-pub mod error;
+pub(crate) mod error;
 mod io;
 mod io_op;
 mod iter;
@@ -18,7 +18,8 @@ pub(crate) mod show;
 
 pub(crate) use decode::Source;
 pub use error::VmError;
-pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
+pub use io::SystemClock;
+pub use io::{Buffer, Clock, HostIo, Output};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
 pub(crate) use io::{
     PIECE, Printed, Stream, StreamEnd, drain_process_output, unraised_process_stdout_failure,
@@ -26,7 +27,7 @@ pub(crate) use io::{
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
-pub use runtime::Runtime;
+pub(crate) use runtime::Runtime;
 pub(crate) use runtime::{CallFrame, Frame, Native, Step};
 
 /// Test-only: what a test is told of the writes of a connection that

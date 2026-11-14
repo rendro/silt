@@ -74,14 +74,14 @@ fn clear_screen_seq_for(no_color: Option<&std::ffi::OsStr>, terminal: bool) -> &
 /// command whose entries are discovered in a directory (`silt test`), the
 /// directory and the entries found there.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct WatchSet {
+pub(crate) struct WatchSet {
     files: BTreeMap<PathBuf, Option<u64>>,
     discovery: Option<(PathBuf, BTreeSet<PathBuf>)>,
 }
 
 impl WatchSet {
     /// The files `paths`, each with what it holds now.
-    pub fn of(paths: impl IntoIterator<Item = PathBuf>) -> WatchSet {
+    pub(crate) fn of(paths: impl IntoIterator<Item = PathBuf>) -> WatchSet {
         WatchSet {
             files: paths
                 .into_iter()
@@ -97,7 +97,7 @@ impl WatchSet {
     /// The set, with `entries` discovered in the directory `dir`: a
     /// `.silt` file created or removed under it is looked at, and when
     /// the entries found there are no longer `entries`, that is a change.
-    pub fn discovered_in(mut self, dir: PathBuf, entries: BTreeSet<PathBuf>) -> WatchSet {
+    pub(crate) fn discovered_in(mut self, dir: PathBuf, entries: BTreeSet<PathBuf>) -> WatchSet {
         self.discovery = Some((dir, entries));
         self
     }
@@ -108,7 +108,7 @@ impl WatchSet {
     /// the policy of the command watched: a lockfile the command would
     /// rewrite is rewritten here, before the files are read, so the
     /// command's own rewrite is not a change.
-    pub fn for_entries(entries: &[PathBuf], lock: LockPolicy) -> WatchSet {
+    pub(crate) fn for_entries(entries: &[PathBuf], lock: LockPolicy) -> WatchSet {
         let mut paths = BTreeSet::new();
         for entry in entries {
             let entry = absolute(entry);
@@ -147,13 +147,13 @@ impl WatchSet {
     }
 
     /// The files of the set.
-    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+    pub(crate) fn paths(&self) -> impl Iterator<Item = &Path> {
         self.files.keys().map(PathBuf::as_path)
     }
 
     /// Whether an event for `path` is to be looked at: a file of the set,
     /// or a `.silt` file under the discovery directory.
-    pub fn concerns(&self, path: &Path) -> bool {
+    pub(crate) fn concerns(&self, path: &Path) -> bool {
         self.files.contains_key(path)
             || self.discovery.as_ref().is_some_and(|(dir, _)| {
                 path.starts_with(dir) && path.extension().is_some_and(|ext| ext == "silt")
@@ -162,7 +162,7 @@ impl WatchSet {
 
     /// Whether a file of the set holds something else now than it did,
     /// or the entries discovered now (`entries()`) are others.
-    pub fn changed(&self, entries: impl FnOnce() -> BTreeSet<PathBuf>) -> bool {
+    pub(crate) fn changed(&self, entries: impl FnOnce() -> BTreeSet<PathBuf>) -> bool {
         self.files
             .iter()
             .any(|(path, content)| content_hash(path) != *content)
@@ -223,7 +223,7 @@ fn absolute(path: &Path) -> PathBuf {
 }
 
 /// The command a watcher runs and stops.
-pub trait Runner {
+pub(crate) trait Runner {
     /// Start the command.
     fn start(&mut self);
     /// Whether the command started last has finished.
@@ -322,7 +322,7 @@ impl Runner for ChildRunner {
 }
 
 /// What a watcher watches: the programs of a command.
-pub struct Target {
+pub(crate) struct Target {
     /// The entry files of the programs, found again before each run.
     pub entries: Box<dyn Fn() -> Vec<PathBuf>>,
     /// The directory the entries are discovered in, for `silt test`
@@ -352,7 +352,7 @@ impl Target {
 
 /// Run `silt <args>` and run it again on every change to the files of
 /// the programs of `target`.
-pub fn watch_and_rerun(target: Target, args: &[String]) {
+pub(crate) fn watch_and_rerun(target: Target, args: &[String]) {
     let (tx, rx) = mpsc::channel();
     // Creating the OS watcher can fail in restrictive environments: sandboxes
     // where inotify is disabled, read-only filesystems, containers that cap
@@ -433,7 +433,7 @@ pub fn watch_and_rerun(target: Target, args: &[String]) {
 /// if the set changed (`entries` gives the entries discovered now): the
 /// command is stopped and run again. When `events` is closed, the
 /// command is stopped and the loop returns.
-pub fn run(
+pub(crate) fn run(
     events: &Receiver<Vec<PathBuf>>,
     mut files: impl FnMut() -> WatchSet,
     mut entries: impl FnMut() -> BTreeSet<PathBuf>,

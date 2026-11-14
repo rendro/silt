@@ -33,7 +33,7 @@ pub mod decoding;
 pub mod docs;
 mod modules;
 
-pub use decoding::Decoding;
+pub(crate) use decoding::Decoding;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -50,7 +50,7 @@ use crate::vm::{Step, Vm, VmError};
 
 /// The text of a variant of a module's error enum, by the variant's
 /// name and its fields: `None` if they are no variant of it.
-pub type ErrorText = fn(&str, &[Value]) -> Option<String>;
+pub(crate) type ErrorText = fn(&str, &[Value]) -> Option<String>;
 
 /// What a row is at run time.
 pub(crate) enum Body {
@@ -115,13 +115,13 @@ pub struct Row {
 }
 
 impl Row {
-    pub fn is_constant(&self) -> bool {
+    pub(crate) fn is_constant(&self) -> bool {
         !self.signature.starts_with("fn ")
     }
 
     /// The number of values a call passes: the dictionaries, then the
     /// arguments.
-    pub fn arity(&self) -> usize {
+    pub(crate) fn arity(&self) -> usize {
         self.dicts + self.params.len()
     }
 
@@ -129,7 +129,7 @@ impl Row {
     /// -> String`; with the module `""`, as the prelude's, `fn
     /// println(value: a) -> () where a: Display`; and where each
     /// parameter is in it (byte offsets). `None` for a constant.
-    pub fn qualified_signature(&self, module: &str) -> Option<(String, Vec<[u32; 2]>)> {
+    pub(crate) fn qualified_signature(&self, module: &str) -> Option<(String, Vec<[u32; 2]>)> {
         let rest = self.signature.strip_prefix("fn ")?;
         let label = match module {
             "" => format!("fn {rest}"),
@@ -217,7 +217,7 @@ impl Row {
 }
 
 /// A row as a `module!` lists it, before its module is known.
-pub struct RowSpec {
+pub(crate) struct RowSpec {
     signature: &'static str,
     summary: &'static str,
     /// The typed body of a function row that has one.
@@ -329,7 +329,7 @@ pub struct TypeDecl {
 
 /// The builtin traits a declared type derives when its module says
 /// nothing else.
-pub const DERIVED: &[&str] = &["Equal", "Compare", "Hash", "Display"];
+pub(crate) const DERIVED: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 pub enum TypeShape {
     /// The variants in declaration order, each with its number of
@@ -341,7 +341,7 @@ pub enum TypeShape {
 
 impl TypeDecl {
     /// The variants of an enum; none for a record.
-    pub fn variants(&self) -> &[(&'static str, usize)] {
+    pub(crate) fn variants(&self) -> &[(&'static str, usize)] {
         match &self.shape {
             TypeShape::Enum(variants) => variants,
             TypeShape::Record(_) => &[],
@@ -394,18 +394,18 @@ pub struct Module {
 
 impl Module {
     /// The rows whose features are built.
-    pub fn enabled_rows(&self) -> impl Iterator<Item = &Row> {
+    pub(crate) fn enabled_rows(&self) -> impl Iterator<Item = &Row> {
         self.rows.iter().filter(|row| row.enabled)
     }
 
     /// The row named `name`, if its features are built.
-    pub fn row(&self, name: &str) -> Option<&Row> {
+    pub(crate) fn row(&self, name: &str) -> Option<&Row> {
         self.enabled_rows().find(|row| row.name == name)
     }
 
     /// The module as the checker reads it: its type declarations, then
     /// the header of each row whose features are built.
-    pub fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         let mut text = String::from(self.types);
         for row in self.enabled_rows() {
             text.push_str(&row.header());
@@ -697,7 +697,7 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
 
 /// The prelude's opaque types: `Bytes`, and `TypeOf(a)`, the type of a
 /// type used as a value (`Int`, a `type a` parameter).
-pub const PRELUDE_OPAQUE: &[(&str, usize)] = &[("Bytes", 0), (crate::defs::TYPE_OF, 1)];
+pub(crate) const PRELUDE_OPAQUE: &[(&str, usize)] = &[("Bytes", 0), (crate::defs::TYPE_OF, 1)];
 
 /// `Option` and `Result` derive no `Compare`.
 const PRELUDE_DERIVES: &[(&str, &[&str])] = &[
@@ -706,7 +706,7 @@ const PRELUDE_DERIVES: &[(&str, &[&str])] = &[
 ];
 
 /// The enums of the prelude, declared like a module's types.
-pub const PRELUDE_TYPES: &str = "\
+pub(crate) const PRELUDE_TYPES: &str = "\
 pub type Result(a, e) { Ok(a), Err(e) }
 pub type Option(a) { Some(a), None }
 ";
@@ -753,13 +753,13 @@ impl Registry {
 
     /// The method `method` of a built-in impl for the type `ty` that is
     /// no module's function: `List.map2`.
-    pub fn impl_row(&self, ty: &str, method: &str) -> Option<&Row> {
+    pub(crate) fn impl_row(&self, ty: &str, method: &str) -> Option<&Row> {
         (self.impls.iter()).find(|row| row.module == ty && row.name == method)
     }
 
     /// The module whose error enum the type `id` is (`IoError`: `io`),
     /// found by the type's id; `None` for any other type.
-    pub fn error_module(&self, id: crate::defs::TypeId) -> Option<&Module> {
+    pub(crate) fn error_module(&self, id: crate::defs::TypeId) -> Option<&Module> {
         // Each builtin type's module, if the type is its error enum,
         // in the order of the builtin types' ids.
         static BY_TYPE: OnceLock<Vec<Option<usize>>> = OnceLock::new();
@@ -787,7 +787,7 @@ impl Registry {
 
     /// The prelude's functions as the checker reads them: each row's
     /// header.
-    pub fn prelude_text(&self) -> String {
+    pub(crate) fn prelude_text(&self) -> String {
         self.prelude.iter().map(|row| row.header() + "\n").collect()
     }
 
@@ -797,13 +797,13 @@ impl Registry {
     }
 
     /// The row `module.function`, if its features are built.
-    pub fn row(&self, module: &str, function: &str) -> Option<&Row> {
+    pub(crate) fn row(&self, module: &str, function: &str) -> Option<&Row> {
         self.module(module)?.row(function)
     }
 
     /// The number of type arguments of the opaque type `name` (of the
     /// prelude or of a module, built or not); `None` for any other name.
-    pub fn opaque_arity(&self, name: &str) -> Option<usize> {
+    pub(crate) fn opaque_arity(&self, name: &str) -> Option<usize> {
         PRELUDE_OPAQUE
             .iter()
             .chain(self.modules.iter().flat_map(|m| m.opaque))
@@ -812,13 +812,13 @@ impl Registry {
     }
 
     /// The modules whose feature is built.
-    pub fn enabled_modules(&self) -> impl Iterator<Item = &Module> {
+    pub(crate) fn enabled_modules(&self) -> impl Iterator<Item = &Module> {
         self.modules.iter().filter(|m| m.enabled)
     }
 
     /// Every declared type with the module that declares it (`None` for
     /// the prelude), built or not.
-    pub fn types(&self) -> impl Iterator<Item = (Option<&'static str>, &TypeDecl)> {
+    pub(crate) fn types(&self) -> impl Iterator<Item = (Option<&'static str>, &TypeDecl)> {
         self.prelude_types.iter().map(|ty| (None, ty)).chain(
             self.modules
                 .iter()

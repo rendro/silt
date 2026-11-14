@@ -7,10 +7,10 @@
 //! its depth does not grow with the document's.
 
 /// Columns per level of [`Doc::Nest`].
-pub const INDENT: usize = 2;
+pub(crate) const INDENT: usize = 2;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Doc {
+pub(crate) enum Doc {
     Nil,
     /// Text as it is. A line break inside it (a multi-line string
     /// literal) is written as it is, without indentation. (A keyword or
@@ -56,24 +56,24 @@ pub enum Doc {
 }
 
 impl Doc {
-    pub fn text(text: impl Into<std::borrow::Cow<'static, str>>) -> Doc {
+    pub(crate) fn text(text: impl Into<std::borrow::Cow<'static, str>>) -> Doc {
         Doc::Text(text.into())
     }
 
-    pub fn concat(parts: Vec<Doc>) -> Doc {
+    pub(crate) fn concat(parts: Vec<Doc>) -> Doc {
         Doc::Concat(parts)
     }
 
-    pub fn nest(doc: Doc) -> Doc {
+    pub(crate) fn nest(doc: Doc) -> Doc {
         Doc::Nest(Box::new(doc))
     }
 
-    pub fn group(doc: Doc) -> Doc {
+    pub(crate) fn group(doc: Doc) -> Doc {
         let forced = doc.forces_break();
         Doc::Group(Box::new(doc), forced)
     }
 
-    pub fn if_break(broken: Doc, flat: Doc) -> Doc {
+    pub(crate) fn if_break(broken: Doc, flat: Doc) -> Doc {
         Doc::IfBreak(Box::new(broken), Box::new(flat))
     }
 
@@ -81,7 +81,7 @@ impl Doc {
     /// an `IfBreak`: a group around it cannot be on one line. A nested
     /// group answers from its flag, so building a document looks at each
     /// node a bounded number of times.
-    pub fn forces_break(&self) -> bool {
+    pub(crate) fn forces_break(&self) -> bool {
         let mut stack = vec![self];
         while let Some(doc) = stack.pop() {
             match doc {
@@ -106,7 +106,7 @@ impl Doc {
         false
     }
 
-    pub fn is_nil(&self) -> bool {
+    pub(crate) fn is_nil(&self) -> bool {
         match self {
             Doc::Nil => true,
             Doc::Concat(parts) => parts.iter().all(Doc::is_nil),
@@ -152,7 +152,7 @@ struct Renderer {
 
 /// Lay `doc` out in `width` columns. The result ends with one line break
 /// unless it is empty.
-pub fn render(doc: &Doc, width: usize) -> String {
+pub(crate) fn render(doc: &Doc, width: usize) -> String {
     let mut r = Renderer {
         width,
         out: String::new(),

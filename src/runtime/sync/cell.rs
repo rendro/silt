@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use super::queue::{Waiter, Wakes};
 use super::token::{Fired, Outcome, Token, Wake};
 
-pub struct Cell<T> {
+pub(crate) struct Cell<T> {
     /// What the cell is, for a report of who waits for it.
     label: Option<String>,
     value: OnceLock<T>,
@@ -29,12 +29,12 @@ impl<T> Default for Cell<T> {
 }
 
 impl<T> Cell<T> {
-    pub fn new() -> Arc<Cell<T>> {
+    pub(crate) fn new() -> Arc<Cell<T>> {
         Arc::new(Cell::default())
     }
 
     /// A cell that says what it is: `task <handle:3>`.
-    pub fn labelled(label: String) -> Arc<Cell<T>> {
+    pub(crate) fn labelled(label: String) -> Arc<Cell<T>> {
         Arc::new(Cell {
             label: Some(label),
             ..Cell::default()
@@ -43,7 +43,7 @@ impl<T> Cell<T> {
 
     /// Set the value and wake every waiter. When the cell is already
     /// complete the first value stands and `value` comes back.
-    pub fn complete(&self, value: T, wake: &dyn Wake) -> Result<(), T> {
+    pub(crate) fn complete(&self, value: T, wake: &dyn Wake) -> Result<(), T> {
         self.value.set(value)?;
         let waiters = std::mem::take(&mut *self.waiters.lock());
         let mut wakes = Wakes::default();
@@ -57,7 +57,7 @@ impl<T> Cell<T> {
     }
 
     /// The value, once the cell is complete.
-    pub fn get(&self) -> Option<&T> {
+    pub(crate) fn get(&self) -> Option<&T> {
         self.value.get()
     }
 }

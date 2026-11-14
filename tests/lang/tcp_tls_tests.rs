@@ -253,7 +253,9 @@ fn main() {{
     {
         use std::time::{Duration, Instant};
         let limit = Instant::now() + Duration::from_secs(10);
-        while silt::testing::vm::io_pool_live_threads(&vm) != silt::testing::vm::io_pool_threads(&vm) {
+        while silt::testing::vm::io_pool_live_threads(&vm)
+            != silt::testing::vm::io_pool_threads(&vm)
+        {
             assert!(
                 Instant::now() < limit,
                 "the thread of the given-up handshake is still there"

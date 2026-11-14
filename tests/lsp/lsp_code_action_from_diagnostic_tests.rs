@@ -147,9 +147,10 @@ fn apply_edits(source: &str, edits: &Value) -> String {
 
 /// Whether `source` lexes and parses.
 fn parses(source: &str) -> bool {
-    let Ok(tokens) = silt::testing::lexer::Lexer::new(silt::testing::source::FileId::default(), source)
-        .tokenize()
-        .checked()
+    let Ok(tokens) =
+        silt::testing::lexer::Lexer::new(silt::testing::source::FileId::default(), source)
+            .tokenize()
+            .checked()
     else {
         return false;
     };

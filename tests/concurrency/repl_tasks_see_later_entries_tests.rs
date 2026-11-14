@@ -727,8 +727,8 @@ fn a_task_that_never_waits_reads_what_an_import_that_failed_once_defines() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_session_sets_no_slot_twice() {
-    use silt::testing::repl::Repl;
     use silt::session::ProjectSetup;
+    use silt::testing::repl::Repl;
 
     let dir = std::env::temp_dir().join(format!("silt_repl_slots_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a directory for the session");

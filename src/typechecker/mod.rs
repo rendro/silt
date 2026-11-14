@@ -23,7 +23,7 @@ mod infer;
 mod inference;
 mod init_order;
 mod json_decode;
-pub mod names;
+pub(crate) mod names;
 mod opaque;
 mod order;
 mod resolve;
@@ -48,19 +48,24 @@ pub(super) use crate::intern::{Symbol, intern, resolve};
 pub(super) use crate::source::Span;
 pub(super) use crate::types::*;
 
-pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
+pub(crate) use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
-pub use builtin_env::*;
-pub use builtin_traits::builtin_trait_decls;
+pub(crate) use builtin_env::*;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use builtin_env::{
+    __builtin_trait_registration_fingerprint, __trait_init_fingerprint_check_program,
+    builtin_type_signatures,
+};
+pub(crate) use builtin_traits::builtin_trait_decls;
 use builtin_traits::*;
 use declare_fns::FnSig;
 use env::TypeEnv;
 use infer::pattern::collect_pattern_vars;
 use solve::{Goal, Origin, Wanted};
 use std::rc::Rc;
-pub use tables::*;
-pub use unify::*;
+pub(crate) use tables::*;
+pub(crate) use unify::*;
 
 /// Names of the builtin traits, which the checker registers itself.
 /// User code cannot redeclare a trait with any of these names — doing
@@ -116,7 +121,7 @@ pub(crate) enum Reading {
 }
 
 #[derive(Clone)]
-pub struct TypeChecker {
+pub(crate) struct TypeChecker {
     /// Accumulated type errors.
     pub errors: Vec<Diagnostic>,
     /// Tracks the types of bindings in the enclosing `loop` (if any),
@@ -808,7 +813,7 @@ impl Default for TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         TypeChecker {
             errors: Vec::new(),
             arm_mismatches: None,
@@ -2133,7 +2138,7 @@ pub struct Signature {
 }
 
 /// What checking one module gives.
-pub struct ModuleCheck {
+pub(crate) struct ModuleCheck {
     /// The module's errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
     /// The inferred type of each top-level value the module binds by a
@@ -2266,7 +2271,7 @@ enum EntryWho {
 }
 
 /// The context a module is checked in, from the session.
-pub struct ModuleContext<'a> {
+pub(crate) struct ModuleContext<'a> {
     /// The module checked.
     pub module: crate::defs::ModuleId,
     /// The package it is of: a help offers an import of a module of the
@@ -2298,7 +2303,7 @@ pub struct ModuleContext<'a> {
 /// session's tables: the module's types, traits and impls join them,
 /// and the scheme of each definition it declares is entered once it is
 /// checked.
-pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
+pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
     let ModuleContext {
         module,
         package,

@@ -24,7 +24,7 @@ pub trait Wake: Send + Sync {
 
 /// How an arm of a wait was completed.
 #[derive(Debug)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     /// A receive arm took this value.
     Received(Value),
     /// A send arm's value was taken by the channel.
@@ -41,7 +41,7 @@ pub enum Outcome {
 
 /// How a wait ended.
 #[derive(Debug)]
-pub enum Fired {
+pub(crate) enum Fired {
     /// The arm at this index of [`Wait::arms`](super::Wait) was
     /// completed.
     Arm(usize, Outcome),
@@ -51,7 +51,7 @@ pub enum Fired {
 
 /// What a task finds when it comes back from a park.
 #[derive(Debug)]
-pub enum Resumed {
+pub(crate) enum Resumed {
     Fired(Fired),
     /// The task was cancelled while it waited. No arm was completed:
     /// it took no value and sent none.

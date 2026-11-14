@@ -85,10 +85,8 @@ fn two_resolvers_do_not_share_aliases() {
 #[test]
 fn lsp_pull_does_not_inherit_other_files_aliases() {
     // First "pull": file with the alias declaration.
-    let errs_first = silt::testing::analyze_str(
-        "type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n",
-    )
-    .1;
+    let errs_first =
+        silt::testing::analyze_str("type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n").1;
     let hard_first: Vec<_> = errs_first
         .into_iter()
         .filter(|e| e.severity == Severity::Error)

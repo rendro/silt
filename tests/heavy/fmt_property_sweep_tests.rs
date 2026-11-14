@@ -110,5 +110,8 @@ fn sixteen_thousand_lines_are_formatted() {
     let once = silt::testing::format::format(file, &source).expect("formatted");
     assert_eq!(once.lines().count(), source.lines().count());
     assert!(once.contains("  let x7999 = add(7999, 7999) -- c7999\n"));
-    assert_eq!(silt::testing::format::format(file, &once).expect("formatted"), once);
+    assert_eq!(
+        silt::testing::format::format(file, &once).expect("formatted"),
+        once
+    );
 }

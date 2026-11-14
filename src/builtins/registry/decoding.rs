@@ -12,15 +12,15 @@ use crate::typeinfo::FieldType;
 
 /// What to do with a type given to a postgres function to decode rows
 /// into that is no record type and no `json.Value`.
-pub const ROW_TYPE_HELP: &str = "declare a record type with a field for each column";
+pub(crate) const ROW_TYPE_HELP: &str = "declare a record type with a field for each column";
 
 /// The part of a type no decoder has: `Option(Option(T))`, whose
 /// `Some(None)` is written as `None` is.
-pub const OPTION_IN_OPTION: &str = "an Option in an Option";
+pub(crate) const OPTION_IN_OPTION: &str = "an Option in an Option";
 
 /// What the compile error says of `json.Value` given to a family that
 /// does not decode it.
-pub const JSON_VALUE_ELSEWHERE: &str = "a type of the json decoders";
+pub(crate) const JSON_VALUE_ELSEWHERE: &str = "a type of the json decoders";
 
 /// A family of decoding builtins: they decode the same field types.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

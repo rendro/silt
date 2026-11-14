@@ -61,10 +61,10 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once};
 use std::time::{Duration, Instant};
 
+use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::testing::builtins::registry::registry;
 use silt::testing::bytecode::{Function, Instr};
 use silt::testing::diagnostic::Code;
-use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::{Buffer, Clock, HostIo, Value, Vm};
 
 /// The builtin modules whose functions stay inside the VM, but for

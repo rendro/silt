@@ -260,7 +260,7 @@ impl Manifest {
 /// compared in canonical form, a path that does not exist (a missing
 /// dependency) by its nearest existing ancestor, so two spellings of one
 /// place (on Windows a short 8.3 name, a verbatim prefix) agree.
-pub fn display_path(path: &Path) -> PathBuf {
+pub(crate) fn display_path(path: &Path) -> PathBuf {
     let Ok(cwd) = std::env::current_dir() else {
         return path.to_path_buf();
     };
@@ -312,7 +312,7 @@ pub fn display_path(path: &Path) -> PathBuf {
 /// row. For such a file the message is returned as one line, with its
 /// line breaks written as `\n`; for every other file it is returned as
 /// the parser wrote it.
-pub fn toml_error_message(message: &str, source: &str) -> String {
+pub(crate) fn toml_error_message(message: &str, source: &str) -> String {
     let value_can_hold_a_line_break =
         source.contains('\\') || source.contains("\"\"\"") || source.contains("'''");
     if value_can_hold_a_line_break {
@@ -345,7 +345,7 @@ fn absolutize(path: &Path) -> PathBuf {
 /// Public so other parts of the binary (notably `silt add`, which has to
 /// validate dep names before mutating the manifest) can apply the same
 /// rule without duplicating the regex.
-pub fn is_silt_identifier(name: &str) -> bool {
+pub(crate) fn is_silt_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -386,7 +386,7 @@ pub fn validate_package_name(name: &str) -> Result<(), String> {
 /// names. Rejecting up front (init / add / Manifest::load) keeps the
 /// failure where the user can act on it instead of surfacing as a
 /// confusing parser diagnostic far from the offending name.
-pub fn is_reserved_keyword(name: &str) -> bool {
+pub(crate) fn is_reserved_keyword(name: &str) -> bool {
     crate::lexer::KEYWORDS.contains(&name) || crate::lexer::KEYWORD_LITERALS.contains(&name)
 }
 
@@ -468,7 +468,7 @@ fn validate_identifier(name: &str) -> Result<(), String> {
 /// The error for a module name that is not one of lowercase letters,
 /// digits and `_`. The name is shown by the display rule
 /// ([`escape_for_display`]): it is a file's name, which can be anybody's.
-pub fn invalid_module_name(name: &str) -> String {
+pub(crate) fn invalid_module_name(name: &str) -> String {
     format!(
         "`{}` is not a valid module name: use lowercase letters, digits and `_`, \
          not starting with a digit",
@@ -478,7 +478,7 @@ pub fn invalid_module_name(name: &str) -> String {
 
 /// The error for a package or dependency name that is not an
 /// identifier of lowercase letters, digits and `_`.
-pub fn invalid_name(name: &str) -> String {
+pub(crate) fn invalid_name(name: &str) -> String {
     format!(
         "`{name}` is not a valid name: use lowercase letters, digits and `_`, \
          not starting with a digit"

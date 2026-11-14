@@ -19,10 +19,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use silt::testing::compile_str;
 use silt::testing::http_wire::{
     BODIES_MAX, BODY_MAX, HEAD_MAX, HEADERS_MAX, REFUSAL_TIME, REQUEST_TIME, TRANSFER_TIME,
 };
-use silt::testing::compile_str;
 use silt::{Buffer, Clock, HostIo, Vm};
 
 /// How long a test waits for what must come before it calls it lost.

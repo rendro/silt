@@ -107,7 +107,7 @@ const MAX_TASKS: usize = 100_000;
 /// On 32-bit targets the address space is the limit (2 to 4 GiB for
 /// everything), so workers get 16 MiB there: 8 times the default, and
 /// 64 workers still fit.
-pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
+pub(crate) const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
     256 * 1024 * 1024
 } else {
     16 * 1024 * 1024
@@ -175,7 +175,7 @@ fn time_slice_setting() -> Result<Option<usize>, String> {
 /// (`SILT_IO_TIMEOUT`, `SILT_TIME_SLICE`), if anything. `silt run` and
 /// `silt test` refuse to start then: a safety setting with a typo would
 /// otherwise be silently not there.
-pub fn settings_error() -> Option<String> {
+pub(crate) fn settings_error() -> Option<String> {
     io_timeout_setting()
         .err()
         .or_else(|| time_slice_setting().err())
@@ -240,7 +240,7 @@ struct Group {
 }
 
 /// The scheduler of one program.
-pub struct Scheduler {
+pub(crate) struct Scheduler {
     inner: Arc<Inner>,
     /// The worker threads, started by the first task.
     workers: Mutex<Option<Vec<thread::JoinHandle<()>>>>,
@@ -550,7 +550,7 @@ impl Scheduler {
     /// Create a new scheduler (does NOT start worker threads yet). Its
     /// deadlines are read on the clock of `io`, and its reports go to
     /// the stderr of `io`.
-    pub fn new(io: HostIo) -> Self {
+    pub(crate) fn new(io: HostIo) -> Self {
         // (A value silt cannot read is refused before the program
         // starts: `settings_error`.)
         let global_io_timeout = io_timeout_setting().ok().flatten();
@@ -664,7 +664,7 @@ impl Scheduler {
     /// While the failures are collected (`collect_unjoined_failures`),
     /// the scheduler keeps none, and this reports nothing: the front
     /// end takes them with `take_unjoined_failures` and reports them.
-    pub fn report_unjoined_failures(&self) -> usize {
+    pub(crate) fn report_unjoined_failures(&self) -> usize {
         report_unjoined_failures(&self.inner)
     }
 
@@ -1222,7 +1222,7 @@ pub(crate) fn unwinding<R>(call: impl FnOnce() -> R) -> R {
 /// internal-error line and the status 101 all together or none of
 /// them. (A stdout whose reader has gone does not kill a process that
 /// is ending so: `no_death_by_a_closed_stdout`.)
-pub fn exit_on_panic() {
+pub(crate) fn exit_on_panic() {
     ITS_PANICS_ARE_SILTS.with(|silts| silts.set(true));
     static HOOKED: Once = Once::new();
     HOOKED.call_once(|| {
@@ -1369,7 +1369,7 @@ fn end_as(how: u8) {
 ///
 /// A panic of silt's own code that comes after this was called writes
 /// nothing, and the process ends with `status` ([`exit_on_panic`]).
-pub fn exit_with_status(status: i32) -> ! {
+pub(crate) fn exit_with_status(status: i32) -> ! {
     end_as(WITH_STATUS);
     std::process::exit(status)
 }
@@ -1392,7 +1392,7 @@ const EXITED: u8 = 2;
 /// program is ignored: the thread that calls it waits for the end. If
 /// the program has called `process.exit` first, the calling thread
 /// waits for that to end the process, and never returns.
-pub fn claim_program_failure() {
+pub(crate) fn claim_program_failure() {
     let first = PROGRAM_END.compare_exchange(OPEN, FAILED, Ordering::SeqCst, Ordering::SeqCst);
     if first == Err(EXITED) {
         loop {
@@ -1482,7 +1482,7 @@ pub(crate) fn with_report_lock<R>(write: impl FnOnce() -> R) -> R {
 /// stderr are: the report of a failed program under `silt run`, which
 /// a closed stderr must not turn into the death of a closed pipe
 /// (status 141).
-pub fn report_on_stderr(text: &str) {
+pub(crate) fn report_on_stderr(text: &str) {
     report(|| {
         let _ = crate::vm::write_stderr(text);
     });
@@ -1507,7 +1507,7 @@ pub fn report_on_stderr(text: &str) {
 /// can run code of the program (a `Display` of its own), and a report
 /// that is held up holds up the lines of a panic, for as long as the
 /// process waits for them.
-pub fn report(write: impl FnOnce()) {
+pub(crate) fn report(write: impl FnOnce()) {
     let lines = PANIC_LINES.lock();
     if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR {
         // (Without the lock: the panic that ends the process writes
@@ -1533,7 +1533,7 @@ pub fn report(write: impl FnOnce()) {
 /// formatter's), or one that was to unwind (`unwinding`). If the
 /// process is already ending nothing is written, and it ends as it
 /// was going to.
-pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
+pub(crate) fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
     end_as(WITH_INTERNAL_ERROR);
     no_death_by_a_closed_stdout();
     // A panic that is writing Rust's lines ends them first, if it does
@@ -3159,7 +3159,7 @@ impl UnjoinedFailure {
     /// stack are the task's; those of a stage that failed with an
     /// earlier stage's failure are its call's: the stage the report
     /// names.
-    pub fn report_error(&self) -> VmError {
+    pub(crate) fn report_error(&self) -> VmError {
         let mut error = self.error.clone();
         if let Some(at) = self.stage_call {
             error.span = Some(at);
@@ -3220,7 +3220,7 @@ pub struct NotShown {
 impl NotShown {
     /// The report of these failures, at the place where the first of
     /// them was spawned.
-    pub fn diagnostic(&self) -> crate::diagnostic::Diagnostic {
+    pub(crate) fn diagnostic(&self) -> crate::diagnostic::Diagnostic {
         let at = self.first_spawned.unwrap_or(crate::source::Span::BUILTIN);
         crate::diagnostic::Diagnostic::error(
             crate::diagnostic::Code::UnjoinedTaskFailure,
@@ -3245,14 +3245,14 @@ fn not_shown_help(count: usize) -> String {
 
 impl UnjoinedFailures {
     /// True if there is nothing to report.
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.failures.is_empty() && self.not_shown.is_empty()
     }
 
     /// The message that reports `count` more failed tasks, which are
     /// not shown. It names no place: which tasks they were is not
     /// told.
-    pub fn not_shown_message(count: usize) -> String {
+    pub(crate) fn not_shown_message(count: usize) -> String {
         let failed = match count {
             1 => "task failed and was",
             _ => "tasks failed and were",

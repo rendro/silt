@@ -106,8 +106,10 @@ const EXPECTED_KEYWORD_LITERALS: &[&str] = &["true", "false"];
 #[test]
 fn lexer_keyword_literals_const_equals_expected_set() {
     // Round-65 LATENT X1 bidirectional lock for KEYWORD_LITERALS.
-    let lexer_set: std::collections::HashSet<&str> =
-        silt::testing::lexer::KEYWORD_LITERALS.iter().copied().collect();
+    let lexer_set: std::collections::HashSet<&str> = silt::testing::lexer::KEYWORD_LITERALS
+        .iter()
+        .copied()
+        .collect();
     let expected_set: std::collections::HashSet<&str> =
         EXPECTED_KEYWORD_LITERALS.iter().copied().collect();
     assert_eq!(

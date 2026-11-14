@@ -25,25 +25,27 @@ mod map_tests;
 #[cfg(test)]
 mod tests;
 
-pub use convert::{
-    FromValue, HostCall, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep,
-    HostTemplates, HostTypes, HostVar, IntoValue, Witness, Witnesses, given_type, witness_type,
+pub use convert::{FromValue, HostCall, IntoValue};
+pub(crate) use convert::{
+    HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep, HostTemplates, HostTypes,
+    HostVar, given_type, witness_type,
 };
 pub(crate) use dates::{Date, Time};
 pub(crate) use deep::drop_held;
 pub use float::Float;
-pub use fmt::{Shown, Written};
+pub(crate) use fmt::Shown;
+pub use list::List;
 #[cfg(feature = "test-hooks")]
 pub use list::copies as list_copies;
-pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+pub(crate) use list::{IntTotal, IntoIter, TooLong};
 pub(crate) use list::{MAX_COLLECTION_LEN, MAX_TEXT_LEN};
 #[cfg(feature = "test-hooks")]
 pub use map::copies as map_copies;
-pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
-pub use obj::{Record, Variant};
-pub use regex::Compiled;
-pub use tuple::Tuple;
-pub use type_of::{dispatch_type_for_value, dispatch_type_name, kind_name};
+pub(crate) use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
+pub(crate) use obj::{Record, Variant};
+pub(crate) use regex::Compiled;
+pub(crate) use tuple::Tuple;
+pub(crate) use type_of::{dispatch_type_for_value, dispatch_type_name, kind_name};
 
 #[derive(Clone)]
 pub enum Value {

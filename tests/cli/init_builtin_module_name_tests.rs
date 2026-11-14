@@ -188,8 +188,11 @@ fn round75_manifest_load_rejects_builtin_package_name() {
         "[package]\nname = \"io\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let err = silt::testing::manifest::Manifest::load(&manifest_path, &mut silt::testing::source::SourceMap::new())
-        .expect_err("Manifest::load must reject builtin-colliding package name `io`");
+    let err = silt::testing::manifest::Manifest::load(
+        &manifest_path,
+        &mut silt::testing::source::SourceMap::new(),
+    )
+    .expect_err("Manifest::load must reject builtin-colliding package name `io`");
     let msg = err.message;
     assert!(
         msg.contains("io"),

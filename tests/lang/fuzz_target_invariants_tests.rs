@@ -118,7 +118,10 @@ fn lexer_invariants_reject_offset_past_source() {
         ),
         // Eof claiming an offset past the end of source — would be a
         // silent bug in a real lexer; the old fuzz driver never noticed.
-        (Token::Eof, Span::point(silt::testing::source::FileId::default(), 99)),
+        (
+            Token::Eof,
+            Span::point(silt::testing::source::FileId::default(), 99),
+        ),
     ];
     let err = check_lexer_invariants(src, &lexed(tokens)).unwrap_err();
     assert!(
@@ -141,7 +144,10 @@ fn lexer_invariants_reject_non_monotonic_offsets() {
             // it accidentally reset position state between tokens.
             Span::point(silt::testing::source::FileId::default(), 0),
         ),
-        (Token::Eof, Span::point(silt::testing::source::FileId::default(), 2)),
+        (
+            Token::Eof,
+            Span::point(silt::testing::source::FileId::default(), 2),
+        ),
     ];
     let err = check_lexer_invariants(src, &lexed(tokens)).unwrap_err();
     assert!(err.contains("non-monotonic"), "unexpected error: {err}");
@@ -155,9 +161,15 @@ fn lexer_invariants_reject_token_after_eof() {
             Token::Ident(silt::testing::intern::intern("x")),
             Span::point(silt::testing::source::FileId::default(), 0),
         ),
-        (Token::Eof, Span::point(silt::testing::source::FileId::default(), 1)),
+        (
+            Token::Eof,
+            Span::point(silt::testing::source::FileId::default(), 1),
+        ),
         // Bogus extra token after Eof.
-        (Token::Plus, Span::point(silt::testing::source::FileId::default(), 1)),
+        (
+            Token::Plus,
+            Span::point(silt::testing::source::FileId::default(), 1),
+        ),
     ];
     let err = check_lexer_invariants(src, &lexed(tokens)).unwrap_err();
     assert!(err.contains("after Eof"), "unexpected error: {err}");
@@ -175,7 +187,9 @@ fn lexer_invariants_reject_token_after_eof() {
 fn tampered(
     tamper: fn(String) -> String,
 ) -> impl Fn(&str) -> Result<String, silt::testing::diagnostic::Diagnostic> {
-    move |text| silt::testing::format::format_with(silt::testing::source::FileId::default(), text, tamper)
+    move |text| {
+        silt::testing::format::format_with(silt::testing::source::FileId::default(), text, tamper)
+    }
 }
 
 const SOURCE: &str = "-- about f\nfn f(x) {\n  let y = [1, 2]  {- two -}\n  (x + 0x10) * y\n}\n";

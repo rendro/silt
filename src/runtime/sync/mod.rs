@@ -45,22 +45,24 @@
 //! cell lock or the timer lock. A token's lock is a leaf below all of
 //! them.
 
-pub mod cell;
-pub mod channel;
-pub mod parking;
+pub(crate) mod cell;
+pub(crate) mod channel;
+pub(crate) mod parking;
 mod queue;
-pub mod timer;
-pub mod token;
-pub mod wait;
+pub(crate) mod timer;
+pub(crate) mod token;
+pub(crate) mod wait;
 
 #[cfg(test)]
 pub(crate) mod double;
 #[cfg(test)]
 mod tests;
 
-pub use cell::{Cell, Completion};
+pub(crate) use cell::{Cell, Completion};
 pub use channel::{Channel, Close, TryReceive, TrySend};
-pub use parking::{Counted, Counts, Parking, Waiting};
-pub use timer::{Timer, TimerId};
-pub use token::{Fired, Outcome, Resumed, TaskId, Token, Wake};
-pub use wait::{Arm, Park, Parked, Source, Wait, park};
+pub(crate) use parking::{Counted, Counts, Parking, Waiting};
+pub(crate) use timer::Timer;
+pub(crate) use token::{Fired, Outcome, Resumed, TaskId, Wake};
+pub(crate) use wait::{Arm, Source, Wait};
+#[cfg(test)]
+pub(crate) use wait::{Park, Parked, park};

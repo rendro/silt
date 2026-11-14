@@ -139,7 +139,7 @@ impl Helper for SiltHelper {}
 
 // ── REPL ────────────────────────────────────────────────────────────
 
-pub fn run_repl() {
+pub(crate) fn run_repl() {
     let cwd = std::env::current_dir().unwrap_or_default();
     let repl = Rc::new(RefCell::new(Repl::new(ProjectSetup::Discover(cwd))));
     let helper = SiltHelper { repl: repl.clone() };
@@ -377,14 +377,14 @@ fn evaluate(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input:
 
 /// What `:type` found: the diagnostics of the expression, warnings too,
 /// and its type, when it has no error.
-pub struct Typed {
+pub(crate) struct Typed {
     pub diagnostics: Vec<Diagnostic>,
     pub ty: Option<String>,
 }
 
 /// `:type` was given declarations, not an expression.
 #[derive(Debug)]
-pub struct NotAnExpression;
+pub(crate) struct NotAnExpression;
 
 /// The type `scheme` stands for as `:type` writes it: its type variables
 /// as letters, in the order they first appear, and what it asks of them
@@ -395,7 +395,7 @@ pub struct NotAnExpression;
 /// not quantify is `_`, as in a diagnostic. A type or trait is written
 /// as `named` says, given its definition and name (`<repl:1>.T` for one
 /// a later entry declared again), else by its name.
-pub fn written_scheme(
+pub(crate) fn written_scheme(
     scheme: &Scheme,
     named: impl Fn(crate::defs::DefId, intern::Symbol) -> Option<String>,
 ) -> String {
@@ -462,7 +462,7 @@ pub fn written_scheme(
 ///
 /// Of a function or a module whose cargo feature is not built, it also
 /// says what it needs. `None` when no builtin has the name.
-pub fn doc_text(name: &str) -> Option<String> {
+pub(crate) fn doc_text(name: &str) -> Option<String> {
     use crate::builtins::registry::docs;
     let registry = crate::builtins::registry::registry();
     let with_summary = |line: String, summary: Option<String>| match summary {
@@ -599,7 +599,7 @@ impl Repl {
 
     /// The problems of the project the session is in, which no input
     /// reports.
-    pub fn project_problems(&mut self) -> Vec<Diagnostic> {
+    pub(crate) fn project_problems(&mut self) -> Vec<Diagnostic> {
         self.session.project_problems()
     }
 
@@ -653,7 +653,7 @@ impl Repl {
 
     /// The code of the `process.exit` that an entry, or a task of one,
     /// called: the session has ended.
-    pub fn exited(&self) -> Option<u8> {
+    pub(crate) fn exited(&self) -> Option<u8> {
         self.vm.scheduler().exit_code()
     }
 
@@ -661,7 +661,7 @@ impl Repl {
     /// the type of its value if it has no error. The entry is not run,
     /// and no later entry sees it. `Err` when it is declarations, which
     /// have no value.
-    pub fn type_of(&mut self, input: &str) -> Result<Typed, NotAnExpression> {
+    pub(crate) fn type_of(&mut self, input: &str) -> Result<Typed, NotAnExpression> {
         let file = self.session.add_cell(input.to_string());
         let analysis = self.session.analyze(file);
         let (diagnostics, failed) = (analysis.diagnostics.clone(), analysis.has_errors());
@@ -703,7 +703,7 @@ impl Repl {
     }
 
     /// `d` rendered for the terminal.
-    pub fn render(&self, d: &Diagnostic) -> String {
+    pub(crate) fn render(&self, d: &Diagnostic) -> String {
         render_human(
             &ReplFiles {
                 sources: self.session.sources(),

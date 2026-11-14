@@ -309,7 +309,7 @@ fn any_expr_in(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool, closures: boo
 
 /// A module of the program, as the session hands it to the compiler:
 /// parsed and typechecked, with what each of its imports names.
-pub struct ModuleUnit {
+pub(crate) struct ModuleUnit {
     /// The module, as the session knows it.
     pub id: crate::defs::ModuleId,
     /// The module's declarations, after the typechecker filled them in.
@@ -337,7 +337,7 @@ pub struct ModuleUnit {
 /// which of them is the entry: the one compiled by `compile_program` or
 /// `compile_declarations`. The others are compiled where they are first
 /// imported.
-pub struct ProgramUnits<'a> {
+pub(crate) struct ProgramUnits<'a> {
     pub modules: Vec<ModuleUnit>,
     pub entry: usize,
     /// The definitions the resolver's slots name.
@@ -355,7 +355,7 @@ pub struct ProgramUnits<'a> {
 /// What the earlier entries of a REPL session installed, which the entry
 /// being compiled uses but does not install again.
 #[derive(Default)]
-pub struct EarlierCells {
+pub(crate) struct EarlierCells {
     /// The modules installed already: an import of one compiles nothing.
     pub installed: HashSet<usize>,
     /// The global slots the earlier entries took. The entry's own
@@ -363,7 +363,7 @@ pub struct EarlierCells {
     pub globals: Globals,
 }
 
-pub struct Compiler<'a> {
+pub(crate) struct Compiler<'a> {
     contexts: Vec<CompileContext>,
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
@@ -485,7 +485,7 @@ impl<'a> Compiler<'a> {
     /// A compiler for the modules of a program, as the session analysed
     /// them. Every definition of the program that has a global slot gets
     /// it now, so code can use a definition compiled after it.
-    pub fn for_program(units: ProgramUnits<'a>) -> Result<Self, Diagnostic> {
+    pub(crate) fn for_program(units: ProgramUnits<'a>) -> Result<Self, Diagnostic> {
         let program_clashes = program_type_clashes(&units);
         let mut globals = units.earlier.globals.clone();
         let mut compiler = Self {
@@ -660,12 +660,12 @@ impl<'a> Compiler<'a> {
     }
 
     /// The types the compiled code builds values of, for the VM.
-    pub fn types(&self) -> TypeTable {
+    pub(crate) fn types(&self) -> TypeTable {
         self.types.borrow().clone()
     }
 
     /// The global slots of the program, for the VM.
-    pub fn globals(&self) -> &Globals {
+    pub(crate) fn globals(&self) -> &Globals {
         &self.globals
     }
 
@@ -679,7 +679,7 @@ impl<'a> Compiler<'a> {
     /// that holds them, whose name no program can write): `GetGlobal
     /// main ; Call 0 ; Return`. A program without an entry point is never
     /// run: the session reports that it has no `main`.
-    pub fn compile_program(
+    pub(crate) fn compile_program(
         &mut self,
         program: &Program,
         entry: Option<crate::defs::DefId>,
@@ -745,7 +745,10 @@ impl<'a> Compiler<'a> {
     /// Returns all compiled functions. The first is a `<script>` that
     /// installs the globals and returns Unit.  Useful for test runners and
     /// the REPL where `main()` is not the entry-point.
-    pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
+    pub(crate) fn compile_declarations(
+        &mut self,
+        program: &Program,
+    ) -> Result<Vec<Function>, Diagnostic> {
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
         self.fill_late_dicts(program)?;
 

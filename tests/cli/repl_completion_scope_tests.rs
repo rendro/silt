@@ -5,8 +5,8 @@
 
 #![cfg(feature = "repl")]
 
-use silt::testing::repl::{Repl, builtin_names, completion_candidates_for_prefix};
 use silt::session::ProjectSetup;
+use silt::testing::repl::{Repl, builtin_names, completion_candidates_for_prefix};
 
 /// The names <Tab> offers after `inputs` ran, each of which must run.
 fn names_after(inputs: &[&str]) -> Vec<String> {

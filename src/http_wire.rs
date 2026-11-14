@@ -45,7 +45,7 @@ pub const BODY_MAX: usize = crate::value::MAX_TEXT_LEN;
 /// The longest method. A connection whose first bytes are no method
 /// and a space is refused at once (400), not waited out: a TLS
 /// handshake sent to this port is no request, however long it lasts.
-pub const METHOD_MAX: usize = 32;
+pub(crate) const METHOD_MAX: usize = 32;
 
 /// The most bytes of request bodies that the server holds at a time
 /// for requests that no handler has yet: bodies that are being read
@@ -63,7 +63,7 @@ pub const BODIES_MAX: usize = 256 * 1024 * 1024;
 
 /// The longest line of a chunked body (a chunk size with its
 /// extensions). Beyond it: 400.
-pub const CHUNK_LINE_MAX: usize = 4 * 1024;
+pub(crate) const CHUNK_LINE_MAX: usize = 4 * 1024;
 
 /// The most bytes of a chunked body that are not the body: the chunk
 /// sizes, their extensions and the line ends. Beyond it: 400. A body
@@ -71,20 +71,20 @@ pub const CHUNK_LINE_MAX: usize = 4 * 1024;
 /// body cut into single bytes, or padded with extensions, cannot make
 /// the server read many times what it is given. (The trailers have
 /// the limit of a head, [`HEAD_MAX`].)
-pub const CHUNK_FRAMING_MAX: usize = 1024 * 1024;
+pub(crate) const CHUNK_FRAMING_MAX: usize = 1024 * 1024;
 
 /// The most handlers that are called at a time. A request beyond it
 /// waits for one to return, in a queue of at most [`QUEUED_MAX`]
 /// requests, for at most [`QUEUED_TIME`].
-pub const HANDLERS_MAX: usize = 128;
+pub(crate) const HANDLERS_MAX: usize = 128;
 
 /// The most requests that wait for a handler. A request beyond it is
 /// answered 503 at once. (A request that waits holds its connection's
 /// task and the body it brought, which [`BODIES_MAX`] bounds.)
-pub const QUEUED_MAX: usize = 1024;
+pub(crate) const QUEUED_MAX: usize = 1024;
 
 /// How long a request waits for a handler before it is answered 503.
-pub const QUEUED_TIME: Duration = Duration::from_secs(5);
+pub(crate) const QUEUED_TIME: Duration = Duration::from_secs(5);
 
 /// How long the server waits for the head of a request, from when it
 /// starts to wait (the connection was accepted, or the response
@@ -108,7 +108,7 @@ pub const REFUSAL_TIME: Duration = Duration::from_secs(5);
 /// How long the server waits before it accepts again after an accept
 /// that failed (the process has no descriptor left, the I/O pool no
 /// thread).
-pub const ACCEPT_RETRY: Duration = Duration::from_millis(100);
+pub(crate) const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
 /// A request, read whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,7 +179,10 @@ impl<R: Read> Reader<R> {
 
     /// A reader that asks `room` before it reads so many more bytes
     /// of a body, and refuses the request (503) where there is none.
-    pub fn with_room(stream: R, room: impl FnMut(usize) -> bool + Send + 'static) -> Reader<R> {
+    pub(crate) fn with_room(
+        stream: R,
+        room: impl FnMut(usize) -> bool + Send + 'static,
+    ) -> Reader<R> {
         Reader {
             stream,
             buf: Vec::new(),
@@ -191,18 +194,18 @@ impl<R: Read> Reader<R> {
     /// Whether the next request has begun to arrive: bytes were read
     /// that no request has used. An empty line before a request is
     /// not its beginning.
-    pub fn has_begun(&self) -> bool {
+    pub(crate) fn has_begun(&self) -> bool {
         !matches!(&self.buf[..], [] | [b'\r'] | [b'\r', b'\n'])
     }
 
     /// [`Reader::has_begun`] as of the reader's last read, for who
     /// cannot ask the reader while it reads.
-    pub fn begun(&self) -> Arc<AtomicBool> {
+    pub(crate) fn begun(&self) -> Arc<AtomicBool> {
         self.begun.clone()
     }
 
     /// Take in bytes of the connection that were read elsewhere.
-    pub fn feed(&mut self, bytes: &[u8]) {
+    pub(crate) fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
         self.begun.store(self.has_begun(), Ordering::SeqCst);
     }
@@ -212,7 +215,7 @@ impl<R: Read> Reader<R> {
     /// if more bytes are needed (or the client waits for `100
     /// Continue`); the reader is as it was then, and
     /// [`Reader::next`] reads on.
-    pub fn buffered(&mut self) -> Option<Next> {
+    pub(crate) fn buffered(&mut self) -> Option<Next> {
         /// Beyond this the bytes are not looked through twice.
         const LOOKED_AT: usize = 64 * 1024;
         if self.buf.is_empty() || self.buf.len() > LOOKED_AT {
@@ -596,7 +599,7 @@ fn expects_continue(head: &Head) -> Step<bool> {
 }
 
 /// The reason phrase of a status.
-pub fn reason(status: u16) -> &'static str {
+pub(crate) fn reason(status: u16) -> &'static str {
     match status {
         100 => "Continue",
         200 => "OK",
@@ -641,7 +644,7 @@ pub fn reason(status: u16) -> &'static str {
 
 /// Whether a response of this status has a body: 1xx, 204 and 304
 /// have none.
-pub fn has_body(status: u16) -> bool {
+pub(crate) fn has_body(status: u16) -> bool {
     !matches!(status, 100..=199 | 204 | 304)
 }
 
@@ -651,11 +654,11 @@ fn is_token(byte: u8) -> bool {
 }
 
 /// The line that tells a client to send its body.
-pub const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+pub(crate) const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
 /// How a response is sent.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Sending<'a> {
+pub(crate) struct Sending<'a> {
     /// The date, as the `Date` header has it.
     pub date: &'a str,
     /// Say that the connection is closed after this response.
@@ -673,7 +676,12 @@ pub struct Sending<'a> {
 /// as is a header whose name or value could not stand in a header
 /// line (a line end in it would start another header, or another
 /// response).
-pub fn response(status: u16, headers: &[(String, String)], body: &[u8], how: Sending) -> Vec<u8> {
+pub(crate) fn response(
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+    how: Sending,
+) -> Vec<u8> {
     let own = ["content-length", "transfer-encoding", "connection", "date"];
     let token = |name: &str| !name.is_empty() && name.bytes().all(is_token);
     let plain = |value: &str| {

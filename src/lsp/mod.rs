@@ -776,7 +776,7 @@ fn extract_request<R: lsp_types::request::Request>(
 
 // ── Entry point ────────────────────────────────────────────────────
 
-pub fn run() {
+pub(crate) fn run() {
     // A message that cannot be read is answered with an error, and the
     // session goes on (lsp-server's own transport ends it).
     let (connection, io_threads) = transport::stdio();

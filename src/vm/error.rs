@@ -225,7 +225,10 @@ impl From<crate::value::TooLong> for VmError {
 ///
 /// Returns an empty vec when the filtered stack is too short to be
 /// informative (a single-frame stack would just restate the error site).
-pub fn render_call_stack<F>(call_stack: &[(String, Span)], mut format_frame: F) -> Vec<String>
+pub(crate) fn render_call_stack<F>(
+    call_stack: &[(String, Span)],
+    mut format_frame: F,
+) -> Vec<String>
 where
     F: FnMut(&str, &Span) -> String,
 {

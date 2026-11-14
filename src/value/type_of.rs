@@ -17,7 +17,7 @@ use crate::value::Value;
 /// [`crate::types::Type`]. Every function-shaped value (a closure, a
 /// builtin, a host function, a variant constructor) is an `Fn`: the typechecker types each as
 /// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
-pub fn dispatch_type_for_value(val: &Value) -> TypeId {
+pub(crate) fn dispatch_type_for_value(val: &Value) -> TypeId {
     let kinds = kind_types();
     match val {
         Value::Variant(variant) => variant.type_id(),
@@ -51,7 +51,7 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
 /// The kind of `val` as a message names it: [`Value::kind`], but for a
 /// value of an opaque type of a builtin module its type with its module
 /// (`regex.Regex`), which a program's own `Regex` is not.
-pub fn kind_name(val: &Value) -> String {
+pub(crate) fn kind_name(val: &Value) -> String {
     let id = dispatch_type_for_value(val);
     match crate::defs::builtin_types().get(id.0.0 as usize) {
         Some((name, Some(module))) if is_opaque_value_type(id) => format!("{module}.{name}"),
@@ -61,7 +61,7 @@ pub fn kind_name(val: &Value) -> String {
 
 /// The name of the type [`dispatch_type_for_value`] gives, as messages
 /// show it.
-pub fn dispatch_type_name(val: &Value) -> String {
+pub(crate) fn dispatch_type_name(val: &Value) -> String {
     match val {
         Value::Variant(variant) => variant.ty().name.clone(),
         Value::Record(record) => record.ty().name.clone(),

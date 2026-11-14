@@ -60,7 +60,9 @@ fn answer() {
         assert!(f.body.ty.is_some(), "body should be typed");
         assert_eq!(
             f.body.ty,
-            Some(silt::testing::types::Type::List(Box::new(silt::testing::types::Type::Int)))
+            Some(silt::testing::types::Type::List(Box::new(
+                silt::testing::types::Type::Int
+            )))
         );
     } else {
         panic!("expected fn decl");

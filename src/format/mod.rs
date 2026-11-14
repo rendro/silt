@@ -53,10 +53,10 @@
 //!   range, a `^pin`) has parentheses around it or around the
 //!   or-pattern, as the source has; both stay.
 
-pub mod check;
-pub mod cursor;
-pub mod doc;
-pub mod print;
+pub(crate) mod check;
+pub(crate) mod cursor;
+pub(crate) mod doc;
+pub(crate) mod print;
 
 use crate::diagnostic::{Code, Diagnostic};
 use crate::lexer::{Lexed, Lexer};
@@ -64,12 +64,12 @@ use crate::parser::Parser;
 use crate::source::{FileId, Span};
 
 /// The width the printer fills.
-pub const WIDTH: usize = 100;
+pub(crate) const WIDTH: usize = 100;
 
 /// What would have gone wrong, phrased to follow "formatting refused: ",
 /// and the place in the input it belongs to, when there is one.
 #[derive(Debug)]
-pub struct Refusal {
+pub(crate) struct Refusal {
     pub message: String,
     pub span: Option<Span>,
 }

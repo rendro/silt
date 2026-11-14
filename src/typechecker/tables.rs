@@ -548,7 +548,7 @@ pub(super) struct CellDecl {
 
 /// What one module's check added to the session's [`Tables`].
 #[derive(Clone, Default)]
-pub struct Rows {
+pub(crate) struct Rows {
     /// The earlier modules' variables the check bound.
     trail: Vec<TyVar>,
     types: Vec<TypeRef>,

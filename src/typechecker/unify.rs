@@ -12,7 +12,7 @@ use super::*;
 /// a type lowers the variables of the type to its own level, so a
 /// variable an outer binding has reached is never generalised.
 #[derive(Clone, Default)]
-pub struct TyVarSupply {
+pub(crate) struct TyVarSupply {
     /// The substitution: maps type variables to their resolved types.
     pub(super) subst: Vec<Option<Type>>,
     /// The level of each variable.
@@ -378,7 +378,7 @@ impl TypeChecker {
     }
 
     /// The one wording of the occurs-check diagnostic.
-    pub fn infinite_type_message(t: &Type) -> String {
+    pub(crate) fn infinite_type_message(t: &Type) -> String {
         format!("infinite type: the type variable appears inside {t}")
     }
 
