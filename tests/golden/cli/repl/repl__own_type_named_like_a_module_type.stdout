@@ -1,0 +1,7 @@
+Silt REPL (type :quit to exit, :help for commands)
+Result(Regex, RegexError)
+Result(regex.Regex, RegexError)
+Regex
+3
+time.Weekday
+List(Weekday)

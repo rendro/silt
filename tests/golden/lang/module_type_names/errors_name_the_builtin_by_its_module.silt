@@ -1,0 +1,39 @@
+-- cmd: check
+-- exit: 1
+-- Where a program's own type meets the builtin one of its name, the
+-- message writes the builtin one with its module.
+-- stderr-contains: error[type]: type mismatch: expected regex.Regex, got Regex
+-- stderr-contains: error[type]: type mismatch: expected Regex, got regex.Regex
+-- stderr-contains: error[type]: type mismatch: expected task.Handle(Int), got Handle
+-- stderr-contains: error[type]: type mismatch: expected tcp.TcpStream, got TcpStream
+-- stderr-contains: error[type]: type mismatch: expected tcp.TcpListener, got TcpListener
+-- stderr-contains: error[type]: type 'Regex' has no field 'size'
+-- stderr-not-contains: compiler bug
+-- stderr-not-contains: shadows builtin type
+import regex
+import task
+import tcp
+
+type Regex { n: Int }
+type Handle { id: Int }
+type TcpStream { peer: String }
+type TcpListener { port: Int }
+
+fn compiled(r: regex.Regex) -> Bool { regex.is_match("a", r) }
+
+fn mine(r: Regex) -> Int { r.n }
+
+fn main() {
+  let own = Regex { n: 1 }
+  let real = regex.compile("a")
+  println(compiled(own))
+  match real {
+    Ok(r) -> println(mine(r))
+    Err(_) -> println("no")
+  }
+  let running = task.spawn { -> 1 }
+  println(running == Handle { id: 2 })
+  tcp.close(TcpStream { peer: "x" })
+  tcp.close_listener(TcpListener { port: 1 })
+  println(own.size)
+}

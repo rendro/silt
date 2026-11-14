@@ -1,0 +1,46 @@
+-- A program's own `type Regex` is a type apart from `regex.Regex`: it is
+-- built, read, matched, compared, printed and encoded as any record, and
+-- a trait with an impl for each picks the right one when the program runs.
+import json
+import regex
+
+type Regex { pattern: String, flags: Int }
+
+trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for Regex {
+  fn describe(self) -> String { "mine: {self.pattern}" }
+}
+
+trait Describe for regex.Regex {
+  fn describe(self) -> String { "the regex module's" }
+}
+
+trait Display for Regex {
+  fn display(self) -> String { "/{self.pattern}/{self.flags}" }
+}
+
+fn both(mine: Regex, compiled: regex.Regex) -> String {
+  "{mine.pattern} {regex.is_match(mine.pattern, compiled)}"
+}
+
+fn main() -> Result((), regex.RegexError) {
+  let mine = Regex { pattern: "aa", flags: 1 }
+  let compiled = regex.compile("a+")?
+  println(both(mine, compiled))
+  println(mine.flags)
+  println(mine.{ flags: 2 })
+  println(Describe.describe(mine))
+  println(Describe.describe(compiled))
+  println([Describe.describe(mine), Describe.describe(compiled)])
+  println(mine == Regex { pattern: "aa", flags: 1 })
+  match mine {
+    Regex { pattern: "aa", flags } -> println("matched {flags}")
+    _ -> println("no match")
+  }
+  println(json.stringify(mine))
+  println(json.parse("""{"pattern":"b","flags":3}""", Regex))
+  Ok(())
+}

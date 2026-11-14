@@ -1,0 +1,14 @@
+> hover 12:15
+```silt
+type Regex { n: Int }
+```
+> hover 12:39
+```silt
+type regex.Regex
+```
+> definition 12:15
+own_regex_beside_regex_regex.silt:10:6-10:11
+> references 10:6
+own_regex_beside_regex_regex.silt:10:6-10:11
+own_regex_beside_regex_regex.silt:12:15-12:20
+own_regex_beside_regex_regex.silt:20:16-20:21

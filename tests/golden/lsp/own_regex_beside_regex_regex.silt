@@ -1,0 +1,22 @@
+-- cmd: lsp
+-- A program's own `Regex` and `regex.Regex`: hover and definition tell
+-- them apart, and the references of the program's are its own.
+-- lsp: hover 12:15
+-- lsp: hover 12:39
+-- lsp: definition 12:15
+-- lsp: references 10:6
+import regex
+
+type Regex { n: Int }
+
+fn both(mine: Regex, compiled: regex.Regex) -> Int {
+  match regex.is_match("a", compiled) {
+    true -> mine.n
+    false -> 0
+  }
+}
+
+fn main() -> Result((), regex.RegexError) {
+  println(both(Regex { n: 1 }, regex.compile("a")?))
+  Ok(())
+}

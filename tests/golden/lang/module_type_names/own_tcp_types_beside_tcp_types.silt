@@ -1,0 +1,47 @@
+-- A program's own `TcpStream(a)` (a generic record) and `TcpListener`
+-- (an enum) beside `tcp.TcpStream` and `tcp.TcpListener`.
+import tcp
+
+type TcpStream(a) { peer: String, data: a }
+
+type TcpListener { Open(Int), Closed }
+
+trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for TcpListener {
+  fn describe(self) -> String {
+    match self {
+      Open(port) -> "mine, open on {port}"
+      Closed -> "mine, closed"
+    }
+  }
+}
+
+trait Describe for tcp.TcpListener {
+  fn describe(self) -> String { "the tcp module's" }
+}
+
+trait Display for TcpStream(a) {
+  fn display(self) -> String { "stream to {self.peer}" }
+}
+
+fn listening(mine: TcpListener, real: tcp.TcpListener) -> Bool {
+  match mine {
+    Open(_) -> tcp.local_port(real) > 0
+    Closed -> false
+  }
+}
+
+fn main() -> Result((), tcp.TcpError) {
+  let stream = TcpStream { peer: "example", data: [1, 2] }
+  let real = tcp.listen("127.0.0.1:0")?
+  println(stream)
+  println(stream.data)
+  println(listening(Open(1), real))
+  println(Describe.describe(Closed))
+  println(Describe.describe(real))
+  tcp.close_listener(real)
+  Ok(())
+}

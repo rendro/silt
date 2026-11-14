@@ -350,12 +350,14 @@ The **prelude** needs no import: the primitive and container types (`Int`,
 `Float`, `Bool`, `String`, `()`, `Bytes`, `List`, `Map`, `Set`, `Channel`, `Fn`),
 `TypeOf(a)` (the type of a type used as a value, like `Int` or a
 `type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
-`panic`. The primitive and container types, `TypeOf`, and the types
-`Handle`, `Regex`, `TcpListener` and `TcpStream` of the modules task,
-regex and tcp cannot be declared again: `type List { ... }` is an error, "type 'List' shadows
-builtin type 'List'". The other names can: a module's own declaration or
-import of `Option`, `Result`, one of their variants, `print`, `println` or
-`panic` shadows the prelude. After `type Maybe(a) { Some(a), None }`, a
+`panic`. The primitive and container types and `TypeOf` cannot be declared
+again: `type List { ... }` is an error, "type 'List' shadows builtin type
+'List'". A type of a built-in module reserves no name: a module may declare
+its own `type Regex` or `type Weekday`, a type apart from `regex.Regex` and
+`time.Weekday`, and use both; with `import regex.{ Regex }` as well, the name is
+bound twice. The other names of the prelude can be declared again: a module's
+own declaration or import of `Option`, `Result`, one of their variants,
+`print`, `println` or `panic` shadows the prelude. After `type Maybe(a) { Some(a), None }`, a
 bare `None` is `Maybe.None`, and the prelude's is still `Option.None`.
 
 

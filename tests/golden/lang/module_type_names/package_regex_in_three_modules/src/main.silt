@@ -1,0 +1,37 @@
+-- A package: shapes declares a `Regex` and a `TcpStream(a)`, util imports
+-- shapes' `Regex` by name, and main declares a `Regex` of its own and
+-- reaches shapes' through an alias; each module also uses `regex.Regex`.
+import regex
+import shapes as s
+import shapes.{ Describe, Open, Shut }
+import util
+
+type Regex { n: Int }
+
+trait Describe for Regex {
+  fn describe(self) -> String { "main.Regex {self.n}" }
+}
+
+fn three(mine: Regex, theirs: s.Regex, compiled: regex.Regex) -> String {
+  "{mine.n} {theirs.pattern} {regex.is_match("x", compiled)}"
+}
+
+fn state(t: s.TcpStream(Int)) -> Int {
+  match t {
+    Open(n) -> n
+    Shut -> 0
+  }
+}
+
+fn main() -> Result((), regex.RegexError) {
+  let mine = Regex { n: 1 }
+  let theirs = s.Regex { pattern: "ab" }
+  let compiled = regex.compile("x")?
+  println(three(mine, theirs, compiled))
+  println(util.first(theirs, regex.compile("b")?))
+  println(Describe.describe(mine))
+  println(Describe.describe(theirs))
+  println(Describe.describe(compiled))
+  println(state(Open(7)) + state(Shut))
+  Ok(())
+}
