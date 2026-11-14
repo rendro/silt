@@ -598,6 +598,35 @@ fn test_a_file_name_that_is_no_utf8_fails_the_listing_and_names_its_directory() 
     );
 }
 
+/// A root whose links lead to a directory whose path is no UTF-8 fails
+/// fs.walk, which shows each path absolute: with U+FFFD in it, every path
+/// it gave named no file. (Not on macOS, nor on Windows, as above.)
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_fails() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new("root_names");
+    let bad = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xffdir"));
+    if std::fs::create_dir_all(bad.join("sub")).is_err() {
+        eprintln!("skipped: the file system refuses a name that is no UTF-8");
+        return;
+    }
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&bad, &link).unwrap();
+    let link = link.to_str().unwrap().to_string();
+    let got = err_msg(run(&format!(
+        "import fs\nimport host\nfn main() {{\n  host.give(fs.walk(\"{link}\"))\n}}\n"
+    )));
+    let shown = std::fs::canonicalize(&bad).unwrap();
+    assert_eq!(
+        got,
+        format!(
+            "invalid input: the path of {link} is not UTF-8: {}",
+            shown.to_string_lossy()
+        )
+    );
+}
+
 // ── stream.file_lines: a line is as long as the file makes it ───────
 
 /// A line of a file longer than 10,000,000 bytes is read whole, as
