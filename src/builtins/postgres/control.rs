@@ -119,6 +119,14 @@ pub(super) fn copy_stream(sql: &str) -> Option<Copy> {
     loop {
         rest = skip(rest, false);
         if let Some((w, after)) = word(rest) {
+            // `E'...'`, a string in which a backslash escapes a quote.
+            if w.eq_ignore_ascii_case("e") && after.starts_with('\'') {
+                rest = after_escaped_string(after);
+                if depth == 0 {
+                    before = None;
+                }
+                continue;
+            }
             if depth == 0 {
                 let after_word = |want: &str| before.is_some_and(|b| b.eq_ignore_ascii_case(want));
                 if after_word("from") && w.eq_ignore_ascii_case("stdin") {
@@ -182,6 +190,23 @@ fn after_quoted(s: &str, quote: char) -> &str {
             }
         }
     }
+}
+
+/// `s`, which starts with the `'` of an `E'...'` string, after it: a
+/// backslash escapes the character behind it, a doubled quote is one
+/// quote. An unterminated one runs to the end.
+fn after_escaped_string(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'\'' if bytes.get(i + 1) == Some(&b'\'') => i += 2,
+            b'\'' => return &s[i + 1..],
+            _ => i += 1,
+        }
+    }
+    ""
 }
 
 /// `s`, which starts with `$`, after a dollar-quoted string (`$$...$$`,
@@ -386,12 +411,15 @@ mod tests {
                 Copy::ToStdout,
             ),
             ("COPY (SELECT $a$x$a$, $1) TO STDOUT", Copy::ToStdout),
+            ("COPY (SELECT E'\\'') TO STDOUT", Copy::ToStdout),
+            ("COPY (SELECT e'a\\' FROM STDIN') TO STDOUT", Copy::ToStdout),
         ] {
             assert_eq!(copy_stream(sql), Some(copy), "{sql:?}");
         }
         for sql in [
             "COPY t FROM '/tmp/x.csv'",
             "COPY t FROM 'stdin'",
+            "COPY t TO E'\\' TO STDOUT'",
             "COPY t TO '/tmp/stdout'",
             "COPY t FROM PROGRAM 'cat stdin'",
             "COPY (SELECT 1 FROM stdin) TO '/tmp/x'",
