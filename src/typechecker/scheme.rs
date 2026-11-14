@@ -1534,6 +1534,9 @@ impl TypeChecker {
             .map(|(_, head)| self.show_type(&Type::Generic(*head, Vec::new())))
             .collect();
         declared.sort();
-        declared.into_iter().next().unwrap_or_else(|| "Int".to_string())
+        declared
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "Int".to_string())
     }
 }

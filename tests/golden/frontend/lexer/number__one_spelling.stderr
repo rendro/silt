@@ -1,65 +1,101 @@
 error[lex]: a `_` in a number stands between two digits: write `1`
- --> number__one_spelling.silt:8:11
+ --> number__one_spelling.silt:9:11
    |
- 8 |   let a = 1_
+ 9 |   let a = 1_
    |           ^^ a `_` in a number stands between two digits: write `1`
 
 error[lex]: a `_` in a number stands between two digits: write `0xF`
- --> number__one_spelling.silt:9:11
-   |
- 9 |   let b = 0x_F
-   |           ^^^^ a `_` in a number stands between two digits: write `0xF`
-
-error[lex]: the prefix of a number is written in lower case: write `0xFF`
  --> number__one_spelling.silt:10:11
     |
- 10 |   let c = 0XFF
+ 10 |   let b = 0x_F
+    |           ^^^^ a `_` in a number stands between two digits: write `0xF`
+
+error[lex]: the prefix of a number is written in lower case: write `0xFF`
+ --> number__one_spelling.silt:11:11
+    |
+ 11 |   let c = 0XFF
     |           ^^^^ the prefix of a number is written in lower case: write `0xFF`
 
 error[lex]: the prefix of a number is written in lower case: write `0b11`
- --> number__one_spelling.silt:11:11
+ --> number__one_spelling.silt:12:11
     |
- 11 |   let d = 0B11
+ 12 |   let d = 0B11
     |           ^^^^ the prefix of a number is written in lower case: write `0b11`
 
 error[lex]: the exponent of a number is written with a lower-case `e`: write `1e3`
- --> number__one_spelling.silt:12:11
+ --> number__one_spelling.silt:13:11
     |
- 12 |   let e = 1E3
+ 13 |   let e = 1E3
     |           ^^^ the exponent of a number is written with a lower-case `e`: write `1e3`
 
 error[lex]: an exponent is written without `+`: write `1e3`
- --> number__one_spelling.silt:13:11
+ --> number__one_spelling.silt:14:11
     |
- 13 |   let f = 1e+3
+ 14 |   let f = 1e+3
     |           ^^^^ an exponent is written without `+`: write `1e3`
 
 error[lex]: a number has no leading zero: write `7`
- --> number__one_spelling.silt:14:11
+ --> number__one_spelling.silt:15:11
     |
- 14 |   let g = 007
+ 15 |   let g = 007
     |           ^^^ a number has no leading zero: write `7`
 
 error[lex]: a number has no leading zero: write `0.5`
- --> number__one_spelling.silt:15:11
+ --> number__one_spelling.silt:16:11
     |
- 15 |   let h = 00.5
+ 16 |   let h = 00.5
     |           ^^^^ a number has no leading zero: write `0.5`
 
 error[lex]: a `_` in a number stands between two digits: write `1_0`
- --> number__one_spelling.silt:16:11
+ --> number__one_spelling.silt:17:11
     |
- 16 |   let i = 1__0
+ 17 |   let i = 1__0
     |           ^^^^ a `_` in a number stands between two digits: write `1_0`
 
 error[lex]: an exponent has no leading zero: write `1e7`
- --> number__one_spelling.silt:17:11
+ --> number__one_spelling.silt:18:11
     |
- 17 |   let j = 1e007
+ 18 |   let j = 1e007
     |           ^^^^^ an exponent has no leading zero: write `1e7`
 
 error[lex]: an exponent has no leading zero: write `2.5e-7`
- --> number__one_spelling.silt:18:11
+ --> number__one_spelling.silt:19:11
     |
- 18 |   let k = 2.5e-07
+ 19 |   let k = 2.5e-07
     |           ^^^^^^^ an exponent has no leading zero: write `2.5e-7`
+
+error[lex]: an exponent of zero says nothing: write `1.0`
+ --> number__one_spelling.silt:20:11
+    |
+ 20 |   let l = 1e0
+    |           ^^^ an exponent of zero says nothing: write `1.0`
+
+error[lex]: an exponent of zero says nothing: write `1.0`
+ --> number__one_spelling.silt:21:11
+    |
+ 21 |   let m = 1e-0
+    |           ^^^^ an exponent of zero says nothing: write `1.0`
+
+error[lex]: an exponent of zero says nothing: write `1.50`
+ --> number__one_spelling.silt:22:11
+    |
+ 22 |   let n = 1.50e0
+    |           ^^^^^^ an exponent of zero says nothing: write `1.50`
+
+error[lex]: an exponent of zero says nothing: write `12.0`
+ --> number__one_spelling.silt:23:11
+    |
+ 23 |   let o = 12e0
+    |           ^^^^ an exponent of zero says nothing: write `12.0`
+
+error[lex]: an exponent of zero says nothing: write `1.0`
+ --> number__one_spelling.silt:24:11
+    |
+ 24 |   let p = 1e00
+    |           ^^^^ an exponent of zero says nothing: write `1.0`
+
+error[lex]: an exponent of zero says nothing: write `1.0`
+ --> number__one_spelling.silt:25:11
+    |
+ 25 |   let q = 1E+0
+    |           ^^^^ an exponent of zero says nothing: write `1.0`

@@ -1691,9 +1691,12 @@ fn is_stray(c: char) -> bool {
 /// is not in the one spelling of its number: a `_` only between two
 /// digits, the prefixes `0x` and `0b` and the exponent `e` in lower
 /// case, no `+` in an exponent, no leading zero in a decimal number or
-/// in an exponent. Zeros at the end of a fraction are allowed: `1.50`
+/// in an exponent, and no exponent of zero, which says nothing (`1.0`,
+/// not `1e0`). Zeros at the end of a fraction are allowed: `1.50`
 /// tells its reader how exact the number is.
-/// The message says the first fault and writes the whole literal right.
+/// The message says the first fault and writes the whole literal right;
+/// an exponent of zero is the fault it says over any other of that
+/// exponent (`1E+00` is `1.0`).
 fn number_spelling(raw: &str) -> Option<String> {
     let lower_prefix = raw.starts_with("0X") || raw.starts_with("0B");
     let (prefix, body) = match raw.get(..2) {
@@ -1706,6 +1709,9 @@ fn number_spelling(raw: &str) -> Option<String> {
         "0b" => c == '0' || c == '1',
         _ => c.is_ascii_digit(),
     };
+    const UPPER_E: &str = "the exponent of a number is written with a lower-case `e`";
+    const PLUS: &str = "an exponent is written without `+`";
+    const EXPONENT_ZERO: &str = "an exponent has no leading zero";
     let mut faults: Vec<&str> = Vec::new();
     if lower_prefix {
         faults.push("the prefix of a number is written in lower case");
@@ -1716,12 +1722,12 @@ fn number_spelling(raw: &str) -> Option<String> {
     while let Some(c) = chars.next() {
         if decimal && (c == 'e' || c == 'E') {
             if c == 'E' {
-                faults.push("the exponent of a number is written with a lower-case `e`");
+                faults.push(UPPER_E);
             }
             text.push('e');
             if chars.peek() == Some(&'+') {
                 chars.next();
-                faults.push("an exponent is written without `+`");
+                faults.push(PLUS);
             }
         } else {
             text.push(c);
@@ -1767,11 +1773,22 @@ fn number_spelling(raw: &str) -> Option<String> {
                 Some(rest) => ("-", rest),
                 None => ("", &fixed[e + 1..]),
             };
-            if digits.len() > 1 && digits.starts_with('0') {
-                faults.push("an exponent has no leading zero");
-                let trimmed = digits.trim_start_matches(['0', '_']);
-                let digits = if trimmed.is_empty() { "0" } else { trimmed };
-                fixed = format!("{}e{sign}{digits}", &fixed[..e]);
+            let trimmed = digits.trim_start_matches(['0', '_']);
+            if trimmed.is_empty() {
+                // An exponent of zero (`1e0`, `1e-00`): the number is its
+                // part before the `e`, a Float, so with a point
+                // (`1.0`, `1.50`). What else was wrong with the exponent
+                // goes with it.
+                faults.retain(|f| ![UPPER_E, PLUS].contains(f));
+                faults.insert(0, "an exponent of zero says nothing");
+                let mantissa = &fixed[..e];
+                fixed = match mantissa.contains('.') {
+                    true => mantissa.to_string(),
+                    false => format!("{mantissa}.0"),
+                };
+            } else if digits.len() > 1 && digits.starts_with('0') {
+                faults.push(EXPONENT_ZERO);
+                fixed = format!("{}e{sign}{trimmed}", &fixed[..e]);
             }
         }
     }
@@ -2402,7 +2419,26 @@ mod tests {
             ("1e007", "an exponent has no leading zero: write `1e7`"),
             ("1e-07", "an exponent has no leading zero: write `1e-7`"),
             ("2.5e0_3", "an exponent has no leading zero: write `2.5e3`"),
-            ("1e00", "an exponent has no leading zero: write `1e0`"),
+            ("1e00", "an exponent of zero says nothing: write `1.0`"),
+            ("1e-00", "an exponent of zero says nothing: write `1.0`"),
+            ("1e0", "an exponent of zero says nothing: write `1.0`"),
+            ("1e-0", "an exponent of zero says nothing: write `1.0`"),
+            ("0e0", "an exponent of zero says nothing: write `0.0`"),
+            ("12e0", "an exponent of zero says nothing: write `12.0`"),
+            (
+                "1_000e0",
+                "an exponent of zero says nothing: write `1_000.0`",
+            ),
+            ("1.5e0", "an exponent of zero says nothing: write `1.5`"),
+            ("1.50e0", "an exponent of zero says nothing: write `1.50`"),
+            (
+                "4.25e-0_0",
+                "an exponent of zero says nothing: write `4.25`",
+            ),
+            ("1E+00", "an exponent of zero says nothing: write `1.0`"),
+            ("1e+0", "an exponent of zero says nothing: write `1.0`"),
+            ("007e0", "an exponent of zero says nothing: write `7.0`"),
+            ("1_.5e0", "an exponent of zero says nothing: write `1.5`"),
             ("007e07", "a number has no leading zero: write `7e7`"),
             (
                 "0X_1E+3",
@@ -2416,6 +2452,15 @@ mod tests {
                 .expect_err(src);
             assert_eq!(errors.code, Code::InvalidNumber, "{src}");
             assert_eq!(errors.message, message, "{src}");
+            // What the message says to write is a number that is accepted.
+            let written = message
+                .rsplit_once("write `")
+                .map(|(_, w)| &w[..w.len() - 1]);
+            let written = written.expect(src);
+            assert!(
+                matches!(lex(written)[..], [Token::Int(_) | Token::Float(_)]),
+                "{src}: {written}"
+            );
         }
         for (src, token) in [
             ("0", Token::Int(0)),
@@ -2427,8 +2472,8 @@ mod tests {
             ("0e3", Token::Float(0.0)),
             ("1_0.2_5e1_0", Token::Float(10.25e10)),
             ("2.5e-3", Token::Float(2.5e-3)),
-            ("1e0", Token::Float(1.0)),
             ("1e10", Token::Float(1e10)),
+            ("1e-1", Token::Float(1e-1)),
             ("10.050", Token::Float(10.05)),
             ("1.50", Token::Float(1.5)),
         ] {
@@ -2439,7 +2484,7 @@ mod tests {
     #[test]
     fn test_scientific_with_decimal() {
         assert_eq!(lex("1.5e3"), vec![Token::Float(1500.0)]);
-        assert_eq!(lex("4.25e0"), vec![Token::Float(4.25)]);
+        assert_eq!(lex("4.25e1"), vec![Token::Float(42.5)]);
         assert_eq!(lex("2.5e-1"), vec![Token::Float(0.25)]);
     }
 

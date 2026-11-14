@@ -1,0 +1,13 @@
+float 1e0: 1.0
+float 1e-0: 1.0
+float 1.5e0: 1.5
+float 1E0: 1.0
+float 1e00: 1.0
+float 0e0: 0.0
+json 1e0: 1.0
+json 1e-0: 1.0
+json 1.5E0: 1.5
+json 1e+0: 1.0
+toml 1e0: 1.0
+toml 1.5e-0: 1.5
+toml 2E+0: 2.0
