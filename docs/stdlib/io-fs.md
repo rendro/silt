@@ -646,10 +646,11 @@ on the result.
 
 `mode` carries the Unix file-type and permission bits as the system
 gives them: a regular file with the permissions `rw-r--r--` (octal 644)
-has the mode 33188, which is octal 100644. silt has no octal literal and
-no bit operators: `s.mode % 512` is the permission bits (420 for octal
-644), and `s.mode % 4096` adds the setuid, setgid and sticky bits. The
-file type is in `is_file`, `is_dir` and `is_symlink`. On Windows `mode`
+has the mode 33188, which is octal 100644. silt has no octal literal;
+take the permission bits with `int.bit_and` and a hex mask:
+`int.bit_and(s.mode, 0x1FF)` is 420 for octal 644 (so `== 0x1A4` tests for
+`rw-r--r--`), and the mask `0xFFF` adds the setuid, setgid and sticky bits.
+The file type is in `is_file`, `is_dir` and `is_symlink`. On Windows `mode`
 is always `0` because NTFS does not expose a Unix-style permission
 triple; use `readonly` / `is_dir` / `is_file` instead for portable code.
 
