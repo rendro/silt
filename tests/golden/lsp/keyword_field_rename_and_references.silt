@@ -1,0 +1,24 @@
+-- cmd: lsp
+-- lsp: references 10:14
+-- lsp: prepare-rename 20:19
+-- lsp: rename 10:14 kind
+-- lsp: rename 20:19 kind
+-- lsp: rename 10:28 count
+-- A field named by a keyword (`type`, `match`) is found where a field
+-- named by an identifier is: its declaration, reads, patterns, and the
+-- names in front of the values of record literals and updates.
+type Event { type: String, match: Int }
+
+fn kind(e: Event) -> String {
+  match e {
+    Event { type: "a", .. } -> "A"
+    Event { type: t, match: m } -> "{t}{m}"
+  }
+}
+
+fn main() {
+  let e = Event { type: "t", match: 1 }
+  let f = e.{ type: "u" }
+  let g = Event { match: 2, type: "v" }
+  println("{kind(e)} {f.type} {g.type} {e.match}")
+}

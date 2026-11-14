@@ -57,6 +57,11 @@ pub struct BuiltinType {
 
 /// Single ordered authoritative list of every built-in type name.
 ///
+/// A type of a builtin module here (`task.Handle`, `tcp.TcpStream`,
+/// `regex.Regex`) is known by its id, as every builtin type is, and is
+/// reached through its module: a program may declare a type of its
+/// name ([`is_prelude_name`] says which names it may not).
+///
 /// Order: primitives first (matching the typechecker's `is_primitive`
 /// match arm at `src/typechecker/mod.rs::check_trait_impl`), then
 /// containers (matching the `is_builtin_container` match arm at the
@@ -119,6 +124,8 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
         arity: None,
         kind: BuiltinKind::Container,
     },
+    // `task.Handle(a)`, a type of the task module: reached through it,
+    // it reserves no name (see [`module_of`]).
     BuiltinType {
         name: "Handle",
         arity: None,
@@ -130,6 +137,8 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
     // trait-impl-target gate (`is_builtin_container`) so error messages
     // for `trait Display for Bytes { ... }` say that no module may
     // write that impl, not `target 'Bytes' is not a declared type`.
+    // `Bytes` is the prelude's; the others are types of the tcp and
+    // regex modules, which reserve no name (see [`module_of`]).
     BuiltinType {
         name: "Bytes",
         arity: Some(0),
@@ -176,6 +185,26 @@ pub fn is_container(name: &str) -> bool {
     matches!(lookup(name), Some(b) if b.kind == BuiltinKind::Container)
 }
 
+/// The builtin module whose type `name` is (`regex` for `Regex`, `tcp`
+/// for `TcpStream`): such a type is reached through its module
+/// (`regex.Regex`) and reserves no name, as `time.Weekday` does not.
+/// `None` for a type of the prelude (`Int`, `List`, `Bytes`) and for
+/// any other name.
+pub fn module_of(name: &str) -> Option<&'static str> {
+    lookup(name)?;
+    let id = crate::defs::builtin_type_id(name)?;
+    crate::defs::builtin_types()
+        .get(id.0.0 as usize)
+        .and_then(|(_, module)| *module)
+}
+
+/// Whether `name` is the name of a builtin type of the prelude, which
+/// every module sees and no program may declare (`Int`, `List`,
+/// `Bytes`); a type of a builtin module (`regex.Regex`) is not one.
+pub fn is_prelude_name(name: &str) -> bool {
+    lookup(name).is_some() && module_of(name).is_none()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +243,29 @@ mod tests {
         assert_eq!(prim_count + cont_count, all_count);
         assert!(prim_count > 0);
         assert!(cont_count > 0);
+    }
+
+    /// The types of builtin modules reserve no name; the prelude's do.
+    #[test]
+    fn module_types_are_no_prelude_names() {
+        for (name, module) in [
+            ("Handle", "task"),
+            ("TcpListener", "tcp"),
+            ("TcpStream", "tcp"),
+            ("Regex", "regex"),
+        ] {
+            assert_eq!(module_of(name), Some(module), "{name}");
+            assert!(!is_prelude_name(name), "{name}");
+        }
+        for name in [
+            "Int", "Float", "Bool", "String", "()", "List", "Map", "Set", "Channel", "Tuple", "Fn",
+            "Bytes",
+        ] {
+            assert_eq!(module_of(name), None, "{name}");
+            assert!(is_prelude_name(name), "{name}");
+        }
+        assert!(!is_prelude_name("Weekday"));
+        assert!(!is_prelude_name("NotABuiltin"));
     }
 
     #[test]

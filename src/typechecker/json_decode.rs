@@ -1306,10 +1306,26 @@ impl TypeChecker {
     pub(super) fn keep_decoder_uses(&mut self, program: &mut Program) {
         let decoding = self.decode_places.clone();
         let mut uses = Vec::new();
+        // What each call of a builtin that writes rows (`csv.stringify`)
+        // is written with, at the place of each value it is given: a
+        // refusal there names it so (`c.stringify` under `import csv as
+        // c`).
+        let mut writers: Vec<(Span, Symbol)> = Vec::new();
         let mut visit = |expr: &mut Expr| {
+            if let ExprKind::Pipe(_, rhs) = &expr.kind
+                && self.writer_called(rhs)
+                && let Some(label) = Self::callee_label(rhs)
+            {
+                writers.push((expr.span, label));
+            }
             let ExprKind::Call(callee, args) = &expr.kind else {
                 return;
             };
+            if self.writer_called(callee)
+                && let Some(label) = Self::callee_label(callee)
+            {
+                writers.extend(args.iter().map(|arg| (arg.span, label)));
+            }
             let call = expr.span;
             let mut keep = |arg: &Expr, callee: Symbol, span: Span| match &arg.ty {
                 Some(Type::Generic(head, _)) if head.is_builtin(crate::defs::TYPE_OF) => {
@@ -1390,6 +1406,9 @@ impl TypeChecker {
             }
         }
         self.decoder_uses.extend(uses);
+        for (span, label) in writers {
+            self.use_callees.entry(span).or_insert(label);
+        }
     }
 
     /// Drop each refusal of a use as one whose type nothing decides
@@ -1524,6 +1543,15 @@ impl TypeChecker {
                 || matches!(self.tables.vars.subst.get(v), Some(Some(resolved))
                     if self.reaches_defaulted(resolved))
         })
+    }
+
+    /// Whether `callee` calls a builtin that writes what a decoder reads
+    /// back (`csv.stringify`).
+    fn writer_called(&self, callee: &Expr) -> bool {
+        (self.res_def(callee.res))
+            .and_then(|def| Some(format!("{}.{}", def.module.builtin_name()?, def.name)))
+            .and_then(|name| crate::builtins::registry::registry().named(&name))
+            .is_some_and(|row| row.writes.is_some())
     }
 
     /// The name of the builtin decoder `callee` calls, as written, if it

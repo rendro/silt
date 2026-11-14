@@ -51,6 +51,7 @@ mod lsp_type_def_impl_tests;
 mod lsp_type_position_rename_tests;
 mod lsp_uri_encoding_tests;
 mod lsp_workspace_tests;
+mod module_type_names_tests;
 mod recursive_let_lsp_tests;
 mod rename_sweep;
 mod rename_sweep_tests;

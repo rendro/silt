@@ -1,0 +1,14 @@
+> prepare-rename 8:11
+8:11-8:12
+> rename 8:11 left
+field_rename_beside_a_read_of_a_value_that_never_is.silt:8:11-8:12 => left
+field_rename_beside_a_read_of_a_value_that_never_is.silt:20:16-20:17 => left
+field_rename_beside_a_read_of_a_value_that_never_is.silt:21:13-21:14 => left
+field_rename_beside_a_read_of_a_value_that_never_is.silt:21:21-21:22 => left
+field_rename_beside_a_read_of_a_value_that_never_is.silt:21:28-21:29 => left
+> references 8:11
+field_rename_beside_a_read_of_a_value_that_never_is.silt:8:11-8:12
+field_rename_beside_a_read_of_a_value_that_never_is.silt:20:16-20:17
+field_rename_beside_a_read_of_a_value_that_never_is.silt:21:13-21:14
+field_rename_beside_a_read_of_a_value_that_never_is.silt:21:21-21:22
+field_rename_beside_a_read_of_a_value_that_never_is.silt:21:28-21:29

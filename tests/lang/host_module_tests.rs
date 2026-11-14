@@ -1371,3 +1371,67 @@ fn a_host_function_that_builds_a_malformed_value_fails_in_every_build() {
     // A well-formed value passes.
     assert!(run("host.give(h.far(5))").is_ok());
 }
+
+/// A host module's own `type Regex` beside `regex.Regex` (owner card
+/// TYP-1): a result of either type is checked against it, and the message
+/// writes the builtin one with its module; a result type that is an opaque
+/// type of a builtin module is checked too, in a field as well.
+#[test]
+fn host_results_of_a_host_regex_and_of_regex_regex_are_told_apart() {
+    let host = HostModule::new("h")
+        .declare_type("type Regex { n: Int }")
+        .declare_type("type Wrapped { Open(regex.Regex), Shut }")
+        .function("fn mk(n: Int) -> Regex", |call: &HostCall| {
+            call.record("Regex", [("n", call.args[0].clone())])
+        })
+        .function(
+            "fn same(r: regex.Regex) -> regex.Regex",
+            |call: &HostCall| Ok(call.args[0].clone()),
+        )
+        .function(
+            "fn wrong_own(r: regex.Regex) -> Regex",
+            |call: &HostCall| Ok(call.args[0].clone()),
+        )
+        .function(
+            "fn wrong_real(r: Regex) -> regex.Regex",
+            |call: &HostCall| Ok(call.args[0].clone()),
+        )
+        .function("fn open_wrong(r: Regex) -> Wrapped", |call: &HostCall| {
+            call.variant("Wrapped", "Open", vec![call.args[0].clone()])
+        });
+    let program = |body: &str| {
+        format!(
+            "import h\nimport host\nimport regex\n\
+             fn main() -> Result((), regex.RegexError) {{\n  let c = regex.compile(\"a\")?\n  \
+             let r = h.mk(3)\n  {body}\n  Ok(())\n}}"
+        )
+    };
+    assert_eq!(
+        run(
+            &program("host.give(regex.is_match(\"a\", h.same(c)))"),
+            host.clone()
+        ),
+        Ok(Value::Bool(true))
+    );
+    let err = run(&program("host.give(h.wrong_own(c).n)"), host.clone()).unwrap_err();
+    assert!(
+        err.contains(
+            "h.wrong_own: its signature returns Regex, but it returned regex.Regex <regex:a>"
+        ),
+        "got: {err}"
+    );
+    let err = run(
+        &program("host.give(regex.is_match(\"a\", h.wrong_real(r)))"),
+        host.clone(),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("h.wrong_real: its signature returns regex.Regex, but it returned Record"),
+        "got: {err}"
+    );
+    let err = run(&program("host.give(h.open_wrong(r))"), host).unwrap_err();
+    assert!(
+        err.contains("h.open_wrong: its signature returns Wrapped, but it returned Variant"),
+        "got: {err}"
+    );
+}

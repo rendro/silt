@@ -455,8 +455,10 @@ pub fn written_scheme(
 ///   and the first paragraph of its section of the reference pages;
 /// - a variant (`Some`, `channel.Message`): the declaration of its
 ///   enum, and the first paragraph of its section, or else its enum's;
-/// - a type of the language (`Int`, `List`): its name and arguments,
-///   and what the page of its module says first.
+/// - a type of the prelude (`Int`, `List`): its name and arguments,
+///   and what the page of its module says first; a type of a builtin
+///   module is found by its module (`regex.Regex`), as `time.Weekday`
+///   is, since its bare name is no builtin.
 ///
 /// Of a function or a module whose cargo feature is not built, it also
 /// says what it needs. `None` when no builtin has the name.
@@ -515,8 +517,11 @@ pub fn doc_text(name: &str) -> Option<String> {
             .or_else(|| docs::type_summary(&enum_name));
         return Some(with_summary(line, summary));
     }
-    let builtin = (crate::types::builtins::BUILTIN_TYPES.iter())
-        .find(|t| t.name == name && t.name.chars().all(char::is_alphabetic))?;
+    let builtin = (crate::types::builtins::BUILTIN_TYPES.iter()).find(|t| {
+        t.name == name
+            && t.name.chars().all(char::is_alphabetic)
+            && crate::types::builtins::is_prelude_name(t.name)
+    })?;
     let params: Vec<String> = (b'a'..)
         .take(builtin.arity? as usize)
         .map(|c| char::from(c).to_string())

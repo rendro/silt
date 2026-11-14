@@ -91,10 +91,15 @@ pub(super) struct Names<'a> {
     pub(super) methods: Vec<MethodUse>,
     pub(super) fields: Vec<FieldUse>,
     /// The field reads on a value whose record type is not known (a
-    /// type error, an anonymous record): the span of the name and the
-    /// name. A field of that name cannot be renamed while one is there,
-    /// since the read may be one of its places.
+    /// type error; a value that never is reads no field): the span of
+    /// the name and the name. A field of that name cannot be renamed
+    /// while one is there, since the read may be one of its places.
     pub(super) unknown_reads: Vec<(Span, Symbol)>,
+    /// The fields of a record literal or update whose name was not found
+    /// in the text before the value: the span of the value, the record
+    /// and the name. The field cannot be renamed while one is there,
+    /// since the rename would leave that place as it is.
+    pub(super) unplaced: Vec<(Span, DefId, Symbol)>,
     /// The module names written before a dot: `geo` in `geo.mk(1)`, in
     /// `geo.Pt { x: 1 }`, in a type `geo.Pt`, in a pattern
     /// `geo.Shape.Circle(r)`, in `where a: geo.Sized`. A name in an
@@ -165,6 +170,7 @@ impl<'a> Names<'a> {
             fields: Vec::new(),
             qualifiers: Vec::new(),
             unknown_reads: Vec::new(),
+            unplaced: Vec::new(),
             declares: false,
             text: session
                 .graph()
@@ -251,9 +257,14 @@ impl<'a> Names<'a> {
             if name.span.start < from {
                 break;
             }
-            if let (Token::Ident(sym), Token::Colon) = (&name.kind, &colon.kind)
-                && *sym == field
-            {
+            // (A keyword names a field as a name does: `Event { type: t }`.)
+            let named = match &name.kind {
+                Token::Ident(sym) => *sym == field,
+                kind => kind
+                    .keyword()
+                    .is_some_and(|k| crate::intern::intern(k) == field),
+            };
+            if named && matches!(colon.kind, Token::Colon) {
                 return Some(Span {
                     file: value.span.file,
                     ..name.span
@@ -515,7 +526,11 @@ impl<'a> Names<'a> {
                     && let Some(record) = self.record_of(receiver.ty.as_ref())
                 {
                     self.field(*field_span, record, *field, false);
-                } else if field_span.is_in_source() {
+                } else if field_span.is_in_source()
+                    // (A read of a value that never is, `panic("a").x`,
+                    // reads no record's field: it never runs.)
+                    && !matches!(receiver.ty, Some(crate::types::Type::Never))
+                {
                     self.unknown_reads.push((*field_span, *field));
                 }
                 self.expr(receiver);
@@ -757,10 +772,14 @@ impl<'a> Names<'a> {
                     }
                 }
                 _ => {
-                    if let Some(record) = record
-                        && let Some(span) = self.field_name_span(from, *field, value)
-                    {
-                        self.field(span, record, *field, false);
+                    if let Some(record) = record {
+                        match self.field_name_span(from, *field, value) {
+                            Some(span) => self.field(span, record, *field, false),
+                            None if value.span.is_in_source() => {
+                                self.unplaced.push((value.span, record, *field));
+                            }
+                            None => {}
+                        }
                     }
                     self.expr(value);
                 }

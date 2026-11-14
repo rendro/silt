@@ -926,13 +926,8 @@ fn report_private_in_public(
 /// a builtin type that no builtin module declares, or `Option` and
 /// `Result`. The bare name is the type.
 fn prelude_type_help(name: &str) -> Option<String> {
-    let declared_by_a_module = (crate::builtins::registry::registry().modules.iter()).any(|m| {
-        m.type_decls.iter().any(|ty| ty.name == name) || m.opaque.iter().any(|(o, _)| *o == name)
-    });
     let in_prelude = matches!(name, "Option" | "Result")
-        || (crate::types::builtins::lookup(name).is_some()
-            && !declared_by_a_module
-            && name != "()");
+        || (crate::types::builtins::is_prelude_name(name) && name != "()");
     in_prelude.then(|| format!("`{name}` is in the prelude: write `{name}` without a module"))
 }
 

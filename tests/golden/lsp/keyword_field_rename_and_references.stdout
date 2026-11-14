@@ -1,0 +1,35 @@
+> references 10:14
+keyword_field_rename_and_references.silt:10:14-10:18
+keyword_field_rename_and_references.silt:14:13-14:17
+keyword_field_rename_and_references.silt:15:13-15:17
+keyword_field_rename_and_references.silt:20:19-20:23
+keyword_field_rename_and_references.silt:21:15-21:19
+keyword_field_rename_and_references.silt:22:29-22:33
+keyword_field_rename_and_references.silt:23:25-23:29
+keyword_field_rename_and_references.silt:23:34-23:38
+> prepare-rename 20:19
+20:19-20:23
+> rename 10:14 kind
+keyword_field_rename_and_references.silt:10:14-10:18 => kind
+keyword_field_rename_and_references.silt:14:13-14:17 => kind
+keyword_field_rename_and_references.silt:15:13-15:17 => kind
+keyword_field_rename_and_references.silt:20:19-20:23 => kind
+keyword_field_rename_and_references.silt:21:15-21:19 => kind
+keyword_field_rename_and_references.silt:22:29-22:33 => kind
+keyword_field_rename_and_references.silt:23:25-23:29 => kind
+keyword_field_rename_and_references.silt:23:34-23:38 => kind
+> rename 20:19 kind
+keyword_field_rename_and_references.silt:10:14-10:18 => kind
+keyword_field_rename_and_references.silt:14:13-14:17 => kind
+keyword_field_rename_and_references.silt:15:13-15:17 => kind
+keyword_field_rename_and_references.silt:20:19-20:23 => kind
+keyword_field_rename_and_references.silt:21:15-21:19 => kind
+keyword_field_rename_and_references.silt:22:29-22:33 => kind
+keyword_field_rename_and_references.silt:23:25-23:29 => kind
+keyword_field_rename_and_references.silt:23:34-23:38 => kind
+> rename 10:28 count
+keyword_field_rename_and_references.silt:10:28-10:33 => count
+keyword_field_rename_and_references.silt:15:22-15:27 => count
+keyword_field_rename_and_references.silt:20:30-20:35 => count
+keyword_field_rename_and_references.silt:22:19-22:24 => count
+keyword_field_rename_and_references.silt:23:43-23:48 => count

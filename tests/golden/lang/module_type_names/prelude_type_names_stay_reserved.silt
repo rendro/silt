@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- The types of the prelude are still names no program may declare.
+-- stderr-contains: error[type]: type 'Bytes' shadows builtin type 'Bytes'
+-- stderr-contains: error[type]: type 'Channel' shadows builtin type 'Channel'
+-- stderr-contains: error[type]: type 'Fn' shadows builtin type 'Fn'
+-- stderr-not-contains: 'Regex'
+type Bytes { n: Int }
+type Channel { n: Int }
+type Fn { n: Int }
+type Regex { n: Int }
+
+fn main() { println(Regex { n: 1 }.n) }

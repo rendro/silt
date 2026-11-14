@@ -133,11 +133,12 @@ value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
 one (`time.Date`, `json.Value`): its type, and the types of the fields
 of the record or of the variant it is, as the declaration gives them
 at the type's arguments (`Box(Int)`: its `value: a` is an `Int`),
-inside it as deep as the check goes. A builtin type whose values are
-neither (`regex.Regex`, `tcp.TcpStream`, `postgres.PgPool`) is not
-checked. A value belongs to the program it was made in: one a host keeps
-from another session's program is not told apart from a value of the
-same type id in this one. A `-> Int` function that returns a
+inside it as deep as the check goes; a `regex.Regex`, `task.Handle(a)`,
+`tcp.TcpStream` or `tcp.TcpListener`: that it is one (what a task
+gives is not looked at). Another builtin type whose values are none of
+these (`postgres.PgPool`) is not checked. A value belongs to the program
+it was made in: one a host keeps from another session's program is not
+told apart from a value of the same type id in this one. A `-> Int` function that returns a
 `String` is a runtime error that names it (`mylib.count: its signature
 returns Int, but it returned String "three"`). No value is of `Never`:
 a `-> Never` function that returns a value is that error too, and it

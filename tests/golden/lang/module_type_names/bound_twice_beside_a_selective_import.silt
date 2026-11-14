@@ -1,0 +1,18 @@
+-- requires-feature: tcp
+-- cmd: check
+-- exit: 1
+-- A type of a builtin module imported by name binds the name: declaring a
+-- type of that name as well binds it twice, as for every import.
+-- stderr-contains: error[parse]: 'Regex' is bound twice at the top level: by the import and by the type here
+-- stderr-contains: error[parse]: 'Handle' is bound twice at the top level: by the import and by the type here
+-- stderr-contains: error[parse]: 'TcpStream' is bound twice at the top level: by the import and by the type here
+-- stderr-not-contains: shadows builtin type
+import regex.{ Regex }
+import task.{ Handle }
+import tcp.{ TcpStream }
+
+type Regex { n: Int }
+type Handle { n: Int }
+type TcpStream { n: Int }
+
+fn main() { println(1) }

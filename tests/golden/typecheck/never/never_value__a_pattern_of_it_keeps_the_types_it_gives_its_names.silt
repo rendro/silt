@@ -1,0 +1,39 @@
+-- A pattern matched against a value that never is gives its names the
+-- types it says: `port` of `Cfg { port, .. }` is an Int, the payloads of
+-- `Add(a, b)` are Ints, and each is used as one (a trait of the program,
+-- Number). Only a name the pattern leaves undecided never is.
+import list
+
+trait Port {
+  fn open(self) -> Int
+}
+
+trait Port for Int {
+  fn open(self) -> Int {
+    self
+  }
+}
+
+type Cfg { port: Int, name: String }
+
+type Msg { Add(Int, Int), Stop }
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn start() -> Int {
+  let Cfg { port, .. } = todo()
+  Port.open(port) + list.sum([port])
+}
+
+fn step() -> Int {
+  match todo() {
+    Add(a, b) -> list.sum([a]) + list.product([b])
+    Stop -> 0
+  }
+}
+
+fn main() {
+  println("ok")
+}

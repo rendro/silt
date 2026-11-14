@@ -180,10 +180,7 @@ impl Project {
     pub(super) fn compile_errors(&mut self, id: ModuleId, modules: &[ModuleId]) -> &[Diagnostic] {
         if !self.compiled.contains_key(&id) {
             let file = self.file(id);
-            let errors = match self
-                .session
-                .compile(file, crate::session::Entry::Tests { filter: None })
-            {
+            let errors = match self.session.compile(file, crate::session::Entry::Module) {
                 Ok(_) => Vec::new(),
                 Err(errors) => errors,
             };

@@ -461,8 +461,10 @@ impl Shapes<'_, '_> {
 
     /// The shape of the type `id` at `args`: a type of the prelude that
     /// values show by what they are (`Int`, `List`, `Option`) as that;
-    /// a record or enum type as itself, its declared fields entered into
-    /// the templates; any other type admits anything.
+    /// an opaque type of a builtin module whose values are a kind of their
+    /// own (`regex.Regex`) as that kind; a record or enum type as itself,
+    /// its declared fields entered into the templates; any other type
+    /// admits anything.
     fn of_id(&mut self, id: TypeId, name: String, mut args: Vec<HostShape>) -> HostShape {
         let prelude = (crate::defs::builtin_types().get(id.0.0 as usize))
             .filter(|(_, module)| module.is_none())
@@ -496,6 +498,9 @@ impl Shapes<'_, '_> {
             if let Some(shape) = shape {
                 return shape;
             }
+        }
+        if crate::types::canonical::is_opaque_value_type(id) {
+            return HostShape::Opaque { id, name };
         }
         match self.template(id) {
             true => HostShape::Named { id, name, args },

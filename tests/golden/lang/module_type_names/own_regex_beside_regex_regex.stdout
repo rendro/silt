@@ -1,0 +1,10 @@
+aa true
+1
+/aa/2
+mine: aa
+the regex module's
+["mine: aa", "the regex module's"]
+true
+matched 1
+{"pattern":"aa","flags":1}
+Ok(/b/3)

@@ -27,7 +27,7 @@ impl Server {
                         .definitions
                         .get(&f.name)
                         .and_then(|d| d.ty.as_ref())
-                        .map(|t| format!("{t}"));
+                        .map(|t| format!("{}", self.written_here(doc, t)));
                     symbols.push(DocumentSymbol {
                         name: f.name.to_string(),
                         detail,
@@ -93,7 +93,8 @@ impl Server {
                         PatternKind::Ident(n) => *n,
                         _ => unreachable!(),
                     };
-                    let detail = value.ty.as_ref().map(|t| format!("{t}"));
+                    let detail =
+                        (value.ty.as_ref()).map(|t| format!("{}", self.written_here(doc, t)));
                     // `range` covers the whole let-binding
                     // declaration, its value included; `selectionRange`
                     // uses the parser-recorded `name_span` when

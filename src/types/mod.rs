@@ -1056,6 +1056,40 @@ pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
     }
 }
 
+/// `ty` with each named type `r` replaced by `f(r)`: the same type with
+/// another name to show (`regex.Regex` for the builtin `Regex` where the
+/// bare name means a program's type).
+pub fn map_refs(ty: &Type, f: &impl Fn(TypeRef) -> TypeRef) -> Type {
+    let each = |ts: &[Type]| ts.iter().map(|t| map_refs(t, f)).collect::<Vec<_>>();
+    let boxed = |t: &Type| Box::new(map_refs(t, f));
+    match ty {
+        Type::Generic(r, args) => Type::Generic(f(*r), each(args)),
+        Type::Fun(params, ret) => Type::Fun(each(params), boxed(ret)),
+        Type::List(inner) => Type::List(boxed(inner)),
+        Type::Set(inner) => Type::Set(boxed(inner)),
+        Type::Channel(inner) => Type::Channel(boxed(inner)),
+        Type::Tuple(elems) => Type::Tuple(each(elems)),
+        Type::Map(k, v) => Type::Map(boxed(k), boxed(v)),
+        Type::App(head, arg) => Type::App(boxed(head), boxed(arg)),
+        Type::Con(head, rest) => {
+            let head = match head {
+                Head::Named(r) => Head::Named(f(*r)),
+                other => *other,
+            };
+            Type::Con(head, each(rest))
+        }
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Var(_)
+        | Type::Rigid(_)
+        | Type::Error
+        | Type::Never => ty.clone(),
+    }
+}
+
 /// Whether `at` is the type `general` with a type for each of its
 /// variables, which `stands` then holds. (Where the two differ in
 /// more than that the answer is no: the caller takes it for unknown.)

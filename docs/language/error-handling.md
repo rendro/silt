@@ -144,7 +144,10 @@ and it is how a tool fails: the `Err` is the program's message to its user.
 | a runtime error or a `panic` | the error with its place and calls on stderr, exit status 1 |
 
 The payload is shown as `println` shows it, so a tool's own error type
-with a `Display` impl reads as the tool writes it. Its type must have
+with a `Display` impl reads as the tool writes it. Where that impl itself
+fails (a `panic` in it, a division by zero), the payload is shown by its
+structure, as `E {a: 1}`, and the failure of the impl is not reported;
+a `process.exit` in it still ends the program. Its type must have
 `Display`: a function, a channel, or a type that holds one and has no
 `Display` impl, is refused when the program is checked (and so is the
 error type of a test function).

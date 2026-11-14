@@ -458,6 +458,31 @@ fn kind_types() -> &'static KindTypes {
     })
 }
 
+/// Whether `id` is an opaque type of a builtin module whose values are a
+/// kind of their own: `task.Handle`, `tcp.TcpListener`, `tcp.TcpStream`,
+/// `regex.Regex`.
+pub fn is_opaque_value_type(id: TypeId) -> bool {
+    let kinds = kind_types();
+    [
+        kinds.handle,
+        kinds.tcp_listener,
+        kinds.tcp_stream,
+        kinds.regex,
+    ]
+    .contains(&id)
+}
+
+/// The kind of `val` as a message names it: [`Value::kind`], but for a
+/// value of an opaque type of a builtin module its type with its module
+/// (`regex.Regex`), which a program's own `Regex` is not.
+pub fn kind_name(val: &Value) -> String {
+    let id = dispatch_type_for_value(val);
+    match crate::defs::builtin_types().get(id.0.0 as usize) {
+        Some((name, Some(module))) if is_opaque_value_type(id) => format!("{module}.{name}"),
+        _ => val.kind().to_string(),
+    }
+}
+
 /// The name of the type [`dispatch_type_for_value`] gives, as messages
 /// show it.
 pub fn dispatch_type_name(val: &Value) -> String {
