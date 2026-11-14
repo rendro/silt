@@ -712,16 +712,17 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
     out
 }
 
-/// The longest message, in characters, that is said again under the
-/// caret: a longer one (a panic's message can be a long text) is in the
-/// headline only.
+/// The widest message, in display columns (a wide character, as in CJK,
+/// takes two), that is said again under the caret: a wider one (a panic's
+/// message can be a long text) is in the headline only.
 const CARET_LABEL_MAX: usize = 120;
 
 /// What stands after the caret of a diagnostic whose message is
 /// `message`: the message itself when it is one short line, else
 /// `here`, as the headline above says it already.
 fn caret_label(message: &str) -> &str {
-    match message.contains('\n') || message.chars().count() > CARET_LABEL_MAX {
+    let chars: Vec<char> = message.chars().collect();
+    match message.contains('\n') || mark_width(chars.iter()) > CARET_LABEL_MAX {
         true => "here",
         false => message,
     }
@@ -1186,6 +1187,22 @@ mod tests {
             &Diagnostic::error(Code::CompileLimit, span(4, 5), &short),
         );
         assert_eq!(out.matches(&short).count(), 2, "{out}");
+    }
+
+    /// The limit counts display columns: 61 wide characters are 122
+    /// columns and are not said again; 60 (120 columns) are. FAILS on
+    /// the base: characters were counted, so 100 wide ones were said
+    /// twice.
+    #[test]
+    fn the_caret_label_limit_counts_display_columns() {
+        let map = sources("let x = 1");
+        let wide = "\u{4e2d}".repeat(CARET_LABEL_MAX / 2 + 1);
+        let error = |message: &str| Diagnostic::error(Code::CompileLimit, span(4, 5), message);
+        let out = render_human(&map, &error(&wide));
+        assert_eq!(out.matches(&wide).count(), 1, "{out}");
+        let fits = "\u{4e2d}".repeat(CARET_LABEL_MAX / 2);
+        let out = render_human(&map, &error(&fits));
+        assert_eq!(out.matches(&fits).count(), 2, "{out}");
     }
 
     fn sources(text: &str) -> SourceMap {
