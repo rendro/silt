@@ -837,7 +837,6 @@ impl Session {
             Entry::Main => {
                 entry_errors.extend(match analysis.top_level.get(&main) {
                     None => Some(entry::missing_main(
-                        &analysis.ast,
                         self.graph
                             .module(id)
                             .file

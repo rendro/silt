@@ -13,9 +13,6 @@ use crate::types::Type;
 /// The name of the function a program starts from.
 pub const ENTRY_POINT: &str = "main";
 
-/// The builtin module that holds the assertions.
-const TEST_MODULE: &str = "test";
-
 /// Classify a top-level function name. `None`: not a test.
 pub fn test_kind(name: &str) -> Option<TestKind> {
     if name.starts_with("skip_test_") {
@@ -62,28 +59,17 @@ pub(super) fn is_test_file(path: &std::path::Path) -> bool {
         .is_some_and(|name| name.to_string_lossy().ends_with("_test.silt"))
 }
 
-/// Is `program` a test file: does it declare a test function, or import
-/// the `test` module? Such a file has no `main` on purpose; it is run
-/// with `silt test`.
-pub fn looks_like_test_file(program: &Program) -> bool {
-    !test_functions(program).is_empty()
-        || program.decls.iter().any(|decl| match decl {
-            Decl::Import(target, _) => resolve(target.module()) == TEST_MODULE,
-            _ => false,
-        })
-}
-
 /// The diagnostic for an entry file `path` (as the user named it) that
 /// binds no `main`. It is about the whole file, so it points at its
-/// start. A test file gets a pointer to `silt test` instead of the advice
-/// to add a `main`.
-pub(super) fn missing_main(program: &Program, file: FileId, path: &str) -> Diagnostic {
+/// start. A test file (`is_test_file`), which has no `main` on purpose,
+/// gets a pointer to `silt test` instead of the advice to add a `main`.
+pub(super) fn missing_main(file: FileId, path: &str) -> Diagnostic {
     let d = Diagnostic::error(
         Code::MissingMain,
         Span::point(file, 0),
         "program has no main() function",
     );
-    if looks_like_test_file(program) {
+    if is_test_file(std::path::Path::new(path)) {
         d.with_note(format!(
             "This looks like a test file — run it with 'silt test {path}' instead."
         ))
@@ -367,12 +353,10 @@ mod tests {
 
     #[test]
     fn test_file() {
-        assert!(looks_like_test_file(&parse("fn test_a() { let _ = 1 }")));
-        assert!(looks_like_test_file(&parse(
-            "import test\nfn helper() { 1 }"
-        )));
-        assert!(!looks_like_test_file(&parse(
-            "-- fn test_a() { 1 }\nfn helper() { 1 }"
-        )));
+        assert!(is_test_file(std::path::Path::new("math_test.silt")));
+        assert!(is_test_file(std::path::Path::new("src/a/b_test.silt")));
+        assert!(!is_test_file(std::path::Path::new("tests.silt")));
+        assert!(!is_test_file(std::path::Path::new("helpers.silt")));
+        assert!(!is_test_file(std::path::Path::new("-")));
     }
 }
