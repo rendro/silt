@@ -102,30 +102,13 @@ impl Completer for SiltHelper {
         pos: usize,
         _ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
-        // Find the word being completed (go back from cursor to whitespace/delimiter).
-        // IMPORTANT: `.` is deliberately NOT a word boundary here, so that
-        // typing `string.` keeps the full `string.` as the completion
-        // prefix and narrows candidates to `string.*` entries. Adding `.`
-        // to this set re-introduces the DX2 regression — see
-        // `test_repl_completion_filters_on_module_prefix`.
-        let start = line[..pos]
-            .rfind(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == '|')
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        let prefix = &line[start..pos];
-
-        if prefix.is_empty() {
-            return Ok((pos, Vec::new()));
-        }
-
-        let matches: Vec<Pair> = (self.repl.borrow().completion_names().into_iter())
-            .filter(|n| n.starts_with(prefix))
+        let (start, names) = self.repl.borrow().completions_at(line, pos);
+        let matches: Vec<Pair> = (names.into_iter())
             .map(|n| Pair {
                 display: n.clone(),
                 replacement: n,
             })
             .collect();
-
         Ok((start, matches))
     }
 }
@@ -687,6 +670,30 @@ impl Repl {
     /// every name the next input sees of the inputs that ran (see
     /// [`scope_completion_names`]). An input that did not run to its
     /// end adds none and takes none away.
+    /// What <Tab> offers for the word that ends at `pos` in `line`: where
+    /// the word starts, and the names that start with it (none for no
+    /// word).
+    pub fn completions_at(&self, line: &str, pos: usize) -> (usize, Vec<String>) {
+        // Find the word being completed (go back from cursor to whitespace/delimiter).
+        // IMPORTANT: `.` is deliberately NOT a word boundary here, so that
+        // typing `string.` keeps the full `string.` as the completion
+        // prefix and narrows candidates to `string.*` entries. Adding `.`
+        // to this set re-introduces the DX2 regression — see
+        // `test_repl_completion_filters_on_module_prefix`.
+        let start = line[..pos]
+            .rfind(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == '|')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let prefix = &line[start..pos];
+        if prefix.is_empty() {
+            return (pos, Vec::new());
+        }
+        let names = (self.completion_names().into_iter())
+            .filter(|n| n.starts_with(prefix))
+            .collect();
+        (start, names)
+    }
+
     pub fn completion_names(&self) -> Vec<String> {
         let mut names = builtin_names();
         let session = &self.session;
@@ -879,22 +886,6 @@ fn print_help() {
         "Multi-line input: an open brace, paren, bracket, string or block comment, or a line that ends in an operator (+, |>, =, -> ...), continues on the next line."
     );
     println!("A brace in a string starts an interpolation: write \\{{ for the character itself.");
-}
-
-/// Completion candidates for a given prefix, using the REPL's builtin name
-/// list. Mirrors the logic inside `SiltHelper::complete` but takes just a
-/// prefix string so integration tests can exercise it without building a
-/// full `rustyline` editor. Intentionally does not re-implement the
-/// word-boundary search — callers pass the already-extracted prefix.
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn completion_candidates_for_prefix(prefix: &str) -> Vec<String> {
-    if prefix.is_empty() {
-        return Vec::new();
-    }
-    builtin_names()
-        .into_iter()
-        .filter(|n| n.starts_with(prefix))
-        .collect()
 }
 
 #[cfg(test)]

@@ -9,14 +9,27 @@
 //! GAP #13 — REPL tab completion's builtin keyword list was missing
 //!           `as`, `else`, `mod`, `pub`, `where`. Fixed: mirror the LSP
 //!           `KEYWORDS` list exactly. These tests call the `pub` helper
-//!           `completion_candidates_for_prefix`, which mirrors the
-//!           `SiltHelper::complete` filter logic over `builtin_names`.
+//!           `Repl::completions_at`, which the line editor's completer
+//!           (`SiltHelper::complete`) calls.
 
+#[cfg(feature = "repl")]
+use silt::session::ProjectSetup;
+use silt::testing::VmErrorInside;
 use silt::testing::diagnostic::render_human;
 #[cfg(feature = "repl")]
-use silt::testing::repl::{builtin_names, completion_candidates_for_prefix};
+use silt::testing::repl::{Repl, builtin_names};
 use silt::testing::source::SourceMap;
 use silt::testing::vm::VmError;
+
+/// What <Tab> offers after `prefix`, typed alone in a fresh REPL: the
+/// REPL's own completion (`Repl::completions_at`, what its line editor
+/// calls).
+#[cfg(feature = "repl")]
+fn tab(prefix: &str) -> Vec<String> {
+    Repl::new(ProjectSetup::None)
+        .completions_at(prefix, prefix.len())
+        .1
+}
 
 // ── GAP #4 / #5: multi-line runtime messages ───────────────────────
 
@@ -69,7 +82,7 @@ fn test_repl_completion_for_p_suggests_pub() {
     // suggested completions. Pre-fix `pub` was missing, so the user
     // could only get `print`/`println`/`panic` — silently losing the
     // `pub fn …`/`pub type …` affordance entirely.
-    let matches = completion_candidates_for_prefix("p");
+    let matches = tab("p");
     assert!(
         matches.iter().any(|s| s == "pub"),
         "expected `pub` in completions for prefix `p`, got:\n{matches:?}"
@@ -86,7 +99,7 @@ fn test_repl_completion_for_each_new_keyword_prefix_suggests_it() {
     // is isolated to exactly one failing test rather than hidden in an
     // aggregate failure.
     for (prefix, keyword) in [("a", "as"), ("e", "else"), ("p", "pub"), ("w", "where")] {
-        let matches = completion_candidates_for_prefix(prefix);
+        let matches = tab(prefix);
         assert!(
             matches.iter().any(|s| s == keyword),
             "expected `{keyword}` in completions for prefix `{prefix}`, got:\n{matches:?}"

@@ -9,7 +9,17 @@
 
 #![cfg(feature = "repl")]
 
-use silt::testing::repl::{builtin_names, completion_candidates_for_prefix};
+use silt::session::ProjectSetup;
+use silt::testing::repl::{Repl, builtin_names};
+
+/// What <Tab> offers after `prefix`, typed alone in a fresh REPL: the
+/// REPL's own completion (`Repl::completions_at`, what its line editor
+/// calls).
+fn tab(prefix: &str) -> Vec<String> {
+    Repl::new(ProjectSetup::None)
+        .completions_at(prefix, prefix.len())
+        .1
+}
 
 #[test]
 fn test_repl_builtin_names_includes_short_commands() {
@@ -27,7 +37,7 @@ fn test_repl_completion_for_colon_q_offers_short_and_long_quit() {
     // Typing `:q` and hitting Tab must offer both `:q` and `:quit`.
     // Pre-fix only `:quit` was offered, so the short form (though the
     // runtime accepts it) was invisible to tab-completion users.
-    let matches = completion_candidates_for_prefix(":q");
+    let matches = tab(":q");
     assert!(
         matches.iter().any(|s| s == ":q"),
         "expected `:q` in completions for `:q`, got:\n{matches:?}"
@@ -41,7 +51,7 @@ fn test_repl_completion_for_colon_q_offers_short_and_long_quit() {
 #[test]
 fn test_repl_completion_for_colon_h_offers_short_and_long_help() {
     // Typing `:h` and hitting Tab must offer both `:h` and `:help`.
-    let matches = completion_candidates_for_prefix(":h");
+    let matches = tab(":h");
     assert!(
         matches.iter().any(|s| s == ":h"),
         "expected `:h` in completions for `:h`, got:\n{matches:?}"
