@@ -4,9 +4,9 @@
 use std::path::PathBuf;
 use std::process;
 
-use silt::git::escape_for_display;
-use silt::package_graph::{LockPolicy, resolve_packages};
-use silt::source::SourceMap;
+use crate::git::escape_for_display;
+use crate::package_graph::{LockPolicy, resolve_packages};
+use crate::source::SourceMap;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
 

@@ -97,7 +97,7 @@ const MAX_TASKS: usize = 100_000;
 /// the whole process.
 ///
 /// On 64-bit targets the value equals the main thread's reserve
-/// (`SILT_STACK_SIZE` in `src/main.rs`, 256 MiB), so a program can
+/// (`SILT_STACK_SIZE` in `src/cli/mod.rs`, 256 MiB), so a program can
 /// work on the same values inside `task.spawn` as outside of it. The
 /// size is a reservation of address space: memory is committed page by
 /// page as the stack grows, so a worker that never recurses deeply

@@ -4,10 +4,10 @@
 use std::fs;
 use std::process;
 
-use silt::git::escape_for_display;
-use silt::intern;
-use silt::package_graph::{LockPolicy, resolve_packages};
-use silt::source::SourceMap;
+use crate::git::escape_for_display;
+use crate::intern;
+use crate::package_graph::{LockPolicy, resolve_packages};
+use crate::source::SourceMap;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
 
@@ -99,7 +99,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
         format!(
             "failed to read {}: {}",
             manifest_path.display(),
-            silt::diagnostic::io_error_text(&e)
+            crate::diagnostic::io_error_text(&e)
         )
     })?;
     let mut doc = manifest_text

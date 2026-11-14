@@ -38,6 +38,11 @@
 pub mod ast;
 pub mod builtins;
 pub mod bytecode;
+// The `silt` command; src/main.rs calls `cli::main`. Not for wasm32,
+// where the playground uses the library and there is no command.
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod cli;
 pub(crate) mod compiler;
 pub mod defs;
 pub mod diagnostic;

@@ -6,8 +6,8 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::process;
 
-use silt::diagnostic::{Diagnostic, SourceView, render_human};
-use silt::session::{Entry, LockPolicy, Session};
+use crate::diagnostic::{Diagnostic, SourceView, render_human};
+use crate::session::{Entry, LockPolicy, Session};
 
 use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_in};
@@ -168,7 +168,7 @@ fn programs_of(paths: &[String]) -> Vec<PackageFiles> {
         program.entry == "-"
             || seen.insert((
                 package,
-                silt::source::canonical_path(Path::new(&program.entry)),
+                crate::source::canonical_path(Path::new(&program.entry)),
             ))
     });
     programs
@@ -232,20 +232,20 @@ impl Loaded {
     /// a file checked before).
     fn has(&mut self, session: &Session, path: &Path) -> bool {
         let names = session.sources().files().map(|file| &file.path);
-        self.has_in(names, path, &mut silt::source::canonical_path)
+        self.has_in(names, path, &mut crate::source::canonical_path)
     }
 
     /// [`Loaded::has`] of the session whose files are named `names`, in
     /// the order read, with `canonical` making a path canonical.
     fn has_in<'a>(
         &mut self,
-        names: impl Iterator<Item = &'a silt::source::SourceName>,
+        names: impl Iterator<Item = &'a crate::source::SourceName>,
         path: &Path,
         canonical: &mut impl FnMut(&Path) -> std::path::PathBuf,
     ) -> bool {
         for name in names.skip(self.seen) {
             self.seen += 1;
-            if let silt::source::SourceName::Path(p) = name {
+            if let crate::source::SourceName::Path(p) = name {
                 self.paths.insert(canonical(p));
             }
         }
@@ -277,7 +277,7 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
         path.parent().is_some_and(|dir| dir != src)
     });
     files.extend(below);
-    without_entry_and_tests(files, entry, tests, silt::source::canonical_path)
+    without_entry_and_tests(files, entry, tests, crate::source::canonical_path)
 }
 
 /// `files`, in their order, but for the entry file `entry` and the test
@@ -399,7 +399,7 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
                 let unreadable = [(path.to_string(), e)];
                 match format {
                     OutputFormat::Json => json.extend(json_errors(
-                        &silt::source::SourceMap::new(),
+                        &crate::source::SourceMap::new(),
                         &unreadable,
                         &[],
                     )),
@@ -434,7 +434,7 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
                     eprintln!();
                 }
                 printed |= !diagnostics.is_empty();
-                silt::diagnostic::eprint_all(&files, &diagnostics);
+                crate::diagnostic::eprint_all(&files, &diagnostics);
             }
         }
     }
@@ -464,7 +464,7 @@ fn report_unreadable(unreadable: &[(String, std::io::Error)]) {
     for (path, e) in unreadable {
         eprintln!(
             "error reading {path}: {}",
-            silt::diagnostic::io_error_text(e)
+            crate::diagnostic::io_error_text(e)
         );
     }
 }
@@ -474,7 +474,7 @@ fn report_unreadable(unreadable: &[(String, std::io::Error)]) {
 /// its place and no position in it.
 fn unreadable_json(path: &str, e: &std::io::Error) -> serde_json::Value {
     serde_json::json!({
-        "code": silt::diagnostic::Code::ModuleNotFound.id(),
+        "code": crate::diagnostic::Code::ModuleNotFound.id(),
         "col": 0,
         "end_col": 0,
         "end_line": 0,
@@ -483,7 +483,7 @@ fn unreadable_json(path: &str, e: &std::io::Error) -> serde_json::Value {
         "kind": "compile",
         "labels": [],
         "line": 0,
-        "message": format!("error reading {path}: {}", silt::diagnostic::io_error_text(e)),
+        "message": format!("error reading {path}: {}", crate::diagnostic::io_error_text(e)),
         "notes": [],
         "severity": "error",
     })
@@ -503,7 +503,7 @@ fn json_errors(
         .chain(
             errors
                 .iter()
-                .map(|d| silt::diagnostic::render_json(files, d)),
+                .map(|d| crate::diagnostic::render_json(files, d)),
         )
         .collect()
 }
@@ -512,7 +512,7 @@ fn json_errors(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use silt::source::SourceName;
+    use crate::source::SourceName;
 
     use super::{Loaded, without_entry_and_tests};
 

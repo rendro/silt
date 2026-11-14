@@ -1,4 +1,4 @@
-//! `silt lsp` — thin wrapper around `silt::lsp::run`.
+//! `silt lsp` — thin wrapper around `crate::lsp::run`.
 
 use std::process;
 
@@ -49,7 +49,7 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
-    silt::lsp::run();
+    crate::lsp::run();
 }
 
 #[cfg(not(feature = "lsp"))]
@@ -61,7 +61,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // helper directly so this branch is covered regardless of which
     // features the test binary was compiled with.
     let tail: &[String] = if args.len() > 2 { &args[2..] } else { &[] };
-    let (code, msg) = silt::feature_stub::disabled_feature_response(tail, "lsp", &usage_text());
+    let (code, msg) = crate::feature_stub::disabled_feature_response(tail, "lsp", &usage_text());
     if code == 0 {
         print!("{msg}");
     } else {

@@ -35,7 +35,7 @@ pub(crate) fn dispatch(args: &[String]) {
             }
         }
     }
-    if let Err(e) = silt::update::run_update(silt::update::UpdateOptions { dry_run, force }) {
+    if let Err(e) = crate::update::run_update(crate::update::UpdateOptions { dry_run, force }) {
         eprintln!("error: silt self-update: {e}");
         process::exit(1);
     }

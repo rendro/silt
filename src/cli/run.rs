@@ -4,10 +4,10 @@
 use std::path::Path;
 use std::process;
 
-use silt::diagnostic::{Diagnostic, render_human};
-use silt::session::{Entry, LockPolicy};
-use silt::source::SourceMap;
-use silt::vm::{Exit, Vm, VmError};
+use crate::diagnostic::{Diagnostic, render_human};
+use crate::session::{Entry, LockPolicy};
+use crate::source::SourceMap;
+use crate::vm::{Exit, Vm, VmError};
 
 use crate::cli::help::{asks_for_help, run_help_text, run_usage_banner};
 use crate::cli::package::{
@@ -72,7 +72,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // sees them. Always set (even when empty) so a stale snapshot
     // from a prior in-process invocation doesn't leak through.
     crate::cli::refuse_bad_settings("run");
-    silt::builtins::io::set_program_args(program_args);
+    crate::builtins::io::set_program_args(program_args);
     // No explicit file → look for an enclosing silt package and use
     // its `src/main.silt`. Outside a package, the usage line says that
     // a file is needed.
@@ -134,7 +134,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // of text. Matches rustc/gcc convention.
     // Lock: tests/cli/cli_test_rendering_tests.rs
     // `test_multiple_errors_render_with_blank_separator`.
-    silt::diagnostic::eprint_all(&ProgramFiles::new(path, session.sources()), &diagnostics);
+    crate::diagnostic::eprint_all(&ProgramFiles::new(path, session.sources()), &diagnostics);
     let program = match compiled {
         Ok(program) if !diagnostics.iter().any(Diagnostic::is_error) => program,
         _ => process::exit(1),
@@ -150,8 +150,8 @@ pub(crate) fn vm_run_file(path: &str) {
     // scheduler. From here on the program may have threads, and the
     // process ends through `exit_with_status`: a thread of the runtime
     // that has panicked may be ending it with the internal error.
-    silt::scheduler::collect_unjoined_failures();
-    let mut vm = Vm::new(silt::HostIo::process());
+    crate::scheduler::collect_unjoined_failures();
+    let mut vm = Vm::new(crate::HostIo::process());
     // `process.exit` ends the process where it is called, from `main`
     // or from a task: nothing below runs then.
     vm.set_exit(Exit::EndsProcess);
@@ -182,19 +182,19 @@ pub(crate) fn vm_run_file(path: &str) {
     });
     let failed = tasks_failed || main_text.is_some();
     if failed {
-        silt::scheduler::claim_program_failure();
+        crate::scheduler::claim_program_failure();
     }
     // (Also when there is nothing to say: a process that is ending
     // with the internal error goes no further than here, and nothing of
-    // the program's is reported then. See `silt::scheduler::report`.)
+    // the program's is reported then. See `crate::scheduler::report`.)
     let mut report = String::new();
     for text in task_texts.iter().chain(&main_text) {
         report += text;
         report.push('\n');
     }
-    silt::scheduler::report_on_stderr(&report);
+    crate::scheduler::report_on_stderr(&report);
     if failed {
-        silt::scheduler::exit_with_status(1);
+        crate::scheduler::exit_with_status(1);
     }
 }
 
@@ -206,7 +206,7 @@ pub(crate) fn vm_run_file(path: &str) {
 /// it for each VM they make. No other build reads the variable.
 #[cfg(feature = "test-hooks")]
 pub(crate) fn panic_where_a_test_says(vm: &Vm) {
-    use silt::vm::PanicAt;
+    use crate::vm::PanicAt;
     let Ok(places) = std::env::var("SILT_TEST_PANIC") else {
         return;
     };
@@ -221,7 +221,7 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
             place => place.strip_prefix("task:").and_then(task),
         };
         match at {
-            Some(at) => silt::vm::panic_for_test(vm, at),
+            Some(at) => crate::vm::panic_for_test(vm, at),
             None => {
                 eprintln!("silt: SILT_TEST_PANIC names no place: '{place}'");
                 process::exit(2);
@@ -234,7 +234,7 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
 /// happened so far, each rendered like any other runtime error of the
 /// program at `path`, and whether there was one.
 fn task_failure_texts(path: &str, sources: &SourceMap) -> (Vec<String>, bool) {
-    let failures = silt::scheduler::take_unjoined_failures();
+    let failures = crate::scheduler::take_unjoined_failures();
     let mut texts: Vec<String> = Vec::new();
     for failure in &failures.failures {
         texts.push(render_runtime_error(&failure.report_error(), path, sources));

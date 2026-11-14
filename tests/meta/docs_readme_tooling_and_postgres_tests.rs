@@ -102,7 +102,7 @@ fn readme_tooling_block_matches_main_help() {
     assert!(
         missing.is_empty(),
         "README.md Tooling block is missing subcommand(s) {:?} that \
-         appear in `silt --help` (authoritative list from src/main.rs). \
+         appear in `silt --help` (authoritative list from src/cli/mod.rs). \
          Add a line for each missing subcommand so the doc stays in sync.\n\n\
          Tooling block:\n{}\n\nHelp output:\n{}",
         missing,
