@@ -360,15 +360,15 @@ sentinel value when cancellation is an expected outcome rather than an error.
 ### Cancelling: `task.cancel(handle)`
 
 ```silt
-let done = channel.new(1)
+let results = channel.new(16)
 let h = task.spawn { ->
-  -- long-running work
-  channel.send(done, 42)
+  -- long-running work that sends what it finds
+  channel.send(results, 42)
 }
 task.cancel(h)
--- task.join(h) would raise `joined task failed: cancelled` at this point;
--- instead, wait on the sentinel channel if you want a non-raising
--- "task is settled" signal.
+-- The task has ended: closing its channel loses nothing it sent.
+-- task.join(h) would raise `joined task failed: cancelled` here.
+channel.close(results)
 ```
 
 **A cancel reaches the tasks the task spawned.** `task.cancel(h)` also
@@ -377,8 +377,8 @@ one that those spawned, however deep: "stop this work" includes the work
 it started. That holds also when `h`'s task has already returned, and
 below a task between them that has returned: a worker that starts
 children and returns is cancelled with its children. Each of them is
-cancelled as `h` is, and all have their result when `task.cancel`
-returns. A task that has already ended keeps its result: a failure of it
+cancelled as `h` is, and `task.cancel` returns when all of them have
+ended. A task that has already ended keeps its result: a failure of it
 is still reported. A task that is spawned by a task that has been
 cancelled is cancelled at once and never runs. The tasks the runtime
 starts in a task's place count as spawned by it: the function of a
@@ -491,33 +491,22 @@ may be lost when the work stops, tell the task to stop over a channel
 (a stop message, or the close of its input), let it finish what it has,
 and join it.
 
+**`task.cancel` returns when the task has ended**, and every task below
+it that the cancel reached: the last steps above have run, theirs too.
+What comes after the cancel (closing the channel the task sent on,
+counting what it sent, removing a file it wrote) sees everything they
+did. The wait is short: a cancelled task ends at its next wait or after
+at most 2,000 steps. (A step that is one long call, such as a sort of a
+long list or a function of the host, runs to its end first.) A task cannot wait for its own end: one that is
+cancelled itself (it cancels itself, or a task it was spawned by, whose
+cancel reaches it) does not wait, its call returns at once, and it has
+the last steps of a cancelled task.
+
 In every case a `task.join(h)` on the cancelled handle raises `joined task
 failed: cancelled` as a runtime error, at once: the handle has its result
-when `task.cancel` returns, whatever the task still does. This matches
-the `task.cancel` section of `docs/stdlib/channel-task.md`; the two are
-kept in sync deliberately.
-
-`task.cancel` does not wait for the task to stop: the task's last steps
-may still run after it returns. Because `task.join` raises on
-a cancelled handle (it does not return `Err("cancelled")` as a value), you
-typically want one of two patterns when cancellation is an expected outcome:
-
-1. **Sentinel channel handshake** — have the task signal completion
-   through a channel before it exits, and wait on that channel instead of
-   `task.join`:
-
-   ```silt
-   task.cancel(h)
-   -- `task.join(h)` here would raise `joined task failed: cancelled`.
-   -- If you only need to know the cancel was acknowledged and you do not
-   -- need the task's value, omit the join and rely on the sentinel
-   -- channel from the task body for your "settled" signal.
-   ```
-
-2. **Join at the boundary** — if you do call `task.join` on a cancelled
-   handle, accept that it will raise `joined task failed: cancelled` at
-   the call site and scope the surrounding code so that failure is the
-   expected exit path.
+as soon as the cancel is made. A task you cancel is not joined: the cancel
+is the wait for it. This matches the `task.cancel` section of
+`docs/stdlib/channel-task.md`; the two are kept in sync deliberately.
 
 Returns `()`.
 
@@ -1395,8 +1384,9 @@ A task holds its worker thread until one of two things happens:
    starving each other.
 
 The slice budget can be set with the `SILT_TIME_SLICE` environment variable,
-which is read once, when the program starts; its least value is 1. A
-smaller value makes tasks take turns more often (for example,
+which is read once, when the program starts: a whole number above 0. A
+value silt cannot read (`abc`, `0`, `-5`) is refused: the program does
+not start, and the error says why. A smaller value makes tasks take turns more often (for example,
 `SILT_TIME_SLICE=500 silt run main.silt`). Its main use is testing and
 debugging: with `SILT_TIME_SLICE=1` a task gives way after every
 instruction, which brings out the faults that depend on where a task is
@@ -1441,9 +1431,11 @@ or a wait on a channel is not I/O and is not ended by it. (The connections
 of `http.serve` have the server's own times instead, see
 [http](stdlib/http.md).)
 
-Accepted format: a suffixed duration only — `5s`, `500ms`, `2m`, `1h`.
-A bare integer with no unit (e.g. `SILT_IO_TIMEOUT=5000`) is NOT accepted; it
-fails to parse and leaves the waits without an end.
+Accepted format: a whole number above 0 with a unit: `500ms`, `5s`, `2m`,
+`1h`. Any other value (a bare number such as `5000`, `0s`, a typo) is
+refused: `silt run`, `silt test` and `silt repl` do not start, and the
+error names the variable, the value and the forms it takes. An empty value
+is the same as none.
 
 ```sh
 # Any I/O that stalls > 5s surfaces the module's typed timeout variant.
@@ -1489,11 +1481,13 @@ What becomes of the operation is one rule for each kind of operation:
 
 | Operation | What becomes of it when nobody waits for it |
 |---|---|
-| `tcp.read`, `tcp.read_exact`, `tcp.write`, the TLS handshakes of `tcp.connect_tls`, `tcp.tls_server` and `tcp.tls_server_mtls`, and the `stream.tcp_*` sources and sink | The connection is **shut down**, as by `tcp.close`, which makes the operation return and frees its thread. |
+| `tcp.connect`, `tcp.connect_tls`, `tcp.read`, `tcp.read_exact`, `tcp.write`, the TLS handshakes of `tcp.tls_server` and `tcp.tls_server_mtls`, and `stream.write_to_tcp` | The connection is **shut down**, as by `tcp.close`, which makes the operation return and frees its thread. A connect that waits for its peer (`tcp.connect`, `tcp.connect_tls`) is shut down too; on Linux that ends it at once, elsewhere it may run on to the system's connect time, and until the connect has returned it counts among the operations that cannot be interrupted (the bound of 64 below). The name lookup of a connect to a host name cannot be interrupted: it ends by the system's own time. |
+| `http.get`, `http.request` | The request is **ended**: its connect, a read or a write it waits in, a TLS handshake, a redirect, which frees its thread. A connect that waits for its peer is shut down, as one of `tcp.connect` is: on Linux that ends it at once; elsewhere it may run on to its connect time (at most 10 s), counted until then among the operations that cannot be interrupted. The name lookup of a host name cannot be interrupted. |
+| `stream.tcp_lines`, `stream.tcp_chunks` | The source **lets go** of the connection, which closes only if nothing else holds it. A read in flight ends without taking anything, on a plain or a TLS connection (see [stream](stdlib/stream.md)). |
 | `tcp.accept`, and the accept of `http.serve` | The accept is woken and gives up; the listener stays usable. A client's connection that reached it is kept by the listener for the next accept. |
 | `postgres.query`, `postgres.execute`, `postgres.notify` and the cursor functions, the `BEGIN` of `postgres.transact`, the `LISTEN` of `postgres.listen` | One that has no connection yet is **never sent**, and the connection goes back to the pool. One that has it: on a pool it is left to finish; in a transaction the server is asked to cancel it, and the transaction is aborted (see [postgres](stdlib/postgres.md)). |
 | `postgres.connect`, `postgres.listen` that were done all the same | What they made is nobody's and is closed: the pool, the listener (its connection goes back to the pool). |
-| `tcp.connect` and the TCP connect of `tcp.connect_tls` (its handshake has not begun), `http.get`, `http.request`, `io.read_file`, `io.write_file`, `io.read_line`, `io.read_stdin`, `io.read_stdin_bytes`, `stream.file_*`, `stream.stdin_lines`, `stream.write_to_file` | It **cannot be interrupted**: it runs to its end, and its result is dropped. A write that had started completes, and a line that `io.read_line` reads afterwards is nobody's. |
+| `io.read_file`, `io.write_file`, `io.read_line`, `io.read_stdin`, `io.read_stdin_bytes`, `stream.file_*`, `stream.stdin_lines`, `stream.write_to_file` | It **cannot be interrupted**: it runs to its end, and its result is dropped. A write that had started completes, and a line that `io.read_line` reads afterwards is nobody's. |
 
 In every case an operation that had not started yet never runs, and an
 operation whose result arrives in the very moment its task stops waiting
@@ -1510,12 +1504,18 @@ until a connection comes. To wake it the listener connects to its own
 port on the loopback address; where that is not possible, say a packet
 filter forbids it, the thread stays until a client connects.
 
-An operation that cannot be interrupted no longer counts as one of the
-pool's while it runs on, so operations that never return (a read of a
-terminal nobody types at) do not use the pool up. Such stuck operations
-have a bound of their own, 64: while that many are still running
-unheard, every new I/O operation fails at once with an error that says
-so, instead of the program taking a thread for each without end.
+An operation that cannot be interrupted (the files and standard input
+of the last row, and on other systems than Linux a connect that waits for
+its peer) no longer counts as one of the pool's while it runs
+on, so operations that never return (a read of a terminal nobody types
+at) do not use the pool up. Such stuck operations have a bound of their
+own, 64: while that many are still running unheard, every new I/O
+operation fails at once with an error that says so, instead of the
+program taking a thread for each without end. Operations that were told
+to stop (the rows above) do not count: they are on their way out. So
+requests that a deadline gives up, also to hosts that do not answer the
+connect (a link checker over hosts that are down), never use the bound on
+Linux.
 
 ### Blocking operations
 
@@ -1532,9 +1532,34 @@ so, instead of the program taking a thread for each without end.
 | `io.read_stdin()`, `io.read_stdin_bytes()` | Always (stdin) |
 | `http.get(url)` | Always (network) |
 | `http.request(...)` | Always (network) |
+| `print`, `println`, `io.eprint`, `io.eprintln` | The output's writer holds 64 KiB that its reader has not taken yet -- resumes when there is room |
 
 None of these block the OS thread. The task is parked and the thread continues
 running other tasks.
+
+What a program prints to the process's output (the `silt` command's
+`HostIo::process()`; an embedder's own outputs are written by the print
+itself, see [the FFI](ffi.md#output-and-clock)) goes to one writer for stdout and stderr together,
+which writes it out in the order of the calls, each text whole: two tasks'
+lines never mix, and a line on stderr stays between the stdout lines it was
+printed between (as `2>&1` shows them). A print does not wait for the reader. Only when the reader
+has not taken 64 KiB of what was printed (a slow log shipper, a pager, a pipe
+nobody reads yet) does a print wait for room, as any wait of a task: the other
+tasks, their timers and deadlines go on, and a `task.deadline` around a print
+that waits ends it (its text is not written). Everything printed is written out
+before the program ends, and before `process.exit` ends it, as long as the
+reader takes it. (A process ended by a signal, such as Ctrl-C, loses what the
+writer still held: up to 64 KiB of prints that had returned.)
+
+One order has a price: while stdout is stuck, the program's own
+`io.eprintln` lines wait behind it too, and a task that logs to stderr waits
+for room as one that prints to stdout does. A program that ends by a failure
+(a runtime error, a panic, a deadlock, a task that failed and that nobody
+joined) waits for its output only while the reader takes some of it, about a
+second without progress at most; then the failure is reported on stderr, and
+the program ends with its status, also where the reader of stdout has gone.
+What was printed and not yet written then is dropped: a reader that pauses
+longer than that second loses up to the last 64 KiB of the output.
 
 I/O operations follow the same transparent yielding pattern as channel
 operations -- no special syntax needed. When code calls `io.read_file` or

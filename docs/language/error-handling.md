@@ -245,7 +245,7 @@ fn parse_config(text) {
   when let Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
-  when let Ok(port) = port_line |> string.replace("port=", "") |> int.parse() else {
+  when let Ok(port) = port_line |> string.replace("port=", "") |> int.parse else {
     return Err("invalid port number")
   }
 

@@ -48,3 +48,13 @@ pub(crate) fn no_file(command: &str) {
         "error: silt {command}: no file given, and no silt.toml found in this directory or any parent"
     );
 }
+
+/// `silt <command>` refuses to start where the environment sets the
+/// runtime's settings (`SILT_IO_TIMEOUT`, `SILT_TIME_SLICE`) to a value
+/// silt cannot read: exit 1, as for a bad flag.
+pub(crate) fn refuse_bad_settings(command: &str) {
+    if let Some(error) = silt::scheduler::settings_error() {
+        eprintln!("error: silt {command}: {error}");
+        std::process::exit(1);
+    }
+}

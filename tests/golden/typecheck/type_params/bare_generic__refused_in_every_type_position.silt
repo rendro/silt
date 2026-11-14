@@ -3,7 +3,7 @@
 -- A generic type is written with its type arguments in every type: a
 -- parameter, a result, a let, a closure parameter, an ascription, a
 -- field, a variant, an alias, a type argument, a trait argument, a
--- where bound and a supertrait. `List()` is no other spelling.
+-- where bound and a supertrait.
 import channel
 type Box(a) { v: a }
 type Pair(k, v) { k: k, v: v }
@@ -15,7 +15,7 @@ type E { A(Map), B(Pair) }
 type L = Al
 fn f1(b: Box) -> Int { 0 }
 fn f2() -> Option(List) { None }
-fn f3(m: Map()) -> Int { 0 }
+fn f3(m: Map) -> Int { 0 }
 fn f4(x: a) -> Int where a: Conv(Box) { 0 }
 fn main() {
   let c: Channel = channel.new(1)

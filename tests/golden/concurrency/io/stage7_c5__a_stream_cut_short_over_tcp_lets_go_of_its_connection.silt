@@ -1,10 +1,11 @@
 -- timeout: 10
 -- requires-feature: tcp
--- A pipeline on a connection that is cut short shuts the connection
--- down, like a read that nobody waits for: `stream.first` takes the
--- one line, the source stops, and the peer, which waits for more,
--- sees the connection end. After that a write on the connection says
--- closed.
+-- A pipeline on a connection that is cut short lets go of the
+-- connection: `stream.first` takes the one line, the source stops
+-- (its read for more, in flight, ends without taking anything), and
+-- `conn` still holds the connection: the peer, which waits for more,
+-- reads what the program writes then. (The source shut the
+-- connection, for every holder.)
 import bytes
 import channel
 import stream
@@ -37,12 +38,14 @@ fn main() {
     panic("cannot connect")
   }
   println(stream.tcp_lines(conn) |> stream.first)
+  -- `conn` still holds the connection: it is open both ways.
+  match tcp.write(conn, bytes.from_string("x")) {
+    Ok(_) -> println("the connection is still open")
+    Err(e) -> println("the write: {e}")
+  }
   when let Some(said) = channel.receive(seen) else {
     panic("the peer said nothing")
   }
   println(said)
-  match tcp.write(conn, bytes.from_string("x")) {
-    Err(tcp.Closed) -> println("closed")
-    _ -> println("something else")
-  }
+  tcp.close(conn)
 }

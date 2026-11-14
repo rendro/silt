@@ -100,7 +100,9 @@ fn main() {
 /// A stream's source waits for I/O like any task: `SILT_IO_TIMEOUT`
 /// ends its wait. The source ends with the module's timeout error as
 /// its last item, and its connection is shut down, as after a
-/// `tcp.read` that timed out: the peer reads the end of it.
+/// `tcp.read` that timed out: the peer reads the end of it. (A stream
+/// that is left or closed lets go of its connection instead; one whose
+/// read timed out shuts it, as every tcp operation that times out does.)
 #[test]
 fn the_global_io_timeout_ends_the_read_of_a_stream() {
     let source = r#"import channel

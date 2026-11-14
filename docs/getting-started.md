@@ -264,6 +264,18 @@ The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-
 
 `silt check -` and `silt fmt -` read the program from stdin, as an editor that pipes a buffer through them needs: `silt fmt -` writes the formatted program to stdout (with `--check`, nothing, and exit 1 when it is not formatted), and `silt check -` reports what it finds at `<stdin>`. The program is a file of the working directory: it imports the modules beside it and belongs to the package there. `-` takes no other file with it.
 
+`silt fmt` changes the layout of a file and, beside it, only these spellings, each of which the checker reads the same:
+
+- parentheses that group nothing and trailing commas go; a closure that is the last argument is written behind the call (in a `match` or `loop` header, inside the parentheses);
+- imports move to the top of the file, sorted;
+- `(a | b) | c` in a pattern is written `a | b | c`, and a closure's or a `match` arm's body of one expression in braces of its own is written without them;
+- `xs |> f()` is written `xs |> f`;
+- a `return x` on the last line of a function is written `x`;
+- a last line `()` behind a `let` in a function's body is left out;
+- `-> ()` of a function at the top level is left out when the body's value is `()` by its form (the body is empty, or its last line is a `let`, `()` or `return ()`) and the signature names no type variable, or a parameter has no type. Anywhere else `-> ()` stays: it is a return type, like `-> Int`, that the checker holds the function to, and leaving it out could change what the checker says (a body that ends in a call might return a value by mistake; with a type variable, the signature is what lets the body call the function at another type). The methods of traits and impls keep theirs.
+
+A comment at a token that is left out stays, next to where the token was.
+
 `silt check` checks a file as a module: a file needs no `main` to check (a library module, a file of types and traits, a test file), and a `main` it has must take no parameters. `silt run` starts a program at `main`, so it asks for one.
 
 `silt check` reports what is wrong with the whole file: a declaration that does not parse is one error, and the declarations behind it are read and checked all the same, as is the text behind a character that belongs to no token. At most fifty syntax errors of a file are shown, with a count of the rest. A file that ends inside a string or a `{- -}` comment that is not closed reports that and nothing else. A file with a syntax error is never run or formatted.

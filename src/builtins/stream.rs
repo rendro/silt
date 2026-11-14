@@ -23,12 +23,16 @@
 //! - A stage or a sink that reads no further (`take`, `first`, an
 //!   error downstream) stops the stage that feeds it, which stops the
 //!   one before it. A channel that no stage feeds is left alone.
+//! - A stage whose output every reader has let go of is stopped the
+//!   same way: the stage holds its output weakly, and so does its wait
+//!   to be asked (`Source::Demand`), so the output is dropped with its
+//!   last reader (`Channel`'s `Drop`).
 //!
 //! Every stage and every sink is one `Pipe`: a frame that does the
 //! waiting, around a function (`Logic`) that says what comes next.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 
@@ -125,8 +129,10 @@ enum Next {
 /// The part of a stage or sink that is its own: given what happened,
 /// what comes next.
 /// What makes the blocking operations of a source or a sink return
-/// when nobody waits for them any more (a connection is shut down).
-type Stop = Arc<dyn Fn() + Send + Sync>;
+/// when nobody waits for them any more (a source on a connection lets go
+/// of it, a sink shuts it down): `true` if what is in flight ends so
+/// (see `Leave::Closes`).
+type Stop = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// What the blocking operations of a source or a sink work on: the
 /// typed error of its module, for an operation that could not run, and
@@ -136,12 +142,18 @@ type Stop = Arc<dyn Fn() + Send + Sync>;
 struct On {
     failure: crate::vm::ErrFactory,
     stop: Option<Stop>,
+    /// What a wait for I/O that ended at `SILT_IO_TIMEOUT` does first:
+    /// on a connection, shut it down, as every tcp operation that times
+    /// out does. (A source that is stopped lets go of its connection;
+    /// one whose read timed out shuts it.)
+    timed_out: Option<Stop>,
 }
 
 /// What a source or a sink of a file works on.
 const ON_A_FILE: On = On {
     failure: io_failure,
     stop: None,
+    timed_out: None,
 };
 
 type Logic = Box<dyn FnMut(Got) -> Result<Next, VmError> + Send>;
@@ -152,10 +164,10 @@ enum State {
     Go(Got),
     /// It waits for a value; the wait's arms are these inputs.
     Taking(Vec<usize>),
-    Emitting,
     Calling,
     Io(IoOp),
-    /// It waits to be asked for a value, and then does this take.
+    /// It waits to be asked for a value, or for room in its output, and
+    /// then does this: a take, or the emit of a value.
     Asking(Next),
     /// It gave way to the other tasks; it goes on with this.
     Then(Next),
@@ -168,8 +180,11 @@ struct Pipe {
     inputs: Vec<Arc<Channel>>,
     /// Which inputs have not ended.
     open: Vec<bool>,
-    /// The output of a stage; a sink has none.
-    out: Option<Arc<Channel>>,
+    /// The output of a stage; a sink has none. Held weakly: the stage
+    /// does not keep its output. When every reader has let it go, it is
+    /// dropped, and that stops the stage (`Channel`'s `Drop`); the stage
+    /// that finds it gone is over.
+    out: Option<Weak<Channel>>,
     /// The handle of a stage's own task: where its failure is read
     /// when the task ends by one.
     handle: Option<Arc<TaskHandle>>,
@@ -184,13 +199,17 @@ struct Pipe {
     /// called when the pipe is stopped before its end, whether an
     /// operation is in flight then or not.
     stop: Option<Stop>,
-    /// For a source on a connection: the shut-down that its output's
-    /// reader runs when it stops reading, also before the source has
-    /// run. It is disarmed when the source ends by itself.
+    /// What its operation does when its wait ends at `SILT_IO_TIMEOUT`
+    /// ([`On::timed_out`]).
+    timed_out: Option<Stop>,
+    /// For a source on a connection: its stop (it lets go of the
+    /// connection, [`Held::let_go`]) that its output's reader runs when
+    /// it stops reading, also before the source has run. It is disarmed
+    /// when the source ends by itself.
     armed: Option<Arc<Armed>>,
 }
 
-/// The shut-down of a connection that a stage is stopped with: run
+/// The stop that a stage on a connection is stopped with: run
 /// once, by whoever stops the stage first, and not after the stage
 /// ended by itself.
 struct Armed {
@@ -208,7 +227,7 @@ impl Armed {
 
     fn fire(&self) {
         if self.armed.swap(false, Ordering::SeqCst) {
-            (self.stop)();
+            let _ = (self.stop)();
         }
     }
 
@@ -248,6 +267,7 @@ impl Pipe {
             drains: false,
             finished: false,
             stop: None,
+            timed_out: None,
             armed: None,
         }
     }
@@ -273,7 +293,7 @@ impl Pipe {
             return;
         }
         let wake = vm.scheduler().wake();
-        if let Some(out) = &self.out {
+        if let Some(out) = self.output() {
             let stage = failure.as_ref().and(self.handle.clone());
             out.close(Close { failure, stage }, wake);
         }
@@ -284,15 +304,20 @@ impl Pipe {
         }
     }
 
+    /// The output of a stage, while a reader has it.
+    fn output(&self) -> Option<Arc<Channel>> {
+        self.out.as_ref().and_then(Weak::upgrade)
+    }
+
     /// Nobody reads the output any more, and the pipe has a value for
-    /// it: the pipe is over before its end. One on a connection shuts
-    /// the connection down, as one that is stopped in a wait does
-    /// (`abandon`): a source that is cut short ends its connection at
-    /// whatever moment its reader went.
+    /// it: the pipe is over before its end. One on a connection is
+    /// stopped (a source lets go of it, a sink shuts it down), as one
+    /// that is stopped in a wait is (`abandon`), at whatever moment its
+    /// reader went.
     fn cut_short(&mut self, vm: &Vm) {
         if !self.finished {
             if let Some(stop) = self.stop.take() {
-                stop();
+                let _ = stop();
             }
             if let Some(armed) = &self.armed {
                 armed.fire();
@@ -331,12 +356,14 @@ impl Pipe {
                 // drains it; `stream.buffered` holds values ahead):
                 // until then it waits, with nothing taken.
                 take @ (Next::Take(_) | Next::TakeAny)
-                    if self.out.as_ref().is_some_and(|out| !out.is_asked()) =>
+                    if self.out.is_some() && self.output().is_none_or(|out| !out.is_asked()) =>
                 {
-                    let Some(out) = &self.out else {
-                        return Err(internal("has no output"));
+                    // Its readers have let the output go: nobody asks.
+                    let Some(out) = self.output() else {
+                        self.cut_short(vm);
+                        return Ok(Step::Done(Value::Unit));
                     };
-                    let wait = Wait::new(vec![Arm::Demand(out.clone())]);
+                    let wait = Wait::new(vec![Arm::Demand(out)]);
                     self.state = State::Asking(take);
                     return Ok(Step::Park(wait));
                 }
@@ -366,8 +393,13 @@ impl Pipe {
                     return Ok(Step::Park(wait));
                 }
                 Next::Emit(value) => {
-                    let Some(out) = &self.out else {
+                    if self.out.is_none() {
                         return Err(internal("has no output"));
+                    }
+                    // Nobody reads the output: its readers let it go.
+                    let Some(out) = self.output() else {
+                        self.cut_short(vm);
+                        return Ok(Step::Done(Value::Unit));
                     };
                     match out.try_send(value, vm.scheduler().wake()) {
                         TrySend::Sent => Got::Emitted,
@@ -376,9 +408,11 @@ impl Pipe {
                             self.cut_short(vm);
                             return Ok(Step::Done(Value::Unit));
                         }
+                        // It waits for room as for being asked, which
+                        // does not keep the output, and sends again.
                         TrySend::Full(value) => {
-                            let wait = Wait::new(vec![Arm::Send(out.clone(), value)]);
-                            self.state = State::Emitting;
+                            let wait = Wait::new(vec![Arm::Demand(out)]);
+                            self.state = State::Asking(Next::Emit(value));
                             return Ok(Step::Park(wait));
                         }
                     }
@@ -387,17 +421,22 @@ impl Pipe {
                     self.state = State::Calling;
                     return Ok(vm.call(callee, args));
                 }
-                Next::Io(operation, On { failure, stop }) => {
+                Next::Io(
+                    operation,
+                    On {
+                        failure,
+                        stop,
+                        timed_out,
+                    },
+                ) => {
+                    self.timed_out = timed_out;
                     // An operation on a connection that ends without its
                     // value reaching the pipe ends the connection, as a
                     // `tcp.read` does.
                     let leave = match stop {
                         Some(stop) => {
                             self.stop = Some(stop.clone());
-                            Leave::Closes(Box::new(move || {
-                                stop();
-                                true
-                            }))
+                            Leave::Closes(Box::new(move || stop()))
                         }
                         None => Leave::RunsOut,
                     };
@@ -438,16 +477,16 @@ impl Native for Pipe {
                 Fired::Arm(arm, Outcome::Closed(close)) => self.ended(arms[arm], close)?,
                 _ => return Err(internal("was woken without a value")),
             },
-            State::Emitting => match vm.woken()? {
-                Fired::Arm(_, Outcome::Sent) => Got::Emitted,
-                // Nobody reads the output.
-                _ => {
-                    self.cut_short(vm);
-                    return Ok(Step::Done(Value::Unit));
-                }
-            },
             // The value, or the module's error at `SILT_IO_TIMEOUT`.
-            State::Io(op) => Got::Io(op.value(&vm.woken()?)),
+            State::Io(op) => {
+                let fired = vm.woken()?;
+                if matches!(fired, Fired::Deadline)
+                    && let Some(timed_out) = self.timed_out.take()
+                {
+                    let _ = timed_out();
+                }
+                Got::Io(op.value(&fired))
+            }
             State::Asking(take) => match vm.woken()? {
                 Fired::Arm(_, Outcome::Asked) => return self.run(vm, take),
                 // Nobody reads the output.
@@ -462,12 +501,12 @@ impl Native for Pipe {
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
-        // A pipe on a connection that is stopped before its end shuts
-        // the connection down, whatever it was doing: not only when a
-        // read happened to be in flight.
+        // A pipe on a connection that is stopped before its end is
+        // stopped on it (a source lets go of it, a sink shuts it down),
+        // whatever it was doing: not only when a read was in flight.
         if !self.finished {
             if let Some(stop) = self.stop.take() {
-                stop();
+                let _ = stop();
             }
             if let Some(armed) = &self.armed {
                 armed.fire();
@@ -508,8 +547,8 @@ fn stage(
 }
 
 /// Start a stage, as [`stage`] does, that works on a connection: `stop`
-/// shuts the connection down when the stage is stopped, whenever that
-/// is: in a read, between two, or before the stage has run at all.
+/// is run when the stage is stopped, whenever that is: in a read,
+/// between two, or before the stage has run at all.
 fn stage_on(
     vm: &mut Vm,
     name: &'static str,
@@ -527,6 +566,7 @@ fn stage_on(
         drains,
     } = output;
     let out = Channel::fed(vm.next_channel_id(), capacity, ahead);
+    out.set_fed_by(name);
     let id = vm.next_task_id();
     let owner = vm.scheduler().current_owner();
     let stage = StageOf {
@@ -555,7 +595,7 @@ fn stage_on(
     });
     let mut pipe = Pipe::new(name, inputs, logic);
     pipe.armed = armed;
-    pipe.out = Some(out.clone());
+    pipe.out = Some(Arc::downgrade(&out));
     pipe.handle = Some(handle.clone());
     if drains {
         // A reader that drains the output drains every input: the
@@ -576,10 +616,22 @@ fn stage_on(
     Ok(Step::Done(Value::Channel(out)))
 }
 
-/// A channel that is closed and empty: the output of a stage that has
-/// nothing to do (`stream.take(s, 0)`).
-fn closed_channel(vm: &mut Vm) -> Step {
+/// A stream whose one item is `item` (an `Err`), and then its end: a
+/// source that could not start says why.
+#[cfg(feature = "tcp")]
+fn failed_stream(vm: &mut Vm, item: Value) -> Step {
     let out = Channel::new(vm.next_channel_id(), 1);
+    let _ = out.try_send(item, vm.scheduler().wake());
+    out.close(Close::default(), vm.scheduler().wake());
+    Step::Done(Value::Channel(out))
+}
+
+/// A channel that is closed and empty: the output of a stage `name` that
+/// has nothing to do (`stream.take(s, 0)`). It is a stream's channel all
+/// the same: a send into it is refused as one.
+fn closed_channel(vm: &mut Vm, name: &'static str) -> Step {
+    let out = Channel::new(vm.next_channel_id(), 1);
+    out.set_fed_by(name);
     out.close(Close::default(), vm.scheduler().wake());
     Step::Done(Value::Channel(out))
 }
@@ -610,15 +662,121 @@ fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     Value::variant(bv::ERR, [Value::variant(bv::IO_OTHER, [Value::string(s)])])
 }
 
-/// What a source or a sink on `stream` works on: its errors are
-/// `TcpError`s, and its operations return when the connection is shut
-/// down.
+/// What a sink on `stream` works on: its errors are `TcpError`s, and
+/// its operations return when the connection is shut down.
 #[cfg(feature = "tcp")]
 fn on_tcp(stream: &Arc<crate::runtime::handle::TcpStreamHandle>) -> On {
     let stream = stream.clone();
+    let shut: Stop = Arc::new(move || {
+        stream.shut_down();
+        true
+    });
     On {
         failure: super::tcp::tcp_timeout_err,
-        stop: Some(Arc::new(move || stream.shut_down())),
+        stop: Some(shut.clone()),
+        timed_out: Some(shut),
+    }
+}
+
+/// The connection of a `stream.tcp_*` source, which the stream holds as
+/// any other name does: while the stream is read, the connection stays.
+/// When the stream is let go of (nothing can read it any more, or
+/// `channel.close`), the source stops reading and lets go of the
+/// connection ([`Held::let_go`]): it is closed only when nothing else
+/// holds it, as any value is. A source that ends by itself (the peer
+/// closed, an error) lets go of it too.
+#[cfg(feature = "tcp")]
+struct Held {
+    slot: Mutex<Option<Arc<crate::runtime::handle::TcpStreamHandle>>>,
+    conn: Weak<crate::runtime::handle::TcpStreamHandle>,
+    /// A read of the source is in flight, with its own hold of the
+    /// connection.
+    reading: AtomicBool,
+    /// What ends that read without shutting the connection down.
+    wake: crate::runtime::handle::ReadWake,
+}
+
+#[cfg(feature = "tcp")]
+impl Held {
+    /// The hold of `conn`; an error when its wake cannot be made (the
+    /// process has no descriptor left), which the stream gives.
+    fn new(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> std::io::Result<Arc<Held>> {
+        Ok(Arc::new(Held {
+            slot: Mutex::new(Some(conn.clone())),
+            conn: Arc::downgrade(conn),
+            reading: AtomicBool::new(false),
+            wake: crate::runtime::handle::ReadWake::new()?,
+        }))
+    }
+
+    /// The connection, for a read, which is in flight until the guard
+    /// is dropped; `None` once the source has let go of it.
+    fn for_read(&self) -> Option<(Arc<crate::runtime::handle::TcpStreamHandle>, Reading<'_>)> {
+        let slot = self.slot.lock();
+        let conn = slot.clone()?;
+        self.reading.store(true, Ordering::SeqCst);
+        Some((conn, Reading(self)))
+    }
+
+    /// The source has ended by itself: it holds the connection no more.
+    fn release(&self) {
+        let taken = self.slot.lock().take();
+        std::mem::drop(taken);
+    }
+
+    /// The stream is let go of: the source lets go of the connection,
+    /// and a read in flight ends without taking anything. If that read
+    /// is the last holder, nobody else can use the connection: it is
+    /// shut down, which ends the read, and closed with it. Else the read
+    /// is woken ([`ReadWake`]): it ends without taking anything, and the
+    /// connection stays its other holders'.
+    ///
+    /// [`ReadWake`]: crate::runtime::handle::ReadWake
+    fn let_go(&self) -> bool {
+        self.release();
+        self.wake.wake();
+        if !self.reading.load(Ordering::SeqCst) {
+            return true;
+        }
+        match self.conn.strong_count() {
+            0 => true,
+            1 => {
+                if let Some(conn) = self.conn.upgrade() {
+                    conn.shut_down();
+                }
+                true
+            }
+            _ => true,
+        }
+    }
+}
+
+/// A read of a source on a connection is in flight ([`Held::for_read`]).
+#[cfg(feature = "tcp")]
+struct Reading<'a>(&'a Held);
+
+#[cfg(feature = "tcp")]
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        self.0.reading.store(false, Ordering::SeqCst);
+    }
+}
+
+/// What a source on a connection works on: its errors are `TcpError`s,
+/// and when nobody reads it any more it lets go of the connection
+/// ([`Held::let_go`]).
+#[cfg(feature = "tcp")]
+fn on_held(held: &Arc<Held>) -> On {
+    let (stops, times_out) = (held.clone(), held.clone());
+    On {
+        failure: super::tcp::tcp_timeout_err,
+        stop: Some(Arc::new(move || stops.let_go())),
+        timed_out: Some(Arc::new(move || {
+            if let Some(conn) = times_out.conn.upgrade() {
+                conn.shut_down();
+            }
+            true
+        })),
     }
 }
 
@@ -695,6 +853,84 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
 /// [`stdin_line_reads`]). Each byte is looked at for a `\n` once: a line
 /// that many reads bring is not searched again from its start at each
 /// one.
+/// How long a line of a line source may be: as long as a string may be
+/// (`MAX_COLLECTION_LEN` bytes). A longer one ends the source with an
+/// error ([`line_too_long`]), before it is read whole: a peer that sends
+/// no newline does not grow the source without end.
+#[cfg(not(test))]
+const LINE_MAX: usize = crate::value::MAX_COLLECTION_LEN;
+/// (A test's line need not take ten megabytes.)
+#[cfg(test)]
+const LINE_MAX: usize = 4_000_000;
+
+/// What a line longer than [`LINE_MAX`] says: `line 3 of app.log is longer
+/// than 10000000 bytes`.
+fn line_too_long(number: u64, of: &str) -> String {
+    format!("line {number} of {of} is longer than {LINE_MAX} bytes")
+}
+
+/// Why the bytes of a line are no line of a line source.
+#[derive(Debug, PartialEq)]
+enum BadLine {
+    /// Longer than [`LINE_MAX`] bytes, its line end not counted.
+    TooLong,
+    NotUtf8,
+}
+
+/// The text of a line, its `\n` or `\r\n` taken off: one rule for every
+/// line source, a line of [`LINE_MAX`] bytes is one, a longer one is not.
+fn line_text(line: &[u8]) -> Result<&str, BadLine> {
+    if line.len() > LINE_MAX {
+        return Err(BadLine::TooLong);
+    }
+    std::str::from_utf8(line).map_err(|_| BadLine::NotUtf8)
+}
+
+/// Whether the bytes of a line whose end has not come are more than a
+/// line may be already: a last `\r` is not counted, as it may begin the
+/// line end.
+fn too_long_already(pending: &[u8]) -> bool {
+    pending.strip_suffix(b"\r").unwrap_or(pending).len() > LINE_MAX
+}
+
+/// What line `number` of `of` (a path, or `stdin`) that is no line
+/// gives: an `IoInvalidInput` that says why.
+fn bad_line(why: BadLine, number: u64, of: &str) -> Value {
+    let why = match why {
+        BadLine::TooLong => line_too_long(number, of),
+        BadLine::NotUtf8 => format!("line {number} of {of} is not UTF-8"),
+    };
+    Value::variant(
+        bv::ERR,
+        [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
+    )
+}
+
+/// The next line of a file read by `reader`, without its `\n` or `\r\n`,
+/// and how many bytes it took; `None` at the end. No more of a line is
+/// read than a line may be with its line end, and one byte more.
+fn next_file_line(
+    reader: &mut impl std::io::BufRead,
+) -> std::io::Result<Option<(Result<String, BadLine>, usize)>> {
+    use std::io::{BufRead, Read};
+    let mut line = Vec::new();
+    let read = Read::take(&mut *reader, LINE_MAX as u64 + 2).read_until(b'\n', &mut line)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if line.last() == Some(&b'\n') {
+        line.pop();
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+    }
+    let text = match line_text(&line) {
+        Ok(_) => Ok(String::from_utf8(line).unwrap_or_default()),
+        Err(why) => Err(why),
+    };
+    Ok(Some((text, read)))
+}
+
 struct LineReads<R> {
     read: R,
     /// What was read and is no line yet.
@@ -725,14 +961,6 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
         }
     }
 
-    fn not_utf8(number: u64) -> Value {
-        let why = format!("line {number} of stdin is not UTF-8");
-        Value::variant(
-            bv::ERR,
-            [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
-        )
-    }
-
     /// The lines of the next read (see [`stdin_line_reads`]).
     fn next_lines(&mut self) -> Vec<Value> {
         let mut lines = Vec::new();
@@ -748,14 +976,14 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
                 self.looked += (at + 1) as u64;
                 let line = &self.pending[taken..from + at];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
-                match std::str::from_utf8(line) {
+                match line_text(line) {
                     Ok(line) => {
                         self.given += 1;
                         lines.push(ok(Value::string(line)));
                     }
-                    Err(_) if lines.is_empty() => {
+                    Err(why) if lines.is_empty() => {
                         self.ended = true;
-                        lines.push(Self::not_utf8(self.given + 1));
+                        lines.push(bad_line(why, self.given + 1, "stdin"));
                         return lines;
                     }
                     // The lines before it are given first: the next read
@@ -772,13 +1000,19 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
             if held_back || !lines.is_empty() {
                 break;
             }
+            if too_long_already(&self.pending) {
+                self.ended = true;
+                lines.push(bad_line(BadLine::TooLong, self.given + 1, "stdin"));
+                break;
+            }
             if self.at_end {
                 self.ended = true;
+                // Only a `\n` or a `\r\n` is a line end: a last `\r` with
+                // no `\n` after it is the line's, as in a file.
                 if !self.pending.is_empty() {
-                    let line = self.pending.strip_suffix(b"\r").unwrap_or(&self.pending);
-                    lines.push(match std::str::from_utf8(line) {
+                    lines.push(match line_text(&self.pending) {
                         Ok(line) => ok(Value::string(line)),
-                        Err(_) => Self::not_utf8(self.given + 1),
+                        Err(why) => bad_line(why, self.given + 1, "stdin"),
                     });
                 }
                 break;
@@ -825,9 +1059,7 @@ const LINES_READ: usize = 4 * 1024;
 /// that what is kept is the line not yet complete and room for one
 /// read: a source that waits holds that, never more.
 #[cfg(feature = "tcp")]
-fn tcp_line_reads(
-    conn: Arc<crate::runtime::handle::TcpStreamHandle>,
-) -> impl FnMut() -> Vec<Value> + Send + 'static {
+fn tcp_line_reads(held: Arc<Held>) -> impl FnMut() -> Vec<Value> + Send + 'static {
     // What was read and is no line yet; how much of it is known to
     // have no `\n`; the peer has closed; the source has ended; the last
     // read filled what it asked for.
@@ -836,13 +1068,15 @@ fn tcp_line_reads(
     let mut closed = false;
     let mut ended = false;
     let mut filled = false;
-    let not_utf8 = |conn: &crate::runtime::handle::TcpStreamHandle| {
+    // A line that is no line ends the source and shuts the connection.
+    let bad = |conn: &crate::runtime::handle::TcpStreamHandle, why: BadLine| {
         conn.shut_down();
-        let not_utf8 = std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid input: stream did not contain valid UTF-8",
-        );
-        super::tcp::tcp_io_err(super::tcp::Doing::Using, &not_utf8)
+        let why = match why {
+            BadLine::NotUtf8 => "invalid input: stream did not contain valid UTF-8".to_string(),
+            BadLine::TooLong => format!("a line is longer than {LINE_MAX} bytes"),
+        };
+        let why = std::io::Error::new(std::io::ErrorKind::InvalidData, why);
+        super::tcp::tcp_io_err(super::tcp::Doing::Using, &why)
     };
     // Room for one read beside the line not yet complete, no more: a
     // long line or a burst leaves no large buffer behind.
@@ -857,6 +1091,12 @@ fn tcp_line_reads(
         if ended {
             return lines;
         }
+        // (The guard is dropped before the connection: the read is over
+        // while it still holds it.)
+        let Some((conn, _reading)) = held.for_read() else {
+            ended = true;
+            return lines;
+        };
         // The bytes this read of the source has read.
         let mut read_here = 0;
         loop {
@@ -873,11 +1113,12 @@ fn tcp_line_reads(
                 };
                 let line = &pending[taken..from + at];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
-                match std::str::from_utf8(line) {
+                match line_text(line) {
                     Ok(line) => lines.push(ok(Value::string(line))),
-                    Err(_) if lines.is_empty() => {
+                    Err(why) if lines.is_empty() => {
                         ended = true;
-                        lines.push(not_utf8(&conn));
+                        lines.push(bad(&conn, why));
+                        held.release();
                         return lines;
                     }
                     // The lines before it are emitted first: the next read
@@ -893,6 +1134,14 @@ fn tcp_line_reads(
             scanned = if held_back { 0 } else { pending.len() };
             if held_back || closed {
                 break;
+            }
+            // A line longer than a string may be ends the source, as one
+            // that is no UTF-8 does.
+            if lines.is_empty() && too_long_already(&pending) {
+                ended = true;
+                lines.push(bad(&conn, BadLine::TooLong));
+                held.release();
+                return lines;
             }
             // Wait only for a first line; with one in hand, read on what
             // is there.
@@ -912,7 +1161,17 @@ fn tcp_line_reads(
             }
             pending.resize(at + LINES_READ, 0);
             let read = match wait {
-                true => conn.read(&mut pending[at..]),
+                true => match conn.read_unless_woken(&mut pending[at..], &held.wake) {
+                    Ok(Some(got)) => Ok(got),
+                    // The stream was let go of: nothing was read, and the
+                    // source ends.
+                    Ok(None) => {
+                        pending.truncate(at);
+                        ended = true;
+                        return lines;
+                    }
+                    Err(e) => Err(e),
+                },
                 false => match conn.read_now(&mut pending[at..]) {
                     Some(got) => Ok(got),
                     None => {
@@ -931,6 +1190,7 @@ fn tcp_line_reads(
                 Err(e) => {
                     ended = true;
                     lines.push(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e));
+                    held.release();
                     return lines;
                 }
             }
@@ -938,10 +1198,11 @@ fn tcp_line_reads(
         give_back(&mut pending);
         if lines.is_empty() && closed {
             ended = true;
+            held.release();
             if !pending.is_empty() {
-                lines.push(match std::str::from_utf8(&pending) {
+                lines.push(match line_text(&pending) {
                     Ok(line) => ok(Value::string(line)),
-                    Err(_) => not_utf8(&conn),
+                    Err(why) => bad(&conn, why),
                 });
             }
         }
@@ -1149,7 +1410,6 @@ builtins! {
         // The lines of up to READ_AT_ONCE bytes a read, each without its
         // `\n` or `\r\n` (as `BufRead::lines` gives them).
         reading(vm, "stream.file_lines", ON_A_FILE, move || {
-            use std::io::BufRead;
             let mut lines = Vec::new();
             if ended {
                 return lines;
@@ -1169,33 +1429,21 @@ builtins! {
             };
             let mut bytes = 0;
             while bytes < READ_AT_ONCE {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => {
+                match next_file_line(reader) {
+                    Ok(None) => {
                         ended = true;
                         break;
                     }
-                    Ok(read) => {
+                    Ok(Some((Ok(line), read))) => {
                         bytes += read;
                         read_lines += 1;
-                        if line.ends_with('\n') {
-                            line.pop();
-                            if line.ends_with('\r') {
-                                line.pop();
-                            }
-                        }
                         lines.push(ok(Value::string(line)));
                     }
-                    // A line that is no UTF-8 is `InvalidInput`, named by
-                    // its number and the path.
-                    Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                    // A line that is no line (no UTF-8, too long) is
+                    // `InvalidInput`, named by its number and the path.
+                    Ok(Some((Err(why), _))) => {
                         ended = true;
-                        let number = read_lines + 1;
-                        let why = format!("line {number} of {path} is not UTF-8");
-                        lines.push(Value::variant(
-                            bv::ERR,
-                            [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
-                        ));
+                        lines.push(bad_line(why, read_lines + 1, &path));
                         break;
                     }
                     Err(e) => {
@@ -1219,21 +1467,34 @@ builtins! {
         let Ok(n @ 1..) = usize::try_from(size) else {
             return Err(VmError::new("stream.tcp_chunks: size must be positive".into()));
         };
-        let stream_handle = stream.clone();
+        let held = match Held::new(stream) {
+            Ok(held) => held,
+            Err(e) => return Ok(failed_stream(vm, super::tcp::tcp_io_err(super::tcp::Doing::Using, &e))),
+        };
+        let on = on_held(&held);
         reading(
             vm,
             "stream.tcp_chunks",
-            on_tcp(&stream_handle),
+            on,
             one_a_read(move || {
+                let (conn, _reading) = held.for_read()?;
                 let mut buf = vec![0u8; n.min(READ_AT_ONCE)];
-                let read = stream_handle.read(&mut buf);
+                let read = conn.read_unless_woken(&mut buf, &held.wake);
                 match read {
-                    Ok(0) => None,
-                    Ok(read) => {
+                    // The stream was let go of: nothing was read.
+                    Ok(None) => None,
+                    Ok(Some(0)) => {
+                        held.release();
+                        None
+                    }
+                    Ok(Some(read)) => {
                         buf.truncate(read);
                         Some(ok(Value::Bytes(Arc::new(buf))))
                     }
-                    Err(e) => Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e)),
+                    Err(e) => {
+                        held.release();
+                        Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e))
+                    }
                 }
             }),
         )
@@ -1241,8 +1502,12 @@ builtins! {
 
     #[cfg(feature = "tcp")]
     fn tcp_lines(vm, stream: TcpStream) -> Result<Step, VmError> {
-        let conn = stream.clone();
-        reading(vm, "stream.tcp_lines", on_tcp(&conn), tcp_line_reads(conn))
+        let held = match Held::new(stream) {
+            Ok(held) => held,
+            Err(e) => return Ok(failed_stream(vm, super::tcp::tcp_io_err(super::tcp::Doing::Using, &e))),
+        };
+        let on = on_held(&held);
+        reading(vm, "stream.tcp_lines", on, tcp_line_reads(held))
     }
 
     // ── Transforms ────────────────────────────────────────────────────────
@@ -1351,7 +1616,7 @@ builtins! {
         // it reads cuts it.
         if n <= 0 {
             ch.abandon(vm.scheduler().wake());
-            return Ok(closed_channel(vm));
+            return Ok(closed_channel(vm, "stream.take"));
         }
         let in_ch = ch.clone();
         let mut left = n;
@@ -1812,10 +2077,14 @@ mod tests {
         let (items, next) = mpsc::channel::<Value>();
         let stopped = Arc::new(AtomicBool::new(false));
         let flag = stopped.clone();
-        let stop: Stop = Arc::new(move || flag.store(true, Ordering::SeqCst));
+        let stop: Stop = Arc::new(move || {
+            flag.store(true, Ordering::SeqCst);
+            true
+        });
         let on = On {
             failure: io_failure,
             stop: Some(stop),
+            timed_out: None,
         };
         let started = reading(
             &mut vm,
@@ -1930,7 +2199,7 @@ mod tests {
     /// name; and how many reads of the source there were.
     #[cfg(feature = "tcp")]
     fn lines_of(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> (Vec<String>, usize) {
-        let mut read = tcp_line_reads(conn.clone());
+        let mut read = tcp_line_reads(Held::new(conn).expect("a wake"));
         let (mut items, mut calls) = (Vec::new(), 0);
         loop {
             calls += 1;
@@ -1950,6 +2219,98 @@ mod tests {
                     (false, Value::Variant(error)) => format!("Err:{}", error.name()),
                     _ => panic!("an item that is no Result of a line"),
                 });
+            }
+        }
+    }
+
+    /// A line longer than a string may be ends a line source with an error,
+    /// when it is that long and before it is read whole: on stdin and on a
+    /// connection alike (the test's cap is 4,000,000 bytes). The lines before
+    /// it come first. (Such a line was read whole however long it grew.)
+    #[test]
+    fn a_line_longer_than_a_string_may_be_ends_the_source() {
+        let mut input = b"ok
+"
+        .to_vec();
+        input.extend(std::iter::repeat_n(b'x', 3 * LINE_MAX));
+        input.extend(
+            b"
+after
+",
+        );
+        let (lines, _) = piece_lines_of(&input, 4096);
+        assert_eq!(lines, ["ok", "ERR"]);
+        #[cfg(feature = "tcp")]
+        {
+            let (conn, reads) = counted(&input, usize::MAX, None);
+            let (items, _) = lines_of(&conn);
+            assert_eq!(items.len(), 2, "{items:?}");
+            assert_eq!(items[0], "ok");
+            assert!(items[1].starts_with("Err:"), "{items:?}");
+            // Not much more than the cap was read.
+            let read = reads[0].load(Ordering::SeqCst) * LINES_READ;
+            assert!(read <= LINE_MAX + 4 * LINES_READ, "{read} bytes read");
+        }
+    }
+
+    /// One rule for the length of a line in every line source: without its
+    /// line end (`\n` or `\r\n`) a line may be the cap (the test's is
+    /// 4,000,000 bytes); one byte more ends the source with an error. The
+    /// same at the end of the input without a line end. (stdin took a line
+    /// one byte longer whose `\n` came with the read past the cap, and a file
+    /// refused a line of the cap that ended in `\r\n`.)
+    #[test]
+    fn a_line_of_the_cap_is_a_line_and_one_byte_more_is_not_in_every_source() {
+        // What each source makes of `input`: a line's length, or "ERR".
+        let kinds = |items: Vec<String>| -> Vec<String> {
+            items
+                .into_iter()
+                .map(|item| match item.starts_with("Err") || item == "ERR" {
+                    true => "ERR".to_string(),
+                    false => item.len().to_string(),
+                })
+                .collect()
+        };
+        let file_of = |input: &[u8]| -> Vec<String> {
+            let mut reader = std::io::BufReader::new(std::io::Cursor::new(input.to_vec()));
+            let mut items = Vec::new();
+            while let Some((line, _)) = next_file_line(&mut reader).expect("read") {
+                match line {
+                    Ok(line) => items.push(line),
+                    Err(_) => {
+                        items.push("ERR".to_string());
+                        break;
+                    }
+                }
+            }
+            items
+        };
+        let cap = LINE_MAX.to_string();
+        let mut cases: Vec<(Vec<u8>, Vec<String>)> = Vec::new();
+        for end in ["\n", "\r\n"] {
+            let mut input = "a".repeat(LINE_MAX).into_bytes();
+            input.extend(end.as_bytes());
+            input.extend("b".repeat(LINE_MAX + 1).into_bytes());
+            input.extend(end.as_bytes());
+            input.extend(b"after\n");
+            cases.push((input, vec![cap.clone(), "ERR".to_string()]));
+        }
+        cases.push(("a".repeat(LINE_MAX).into_bytes(), vec![cap.clone()]));
+        cases.push((
+            "a".repeat(LINE_MAX + 1).into_bytes(),
+            vec!["ERR".to_string()],
+        ));
+        for (input, expected) in cases {
+            assert_eq!(kinds(file_of(&input)), expected, "file");
+            for piece in [4096, 65536] {
+                let (lines, _) = piece_lines_of(&input, piece);
+                assert_eq!(kinds(lines), expected, "stdin, reads of {piece}");
+            }
+            #[cfg(feature = "tcp")]
+            {
+                let (conn, _) = counted(&input, usize::MAX, None);
+                let (items, _) = lines_of(&conn);
+                assert_eq!(kinds(items), expected, "tcp");
             }
         }
     }
@@ -2007,7 +2368,29 @@ mod tests {
     /// time, however the bytes come: `\n` and `\r\n` end a line, a lone
     /// `\r` is kept, an empty line is one, a final `\n` makes no empty
     /// last line, and what follows the last `\n` is the last line (a
-    /// final `\r` with it).
+    /// final `\r` with it). The same of stdin, however its reads come.
+    #[test]
+    fn stdin_lines_gives_the_lines_tcp_lines_gives() {
+        let cases: [(&[u8], &[&str]); 5] = [
+            (b"a\r\nb\n\nc\rd\ne\r", &["a", "b", "", "c\rd", "e\r"]),
+            (b"x\n", &["x"]),
+            (b"", &[]),
+            (b"\n\r\n", &["", ""]),
+            ("é\n日本\r\nz".as_bytes(), &["é", "日本", "z"]),
+        ];
+        for (data, want) in cases {
+            for piece in [1, 2, 3, 7, 4096] {
+                assert_eq!(
+                    piece_lines_of(data, piece).0,
+                    want,
+                    "{data:?} read {piece} at a time"
+                );
+            }
+        }
+    }
+
+    /// The lines of a connection are those of stdin, however the bytes
+    /// come.
     #[test]
     #[cfg(feature = "tcp")]
     fn tcp_lines_gives_the_same_lines_however_the_bytes_come() {
@@ -2038,7 +2421,7 @@ mod tests {
     #[cfg(feature = "tcp")]
     fn tcp_lines_ends_at_a_line_that_is_no_utf8_or_a_read_that_fails() {
         let (conn, _) = counted(b"a\nb\n\xff\nc\n", usize::MAX, None);
-        let mut read = tcp_line_reads(conn.clone());
+        let mut read = tcp_line_reads(Held::new(&conn).expect("a wake"));
         let mut lines = 0;
         let ended = loop {
             let got = read();
@@ -2078,8 +2461,9 @@ mod tests {
     }
 
     /// The reader of a source on a connection is gone when the source
-    /// comes with an item for it: the source ends, and it shuts its
-    /// connection down, as it does when it is stopped in a read.
+    /// comes with an item for it: the source ends, and runs its stop on
+    /// the connection (here a flag; `stream.tcp_*`: it lets go of it),
+    /// as it does when it is stopped in a read.
     #[test]
     fn a_source_that_finds_its_output_closed_stops_its_connection() {
         let (vm, out, items, stopped) = source();
@@ -2099,14 +2483,15 @@ mod tests {
         let flag = stopped.clone();
         let mut pipe = Pipe::new("test.source", vec![], logic);
         pipe.armed = Some(Arc::new(Armed::new(Arc::new(move || {
-            flag.store(true, Ordering::SeqCst)
+            flag.store(true, Ordering::SeqCst);
+            true
         }))));
         (pipe, stopped)
     }
 
     /// A source on a connection that is stopped before it has run (a
     /// worker ends a task that was cancelled before its first slice:
-    /// its frames are abandoned) shuts its connection down; it does not
+    /// its frames are abandoned) runs its stop on its connection; it does not
     /// take the stop for an end of its own. (Before, its abandon
     /// disarmed the shut-down, and a reader that stopped it at that
     /// moment left the connection open.)
@@ -2156,7 +2541,10 @@ mod tests {
                 .send(Value::Int(item as i64))
                 .expect("the source reads");
         }
-        until("the source did not wait for room", || out.waiting().1 > 0);
+        // (It waits to be asked for room, with its item.)
+        until("the source did not wait for room", || {
+            out.len() == AHEAD && out.feeders() > 0
+        });
         assert!(!stopped.load(Ordering::SeqCst));
         out.close(Close::default(), vm.scheduler().wake());
         until("the connection was left open", || {
@@ -2195,7 +2583,7 @@ mod tests {
                     _ => Next::Done(Value::Unit),
                 })
             });
-            pipe.out = Some(out.clone());
+            pipe.out = Some(Arc::downgrade(&out));
             // The VM of a stage's task has the task's flag.
             vm.cancelled = Some(handle.cancel_flag());
             pipe.handle = Some(handle);

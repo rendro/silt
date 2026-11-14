@@ -1,0 +1,44 @@
+-- cmd: check
+-- exit: 1
+-- Empty parentheses behind a name are no second spelling of the name:
+-- a type, a trait, a variant and a variant pattern without arguments
+-- are written without them. Each place is refused once, and nothing
+-- more is said about the declaration (`silt fmt`, which used to drop
+-- them, turned the refused `trait Q for W()` into an accepted program).
+type W {
+  n: Int,
+}
+
+type T() {
+  x: Int,
+}
+
+type E {
+  A(),
+  B,
+}
+
+trait Q() {
+  fn q(self) -> Int
+}
+
+trait Q for W() {
+  fn q(self) -> Int {
+    self.n
+  }
+}
+
+fn f(w: W(), x: a) -> Int where a: Display() {
+  1
+}
+
+fn g(e: E) -> Int {
+  match e {
+    B() -> 1
+    _ -> 2
+  }
+}
+
+fn main() {
+  println(Q.q(W { n: 1 }))
+}
