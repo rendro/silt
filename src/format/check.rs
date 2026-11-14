@@ -1307,9 +1307,10 @@ pub(super) fn unit_return_dropped(f: &FnDecl) -> bool {
 /// as such (one in a closure counts too: the rule stays on the safe
 /// side).
 fn returns_a_value(body: &Expr) -> bool {
-    crate::compiler::any_expr(body, &mut |e| {
-        matches!(&e.kind, ExprKind::Return(Some(value)) if !matches!(value.kind, ExprKind::Unit))
-    })
+    crate::compiler::any_expr(
+        body,
+        &mut |e| matches!(&e.kind, ExprKind::Return(Some(value)) if !matches!(value.kind, ExprKind::Unit)),
+    )
 }
 
 /// A stage of a pipeline as it is compared: `f()`, a call of a name
