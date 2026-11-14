@@ -145,6 +145,16 @@ arrive. The same holds for a chunk of `stream.tcp_chunks`. `max` and
 ("tcp.read: max must be positive", "tcp.read_exact: n must be
 positive"), as a chunk size of 0 or less is for `stream.tcp_chunks`.
 
+**How much the peer can send at once.** What comes from the network is
+limited, so that a peer does not decide how much memory a program takes:
+`tcp.read_exact` takes at most 10,000,000 bytes, and a larger `n` is
+`Err(Other("tcp.read_exact: 10000001 bytes is more than the 10000000 one
+read may take"))`, with nothing read and the connection as it was (a
+length the peer sent is checked so). A line of `stream.tcp_lines` is at
+most 10,000,000 bytes too: a longer one is an `Err(Other("a line is
+longer than 10000000 bytes"))` item and the last, and the source shuts
+its connection down. (A file and stdin have no such limit.)
+
 ## Stream lifetime
 
 `tcp.close(conn)` shuts the connection down: a `read` or `write` that

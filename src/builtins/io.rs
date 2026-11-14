@@ -175,6 +175,21 @@ fn is_link_loop(err: &std::io::Error) -> bool {
     }
 }
 
+/// The error of a listing of `dir` that meets the name `name`, which is
+/// no UTF-8: a String cannot hold it, and a name changed to fit (U+FFFD
+/// for the bytes) would name no file. (`InvalidInput`, which `path_err`
+/// keeps with its words.)
+pub(crate) fn name_not_utf8(dir: &std::path::Path, name: &std::ffi::OsStr) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!(
+            "a name in {} is not UTF-8: {}",
+            dir.to_string_lossy(),
+            name.to_string_lossy()
+        ),
+    )
+}
+
 /// `Err(Other("<what>: <path>"))`, the form of `file not found: <path>`.
 fn path_err_text(what: &str, path: &str) -> Value {
     io_result_err_unknown(format!("{what}: {path}"))
@@ -443,7 +458,10 @@ pub(crate) mod fs {
             let names = std::fs::read_dir(path).and_then(|entries| {
                 let names = entries.map(|entry| {
                     let name = entry?.file_name();
-                    Ok(Value::string(name.to_string_lossy().into_owned()))
+                    match name.into_string() {
+                        Ok(name) => Ok(Value::string(name)),
+                        Err(name) => Err(name_not_utf8(Path::new(path), &name)),
+                    }
                 });
                 names.collect::<std::io::Result<Vec<Value>>>()
             });
@@ -454,9 +472,24 @@ pub(crate) mod fs {
             result(std::fs::create_dir_all(path), path, unit)
         }
 
+        // The path itself is removed, never what a link leads to: a link
+        // to a directory is unlinked as a link to a file is (on Windows
+        // such a link is removed as a directory is, which is how the
+        // system removes it).
         fn remove(path: &str) -> Value {
             let at = Path::new(path);
-            let removed = match at.is_dir() {
+            let directory = std::fs::symlink_metadata(at).is_ok_and(|md| {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::FileTypeExt;
+                    md.is_dir() || md.file_type().is_symlink_dir()
+                }
+                #[cfg(not(windows))]
+                {
+                    md.is_dir()
+                }
+            });
+            let removed = match directory {
                 true => std::fs::remove_dir(at),
                 false => std::fs::remove_file(at),
             };
@@ -590,13 +623,15 @@ pub(crate) mod fs {
             for entry in walker {
                 let entry = match entry {
                     Ok(entry) => entry,
-                    // walkdir::Error -> reconstruct an io::Error when
-                    // possible so variant classification is accurate;
-                    // fall back to Other when walkdir wraps a
-                    // non-io cause (cycle detection etc.).
+                    // The error names the path that failed, as walkdir
+                    // made it from `root` (`w/locked`, not `w`): one
+                    // directory that cannot be read fails the whole walk.
+                    // A cause that is no io error (a loop of links, which
+                    // a walk that follows none does not meet) is Other.
                     Err(err) => {
+                        let at = err.path().map_or(root.into(), |at| at.to_string_lossy());
                         return match err.io_error() {
-                            Some(io_error) => path_err(io_error, root),
+                            Some(io_error) => path_err(io_error, &at),
                             None => io_result_err_unknown(err.to_string()),
                         };
                     }
@@ -605,6 +640,13 @@ pub(crate) mod fs {
                     return io_result_err_unknown(format!(
                         "fs.walk: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
                     ));
+                }
+                // A name that is no UTF-8 fails the walk, naming the
+                // directory it is in (met before what is in it).
+                if entry.depth() > 0 && entry.file_name().to_str().is_none() {
+                    let dir = entry.path().parent().unwrap_or(base);
+                    let why = name_not_utf8(dir, entry.file_name());
+                    return path_err(&why, &dir.to_string_lossy());
                 }
                 let shown = match entry.path().strip_prefix(base) {
                     Ok(below) if below.as_os_str().is_empty() => shown_root.clone(),
@@ -638,7 +680,9 @@ pub(crate) mod fs {
                 }
                 match entry {
                     Ok(path) => out.push(Value::string(path.to_string_lossy().into_owned())),
-                    Err(e) => return path_err(&e, pattern),
+                    // The directory that could not be listed, not the
+                    // pattern: one fails the whole call.
+                    Err((dir, e)) => return path_err(&e, &dir.to_string_lossy()),
                 }
             }
             fs_ok(Value::list(out))

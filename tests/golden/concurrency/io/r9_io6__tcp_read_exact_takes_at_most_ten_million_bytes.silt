@@ -1,0 +1,36 @@
+-- timeout: 20
+-- requires-feature: tcp
+-- What comes from the network is limited, so that a peer does not decide
+-- how much memory the program takes: `tcp.read_exact` takes at most
+-- 10,000,000 bytes. A larger `n` (a length the peer sent, say) is an
+-- `Err(Other(..))` that reads nothing and leaves the connection as it
+-- was: the next read gets the bytes the peer sent.
+import bytes
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let peer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
+    let _ = tcp.write(conn, bytes.from_string("hi"))
+    let _ = tcp.read(conn, 16)
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  match tcp.read_exact(conn, 10000001) {
+    Err(tcp.Other(why)) -> println(why)
+    _ -> println("something else")
+  }
+  match tcp.read_exact(conn, 2) {
+    Ok(read) -> println(bytes.to_string(read))
+    Err(_) -> println("the connection was lost")
+  }
+  tcp.close(conn)
+  task.join(peer)
+}
