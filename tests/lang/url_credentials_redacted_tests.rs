@@ -78,6 +78,29 @@ fn f12_redactor_handles_both_schemes_in_one_message() {
     );
 }
 
+/// The userinfo is read as the client reads it: up to the last `@` of the
+/// authority (a password with a raw `@` was cut at the first, and its
+/// rest shown), and after a scheme in any case (`HTTP://`, which the
+/// client sends with the credentials, showed them whole). Text that is
+/// no ASCII around a URL stays as it is.
+#[cfg(feature = "http")]
+#[test]
+fn f12_redactor_reads_the_authority_as_the_client_does() {
+    for (input, expected) in [
+        ("fail: http://user:p@ss@host/x", "fail: http://***@host/x"),
+        (
+            "fail: HTTP://user:pw@host/x and hTtPs://u:p@h2",
+            "fail: HTTP://***@host/x and hTtPs://***@h2",
+        ),
+        ("café http://u:pé@h/ü", "café http://***@h/ü"),
+        ("http://@host/x", "http://@host/x"),
+        ("http://host/a@b", "http://host/a@b"),
+        ("ends with http://", "ends with http://"),
+    ] {
+        assert_eq!(redact_http_url_userinfo(input), expected, "{input}");
+    }
+}
+
 #[cfg(feature = "http")]
 #[test]
 fn f12_http_get_unreachable_does_not_leak_password_in_err() {

@@ -242,61 +242,40 @@ pub(crate) fn ureq_response_to_value(
 /// to the silt program (F12). Replace the userinfo segment with
 /// `***@` for any `http://` / `https://` substring that carries one.
 ///
-/// Grammar: the userinfo component of RFC 3986 is
-/// `*( unreserved / pct-encoded / sub-delims / ":" )`. We accept a
-/// conservative superset: alphanumerics, `%` escapes, and the common
-/// URL-safe punctuation (`._~-+`) in the user segment, optionally
-/// followed by `:<password>` where password is any non-`@`,
-/// non-whitespace run. The `@` terminates userinfo.
+/// The authority is read as the client reads it ([`basic_of_url`]): the
+/// scheme in any case (`HTTP://` is sent as `http://` is), and the
+/// userinfo up to the LAST `@` before the end of the authority (a `/`,
+/// `?`, `#` or white space), so a password with a raw `@` in it is
+/// scrubbed whole. `scheme://@host` stays as it is.
 #[cfg(feature = "http")]
 pub fn redact_http_url_userinfo(msg: &str) -> String {
+    // (ASCII lower case keeps every byte where it is.)
+    let lower = msg.to_ascii_lowercase();
     let mut out = String::with_capacity(msg.len());
-    let bytes = msg.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        // Look for scheme prefix at position `i`.
-        let rest = &msg[i..];
-        let scheme_len = if rest.starts_with("https://") {
-            8
-        } else if rest.starts_with("http://") {
-            7
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
-            continue;
+    let mut at = 0;
+    loop {
+        let next = ["http://", "https://"]
+            .iter()
+            .filter_map(|scheme| Some((at + lower[at..].find(scheme)?, scheme.len())))
+            .min();
+        let Some((start, scheme_len)) = next else {
+            break;
         };
-        // Scan forward for `@` before any URL terminator char.
-        // Valid userinfo chars: alphanumeric, `%`, `.`, `_`, `~`, `-`, `+`, `:`.
-        let host_start = i + scheme_len;
-        let mut j = host_start;
-        let mut at_pos: Option<usize> = None;
-        while j < bytes.len() {
-            let b = bytes[j];
-            // Terminators for the authority component.
-            if b == b'@' {
-                at_pos = Some(j);
-                break;
+        let host_start = start + scheme_len;
+        out.push_str(&msg[at..host_start]);
+        let authority = &msg[host_start..];
+        let end = authority
+            .find(|c: char| matches!(c, '/' | '?' | '#') || c.is_whitespace())
+            .unwrap_or(authority.len());
+        at = match authority[..end].rfind('@') {
+            Some(last @ 1..) => {
+                out.push_str("***");
+                host_start + last
             }
-            if b == b'/' || b == b'?' || b == b'#' || b == b' ' || b == b'\t' || b == b'\n' {
-                break;
-            }
-            // Accept any non-terminator byte (covers alphanumeric, `%`
-            // escapes, `:` separator, and the `._~-+` URL-safe set).
-            j += 1;
-        }
-        // Copy scheme verbatim.
-        out.push_str(&msg[i..host_start]);
-        if let Some(at) = at_pos {
-            // Only scrub if we actually have content before the `@`
-            // (otherwise `scheme://@host` stays as-is).
-            if at > host_start {
-                out.push_str("***@");
-                i = at + 1; // skip the original userinfo + `@`
-                continue;
-            }
-        }
-        i = host_start;
+            _ => host_start,
+        };
     }
+    out.push_str(&msg[at..]);
     out
 }
 
