@@ -1,0 +1,17 @@
+error[parse]: a record needs a field: for a type of one value write `type Void { Void }`
+ --> record_without_fields__is_refused.silt:7:11
+   |
+ 7 | type Void {}
+   |           ^^ a record needs a field: for a type of one value write `type Void { Void }`
+
+error[parse]: a record needs a field: for a type of one value write `type Tag(a) { Tag }`
+ --> record_without_fields__is_refused.silt:8:13
+   |
+ 8 | type Tag(a) { }
+   |             ^^^ a record needs a field: for a type of one value write `type Tag(a) { Tag }`
+
+error[parse]: a record needs a field: for a type of one value write `type Marker(a, b) { Marker }`
+ --> record_without_fields__is_refused.silt:9:23
+   |
+ 9 | pub type Marker(a, b) {
+   |                       ^ a record needs a field: for a type of one value write `type Marker(a, b) { Marker }`

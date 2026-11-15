@@ -18,7 +18,9 @@ type A {
   C(Int),
 }
 
-type R(a) {}
+type R(a) {
+  x: a,
+}
 
 pub type F = Fn() -> Fn(Int) -> R(Int)
 

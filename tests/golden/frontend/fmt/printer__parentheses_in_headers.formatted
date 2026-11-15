@@ -8,8 +8,6 @@ type P {
   x: Int,
 }
 
-type E {}
-
 fn main() {
   let a = 1
   let b = match ({

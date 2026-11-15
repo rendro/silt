@@ -609,7 +609,7 @@ impl TypeChecker {
     }
 
     /// Whether `ty` has no value: `Never`, the one type without one
-    /// (`type Empty {}` is a record with no fields, which has one). A
+    /// (every enum has a variant and every record a field). A
     /// composite type with such a part (a tuple, a record) is not looked
     /// into: taking a type with values for an empty one would accept a
     /// match that misses them.
