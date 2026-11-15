@@ -231,12 +231,18 @@ impl TypeChecker {
         self.module_name_here(module).map(ModuleWritten::Named)
     }
 
-    /// [`TypeChecker::module_written`] for every module of the program
-    /// the session knows but this one: what the module's analysis keeps
-    /// for the editor, so that hover writes another module's types as
-    /// the messages do.
+    /// [`TypeChecker::module_written`] for every module this one reaches
+    /// through its imports, the only modules whose types its code can
+    /// hold: what the module's analysis keeps for the editor, so that
+    /// hover writes another module's types as the messages do. (Not for
+    /// every module the session knows: that made checking a program of n
+    /// modules take time n squared.) None for a REPL cell, which has no
+    /// reach and no editor.
     pub(super) fn modules_written(&self) -> HashMap<crate::session::ModuleId, ModuleWritten> {
-        (self.tables.module_names.keys())
+        let Some(reach) = &self.reach else {
+            return HashMap::new();
+        };
+        (reach.iter())
             .filter_map(|module| Some((*module, self.module_written(*module)?)))
             .collect()
     }
