@@ -16,7 +16,8 @@
 
 use std::fs;
 use std::io::Read;
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -51,6 +52,23 @@ fn wait_for(buf: &Arc<Mutex<Vec<u8>>>, marker: &str) {
     }
 }
 
+/// The watcher and its directory, ended on every way out of the test:
+/// a wait that times out panics, and the watcher, left running, would
+/// hold whatever it inherited (a test runner's lock among them) for as
+/// long as it lives.
+struct Watcher {
+    child: Child,
+    dir: PathBuf,
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
 #[test]
 fn watch_writes_no_clear_screen_escape_to_piped_stderr() {
     let dir = std::env::temp_dir().join(format!("silt_round91_watch_tty_{}", std::process::id()));
@@ -59,7 +77,7 @@ fn watch_writes_no_clear_screen_escape_to_piped_stderr() {
     let file = dir.join("main.silt");
     fs::write(&file, "fn main() {\n  println(\"first-run\")\n}\n").unwrap();
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
+    let child = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("run")
         .arg("-w")
         .arg(&file)
@@ -69,8 +87,9 @@ fn watch_writes_no_clear_screen_escape_to_piped_stderr() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn silt run -w");
-    let stdout = drain(child.stdout.take().unwrap());
-    let stderr = drain(child.stderr.take().unwrap());
+    let mut watcher = Watcher { child, dir };
+    let stdout = drain(watcher.child.stdout.take().unwrap());
+    let stderr = drain(watcher.child.stderr.take().unwrap());
 
     // The initial run, then a rerun: each run prints the clear-screen
     // sequence when stderr is a tty.
@@ -79,9 +98,7 @@ fn watch_writes_no_clear_screen_escape_to_piped_stderr() {
     fs::write(&file, "fn main() {\n  println(\"second-run\")\n}\n").unwrap();
     wait_for(&stdout, "second-run");
 
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = fs::remove_dir_all(&dir);
+    drop(watcher);
 
     let err = String::from_utf8_lossy(&stderr.lock().unwrap()).into_owned();
     assert!(
