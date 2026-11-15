@@ -32,12 +32,11 @@ use std::sync::Arc;
 
 use crate::ast::*;
 use crate::defs::{
-    BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TraitId, TypeId, Vis, builtin_types,
+    BuiltinDefs, Def, DefId, DefKind, DefTable, ModuleId, Res, TraitId, TypeId, Vis, builtin_types,
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_WHILE_FOR};
-use crate::session::ModuleId;
 use crate::source::Span;
 
 use super::suggest::suggest_similar;
@@ -87,6 +86,7 @@ pub struct ModuleScope {
 impl ModuleScope {
     /// For a REPL cell: the variants of the enums it imports from the
     /// earlier cell.
+    #[cfg(any(feature = "repl", test, feature = "test-hooks"))]
     pub fn implied(&self) -> &HashMap<Symbol, Binding> {
         &self.implied
     }
@@ -94,7 +94,7 @@ impl ModuleScope {
 
 /// What an import of a module names, for the resolver.
 #[derive(Clone, Copy)]
-pub enum Imported<'a> {
+pub(crate) enum Imported<'a> {
     /// A builtin module (its pseudo-module).
     Builtin(ModuleId),
     /// A module of the graph, resolved already.
@@ -107,7 +107,7 @@ pub enum Imported<'a> {
 
 /// What kind of module is resolved.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ModuleKind {
+pub(crate) enum ModuleKind {
     File,
     /// A REPL cell: it offers everything it declares and everything it
     /// sees through the earlier cell.
@@ -117,7 +117,7 @@ pub enum ModuleKind {
 }
 
 /// What resolving a module gives.
-pub struct Resolution {
+pub(crate) struct Resolution {
     pub scope: ModuleScope,
     pub diagnostics: Vec<Diagnostic>,
     /// The accesses `m.x` whose `m` is a local that hides an imported
@@ -129,7 +129,7 @@ pub struct Resolution {
 /// it hides is imported and has a member `x`: if the local has no field
 /// or method `x`, the module was meant.
 #[derive(Clone, Debug)]
-pub struct HiddenModule {
+pub(crate) struct HiddenModule {
     /// The access, `m.x`.
     pub access: Span,
     /// The name `m`, of the local and of the import.
@@ -142,7 +142,7 @@ pub struct HiddenModule {
 
 /// What hides a module that an access means.
 #[derive(Clone, Copy, Debug)]
-pub enum HiddenBy {
+pub(crate) enum HiddenBy {
     /// A local, bound at this span.
     Local(Span),
     /// In the REPL, the `let` of an earlier entry, which binds the name
@@ -151,7 +151,7 @@ pub enum HiddenBy {
 }
 
 /// What the resolver reads of a module besides its declarations.
-pub struct Source<'a> {
+pub(crate) struct Source<'a> {
     /// The module's text, which the quick fixes edit.
     pub text: &'a str,
     /// Whether its declarations are all of the text: a declaration that
@@ -178,13 +178,13 @@ enum ImportedName {
 /// The builtin pseudo-modules: what the prelude binds and what each
 /// builtin module offers.
 #[derive(Debug, Default)]
-pub struct BuiltinScopes {
+pub(crate) struct BuiltinScopes {
     pub prelude: Exports,
     pub modules: HashMap<ModuleId, Exports>,
 }
 
 /// The builtin definitions and scopes, built once for the process.
-pub fn builtins() -> (Arc<BuiltinDefs>, Arc<BuiltinScopes>) {
+pub(crate) fn builtins() -> (Arc<BuiltinDefs>, Arc<BuiltinScopes>) {
     static BUILTINS: std::sync::OnceLock<(Arc<BuiltinDefs>, Arc<BuiltinScopes>)> =
         std::sync::OnceLock::new();
     let (defs, scopes) = BUILTINS.get_or_init(|| {
@@ -196,12 +196,12 @@ pub fn builtins() -> (Arc<BuiltinDefs>, Arc<BuiltinScopes>) {
 
 /// The builtin definition `id`; `None` for the id of a module's
 /// definition.
-pub fn builtin_def(id: DefId) -> Option<Def> {
+pub(crate) fn builtin_def(id: DefId) -> Option<Def> {
     builtins().0.defs.get(id.0 as usize).cloned()
 }
 
 /// A new definition table over the builtins.
-pub fn new_def_table() -> DefTable {
+pub(crate) fn new_def_table() -> DefTable {
     DefTable::new(builtins().0)
 }
 
@@ -337,7 +337,7 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
 /// `defs`, bind its imports (`imports`, by the module name written after
 /// `import`), and write what each name means on the AST. `source` is
 /// what the warnings and their quick fixes read of the module.
-pub fn resolve_module(
+pub(crate) fn resolve_module(
     program: &mut Program,
     module: ModuleId,
     kind: ModuleKind,
@@ -1481,7 +1481,7 @@ impl Resolver<'_> {
                     for (at, (item, item_span)) in items.iter().enumerate() {
                         // (An imported `main` is the file's entry point:
                         // running the file uses it.)
-                        let entry = *item == intern(crate::session::ENTRY_POINT);
+                        let entry = *item == intern(crate::program::ENTRY_POINT);
                         if used.contains(item) || entry || erred(*item_span, &self.diagnostics) {
                             continue;
                         }

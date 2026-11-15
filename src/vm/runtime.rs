@@ -529,7 +529,7 @@ impl OwnClosures {
 
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
-pub struct Runtime {
+pub(crate) struct Runtime {
     // ── M:N scheduler ──────────────────────────────────────────
     /// The scheduler of the program's tasks.
     pub(crate) scheduler: Arc<Scheduler>,

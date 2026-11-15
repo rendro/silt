@@ -42,7 +42,7 @@
 //!    float scope before `1` hits the integer scope).
 
 use regex::Regex;
-use silt::lexer::{Lexer, Token};
+use silt::testing::lexer::{Lexer, Token};
 use std::fs;
 use std::path::PathBuf;
 
@@ -121,7 +121,7 @@ enum Kind {
 /// Lex `src`; return `Some(kind)` iff it produces exactly one
 /// significant token and that token is a number literal.
 fn lex_single_number(src: &str) -> Option<Kind> {
-    let tokens = Lexer::new(silt::source::FileId::default(), src)
+    let tokens = Lexer::new(silt::testing::source::FileId::default(), src)
         .tokenize()
         .checked()
         .ok()?;

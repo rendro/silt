@@ -20,18 +20,19 @@
 //!      every variant and asserts `user_facing_type_name == kind`
 //!      modulo the four documented deliberate aliases.
 
-use silt::typeinfo::bv;
+use silt::testing::typeinfo::bv;
+use silt::testing::{ValueInside, VmInside};
 use std::sync::Arc;
 
-use silt::bytecode::{Function, VmClosure};
-use silt::runtime::handle::TaskHandle;
-use silt::runtime::sync::Channel;
-use silt::value::Value;
-use silt::vm::Vm;
+use silt::testing::bytecode::{Function, VmClosure};
+use silt::testing::runtime::handle::TaskHandle;
+use silt::testing::runtime::sync::Channel;
+use silt::testing::value::Value;
+use silt::testing::vm::Vm;
 
 /// The builtin function `name` (`println`, `list.map`) as a value.
 fn builtin(name: &str) -> Value {
-    silt::builtins::registry::registry()
+    silt::testing::builtins::registry::registry()
         .named(name)
         .unwrap_or_else(|| panic!("the builtin {name}"))
         .value()
@@ -68,16 +69,16 @@ struct AllVariants {
 }
 
 /// A program's record type `Point`.
-fn point_type() -> Arc<silt::typeinfo::TypeInfo> {
-    silt::typeinfo::TypeInfo::new_record(
-        silt::defs::TypeId(silt::defs::DefId(9000)),
+fn point_type() -> Arc<silt::testing::typeinfo::TypeInfo> {
+    silt::testing::typeinfo::TypeInfo::new_record(
+        silt::testing::defs::TypeId(silt::testing::defs::DefId(9000)),
         "Point",
-        vec![("x".to_string(), silt::typeinfo::FieldType::Int)],
+        vec![("x".to_string(), silt::testing::typeinfo::FieldType::Int)],
     )
 }
 
 fn build_all_variants() -> AllVariants {
-    use silt::runtime::handle::{TcpListenerHandle, TcpStreamHandle};
+    use silt::testing::runtime::handle::{TcpListenerHandle, TcpStreamHandle};
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
     let port = listener.local_addr().unwrap().port();
@@ -93,7 +94,7 @@ fn build_all_variants() -> AllVariants {
 
     AllVariants {
         int: Value::Int(7),
-        float: Value::Float(silt::value::Float::new(1.5).expect("a finite number")),
+        float: Value::Float(silt::testing::value::Float::new(1.5).expect("a finite number")),
         bool_: Value::Bool(true),
         string: Value::string("hi"),
         list: Value::list(vec![Value::Int(1)]),

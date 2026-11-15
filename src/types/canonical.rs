@@ -14,18 +14,18 @@
 //! ## Phase history (A through D — all live)
 //!
 //! Phase A originally shipped this module standalone — exposing
-//! [`canonicalize`], [`types_equal`], and [`canonical_name`] with unit
+//! `canonicalize`, `types_equal`, and `canonical_name` with unit
 //! coverage but no callers. That is no longer true: phase B routed the
 //! unifier (`unify` in `src/typechecker/mod.rs`) and the typechecker's
-//! `resolve_type_expr` / `type_name_for_impl` through [`canonicalize`];
+//! `resolve_type_expr` / `type_name_for_impl` through `canonicalize`;
 //! phase C pointed the VM's runtime dispatch (via
-//! [`dispatch_type_for_value`]) and the compiler's keying of impl
-//! methods (via [`canonical_head`]) at the canonical-name oracle;
+//! `crate::value::dispatch_type_for_value`) and the compiler's keying of impl
+//! methods (via `canonical_head`) at the canonical-name oracle;
 //! phase D added the alias registry described below.
 //!
 //! ## Display vs canonical name
 //!
-//! [`canonical_name`] is the runtime-dispatch oracle, not a diagnostic
+//! `canonical_name` is the runtime-dispatch oracle, not a diagnostic
 //! renderer: an alias written in the source is shown as the type it
 //! stands for.
 //!
@@ -39,7 +39,7 @@
 //! internally-inferred types continue to spell themselves out (e.g. `let x:
 //! Bytes = ...; let y = x` infers `y : List(Int)` for diagnostics on `y`).
 //!
-//! Phase A's [`canonicalize`] was a pure function with no shared state.
+//! Phase A's `canonicalize` was a pure function with no shared state.
 //! Phase D adds a compile-session-scoped alias registry — see
 //! [`Resolver::register_alias`] / [`Resolver::lookup_alias`] — that
 //! the typechecker populates at decl-processing time and the
@@ -56,14 +56,13 @@
 //! - Phase A unit tests in this module continue to pass because they
 //!   exercise built-in types only — no aliases registered.
 //! - The substitution helper for parametric aliases is the existing
-//!   [`crate::types::substitute_vars`] keyed on a `TyVar -> Type` map.
+//!   `crate::types::substitute_vars` keyed on a `TyVar -> Type` map.
 //!   The typechecker assigns one fresh `TyVar` per alias parameter at
 //!   registration time so the substitution is straightforward.
 
 use crate::defs::TypeId;
 use crate::intern::Symbol;
 use crate::types::{TyVar, Type, TypeRef};
-use crate::value::Value;
 use std::collections::HashMap;
 
 /// Resolved type-alias entry stored in the global alias registry.
@@ -108,6 +107,7 @@ pub struct Resolver {
 
 impl Resolver {
     /// Allocate a fresh resolver with empty maps.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn new() -> Self {
         Self::default()
     }
@@ -137,8 +137,7 @@ impl Resolver {
 
     /// What the registry holds, for a test that compares two states of
     /// a session: each alias, in a fixed order.
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[doc(hidden)]
+    #[cfg(test)]
     pub fn fingerprint(&self) -> Vec<String> {
         let mut rows: Vec<String> = self
             .aliases
@@ -163,7 +162,7 @@ impl Resolver {
 /// Every other variant is rebuilt structurally with each contained
 /// type recursively canonicalised. Primitive variants and type
 /// variables are returned unchanged.
-pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
+pub(crate) fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
     match ty {
         // ── Phase D: user-declared aliases ─────────────────────────
         // A `Type::Generic(name, args)` whose `name` is a registered
@@ -254,7 +253,8 @@ fn expand_alias(info: &AliasInfo, args: &[Type]) -> Type {
 /// positions count as equal) is a phase-B+ concern: the unifier will
 /// continue to handle var-binding via its substitution map, and
 /// [`types_equal`] is only consulted on already-substituted types.
-pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
+#[cfg(test)]
+pub(crate) fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
     canonicalize(resolver, a) == canonicalize(resolver, b)
 }
 
@@ -275,7 +275,7 @@ pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
 /// `"Point"`, and a parameterised `Type::Generic("Result", [Int, String])`
 /// canonicalises to `"Result"` (parameters are stripped because dispatch
 /// lookup is by head constructor).
-pub fn canonical_name(ty: &Type) -> String {
+pub(crate) fn canonical_name(ty: &Type) -> String {
     match ty {
         // ── Primitives ─────────────────────────────────────────────
         Type::Int => "Int".to_string(),
@@ -326,7 +326,7 @@ pub fn canonical_name(ty: &Type) -> String {
 /// aliases collapse fully via recursion.
 ///
 /// Any other type is its own head.
-pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
+pub(crate) fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
     if let Some(info) = resolver.lookup_alias(ty) {
         let canon_target = canonicalize(resolver, &info.target);
         if let Some(head) = head_of_canon(&canon_target) {
@@ -343,7 +343,7 @@ pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
 ///
 /// Returns `None` for shapes that have no nominal head (raw
 /// type-variables, error / never sentinels).
-pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
+pub(crate) fn head_of_canon(ty: &Type) -> Option<TypeRef> {
     let builtin = match ty {
         Type::Int => "Int",
         Type::Float => "Float",
@@ -370,69 +370,29 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
     Some(TypeRef::builtin(builtin))
 }
 
-/// The type a runtime [`Value`] dispatches its methods on: the type the
-/// methods of its impls are keyed by. A record, a variant and a type
-/// descriptor carry their type, so `Int.default()` and
-/// `Todo.decode(...)` route to impls of `Int` / `Todo`.
-///
-/// The mapping mirrors [`canonical_name`] applied to each `Value`
-/// variant's corresponding [`Type`]. Every function-shaped value (a closure, a builtin, a host function, a
-/// variant constructor) is an `Fn`: the typechecker types each as
-/// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
-pub fn dispatch_type_for_value(val: &Value) -> TypeId {
-    let kinds = kind_types();
-    match val {
-        Value::Variant(variant) => variant.type_id(),
-        Value::Record(record) => record.type_id(),
-        Value::TypeDescriptor(ty) => ty.id,
-        Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
-        Value::Int(_) => kinds.int,
-        Value::Float(_) => kinds.float,
-        Value::Bool(_) => kinds.bool,
-        Value::String(_, _) => kinds.string,
-        Value::List(_) => kinds.list,
-        Value::Map(_) => kinds.map,
-        Value::Set(_) => kinds.set,
-        Value::Tuple(_) => kinds.tuple,
-        Value::Channel(_) => kinds.channel,
-        Value::VmClosure(_)
-        | Value::BuiltinFn(_)
-        | Value::HostFn(_)
-        | Value::VariantConstructor(..) => kinds.function,
-        Value::Unit => kinds.unit,
-        Value::Bytes(_) => kinds.bytes,
-        Value::Handle(_) => kinds.handle,
-        Value::TcpListener(_) => kinds.tcp_listener,
-        Value::TcpStream(_) => kinds.tcp_stream,
-        Value::Regex(_) => kinds.regex,
-        // (No method is found by a dictionary.)
-        Value::Dict(_) => kinds.unit,
-    }
-}
-
 /// The builtin type of each kind of value that is no record and no
 /// variant, found once: a method call that finds its method where the
 /// code runs asks for the type of its receiver every time.
-struct KindTypes {
-    int: TypeId,
-    float: TypeId,
-    bool: TypeId,
-    string: TypeId,
-    list: TypeId,
-    map: TypeId,
-    set: TypeId,
-    tuple: TypeId,
-    channel: TypeId,
-    function: TypeId,
-    unit: TypeId,
-    bytes: TypeId,
-    handle: TypeId,
-    tcp_listener: TypeId,
-    tcp_stream: TypeId,
-    regex: TypeId,
+pub(crate) struct KindTypes {
+    pub(crate) int: TypeId,
+    pub(crate) float: TypeId,
+    pub(crate) bool: TypeId,
+    pub(crate) string: TypeId,
+    pub(crate) list: TypeId,
+    pub(crate) map: TypeId,
+    pub(crate) set: TypeId,
+    pub(crate) tuple: TypeId,
+    pub(crate) channel: TypeId,
+    pub(crate) function: TypeId,
+    pub(crate) unit: TypeId,
+    pub(crate) bytes: TypeId,
+    pub(crate) handle: TypeId,
+    pub(crate) tcp_listener: TypeId,
+    pub(crate) tcp_stream: TypeId,
+    pub(crate) regex: TypeId,
 }
 
-fn kind_types() -> &'static KindTypes {
+pub(crate) fn kind_types() -> &'static KindTypes {
     static KINDS: std::sync::OnceLock<KindTypes> = std::sync::OnceLock::new();
     KINDS.get_or_init(|| {
         let of = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
@@ -462,7 +422,7 @@ fn kind_types() -> &'static KindTypes {
 /// kind of their own: `task.Handle`, `tcp.TcpListener`, `tcp.TcpStream`,
 /// `regex.Regex`, and the handles of `postgres` (`PgPool`, `PgTx`,
 /// `PgCursor`), variants of types of their own that no program can make.
-pub fn is_opaque_value_type(id: TypeId) -> bool {
+pub(crate) fn is_opaque_value_type(id: TypeId) -> bool {
     let kinds = kind_types();
     [
         kinds.handle,
@@ -474,38 +434,6 @@ pub fn is_opaque_value_type(id: TypeId) -> bool {
         crate::typeinfo::ty::PG_CURSOR,
     ]
     .contains(&id)
-}
-
-/// The kind of `val` as a message names it, beside the type `written`
-/// that it was to be of: [`Value::kind`], but for a value of an opaque
-/// type of a builtin module its type with its module (`regex.Regex`),
-/// which a program's own `Regex` is not, and the same for a record or a
-/// variant of a type of a builtin module that `written` does not name
-/// (`json.Value` where a host's own `Value` was to be).
-pub fn kind_name(val: &Value, written: &str) -> String {
-    let id = dispatch_type_for_value(val);
-    if let Some((name, Some(module))) = crate::defs::builtin_types().get(id.0.0 as usize) {
-        let qualified = format!("{module}.{name}");
-        let named =
-            matches!(val, Value::Record(_) | Value::Variant(_)) && !written.contains(&qualified);
-        if is_opaque_value_type(id) || named {
-            return qualified;
-        }
-    }
-    val.kind().to_string()
-}
-
-/// The name of the type [`dispatch_type_for_value`] gives, as messages
-/// show it.
-pub fn dispatch_type_name(val: &Value) -> String {
-    match val {
-        Value::Variant(variant) => variant.ty().name.clone(),
-        Value::Record(record) => record.ty().name.clone(),
-        Value::TypeDescriptor(ty) => ty.name.clone(),
-        _ => crate::typeinfo::builtin_type(dispatch_type_for_value(val))
-            .name
-            .clone(),
-    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -773,71 +701,6 @@ mod tests {
         for ty in types {
             assert_eq!(canonical_head(&res, ty), ty, "expected round-trip for {ty}");
         }
-    }
-
-    // ── dispatch_type_for_value ────────────────────────────────────
-
-    fn builtin_id(name: &str) -> TypeId {
-        TypeRef::builtin(name).id
-    }
-
-    #[test]
-    fn dispatch_type_for_value_list_is_list() {
-        let v = Value::list(vec![]);
-        assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
-    }
-
-    #[test]
-    fn dispatch_type_for_value_primitives() {
-        assert_eq!(dispatch_type_for_value(&Value::Int(0)), builtin_id("Int"));
-        assert_eq!(
-            dispatch_type_for_value(&Value::Float(crate::value::Float::from(0))),
-            builtin_id("Float")
-        );
-        assert_eq!(
-            dispatch_type_for_value(&Value::Bool(false)),
-            builtin_id("Bool")
-        );
-        assert_eq!(
-            dispatch_type_for_value(&Value::string(String::new())),
-            builtin_id("String")
-        );
-        assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("()"));
-    }
-
-    #[test]
-    fn dispatch_type_for_value_record_uses_carried_type() {
-        let v = Value::builtin_record(
-            crate::typeinfo::ty::DATE,
-            [
-                ("year", Value::Int(2024)),
-                ("month", Value::Int(1)),
-                ("day", Value::Int(2)),
-            ],
-        );
-        assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::DATE);
-        assert_eq!(dispatch_type_name(&v), "Date");
-    }
-
-    #[test]
-    fn dispatch_type_for_value_descriptors_use_carried_type() {
-        assert_eq!(
-            dispatch_type_for_value(&Value::TypeDescriptor(
-                crate::typeinfo::builtin_type(crate::typeinfo::ty::WEEKDAY).clone()
-            )),
-            crate::typeinfo::ty::WEEKDAY
-        );
-        assert_eq!(
-            dispatch_type_for_value(&Value::PrimitiveDescriptor("Int")),
-            builtin_id("Int")
-        );
-    }
-
-    #[test]
-    fn dispatch_type_for_value_variant_uses_its_type() {
-        let v = Value::variant(crate::typeinfo::bv::SOME, [Value::Int(7)]);
-        assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::OPTION);
-        assert_eq!(dispatch_type_name(&v), "Option");
     }
 
     // ── Phase D: alias registry + expansion in canonicalize ──────────

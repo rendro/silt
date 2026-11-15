@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use silt::session::testing::compile_str;
+use silt::testing::compile_str;
 use silt::{Buffer, Clock, HostIo, Vm};
 
 /// The number of threads of this process.

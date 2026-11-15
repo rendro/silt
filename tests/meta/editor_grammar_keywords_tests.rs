@@ -1,4 +1,4 @@
-//! Regression lock: every silt *core* keyword in `silt::lexer::KEYWORDS`
+//! Regression lock: every silt *core* keyword in `silt::testing::lexer::KEYWORDS`
 //! must appear in both editor syntax-highlighting grammars, and neither
 //! grammar's keyword scope may list a word the lexer does not treat as a
 //! keyword. A keyword added to the lexer without updating
@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-const EXPECTED_CORE_KEYWORDS: &[&str] = silt::lexer::KEYWORDS;
+const EXPECTED_CORE_KEYWORDS: &[&str] = silt::testing::lexer::KEYWORDS;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -150,9 +150,9 @@ fn editor_grammars_include_all_core_keywords() {
     assert!(
         missing.is_empty(),
         "Editor syntax grammars are out of sync with \
-         `silt::lexer::KEYWORDS`.\n\
+         `silt::testing::lexer::KEYWORDS`.\n\
          Add the following keyword(s) to the grammar file(s) listed:\n  - {}\n\
-         Authoritative source: `silt::lexer::KEYWORDS`.",
+         Authoritative source: `silt::testing::lexer::KEYWORDS`.",
         missing.join("\n  - ")
     );
 }
@@ -196,7 +196,7 @@ fn editor_grammars_have_no_stray_keywords() {
         "Editor grammars contain keywords not present in \
          EXPECTED_CORE_KEYWORDS. Either remove the stray entries \
          from the grammar files, or (if the keyword is genuinely \
-         new) add it to `silt::lexer::KEYWORDS`:\n  - {}",
+         new) add it to `silt::testing::lexer::KEYWORDS`:\n  - {}",
         stray.join("\n  - ")
     );
 }

@@ -24,12 +24,12 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, RootCertStore};
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 use crate::port_file::PortFile;
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// A full mTLS PKI generated for a single test.

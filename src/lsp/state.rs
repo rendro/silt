@@ -8,9 +8,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::*;
+use crate::defs::ModuleId;
 use crate::intern::Symbol;
 use crate::lexer::{Lexed, Lexer, Tok};
-use crate::session::ModuleId;
 use crate::source::{FileId, SourceFile};
 use crate::types::Type;
 

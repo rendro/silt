@@ -11,8 +11,8 @@
 
 use std::time::{Duration, Instant};
 
-use silt::lexer::{Lexer, MAX_SYNTAX_ERRORS, Token};
-use silt::source::FileId;
+use silt::testing::lexer::{Lexer, MAX_SYNTAX_ERRORS, Token};
+use silt::testing::source::FileId;
 
 /// `unit` repeated to at least `bytes` bytes.
 fn repeated(unit: &str, bytes: usize) -> String {

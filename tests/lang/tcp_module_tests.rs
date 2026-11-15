@@ -19,10 +19,10 @@
 
 #![cfg(feature = "tcp")]
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// An address that nobody listens on: a port the OS gave and that was

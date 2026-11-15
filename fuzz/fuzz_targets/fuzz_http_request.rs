@@ -1,10 +1,10 @@
 #![no_main]
-//! The reader of HTTP requests (`silt::http_wire`), which `http.serve`
+//! The reader of HTTP requests (`silt::testing::http_wire`), which `http.serve`
 //! hands whatever a client sends: on any bytes it must end without a
 //! panic, give no request beyond the server's limits, and read the
 //! same requests however the bytes arrive.
 use libfuzzer_sys::fuzz_target;
-use silt::http_wire::{BODY_MAX, HEADERS_MAX, HEAD_MAX, Next, Reader, Request};
+use silt::testing::http_wire::{BODY_MAX, HEAD_MAX, HEADERS_MAX, Next, Reader, Request};
 use std::io::Read;
 
 /// `bytes`, read at most `piece` at a time.
@@ -34,7 +34,10 @@ fn read(bytes: &[u8], piece: usize) -> (Vec<Request>, Option<u16>) {
                 assert!(request.headers.len() <= HEADERS_MAX);
                 assert!(!request.method.is_empty() && !request.target.is_empty());
                 // Nothing of the head holds a line end.
-                let head = request.headers.iter().flat_map(|(name, value)| [name, value]);
+                let head = request
+                    .headers
+                    .iter()
+                    .flat_map(|(name, value)| [name, value]);
                 let mut length = 0;
                 for text in [&request.method, &request.target].into_iter().chain(head) {
                     assert!(!text.contains(['\r', '\n']), "{text:?}");
@@ -58,6 +61,9 @@ fn read(bytes: &[u8], piece: usize) -> (Vec<Request>, Option<u16>) {
 fuzz_target!(|data: &[u8]| {
     let whole = read(data, usize::MAX);
     for piece in [1, 7] {
-        assert!(read(data, piece) == whole, "read differently {piece} bytes at a time");
+        assert!(
+            read(data, piece) == whole,
+            "read differently {piece} bytes at a time"
+        );
     }
 });

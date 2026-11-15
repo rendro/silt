@@ -3,13 +3,13 @@
 //! (tests/golden/frontend/hints/round92_parser_hint__*.silt); what stays
 //! here is the example-corpus parse control.
 
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 /// Parse a source string with the strict entry point; Ok(()) when the
 /// whole program parses cleanly.
 fn parse_ok(input: &str) -> Result<(), String> {
-    let tokens = Lexer::new(silt::source::FileId::default(), input)
+    let tokens = Lexer::new(silt::testing::source::FileId::default(), input)
         .tokenize()
         .checked()
         .map_err(|e| format!("{e:?}"))?;

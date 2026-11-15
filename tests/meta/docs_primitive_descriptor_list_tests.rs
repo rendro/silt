@@ -4,15 +4,15 @@
 //! primitive type descriptors available in the global namespace
 //! (`Int`, `Float`, `String`, `Bool`, …). A descriptor once went
 //! undocumented in both; this test asserts every name of
-//! `silt::module::BUILTIN_PRIMITIVE_NAMES` appears in both.
+//! `silt::testing::module::BUILTIN_PRIMITIVE_NAMES` appears in both.
 
 use std::fs;
 
-/// The primitive descriptor names: `silt::module::BUILTIN_PRIMITIVE_NAMES`.
+/// The primitive descriptor names: `silt::testing::module::BUILTIN_PRIMITIVE_NAMES`.
 fn primitive_descriptor_names() -> Vec<String> {
     // Use the public constant directly — no source-text scraping
     // needed once the names are exposed as a `pub const` slice.
-    silt::module::BUILTIN_PRIMITIVE_NAMES
+    silt::testing::module::BUILTIN_PRIMITIVE_NAMES
         .iter()
         .map(|s| (*s).to_string())
         .collect()

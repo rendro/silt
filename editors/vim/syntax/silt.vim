@@ -20,7 +20,7 @@ syntax keyword siltConstructor Null Bool Int Float String Array Object
 " tests/editor_grammar_primitives_tests.rs.
 syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Handle Bytes TcpListener TcpStream Regex
 " The record and enum types the builtin modules declare
-" (`silt::module::builtin_module_types`). Lock test at
+" (`builtin_module_types` in src/module.rs). Lock test at
 " tests/meta/editor_grammar_primitives_tests.rs.
 syntax keyword siltType FileStat Instant Date Time DateTime Duration Weekday Method Response Request
 syntax keyword siltType IoError JsonError TomlError IntError FloatError HttpError RegexError TimeError BytesError PostgresError TcpError EncodingError CryptoError UuidError TaskError

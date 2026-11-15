@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process;
 
-use silt::diagnostic::{Diagnostic, render_human};
-use silt::session::{Entry, EntryPoint, LockPolicy, TestKind, selected_tests};
-use silt::source::SourceMap;
-use silt::vm::{Exit, Vm};
+use crate::diagnostic::{Diagnostic, render_human};
+use crate::session::{Entry, EntryPoint, LockPolicy, TestKind, selected_tests};
+use crate::source::SourceMap;
+use crate::vm::{Exit, Vm};
 
 use crate::cli::help::test_usage_banner;
 use crate::cli::paths::{
@@ -111,8 +111,8 @@ fn report_diagnostics(
     compiled: bool,
 ) -> bool {
     // (Rendering a diagnostic runs no code of a program.)
-    silt::scheduler::report(|| {
-        silt::diagnostic::eprint_all(&ProgramFiles::new(shown, sources), new)
+    crate::scheduler::report(|| {
+        crate::diagnostic::eprint_all(&ProgramFiles::new(shown, sources), new)
     });
     if compiled && !diagnostics.iter().any(Diagnostic::is_error) {
         return false;
@@ -156,7 +156,7 @@ fn check_package_first(dir: &Path) {
             eprintln!(
                 "error reading {}: {}",
                 files.entry,
-                silt::diagnostic::io_error_text(&e)
+                crate::diagnostic::io_error_text(&e)
             );
             process::exit(1);
         }
@@ -171,11 +171,11 @@ fn check_package_first(dir: &Path) {
     for (path, e) in &checked.unreadable {
         eprintln!(
             "error reading {path}: {}",
-            silt::diagnostic::io_error_text(e)
+            crate::diagnostic::io_error_text(e)
         );
     }
     let files = ProgramFiles::new(&files.entry, checked.session.sources());
-    silt::diagnostic::eprint_all(&files, &errors);
+    crate::diagnostic::eprint_all(&files, &errors);
     eprintln!("error: silt test: the package has errors (see above), so no test was run");
     process::exit(1);
 }
@@ -199,9 +199,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // leads to (`open_entry`), so that package is checked. Where
             // the path as given finds the same package, it is looked for
             // from there, so that its files are shown as given.
-            let real = silt::source::canonical_path(Path::new(&f));
+            let real = crate::source::canonical_path(Path::new(&f));
             let package_of = |dir: &Path| {
-                silt::manifest::Manifest::find(dir).map(|root| silt::source::canonical_path(&root))
+                crate::manifest::Manifest::find(dir)
+                    .map(|root| crate::source::canonical_path(&root))
             };
             match real.parent() {
                 Some(real) if package_of(dir) != package_of(real) => check_package_first(real),
@@ -221,9 +222,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // A filter that selects nothing fails the run, also where there
         // is nothing to select from.
         if let Some(filter) = &filter {
-            let filter = silt::git::escape_for_display(filter);
+            let filter = crate::git::escape_for_display(filter);
             say(&format!("no test matches --filter '{filter}'\n"));
-            silt::scheduler::exit_with_status(1);
+            crate::scheduler::exit_with_status(1);
         }
         println!("no test files found");
         return;
@@ -236,7 +237,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     let mut counts = Counts::default();
     // The failures of spawned tasks are taken from the scheduler and
     // charged to the test that spawned the task.
-    silt::scheduler::collect_unjoined_failures();
+    crate::scheduler::collect_unjoined_failures();
     let mut owners = TaskOwners::default();
     // The diagnostics shown so far, as rendered: the errors and the
     // warnings of a module that several test files import are shown
@@ -261,7 +262,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 files_considered += 1;
                 say(&format!(
                     "{path}: failed to read — {}\n",
-                    silt::diagnostic::io_error_text(&e)
+                    crate::diagnostic::io_error_text(&e)
                 ));
                 counts.file_errors.unreadable += 1;
                 continue;
@@ -327,7 +328,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         });
         let setup_owner = owners.add_owner(file_index);
 
-        let mut vm = Vm::new(silt::HostIo::process());
+        let mut vm = Vm::new(crate::HostIo::process());
         // A `process.exit` fails the file's top-level code, or the test
         // it is in: the other files and tests run.
         vm.set_exit(Exit::FailsTestFile);
@@ -442,9 +443,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     // summary of nothing. A filter that selects nothing is a mistake
     // (a typo in it would otherwise pass as a green run).
     if files_considered == 0 {
-        let filter = silt::git::escape_for_display(filter.as_deref().unwrap_or_default());
+        let filter = crate::git::escape_for_display(filter.as_deref().unwrap_or_default());
         say(&format!("no test matches --filter '{filter}'\n"));
-        silt::scheduler::exit_with_status(1);
+        crate::scheduler::exit_with_status(1);
     }
 
     let Counts {
@@ -469,7 +470,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     say(&said);
     // (The tests may have left threads: see `vm_run_file`.)
     if failed > 0 || file_errors.any() {
-        silt::scheduler::exit_with_status(1);
+        crate::scheduler::exit_with_status(1);
     }
 }
 
@@ -593,7 +594,7 @@ impl TaskOwners {
     /// file's top-level code, which was woken by the test: it is kept
     /// for the report of the file.
     fn take_task_failures(&mut self, current: u64, counts: &mut Counts) -> Vec<String> {
-        let taken = silt::scheduler::take_unjoined_failures();
+        let taken = crate::scheduler::take_unjoined_failures();
         // The reports per owner tag, in the order in which the tasks
         // failed.
         let mut reports: BTreeMap<u64, Vec<String>> = BTreeMap::new();
@@ -692,7 +693,7 @@ fn indented(text: &str) -> String {
 
 /// Write `text`, which ends its own lines, on stderr as one report of
 /// the command's: whole before the lines of a panic of silt's own
-/// code, or not at all (`silt::scheduler::report`).
+/// code, or not at all (`crate::scheduler::report`).
 fn say(text: &str) {
-    silt::scheduler::report(|| eprint!("{text}"));
+    crate::scheduler::report(|| eprint!("{text}"));
 }

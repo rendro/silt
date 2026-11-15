@@ -28,13 +28,16 @@ postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = ["dep:socket2"]
 tcp-tls = ["tcp", "dep:rustls", "dep:webpki-roots"]
 # The test API, which is no part of what the crate promises an
-# embedder: `silt::session::testing` (check or run a program given as
-# text), `silt::fuzz_invariants` (what the fuzz targets assert), and
-# what tests outside the crate read of the I/O pool (its size, what a
-# panicking operation completes with) and are told of a connection's
-# writes. Always enabled under `cfg(test)`; the tests, benches and the
-# fuzz crate turn it on.
+# embedder: `silt::testing`, the one door of the tests, benches and fuzz
+# targets to the crate's inside (checking or running a program given as
+# text, what the fuzz targets assert, the internal modules they read).
+# Always enabled under `cfg(test)`; the tests, benches and the fuzz
+# crate turn it on.
 test-hooks = []
+# What the playground (playground/) takes of silt beyond the embedding
+# API: the colours of tokens, completions, formatting, and the names of
+# the diagnostic types (`silt::playground`). No part of the promise.
+playground = []
 
 [[bench]]
 name = "vm_bench"

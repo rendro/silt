@@ -35,12 +35,12 @@ use super::doc::Doc;
 
 /// The printer asked for a token the source does not have next.
 #[derive(Debug, Clone)]
-pub struct Mismatch {
+pub(crate) struct Mismatch {
     pub message: String,
     pub span: Span,
 }
 
-pub struct Cursor<'a> {
+pub(crate) struct Cursor<'a> {
     source: &'a str,
     tokens: Vec<&'a Tok>,
     comments: &'a [Comment],
@@ -73,7 +73,7 @@ pub struct Cursor<'a> {
 
 /// The comments at the closing brace of a block (see
 /// [`Cursor::closer_comments`]).
-pub struct CloserComments {
+pub(crate) struct CloserComments {
     /// One stands in front of the brace.
     pub in_front: bool,
     /// One in front of the brace stands on a line of its own.
@@ -113,7 +113,7 @@ const SPELLINGS: [&str; 52] = [
 ];
 
 impl<'a> Cursor<'a> {
-    pub fn new(source: &'a str, lexed: &'a Lexed) -> Self {
+    pub(crate) fn new(source: &'a str, lexed: &'a Lexed) -> Self {
         let tokens: Vec<&Tok> = lexed.tokens.iter().collect();
         let mut closers = vec![0; tokens.len()];
         let mut open = Vec::new();
@@ -152,29 +152,29 @@ impl<'a> Cursor<'a> {
     }
 
     /// The next source token.
-    pub fn peek(&self) -> &'a Token {
+    pub(crate) fn peek(&self) -> &'a Token {
         &self.tok().kind
     }
 
     /// The source token `n` places after the next one.
-    pub fn peek_at(&self, n: usize) -> &'a Token {
+    pub(crate) fn peek_at(&self, n: usize) -> &'a Token {
         &self.tokens[(self.pos + n).min(self.tokens.len() - 1)].kind
     }
 
     /// Whether the next source token is of the kind of `kind` (its text
     /// or value is not compared).
-    pub fn at(&self, kind: &Token) -> bool {
+    pub(crate) fn at(&self, kind: &Token) -> bool {
         std::mem::discriminant(self.peek()) == std::mem::discriminant(kind)
     }
 
     /// Where the next source token starts.
-    pub fn offset(&self) -> u32 {
+    pub(crate) fn offset(&self) -> u32 {
         self.tok().span.start
     }
 
     /// Whether a comment that stands behind the token written last is
     /// written already: it is in front of whatever is written next.
-    pub fn comment_behind_last_token(&self) -> bool {
+    pub(crate) fn comment_behind_last_token(&self) -> bool {
         let first = self
             .comments
             .partition_point(|c| c.span.start < self.last_written_end);
@@ -182,19 +182,19 @@ impl<'a> Cursor<'a> {
     }
 
     /// The source text of `span`.
-    pub fn source(&self, span: Span) -> &'a str {
+    pub(crate) fn source(&self, span: Span) -> &'a str {
         &self.source[span.start as usize..span.end as usize]
     }
 
     /// How many comments are written so far, to tell whether a stretch
     /// of tokens held one.
-    pub fn comments_written(&self) -> u32 {
+    pub(crate) fn comments_written(&self) -> u32 {
         self.next_comment
     }
 
     /// The source from byte `start` to the end of the token written
     /// last.
-    pub fn text_since(&self, start: u32) -> &'a str {
+    pub(crate) fn text_since(&self, start: u32) -> &'a str {
         let end = match self.pos.checked_sub(1) {
             Some(prev) => self.tokens[prev].span.end,
             None => start,
@@ -207,7 +207,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// Record that the source is not what the printer expects.
-    pub fn fail(&mut self, message: impl Into<String>) {
+    pub(crate) fn fail(&mut self, message: impl Into<String>) {
         if self.error.is_none() {
             self.error = Some(Mismatch {
                 message: message.into(),
@@ -266,7 +266,7 @@ impl<'a> Cursor<'a> {
 
     /// Whether the next token, or the first comment on a line of its own
     /// in front of it, stands after an empty line.
-    pub fn blank_before(&self) -> bool {
+    pub(crate) fn blank_before(&self) -> bool {
         for index in self.gap() {
             let newlines = self.newlines_before_comment(index);
             if newlines > 0 {
@@ -299,7 +299,7 @@ impl<'a> Cursor<'a> {
 
     /// Whether a line break stands between the token written last (and
     /// the comments on its line) and the next token.
-    pub fn line_break_before(&self) -> bool {
+    pub(crate) fn line_break_before(&self) -> bool {
         self.gap()
             .any(|index| self.newlines_before_comment(index) > 0)
             || self.newlines_before_token() > 0
@@ -307,7 +307,7 @@ impl<'a> Cursor<'a> {
 
     /// Whether a comment in front of the next token will stand on a line
     /// of its own.
-    pub fn own_line_comment_ahead(&self) -> bool {
+    pub(crate) fn own_line_comment_ahead(&self) -> bool {
         let tok = self.tok();
         let gap = self.gap();
         gap.clone().any(|index| {
@@ -319,18 +319,18 @@ impl<'a> Cursor<'a> {
 
     /// Whether a comment that ends its line stands behind the token
     /// written last.
-    pub fn line_ended(&self) -> bool {
+    pub(crate) fn line_ended(&self) -> bool {
         self.line_ended
     }
 
     /// Whether a comment stands in front of the next token.
-    pub fn comment_ahead(&self) -> bool {
+    pub(crate) fn comment_ahead(&self) -> bool {
         !self.gap().is_empty() || !self.carried.is_empty()
     }
 
     /// As `leading`, without the empty lines between the comments and
     /// behind them: for a declaration that is moved (an import).
-    pub fn leading_without_blank_lines(&mut self) -> Doc {
+    pub(crate) fn leading_without_blank_lines(&mut self) -> Doc {
         fn strip(doc: Doc) -> Doc {
             match doc {
                 Doc::BlankLine => Doc::Nil,
@@ -345,7 +345,7 @@ impl<'a> Cursor<'a> {
     /// from skipped tokens. `token` calls this; the printer calls it
     /// where the comments belong inside an indentation that the token
     /// itself is outside of (the comments before a closing brace).
-    pub fn leading(&mut self) -> Doc {
+    pub(crate) fn leading(&mut self) -> Doc {
         let mut docs = std::mem::take(&mut self.carried);
         let tok = self.tok();
         let gap = self.gap();
@@ -390,7 +390,7 @@ impl<'a> Cursor<'a> {
     /// Whether comments stand behind the token written last, the first
     /// on its line, and none of them is a `--` comment: `{- -}`
     /// comments that `trailing` would keep behind the token.
-    pub fn block_comments_behind(&self) -> bool {
+    pub(crate) fn block_comments_behind(&self) -> bool {
         let gap = self.gap();
         !gap.is_empty()
             && self.pos > 0
@@ -403,7 +403,7 @@ impl<'a> Cursor<'a> {
     /// Whether comments stand behind the token written last, on its
     /// line, the first a `{- -}` comment and a `--` comment among them:
     /// comments that `trailing` gives, the line ending behind them.
-    pub fn block_then_line_comment_behind(&self) -> bool {
+    pub(crate) fn block_then_line_comment_behind(&self) -> bool {
         let gap = self.gap();
         let start = gap.start;
         !gap.is_empty()
@@ -416,7 +416,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// The comments behind the token written last, on its line.
-    pub fn trailing(&mut self) -> Doc {
+    pub(crate) fn trailing(&mut self) -> Doc {
         let tok = self.tok();
         let gap = self.gap();
         let mut docs = Vec::new();
@@ -445,7 +445,7 @@ impl<'a> Cursor<'a> {
     /// to the first empty line or the first declaration. They stay on
     /// top whatever order the declarations are put in. With whether an
     /// empty line follows them.
-    pub fn header(&mut self) -> (Doc, bool) {
+    pub(crate) fn header(&mut self) -> (Doc, bool) {
         if self.pos != 0 {
             return (Doc::Nil, false);
         }
@@ -507,7 +507,7 @@ impl<'a> Cursor<'a> {
     /// expression that starts here and ends at byte `end`: those whose
     /// `)` stand directly behind the expression's last token. A `(`
     /// that closes earlier is around a part of the expression.
-    pub fn wrappers(&self, end: u32) -> usize {
+    pub(crate) fn wrappers(&self, end: u32) -> usize {
         let last = self.tokens.partition_point(|tok| tok.span.end < end);
         if self.tokens.get(last).is_none_or(|tok| tok.span.end != end) {
             return 0;
@@ -528,7 +528,7 @@ impl<'a> Cursor<'a> {
 
     /// Skip `count` tokens of the kind of `kind`, as far as they stand
     /// at the cursor.
-    pub fn skip_n(&mut self, kind: &Token, count: usize) {
+    pub(crate) fn skip_n(&mut self, kind: &Token, count: usize) {
         for _ in 0..count {
             if !self.at(kind) {
                 break;
@@ -539,12 +539,12 @@ impl<'a> Cursor<'a> {
 
     /// The comments carried over from skipped tokens, for this place:
     /// behind what the skipped tokens closed.
-    pub fn carried(&mut self) -> Doc {
+    pub(crate) fn carried(&mut self) -> Doc {
         Doc::concat(std::mem::take(&mut self.carried))
     }
 
     /// Skip `()` at the cursor: an empty list the tree does not record.
-    pub fn skip_empty_parens(&mut self) {
+    pub(crate) fn skip_empty_parens(&mut self) {
         if self.at(&Token::LParen) && matches!(self.peek_at(1), Token::RParen) {
             self.skip_one();
             self.skip_one();
@@ -554,7 +554,7 @@ impl<'a> Cursor<'a> {
     /// Skip the next source token, whatever it is, as `skip` does: a
     /// token of a spelling the printer leaves out (`-> ()`, a last line
     /// `()`).
-    pub fn skip_any(&mut self) {
+    pub(crate) fn skip_any(&mut self) {
         self.skip_one();
     }
 
@@ -589,7 +589,7 @@ impl<'a> Cursor<'a> {
     /// where they may stand as they are (an opening parenthesis; the
     /// braces of a block that is a closure's body, the opening brace of
     /// one that is an arm's, and the parentheses around either).
-    pub fn pass(&mut self, kind: &Token) {
+    pub(crate) fn pass(&mut self, kind: &Token) {
         if !self.at(kind) {
             return;
         }
@@ -603,7 +603,7 @@ impl<'a> Cursor<'a> {
     /// a comment would stand on a line of its own above the token
     /// behind them, where none stands so in the source. Above a `let`
     /// such a comment reads as the binding's documentation.
-    pub fn pass_sets_a_comment_above(&self, count: usize) -> bool {
+    pub(crate) fn pass_sets_a_comment_above(&self, count: usize) -> bool {
         let Some(behind) = self.tokens.get(self.pos + count) else {
             return false;
         };
@@ -626,7 +626,7 @@ impl<'a> Cursor<'a> {
 
     /// The first token behind the expression that ends at byte `end` and
     /// the closing parentheses around it.
-    pub fn behind(&self, end: u32) -> &'a Token {
+    pub(crate) fn behind(&self, end: u32) -> &'a Token {
         let last = self.tokens.partition_point(|tok| tok.span.end < end);
         self.tokens
             .iter()
@@ -638,7 +638,7 @@ impl<'a> Cursor<'a> {
     /// The token behind the expression that ends at byte `end` and the
     /// `count` closing parentheses directly behind it, and whether a
     /// line break stands in front of it.
-    pub fn behind_parens(&self, end: u32, count: usize) -> (&'a Token, bool) {
+    pub(crate) fn behind_parens(&self, end: u32, count: usize) -> (&'a Token, bool) {
         let last = self.tokens.partition_point(|tok| tok.span.end < end);
         self.tokens
             .get(last + 1 + count)
@@ -649,7 +649,7 @@ impl<'a> Cursor<'a> {
 
     /// The comments at the closing brace of the block that ends at byte
     /// `end` and has `wrappers` parentheses around it.
-    pub fn closer_comments(&self, end: u32, wrappers: usize) -> CloserComments {
+    pub(crate) fn closer_comments(&self, end: u32, wrappers: usize) -> CloserComments {
         let closer = self.tokens.partition_point(|tok| tok.span.end < end);
         let in_front = self
             .tokens
@@ -709,7 +709,7 @@ impl<'a> Cursor<'a> {
 
     /// Whether a comment stands in the source between the bytes `start`
     /// and `end`.
-    pub fn comments_between(&self, start: u32, end: u32) -> bool {
+    pub(crate) fn comments_between(&self, start: u32, end: u32) -> bool {
         let first = self.comments.partition_point(|c| c.span.start < start);
         self.comments.get(first).is_some_and(|c| c.span.start < end)
     }
@@ -723,7 +723,11 @@ impl<'a> Cursor<'a> {
     /// break that only they allow. The printer closes them with
     /// `kept_closer_ahead` and `release_kept`; one it does not come to is
     /// written when the cursor does.
-    pub fn keep_prefix_parens(&mut self, head_end: u32, chain_end: u32) -> Vec<(usize, Doc)> {
+    pub(crate) fn keep_prefix_parens(
+        &mut self,
+        head_end: u32,
+        chain_end: u32,
+    ) -> Vec<(usize, Doc)> {
         let last_of_head = self.tokens.partition_point(|tok| tok.span.end < head_end);
         let keeps: Vec<bool> = self.tokens[self.pos.min(self.tokens.len())..]
             .iter()
@@ -763,7 +767,7 @@ impl<'a> Cursor<'a> {
     /// Whether the token `closer`, a `)` of `keep_prefix_parens`, is
     /// next, behind closing parentheses that are dropped at most: those
     /// are skipped then.
-    pub fn kept_closer_ahead(&mut self, closer: usize) -> bool {
+    pub(crate) fn kept_closer_ahead(&mut self, closer: usize) -> bool {
         let in_run = closer >= self.pos
             && self.tokens[self.pos..=closer]
                 .iter()
@@ -778,7 +782,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// The printer writes the `)` at `closer` itself.
-    pub fn release_kept(&mut self, closer: usize) {
+    pub(crate) fn release_kept(&mut self, closer: usize) {
         self.kept_closers.retain(|kept| *kept != closer);
     }
 
@@ -808,7 +812,7 @@ impl<'a> Cursor<'a> {
     /// the others are around that alternative. (A pattern's span ends
     /// behind its parentheses, so their closing ones cannot be counted
     /// as for an expression.)
-    pub fn pattern_wrappers(&self, start: u32, inner_end: Option<u32>) -> usize {
+    pub(crate) fn pattern_wrappers(&self, start: u32, inner_end: Option<u32>) -> usize {
         self.tokens[self.pos.min(self.tokens.len())..]
             .iter()
             .enumerate()
@@ -823,7 +827,7 @@ impl<'a> Cursor<'a> {
 
     /// Whether a comment stands directly behind one of the `count`
     /// opening parentheses at the cursor.
-    pub fn comments_behind_opening(&self, count: usize) -> bool {
+    pub(crate) fn comments_behind_opening(&self, count: usize) -> bool {
         self.tokens
             .iter()
             .skip(self.pos + 1)
@@ -835,7 +839,7 @@ impl<'a> Cursor<'a> {
     /// nested pairs of parentheses at the cursor: behind an opening one
     /// or in front of a closing one. There a line break is allowed that
     /// is not allowed without the parentheses.
-    pub fn comments_inside_parens(&self, count: usize) -> bool {
+    pub(crate) fn comments_inside_parens(&self, count: usize) -> bool {
         if count == 0 || self.pos + count >= self.tokens.len() {
             return false;
         }
@@ -847,35 +851,6 @@ impl<'a> Cursor<'a> {
         (self.pos + 1..=self.pos + count)
             .chain(inner_closer..=outer_closer)
             .any(|i| !self.tokens[i].comments.is_empty())
-    }
-
-    /// Whether the innermost of the `count` nested pairs of parentheses
-    /// at the cursor holds a token of the kind of `kind` that is in no
-    /// other bracket.
-    pub fn parens_hold(&self, count: usize, kind: &Token) -> bool {
-        if count == 0 || self.pos + count > self.tokens.len() {
-            return false;
-        }
-        let open = self.pos + count - 1;
-        let mut depth = 0;
-        for tok in &self.tokens[open + 1..self.closers[open].max(open + 1)] {
-            match tok.kind {
-                _ if depth == 0
-                    && std::mem::discriminant(&tok.kind) == std::mem::discriminant(kind) =>
-                {
-                    return true;
-                }
-                Token::LParen
-                | Token::LBracket
-                | Token::LBrace
-                | Token::HashBrace
-                | Token::HashBracket
-                | Token::StringStart(_) => depth += 1,
-                Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => depth -= 1,
-                _ => {}
-            }
-        }
-        false
     }
 
     /// Move to the next source token of the kind of `kind`, over
@@ -904,7 +879,7 @@ impl<'a> Cursor<'a> {
 
     /// Write the next source token, which is of the kind of `kind`, with
     /// its comments.
-    pub fn token(&mut self, kind: &Token) -> Doc {
+    pub(crate) fn token(&mut self, kind: &Token) -> Doc {
         if !self.seek(kind) {
             return Doc::Nil;
         }
@@ -920,7 +895,7 @@ impl<'a> Cursor<'a> {
 
     /// As `token`, in two steps: the token with the comments in front of
     /// it, and (from `trailing`) the comments behind it.
-    pub fn token_without_trailing(&mut self, kind: &Token) -> Doc {
+    pub(crate) fn token_without_trailing(&mut self, kind: &Token) -> Doc {
         if !self.seek(kind) {
             return Doc::Nil;
         }
@@ -935,7 +910,7 @@ impl<'a> Cursor<'a> {
     /// If the next source token is of the kind of `kind`, skip it and
     /// give its comments for this place: the printer writes this token
     /// by its own rule (a trailing comma).
-    pub fn skip(&mut self, kind: &Token) -> Doc {
+    pub(crate) fn skip(&mut self, kind: &Token) -> Doc {
         if !self.at(kind) {
             return Doc::Nil;
         }
@@ -944,7 +919,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// Whether every token is written.
-    pub fn at_end(&self) -> bool {
+    pub(crate) fn at_end(&self) -> bool {
         self.tok().kind == Token::Eof
     }
 }

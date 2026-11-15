@@ -2,15 +2,15 @@
 //!
 //! Covers project root discovery, the entry point of a package, and the
 //! rendering of package diagnostics. The packages of a program are
-//! resolved by the session (`silt::session`).
+//! resolved by the session (`crate::session`).
 
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use silt::diagnostic::Diagnostic;
-use silt::manifest::Manifest;
-use silt::source::SourceMap;
+use crate::diagnostic::Diagnostic;
+use crate::manifest::Manifest;
+use crate::source::SourceMap;
 
 /// Package diagnostics and the source map holding the manifests and
 /// lockfile they point into.
@@ -59,12 +59,12 @@ pub(crate) fn die_on_manifest_error_with(failure: PackageFailure, code: i32) -> 
         let json = serde_json::Value::Array(
             diagnostics
                 .iter()
-                .map(|d| silt::diagnostic::render_json(&sources, d))
+                .map(|d| crate::diagnostic::render_json(&sources, d))
                 .collect(),
         );
         println!("{json}");
     } else {
-        silt::diagnostic::eprint_all(&sources, &diagnostics);
+        crate::diagnostic::eprint_all(&sources, &diagnostics);
     }
     process::exit(code);
 }
@@ -145,7 +145,7 @@ pub(crate) fn resolve_package_entry_point_in(
         }
         eprintln!(
             "package has no entry point — expected `src/main.silt` at {}",
-            silt::git::escape_for_display(&entry.display().to_string())
+            crate::git::escape_for_display(&entry.display().to_string())
         );
         eprintln!("  = note: found `src/lib.silt` — this is a library-only package");
         eprintln!(
@@ -156,7 +156,7 @@ pub(crate) fn resolve_package_entry_point_in(
     }
     eprintln!(
         "package has no entry point — expected `src/main.silt` at {}",
-        silt::git::escape_for_display(&entry.display().to_string())
+        crate::git::escape_for_display(&entry.display().to_string())
     );
     Err(())
 }

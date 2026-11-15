@@ -10,8 +10,9 @@
 //! `tests/heavy/integration.rs` so the typechecker signature registrations
 //! (FileStat record, new function schemes) are exercised end-to-end.
 
-use silt::typeinfo::bv;
-use silt::value::Value;
+use silt::testing::ValueInside;
+use silt::testing::typeinfo::bv;
+use silt::testing::value::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -52,7 +53,7 @@ impl Drop for TempDir {
 }
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Expect an `Ok(inner)` variant; return `inner`.

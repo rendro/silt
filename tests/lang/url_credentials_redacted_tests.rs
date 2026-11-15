@@ -12,7 +12,7 @@
 // ── F12: http credential scrubber ─────────────────────────────────────
 
 #[cfg(feature = "http")]
-use silt::builtins::http::redact_http_url_userinfo;
+use silt::testing::builtins::http::redact_http_url_userinfo;
 
 #[cfg(feature = "http")]
 #[test]
@@ -289,7 +289,7 @@ fn a_message_hides_the_credentials_of_any_scheme() {
 #[cfg(feature = "http")]
 #[test]
 fn a_url_hides_its_credentials_however_it_is_spelt() {
-    use silt::builtins::http::redact_url;
+    use silt::testing::builtins::http::redact_url;
     for (input, expected) in [
         ("http://u:pw@h/x", "http://***@h/x"),
         ("http:/u:pw@h/x", "http:/***@h/x"),

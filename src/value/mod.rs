@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use crate::builtins::registry::BuiltinId;
 use crate::bytecode;
+use crate::defs::BuiltinId;
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{Tag, TypeInfo};
 
 mod convert;
+mod dates;
 mod deep;
 mod float;
 mod fmt;
@@ -14,37 +15,44 @@ mod key;
 mod list;
 mod map;
 mod obj;
+mod regex;
 mod thin;
 mod tuple;
+mod type_of;
 
 #[cfg(test)]
 mod map_tests;
 #[cfg(test)]
 mod tests;
 
-pub use convert::{
-    FromValue, HostCall, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep,
-    HostTemplates, HostTypes, HostVar, IntoValue, Witness, Witnesses, given_type, witness_type,
+pub use convert::{FromValue, HostCall, IntoValue};
+pub(crate) use convert::{
+    HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep, HostTemplates, HostTypes,
+    HostVar, given_type, witness_type,
 };
+pub(crate) use dates::{Date, Time};
 pub(crate) use deep::drop_held;
 pub use float::Float;
-pub use fmt::{Shown, Written};
+pub(crate) use fmt::Shown;
+pub use list::List;
 #[cfg(feature = "test-hooks")]
 pub use list::copies as list_copies;
-pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+pub(crate) use list::{IntTotal, IntoIter, TooLong};
 pub(crate) use list::{MAX_COLLECTION_LEN, MAX_TEXT_LEN};
 #[cfg(feature = "test-hooks")]
 pub use map::copies as map_copies;
-pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
-pub use obj::{Record, Variant};
-pub use tuple::Tuple;
+pub(crate) use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
+pub(crate) use obj::{Record, Variant};
+pub(crate) use regex::Compiled;
+pub(crate) use tuple::Tuple;
+pub(crate) use type_of::{dispatch_type_for_value, dispatch_type_name, kind_name};
 
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
     Float(Float),
     Bool(bool),
-    /// A string, and whether it is all ASCII ([`Ascii`]): made by
+    /// A string, and whether it is all ASCII (`Ascii`): made by
     /// [`Value::string`], which looks.
     String(Arc<str>, Ascii),
     List(List),
@@ -68,7 +76,7 @@ pub enum Value {
     TypeDescriptor(Arc<TypeInfo>),
     /// The token of a primitive type (`Int`, `Float`, `String`, `Bool`)
     /// passed as a `type a` argument: its name, one of
-    /// [`crate::module::BUILTIN_PRIMITIVE_NAMES`].
+    /// `crate::module::BUILTIN_PRIMITIVE_NAMES`.
     PrimitiveDescriptor(&'static str),
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
@@ -88,7 +96,7 @@ pub enum Value {
     TcpStream(Arc<TcpStreamHandle>),
     /// A compiled regex pattern (`regex.compile`): equal to another of
     /// the same pattern text.
-    Regex(Arc<crate::builtins::regex::Compiled>),
+    Regex(Arc<crate::value::Compiled>),
     /// A dictionary (`bytecode::dict`): no program value is one; the
     /// code passes it, hidden, to what has bounds of a program's trait.
     Dict(bytecode::dict::Dict),
@@ -153,12 +161,12 @@ impl Value {
     }
 
     /// The list of `items`.
-    pub fn list(items: Vec<Value>) -> Value {
+    pub(crate) fn list(items: Vec<Value>) -> Value {
         Value::List(List::from(items))
     }
 
-    /// The variant `tag` (a [`Tag`], or a builtin variant of
-    /// [`crate::typeinfo::bv`]) with the fields `fields`: an array of
+    /// The variant `tag` (a `Tag`, or a builtin variant of
+    /// `crate::typeinfo::bv`) with the fields `fields`: an array of
     /// them (`[x]`, `[]`), which a variant of one field holds without a
     /// list of its own, or a list.
     pub fn variant<F>(tag: impl Into<Tag>, fields: F) -> Value
@@ -170,7 +178,7 @@ impl Value {
     }
 
     /// The tuple of `items`.
-    pub fn tuple(items: Vec<Value>) -> Value {
+    pub(crate) fn tuple(items: Vec<Value>) -> Value {
         Value::Tuple(Tuple::from(items))
     }
 
@@ -193,7 +201,7 @@ impl Value {
 
     /// A record of the builtin record type `ty` (`ty::DATE`) with the
     /// fields `fields`, named, in the order the type declares them.
-    pub fn builtin_record<const N: usize>(
+    pub(crate) fn builtin_record<const N: usize>(
         ty: crate::defs::TypeId,
         fields: [(&str, Value); N],
     ) -> Value {
@@ -216,7 +224,7 @@ impl Value {
 impl Value {
     /// A record of the test type `R` with the fields `fields`, in that
     /// order.
-    pub fn test_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+    pub(crate) fn test_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
         let (names, values): (Vec<_>, Vec<_>) = (fields.into_iter())
             .map(|(name, value)| ((name.to_string(), crate::typeinfo::FieldType::Int), value))
             .unzip();
@@ -230,8 +238,8 @@ impl Value {
     /// variant.
     ///
     /// Not for method dispatch: that is
-    /// `crate::types::canonical::dispatch_type_for_value`.
-    pub fn kind(&self) -> &'static str {
+    /// `crate::value::dispatch_type_for_value`.
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
@@ -269,7 +277,7 @@ impl Value {
     /// Whether the value is a function: a closure, a builtin function, a
     /// host function or a variant's constructor. To a program each is an
     /// `Fn`.
-    pub fn is_fn(&self) -> bool {
+    pub(crate) fn is_fn(&self) -> bool {
         matches!(
             self,
             Value::VmClosure(_)
@@ -294,7 +302,7 @@ impl Value {
     /// `hash` methods (src/vm/dispatch.rs) and the collection builtins
     /// (`ensure_no_fn`, src/builtins/collections.rs). Locked by the goldens
     /// tests/golden/typecheck/fn_compare/container_fn_compare_runtime_gate__*.
-    pub fn contains_fn(&self) -> bool {
+    pub(crate) fn contains_fn(&self) -> bool {
         // A value without parts answers by itself, before the worklist
         // is made: `==` on two Ints, Floats, Bools or Strings allocates
         // nothing.

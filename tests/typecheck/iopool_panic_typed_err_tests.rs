@@ -23,7 +23,7 @@
 //! the caller's typecheck signature expects.
 //!
 //! Lock strategy: drive the actual `IoPool::submit_with` worker-panic
-//! path via the test-only hook `silt::vm::submit_panicking_io_for_test`
+//! path via the test-only hook `silt::testing::vm::submit_panicking_io_for_test`
 //! (gated on `cfg(any(test, feature = "test-hooks"))`). The hook
 //! submits a closure that `panic!`s, blocks on the completion, and
 //! returns the resulting Value. We supply an `IoCompletion` whose
@@ -35,7 +35,7 @@
 //! scheduler watchdog) — exactly the path V1 reports as broken.
 //!
 //! Gated on the `test-hooks` Cargo feature so the introspection helper
-//! `silt::vm::submit_panicking_io_for_test` is exposed. Run with:
+//! `silt::testing::vm::submit_panicking_io_for_test` is exposed. Run with:
 //!
 //! ```sh
 //! cargo test --features test-hooks --test typecheck iopool_panic_typed_err
@@ -43,23 +43,23 @@
 
 #![cfg(feature = "test-hooks")]
 
-use silt::typeinfo::bv;
-use silt::value::Value;
-use silt::vm::{Vm, submit_panicking_io_for_test};
+use silt::testing::typeinfo::bv;
+use silt::testing::value::Value;
+use silt::testing::vm::{Vm, submit_panicking_io_for_test};
 
 /// Build a typed factory that wraps any message in
 /// `Err(SyntheticTypedTimeout(msg))`. Distinct from any production
 /// factory so we can be certain the routing went through THIS factory
 /// (and therefore through `build_timeout_err` rather than the legacy
 /// untyped `Err(String)` path).
-fn synthetic_typed_factory(failure: silt::vm::IoFailure<'_>) -> Value {
+fn synthetic_typed_factory(failure: silt::testing::vm::IoFailure<'_>) -> Value {
     let msg = failure.text();
     Value::variant(
         bv::ERR,
         [Value::variant(
-            silt::typeinfo::Tag::new(
-                silt::typeinfo::TypeInfo::new_enum(
-                    silt::defs::TypeId(silt::defs::DefId(9000)),
+            silt::testing::typeinfo::Tag::new(
+                silt::testing::typeinfo::TypeInfo::new_enum(
+                    silt::testing::defs::TypeId(silt::testing::defs::DefId(9000)),
                     "Synthetic",
                     &[("SyntheticTypedTimeout", 1)],
                 ),

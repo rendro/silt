@@ -24,14 +24,14 @@ const CURL_HTTPS_ONLY: [&str; 3] = ["--proto", "=https", "--tlsv1.2"];
 /// The most redirects a wget download follows ([`download`]).
 const WGET_HOPS_MOST: usize = 10;
 
-pub struct UpdateOptions {
+pub(crate) struct UpdateOptions {
     /// If true, print what would happen without downloading or replacing.
     pub dry_run: bool,
     /// If true, replace the binary even when already on the latest version.
     pub force: bool,
 }
 
-pub fn run_update(opts: UpdateOptions) -> Result<(), String> {
+pub(crate) fn run_update(opts: UpdateOptions) -> Result<(), String> {
     let target = detect_target()?;
     let current = crate::VERSION;
 

@@ -24,7 +24,7 @@ use super::doc::{Doc, render};
 
 /// The document for `program`, whose tokens are `lexed` and whose text
 /// is `source`.
-pub fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mismatch> {
+pub(crate) fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mismatch> {
     let mut printer = Printer {
         cur: Cursor::new(source, lexed),
         closure_alternatives: false,

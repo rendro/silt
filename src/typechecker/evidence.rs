@@ -156,7 +156,7 @@ fn params_in(ev: &Evidence, out: &mut Vec<(Span, u16)>) {
 /// it, which for a REPL input may be an earlier input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct EvRef {
-    pub(super) module: crate::session::ModuleId,
+    pub(super) module: crate::defs::ModuleId,
     pub(super) id: EvId,
 }
 
@@ -1193,7 +1193,7 @@ impl TypeChecker {
             let Decl::Fn(f) = decl else {
                 continue;
             };
-            if !crate::session::is_cell_name(&resolve(f.name)) {
+            if !crate::program::is_cell_name(&resolve(f.name)) {
                 continue;
             }
             let tag = f.body.span;

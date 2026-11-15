@@ -2,7 +2,7 @@
 //!
 //! [`verify`] checks the code of one function by abstract
 //! interpretation of the height of its frame, with the effects of the
-//! instruction table ([`ops`](super::ops)). Code that passes cannot make
+//! instruction table (`ops`). Code that passes cannot make
 //! the VM take a value off an empty frame, read a slot, a constant or an
 //! upvalue that is not there, find a constant of the wrong
 //! kind, or continue at a place where no instruction starts; so the VM
@@ -41,7 +41,8 @@
 
 use std::fmt;
 
-use crate::builtins::registry::{BuiltinId, Row, registry};
+use crate::builtins::registry::{Row, registry};
+use crate::defs::BuiltinId;
 use crate::value::Value;
 
 use super::ops::{ConstKind, Effect, Flow, Instr, Operand, decode};
@@ -826,7 +827,7 @@ mod tests {
             "at offset 0: `CallBuiltin` names the builtin math.pi, which is no function of this build"
         );
         // A builtin function as a value is checked the same way.
-        let gone = Value::BuiltinFn(crate::builtins::registry::BuiltinId(0xffff));
+        let gone = Value::BuiltinFn(crate::defs::BuiltinId(0xffff));
         let code = vec![op(Op::Constant), 0, 0, op(Op::Return)];
         assert_eq!(
             rejected(code.clone(), vec![gone]),

@@ -24,9 +24,9 @@ use std::path::PathBuf;
 use lsp_types::{Location, SymbolInformation, SymbolKind, Uri};
 
 use crate::ast::{Decl, FnDecl, ImportTarget, PatternKind, Program, Selection, TypeBody, TypeDecl};
-use crate::defs::{DefId, DefKind, Res};
+use crate::defs::{DefId, DefKind, ModuleId, Res};
 use crate::intern::{Symbol, resolve as resolve_sym};
-use crate::session::{ModuleId, Session};
+use crate::session::Session;
 use crate::source::{SourceFile, Span};
 use crate::types::Type;
 

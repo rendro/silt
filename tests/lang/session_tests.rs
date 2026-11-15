@@ -3,8 +3,9 @@
 
 use std::sync::Arc;
 
-use silt::session::testing::{check_str, run_files, run_str, session_with, test_path};
-use silt::value::Value;
+use silt::testing::SessionInside;
+use silt::testing::value::Value;
+use silt::testing::{check_str, run_files, run_str, session_with, test_path};
 
 /// An editor's change to an imported module re-checks that module and
 /// its importers, and nothing else: an unrelated module keeps its check.

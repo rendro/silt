@@ -19,7 +19,7 @@
 //! If this test fails after changing `builtin_free_function_names()`, add
 //! or remove the name in both grammar files above.
 
-use silt::module::builtin_free_function_names;
+use silt::testing::module::builtin_free_function_names;
 
 use std::collections::BTreeSet;
 use std::fs;

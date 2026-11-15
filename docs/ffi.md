@@ -562,6 +562,13 @@ program hands its values to you through a host function it calls, as
 program carries its host functions, and the `Vm` its output and clock:
 there is no other set-up.
 
+**Tests.** A program compiled for `Entry::Tests { filter }` holds its
+test functions: `program.entry` is `EntryPoint::Tests(tests)`, a
+`TestFn` for each, with its `name` and its `kind` (`TestKind::Run`, or
+`TestKind::Skip` for a `skip_test_` function, which is reported and not
+called). `vm.call_test(&test)` runs one, as `silt test` does: `Ok(())`
+when it passed, its error when it failed.
+
 **The end of a program.** `run_program` returns when `main` has
 returned; tasks that the program spawned may still be at work.
 `vm.settle()` waits until the program has ended as `silt run` defines

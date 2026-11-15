@@ -33,14 +33,14 @@ fn program_args_lock() -> &'static RwLock<Vec<String>> {
 
 /// Set the program arguments returned by `io.args()`. Called by the CLI
 /// after parsing positionals out of `argv` and locating the `--` separator.
-pub fn set_program_args(args: Vec<String>) {
+pub(crate) fn set_program_args(args: Vec<String>) {
     if let Ok(mut guard) = program_args_lock().write() {
         *guard = args;
     }
 }
 
 /// Read a snapshot of the currently-set program arguments.
-pub fn program_args() -> Vec<String> {
+pub(crate) fn program_args() -> Vec<String> {
     program_args_lock()
         .read()
         .map(|g| g.clone())

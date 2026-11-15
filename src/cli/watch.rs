@@ -1,5 +1,5 @@
 //! Watch-mode interceptor: when `--watch` (or `-w`) is present on the
-//! command line, strip the flag and hand off to `silt::watch` after
+//! command line, strip the flag and hand off to `crate::watch` after
 //! doing a dry-validation pass so we don't enter the watch loop on
 //! inputs the underlying subcommand would refuse up front. The watcher
 //! is given the entry files of the programs the subcommand runs; it
@@ -18,9 +18,9 @@ use crate::cli::help::{check_usage_banner, disasm_usage_banner, run_usage_banner
 use crate::cli::package::find_project_root;
 #[cfg(feature = "watch")]
 #[cfg(feature = "watch")]
-use silt::session::LockPolicy;
+use crate::session::LockPolicy;
 #[cfg(feature = "watch")]
-use silt::watch::Target;
+use crate::watch::Target;
 
 /// If `--watch` / `-w` is present in `args`, handle the watch loop and
 /// return `true`. Return `false` to let the caller proceed with normal
@@ -251,7 +251,7 @@ fn handle_watch(args: &[String]) {
         discovery,
         lock,
     };
-    silt::watch::watch_and_rerun(target, &filtered);
+    crate::watch::watch_and_rerun(target, &filtered);
 }
 
 /// The first positional argument of the subcommand in `args` (`args[0]`

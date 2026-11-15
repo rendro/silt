@@ -79,7 +79,7 @@ fn silt(sub: &str, label: &str, src: &str) -> Output {
 #[test]
 fn a_function_of_every_builtin_module_runs() {
     let mut missing = Vec::new();
-    for &module in silt::module::builtin_modules() {
+    for &module in silt::testing::module::builtin_modules() {
         let Some(call) = module_call(module) else {
             missing.push(module);
             continue;

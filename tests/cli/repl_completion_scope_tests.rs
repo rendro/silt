@@ -5,8 +5,17 @@
 
 #![cfg(feature = "repl")]
 
-use silt::repl::{Repl, builtin_names, completion_candidates_for_prefix};
 use silt::session::ProjectSetup;
+use silt::testing::repl::{Repl, builtin_names};
+
+/// What <Tab> offers after `prefix`, typed alone in a fresh REPL: the
+/// REPL's own completion (`Repl::completions_at`, what its line editor
+/// calls).
+fn tab(prefix: &str) -> Vec<String> {
+    Repl::new(ProjectSetup::None)
+        .completions_at(prefix, prefix.len())
+        .1
+}
 
 /// The names <Tab> offers after `inputs` ran, each of which must run.
 fn names_after(inputs: &[&str]) -> Vec<String> {
@@ -100,14 +109,14 @@ fn round77_record_type_does_not_leak_field_names_into_completion() {
 #[test]
 fn builtin_module_names_complete_only_through_an_import() {
     for (prefix, absent) in [("Mon", "Monday"), ("Rec", "Recv"), ("list.m", "list.map")] {
-        let matches = completion_candidates_for_prefix(prefix);
+        let matches = tab(prefix);
         assert!(
             !matches.iter().any(|s| s == absent),
             "`{absent}` offered: {matches:?}"
         );
     }
     for (prefix, present) in [("Ok", "Ok"), ("Som", "Some")] {
-        let matches = completion_candidates_for_prefix(prefix);
+        let matches = tab(prefix);
         assert!(
             matches.iter().any(|s| s == present),
             "`{present}` missing: {matches:?}"

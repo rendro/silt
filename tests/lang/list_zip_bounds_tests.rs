@@ -13,10 +13,10 @@
 //! here: materializing 10M tuples takes longer than the golden harness's
 //! 20 s per-case limit in a debug build, and in-process it is quicker.
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 // ── Exactly at the cap: must pass ───────────────────────────────────

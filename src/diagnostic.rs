@@ -451,7 +451,7 @@ pub trait SourceView {
 }
 
 /// The name a file of a source map has when nobody renames it.
-pub fn source_name_for_display(name: &SourceName) -> Option<String> {
+pub(crate) fn source_name_for_display(name: &SourceName) -> Option<String> {
     match name {
         SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p) => {
             Some(p.display().to_string())
@@ -592,7 +592,7 @@ pub(crate) fn active_colors() -> &'static Colors {
 /// "permission denied", ...): the same on every platform, where the
 /// operating system's text differs and ends in "(os error N)". An error
 /// of another kind keeps its text, without that suffix.
-pub fn io_error_text(err: &std::io::Error) -> String {
+pub(crate) fn io_error_text(err: &std::io::Error) -> String {
     use std::io::ErrorKind;
     let text = match err.kind() {
         ErrorKind::NotFound => "no such file",
@@ -792,7 +792,7 @@ fn write_body(out: &mut String, c: &Colors, prefix: &str, text: &str) {
 
 /// The diagnostics `ds`, rendered for a terminal on stderr, with a blank
 /// line between two of them.
-pub fn eprint_all<'a>(view: &dyn SourceView, ds: impl IntoIterator<Item = &'a Diagnostic>) {
+pub(crate) fn eprint_all<'a>(view: &dyn SourceView, ds: impl IntoIterator<Item = &'a Diagnostic>) {
     for (i, d) in ds.into_iter().enumerate() {
         if i > 0 {
             eprintln!();
@@ -979,7 +979,7 @@ fn mark_width<'a>(chars: impl Iterator<Item = &'a char>) -> usize {
 /// data. Lines and columns are 1-based, as the terminal shows them; a
 /// span at no place of a file (one that could not be read) is at line 1,
 /// column 1, and a span in no file also has file `"<unknown>"`.
-pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
+pub(crate) fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
     let place = |span: Span| -> serde_json::Map<String, serde_json::Value> {
         let located = view.locate(span);
         let file = located
@@ -1031,7 +1031,7 @@ pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
 /// quick fixes travel in `data`, as `[{"title", "edits": [{"range",
 /// "newText"}]}]`, for the code-action request to hand back.
 #[cfg(feature = "lsp")]
-pub fn to_lsp(
+pub(crate) fn to_lsp(
     sources: &SourceMap,
     d: &Diagnostic,
     uri: &dyn Fn(FileId) -> Option<lsp_types::Uri>,

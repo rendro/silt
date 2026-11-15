@@ -8,11 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use silt::git::{EscapedDisplay, EscapingWriter, escape_for_display};
-use silt::intern;
-use silt::lockfile::normalize_path;
-use silt::package_graph::{LockPolicy, resolve_packages};
-use silt::source::SourceMap;
+use crate::git::{EscapedDisplay, EscapingWriter, escape_for_display};
+use crate::intern;
+use crate::lockfile::normalize_path;
+use crate::package_graph::{LockPolicy, resolve_packages};
+use crate::source::SourceMap;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
 
@@ -146,7 +146,7 @@ enum AddSource {
     Path(String),
     Git {
         url: String,
-        ref_spec: silt::git::GitRef,
+        ref_spec: crate::git::GitRef,
     },
 }
 
@@ -304,9 +304,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
                 1 => {
                     let (kind, value) = chosen.into_iter().next().unwrap();
                     match kind {
-                        "rev" => silt::git::GitRef::Rev(value),
-                        "branch" => silt::git::GitRef::Branch(value),
-                        "tag" => silt::git::GitRef::Tag(value),
+                        "rev" => crate::git::GitRef::Rev(value),
+                        "branch" => crate::git::GitRef::Branch(value),
+                        "tag" => crate::git::GitRef::Tag(value),
                         _ => unreachable!("kinds restricted above"),
                     }
                 }
@@ -339,17 +339,17 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // Identifier rules first (cheap, deterministic), then collisions:
     // a name that's both invalid AND a builtin should report invalid
     // (the user's bigger problem).
-    if !silt::manifest::is_silt_identifier(&name) {
-        return Err(silt::manifest::invalid_name(&name).into());
+    if !crate::manifest::is_silt_identifier(&name) {
+        return Err(crate::manifest::invalid_name(&name).into());
     }
-    if silt::module::is_builtin_module(&name) {
+    if crate::module::is_builtin_module(&name) {
         return Err(format!(
             "dependency name `{name}` collides with builtin module `{name}`; \
              pick a different name"
         )
         .into());
     }
-    if silt::manifest::is_reserved_keyword(&name) {
+    if crate::manifest::is_reserved_keyword(&name) {
         return Err(format!(
             "dependency name `{name}` is a reserved silt keyword; \
              pick a different name"
@@ -403,7 +403,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // manifest's tree (e.g. an absolute path under /opt) we
             // fall back to the absolute form because there's no clean
             // relative form to write.
-            let stored_path = silt::lockfile::relative_path(&root, &absolute_dep_path)
+            let stored_path = crate::lockfile::relative_path(&root, &absolute_dep_path)
                 .unwrap_or_else(|| absolute_dep_path.display().to_string());
             let mut inline = toml_edit::InlineTable::new();
             inline.insert(
@@ -431,7 +431,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // input ("not a url") without paying for an `ls-remote`
             // roundtrip, and option-shaped input (`--upload-pack=...`)
             // before it can reach `git` at all.
-            if let Err(e) = silt::git::validate_git_url(&url) {
+            if let Err(e) = crate::git::validate_git_url(&url) {
                 return Err(format!(
                     "--git URL `{}` doesn't look like a git URL: {}",
                     e.url, e.reason
@@ -442,8 +442,8 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // any network traffic. `verify_reachable` would catch this
             // eventually but the diagnostic is friendlier here, and we
             // also avoid a wasted roundtrip.
-            if let silt::git::GitRef::Rev(sha) = &ref_spec
-                && !silt::git::is_valid_sha_shape(sha)
+            if let crate::git::GitRef::Rev(sha) = &ref_spec
+                && !crate::git::is_valid_sha_shape(sha)
             {
                 return Err(format!(
                     "--rev `{sha}` is not a valid commit SHA shape \
@@ -457,7 +457,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // message, each line marked as git's, so users see the real
             // diagnostic, e.g. "Repository not found" or "Permission
             // denied (publickey)".
-            silt::git::verify_reachable(&url)
+            crate::git::verify_reachable(&url)
                 .map_err(|e| AddError::caused(format!("cannot reach `{url}`"), e))?;
 
             // Whether the ref exists (`--branch nonexistent_xyz`) is
@@ -503,7 +503,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         format!(
             "failed to read {}: {}",
             manifest_path.display(),
-            silt::diagnostic::io_error_text(&e)
+            crate::diagnostic::io_error_text(&e)
         )
     })?;
     // Reported the way loading the manifest reports it. The parser's
@@ -563,7 +563,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
 /// every system and starting with `./` or `../`, so that it is read as
 /// a local path; or absolute when there is no relative form.
 fn manifest_relative_url(root: &Path, url: &Path) -> String {
-    match silt::lockfile::relative_path(root, url) {
+    match crate::lockfile::relative_path(root, url) {
         Some(relative) if relative == ".." || relative.starts_with("../") => relative,
         Some(relative) => format!("./{relative}"),
         None => url.display().to_string(),

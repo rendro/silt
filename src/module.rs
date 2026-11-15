@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use crate::builtins::registry::{TypeShape, registry};
 
 /// The builtin modules, built or not, in the order of their ids
-/// ([`crate::session::ModuleId::builtin`]): their functions
+/// ([`crate::defs::ModuleId::builtin`]): their functions
 /// (`module.func`) are builtins, not loaded from files.
 pub fn builtin_modules() -> &'static [&'static str] {
     static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();
@@ -19,7 +19,7 @@ pub fn builtin_modules() -> &'static [&'static str] {
 /// digit, and not a keyword (`import match` cannot parse), the rule of a
 /// package name ([`crate::manifest::is_silt_identifier`],
 /// [`crate::manifest::is_reserved_keyword`]).
-pub fn is_module_name(name: &str) -> bool {
+pub(crate) fn is_module_name(name: &str) -> bool {
     crate::manifest::is_silt_identifier(name) && !crate::manifest::is_reserved_keyword(name)
 }
 
@@ -28,7 +28,7 @@ pub fn is_module_name(name: &str) -> bool {
 /// `None` when that is still no module name (a leading digit, a letter
 /// outside a-z, a keyword) or is a builtin module's, which no file can
 /// take.
-pub fn suggested_module_name(name: &str) -> Option<String> {
+pub(crate) fn suggested_module_name(name: &str) -> Option<String> {
     let suggestion: String = name
         .to_lowercase()
         .chars()
@@ -41,13 +41,13 @@ pub fn suggested_module_name(name: &str) -> Option<String> {
 }
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
-pub fn is_builtin_module(name: &str) -> bool {
+pub(crate) fn is_builtin_module(name: &str) -> bool {
     registry().module(name).is_some()
 }
 
 /// The cargo feature the builtin module `name` needs and this build
 /// lacks; `None` for a module that is built and for any other name.
-pub fn missing_feature(name: &str) -> Option<&'static str> {
+pub(crate) fn missing_feature(name: &str) -> Option<&'static str> {
     let module = registry().module(name)?;
     if module.enabled { None } else { module.feature }
 }
@@ -56,7 +56,7 @@ pub fn missing_feature(name: &str) -> Option<&'static str> {
 /// needs and this build lacks, when the module itself is built
 /// (`tcp-tls` for `tcp.connect_tls`); `None` for a member that is built
 /// and for any other name.
-pub fn member_missing_feature(module: &str, name: &str) -> Option<&'static str> {
+pub(crate) fn member_missing_feature(module: &str, name: &str) -> Option<&'static str> {
     let module = registry().module(module).filter(|m| m.enabled)?;
     let row = module.rows.iter().find(|row| row.name == name)?;
     if row.enabled { None } else { row.feature }
@@ -65,7 +65,7 @@ pub fn member_missing_feature(module: &str, name: &str) -> Option<&'static str> 
 /// What to say of a builtin module or member that needs the cargo
 /// feature `feature`, which this build lacks: `what` "is not part of
 /// this build of silt: ...".
-pub fn needs_feature(what: &str, feature: &str) -> String {
+pub(crate) fn needs_feature(what: &str, feature: &str) -> String {
     format!("{what} is not part of this build of silt: it needs the cargo feature `{feature}`")
 }
 
@@ -82,7 +82,8 @@ pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "String", "Bool"]
 /// as a `Value::TypeDescriptor` constant of the builtin type; the
 /// typechecker binds each but `Tuple` as a polymorphic
 /// `TypeOf(Container(...))`.
-pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Channel", "Tuple"];
+pub(crate) const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] =
+    &["List", "Map", "Set", "Channel", "Tuple"];
 
 /// Names of silt's builtin global free functions, callable without a
 /// module prefix: `print(...)`, not `io.print(...)`. Used as a value,
@@ -101,6 +102,7 @@ pub fn builtin_free_function_names() -> &'static [&'static str] {
 /// uppercase names a program writes in type position (`time.Date`) but
 /// the stdlib owns, which editors highlight and the LSP refuses to
 /// rename.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn builtin_module_types() -> &'static [&'static str] {
     static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();
     NAMES.get_or_init(|| {
@@ -117,7 +119,8 @@ pub fn builtin_module_types() -> &'static [&'static str] {
 /// types and for any other name. A module's types are reached as
 /// `time.Weekday`; their variants as `time.Monday` (see
 /// [`builtin_module_variants`]).
-pub fn builtin_type_module(name: &str) -> Option<&'static str> {
+#[cfg(feature = "lsp")]
+pub(crate) fn builtin_type_module(name: &str) -> Option<&'static str> {
     registry()
         .modules
         .iter()
@@ -129,7 +132,8 @@ pub fn builtin_type_module(name: &str) -> Option<&'static str> {
 /// are reached as `module.Variant`: `Message` and `Recv` for `channel`,
 /// `Monday` for `time`. Two modules may have a variant of one name
 /// (`tcp.Timeout`, `http.Timeout`). Empty for any other name.
-pub fn builtin_module_variants(module: &str) -> Vec<&'static str> {
+#[cfg(any(feature = "lsp", feature = "playground"))]
+pub(crate) fn builtin_module_variants(module: &str) -> Vec<&'static str> {
     registry()
         .modules
         .iter()
@@ -169,16 +173,18 @@ pub fn builtin_error_enum_variants_with_arity()
 /// The `(variant_name, arity)` listing of every other builtin enum:
 /// `Result`, `Option`, `Step`, `ChannelResult`, `ChannelOp`, `Selected`,
 /// `Weekday`, `Method`.
-pub fn builtin_prelude_enum_variants_with_arity()
+pub(crate) fn builtin_prelude_enum_variants_with_arity()
 -> &'static [(&'static str, &'static [(&'static str, usize)])] {
     static ENUMS: OnceLock<Vec<(&'static str, &'static [(&'static str, usize)])>> = OnceLock::new();
     ENUMS.get_or_init(|| enums_with_arity(|is_error| !is_error))
 }
 
 /// The builtin enums as `(enum_name, variant_names)` pairs: the prelude
-/// enums (Result, Option) and the enums of the builtin modules. The
-/// compiler finds a builtin variant by its name here in the derived
-/// impls of the builtin types, which name variants unresolved.
+/// enums (Result, Option) and the enums of the builtin modules, whose
+/// variants the playground offers (`all_builtin_constructor_names`).
+/// (Equality, order, hash and display of a builtin variant are the
+/// runtime's own: no derived impl names one.)
+#[cfg(any(feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
     static ENUMS: OnceLock<Vec<(&'static str, Vec<&'static str>)>> = OnceLock::new();
     ENUMS.get_or_init(|| {
@@ -192,7 +198,8 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
 
 /// Every builtin enum variant name across all builtin enums, for
 /// completion in the playground.
-pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
+#[cfg(feature = "playground")]
+pub(crate) fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
     builtin_enum_variants()
         .iter()
         .flat_map(|(_, variants)| variants.iter().copied())
@@ -200,6 +207,7 @@ pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
 
 /// The functions of the builtin module `module` whose features are
 /// built: for "string", `["char_code", "chars", ...]`.
+#[cfg(any(feature = "lsp", feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
     registry().module(module).map_or_else(Vec::new, |m| {
         m.enabled_rows()
@@ -211,6 +219,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
 
 /// The constants (non-function values) of the builtin module `module`:
 /// for "math", `["e", "pi"]`.
+#[cfg(any(feature = "lsp", feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
     registry().module(module).map_or_else(Vec::new, |m| {
         m.enabled_rows()
@@ -226,7 +235,7 @@ pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
 /// the file is not there, a did-you-mean for a near-miss sibling `.silt`
 /// file and a pointer at `[dependencies]` in silt.toml. A permission or
 /// encoding error on an existing file does not invite a rename hunt.
-pub fn module_load_error(
+pub(crate) fn module_load_error(
     module_name: &str,
     attempted_path: &std::path::Path,
     attempted_display: &str,

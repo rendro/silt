@@ -48,7 +48,7 @@ pub enum GitRef {
 impl GitRef {
     /// Returns the underlying ref string, useful for display and TOML
     /// rendering.
-    pub fn as_ref_string(&self) -> &str {
+    pub(crate) fn as_ref_string(&self) -> &str {
         match self {
             GitRef::Rev(s) | GitRef::Branch(s) | GitRef::Tag(s) => s.as_str(),
         }
@@ -56,7 +56,7 @@ impl GitRef {
 
     /// Returns a static label for the ref kind: `"rev"`, `"branch"`, or
     /// `"tag"`.
-    pub fn kind(&self) -> &'static str {
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             GitRef::Rev(_) => "rev",
             GitRef::Branch(_) => "branch",
@@ -201,7 +201,7 @@ const ACCEPTED_GIT_URL_FORMS: &str = concat!(
 
 /// A git URL rejected by [`validate_git_url`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidGitUrl {
+pub(crate) struct InvalidGitUrl {
     /// The offending value, with control and invisible characters
     /// escaped so it is safe to print on a single line.
     pub url: String,
@@ -276,7 +276,7 @@ impl std::error::Error for InvalidGitUrl {}
 /// path (`\\server\share`) are local paths too, as git takes them there
 /// (`silt add --git ./lib` stores such a path made from the working
 /// directory). Elsewhere `C:/repo` is the scp-like `host:path`.
-pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
+pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     let local = is_local_git_url(url);
     let is_forbidden: fn(char) -> bool = if local {
         is_forbidden_in_local_form
@@ -337,7 +337,7 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
 /// `subst` gave one), also with no slash after it
 /// (`c:repo`, relative to the current directory of that drive), where
 /// elsewhere it is the host of an scp-like URL.
-pub fn is_local_git_url(url: &str) -> bool {
+pub(crate) fn is_local_git_url(url: &str) -> bool {
     is_local_git_url_on(url, cfg!(windows))
 }
 
@@ -539,14 +539,14 @@ fn check_url(url: &str) -> Result<(), GitError> {
 /// A backslash is shown as it is, and no character of an escape is
 /// itself escaped, so escaping a text twice gives the same result as
 /// escaping it once.
-pub fn needs_escape(c: char) -> bool {
+pub(crate) fn needs_escape(c: char) -> bool {
     c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible_format_char(c)
 }
 
 /// Render an untrusted string for a message, by the display rule
 /// ([`needs_escape`]): a hostile value cannot forge extra lines, drive
 /// the terminal, or disguise what it is.
-pub fn escape_for_display(s: &str) -> String {
+pub(crate) fn escape_for_display(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         if needs_escape(c) {
@@ -564,38 +564,24 @@ pub fn escape_for_display(s: &str) -> String {
 /// ([`needs_escape`]). The message itself decides where a line ends,
 /// with [`EscapingWriter::line_break`]; a line break inside a value is
 /// shown as `\n`.
-pub struct EscapingWriter<'a, 'b> {
+pub(crate) struct EscapingWriter<'a, 'b> {
     out: &'a mut fmt::Formatter<'b>,
 }
 
 impl<'a, 'b> EscapingWriter<'a, 'b> {
     /// Wrap the formatter a `Display` impl was given.
-    pub fn new(out: &'a mut fmt::Formatter<'b>) -> Self {
+    pub(crate) fn new(out: &'a mut fmt::Formatter<'b>) -> Self {
         EscapingWriter { out }
     }
 
     /// End the current line of the message and start the next one.
-    pub fn line_break(&mut self) -> fmt::Result {
+    pub(crate) fn line_break(&mut self) -> fmt::Result {
         self.out.write_char('\n')
-    }
-
-    /// Write `text` line by line: each line escaped, its line breaks
-    /// kept. Only for text whose line breaks are known not to come
-    /// from an untrusted value; a line break that does would start a
-    /// line of output of its own.
-    pub fn lines(&mut self, text: &str) -> fmt::Result {
-        for (index, line) in text.lines().enumerate() {
-            if index > 0 {
-                self.line_break()?;
-            }
-            self.write_str(line)?;
-        }
-        Ok(())
     }
 
     /// Write an error that escapes its own message, keeping the line
     /// breaks that message makes.
-    pub fn nested(&mut self, inner: &dyn EscapedDisplay) -> fmt::Result {
+    pub(crate) fn nested(&mut self, inner: &dyn EscapedDisplay) -> fmt::Result {
         fmt::Display::fmt(inner, &mut *self.out)
     }
 }
@@ -618,7 +604,7 @@ impl fmt::Write for EscapingWriter<'_, '_> {
 /// Marks an error type whose `Display` impl writes its whole message
 /// through an [`EscapingWriter`]. Only such a type can be handed to
 /// [`EscapingWriter::nested`].
-pub trait EscapedDisplay: fmt::Display {}
+pub(crate) trait EscapedDisplay: fmt::Display {}
 
 // ── Cache path resolution ──────────────────────────────────────────────
 
@@ -706,7 +692,7 @@ fn compute_cache_root() -> Result<PathBuf, GitError> {
 /// [`fetch_to_cache`]) handle creation/atomic rename.
 ///
 /// `commit` becomes a path component, and one commit must have one
-/// directory, so only a full commit id ([`is_full_commit_id`]) is
+/// directory, so only a full commit id (`is_full_commit_id`) is
 /// accepted: a value such as `../../../../x` (from a hand-edited
 /// `silt.lock`) would otherwise point the cache path at an arbitrary
 /// directory, and a prefix would give one commit several.
@@ -725,7 +711,7 @@ pub fn cache_for(url: &str, commit: &str) -> Result<PathBuf, GitError> {
 /// when it is there ([`cache_for`]). Nothing is fetched, and nothing is
 /// created: the language server, which fetches nothing, reads the cache
 /// with it.
-pub fn cached_checkout(url: &str, commit: &str) -> Option<PathBuf> {
+pub(crate) fn cached_checkout(url: &str, commit: &str) -> Option<PathBuf> {
     if !is_full_commit_id(commit) {
         return None;
     }
@@ -756,10 +742,10 @@ fn url_hash(url: &str) -> String {
 /// fails loudly later if the commit doesn't exist remotely. A short
 /// `Rev` is resolved in a clone of the repository to the one commit
 /// whose id it starts with; a tag or a branch of the same name is never
-/// taken for it (see [`fetch_rev`]). For `Branch`/`Tag` we run
+/// taken for it (see `fetch_rev`). For `Branch`/`Tag` we run
 /// `git ls-remote -- <url> <ref>` and parse the id out.
 ///
-/// The URL must pass [`validate_git_url`]; the branch or tag name is
+/// The URL must pass `validate_git_url`; the branch or tag name is
 /// only ever sent as `refs/heads/<name>` / `refs/tags/<name>`, which
 /// cannot be option-shaped.
 pub fn resolve_ref(url: &str, ref_spec: &GitRef) -> Result<String, GitError> {
@@ -819,7 +805,7 @@ pub fn verify_reachable(url: &str) -> Result<(), GitError> {
 /// This is the shape of a `rev` a manifest or `silt add --rev` may
 /// give: a full id or a prefix of one. Being hexadecimal only, an
 /// accepted value can be neither a path nor an option.
-pub fn is_valid_sha_shape(s: &str) -> bool {
+pub(crate) fn is_valid_sha_shape(s: &str) -> bool {
     let len = s.len();
     if !(7..=64).contains(&len) {
         return false;
@@ -830,14 +816,14 @@ pub fn is_valid_sha_shape(s: &str) -> bool {
 /// Returns true if `s` is a full commit id: 40 hexadecimal characters
 /// (SHA-1) or 64 (SHA-256). The one shape a lockfile `rev` and a cache
 /// directory name have.
-pub fn is_full_commit_id(s: &str) -> bool {
+pub(crate) fn is_full_commit_id(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 // ── Fetch ──────────────────────────────────────────────────────────────
 
 /// Fetch the repo at the full commit id `commit` into the cache and
-/// return the checkout directory. See [`fetch_rev`].
+/// return the checkout directory. See `fetch_rev`.
 pub fn fetch_to_cache(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     check_url(url)?;
     if !is_full_commit_id(commit) {
@@ -853,7 +839,7 @@ pub fn fetch_to_cache(url: &str, commit: &str) -> Result<PathBuf, GitError> {
 /// cache: it is removed first, and the commit is cloned again.
 /// `silt update` fetches this way, so what it pins is the commit's own
 /// content, whatever was done to the cache.
-pub fn fetch_afresh(url: &str, commit: &str) -> Result<PathBuf, GitError> {
+pub(crate) fn fetch_afresh(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     let dest = cache_for(url, commit)?;
     match fs::remove_dir_all(&dest) {
         Ok(()) => {}
@@ -884,7 +870,7 @@ pub fn fetch_afresh(url: &str, commit: &str) -> Result<PathBuf, GitError> {
 /// race), that one is used. A checkout whose `silt.toml` or `src/` holds
 /// a symbolic link is rejected and not cached (the rule of
 /// `lockfile::checksum_path_source`).
-pub fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitError> {
+pub(crate) fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitError> {
     check_url(url)?;
     if !is_valid_sha_shape(rev) {
         return Err(GitError::RefNotFound {
@@ -1673,27 +1659,6 @@ mod tests {
             Inline(TwoLines("x")).to_string(),
             "inline: first: x\\nsecond: x"
         );
-    }
-
-    /// An error that writes `text` with [`EscapingWriter::lines`].
-    struct Lines(&'static str);
-
-    impl fmt::Display for Lines {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let mut f = EscapingWriter::new(f);
-            write!(f, "message: ")?;
-            f.lines(self.0)
-        }
-    }
-
-    #[test]
-    fn escaping_writer_keeps_the_lines_of_a_text_and_escapes_each() {
-        assert_eq!(
-            Lines("one\u{1b}\r\ntwo\u{202e}\n\nfour\n").to_string(),
-            "message: one\\u{1b}\ntwo\\u{202e}\n\nfour"
-        );
-        assert_eq!(Lines("one").to_string(), "message: one");
-        assert_eq!(Lines("").to_string(), "message: ");
     }
 
     /// True if `s` holds a character a terminal would act on or hide.

@@ -1,0 +1,1441 @@
+# The public items of src: everything outside code can reach (see the
+# surface tests in tests/meta/public_api_tests.rs). An item is here for
+# one of four reasons: it is promised (docs/ffi.md, the list in
+# src/lib.rs) or handed out by a promised name; it is the command's entry
+# (silt::cli::main); it is the playground's (silt::playground, feature
+# `playground`); or the tests, benches and fuzz targets read it through
+# the test API (silt::testing, feature `test-hooks`).
+src/ast.rs: pub args
+src/ast.rs: pub args_key
+src/ast.rs: pub body
+src/ast.rs: pub body
+src/ast.rs: pub body
+src/ast.rs: pub const AS
+src/ast.rs: pub const CALL
+src/ast.rs: pub const FIELD
+src/ast.rs: pub const PIPE
+src/ast.rs: pub const RANGE
+src/ast.rs: pub const TRAILING_CLOSURE
+src/ast.rs: pub const UNARY
+src/ast.rs: pub decls
+src/ast.rs: pub dict_owners
+src/ast.rs: pub doc
+src/ast.rs: pub doc
+src/ast.rs: pub doc
+src/ast.rs: pub enum BinOp
+src/ast.rs: pub enum Decl
+src/ast.rs: pub enum ExprKind
+src/ast.rs: pub enum ImportTarget
+src/ast.rs: pub enum ListElem
+src/ast.rs: pub enum ParamKind
+src/ast.rs: pub enum PatternKind
+src/ast.rs: pub enum Selection
+src/ast.rs: pub enum Stmt
+src/ast.rs: pub enum StringPart
+src/ast.rs: pub enum TypeBody
+src/ast.rs: pub enum TypeExprKind
+src/ast.rs: pub enum UnaryOp
+src/ast.rs: pub ev
+src/ast.rs: pub evidence
+src/ast.rs: pub fields
+src/ast.rs: pub fn binding_power
+src/ast.rs: pub fn bound_on
+src/ast.rs: pub fn from_token
+src/ast.rs: pub fn module
+src/ast.rs: pub fn new
+src/ast.rs: pub fn new
+src/ast.rs: pub fn new
+src/ast.rs: pub fn written
+src/ast.rs: pub fn written
+src/ast.rs: pub guard
+src/ast.rs: pub header_span
+src/ast.rs: pub held_types
+src/ast.rs: pub instance
+src/ast.rs: pub irrefutable
+src/ast.rs: pub is_opaque
+src/ast.rs: pub is_pub
+src/ast.rs: pub is_pub
+src/ast.rs: pub is_pub
+src/ast.rs: pub is_recovery_stub
+src/ast.rs: pub is_signature_only
+src/ast.rs: pub kind
+src/ast.rs: pub kind
+src/ast.rs: pub kind
+src/ast.rs: pub kind
+src/ast.rs: pub late_evidence
+src/ast.rs: pub methods
+src/ast.rs: pub methods
+src/ast.rs: pub mod prec
+src/ast.rs: pub module
+src/ast.rs: pub name
+src/ast.rs: pub name
+src/ast.rs: pub name
+src/ast.rs: pub name
+src/ast.rs: pub name
+src/ast.rs: pub name
+src/ast.rs: pub name
+src/ast.rs: pub name_span
+src/ast.rs: pub name_span
+src/ast.rs: pub name_span
+src/ast.rs: pub name_span
+src/ast.rs: pub name_span
+src/ast.rs: pub param_where_clauses
+src/ast.rs: pub params
+src/ast.rs: pub params
+src/ast.rs: pub params
+src/ast.rs: pub parenthesised
+src/ast.rs: pub pattern
+src/ast.rs: pub pattern
+src/ast.rs: pub pattern_lets
+src/ast.rs: pub res
+src/ast.rs: pub res
+src/ast.rs: pub res
+src/ast.rs: pub res
+src/ast.rs: pub return_type
+src/ast.rs: pub run_refusals
+src/ast.rs: pub sel
+src/ast.rs: pub shown_args
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub span
+src/ast.rs: pub statements
+src/ast.rs: pub struct EnumVariant
+src/ast.rs: pub struct Expr
+src/ast.rs: pub struct FnDecl
+src/ast.rs: pub struct MatchArm
+src/ast.rs: pub struct Param
+src/ast.rs: pub struct Pattern
+src/ast.rs: pub struct Program
+src/ast.rs: pub struct Qualifier
+src/ast.rs: pub struct RecordField
+src/ast.rs: pub struct StatementMarks
+src/ast.rs: pub struct TraitDecl
+src/ast.rs: pub struct TraitImpl
+src/ast.rs: pub struct TraitRef
+src/ast.rs: pub struct TypeDecl
+src/ast.rs: pub struct TypeExpr
+src/ast.rs: pub struct WhereClause
+src/ast.rs: pub supertraits
+src/ast.rs: pub target_module
+src/ast.rs: pub target_param_names
+src/ast.rs: pub target_res
+src/ast.rs: pub target_type
+src/ast.rs: pub target_type_args
+src/ast.rs: pub target_type_span
+src/ast.rs: pub trait_args
+src/ast.rs: pub trait_args
+src/ast.rs: pub trait_module
+src/ast.rs: pub trait_module
+src/ast.rs: pub trait_name
+src/ast.rs: pub trait_name
+src/ast.rs: pub trait_name_span
+src/ast.rs: pub trait_name_span
+src/ast.rs: pub trait_res
+src/ast.rs: pub trait_res
+src/ast.rs: pub ty
+src/ast.rs: pub ty
+src/ast.rs: pub ty
+src/ast.rs: pub type_param
+src/ast.rs: pub unknown
+src/ast.rs: pub where_clauses
+src/ast.rs: pub where_clauses
+src/builtins/http.rs: pub fn redact_http_url_userinfo
+src/builtins/http.rs: pub fn redact_url
+src/builtins/mod.rs: pub mod http
+src/builtins/mod.rs: pub mod postgres
+src/builtins/mod.rs: pub mod registry
+src/builtins/postgres.rs: pub enum EffectiveSslMode
+src/builtins/postgres.rs: pub fn connect_limit_for_tests
+src/builtins/postgres.rs: pub fn pg_timeout_err_for_tests
+src/builtins/postgres.rs: pub fn read_max_pool_size_for_tests
+src/builtins/postgres.rs: pub fn redact_pg_message
+src/builtins/postgres.rs: pub fn resolve_effective_sslmode_for_tests
+src/builtins/registry.rs: pub connection
+src/builtins/registry.rs: pub decoding
+src/builtins/registry.rs: pub derives
+src/builtins/registry.rs: pub dicts
+src/builtins/registry.rs: pub enabled
+src/builtins/registry.rs: pub enabled
+src/builtins/registry.rs: pub enum TypeShape
+src/builtins/registry.rs: pub error
+src/builtins/registry.rs: pub feature
+src/builtins/registry.rs: pub feature
+src/builtins/registry.rs: pub fn builtin
+src/builtins/registry.rs: pub fn module
+src/builtins/registry.rs: pub fn named
+src/builtins/registry.rs: pub fn qualified
+src/builtins/registry.rs: pub fn registry
+src/builtins/registry.rs: pub fn value
+src/builtins/registry.rs: pub id
+src/builtins/registry.rs: pub impls
+src/builtins/registry.rs: pub mod decoding
+src/builtins/registry.rs: pub mod docs
+src/builtins/registry.rs: pub module
+src/builtins/registry.rs: pub modules
+src/builtins/registry.rs: pub name
+src/builtins/registry.rs: pub name
+src/builtins/registry.rs: pub name
+src/builtins/registry.rs: pub opaque
+src/builtins/registry.rs: pub page
+src/builtins/registry.rs: pub page_file
+src/builtins/registry.rs: pub params
+src/builtins/registry.rs: pub prelude
+src/builtins/registry.rs: pub prelude_types
+src/builtins/registry.rs: pub rows
+src/builtins/registry.rs: pub shape
+src/builtins/registry.rs: pub signature
+src/builtins/registry.rs: pub statement
+src/builtins/registry.rs: pub struct Module
+src/builtins/registry.rs: pub struct Registry
+src/builtins/registry.rs: pub struct Row
+src/builtins/registry.rs: pub struct TypeDecl
+src/builtins/registry.rs: pub summary
+src/builtins/registry.rs: pub text
+src/builtins/registry.rs: pub trait_names
+src/builtins/registry.rs: pub traits
+src/builtins/registry.rs: pub type_decls
+src/builtins/registry.rs: pub types
+src/builtins/registry.rs: pub writes
+src/builtins/registry/decoding.rs: pub const ALL
+src/builtins/registry/decoding.rs: pub const ALL
+src/builtins/registry/decoding.rs: pub const CSV
+src/builtins/registry/decoding.rs: pub const JSON
+src/builtins/registry/decoding.rs: pub const POSTGRES
+src/builtins/registry/decoding.rs: pub const TOML
+src/builtins/registry/decoding.rs: pub const TOML_RECORD
+src/builtins/registry/decoding.rs: pub enum Family
+src/builtins/registry/decoding.rs: pub enum Leaf
+src/builtins/registry/decoding.rs: pub family
+src/builtins/registry/decoding.rs: pub fn bytes_help
+src/builtins/registry/decoding.rs: pub fn decodes
+src/builtins/registry/decoding.rs: pub fn decodes_enums
+src/builtins/registry/decoding.rs: pub fn help
+src/builtins/registry/decoding.rs: pub fn honours_impls
+src/builtins/registry/decoding.rs: pub fn json_value
+src/builtins/registry/decoding.rs: pub fn lacks
+src/builtins/registry/decoding.rs: pub fn leaves
+src/builtins/registry/decoding.rs: pub fn name
+src/builtins/registry/decoding.rs: pub fn nested
+src/builtins/registry/decoding.rs: pub fn of
+src/builtins/registry/decoding.rs: pub fn record_help
+src/builtins/registry/decoding.rs: pub fn rows
+src/builtins/registry/decoding.rs: pub fn type_argument_help
+src/builtins/registry/decoding.rs: pub fn type_arguments
+src/builtins/registry/decoding.rs: pub primitives
+src/builtins/registry/decoding.rs: pub struct Decoding
+src/builtins/registry/docs.rs: pub fn builtin_docs
+src/builtins/registry/docs.rs: pub fn iter_sections
+src/builtins/registry/docs.rs: pub fn pages
+src/builtins/registry/docs.rs: pub fn render_card
+src/builtins/registry/docs.rs: pub fn render_page
+src/builtins/registry/docs.rs: pub fn signature_block
+src/bytecode/dict.rs: pub args
+src/bytecode/dict.rs: pub descriptor
+src/bytecode/dict.rs: pub enum Dict
+src/bytecode/dict.rs: pub enum Method
+src/bytecode/dict.rs: pub enum Recipe
+src/bytecode/dict.rs: pub fn descriptor
+src/bytecode/dict.rs: pub fn index
+src/bytecode/dict.rs: pub fn new
+src/bytecode/dict.rs: pub fn sub
+src/bytecode/dict.rs: pub fn super_dict
+src/bytecode/dict.rs: pub fn template
+src/bytecode/dict.rs: pub fn where_dict
+src/bytecode/dict.rs: pub full
+src/bytecode/dict.rs: pub index
+src/bytecode/dict.rs: pub methods
+src/bytecode/dict.rs: pub name
+src/bytecode/dict.rs: pub struct Built
+src/bytecode/dict.rs: pub struct Template
+src/bytecode/dict.rs: pub supers
+src/bytecode/dict.rs: pub template
+src/bytecode/dict.rs: pub tr
+src/bytecode/dict.rs: pub ty
+src/bytecode/dict.rs: pub wheres
+src/bytecode/mod.rs: pub bound
+src/bytecode/mod.rs: pub enum Segment
+src/bytecode/mod.rs: pub fn add_decoded_instance
+src/bytecode/mod.rs: pub fn add_def
+src/bytecode/mod.rs: pub fn add_default_method
+src/bytecode/mod.rs: pub fn add_method
+src/bytecode/mod.rs: pub fn add_method_at
+src/bytecode/mod.rs: pub fn add_template
+src/bytecode/mod.rs: pub fn any_decoded
+src/bytecode/mod.rs: pub fn any_encoded
+src/bytecode/mod.rs: pub fn any_shown
+src/bytecode/mod.rs: pub fn arity
+src/bytecode/mod.rs: pub fn call_method
+src/bytecode/mod.rs: pub fn chunk
+src/bytecode/mod.rs: pub fn closure
+src/bytecode/mod.rs: pub fn code
+src/bytecode/mod.rs: pub fn constant
+src/bytecode/mod.rs: pub fn constants
+src/bytecode/mod.rs: pub fn decoded
+src/bytecode/mod.rs: pub fn decoded_any
+src/bytecode/mod.rs: pub fn def
+src/bytecode/mod.rs: pub fn default_for
+src/bytecode/mod.rs: pub fn default_for_at
+src/bytecode/mod.rs: pub fn default_method
+src/bytecode/mod.rs: pub fn default_methods
+src/bytecode/mod.rs: pub fn dict_slot
+src/bytecode/mod.rs: pub fn encoded
+src/bytecode/mod.rs: pub fn hidden
+src/bytecode/mod.rs: pub fn index
+src/bytecode/mod.rs: pub fn instrs
+src/bytecode/mod.rs: pub fn is_empty
+src/bytecode/mod.rs: pub fn is_empty
+src/bytecode/mod.rs: pub fn len
+src/bytecode/mod.rs: pub fn len
+src/bytecode/mod.rs: pub fn method
+src/bytecode/mod.rs: pub fn method_at
+src/bytecode/mod.rs: pub fn method_count
+src/bytecode/mod.rs: pub fn method_id
+src/bytecode/mod.rs: pub fn method_name
+src/bytecode/mod.rs: pub fn name
+src/bytecode/mod.rs: pub fn name
+src/bytecode/mod.rs: pub fn new
+src/bytecode/mod.rs: pub fn next_template_index
+src/bytecode/mod.rs: pub fn note_trait_methods
+src/bytecode/mod.rs: pub fn pending_slot
+src/bytecode/mod.rs: pub fn returning_unit
+src/bytecode/mod.rs: pub fn shown
+src/bytecode/mod.rs: pub fn span_at
+src/bytecode/mod.rs: pub fn string
+src/bytecode/mod.rs: pub fn tag
+src/bytecode/mod.rs: pub fn template
+src/bytecode/mod.rs: pub fn template_at
+src/bytecode/mod.rs: pub fn trait_at
+src/bytecode/mod.rs: pub fn trait_count
+src/bytecode/mod.rs: pub fn trait_index
+src/bytecode/mod.rs: pub fn trait_method
+src/bytecode/mod.rs: pub fn trait_methods
+src/bytecode/mod.rs: pub fn trait_name
+src/bytecode/mod.rs: pub fn type_info
+src/bytecode/mod.rs: pub fn upvalue_count
+src/bytecode/mod.rs: pub fn without_definitions_since
+src/bytecode/mod.rs: pub function
+src/bytecode/mod.rs: pub index
+src/bytecode/mod.rs: pub is_local
+src/bytecode/mod.rs: pub mod verify
+src/bytecode/mod.rs: pub struct Chunk
+src/bytecode/mod.rs: pub struct Const
+src/bytecode/mod.rs: pub struct Function
+src/bytecode/mod.rs: pub struct Globals
+src/bytecode/mod.rs: pub struct UpvalueDesc
+src/bytecode/mod.rs: pub struct VmClosure
+src/bytecode/mod.rs: pub upvalues
+src/bytecode/mod.rs: pub use ops::Instr
+src/bytecode/mod.rs: pub use verify::verify
+src/bytecode/ops.rs: pub const ALL
+src/bytecode/ops.rs: pub count
+src/bytecode/ops.rs: pub cut
+src/bytecode/ops.rs: pub enum ConstKind
+src/bytecode/ops.rs: pub enum Flow
+src/bytecode/ops.rs: pub enum Instr
+src/bytecode/ops.rs: pub enum Op
+src/bytecode/ops.rs: pub enum Operand
+src/bytecode/ops.rs: pub flow
+src/bytecode/ops.rs: pub fn effect
+src/bytecode/ops.rs: pub fn from_byte
+src/bytecode/ops.rs: pub fn is_empty
+src/bytecode/ops.rs: pub fn is_empty
+src/bytecode/ops.rs: pub fn iter
+src/bytecode/ops.rs: pub fn iter
+src/bytecode/ops.rs: pub fn len
+src/bytecode/ops.rs: pub fn len
+src/bytecode/ops.rs: pub fn name
+src/bytecode/ops.rs: pub fn op
+src/bytecode/ops.rs: pub fn operands
+src/bytecode/ops.rs: pub fn values
+src/bytecode/ops.rs: pub max
+src/bytecode/ops.rs: pub pops
+src/bytecode/ops.rs: pub pushes
+src/bytecode/ops.rs: pub struct Effect
+src/bytecode/ops.rs: pub struct Operands
+src/bytecode/ops.rs: pub struct Segments
+src/bytecode/ops.rs: pub trait Packed
+src/bytecode/ops.rs: pub what
+src/bytecode/verify.rs: pub at
+src/bytecode/verify.rs: pub fn verify
+src/bytecode/verify.rs: pub fn verify_globals
+src/bytecode/verify.rs: pub struct VerifyError
+src/bytecode/verify.rs: pub what
+src/cli/mod.rs: pub fn main
+src/compiler/mod.rs: pub defs
+src/compiler/mod.rs: pub earlier
+src/compiler/mod.rs: pub entry
+src/compiler/mod.rs: pub globals
+src/compiler/mod.rs: pub host
+src/compiler/mod.rs: pub id
+src/compiler/mod.rs: pub imports
+src/compiler/mod.rs: pub installed
+src/compiler/mod.rs: pub let_order
+src/compiler/mod.rs: pub modules
+src/compiler/mod.rs: pub program
+src/compiler/mod.rs: pub qualifier
+src/compiler/mod.rs: pub tables
+src/defs.rs: pub const PRELUDE
+src/defs.rs: pub defs
+src/defs.rs: pub enum DefKind
+src/defs.rs: pub enum Res
+src/defs.rs: pub enum Vis
+src/defs.rs: pub fn add
+src/defs.rs: pub fn add_variant
+src/defs.rs: pub fn builtin
+src/defs.rs: pub fn builtin_name
+src/defs.rs: pub fn clear_module
+src/defs.rs: pub fn get
+src/defs.rs: pub fn is_builtin
+src/defs.rs: pub fn is_type
+src/defs.rs: pub fn named
+src/defs.rs: pub fn new
+src/defs.rs: pub fn none
+src/defs.rs: pub fn of
+src/defs.rs: pub fn of_module
+src/defs.rs: pub fn set_alias_type
+src/defs.rs: pub fn set_kind
+src/defs.rs: pub fn through_alias
+src/defs.rs: pub fn variant_type
+src/defs.rs: pub fn variants
+src/defs.rs: pub kind
+src/defs.rs: pub module
+src/defs.rs: pub name
+src/defs.rs: pub span
+src/defs.rs: pub struct BuiltinDefs
+src/defs.rs: pub struct BuiltinId
+src/defs.rs: pub struct Def
+src/defs.rs: pub struct DefId
+src/defs.rs: pub struct DefTable
+src/defs.rs: pub struct ImplArgs
+src/defs.rs: pub struct ModuleId
+src/defs.rs: pub struct TraitId
+src/defs.rs: pub struct TypeId
+src/defs.rs: pub variants
+src/defs.rs: pub vis
+src/diagnostic.rs: pub code
+src/diagnostic.rs: pub col
+src/diagnostic.rs: pub const ALL
+src/diagnostic.rs: pub edits
+src/diagnostic.rs: pub end_col
+src/diagnostic.rs: pub end_line
+src/diagnostic.rs: pub enum Code
+src/diagnostic.rs: pub enum Phase
+src/diagnostic.rs: pub enum Severity
+src/diagnostic.rs: pub file
+src/diagnostic.rs: pub fixes
+src/diagnostic.rs: pub fn error
+src/diagnostic.rs: pub fn help_lines
+src/diagnostic.rs: pub fn id
+src/diagnostic.rs: pub fn is_error
+src/diagnostic.rs: pub fn is_warning
+src/diagnostic.rs: pub fn new
+src/diagnostic.rs: pub fn phase
+src/diagnostic.rs: pub fn phase
+src/diagnostic.rs: pub fn position
+src/diagnostic.rs: pub fn render_human
+src/diagnostic.rs: pub fn severity
+src/diagnostic.rs: pub fn warning
+src/diagnostic.rs: pub fn with_fix
+src/diagnostic.rs: pub fn with_help
+src/diagnostic.rs: pub fn with_label
+src/diagnostic.rs: pub fn with_note
+src/diagnostic.rs: pub fn word
+src/diagnostic.rs: pub help
+src/diagnostic.rs: pub help_at
+src/diagnostic.rs: pub labels
+src/diagnostic.rs: pub line
+src/diagnostic.rs: pub line_text
+src/diagnostic.rs: pub message
+src/diagnostic.rs: pub notes
+src/diagnostic.rs: pub position
+src/diagnostic.rs: pub severity
+src/diagnostic.rs: pub span
+src/diagnostic.rs: pub struct Diagnostic
+src/diagnostic.rs: pub struct Fix
+src/diagnostic.rs: pub struct Located
+src/diagnostic.rs: pub struct Position
+src/diagnostic.rs: pub title
+src/diagnostic.rs: pub trait SourceView
+src/disassemble.rs: pub fn disassemble_function
+src/evidence.rs: pub cell
+src/evidence.rs: pub enum Evidence
+src/evidence.rs: pub enum Layout
+src/evidence.rs: pub enum Site
+src/evidence.rs: pub header
+src/evidence.rs: pub id
+src/evidence.rs: pub layout
+src/evidence.rs: pub own
+src/evidence.rs: pub struct ImplEvidence
+src/evidence.rs: pub struct Late
+src/evidence.rs: pub struct Shape
+src/evidence.rs: pub supers
+src/evidence.rs: pub wheres
+src/feature_stub.rs: pub fn disabled_feature_response
+src/format/cursor.rs: pub behind
+src/format/cursor.rs: pub ends_line
+src/format/cursor.rs: pub error
+src/format/cursor.rs: pub in_front
+src/format/cursor.rs: pub message
+src/format/cursor.rs: pub own_line
+src/format/cursor.rs: pub span
+src/format/mod.rs: pub fn format
+src/format/mod.rs: pub fn format_with
+src/format/mod.rs: pub message
+src/format/mod.rs: pub span
+src/fuzz_invariants.rs: pub fn check_csv
+src/fuzz_invariants.rs: pub fn check_formatter_invariants
+src/fuzz_invariants.rs: pub fn check_formatter_invariants_of
+src/fuzz_invariants.rs: pub fn check_http_response
+src/fuzz_invariants.rs: pub fn check_json_decoding
+src/fuzz_invariants.rs: pub fn check_lexer_invariants
+src/fuzz_invariants.rs: pub fn check_lsp_messages
+src/fuzz_invariants.rs: pub fn check_package_files
+src/fuzz_invariants.rs: pub fn check_parser_invariants
+src/fuzz_invariants.rs: pub fn check_toml_decoding
+src/fuzz_invariants.rs: pub fn json_text_of
+src/fuzz_invariants.rs: pub fn toml_text_of
+src/git.rs: pub enum GitError
+src/git.rs: pub enum GitRef
+src/git.rs: pub fn cache_dir
+src/git.rs: pub fn cache_for
+src/git.rs: pub fn fetch_to_cache
+src/git.rs: pub fn resolve_ref
+src/git.rs: pub fn verify_reachable
+src/git.rs: pub reason
+src/git.rs: pub url
+src/http_wire.rs: pub body
+src/http_wire.rs: pub close
+src/http_wire.rs: pub close
+src/http_wire.rs: pub const BODIES_MAX
+src/http_wire.rs: pub const BODY_MAX
+src/http_wire.rs: pub const HEADERS_MAX
+src/http_wire.rs: pub const HEAD_MAX
+src/http_wire.rs: pub const REFUSAL_TIME
+src/http_wire.rs: pub const REQUEST_TIME
+src/http_wire.rs: pub const TRANSFER_TIME
+src/http_wire.rs: pub date
+src/http_wire.rs: pub enum Next
+src/http_wire.rs: pub fn new
+src/http_wire.rs: pub fn next
+src/http_wire.rs: pub head_only
+src/http_wire.rs: pub headers
+src/http_wire.rs: pub http10
+src/http_wire.rs: pub keep_alive
+src/http_wire.rs: pub method
+src/http_wire.rs: pub status
+src/http_wire.rs: pub struct Reader
+src/http_wire.rs: pub struct Refused
+src/http_wire.rs: pub struct Request
+src/http_wire.rs: pub target
+src/http_wire.rs: pub why
+src/intern.rs: pub fn intern
+src/intern.rs: pub fn resolve
+src/intern.rs: pub struct Symbol
+src/layers.rs: pub fn rows_copied
+src/lexer.rs: pub comments
+src/lexer.rs: pub comments
+src/lexer.rs: pub const KEYWORDS
+src/lexer.rs: pub const KEYWORD_LITERALS
+src/lexer.rs: pub const MAX_SYNTAX_ERRORS
+src/lexer.rs: pub cut_short
+src/lexer.rs: pub enum CommentKind
+src/lexer.rs: pub enum Token
+src/lexer.rs: pub errors
+src/lexer.rs: pub fn checked
+src/lexer.rs: pub fn keyword
+src/lexer.rs: pub fn new
+src/lexer.rs: pub fn text
+src/lexer.rs: pub fn tokenize
+src/lexer.rs: pub kind
+src/lexer.rs: pub kind
+src/lexer.rs: pub more_errors
+src/lexer.rs: pub newlines_before
+src/lexer.rs: pub newlines_before
+src/lexer.rs: pub quotes_off
+src/lexer.rs: pub semicolons
+src/lexer.rs: pub span
+src/lexer.rs: pub span
+src/lexer.rs: pub struct Comment
+src/lexer.rs: pub struct Lexed
+src/lexer.rs: pub struct Lexer
+src/lexer.rs: pub struct Tok
+src/lexer.rs: pub tokens
+src/lib.rs: pub mod ast
+src/lib.rs: pub mod builtins
+src/lib.rs: pub mod bytecode
+src/lib.rs: pub mod cli
+src/lib.rs: pub mod defs
+src/lib.rs: pub mod diagnostic
+src/lib.rs: pub mod disassemble
+src/lib.rs: pub mod feature_stub
+src/lib.rs: pub mod format
+src/lib.rs: pub mod fuzz_invariants
+src/lib.rs: pub mod git
+src/lib.rs: pub mod http_wire
+src/lib.rs: pub mod intern
+src/lib.rs: pub mod layers
+src/lib.rs: pub mod lexer
+src/lib.rs: pub mod lockfile
+src/lib.rs: pub mod lsp
+src/lib.rs: pub mod manifest
+src/lib.rs: pub mod module
+src/lib.rs: pub mod package_graph
+src/lib.rs: pub mod parser
+src/lib.rs: pub mod playground
+src/lib.rs: pub mod repl
+src/lib.rs: pub mod runtime
+src/lib.rs: pub mod scheduler
+src/lib.rs: pub mod session
+src/lib.rs: pub mod source
+src/lib.rs: pub mod testing
+src/lib.rs: pub mod typechecker
+src/lib.rs: pub mod typeinfo
+src/lib.rs: pub mod types
+src/lib.rs: pub mod value
+src/lib.rs: pub mod vm
+src/lib.rs: pub use crate::ast::*
+src/lib.rs: pub use crate::builtins::*
+src/lib.rs: pub use crate::bytecode::*
+src/lib.rs: pub use crate::defs::*
+src/lib.rs: pub use crate::diagnostic::*
+src/lib.rs: pub use crate::disassemble::*
+src/lib.rs: pub use crate::feature_stub::*
+src/lib.rs: pub use crate::format::*
+src/lib.rs: pub use crate::fuzz_invariants::*
+src/lib.rs: pub use crate::git::*
+src/lib.rs: pub use crate::http_wire::*
+src/lib.rs: pub use crate::intern::*
+src/lib.rs: pub use crate::layers::*
+src/lib.rs: pub use crate::lexer::*
+src/lib.rs: pub use crate::lockfile::*
+src/lib.rs: pub use crate::lsp::*
+src/lib.rs: pub use crate::manifest::*
+src/lib.rs: pub use crate::module::*
+src/lib.rs: pub use crate::package_graph::*
+src/lib.rs: pub use crate::parser::*
+src/lib.rs: pub use crate::repl::*
+src/lib.rs: pub use crate::runtime::*
+src/lib.rs: pub use crate::scheduler::*
+src/lib.rs: pub use crate::session::testing::*
+src/lib.rs: pub use crate::source::*
+src/lib.rs: pub use crate::typechecker::*
+src/lib.rs: pub use crate::typeinfo::*
+src/lib.rs: pub use crate::types::*
+src/lib.rs: pub use crate::value::*
+src/lib.rs: pub use crate::vm::*
+src/lib.rs: pub use crate::vm::SystemClock
+src/lib.rs: pub use typeinfo::Tag
+src/lib.rs: pub use value::FromValue
+src/lib.rs: pub use value::IntoValue
+src/lib.rs: pub use value::Value
+src/lib.rs: pub use vm::Buffer
+src/lib.rs: pub use vm::Clock
+src/lib.rs: pub use vm::Exit
+src/lib.rs: pub use vm::HostIo
+src/lib.rs: pub use vm::Output
+src/lib.rs: pub use vm::Vm
+src/lib.rs: pub use vm::VmError
+src/lockfile.rs: pub checksum
+src/lockfile.rs: pub enum ChecksumError
+src/lockfile.rs: pub enum LockedSource
+src/lockfile.rs: pub fn checksum_path_source
+src/lockfile.rs: pub fn load
+src/lockfile.rs: pub fn normalize_path
+src/lockfile.rs: pub fn write
+src/lockfile.rs: pub name
+src/lockfile.rs: pub packages
+src/lockfile.rs: pub source
+src/lockfile.rs: pub struct LockedPackage
+src/lockfile.rs: pub struct Lockfile
+src/lockfile.rs: pub version
+src/lockfile.rs: pub version
+src/lsp/mod.rs: pub fn file_uri_to_path
+src/lsp/mod.rs: pub use preload::path_to_file_uri
+src/lsp/mod.rs: pub use rename::is_valid_silt_ident
+src/lsp/preload.rs: pub fn path_to_file_uri
+src/lsp/rename.rs: pub fn is_valid_silt_ident
+src/manifest.rs: pub dependencies
+src/manifest.rs: pub enum Dependency
+src/manifest.rs: pub file
+src/manifest.rs: pub fn find
+src/manifest.rs: pub fn load
+src/manifest.rs: pub fn validate_package_name
+src/manifest.rs: pub key
+src/manifest.rs: pub name
+src/manifest.rs: pub name_span
+src/manifest.rs: pub package
+src/manifest.rs: pub source
+src/manifest.rs: pub struct DependencyEntry
+src/manifest.rs: pub struct Manifest
+src/manifest.rs: pub struct PackageMeta
+src/manifest.rs: pub use crate::git::GitRef
+src/manifest.rs: pub value
+src/manifest.rs: pub version
+src/module.rs: pub const BUILTIN_PRIMITIVE_NAMES
+src/module.rs: pub fn builtin_enum_variants
+src/module.rs: pub fn builtin_error_enum_variants_with_arity
+src/module.rs: pub fn builtin_free_function_names
+src/module.rs: pub fn builtin_module_constants
+src/module.rs: pub fn builtin_module_functions
+src/module.rs: pub fn builtin_module_types
+src/module.rs: pub fn builtin_modules
+src/package_graph.rs: pub deps
+src/package_graph.rs: pub enum LockChange
+src/package_graph.rs: pub enum LockPolicy
+src/package_graph.rs: pub fn resolve_packages
+src/package_graph.rs: pub id
+src/package_graph.rs: pub lock
+src/package_graph.rs: pub manifest
+src/package_graph.rs: pub name
+src/package_graph.rs: pub packages
+src/package_graph.rs: pub root
+src/package_graph.rs: pub root
+src/package_graph.rs: pub src
+src/package_graph.rs: pub struct PackageGraph
+src/package_graph.rs: pub struct PackageId
+src/package_graph.rs: pub struct PackageNode
+src/parser.rs: pub fn new
+src/parser.rs: pub fn parse_expr
+src/parser.rs: pub fn parse_program
+src/parser.rs: pub fn parse_program_recovering
+src/parser.rs: pub fn with_docs
+src/parser.rs: pub struct Parser
+src/playground.rs: pub const TOKEN_KINDS
+src/playground.rs: pub const VERSION
+src/playground.rs: pub fn completions
+src/playground.rs: pub fn error_diagnostic
+src/playground.rs: pub fn render_diagnostic
+src/playground.rs: pub fn returned
+src/playground.rs: pub fn tokens
+src/playground.rs: pub use crate::diagnostic::Diagnostic
+src/playground.rs: pub use crate::diagnostic::Severity
+src/playground.rs: pub use crate::format::format
+src/playground.rs: pub use crate::source::FileId
+src/program.rs: pub entry
+src/program.rs: pub enum EntryPoint
+src/program.rs: pub enum TestKind
+src/program.rs: pub kind
+src/program.rs: pub name
+src/program.rs: pub slot
+src/program.rs: pub span
+src/program.rs: pub struct Program
+src/program.rs: pub struct TestFn
+src/program.rs: pub types
+src/repl.rs: pub committed
+src/repl.rs: pub diagnostics
+src/repl.rs: pub diagnostics
+src/repl.rs: pub fn builtin_names
+src/repl.rs: pub fn completion_names
+src/repl.rs: pub fn completions_at
+src/repl.rs: pub fn eval
+src/repl.rs: pub fn new
+src/repl.rs: pub fn scope_completion_names
+src/repl.rs: pub fn show
+src/repl.rs: pub struct Evaluation
+src/repl.rs: pub struct Repl
+src/repl.rs: pub ty
+src/repl.rs: pub value
+src/runtime/handle.rs: pub at
+src/runtime/handle.rs: pub enum Accepted
+src/runtime/handle.rs: pub enum HandOver
+src/runtime/handle.rs: pub enum Taken
+src/runtime/handle.rs: pub enum WriteMoment
+src/runtime/handle.rs: pub fn accept
+src/runtime/handle.rs: pub fn cancel
+src/runtime/handle.rs: pub fn cancel_flag
+src/runtime/handle.rs: pub fn cancel_spawned
+src/runtime/handle.rs: pub fn close
+src/runtime/handle.rs: pub fn complete
+src/runtime/handle.rs: pub fn connected
+src/runtime/handle.rs: pub fn connecting
+src/runtime/handle.rs: pub fn count_late
+src/runtime/handle.rs: pub fn deadline
+src/runtime/handle.rs: pub fn done
+src/runtime/handle.rs: pub fn end_writes
+src/runtime/handle.rs: pub fn expire
+src/runtime/handle.rs: pub fn fail
+src/runtime/handle.rs: pub fn fails_with_its_input
+src/runtime/handle.rs: pub fn hand_back
+src/runtime/handle.rs: pub fn hand_over
+src/runtime/handle.rs: pub fn has_unjoined_failure
+src/runtime/handle.rs: pub fn is_cancelled
+src/runtime/handle.rs: pub fn is_closed
+src/runtime/handle.rs: pub fn is_closed
+src/runtime/handle.rs: pub fn is_connecting
+src/runtime/handle.rs: pub fn is_expired
+src/runtime/handle.rs: pub fn is_over
+src/runtime/handle.rs: pub fn is_served
+src/runtime/handle.rs: pub fn is_shut
+src/runtime/handle.rs: pub fn keep
+src/runtime/handle.rs: pub fn late
+src/runtime/handle.rs: pub fn local_addr
+src/runtime/handle.rs: pub fn mark_joined
+src/runtime/handle.rs: pub fn new
+src/runtime/handle.rs: pub fn new
+src/runtime/handle.rs: pub fn new
+src/runtime/handle.rs: pub fn of_stage
+src/runtime/handle.rs: pub fn over_flag
+src/runtime/handle.rs: pub fn owner
+src/runtime/handle.rs: pub fn peer_addr
+src/runtime/handle.rs: pub fn plain
+src/runtime/handle.rs: pub fn read
+src/runtime/handle.rs: pub fn read_exact
+src/runtime/handle.rs: pub fn read_now
+src/runtime/handle.rs: pub fn read_unless_woken
+src/runtime/handle.rs: pub fn reads_now
+src/runtime/handle.rs: pub fn serve
+src/runtime/handle.rs: pub fn served_no_more
+src/runtime/handle.rs: pub fn set
+src/runtime/handle.rs: pub fn set_nodelay
+src/runtime/handle.rs: pub fn set_over
+src/runtime/handle.rs: pub fn shut
+src/runtime/handle.rs: pub fn shut_down
+src/runtime/handle.rs: pub fn socket
+src/runtime/handle.rs: pub fn spawn_site
+src/runtime/handle.rs: pub fn spawned_at
+src/runtime/handle.rs: pub fn stage
+src/runtime/handle.rs: pub fn stage_call_of_a_failed_input
+src/runtime/handle.rs: pub fn stage_of
+src/runtime/handle.rs: pub fn stop
+src/runtime/handle.rs: pub fn take_kept
+src/runtime/handle.rs: pub fn take_unjoined_failure
+src/runtime/handle.rs: pub fn try_get
+src/runtime/handle.rs: pub fn wake
+src/runtime/handle.rs: pub fn watch_writes
+src/runtime/handle.rs: pub fn whole
+src/runtime/handle.rs: pub fn widen_backlog
+src/runtime/handle.rs: pub fn with_deadline
+src/runtime/handle.rs: pub fn with_owner
+src/runtime/handle.rs: pub fn write_all
+src/runtime/handle.rs: pub fn write_in_turn
+src/runtime/handle.rs: pub fn write_last_in_turn
+src/runtime/handle.rs: pub fn write_whole_in_turn
+src/runtime/handle.rs: pub id
+src/runtime/handle.rs: pub id
+src/runtime/handle.rs: pub id
+src/runtime/handle.rs: pub inputs
+src/runtime/handle.rs: pub name
+src/runtime/handle.rs: pub output
+src/runtime/handle.rs: pub source
+src/runtime/handle.rs: pub struct ReadWake
+src/runtime/handle.rs: pub struct Shutter
+src/runtime/handle.rs: pub struct StageOf
+src/runtime/handle.rs: pub struct TaskHandle
+src/runtime/handle.rs: pub struct TcpListenerHandle
+src/runtime/handle.rs: pub struct TcpStreamHandle
+src/runtime/handle.rs: pub struct WriteWatching
+src/runtime/handle.rs: pub trait ReadWrite
+src/runtime/mod.rs: pub mod handle
+src/runtime/mod.rs: pub mod sync
+src/runtime/sync/cell.rs: pub trait Completion
+src/runtime/sync/channel.rs: pub enum TryReceive
+src/runtime/sync/channel.rs: pub enum TrySend
+src/runtime/sync/channel.rs: pub failure
+src/runtime/sync/channel.rs: pub fn abandon
+src/runtime/sync/channel.rs: pub fn capacity
+src/runtime/sync/channel.rs: pub fn close
+src/runtime/sync/channel.rs: pub fn closes_by_timer
+src/runtime/sync/channel.rs: pub fn drain
+src/runtime/sync/channel.rs: pub fn drain_feeder_with
+src/runtime/sync/channel.rs: pub fn fed
+src/runtime/sync/channel.rs: pub fn fed_by
+src/runtime/sync/channel.rs: pub fn id
+src/runtime/sync/channel.rs: pub fn is_asked
+src/runtime/sync/channel.rs: pub fn is_closed
+src/runtime/sync/channel.rs: pub fn is_draining
+src/runtime/sync/channel.rs: pub fn is_empty
+src/runtime/sync/channel.rs: pub fn len
+src/runtime/sync/channel.rs: pub fn new
+src/runtime/sync/channel.rs: pub fn raise
+src/runtime/sync/channel.rs: pub fn set_fed_by
+src/runtime/sync/channel.rs: pub fn stop_feeder_with
+src/runtime/sync/channel.rs: pub fn try_receive
+src/runtime/sync/channel.rs: pub fn try_send
+src/runtime/sync/channel.rs: pub fn waiting
+src/runtime/sync/channel.rs: pub stage
+src/runtime/sync/channel.rs: pub struct Channel
+src/runtime/sync/channel.rs: pub struct Close
+src/runtime/sync/mod.rs: pub use channel::Channel
+src/runtime/sync/mod.rs: pub use channel::Close
+src/runtime/sync/mod.rs: pub use channel::TryReceive
+src/runtime/sync/mod.rs: pub use channel::TrySend
+src/runtime/sync/parking.rs: pub deadline
+src/runtime/sync/parking.rs: pub ending
+src/runtime/sync/parking.rs: pub on
+src/runtime/sync/parking.rs: pub sleeper
+src/runtime/sync/parking.rs: pub task
+src/runtime/sync/parking.rs: pub waiting
+src/runtime/sync/queue.rs: pub struct Waiter
+src/runtime/sync/queue.rs: pub struct Wakes
+src/runtime/sync/timer.rs: pub fn pass_to_next_deadline
+src/runtime/sync/token.rs: pub fn cancel
+src/runtime/sync/token.rs: pub fn is_waiting
+src/runtime/sync/token.rs: pub fn task
+src/runtime/sync/token.rs: pub struct TaskId
+src/runtime/sync/token.rs: pub struct Token
+src/runtime/sync/token.rs: pub trait Wake
+src/runtime/sync/wait.rs: pub arms
+src/runtime/sync/wait.rs: pub bounded
+src/runtime/sync/wait.rs: pub cancel
+src/runtime/sync/wait.rs: pub deadline
+src/runtime/sync/wait.rs: pub first
+src/runtime/sync/wait.rs: pub task_deadline
+src/scheduler.rs: pub count
+src/scheduler.rs: pub enum PanicAt
+src/scheduler.rs: pub error
+src/scheduler.rs: pub failures
+src/scheduler.rs: pub first_spawned
+src/scheduler.rs: pub fn collect_unjoined_failures
+src/scheduler.rs: pub fn take_unjoined_failures
+src/scheduler.rs: pub mod test_support
+src/scheduler.rs: pub not_shown
+src/scheduler.rs: pub owner
+src/scheduler.rs: pub owner
+src/scheduler.rs: pub spawned
+src/scheduler.rs: pub stage
+src/scheduler.rs: pub stage_call
+src/scheduler.rs: pub struct NotShown
+src/scheduler.rs: pub struct UnjoinedFailure
+src/scheduler.rs: pub struct UnjoinedFailures
+src/scheduler.rs: pub task_id
+src/scheduler/test_support.rs: pub deadlock_count
+src/scheduler/test_support.rs: pub elapsed
+src/scheduler/test_support.rs: pub error_message
+src/scheduler/test_support.rs: pub first_failure_index
+src/scheduler/test_support.rs: pub first_failure_message
+src/scheduler/test_support.rs: pub fn compute
+src/scheduler/test_support.rs: pub fn new
+src/scheduler/test_support.rs: pub fn ok
+src/scheduler/test_support.rs: pub fn run_trial
+src/scheduler/test_support.rs: pub fn saw_deadlock
+src/scheduler/test_support.rs: pub fn saw_panic
+src/scheduler/test_support.rs: pub fn with_budget
+src/scheduler/test_support.rs: pub panic_count
+src/scheduler/test_support.rs: pub result
+src/scheduler/test_support.rs: pub stdout
+src/scheduler/test_support.rs: pub struct InProcessRunner
+src/scheduler/test_support.rs: pub struct TrialOutcome
+src/scheduler/test_support.rs: pub struct TrialStats
+src/scheduler/test_support.rs: pub timed_out
+src/scheduler/test_support.rs: pub timed_out_count
+src/scheduler/test_support.rs: pub wrong_value_count
+src/session/analysis.rs: pub ast
+src/session/analysis.rs: pub diagnostics
+src/session/analysis.rs: pub entry_display
+src/session/analysis.rs: pub let_order
+src/session/analysis.rs: pub scope
+src/session/analysis.rs: pub signatures
+src/session/analysis.rs: pub struct ModuleAnalysis
+src/session/analysis.rs: pub top_level
+src/session/cells.rs: pub count
+src/session/cells.rs: pub file
+src/session/cells.rs: pub globals
+src/session/cells.rs: pub info
+src/session/cells.rs: pub n
+src/session/graph.rs: pub ast
+src/session/graph.rs: pub back_edges
+src/session/graph.rs: pub cut_short
+src/session/graph.rs: pub cycles
+src/session/graph.rs: pub enum ImportResolution
+src/session/graph.rs: pub file
+src/session/graph.rs: pub first_import
+src/session/graph.rs: pub fn failed
+src/session/graph.rs: pub fn imported_modules
+src/session/graph.rs: pub fn module
+src/session/graph.rs: pub fn module_at
+src/session/graph.rs: pub fn modules
+src/session/graph.rs: pub fn order
+src/session/graph.rs: pub fn reach
+src/session/graph.rs: pub fn reverse_dependents
+src/session/graph.rs: pub host
+src/session/graph.rs: pub id
+src/session/graph.rs: pub imports
+src/session/graph.rs: pub incomplete
+src/session/graph.rs: pub load_error
+src/session/graph.rs: pub modules
+src/session/graph.rs: pub name
+src/session/graph.rs: pub name
+src/session/graph.rs: pub package
+src/session/graph.rs: pub package_name
+src/session/graph.rs: pub path
+src/session/graph.rs: pub problem
+src/session/graph.rs: pub problems
+src/session/graph.rs: pub resolution
+src/session/graph.rs: pub span
+src/session/graph.rs: pub struct Import
+src/session/graph.rs: pub struct Module
+src/session/graph.rs: pub struct ModuleGraph
+src/session/graph.rs: pub struct Ordering
+src/session/host.rs: pub arity
+src/session/host.rs: pub call
+src/session/host.rs: pub decl
+src/session/host.rs: pub fn declare_type
+src/session/host.rs: pub fn fn0
+src/session/host.rs: pub fn fn1
+src/session/host.rs: pub fn fn2
+src/session/host.rs: pub fn function
+src/session/host.rs: pub fn new
+src/session/host.rs: pub id
+src/session/host.rs: pub lookup
+src/session/host.rs: pub name
+src/session/host.rs: pub signature
+src/session/host.rs: pub struct HostModule
+src/session/host.rs: pub tables
+src/session/host.rs: pub templates
+src/session/host.rs: pub types
+src/session/mod.rs: pub builtins
+src/session/mod.rs: pub diagnostics
+src/session/mod.rs: pub entry
+src/session/mod.rs: pub enum Builtins
+src/session/mod.rs: pub enum Entry
+src/session/mod.rs: pub fn analyze
+src/session/mod.rs: pub fn compile
+src/session/mod.rs: pub fn has_errors
+src/session/mod.rs: pub fn new
+src/session/mod.rs: pub fn set_overlay
+src/session/mod.rs: pub fn sources
+src/session/mod.rs: pub host
+src/session/mod.rs: pub lock
+src/session/mod.rs: pub modules
+src/session/mod.rs: pub project
+src/session/mod.rs: pub struct Analysis
+src/session/mod.rs: pub struct Config
+src/session/mod.rs: pub struct Session
+src/session/mod.rs: pub use crate::program::EntryPoint
+src/session/mod.rs: pub use crate::program::Program
+src/session/mod.rs: pub use crate::program::TestFn
+src/session/mod.rs: pub use crate::program::TestKind
+src/session/mod.rs: pub use crate::value::HostCall
+src/session/mod.rs: pub use host::HostModule
+src/session/mod.rs: pub use packages::LockPolicy
+src/session/mod.rs: pub use packages::ProjectSetup
+src/session/packages.rs: pub deps
+src/session/packages.rs: pub enum ProjectSetup
+src/session/packages.rs: pub id
+src/session/packages.rs: pub lock
+src/session/packages.rs: pub manifest
+src/session/packages.rs: pub name
+src/session/packages.rs: pub packages
+src/session/packages.rs: pub root
+src/session/packages.rs: pub src
+src/session/packages.rs: pub use crate::package_graph::LockPolicy
+src/session/testing.rs: pub fn analyze_files
+src/session/testing.rs: pub fn analyze_str
+src/session/testing.rs: pub fn check_files
+src/session/testing.rs: pub fn check_str
+src/session/testing.rs: pub fn check_with_host
+src/session/testing.rs: pub fn compile_decls_str
+src/session/testing.rs: pub fn compile_given
+src/session/testing.rs: pub fn compile_str
+src/session/testing.rs: pub fn give_module
+src/session/testing.rs: pub fn last
+src/session/testing.rs: pub fn run_files
+src/session/testing.rs: pub fn run_given
+src/session/testing.rs: pub fn run_str
+src/session/testing.rs: pub fn run_with_host
+src/session/testing.rs: pub fn session_with
+src/session/testing.rs: pub fn test_path
+src/session/testing.rs: pub struct Given
+src/session/testing.rs: pub trait ProgramInside
+src/session/testing.rs: pub trait SessionInside
+src/session/testing.rs: pub trait ValueInside
+src/session/testing.rs: pub trait VmErrorInside
+src/session/testing.rs: pub trait VmInside
+src/source.rs: pub col
+src/source.rs: pub const BUILTIN
+src/source.rs: pub const BUILTIN
+src/source.rs: pub end
+src/source.rs: pub end_col
+src/source.rs: pub end_line
+src/source.rs: pub enum SourceName
+src/source.rs: pub file
+src/source.rs: pub fn add
+src/source.rs: pub fn canonical_path
+src/source.rs: pub fn end_offset
+src/source.rs: pub fn file
+src/source.rs: pub fn file_count
+src/source.rs: pub fn files
+src/source.rs: pub fn get
+src/source.rs: pub fn is_in_source
+src/source.rs: pub fn line_col
+src/source.rs: pub fn line_col
+src/source.rs: pub fn line_count
+src/source.rs: pub fn line_start
+src/source.rs: pub fn line_text
+src/source.rs: pub fn lsp_position
+src/source.rs: pub fn lsp_position
+src/source.rs: pub fn new
+src/source.rs: pub fn new
+src/source.rs: pub fn offset_of_lsp_position
+src/source.rs: pub fn point
+src/source.rs: pub fn snippet
+src/source.rs: pub fn start_offset
+src/source.rs: pub fn text_lines
+src/source.rs: pub fn to
+src/source.rs: pub line
+src/source.rs: pub line_text
+src/source.rs: pub path
+src/source.rs: pub start
+src/source.rs: pub struct FileId
+src/source.rs: pub struct Snippet
+src/source.rs: pub struct SourceFile
+src/source.rs: pub struct SourceMap
+src/source.rs: pub struct Span
+src/source.rs: pub text
+src/typechecker/builtin_env.rs: pub fn __builtin_trait_registration_fingerprint
+src/typechecker/builtin_env.rs: pub fn __trait_init_fingerprint_check_program
+src/typechecker/builtin_env.rs: pub fn builtin_type_signatures
+src/typechecker/mod.rs: pub diagnostics
+src/typechecker/mod.rs: pub entry_display
+src/typechecker/mod.rs: pub errors
+src/typechecker/mod.rs: pub let_order
+src/typechecker/mod.rs: pub signatures
+src/typechecker/mod.rs: pub struct Signature
+src/typechecker/mod.rs: pub text
+src/typechecker/mod.rs: pub top_level
+src/typechecker/mod.rs: pub ty
+src/typechecker/mod.rs: pub use builtin_env::__builtin_trait_registration_fingerprint
+src/typechecker/mod.rs: pub use builtin_env::__trait_init_fingerprint_check_program
+src/typechecker/mod.rs: pub use builtin_env::builtin_type_signatures
+src/typechecker/names.rs: pub access
+src/typechecker/names.rs: pub by
+src/typechecker/names.rs: pub complete
+src/typechecker/names.rs: pub diagnostics
+src/typechecker/names.rs: pub enum Binding
+src/typechecker/names.rs: pub exports
+src/typechecker/names.rs: pub fn implied
+src/typechecker/names.rs: pub hidden_imports
+src/typechecker/names.rs: pub hidden_modules
+src/typechecker/names.rs: pub module
+src/typechecker/names.rs: pub modules
+src/typechecker/names.rs: pub name
+src/typechecker/names.rs: pub prelude
+src/typechecker/names.rs: pub private
+src/typechecker/names.rs: pub scope
+src/typechecker/names.rs: pub struct Exports
+src/typechecker/names.rs: pub struct ModuleScope
+src/typechecker/names.rs: pub text
+src/typechecker/names.rs: pub types
+src/typechecker/names.rs: pub types
+src/typechecker/names.rs: pub values
+src/typechecker/names.rs: pub values
+src/typeinfo.rs: pub arity
+src/typeinfo.rs: pub const ERR
+src/typeinfo.rs: pub const JSON_NULL
+src/typeinfo.rs: pub const NONE
+src/typeinfo.rs: pub const OK
+src/typeinfo.rs: pub const SOME
+src/typeinfo.rs: pub const fn new
+src/typeinfo.rs: pub enum FieldType
+src/typeinfo.rs: pub enum Shape
+src/typeinfo.rs: pub fields
+src/typeinfo.rs: pub fn applied
+src/typeinfo.rs: pub fn builtin_type_named
+src/typeinfo.rs: pub fn extend
+src/typeinfo.rs: pub fn field_index
+src/typeinfo.rs: pub fn fields
+src/typeinfo.rs: pub fn fits
+src/typeinfo.rs: pub fn get
+src/typeinfo.rs: pub fn insert
+src/typeinfo.rs: pub fn instances
+src/typeinfo.rs: pub fn instantiated
+src/typeinfo.rs: pub fn is
+src/typeinfo.rs: pub fn is_builtin
+src/typeinfo.rs: pub fn iter
+src/typeinfo.rs: pub fn name
+src/typeinfo.rs: pub fn new
+src/typeinfo.rs: pub fn new_enum
+src/typeinfo.rs: pub fn new_record
+src/typeinfo.rs: pub fn records
+src/typeinfo.rs: pub fn shown
+src/typeinfo.rs: pub fn tag
+src/typeinfo.rs: pub fn variants
+src/typeinfo.rs: pub id
+src/typeinfo.rs: pub mod bv
+src/typeinfo.rs: pub name
+src/typeinfo.rs: pub name
+src/typeinfo.rs: pub ordinal
+src/typeinfo.rs: pub shape
+src/typeinfo.rs: pub struct BuiltinVariant
+src/typeinfo.rs: pub struct Tag
+src/typeinfo.rs: pub struct TypeInfo
+src/typeinfo.rs: pub struct TypeTable
+src/typeinfo.rs: pub struct VariantInfo
+src/typeinfo.rs: pub ty
+src/types/builtins.rs: pub arity
+src/types/builtins.rs: pub enum BuiltinKind
+src/types/builtins.rs: pub fn is_prelude_name
+src/types/builtins.rs: pub fn iter_all
+src/types/builtins.rs: pub kind
+src/types/builtins.rs: pub name
+src/types/builtins.rs: pub struct BuiltinType
+src/types/canonical.rs: pub fn fingerprint
+src/types/canonical.rs: pub fn lookup_alias
+src/types/canonical.rs: pub fn new
+src/types/canonical.rs: pub fn register_alias
+src/types/canonical.rs: pub fn unregister_alias
+src/types/canonical.rs: pub param_var_ids
+src/types/canonical.rs: pub params
+src/types/canonical.rs: pub struct AliasInfo
+src/types/canonical.rs: pub struct Resolver
+src/types/canonical.rs: pub target
+src/types/mod.rs: pub by
+src/types/mod.rs: pub enum Asked
+src/types/mod.rs: pub enum BuiltinCheck
+src/types/mod.rs: pub enum Head
+src/types/mod.rs: pub enum Pred
+src/types/mod.rs: pub enum Type
+src/types/mod.rs: pub fn applied
+src/types/mod.rs: pub fn apply
+src/types/mod.rs: pub fn args
+src/types/mod.rs: pub fn bound
+src/types/mod.rs: pub fn builtin
+src/types/mod.rs: pub fn builtin
+src/types/mod.rs: pub fn builtin
+src/types/mod.rs: pub fn builtin
+src/types/mod.rs: pub fn collect_refs
+src/types/mod.rs: pub fn holds_error
+src/types/mod.rs: pub fn is_builtin
+src/types/mod.rs: pub fn is_builtin
+src/types/mod.rs: pub fn is_builtin
+src/types/mod.rs: pub fn joined
+src/types/mod.rs: pub fn letters
+src/types/mod.rs: pub fn mentions
+src/types/mod.rs: pub fn mono
+src/types/mod.rs: pub fn of_bound
+src/types/mod.rs: pub fn option
+src/types/mod.rs: pub fn result
+src/types/mod.rs: pub fn routes
+src/types/mod.rs: pub fn show_all
+src/types/mod.rs: pub fn split_constructor
+src/types/mod.rs: pub fn subject
+src/types/mod.rs: pub fn substitute
+src/types/mod.rs: pub fn test
+src/types/mod.rs: pub fn type_of
+src/types/mod.rs: pub fn type_ref
+src/types/mod.rs: pub fn unwritten
+src/types/mod.rs: pub id
+src/types/mod.rs: pub id
+src/types/mod.rs: pub items
+src/types/mod.rs: pub mod builtins
+src/types/mod.rs: pub mod canonical
+src/types/mod.rs: pub name
+src/types/mod.rs: pub name
+src/types/mod.rs: pub name
+src/types/mod.rs: pub passer
+src/types/mod.rs: pub preds
+src/types/mod.rs: pub struct Asker
+src/types/mod.rs: pub struct RigidId
+src/types/mod.rs: pub struct Scheme
+src/types/mod.rs: pub struct TraitKey
+src/types/mod.rs: pub struct TypeRef
+src/types/mod.rs: pub ty
+src/types/mod.rs: pub var
+src/types/mod.rs: pub vars
+src/update.rs: pub dry_run
+src/update.rs: pub force
+src/value/convert.rs: pub args
+src/value/convert.rs: pub arity
+src/value/convert.rs: pub call
+src/value/convert.rs: pub enum HostFault
+src/value/convert.rs: pub enum HostShape
+src/value/convert.rs: pub enum HostStep
+src/value/convert.rs: pub fn check
+src/value/convert.rs: pub fn get
+src/value/convert.rs: pub fn new
+src/value/convert.rs: pub fn new
+src/value/convert.rs: pub fn record
+src/value/convert.rs: pub fn variant
+src/value/convert.rs: pub fn witnesses
+src/value/convert.rs: pub name
+src/value/convert.rs: pub name
+src/value/convert.rs: pub name
+src/value/convert.rs: pub of_type
+src/value/convert.rs: pub param
+src/value/convert.rs: pub path
+src/value/convert.rs: pub returns
+src/value/convert.rs: pub source
+src/value/convert.rs: pub sources
+src/value/convert.rs: pub struct HostCall
+src/value/convert.rs: pub struct HostFn
+src/value/convert.rs: pub struct HostSource
+src/value/convert.rs: pub struct HostTypes
+src/value/convert.rs: pub struct HostVar
+src/value/convert.rs: pub struct Witness
+src/value/convert.rs: pub struct Witnesses
+src/value/convert.rs: pub templates
+src/value/convert.rs: pub trait FromValue
+src/value/convert.rs: pub trait IntoValue
+src/value/convert.rs: pub types
+src/value/convert.rs: pub value
+src/value/convert.rs: pub vars
+src/value/float.rs: pub fn get
+src/value/float.rs: pub fn new
+src/value/float.rs: pub struct Float
+src/value/list.rs: pub enum IntTotal
+src/value/list.rs: pub fn concat
+src/value/list.rs: pub fn contains
+src/value/list.rs: pub fn contains_fn
+src/value/list.rs: pub fn count
+src/value/list.rs: pub fn first
+src/value/list.rs: pub fn get
+src/value/list.rs: pub fn ints
+src/value/list.rs: pub fn is_empty
+src/value/list.rs: pub fn iter
+src/value/list.rs: pub fn last
+src/value/list.rs: pub fn len
+src/value/list.rs: pub fn new
+src/value/list.rs: pub fn position
+src/value/list.rs: pub fn product_ints
+src/value/list.rs: pub fn push_back
+src/value/list.rs: pub fn push_front
+src/value/list.rs: pub fn remove_at
+src/value/list.rs: pub fn set
+src/value/list.rs: pub fn shares
+src/value/list.rs: pub fn slice
+src/value/list.rs: pub fn sorted
+src/value/list.rs: pub fn sum_ints
+src/value/list.rs: pub fn to_vec
+src/value/list.rs: pub fn unique
+src/value/list.rs: pub fn writable
+src/value/list.rs: pub mod copies
+src/value/list.rs: pub struct IntoIter
+src/value/list.rs: pub struct Iter
+src/value/list.rs: pub struct List
+src/value/list.rs: pub struct TooLong
+src/value/map.rs: pub fn contains
+src/value/map.rs: pub fn contains_key
+src/value/map.rs: pub fn count
+src/value/map.rs: pub fn difference
+src/value/map.rs: pub fn get
+src/value/map.rs: pub fn holds_fn
+src/value/map.rs: pub fn insert
+src/value/map.rs: pub fn insert
+src/value/map.rs: pub fn intersection
+src/value/map.rs: pub fn is_empty
+src/value/map.rs: pub fn is_empty
+src/value/map.rs: pub fn is_subset
+src/value/map.rs: pub fn iter
+src/value/map.rs: pub fn iter
+src/value/map.rs: pub fn keys
+src/value/map.rs: pub fn len
+src/value/map.rs: pub fn len
+src/value/map.rs: pub fn merge
+src/value/map.rs: pub fn new
+src/value/map.rs: pub fn new
+src/value/map.rs: pub fn remove
+src/value/map.rs: pub fn remove
+src/value/map.rs: pub fn shares
+src/value/map.rs: pub fn shares
+src/value/map.rs: pub fn symmetric_difference
+src/value/map.rs: pub fn union
+src/value/map.rs: pub fn values
+src/value/map.rs: pub fn without_fn
+src/value/map.rs: pub mod copies
+src/value/map.rs: pub struct Map
+src/value/map.rs: pub struct MapIntoIter
+src/value/map.rs: pub struct MapIter
+src/value/map.rs: pub struct Set
+src/value/map.rs: pub struct SetIntoIter
+src/value/map.rs: pub struct SetIter
+src/value/mod.rs: pub enum Value
+src/value/mod.rs: pub fn is
+src/value/mod.rs: pub fn map
+src/value/mod.rs: pub fn of
+src/value/mod.rs: pub fn record
+src/value/mod.rs: pub fn set
+src/value/mod.rs: pub fn string
+src/value/mod.rs: pub fn variant
+src/value/mod.rs: pub struct Ascii
+src/value/mod.rs: pub use convert::FromValue
+src/value/mod.rs: pub use convert::HostCall
+src/value/mod.rs: pub use convert::IntoValue
+src/value/mod.rs: pub use float::Float
+src/value/mod.rs: pub use list::List
+src/value/mod.rs: pub use list::copies as list_copies
+src/value/mod.rs: pub use map::copies as map_copies
+src/value/obj.rs: pub fn fields
+src/value/obj.rs: pub fn fields
+src/value/obj.rs: pub fn get
+src/value/obj.rs: pub fn has_tag
+src/value/obj.rs: pub fn is
+src/value/obj.rs: pub fn name
+src/value/obj.rs: pub fn named
+src/value/obj.rs: pub fn of
+src/value/obj.rs: pub fn ordinal
+src/value/obj.rs: pub fn tag
+src/value/obj.rs: pub fn ty
+src/value/obj.rs: pub fn ty
+src/value/obj.rs: pub fn type_id
+src/value/obj.rs: pub fn type_id
+src/value/obj.rs: pub fn updated
+src/value/obj.rs: pub fn written
+src/value/obj.rs: pub struct Record
+src/value/obj.rs: pub struct Variant
+src/value/regex.rs: pub struct Compiled
+src/value/tuple.rs: pub struct Tuple
+src/vm/error.rs: pub display_failure
+src/vm/error.rs: pub exit
+src/vm/error.rs: pub fn new
+src/vm/error.rs: pub fn note
+src/vm/error.rs: pub message
+src/vm/error.rs: pub message
+src/vm/error.rs: pub out_of_steps
+src/vm/error.rs: pub returned
+src/vm/error.rs: pub span
+src/vm/error.rs: pub span
+src/vm/error.rs: pub struct DisplayFailure
+src/vm/error.rs: pub struct VmError
+src/vm/error.rs: pub type_name
+src/vm/io.rs: pub fn buffer
+src/vm/io.rs: pub fn clock
+src/vm/io.rs: pub fn contents
+src/vm/io.rs: pub fn new
+src/vm/io.rs: pub fn new
+src/vm/io.rs: pub fn process
+src/vm/io.rs: pub fn take
+src/vm/io.rs: pub struct Buffer
+src/vm/io.rs: pub struct HostIo
+src/vm/io.rs: pub struct SystemClock
+src/vm/io.rs: pub trait Clock
+src/vm/io.rs: pub trait Output
+src/vm/io_op.rs: pub enum IoFailure
+src/vm/io_op.rs: pub fn text
+src/vm/io_op.rs: pub struct Wanted
+src/vm/mod.rs: pub enum Exit
+src/vm/mod.rs: pub fn call_test
+src/vm/mod.rs: pub fn io_pool_live_threads
+src/vm/mod.rs: pub fn io_pool_threads
+src/vm/mod.rs: pub fn new
+src/vm/mod.rs: pub fn panic_for_test
+src/vm/mod.rs: pub fn run_program
+src/vm/mod.rs: pub fn set_exit
+src/vm/mod.rs: pub fn set_step_budget
+src/vm/mod.rs: pub fn set_time_slice
+src/vm/mod.rs: pub fn settle
+src/vm/mod.rs: pub fn slots_set_again
+src/vm/mod.rs: pub fn stop_tasks
+src/vm/mod.rs: pub fn submit_panicking_io_for_test
+src/vm/mod.rs: pub fn wait_until_idle
+src/vm/mod.rs: pub struct Vm
+src/vm/mod.rs: pub use crate::runtime::handle::WriteMoment
+src/vm/mod.rs: pub use crate::runtime::handle::WriteWatching
+src/vm/mod.rs: pub use crate::runtime::handle::watch_writes
+src/vm/mod.rs: pub use crate::scheduler::PanicAt
+src/vm/mod.rs: pub use error::VmError
+src/vm/mod.rs: pub use io::Buffer
+src/vm/mod.rs: pub use io::Clock
+src/vm/mod.rs: pub use io::HostIo
+src/vm/mod.rs: pub use io::Output
+src/vm/mod.rs: pub use io::SystemClock
+src/vm/mod.rs: pub use io_op::IoFailure
+src/vm/show.rs: pub fn show_text
+src/watch.rs: pub discovery
+src/watch.rs: pub entries
+src/watch.rs: pub lock

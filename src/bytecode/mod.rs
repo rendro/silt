@@ -11,21 +11,22 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
-use crate::builtins::registry::BuiltinId;
+use crate::defs::BuiltinId;
 use crate::defs::{DefId, ImplArgs, TraitId, TypeId};
 use crate::layers::{Layers, Rows};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
-pub mod dict;
-pub mod emit;
-pub mod ops;
+pub(crate) mod dict;
+pub(crate) mod emit;
+pub(crate) mod ops;
 pub mod verify;
 
-pub use emit::Emitter;
-pub use ops::{Asm, Instr, Op, Operands, Segments, decode};
-pub use verify::{VerifyError, verify};
+pub(crate) use emit::Emitter;
+pub use ops::Instr;
+pub(crate) use ops::{Asm, Op, Segments, decode};
+pub use verify::verify;
 
 /// A dedup key for simple constant types.  Using a dedicated enum avoids
 /// relying on `Value`'s `Hash`/`Eq` and keeps the dedup scope explicit.
@@ -595,7 +596,7 @@ impl Written {
 // ── Operands the compiler names ────────────────────────────────────
 
 /// A constant of a function, by its index in the function's pool. The
-/// emitter hands them out ([`Emitter::constant`]); the decoder reads
+/// emitter hands them out (`Emitter::constant`); the decoder reads
 /// them back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Const(u16);
@@ -611,7 +612,7 @@ impl Const {
 /// them out ([`Emitter::label`]) and gives each its place
 /// ([`Emitter::bind`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Label(usize);
+pub(crate) struct Label(usize);
 
 /// Describes how to capture an upvalue when creating a closure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -636,7 +637,7 @@ pub enum Segment {
 // ── Chunk ──────────────────────────────────────────────────────────
 
 /// A chunk of bytecode with its constant pool and source mappings. Only
-/// the [`Emitter`] writes one.
+/// the `Emitter` writes one.
 #[derive(Debug, Clone)]
 pub struct Chunk {
     /// The encoded instructions (see [`ops`]).
@@ -805,7 +806,7 @@ impl Chunk {
 // ── Function ───────────────────────────────────────────────────────
 
 /// A compiled function (or the top-level script). Every `Function` has
-/// passed the verifier ([`verify`](mod@verify)): [`Emitter::finish`] is the one way
+/// passed the verifier ([`verify`](mod@verify)): `Emitter::finish` is the one way
 /// to make one, so the VM runs verified code only.
 #[derive(Debug, Clone)]
 pub struct Function {

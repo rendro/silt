@@ -5,12 +5,12 @@
 //! editor-grammar tests, etc.) historically drifted whenever a new
 //! built-in type was added. This module is the single place to add or
 //! remove a built-in type name; every consumer derives from
-//! [`BUILTIN_TYPES`] (or, for editor-grammar text files, is locked
+//! `BUILTIN_TYPES` (or, for editor-grammar text files, is locked
 //! against it by `tests/meta/editor_grammar_primitives_tests.rs`).
 //!
 //! ## Adding a new built-in type
 //!
-//! 1. Add an entry to [`BUILTIN_TYPES`] below.
+//! 1. Add an entry to `BUILTIN_TYPES` below.
 //! 2. Add the surface name to both editor grammars:
 //!    - `editors/vim/syntax/silt.vim` (siltType keyword line)
 //!    - `editors/vscode/syntaxes/silt.tmLanguage.json` (`primitives` regex)
@@ -66,7 +66,7 @@ pub struct BuiltinType {
 /// match arm at `src/typechecker/mod.rs::check_trait_impl`), then
 /// containers (matching the `is_builtin_container` match arm at the
 /// same site). The unit type has one name, `()`.
-pub static BUILTIN_TYPES: &[BuiltinType] = &[
+pub(crate) static BUILTIN_TYPES: &[BuiltinType] = &[
     // ── Primitives ─────────────────────────────────────────────────
     BuiltinType {
         name: "Int",
@@ -165,23 +165,24 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
 /// Look up a built-in type entry by surface name. Returns `None` for
 /// names not in [`BUILTIN_TYPES`] (e.g. user-declared records, type
 /// variables, unrecognised text).
-pub fn lookup(name: &str) -> Option<&'static BuiltinType> {
+pub(crate) fn lookup(name: &str) -> Option<&'static BuiltinType> {
     BUILTIN_TYPES.iter().find(|b| b.name == name)
 }
 
 /// Iterate every authoritative entry, primitives then containers, in
-/// the order declared by [`BUILTIN_TYPES`].
+/// the order declared by `BUILTIN_TYPES`.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn iter_all() -> impl Iterator<Item = &'static BuiltinType> {
     BUILTIN_TYPES.iter()
 }
 
 /// Convenience: is `name` a built-in primitive surface name?
-pub fn is_primitive(name: &str) -> bool {
+pub(crate) fn is_primitive(name: &str) -> bool {
     matches!(lookup(name), Some(b) if b.kind == BuiltinKind::Primitive)
 }
 
 /// Convenience: is `name` a built-in container surface name?
-pub fn is_container(name: &str) -> bool {
+pub(crate) fn is_container(name: &str) -> bool {
     matches!(lookup(name), Some(b) if b.kind == BuiltinKind::Container)
 }
 
@@ -190,7 +191,7 @@ pub fn is_container(name: &str) -> bool {
 /// (`regex.Regex`) and reserves no name, as `time.Weekday` does not.
 /// `None` for a type of the prelude (`Int`, `List`, `Bytes`) and for
 /// any other name.
-pub fn module_of(name: &str) -> Option<&'static str> {
+pub(crate) fn module_of(name: &str) -> Option<&'static str> {
     lookup(name)?;
     let id = crate::defs::builtin_type_id(name)?;
     crate::defs::builtin_types()

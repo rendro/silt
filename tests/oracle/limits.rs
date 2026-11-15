@@ -2,7 +2,7 @@
 //! slice (`Vm::set_time_slice`) and the step budget
 //! (`Vm::set_step_budget`).
 
-use silt::session::testing::compile_given;
+use silt::testing::{VmErrorInside, compile_given};
 use silt::{Buffer, HostIo, Value, Vm, VmError};
 
 /// The value the program gave (`host.give`) or its error, and what the program and the
@@ -109,7 +109,7 @@ fn a_step_budget_ends_a_program_that_does_not_end() {
     let (result, _) = run_whole(endless, |vm| vm.set_step_budget(100_000));
     let error = result.unwrap_err();
     assert!(error.out_of_steps, "{error:?}");
-    assert!(!error.type_confusion);
+    assert!(!error.is_type_confusion());
     assert_eq!(error.message, "the step budget is used up");
     // A runtime error of the program is not that.
     let (result, _) = run_whole("fn main() {\n  host.give(1 / 0)\n}\nimport host\n", |vm| {

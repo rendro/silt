@@ -4,9 +4,9 @@
 //! become the program's `Response` without a panic, with the status,
 //! headers and body that were sent (a gzip body unpacked), and a
 //! redirect is resolved to a URL on the right server
-//! (`silt::fuzz_invariants::check_http_response`).
+//! (`silt::testing::fuzz_invariants::check_http_response`).
 use libfuzzer_sys::fuzz_target;
-use silt::fuzz_invariants::check_http_response;
+use silt::testing::fuzz_invariants::check_http_response;
 
 fuzz_target!(|data: &[u8]| {
     if let Err(e) = check_http_response(data) {

@@ -9,7 +9,7 @@
 //! cases `tests/golden/lang/limits/list_flatten_unfold_bounds__*`.
 
 fn run_err(input: &str) -> String {
-    match silt::session::testing::run_str(input) {
+    match silt::testing::run_str(input) {
         Ok(v) => panic!("expected an error, got {v:?}"),
         Err(e) => e,
     }

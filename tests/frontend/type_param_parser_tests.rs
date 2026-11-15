@@ -10,15 +10,15 @@
 //! The rejection diagnostics and the canonical-format checks live in
 //! golden cases: tests/golden/frontend/{parser,fmt}/type_param_parser__*.silt.
 
-use silt::ast::{Decl, FnDecl, ParamKind, PatternKind};
-fn format_source(source: &str) -> Result<String, silt::diagnostic::Diagnostic> {
-    silt::format::format(silt::source::FileId::default(), source)
+use silt::testing::ast::{Decl, FnDecl, ParamKind, PatternKind};
+fn format_source(source: &str) -> Result<String, silt::testing::diagnostic::Diagnostic> {
+    silt::testing::format::format(silt::testing::source::FileId::default(), source)
 }
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 fn parse_ok(src: &str) -> Vec<Decl> {
-    let tokens = Lexer::new(silt::source::FileId::default(), src)
+    let tokens = Lexer::new(silt::testing::source::FileId::default(), src)
         .tokenize()
         .checked()
         .expect("lexer");
