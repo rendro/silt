@@ -269,7 +269,7 @@ fn test_lsp_help_flag() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // Production message from src/main.rs lsp subcommand help.
+        // Production message from src/cli/lsp.rs (`silt lsp --help`).
         assert!(
             stdout.contains("Usage: silt lsp"),
             "silt lsp {flag}: expected 'Usage: silt lsp' in help output, got: {stdout}"

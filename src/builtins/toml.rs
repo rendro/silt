@@ -198,13 +198,13 @@ impl serde::Serialize for Toml<'_> {
 /// text alike.
 fn literal(data: &Data) -> Result<::toml::value::Datetime, std::string::String> {
     use ::toml::value::Datetime;
-    let date = |date: &data::Date| {
+    let date = |date: &crate::value::Date| {
         let year = u16::try_from(date.year).ok().filter(|year| *year <= 9999)?;
         let (month, day) = (u8::try_from(date.month).ok()?, u8::try_from(date.day).ok()?);
         NaiveDate::from_ymd_opt(year.into(), month.into(), day.into())?;
         Some(::toml::value::Date { year, month, day })
     };
-    let time = |time: &data::Time| {
+    let time = |time: &crate::value::Time| {
         let hour = u8::try_from(time.hour).ok()?;
         let minute = u8::try_from(time.minute).ok()?;
         let second = u8::try_from(time.second).ok()?;

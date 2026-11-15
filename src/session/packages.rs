@@ -29,7 +29,7 @@ pub enum ProjectSetup {
 
 /// One package of a program.
 #[derive(Debug, Clone)]
-pub struct Package {
+pub(crate) struct Package {
     pub id: PackageId,
     /// `[package].name`, unique in a graph; `__local__` for a script.
     pub name: Symbol,
@@ -44,7 +44,7 @@ pub struct Package {
 
 /// The packages of a program.
 #[derive(Debug, Clone)]
-pub struct Packages {
+pub(crate) struct Packages {
     /// Indexed by `PackageId`.
     pub packages: Vec<Package>,
     /// The package the entry files belong to.
@@ -54,12 +54,12 @@ pub struct Packages {
 }
 
 impl Packages {
-    pub fn package(&self, id: PackageId) -> &Package {
+    pub(crate) fn package(&self, id: PackageId) -> &Package {
         &self.packages[id.0 as usize]
     }
 
     /// The package `key` names in `from`'s `[dependencies]`.
-    pub fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId> {
+    pub(crate) fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId> {
         self.package(from)
             .deps
             .iter()
@@ -68,7 +68,7 @@ impl Packages {
     }
 
     /// One unnamed package whose modules are in `src`.
-    pub fn unnamed(src: Option<PathBuf>) -> Packages {
+    pub(crate) fn unnamed(src: Option<PathBuf>) -> Packages {
         Packages {
             packages: vec![Package {
                 id: PackageId(0),

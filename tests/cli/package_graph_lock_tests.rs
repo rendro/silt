@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use silt::diagnostic::Code;
-use silt::git::GitRef;
-use silt::lockfile::{LockedPackage, LockedSource, Lockfile};
-use silt::package_graph::{LockChange, LockPolicy, resolve_packages};
-use silt::source::SourceMap;
+use silt::testing::diagnostic::Code;
+use silt::testing::git::GitRef;
+use silt::testing::lockfile::{LockedPackage, LockedSource, Lockfile};
+use silt::testing::package_graph::{LockChange, LockPolicy, resolve_packages};
+use silt::testing::source::SourceMap;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -60,7 +60,7 @@ fn a_pinned_git_dependency_resolves_without_git() {
 
     // A populated cache directory for the pinned commit, so the package
     // can be read without a clone.
-    let cache_dir = silt::git::cache_for(url, resolved_sha).expect("cache_for");
+    let cache_dir = silt::testing::git::cache_for(url, resolved_sha).expect("cache_for");
     fs::create_dir_all(cache_dir.join("src")).unwrap();
     fs::write(
         cache_dir.join("silt.toml"),
@@ -88,7 +88,8 @@ fn a_pinned_git_dependency_resolves_without_git() {
                 },
                 // The checkout's own: a git checkout is compared with
                 // the checksum the lock pins.
-                checksum: silt::lockfile::checksum_path_source(&cache_dir).expect("checksum"),
+                checksum: silt::testing::lockfile::checksum_path_source(&cache_dir)
+                    .expect("checksum"),
             },
         ],
     };

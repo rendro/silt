@@ -13,7 +13,7 @@
 //! and invites users to type `silt <cmd> --help` for the usage shape.
 //!
 //! The fix factored the disabled-feature branch into the pure
-//! `silt::feature_stub::disabled_feature_response(args, feature,
+//! `silt::testing::feature_stub::disabled_feature_response(args, feature,
 //! usage_text)` helper that returns `(exit_code, output_string)`.
 //! When `--help`/`-h` appears in `args`, it returns
 //! `(0, usage_text)`; otherwise it returns `(1, "<rebuild hint>")`.
@@ -52,7 +52,7 @@ fn help_flag_returns_usage_and_zero_exit_for_repl() {
     let _pid = test_pid();
     let args = vec!["--help".to_string()];
     let usage = "Usage: silt repl\n\nStart an interactive REPL session.\n";
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "repl", usage);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "repl", usage);
     assert_eq!(code, 0, "--help must exit 0, got {code}");
     assert!(
         out.contains("Usage:"),
@@ -74,7 +74,7 @@ fn help_flag_returns_usage_and_zero_exit_for_lsp() {
     let _pid = test_pid();
     let args = vec!["--help".to_string()];
     let usage = "Usage: silt lsp\n\nStart the silt language server. Communicates over stdio...\n";
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "lsp", usage);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "lsp", usage);
     assert_eq!(code, 0, "--help must exit 0, got {code}");
     assert!(
         out.contains("Usage:"),
@@ -92,7 +92,7 @@ fn short_help_flag_returns_usage_and_zero_exit() {
     let _pid = test_pid();
     let args = vec!["-h".to_string()];
     let usage = "Usage: silt repl\n";
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "repl", usage);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "repl", usage);
     assert_eq!(code, 0, "-h must exit 0, got {code}");
     assert!(
         out.contains("Usage:"),
@@ -107,7 +107,7 @@ fn help_flag_works_after_other_args() {
     let _pid = test_pid();
     let args = vec!["--unknown".to_string(), "--help".to_string()];
     let usage = "Usage: silt lsp\n";
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "lsp", usage);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "lsp", usage);
     assert_eq!(code, 0, "--help mixed with other args must still exit 0");
     assert!(out.contains("Usage:"));
 }
@@ -120,7 +120,7 @@ fn empty_args_returns_rebuild_hint_and_exit_one_for_repl() {
     let _pid = test_pid();
     let args: Vec<String> = Vec::new();
     let usage = "Usage: silt repl\n";
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "repl", usage);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "repl", usage);
     assert_eq!(code, 1, "no args must exit 1, got {code}");
     assert!(
         out.contains("feature is not enabled"),
@@ -141,7 +141,7 @@ fn empty_args_returns_rebuild_hint_and_exit_one_for_lsp() {
     let _pid = test_pid();
     let args: Vec<String> = Vec::new();
     let usage = "Usage: silt lsp\n";
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "lsp", usage);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "lsp", usage);
     assert_eq!(code, 1, "no args must exit 1, got {code}");
     assert!(
         out.contains("feature is not enabled"),
@@ -161,7 +161,7 @@ fn non_help_flags_take_the_rebuild_hint_path() {
     let _pid = test_pid();
     let args = vec!["--strict".to_string(), "foo".to_string()];
     let usage = "Usage: silt repl\n";
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "repl", usage);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "repl", usage);
     assert_eq!(code, 1, "non-help args must exit 1");
     assert!(out.contains("feature is not enabled"));
 }
@@ -184,7 +184,7 @@ fn usage_text_contract_is_usage_colon_prefix() {
     // with a newline.
     let banner = "Usage: silt repl\n\nbody\n";
     let args = vec!["--help".to_string()];
-    let (code, out) = silt::feature_stub::disabled_feature_response(&args, "repl", banner);
+    let (code, out) = silt::testing::feature_stub::disabled_feature_response(&args, "repl", banner);
     assert_eq!(code, 0);
     assert!(
         out.starts_with("Usage:"),

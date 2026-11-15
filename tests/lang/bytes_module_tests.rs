@@ -11,10 +11,10 @@
 //! tests/golden/lang/stdlib/bytes_module__*.silt. The map-key test stays
 //! here because it inspects the map value itself.
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 #[test]

@@ -19,10 +19,6 @@
 //! pub enum LockChange { Unchanged, Created, Updated }
 //! pub fn resolve_packages(project_root: &Path, policy: LockPolicy, sources: &mut SourceMap)
 //!     -> Result<PackageGraph, Vec<Diagnostic>>;
-//! impl PackageGraph {
-//!     pub fn package(&self, id: PackageId) -> &PackageNode;
-//!     pub fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId>;
-//! }
 //! ```
 //!
 //! `packages[id.0]` is the node of `id`; the root is `packages[0]`, and
@@ -112,21 +108,6 @@ pub struct PackageGraph {
     pub packages: Vec<PackageNode>,
     /// What happened to `silt.lock`.
     pub lock: LockChange,
-}
-
-impl PackageGraph {
-    pub fn package(&self, id: PackageId) -> &PackageNode {
-        &self.packages[id.0 as usize]
-    }
-
-    /// The package that `key` in `from`'s `[dependencies]` resolves to.
-    pub fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId> {
-        self.package(from)
-            .deps
-            .iter()
-            .find(|(k, _, _)| *k == key)
-            .map(|(_, id, _)| *id)
-    }
 }
 
 /// How `silt.lock` is used.

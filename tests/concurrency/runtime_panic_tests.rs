@@ -6,7 +6,7 @@
 //! the channel only that task would send on, the program's own thread.
 //!
 //! No silt program can make the runtime panic, so the panic is made by
-//! the test-only `silt::vm::panic_for_test`, in the runtime's own code
+//! the test-only `silt::testing::vm::panic_for_test`, in the runtime's own code
 //! and outside every catch of a builtin's panic. No test here asserts a
 //! time: that nothing hangs is shown by the test ending.
 
@@ -15,8 +15,8 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use silt::session::Program;
-use silt::session::testing::compile_str;
-use silt::vm::{PanicAt, panic_for_test};
+use silt::testing::compile_str;
+use silt::testing::vm::{PanicAt, panic_for_test};
 use silt::{Buffer, HostIo, Value, Vm};
 
 fn compiled(source: &str) -> Program {
@@ -96,7 +96,7 @@ fn a_panic_of_a_worker_reaches_the_thread_that_waits_for_the_lost_task() {
 
     let other = Buffer::new();
     let (program, given) =
-        silt::session::testing::compile_given("import host\nfn main() { host.give(6 * 7) }")
+        silt::testing::compile_given("import host\nfn main() { host.give(6 * 7) }")
             .expect("the program compiles");
     let answer = Vm::new(HostIo::buffer(&other)).run_program(&program);
     assert_eq!(answer.map_err(|e| e.message), Ok(()));
@@ -312,7 +312,7 @@ fn a_second_panic_in_the_shutdown_of_a_broken_runtime_is_dropped() {
 /// The library never ends the process, whatever the VM writes to: a VM
 /// on the process's own stdout and stderr, as the `silt` command makes
 /// it, gives the panic of its worker out of the call, and this process
-/// lives to say so. (Only `silt::scheduler::exit_on_panic`, which the
+/// lives to say so. (Only `silt::testing::scheduler::exit_on_panic`, which the
 /// command calls and no test of this binary does, makes a runtime end
 /// the process.)
 #[test]

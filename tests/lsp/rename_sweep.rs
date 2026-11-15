@@ -30,7 +30,7 @@ pub(crate) fn repo() -> &'static Path {
 
 /// A `file://` URI for `path`, as the other LSP tests write them.
 fn uri_of(path: &Path) -> String {
-    silt::lsp::path_to_file_uri(path)
+    silt::testing::lsp::path_to_file_uri(path)
         .map(|uri| uri.as_str().to_string())
         .expect("a file URI")
 }
@@ -370,7 +370,7 @@ pub(crate) fn sweep(
     let _ = std::fs::remove_dir_all(&scratch);
     let root = scratch.join("c");
     copy_dir(case, &root);
-    let root = silt::source::canonical_path(&root);
+    let root = silt::testing::source::canonical_path(&root);
     // A package's lockfile is written once, by the CLI: the server only
     // reads it.
     silt(&root, &["check", run_entry]);
@@ -417,7 +417,7 @@ pub(crate) fn sweep(
             .iter()
             .map(|(name, _)| *name)
             .filter(|name| upper(name) == want_upper)
-            .filter(|name| !silt::lexer::KEYWORDS.contains(name))
+            .filter(|name| !silt::testing::lexer::KEYWORDS.contains(name))
             .take(3)
             .map(str::to_string)
             .collect();

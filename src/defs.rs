@@ -114,8 +114,16 @@ pub enum Res {
     Error,
 }
 
+/// A row's number: what a call of a builtin carries
+/// ([`Instr::CallBuiltin`](crate::bytecode::Instr)) and what a builtin
+/// function is as a value ([`crate::value::Value::BuiltinFn`]). It is the row's place
+/// among all rows ([`crate::builtins::registry::Registry::builtin`]) in this build of silt, and
+/// means nothing in another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BuiltinId(pub(crate) u16);
+
 /// A module: of a session's module graph, an index into
-/// [`crate::session::ModuleGraph::modules`]; or a builtin pseudo-module
+/// `crate::session::ModuleGraph::modules`; or a builtin pseudo-module
 /// (the prelude, `list`, ...). Defined here, below the session, as the
 /// checker and the compiler name modules too.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -163,13 +171,13 @@ impl ModuleId {
 /// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
 /// has no variants and no fields, and the builtin registry lists it with
 /// its module. `None` for any other name.
-pub fn opaque_type_arity(name: &str) -> Option<usize> {
+pub(crate) fn opaque_type_arity(name: &str) -> Option<usize> {
     crate::builtins::registry::registry().opaque_arity(name)
 }
 
 /// The type of a type written as a value (`json.parse(s, Pt)`, a `type a`
 /// parameter): `TypeOf(Pt)`, a prelude type.
-pub const TYPE_OF: &str = "TypeOf";
+pub(crate) const TYPE_OF: &str = "TypeOf";
 
 /// Every builtin type, with the builtin module that declares it (`None`
 /// for the prelude), in the order of their ids: the `k`th is
@@ -179,7 +187,7 @@ pub const TYPE_OF: &str = "TypeOf";
 /// the constants of [`crate::typeinfo::ty`]; then the prelude's, then
 /// each module's: the records and enums the builtin registry declares
 /// for it and its opaque handles.
-pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
+pub(crate) fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
     static TYPES: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
     TYPES.get_or_init(|| {
         let registry = crate::builtins::registry::registry();
@@ -229,7 +237,7 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
 }
 
 /// The traits of the prelude: the first of [`builtin_traits`].
-pub const PRELUDE_TRAITS: &[&str] = &[
+pub(crate) const PRELUDE_TRAITS: &[&str] = &[
     "Compare",
     "Display",
     "Equal",
@@ -246,7 +254,7 @@ pub const PRELUDE_TRAITS: &[&str] = &[
 /// enter them right after the builtin types. The prelude's come first,
 /// then those the builtin registry declares for a module
 /// (`json.Encode`).
-pub fn builtin_traits() -> &'static [(&'static str, Option<&'static str>)] {
+pub(crate) fn builtin_traits() -> &'static [(&'static str, Option<&'static str>)] {
     static TRAITS: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
     TRAITS.get_or_init(|| {
         let registry = crate::builtins::registry::registry();
@@ -261,14 +269,14 @@ pub fn builtin_traits() -> &'static [(&'static str, Option<&'static str>)] {
 
 /// The builtin trait of the id `id`, with the builtin module that
 /// declares it; `None` for the id of any other definition.
-pub fn builtin_trait_of_id(id: DefId) -> Option<(&'static str, Option<&'static str>)> {
+pub(crate) fn builtin_trait_of_id(id: DefId) -> Option<(&'static str, Option<&'static str>)> {
     let k = (id.0 as usize).checked_sub(builtin_types().len())?;
     builtin_traits().get(k).copied()
 }
 
 /// The builtin trait whose method `method` is (`display` of Display,
 /// `encode` of json.Encode); `None` for any other name.
-pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
+pub(crate) fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
     let name = match method {
         "display" => "Display",
         "compare" => "Compare",
@@ -289,13 +297,13 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
 /// and `m.pure(x)` have no value of the type to find its impl by.
 /// (An operator on numbers is still found by the value: the VM's
 /// arithmetic reads it.)
-pub const VALUE_DRIVEN_TRAITS: &[&str] =
+pub(crate) const VALUE_DRIVEN_TRAITS: &[&str] =
     &["Compare", "Display", "Equal", "Hash", "Encode", "Decode"];
 
 /// Whether a value of a type with the trait `t` is passed with the
 /// trait's dictionary: a trait a program declares, or a builtin one that
 /// is not found by the value ([`VALUE_DRIVEN_TRAITS`]).
-pub fn has_dictionary(t: TraitId) -> bool {
+pub(crate) fn has_dictionary(t: TraitId) -> bool {
     // (Asked of every predicate the checker meets: by the builtin
     // trait's place, not its name.)
     static FOUND_BY_VALUE: OnceLock<Vec<bool>> = OnceLock::new();
@@ -310,7 +318,7 @@ pub fn has_dictionary(t: TraitId) -> bool {
 
 /// The id of the builtin trait `name`; `None` when no builtin trait has
 /// that name.
-pub fn builtin_trait_id(name: &str) -> Option<TraitId> {
+pub(crate) fn builtin_trait_id(name: &str) -> Option<TraitId> {
     builtin_traits()
         .iter()
         .position(|(t, _)| *t == name)
@@ -319,7 +327,7 @@ pub fn builtin_trait_id(name: &str) -> Option<TraitId> {
 
 /// The id of the builtin type `name`; `None` when no builtin type has
 /// that name. Builtin type names are unique.
-pub fn builtin_type_id(name: &str) -> Option<TypeId> {
+pub(crate) fn builtin_type_id(name: &str) -> Option<TypeId> {
     static INDEX: OnceLock<HashMap<&'static str, u32>> = OnceLock::new();
     INDEX
         .get_or_init(|| {

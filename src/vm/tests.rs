@@ -4625,7 +4625,7 @@ mod type_confusion {
     /// with the words two closures are refused with.
     #[test]
     fn functions_of_different_kinds_are_functions() {
-        let builtin = || Value::BuiltinFn(crate::builtins::registry::BuiltinId(0));
+        let builtin = || Value::BuiltinFn(crate::defs::BuiltinId(0));
         let constructor = || Value::VariantConstructor(bv::SOME.tag());
         for other in [builtin, constructor] {
             confused("type 'Fn' does not implement Equal", |e| {
@@ -6408,7 +6408,7 @@ mod methods_in_place {
     fn vm_with(receiver: &Value, method: Value) -> Vm {
         let mut globals = crate::bytecode::Globals::default();
         let t = crate::defs::builtin_trait_id("Display").unwrap();
-        let ty = crate::types::canonical::dispatch_type_for_value(receiver);
+        let ty = crate::value::dispatch_type_for_value(receiver);
         assert_eq!(globals.trait_index(t, "T".to_string()), Some(0));
         let slot = globals.add_method(t, ty, "m", "T.m".to_string()).unwrap();
         assert_eq!(globals.method_id("m"), Some(0));

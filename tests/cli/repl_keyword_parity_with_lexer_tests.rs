@@ -14,15 +14,15 @@
 #[test]
 fn repl_builtin_names_is_superset_of_lexer_keywords() {
     let names: std::collections::HashSet<String> =
-        silt::repl::builtin_names().into_iter().collect();
-    for kw in silt::lexer::KEYWORDS {
+        silt::testing::repl::builtin_names().into_iter().collect();
+    for kw in silt::testing::lexer::KEYWORDS {
         assert!(
             names.contains(*kw),
             "REPL builtin_names missing lexer keyword `{kw}` — \
              repl.rs must consume lexer::KEYWORDS directly"
         );
     }
-    for kw in silt::lexer::KEYWORD_LITERALS {
+    for kw in silt::testing::lexer::KEYWORD_LITERALS {
         assert!(
             names.contains(*kw),
             "REPL builtin_names missing lexer keyword literal `{kw}`"
@@ -33,7 +33,7 @@ fn repl_builtin_names_is_superset_of_lexer_keywords() {
 #[test]
 fn repl_includes_short_commands() {
     let names: std::collections::HashSet<String> =
-        silt::repl::builtin_names().into_iter().collect();
+        silt::testing::repl::builtin_names().into_iter().collect();
     for short in &[":quit", ":q", ":help", ":h", ":type", ":doc"] {
         assert!(names.contains(*short));
     }

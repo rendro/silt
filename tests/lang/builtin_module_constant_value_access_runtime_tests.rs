@@ -36,8 +36,8 @@ fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
 #[test]
 fn every_registry_constant_is_value_accessible() {
     let mut checked = 0usize;
-    for &module in silt::module::builtin_modules() {
-        for konst in silt::module::builtin_module_constants(module) {
+    for &module in silt::testing::module::builtin_modules() {
+        for konst in silt::testing::module::builtin_module_constants(module) {
             checked += 1;
             let label = format!("{module}_{konst}");
             // Bind the constant as a first-class value (forces a

@@ -623,13 +623,13 @@ import host
 /// `host_calls_program` takes; it must give `expected`.
 fn host_run_time(source: &str, expected: usize) -> Duration {
     use silt::session::{HostCall, HostModule};
-    use silt::value::Value;
+    use silt::testing::value::Value;
     let host = HostModule::new("h")
         .function(
             "fn getopt(xs: List(Option(a)), i: Int) -> Option(a)",
             |call: &HostCall| {
                 let (Value::List(xs), Value::Int(i)) = (&call.args[0], &call.args[1]) else {
-                    return Err(silt::vm::VmError::new(
+                    return Err(silt::testing::vm::VmError::new(
                         "expected a list and an index".into(),
                     ));
                 };
@@ -641,7 +641,7 @@ fn host_run_time(source: &str, expected: usize) -> Duration {
             |call: &HostCall| Ok(call.args[0].clone()),
         );
     let started = Instant::now();
-    let given = silt::session::testing::run_with_host(&[("main.silt", source)], vec![host]);
+    let given = silt::testing::run_with_host(&[("main.silt", source)], vec![host]);
     let elapsed = started.elapsed();
     assert_eq!(given, Ok(Value::Int(expected as i64)));
     elapsed

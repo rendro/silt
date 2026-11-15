@@ -14,7 +14,7 @@ use crate::intern::{Symbol, intern};
 // ── Type representation ─────────────────────────────────────────────
 
 /// A unique identifier for type variables.
-pub type TyVar = usize;
+pub(crate) type TyVar = usize;
 
 /// An annotation variable inside its own declaration (see
 /// [`Type::Rigid`]): the variable it is in the declaration's scheme, and
@@ -265,6 +265,7 @@ impl Type {
     }
 
     /// `Result(t, e)`.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn result(t: Type, e: Type) -> Type {
         Type::builtin("Result", vec![t, e])
     }
@@ -453,7 +454,7 @@ impl Shown<'_> {
 /// In a name [`Type::show_all`] is given for a type, where the part
 /// that is written after the type's arguments begins: a description of
 /// the type's place (`InErr of package inner`) follows them.
-pub const AFTER_ARGUMENTS: char = '\u{1}';
+pub(crate) const AFTER_ARGUMENTS: char = '\u{1}';
 
 impl std::fmt::Display for Shown<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -651,7 +652,7 @@ pub enum Asked {
 /// A route of `Asked::Through`: the modules of the definitions of other
 /// modules on it, and the functions and methods it passes the type
 /// through.
-pub type ThroughRoute = (Vec<crate::session::ModuleId>, Vec<Symbol>);
+pub(crate) type ThroughRoute = (Vec<crate::defs::ModuleId>, Vec<Symbol>);
 
 impl Asked {
     /// The routes of `Through`.
@@ -661,7 +662,7 @@ impl Asked {
                 let (owners, links) = route.split_once(';').unwrap_or(("", route));
                 let owners = (owners.split(','))
                     .filter_map(|n| n.parse().ok())
-                    .map(crate::session::ModuleId)
+                    .map(crate::defs::ModuleId)
                     .collect();
                 let links = (links.split(' '))
                     .filter(|name| !name.is_empty())
@@ -887,7 +888,7 @@ impl Scheme {
 
 /// The variables of `ty` applied as type constructors (`m` of `m(Int)`),
 /// each once, in the order they first appear.
-pub fn constructor_heads(ty: &Type) -> Vec<TyVar> {
+pub(crate) fn constructor_heads(ty: &Type) -> Vec<TyVar> {
     fn walk(ty: &Type, out: &mut Vec<TyVar>) {
         match ty {
             Type::App(head, arg) => {
@@ -921,7 +922,7 @@ pub fn constructor_heads(ty: &Type) -> Vec<TyVar> {
 
 /// Collect free type variables in a type: each once, in the order they
 /// first appear.
-pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
+pub(crate) fn free_vars_in(ty: &Type) -> Vec<TyVar> {
     fn walk(ty: &Type, out: &mut Distinct<TyVar>) {
         match ty {
             Type::Var(v) => {
@@ -961,7 +962,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
 /// Items each kept once, in the order first pushed. Past a few, a set
 /// says which are kept: a type of many variables is not compared with
 /// itself pair by pair.
-pub struct Distinct<T> {
+pub(crate) struct Distinct<T> {
     pub items: Vec<T>,
     seen: Option<std::collections::HashSet<T>>,
 }
@@ -980,7 +981,7 @@ impl<T: Copy + Eq + std::hash::Hash> Distinct<T> {
     const FEW: usize = 32;
 
     /// Keep `item` unless it is kept already; whether it was new.
-    pub fn push(&mut self, item: T) -> bool {
+    pub(crate) fn push(&mut self, item: T) -> bool {
         let new = match &mut self.seen {
             Some(seen) => seen.insert(item),
             None => !self.items.contains(&item),
@@ -995,7 +996,7 @@ impl<T: Copy + Eq + std::hash::Hash> Distinct<T> {
     }
 
     /// Whether `item` is kept.
-    pub fn contains(&self, item: &T) -> bool {
+    pub(crate) fn contains(&self, item: &T) -> bool {
         match &self.seen {
             Some(seen) => seen.contains(item),
             None => self.items.contains(item),
@@ -1015,7 +1016,7 @@ impl<T: Copy + Eq + std::hash::Hash> FromIterator<T> for Distinct<T> {
 
 /// The type `ty` with each annotation variable of `rigid` written as
 /// the rigid variable it is inside its declaration.
-pub fn rigidify(ty: &Type, rigid: &[RigidId]) -> Type {
+pub(crate) fn rigidify(ty: &Type, rigid: &[RigidId]) -> Type {
     if rigid.is_empty() {
         return ty.clone();
     }
@@ -1025,7 +1026,7 @@ pub fn rigidify(ty: &Type, rigid: &[RigidId]) -> Type {
 
 /// The type `ty` with each rigid variable written as the variable a
 /// scheme quantifies, and those variables, in the order they appear.
-pub fn unrigidify(ty: &Type) -> (Type, Vec<TyVar>) {
+pub(crate) fn unrigidify(ty: &Type) -> (Type, Vec<TyVar>) {
     let mut vars = Vec::new();
     let ty = map_rigid(ty, &mut |r| {
         if !vars.contains(&r.var) {
@@ -1038,7 +1039,7 @@ pub fn unrigidify(ty: &Type) -> (Type, Vec<TyVar>) {
 
 /// The type `ty` with each of the rigid variables `own` written as the
 /// variable a scheme quantifies, and those of them it mentions.
-pub fn release_rigid(ty: &Type, own: &[RigidId]) -> (Type, Vec<TyVar>) {
+pub(crate) fn release_rigid(ty: &Type, own: &[RigidId]) -> (Type, Vec<TyVar>) {
     let mut vars = Vec::new();
     let ty = map_rigid(ty, &mut |r| {
         if !own.contains(&r) {
@@ -1053,7 +1054,7 @@ pub fn release_rigid(ty: &Type, own: &[RigidId]) -> (Type, Vec<TyVar>) {
 }
 
 /// `ty` with each rigid variable replaced by what `f` gives for it.
-pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
+pub(crate) fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
     match ty {
         Type::Rigid(r) => f(*r),
         Type::Fun(params, ret) => {
@@ -1084,7 +1085,8 @@ pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
 /// `ty` with each named type `r` replaced by `f(r)`: the same type with
 /// another name to show (`regex.Regex` for the builtin `Regex` where the
 /// bare name means a program's type).
-pub fn map_refs(ty: &Type, f: &impl Fn(TypeRef) -> TypeRef) -> Type {
+#[cfg(feature = "lsp")]
+pub(crate) fn map_refs(ty: &Type, f: &impl Fn(TypeRef) -> TypeRef) -> Type {
     let each = |ts: &[Type]| ts.iter().map(|t| map_refs(t, f)).collect::<Vec<_>>();
     let boxed = |t: &Type| Box::new(map_refs(t, f));
     match ty {
@@ -1118,7 +1120,7 @@ pub fn map_refs(ty: &Type, f: &impl Fn(TypeRef) -> TypeRef) -> Type {
 /// Whether `at` is the type `general` with a type for each of its
 /// variables, which `stands` then holds. (Where the two differ in
 /// more than that the answer is no: the caller takes it for unknown.)
-pub fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>) -> bool {
+pub(crate) fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>) -> bool {
     let mut all = |general: &[Type], at: &[Type]| {
         general.len() == at.len()
             && general
@@ -1154,7 +1156,7 @@ pub fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>)
 }
 
 /// Substitute type variables according to a mapping.
-pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
+pub(crate) fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
     match ty {
         Type::Var(v) => {
             if let Some(replacement) = mapping.get(v) {
@@ -1197,7 +1199,7 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
 /// Substitute enum type parameters with concrete type arguments.
 /// This is used when we know e.g. Result(Int, String) and want to
 /// resolve the type of a variant's field.
-pub fn substitute_enum_params(
+pub(crate) fn substitute_enum_params(
     field_ty: &Type,
     param_var_ids: &[TyVar],
     type_args: &[Type],

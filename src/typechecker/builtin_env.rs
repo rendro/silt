@@ -82,6 +82,7 @@ pub(super) fn builtin_scheme(def: &crate::defs::Def) -> Option<Scheme> {
 
 /// Return a map of builtin qualified names to their type signature strings.
 /// Used by the LSP to show type info in completions.
+#[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
 pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
     let env = builtin_env();
     let (mut checker, _) = env.start();
@@ -98,6 +99,7 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
 }
 
 /// The part of a qualified name before its first dot.
+#[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
 fn module_of(qualified: &str) -> &str {
     qualified.split('.').next().unwrap_or(qualified)
 }
@@ -263,7 +265,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
         for id in variants {
             if let Some(scheme) = checker.tables.schemes.remove(id) {
                 let variant = defs.defs[id.0 as usize].name;
-                if of.module == crate::session::ModuleId::PRELUDE {
+                if of.module == crate::defs::ModuleId::PRELUDE {
                     env.define(variant, scheme.clone());
                 }
                 env.define(intern(&format!("{}.{variant}", of.name)), scheme);
@@ -412,7 +414,6 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
 /// Stringifies the `Symbol` keys so test code doesn't need access to
 /// the crate-private `Symbol`/`intern` types.
 #[cfg(any(test, feature = "test-hooks"))]
-#[doc(hidden)]
 pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
     let mut checker = TypeChecker::new();
@@ -439,7 +440,6 @@ pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<St
 ///
 /// Used by `tests/typecheck/unified_trait_registration_tests.rs`.
 #[cfg(any(test, feature = "test-hooks"))]
-#[doc(hidden)]
 pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     String,
     String,

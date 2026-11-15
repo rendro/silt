@@ -750,13 +750,13 @@ fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
 /// check, check --format, test, fmt, fmt --check, repl, lsp, disasm) but
 /// omitted `silt init`, even though `silt init` is the very first
 /// command the same file tells the user to run in the "Your first
-/// program" section and is listed both in `src/main.rs` help output and
+/// program" section and is listed both in `src/cli/mod.rs` help output and
 /// README.md.
 ///
 /// This test extracts the set of subcommands from `silt --help` output
-/// (the authoritative list in src/main.rs) and asserts that every one of
+/// (the authoritative list in src/cli/mod.rs) and asserts that every one of
 /// them appears in the Tooling block of getting-started.md. If a new
-/// subcommand is added to src/main.rs without updating this doc, the
+/// subcommand is added to src/cli/mod.rs without updating this doc, the
 /// walker fails with a precise pointer at the missing command.
 #[test]
 fn test_getting_started_tooling_block_matches_main_help() {
@@ -840,7 +840,7 @@ fn test_getting_started_tooling_block_matches_main_help() {
     assert!(
         missing.is_empty(),
         "{}: Tooling block is missing subcommand(s) {:?} that appear in \
-         `silt --help` (authoritative list from src/main.rs). Add a line \
+         `silt --help` (authoritative list from src/cli/mod.rs). Add a line \
          for each missing subcommand so the doc stays in sync.\n\nTooling \
          block:\n{}\n\nHelp output:\n{}",
         gs_path.display(),

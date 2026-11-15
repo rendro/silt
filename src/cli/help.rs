@@ -1,5 +1,5 @@
 //! Top-level help text, usage banners, and the shared signature/description
-//! alignment plumbing. Pulled out of `main.rs` so the banner helpers can
+//! alignment plumbing. Kept apart from the dispatcher so the banner helpers can
 //! share one source-of-truth and the `tests/cli/cli_help_rows_and_banners_tests.rs` lockers
 //! keep passing across refactors.
 
@@ -231,5 +231,21 @@ mod tests {
         assert_eq!(shell_word(""), "\"\"");
         assert_eq!(shell_word("a$b`c\"d\\e"), "\"a\\$b\\`c\\\"d\\\\e\"");
         assert_eq!(shell_word("it's"), "\"it's\"");
+    }
+
+    /// The usage text has a row for each command of `cli::COMMANDS`, and
+    /// names no other: a command added to the table without a row, or a
+    /// row left for a command that is gone, fails here.
+    #[test]
+    fn the_usage_rows_are_the_commands() {
+        let text = usage_text();
+        let rows: std::collections::BTreeSet<&str> = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("  silt "))
+            .filter_map(|rest| rest.split_whitespace().next())
+            .collect();
+        let commands: std::collections::BTreeSet<&str> =
+            crate::cli::COMMANDS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(rows, commands);
     }
 }

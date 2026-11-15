@@ -1,5 +1,5 @@
 //! Values from the command line, from manifests and from the file
-//! system are shown by one display rule (`silt::git::escape_for_display`):
+//! system are shown by one display rule (`silt::testing::git::escape_for_display`):
 //! a control or invisible character is printed as an escape such as
 //! `\t`, so it cannot split a line of output or drive the terminal.
 //!

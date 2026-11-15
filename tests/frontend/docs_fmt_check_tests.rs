@@ -8,7 +8,7 @@
 //! error) is not checked. A block in a list item is read without the
 //! item's indentation.
 
-use silt::source::FileId;
+use silt::testing::source::FileId;
 
 use crate::fmt_property::doc_snippets;
 
@@ -33,7 +33,7 @@ const SKIP: [(&str, &str); 5] = [
 ];
 
 fn format(text: &str) -> Option<String> {
-    silt::format::format(FileId::default(), text).ok()
+    silt::testing::format::format(FileId::default(), text).ok()
 }
 
 /// `block` as a program, formatted.

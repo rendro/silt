@@ -13,12 +13,12 @@
 //!      consulted `builtin_module_constants`, so editor autocompletion
 //!      failed to suggest `math.pi`, `float.max_value`, etc.
 //!
-//! The L8 checks call into `silt::module` directly. The G5 checks spawn
+//! The L8 checks call into `silt::testing::module` directly. The G5 checks spawn
 //! the compiled `silt lsp` binary and drive it over stdin/stdout using
 //! the same framing helpers as `tests/lsp/lsp.rs`, because `dot_completions`
 //! is a private method on the LSP server struct.
 
-use silt::module;
+use silt::testing::module;
 
 // ── L8: direct tests against `builtin_module_constants` ───────────
 

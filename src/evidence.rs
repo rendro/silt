@@ -17,7 +17,7 @@ use crate::source::Span;
 /// The definition an impl's evidence of its supertraits names
 /// ([`Evidence::Param`]): the impl's header, whose bounds are the
 /// predicates it asks, in order.
-pub const IMPL_HEADER: Span = Span::BUILTIN;
+pub(crate) const IMPL_HEADER: Span = Span::BUILTIN;
 
 /// What proves that a type implements a trait.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,7 +64,7 @@ pub enum Evidence {
 /// the session) and the predicate's place among its evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Late {
-    pub cell: crate::session::ModuleId,
+    pub cell: crate::defs::ModuleId,
     pub id: u32,
 }
 

@@ -107,7 +107,7 @@ pub enum LockedSource {
     /// Path-style dependency. `path` is the package's root as the
     /// lockfile writes it: relative to the directory of the `silt.toml`
     /// the lockfile belongs to, with `/` between its parts
-    /// ([`relative_path`]), so that a package that is moved or checked
+    /// (`relative_path`), so that a package that is moved or checked
     /// out elsewhere with its dependencies keeps its lockfile; absolute
     /// only where there is no relative form (another drive).
     Path { path: PathBuf },
@@ -182,7 +182,7 @@ impl Lockfile {
     /// the same versions and sources. Checksums are not compared: a git
     /// checkout's is compared when it is loaded, and content drift in a
     /// path dep is what `silt update` is for.
-    pub fn same_pins(&self, other: &Lockfile) -> bool {
+    pub(crate) fn same_pins(&self, other: &Lockfile) -> bool {
         let key = |lock: &Lockfile| {
             let mut entries: Vec<(String, String, LockedSource)> = lock
                 .packages
@@ -199,7 +199,7 @@ impl Lockfile {
     /// directory it names from `base` (the directory of the lock):
     /// `same_pins` but for how a path is written (an old lockfile that
     /// wrote it absolute).
-    pub fn same_places(&self, other: &Lockfile, base: &Path) -> bool {
+    pub(crate) fn same_places(&self, other: &Lockfile, base: &Path) -> bool {
         let sorted = |lock: &Lockfile| {
             let mut entries: Vec<LockedPackage> = lock.packages.clone();
             entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -216,7 +216,7 @@ impl Lockfile {
 impl LockedSource {
     /// Whether `self` and `other` are one source: a path entry by the
     /// directory it names from `base`, however it is written.
-    pub fn same_place(&self, other: &LockedSource, base: &Path) -> bool {
+    pub(crate) fn same_place(&self, other: &LockedSource, base: &Path) -> bool {
         match (self, other) {
             (LockedSource::Path { path: a }, LockedSource::Path { path: b }) => {
                 normalize_path(&base.join(a)) == normalize_path(&base.join(b))
@@ -285,7 +285,7 @@ pub fn checksum_path_source(pkg_root: &Path) -> Result<String, ChecksumError> {
         hasher.update(hash.as_bytes());
         hasher.update(b"\n");
     }
-    Ok(format!("sha256:{:x}", hasher.finalize()))
+    Ok(format!("sha256:{}", lower_hex(&hasher.finalize())))
 }
 
 // ── Internals ──────────────────────────────────────────────────────────
@@ -331,7 +331,7 @@ pub fn normalize_path(p: &Path) -> PathBuf {
 /// stores it (`silt.toml`, `silt.lock`) reads the same everywhere;
 /// `None` when there is no relative form: one of the two is absolute
 /// and the other is not, or they are on two drives.
-pub fn relative_path(base: &Path, target: &Path) -> Option<String> {
+pub(crate) fn relative_path(base: &Path, target: &Path) -> Option<String> {
     use std::path::Component;
     if base.is_absolute() != target.is_absolute() {
         return None;
@@ -369,7 +369,17 @@ impl From<std::io::Error> for ChecksumError {
 fn file_hash(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    lower_hex(&hasher.finalize())
+}
+
+/// `bytes` in lower-case hexadecimal, two digits a byte.
+pub(crate) fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(hex, "{byte:02x}").expect("a write to a String does not fail");
+    }
+    hex
 }
 
 /// Hash the `.silt` files under `dir` into `out`, keyed by their path

@@ -15,8 +15,8 @@ pub struct TaskId(pub u64);
 /// The scheduler, as this module sees it.
 pub trait Wake: Send + Sync {
     /// The wait of the parked task `task` has ended: count it as
-    /// runnable and queue it. Called once for each park that
-    /// [`Parked::commit`](super::Parked::commit) confirmed, from
+    /// runnable and queue it. Called once for each park whose
+    /// [`Token::commit`] confirmed it (`Parking::park` commits), from
     /// whichever thread ended the wait, with no lock of this module
     /// held.
     fn wake(&self, task: TaskId);
@@ -24,7 +24,7 @@ pub trait Wake: Send + Sync {
 
 /// How an arm of a wait was completed.
 #[derive(Debug)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     /// A receive arm took this value.
     Received(Value),
     /// A send arm's value was taken by the channel.
@@ -41,7 +41,7 @@ pub enum Outcome {
 
 /// How a wait ended.
 #[derive(Debug)]
-pub enum Fired {
+pub(crate) enum Fired {
     /// The arm at this index of [`Wait::arms`](super::Wait) was
     /// completed.
     Arm(usize, Outcome),
@@ -51,7 +51,7 @@ pub enum Fired {
 
 /// What a task finds when it comes back from a park.
 #[derive(Debug)]
-pub enum Resumed {
+pub(crate) enum Resumed {
     Fired(Fired),
     /// The task was cancelled while it waited. No arm was completed:
     /// it took no value and sent none.
@@ -175,7 +175,12 @@ impl Token {
         }
     }
 
-    /// See [`Parked::commit`](super::Parked::commit).
+    /// Give the task up: `true` when it is parked, and one
+    /// [`Wake::wake`] will name it when its wait ends; `false` when the
+    /// wait has ended already and no wake comes, so the caller still has
+    /// the task. The caller has already put the task where a wake finds
+    /// it: the wake can come before `commit` returns. (`Parking::park`
+    /// calls it, on `Parked::token`.)
     pub(super) fn commit(&self) -> bool {
         let mut state = self.state.lock();
         match *state {

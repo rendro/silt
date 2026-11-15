@@ -7,7 +7,7 @@
 //! newly registered enum whose module says nothing of its variants
 //! fails.
 
-use silt::module::builtin_error_enum_variants_with_arity;
+use silt::testing::module::builtin_error_enum_variants_with_arity;
 
 // ── Behavioural lock ────────────────────────────────────────────────
 

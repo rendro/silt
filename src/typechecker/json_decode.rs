@@ -26,7 +26,7 @@ pub(crate) struct DecodeGap {
     asker: Option<Asker>,
     /// The modules whose definitions, at this use, ask for the type: each
     /// may decode an opaque type of its own.
-    owners: Vec<crate::session::ModuleId>,
+    owners: Vec<crate::defs::ModuleId>,
 }
 
 /// A route by which a body hands the type of an annotation variable to a
@@ -35,7 +35,7 @@ pub(crate) struct DecodeGap {
 pub(crate) enum OwnerRoute {
     /// To a definition of this module (none), or through definitions of
     /// other modules (each of them).
-    Direct(Vec<crate::session::ModuleId>),
+    Direct(Vec<crate::defs::ModuleId>),
     /// On to the bound of a variable of a definition of this module.
     Passed(TyVar),
 }
@@ -195,7 +195,7 @@ impl TypeChecker {
         &mut self,
         ty: &Type,
         origin: Origin,
-        owners: &[crate::session::ModuleId],
+        owners: &[crate::defs::ModuleId],
     ) {
         fn walk(ty: &Type, out: &mut Vec<Type>) {
             match ty {
@@ -284,7 +284,7 @@ impl TypeChecker {
         ty: &Type,
         origin: Origin,
         asker: Option<Asker>,
-        owners: Vec<crate::session::ModuleId>,
+        owners: Vec<crate::defs::ModuleId>,
     ) {
         // (A type held with its arguments left open, `let t = List`, is
         // refused as one given so.)
@@ -309,7 +309,7 @@ impl TypeChecker {
         &mut self,
         ty: &Type,
         origin: Origin,
-        owners: Vec<crate::session::ModuleId>,
+        owners: Vec<crate::defs::ModuleId>,
     ) {
         self.decodes_through_calls.push(DecodeGap {
             subject: self.apply(ty),
@@ -385,7 +385,7 @@ impl TypeChecker {
         &mut self,
         r: RigidId,
         encode: bool,
-        (mut owners, passed): (Vec<crate::session::ModuleId>, Option<TyVar>),
+        (mut owners, passed): (Vec<crate::defs::ModuleId>, Option<TyVar>),
         asker: Option<Asker>,
     ) {
         let var = self.rigid_rep_var(r.var);
@@ -411,11 +411,11 @@ impl TypeChecker {
     pub(super) fn owners_at(
         &self,
         ev: Option<super::evidence::EvRef>,
-    ) -> Vec<crate::session::ModuleId> {
+    ) -> Vec<crate::defs::ModuleId> {
         let Some(ev) = ev else {
             return Vec::new();
         };
-        let mut owners: Vec<crate::session::ModuleId> =
+        let mut owners: Vec<crate::defs::ModuleId> =
             self.owed_for.get(&ev).copied().into_iter().collect();
         owners.extend(self.owed_also.get(&ev).into_iter().flatten());
         owners
@@ -423,7 +423,7 @@ impl TypeChecker {
 
     /// The asker of a route by which the decoder's bound on `var` refuses
     /// an opaque type of `module`: one whose owner is not that module.
-    fn refused_route(&self, var: TyVar, module: crate::session::ModuleId) -> Option<Asker> {
+    fn refused_route(&self, var: TyVar, module: crate::defs::ModuleId) -> Option<Asker> {
         let routes = self.owner_routes.get(&(var, false))?;
         (routes.iter()).find_map(|(route, asker)| {
             let owners = match route {
@@ -436,7 +436,7 @@ impl TypeChecker {
 
     /// The module of an opaque type of another module that decoding `ty`
     /// builds, at the top or in a type argument at any depth.
-    fn opaque_module_in(&self, ty: &Type) -> Option<crate::session::ModuleId> {
+    fn opaque_module_in(&self, ty: &Type) -> Option<crate::defs::ModuleId> {
         match ty {
             Type::Generic(head, args) => {
                 let opaque = self
@@ -458,7 +458,7 @@ impl TypeChecker {
     /// decodes (or `encodes`) the type of the annotation variable `var`:
     /// any of them decodes or encodes its own opaque types there. None
     /// where a route is this module's own.
-    pub(super) fn route_owner(&self, var: TyVar, encode: bool) -> Vec<crate::session::ModuleId> {
+    pub(super) fn route_owner(&self, var: TyVar, encode: bool) -> Vec<crate::defs::ModuleId> {
         let var = self.rigid_rep_var(var);
         self.route_owner_in(var, encode, &mut Vec::new())
             .unwrap_or_default()
@@ -471,7 +471,7 @@ impl TypeChecker {
         var: TyVar,
         encode: bool,
         seen: &mut Vec<TyVar>,
-    ) -> Option<Vec<crate::session::ModuleId>> {
+    ) -> Option<Vec<crate::defs::ModuleId>> {
         if seen.contains(&var) {
             return None;
         }
@@ -479,7 +479,7 @@ impl TypeChecker {
             return Some(Vec::new());
         };
         seen.push(var);
-        let mut found: Option<Vec<crate::session::ModuleId>> = None;
+        let mut found: Option<Vec<crate::defs::ModuleId>> = None;
         for (route, _) in routes {
             let owners = match route {
                 OwnerRoute::Direct(owners) => Some(owners.clone()),
@@ -587,7 +587,7 @@ impl TypeChecker {
     fn encoded_through(
         &self,
         mut asked: Asked,
-        refused: Option<crate::session::ModuleId>,
+        refused: Option<crate::defs::ModuleId>,
     ) -> Option<(Vec<Symbol>, Symbol)> {
         let mut links = Vec::new();
         let mut seen = Vec::new();
@@ -913,7 +913,7 @@ impl TypeChecker {
     fn passed_through_refused(
         &self,
         asker: Option<Asker>,
-        refused: Option<crate::session::ModuleId>,
+        refused: Option<crate::defs::ModuleId>,
     ) -> Vec<Symbol> {
         let routes = self.passed_through_routes(asker, Some(refused));
         (routes.into_iter().next()).map_or_else(Vec::new, |(_, links)| links)
@@ -928,7 +928,7 @@ impl TypeChecker {
     fn passed_through_routes(
         &self,
         asker: Option<Asker>,
-        refused: Option<Option<crate::session::ModuleId>>,
+        refused: Option<Option<crate::defs::ModuleId>>,
     ) -> Vec<crate::types::ThroughRoute> {
         let mut links = Vec::new();
         let mut seen = Vec::new();
@@ -951,7 +951,7 @@ impl TypeChecker {
                     // (A route through a function of the type's own
                     // module, `mail.load`, decodes it: not the one that
                     // refuses it.)
-                    let own = |module: crate::session::ModuleId, links: &[Symbol]| {
+                    let own = |module: crate::defs::ModuleId, links: &[Symbol]| {
                         let name = self.tables.module_names.get(&module).copied();
                         name.is_some_and(|name| {
                             let prefix = format!("{name}.");
@@ -1252,7 +1252,7 @@ impl TypeChecker {
         builtin: &str,
         written: Option<Symbol>,
         ty: &Type,
-        (owner, span): (&[crate::session::ModuleId], Span),
+        (owner, span): (&[crate::defs::ModuleId], Span),
     ) -> Option<Diagnostic> {
         match ty {
             Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,

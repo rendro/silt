@@ -10,9 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use silt::diagnostic::Diagnostic;
-use silt::manifest::Manifest;
-use silt::source::SourceMap;
+use silt::testing::diagnostic::Diagnostic;
+use silt::testing::manifest::Manifest;
+use silt::testing::source::SourceMap;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -83,19 +83,33 @@ fn manifest_rejects_unknown_section() {
 fn manifest_accepts_well_known_fields() {
     // `description` is not yet a recognized [package] field in silt; once
     // (and if) it lands, this test should be updated. For now we use the
-    // currently-recognized keys — `name`, `version`, `edition` — to
-    // confirm that the deny_unknown_fields gate doesn't break valid
-    // manifests.
+    // currently-recognized keys — `name`, `version` — to confirm that the
+    // deny_unknown_fields gate doesn't break valid manifests.
     let good = r#"
         [package]
         name = "x"
         version = "0.1.0"
-        edition = "2026"
     "#;
     let result = parse_manifest_str(good);
     assert!(
         result.is_ok(),
         "manifest with no unknown keys must still parse, got: {:?}",
         result.err()
+    );
+}
+
+#[test]
+fn edition_is_no_key_of_the_package_table() {
+    // silt has no editions: `edition` under `[package]` is an unknown key
+    // like any other.
+    let with_edition = r#"
+        [package]
+        name = "x"
+        version = "0.1.0"
+        edition = "2026"
+    "#;
+    assert!(
+        parse_manifest_str(with_edition).is_err(),
+        "`edition` must be refused as an unknown key"
     );
 }

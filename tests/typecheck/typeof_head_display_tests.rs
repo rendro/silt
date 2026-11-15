@@ -15,15 +15,15 @@
 /// relies on now that it formats via the parent `Type` values.
 #[test]
 fn typeof_head_renders_as_surface_type_form() {
-    use silt::intern::intern;
-    use silt::types::Type;
+    use silt::testing::intern::intern;
+    use silt::testing::types::Type;
 
     // Build `Type::Generic("TypeOf", [Generic("Person", [])])` —
     // exactly what flows through the `(Generic, Generic)` arm when a
     // user-declared record `Person` is used as a type descriptor.
     let person = Type::Generic(
-        silt::types::TypeRef {
-            id: silt::defs::TypeId(silt::defs::DefId(u32::MAX - 1)),
+        silt::testing::types::TypeRef {
+            id: silt::testing::defs::TypeId(silt::testing::defs::DefId(u32::MAX - 1)),
             name: intern("Person"),
         },
         vec![],

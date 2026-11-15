@@ -18,32 +18,10 @@
 //! | [`Emitter::assume_height`]`(height)` | In unreachable code, what the height would be. |
 //! | [`Emitter::finish`]`(upvalues)` | Verify the code and give the function, which captures `upvalues` values. |
 //!
-//! `if x { 1 } else { 2 }` for a function of one parameter `x`:
-//!
-//! ```
-//! use silt::bytecode::{Asm, Emitter};
-//! use silt::source::Span;
-//! use silt::value::Value;
-//!
-//! let span = Span::BUILTIN;
-//! let mut e = Emitter::new("pick".to_string(), 1, span)?;
-//! let one = e.constant(Value::Int(1), span)?;
-//! let two = e.constant(Value::Int(2), span)?;
-//! let otherwise = e.label();
-//! let end = e.label();
-//! e.emit(Asm::GetLocal { slot: 0 }, span)?; // height 2
-//! e.emit(Asm::JumpIfFalse { to: otherwise }, span)?; // height 1
-//! e.emit(Asm::Constant { k: one }, span)?; // height 2
-//! e.emit(Asm::Jump { to: end }, span)?; // the next instruction is unreachable
-//! e.bind(otherwise, span)?; // reachable again, height 1
-//! e.emit(Asm::Constant { k: two }, span)?;
-//! e.bind(end, span)?;
-//! assert_eq!(e.height(), 2);
-//! e.emit(Asm::Return, span)?;
-//! let function = e.finish(0)?;
-//! assert_eq!(function.arity(), 1);
-//! # Ok::<(), silt::diagnostic::Diagnostic>(())
-//! ```
+//! `if x { 1 } else { 2 }` for a function of one parameter `x` is the
+//! unit test `an_if_with_an_else_is_two_labels` among this file's tests
+//! (a test, not a doc example: the module is the crate's own, which a
+//! doc example cannot reach).
 //!
 //! # Operands
 //!
@@ -113,7 +91,7 @@ struct LabelState {
 }
 
 /// See the [module documentation](self).
-pub struct Emitter {
+pub(crate) struct Emitter {
     function: Function,
     height: usize,
     reachable: bool,
@@ -202,7 +180,7 @@ impl Emitter {
     /// An emitter for a function named `name` that takes `arity`
     /// arguments; more than a function can take is a compile limit at
     /// `span`.
-    pub fn new(name: String, arity: usize, span: Span) -> Result<Self, Diagnostic> {
+    pub(crate) fn new(name: String, arity: usize, span: Span) -> Result<Self, Diagnostic> {
         let narrowed = narrow_u8(arity, "parameters of a function")
             .map_err(|limit| limit_diagnostic(limit, span))?;
         Ok(Emitter {
@@ -223,30 +201,30 @@ impl Emitter {
     }
 
     /// The name of the function being emitted.
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.function.name
     }
 
     /// The number of values in the frame where the next instruction
     /// runs. In unreachable code, a nominal height.
-    pub fn height(&self) -> usize {
+    pub(crate) fn height(&self) -> usize {
         self.height
     }
 
     /// Whether control can reach the next instruction.
-    pub fn reachable(&self) -> bool {
+    pub(crate) fn reachable(&self) -> bool {
         self.reachable
     }
 
     /// Whether the code so far is complete as a function's: its last
     /// instruction ends the function's run, and control cannot reach
     /// what would come next.
-    pub fn ended(&self) -> bool {
+    pub(crate) fn ended(&self) -> bool {
         self.ended && !self.reachable
     }
 
     /// In unreachable code: what the height would be here.
-    pub fn assume_height(&mut self, height: usize) {
+    pub(crate) fn assume_height(&mut self, height: usize) {
         debug_assert!(!self.reachable, "the height of reachable code is known");
         if !self.reachable {
             self.height = height;
@@ -254,7 +232,7 @@ impl Emitter {
     }
 
     /// The constant `value` of the function.
-    pub fn constant(&mut self, value: Value, span: Span) -> Result<Const, Diagnostic> {
+    pub(crate) fn constant(&mut self, value: Value, span: Span) -> Result<Const, Diagnostic> {
         let count = self.function.chunk.constants.len() + 1;
         self.function.chunk.add_constant(value).ok_or_else(|| {
             let limit = Limit {
@@ -279,7 +257,7 @@ impl Emitter {
     /// A `SetLocal` of the slot the value on top is in is no instruction
     /// at all: the value is there already (it would be copied over
     /// itself, a count up and down of a list or a string).
-    pub fn emit(&mut self, asm: Asm<'_>, span: Span) -> Result<(), Diagnostic> {
+    pub(crate) fn emit(&mut self, asm: Asm<'_>, span: Span) -> Result<(), Diagnostic> {
         if let Asm::SetLocal { slot } = asm
             && self.reachable
             && slot + 1 == self.height
@@ -363,14 +341,14 @@ impl Emitter {
     }
 
     /// A new label, to be bound.
-    pub fn label(&mut self) -> Label {
+    pub(crate) fn label(&mut self) -> Label {
         self.labels.push(LabelState::default());
         Label(self.labels.len() - 1)
     }
 
     /// Place `label` at the next instruction: the jumps waiting for it
     /// go here.
-    pub fn bind(&mut self, label: Label, span: Span) -> Result<(), Diagnostic> {
+    pub(crate) fn bind(&mut self, label: Label, span: Span) -> Result<(), Diagnostic> {
         self.bind_over(label, "bytes of code in a branch", span)
     }
 
@@ -378,7 +356,7 @@ impl Emitter {
     /// a program has too much of (`"bytes of code in a match arm"`)
     /// when a conditional jump, which reaches 65,535 bytes forward,
     /// cannot get here. `span` is blamed then.
-    pub fn bind_over(
+    pub(crate) fn bind_over(
         &mut self,
         label: Label,
         over: &'static str,
@@ -422,26 +400,26 @@ impl Emitter {
     }
 
     /// How many of the function's first parameters are hidden.
-    pub fn hidden(&self) -> usize {
+    pub(crate) fn hidden(&self) -> usize {
         self.function.hidden()
     }
 
     /// The first `n` of the function's parameters are hidden (the
     /// dictionaries of a definition with bounds).
-    pub fn hidden_params(&mut self, n: usize) {
+    pub(crate) fn hidden_params(&mut self, n: usize) {
         self.function.hidden = u8::try_from(n).unwrap_or(u8::MAX);
     }
 
     /// The function is a method of an impl of a program's trait: a call
     /// leaves the impl's dictionary in the slot of the callee.
-    pub fn takes_dict_slot(&mut self) {
+    pub(crate) fn takes_dict_slot(&mut self) {
         self.function.dict_slot = true;
     }
 
     /// The function, with `upvalue_count` upvalues (more than a closure
     /// can capture is a compile limit). Its code is verified: malformed
     /// code is a compiler bug, reported here and never run.
-    pub fn finish(mut self, upvalue_count: usize) -> Result<Function, Diagnostic> {
+    pub(crate) fn finish(mut self, upvalue_count: usize) -> Result<Function, Diagnostic> {
         let span = self
             .function
             .chunk
@@ -546,7 +524,7 @@ fn function_too_large(count: usize) -> Limit {
 
 /// The compile error for a limit of the bytecode: the one wording every
 /// limit has.
-pub fn limit_diagnostic(limit: Limit, span: Span) -> Diagnostic {
+pub(crate) fn limit_diagnostic(limit: Limit, span: Span) -> Diagnostic {
     let Limit { what, count, max } = limit;
     let diagnostic = Diagnostic::error(
         Code::CompileLimit,
@@ -567,7 +545,7 @@ pub fn limit_diagnostic(limit: Limit, span: Span) -> Diagnostic {
 /// of a function the VM has: each bound is a parameter, hidden. `None`
 /// when they fit, or when there is no bound (the plain limit of
 /// parameters then says it).
-pub fn bounds_past_limit(params: usize, bounds: usize, span: Span) -> Option<Diagnostic> {
+pub(crate) fn bounds_past_limit(params: usize, bounds: usize, span: Span) -> Option<Diagnostic> {
     let (count, max) = (params + bounds, usize::from(u8::MAX));
     (bounds > 0 && count > max).then(|| {
         let limit = Limit {
@@ -587,6 +565,31 @@ mod tests {
 
     fn span() -> Span {
         Span::BUILTIN
+    }
+
+    /// The module's example: `if x { 1 } else { 2 }` for a function of
+    /// one parameter `x`.
+    #[test]
+    fn an_if_with_an_else_is_two_labels() -> Result<(), crate::diagnostic::Diagnostic> {
+        use crate::value::Value;
+        let span = Span::BUILTIN;
+        let mut e = Emitter::new("pick".to_string(), 1, span)?;
+        let one = e.constant(Value::Int(1), span)?;
+        let two = e.constant(Value::Int(2), span)?;
+        let otherwise = e.label();
+        let end = e.label();
+        e.emit(Asm::GetLocal { slot: 0 }, span)?; // height 2
+        e.emit(Asm::JumpIfFalse { to: otherwise }, span)?; // height 1
+        e.emit(Asm::Constant { k: one }, span)?; // height 2
+        e.emit(Asm::Jump { to: end }, span)?; // the next instruction is unreachable
+        e.bind(otherwise, span)?; // reachable again, height 1
+        e.emit(Asm::Constant { k: two }, span)?;
+        e.bind(end, span)?;
+        assert_eq!(e.height(), 2);
+        e.emit(Asm::Return, span)?;
+        let function = e.finish(0)?;
+        assert_eq!(function.arity(), 1);
+        Ok(())
     }
 
     #[test]

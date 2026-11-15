@@ -542,7 +542,7 @@ source of randomness of its own, so the embedder supplies them:
   is elsewhere.
 - **Randomness.** `getrandom` and `uuid` refuse to build for the target
   until the embedder's crate picks a source: in a browser, add
-  `getrandom = { version = "0.2", features = ["js"] }` and
+  `getrandom = { version = "0.4", features = ["wasm_js"] }` and
   `uuid = { version = "1", features = ["js"] }` to its dependencies.
 
 The crate in `playground/` is such an embedder: the playground of
@@ -561,6 +561,13 @@ program hands its values to you through a host function it calls, as
 `mylib.give` does in the Quick Start, or through what it prints. The
 program carries its host functions, and the `Vm` its output and clock:
 there is no other set-up.
+
+**Tests.** A program compiled for `Entry::Tests { filter }` holds its
+test functions: `program.entry` is `EntryPoint::Tests(tests)`, a
+`TestFn` for each, with its `name` and its `kind` (`TestKind::Run`, or
+`TestKind::Skip` for a `skip_test_` function, which is reported and not
+called). `vm.call_test(&test)` runs one, as `silt test` does: `Ok(())`
+when it passed, its error when it failed.
 
 **The end of a program.** `run_program` returns when `main` has
 returned; tasks that the program spawned may still be at work.

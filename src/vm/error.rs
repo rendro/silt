@@ -18,14 +18,14 @@ impl std::fmt::Debug for TakenFrom {
 pub struct VmError {
     pub message: String,
     /// What to do about it, one line each: the diagnostic's help.
-    pub help: Vec<String>,
+    pub(crate) help: Vec<String>,
     /// The help lines that name a place of the program: the line at the
     /// index has `{at}` where the place of the span is shown (see
-    /// [`Diagnostic::help_at`]).
-    pub help_at: Box<[(usize, Span)]>,
+    /// `Diagnostic::help_at`).
+    pub(crate) help_at: Box<[(usize, Span)]>,
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
-    pub type_confusion: bool,
+    pub(crate) type_confusion: bool,
     /// If true, the program had run the steps its embedder gave it
     /// ([`Vm::set_step_budget`](super::Vm::set_step_budget)) and was
     /// ended for it: this is the budget's error, the error of a join
@@ -47,7 +47,7 @@ pub struct VmError {
     /// The text of the `Err(e)` the program's own code returned when it ran
     /// to its end (`e` as `println` writes it): `main`
     /// ([`Vm::run_program`](super::Vm::run_program)), or a test function
-    /// ([`Vm::call_test`](super::Vm::call_test)). The span is the
+    /// (`Vm::call_test`). The span is the
     /// function's name, and there is no call stack. `silt run` and the
     /// playground write a `main` that returned `Err` as the one line
     /// `error: <text>`: it is the program's message to its user, not
@@ -56,7 +56,7 @@ pub struct VmError {
     /// With [`VmError::returned`]: the `Display` impl that showed the
     /// `Err` failed, and the text is the payload's structure. What
     /// failed, for the note a front door writes after the text
-    /// ([`DisplayFailure::note`]).
+    /// (`DisplayFailure::note`).
     pub display_failure: Option<Box<DisplayFailure>>,
     /// The task whose failure this is, when a `task.join` took it from
     /// that task: a cancel that dismisses it hands it back to the task,
@@ -66,7 +66,7 @@ pub struct VmError {
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
-    pub call_stack: Vec<(String, Span)>,
+    pub(crate) call_stack: Vec<(String, Span)>,
 }
 
 impl VmError {
@@ -92,9 +92,9 @@ impl VmError {
     /// the name). The code a VM runs is verified, so the instruction is
     /// well-formed; the value is one the typechecker said could not be
     /// there. Every such error of the instruction loop is made here and
-    /// has its own diagnostic code ([`Code::TypeConfusion`]): it is
+    /// has its own diagnostic code (`Code::TypeConfusion`): it is
     /// reachable exactly when the typechecker is unsound.
-    pub fn type_confusion(message: impl Into<String>) -> Self {
+    pub(crate) fn type_confusion(message: impl Into<String>) -> Self {
         VmError {
             type_confusion: true,
             ..VmError::new(message.into())
@@ -160,14 +160,14 @@ impl VmError {
     }
 
     /// The error with `help` as a help line.
-    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+    pub(crate) fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help.push(help.into());
         self
     }
 
     /// The error with `help` as a help line that names the place `at`:
     /// its `{at}` shows where that is.
-    pub fn with_help_at(mut self, help: impl Into<String>, at: Span) -> Self {
+    pub(crate) fn with_help_at(mut self, help: impl Into<String>, at: Span) -> Self {
         let mut help_at = std::mem::take(&mut self.help_at).into_vec();
         help_at.push((self.help.len(), at));
         self.help_at = help_at.into_boxed_slice();
@@ -180,8 +180,8 @@ impl VmError {
     /// a builtin's report can go on for several lines), its one note.
     /// The labels are the call stack, innermost frame first. An error
     /// with no span is about no place of the program, and has
-    /// [`Span::BUILTIN`].
-    pub fn to_diagnostic(&self) -> Diagnostic {
+    /// `Span::BUILTIN`.
+    pub(crate) fn to_diagnostic(&self) -> Diagnostic {
         let (head, rest) = match self.message.split_once('\n') {
             Some((head, rest)) => (head, Some(rest)),
             None => (self.message.as_str(), None),
@@ -222,7 +222,7 @@ pub struct DisplayFailure {
 impl DisplayFailure {
     /// The most of the failure's message a note gives: it is one line
     /// under the text it is about.
-    pub const MOST: usize = 1_000;
+    pub(crate) const MOST: usize = 1_000;
 
     /// The note, with the place as `view` shows it: `the Display impl
     /// of E failed: panic: display panics (main.silt:3:32)`.
@@ -242,7 +242,7 @@ impl DisplayFailure {
 }
 
 /// The message alone: a front door renders a runtime error through
-/// [`VmError::to_diagnostic`] and its source map, which give it a place.
+/// `VmError::to_diagnostic` and its source map, which give it a place.
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "error[runtime]: {}", self.message)
@@ -275,7 +275,10 @@ impl From<crate::value::TooLong> for VmError {
 ///
 /// Returns an empty vec when the filtered stack is too short to be
 /// informative (a single-frame stack would just restate the error site).
-pub fn render_call_stack<F>(call_stack: &[(String, Span)], mut format_frame: F) -> Vec<String>
+pub(crate) fn render_call_stack<F>(
+    call_stack: &[(String, Span)],
+    mut format_frame: F,
+) -> Vec<String>
 where
     F: FnMut(&str, &Span) -> String,
 {

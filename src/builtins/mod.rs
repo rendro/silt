@@ -5,34 +5,34 @@
 //! delegates to.
 
 pub(crate) mod applicative;
-pub mod bytes;
-pub mod collections;
+pub(crate) mod bytes;
+pub(crate) mod collections;
 pub(crate) mod common;
-pub mod concurrency;
-pub mod core;
-pub mod crypto;
-pub mod csv;
+pub(crate) mod concurrency;
+pub(crate) mod core;
+pub(crate) mod crypto;
+pub(crate) mod csv;
 pub(crate) mod data;
 pub(crate) mod decode;
-pub mod encoding;
+pub(crate) mod encoding;
 pub mod http;
-pub mod io;
-pub mod json;
-pub mod numeric;
+pub(crate) mod io;
+pub(crate) mod json;
+pub(crate) mod numeric;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub(crate) mod prelude;
-pub mod process;
-pub mod regex;
+pub(crate) mod process;
+pub(crate) mod regex;
 pub mod registry;
-pub mod stream;
-pub mod string;
+pub(crate) mod stream;
+pub(crate) mod string;
 #[cfg(feature = "tcp")]
-pub mod tcp;
-pub mod time;
-pub mod toml;
+pub(crate) mod tcp;
+pub(crate) mod time;
+pub(crate) mod toml;
 pub(crate) mod typed;
-pub mod uuid;
+pub(crate) mod uuid;
 
 /// The text of a variant of a builtin error enum, as it is shown
 /// (`"{e}"`, the `error:` line of a `main` that returns it). `None` if
@@ -41,7 +41,7 @@ pub mod uuid;
 ///
 /// The enum is found by its type's id (`Registry::error_module`), and
 /// its module says what each variant reads as (`error:` of `module!`).
-pub fn error_text(error: &crate::value::Variant) -> Option<String> {
+pub(crate) fn error_text(error: &crate::value::Variant) -> Option<String> {
     let text = registry::registry().error_module(error.type_id())?.text?;
     text(error.name(), error.fields())
 }

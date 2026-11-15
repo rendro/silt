@@ -1,4 +1,4 @@
-//! `silt repl` — thin wrapper around `silt::repl::run_repl`.
+//! `silt repl` — thin wrapper around `crate::repl::run_repl`.
 
 use std::process;
 
@@ -49,7 +49,7 @@ pub(crate) fn dispatch(args: &[String]) {
         }
     }
     crate::cli::refuse_bad_settings("repl");
-    silt::repl::run_repl();
+    crate::repl::run_repl();
 }
 
 #[cfg(not(feature = "repl"))]
@@ -61,7 +61,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // helper directly so this branch is covered regardless of which
     // features the test binary was compiled with.
     let tail: &[String] = if args.len() > 2 { &args[2..] } else { &[] };
-    let (code, msg) = silt::feature_stub::disabled_feature_response(tail, "repl", &usage_text());
+    let (code, msg) = crate::feature_stub::disabled_feature_response(tail, "repl", &usage_text());
     if code == 0 {
         print!("{msg}");
     } else {

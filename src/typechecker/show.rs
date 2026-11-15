@@ -203,7 +203,7 @@ impl TypeChecker {
     /// module calls itself (`lib`); None for another package's module no
     /// import here can reach (its names are written bare, its types
     /// described: `described_type`).
-    pub(super) fn module_name_here(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    pub(super) fn module_name_here(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         let package = |m| self.tables.module_packages.get(&m);
         if package(module) != package(self.module) {
             return self.import_path(module);
@@ -216,7 +216,7 @@ impl TypeChecker {
     /// [`ModuleWritten`]): by the name `module_name_here` gives, or
     /// described where no import written here can reach it. None for
     /// this module itself and for a builtin module.
-    pub(super) fn module_written(&self, module: crate::session::ModuleId) -> Option<ModuleWritten> {
+    pub(super) fn module_written(&self, module: crate::defs::ModuleId) -> Option<ModuleWritten> {
         if module.is_builtin() || module == self.module {
             return None;
         }
@@ -238,9 +238,9 @@ impl TypeChecker {
     /// every module the session knows: that made checking a program of n
     /// modules take time n squared.) For a REPL cell, which has no reach,
     /// every module of the program the session has.
-    pub(super) fn modules_written(&self) -> HashMap<crate::session::ModuleId, ModuleWritten> {
+    pub(super) fn modules_written(&self) -> HashMap<crate::defs::ModuleId, ModuleWritten> {
         let written =
-            |module: &crate::session::ModuleId| Some((*module, self.module_written(*module)?));
+            |module: &crate::defs::ModuleId| Some((*module, self.module_written(*module)?));
         match &self.reach {
             Some(reach) => reach.get().iter().filter_map(written).collect(),
             // A REPL cell (for `:type`) can name what the earlier cells
@@ -297,9 +297,9 @@ impl TypeChecker {
 
     /// The module that declares the type `r`: a builtin module's
     /// pseudo-module, or a module of the graph. None for the prelude.
-    pub(super) fn module_of_type(&self, r: TypeRef) -> Option<crate::session::ModuleId> {
+    pub(super) fn module_of_type(&self, r: TypeRef) -> Option<crate::defs::ModuleId> {
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, module)) => crate::session::ModuleId::builtin(module.as_ref()?),
+            Some((_, module)) => crate::defs::ModuleId::builtin(module.as_ref()?),
             None => self.def(r.id.0).map(|def| def.module),
         }
     }
@@ -312,7 +312,7 @@ impl TypeChecker {
     /// one rule for every help that writes a name of another module.
     pub(super) fn spelling_in_reach(
         &self,
-        module: crate::session::ModuleId,
+        module: crate::defs::ModuleId,
         name: &str,
     ) -> Option<String> {
         let by_name = (self.spelled.iter()).find(|(id, _)| {
@@ -335,7 +335,7 @@ impl TypeChecker {
     /// path the file binds already (`bound_here`): that import would
     /// bind it twice. The one rule of every "after `import X`" a help
     /// offers.
-    pub(super) fn import_path(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    pub(super) fn import_path(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         if let Some(path) = self.import_paths.get(&module) {
             return Some(*path);
         }
@@ -353,7 +353,7 @@ impl TypeChecker {
 
     /// The path of `import_path` before the file's own names are
     /// looked at.
-    fn path_to_import(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    fn path_to_import(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         // (A dependency's library that another module of the package
         // imports: by its key.)
         if let Some(key) = self.dependency_keys.get(&module) {
@@ -685,7 +685,7 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
 /// editor's hover, signature help, completion details and inlay hints
 /// (`TypeChecker::module_written`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ModuleWritten {
+pub(crate) enum ModuleWritten {
     /// By a name a program writes: its own (`shapes`), a dependency's
     /// key for the dependency's library (`da`, imported here or not).
     Named(Symbol),
@@ -703,7 +703,7 @@ impl ModuleWritten {
     /// package inner`, `UErr of module util of package da` (the
     /// arguments of a generic one stand before the description, at
     /// [`crate::types::AFTER_ARGUMENTS`]).
-    pub fn type_name(&self, name: Symbol) -> String {
+    pub(crate) fn type_name(&self, name: Symbol) -> String {
         let after = crate::types::AFTER_ARGUMENTS;
         match self {
             ModuleWritten::Named(module) => format!("{module}.{name}"),

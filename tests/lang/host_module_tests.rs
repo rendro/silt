@@ -3,12 +3,13 @@
 //! program imports one like any module; calls are typechecked against
 //! the declared signatures and run the Rust closure.
 
-use silt::diagnostic::{Code, Diagnostic};
-use silt::session::testing::{check_with_host, run_with_host};
 use silt::session::{Builtins, HostCall, HostModule};
-use silt::typeinfo::bv;
-use silt::value::{IntoValue, Value};
-use silt::vm::VmError;
+use silt::testing::diagnostic::{Code, Diagnostic};
+use silt::testing::typeinfo::bv;
+use silt::testing::value::{IntoValue, Value};
+use silt::testing::vm::VmError;
+use silt::testing::{SessionInside, ValueInside};
+use silt::testing::{check_with_host, run_with_host};
 
 fn mylib() -> HostModule {
     HostModule::new("mylib")
@@ -1314,7 +1315,7 @@ fn a_session_is_used_on_another_thread() {
 /// value panicked out of the VM.)
 #[test]
 fn a_host_function_that_builds_a_malformed_value_fails_in_every_build() {
-    use silt::typeinfo::Tag;
+    use silt::testing::typeinfo::Tag;
     let host = HostModule::new("h")
         .function("fn first_field(x: a) -> a", |call: &HostCall| {
             match &call.args[0] {

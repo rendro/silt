@@ -78,6 +78,7 @@ pub use preload::path_to_file_uri;
 /// Whether a rename may give a name: exposed so that the test of the
 /// lexer's keyword list (`tests/meta/lexer_keyword_parity_tests.rs`) can
 /// ask the rename guard about each keyword.
+#[cfg(any(test, feature = "test-hooks"))]
 pub use rename::is_valid_silt_ident;
 
 // ── Server ─────────────────────────────────────────────────────────
@@ -786,7 +787,7 @@ fn extract_request<R: lsp_types::request::Request>(
 /// Serve the editor on stdio until it ends the session: `true` when it
 /// asked for a shutdown first, as the protocol has it (the server then
 /// ends with 0, else with 1).
-pub fn run() -> bool {
+pub(crate) fn run() -> bool {
     // A message that cannot be read is answered with an error, and the
     // session goes on (lsp-server's own transport ends it).
     let (connection, io_threads) = transport::stdio();

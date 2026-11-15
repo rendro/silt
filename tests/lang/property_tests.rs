@@ -7,8 +7,8 @@
 //! - Parse-format-parse roundtrip produces structurally equivalent ASTs
 
 use proptest::prelude::*;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 // ── Generators ────────────────────────────────────────────────────────
 
@@ -152,8 +152,8 @@ proptest! {
     /// Error token).
     #[test]
     fn lexer_never_panics(input in "\\PC{0,200}") {
-        let lexed = Lexer::new(silt::source::FileId::default(), &input).tokenize();
-        prop_assert_eq!(silt::fuzz_invariants::check_lexer_invariants(&input, &lexed), Ok(()));
+        let lexed = Lexer::new(silt::testing::source::FileId::default(), &input).tokenize();
+        prop_assert_eq!(silt::testing::fuzz_invariants::check_lexer_invariants(&input, &lexed), Ok(()));
     }
 
     /// The parser must never panic on arbitrary strings, whatever the
@@ -161,7 +161,7 @@ proptest! {
     /// most its cap of errors and the line that counts the rest.
     #[test]
     fn parser_never_panics(input in "\\PC{0,200}") {
-        let lexed = Lexer::new(silt::source::FileId::default(), &input).tokenize();
+        let lexed = Lexer::new(silt::testing::source::FileId::default(), &input).tokenize();
         let (_, errors) = Parser::new(lexed, &input).parse_program_recovering();
         prop_assert!(errors.len() <= 51, "{} errors", errors.len());
     }
@@ -169,7 +169,7 @@ proptest! {
     /// The formatter must never panic, even on garbage input.
     #[test]
     fn formatter_never_panics(input in "\\PC{0,200}") {
-        let _ = silt::format::format(silt::source::FileId::default(), &input);
+        let _ = silt::testing::format::format(silt::testing::source::FileId::default(), &input);
     }
 }
 
@@ -183,8 +183,8 @@ proptest! {
     #[test]
     fn formatter_idempotent_on_generated_code(source in arb_formattable_program()) {
         // Only test programs that actually parse and format successfully.
-        if let Ok(first) = silt::format::format(silt::source::FileId::default(), &source)
-            && let Ok(second) = silt::format::format(silt::source::FileId::default(), &first) {
+        if let Ok(first) = silt::testing::format::format(silt::testing::source::FileId::default(), &source)
+            && let Ok(second) = silt::testing::format::format(silt::testing::source::FileId::default(), &first) {
                 prop_assert_eq!(first, second);
         }
     }
@@ -193,15 +193,15 @@ proptest! {
     /// if s parses, then format(s) also parses.
     #[test]
     fn formatter_preserves_parseability(source in arb_formattable_program()) {
-        let tokens = Lexer::new(silt::source::FileId::default(), &source).tokenize().checked();
+        let tokens = Lexer::new(silt::testing::source::FileId::default(), &source).tokenize().checked();
         if tokens.is_err() { return Ok(()); }
         let tokens = tokens.unwrap();
         let result = Parser::new(tokens, &source).parse_program();
         if result.is_err() { return Ok(()); }
 
         // Source parses — formatted version must also parse.
-        if let Ok(formatted) = silt::format::format(silt::source::FileId::default(), &source) {
-            let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted).tokenize().checked()
+        if let Ok(formatted) = silt::testing::format::format(silt::testing::source::FileId::default(), &source) {
+            let tokens2 = Lexer::new(silt::testing::source::FileId::default(), &formatted).tokenize().checked()
                 .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {}", e.message).into()))?;
             Parser::new(tokens2, &formatted).parse_program()
                 .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {}", e.message).into()))?;
@@ -218,7 +218,7 @@ proptest! {
     /// parses without errors. Type errors are fine, panics are not.
     #[test]
     fn typechecker_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize().checked() {
+        let tokens = match Lexer::new(silt::testing::source::FileId::default(), &input).tokenize().checked() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
@@ -226,14 +226,14 @@ proptest! {
             return Ok(());
         }
         // Must not panic — type errors are acceptable.
-        let _ = silt::session::testing::analyze_str(&input);
+        let _ = silt::testing::analyze_str(&input);
     }
 
     /// The compiler must never panic on arbitrary input that lexes, parses,
     /// and typechecks without errors. Compile errors are fine, panics are not.
     #[test]
     fn compiler_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize().checked() {
+        let tokens = match Lexer::new(silt::testing::source::FileId::default(), &input).tokenize().checked() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
@@ -242,7 +242,7 @@ proptest! {
         }
         // Must not panic — type and compile errors are acceptable (a
         // program with a type error is not compiled).
-        let _ = silt::session::testing::compile_decls_str(&input);
+        let _ = silt::testing::compile_decls_str(&input);
     }
 }
 
@@ -263,7 +263,7 @@ proptest! {
         op in prop_oneof![Just("+"), Just("-"), Just("*")],
     ) {
         let source = format!("import host\nfn main() {{ host.give({a} {op} {b}) }}");
-        let (program, given) = match silt::session::testing::compile_given(&source) {
+        let (program, given) = match silt::testing::compile_given(&source) {
             Ok(p) => p,
             Err(errors) => {
                 return Err(TestCaseError::Fail(
@@ -271,7 +271,7 @@ proptest! {
                 ));
             }
         };
-        let vm_result = silt::vm::Vm::new(silt::HostIo::process())
+        let vm_result = silt::testing::vm::Vm::new(silt::HostIo::process())
             .run_program(&program)
             .map(|()| given.last().unwrap_or(silt::Value::Unit));
 
@@ -287,7 +287,7 @@ proptest! {
             Some(reference) => {
                 // No overflow: Silt must succeed and return exactly this value.
                 match vm_result {
-                    Ok(silt::value::Value::Int(got)) => {
+                    Ok(silt::testing::value::Value::Int(got)) => {
                         prop_assert_eq!(
                             got,
                             reference,
@@ -322,7 +322,7 @@ proptest! {
                 // and not a panic. (`vm.run` returning is sufficient for
                 // "did not panic" — this branch just asserts we did not
                 // silently succeed with a wrong value.)
-                if let Ok(silt::value::Value::Int(got)) = vm_result {
+                if let Ok(silt::testing::value::Value::Int(got)) = vm_result {
                     return Err(TestCaseError::Fail(
                         format!(
                             "silt {a} {op} {b} silently returned Int({got}) but Rust overflowed"
@@ -351,7 +351,7 @@ proptest! {
     /// reads back as the same Float.
     #[test]
     fn a_float_s_text_has_one_point_and_reads_back(number in arb_finite()) {
-        let float = silt::value::Float::new(number).expect("a finite number");
+        let float = silt::testing::value::Float::new(number).expect("a finite number");
         let text = float.to_string();
         let digits = text.strip_prefix('-').unwrap_or(&text);
         prop_assert_eq!(digits.matches('.').count(), 1, "{}", &text);
@@ -372,17 +372,17 @@ proptest! {
 fn silt_literal(number: f64) -> String {
     let text = format!("{number:?}");
     let digits = text.strip_prefix('-').unwrap_or(&text);
-    let lexed = Lexer::new(silt::source::FileId::default(), digits)
+    let lexed = Lexer::new(silt::testing::source::FileId::default(), digits)
         .tokenize()
         .checked()
         .unwrap_or_else(|e| panic!("{text} is no silt literal: {}", e.message));
-    let tokens: Vec<silt::lexer::Token> = (lexed.tokens.into_iter())
+    let tokens: Vec<silt::testing::lexer::Token> = (lexed.tokens.into_iter())
         .map(|token| token.kind)
-        .filter(|token| !matches!(token, silt::lexer::Token::Eof))
+        .filter(|token| !matches!(token, silt::testing::lexer::Token::Eof))
         .collect();
     assert_eq!(
         tokens,
-        [silt::lexer::Token::Float(number.abs())],
+        [silt::testing::lexer::Token::Float(number.abs())],
         "{text} lexes as the number"
     );
     text
@@ -447,8 +447,8 @@ proptest! {
             "import float\nimport host\nimport string\nfn main() {{ host.give(string.join([{}], \"|\")) }}",
             calls.join(", ")
         );
-        let joined = match silt::session::testing::run_given(&source) {
-            Ok(silt::value::Value::String(joined, _)) => joined.to_string(),
+        let joined = match silt::testing::run_given(&source) {
+            Ok(silt::testing::value::Value::String(joined, _)) => joined.to_string(),
             other => return Err(TestCaseError::fail(format!("{source}: {other:?}"))),
         };
         let texts: Vec<&str> = joined.split('|').collect();

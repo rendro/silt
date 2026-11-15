@@ -3,17 +3,17 @@
 //! file and how its files are named in diagnostics, and the
 //! path-relative helper that `silt add` uses when recording dependency
 //! paths in `silt.toml`. (Lexical `.`/`..` normalization is NOT defined here:
-//! `silt add` delegates to `silt::lockfile::normalize_path`, the
+//! `silt add` delegates to `crate::lockfile::normalize_path`, the
 //! single definition, so the manifest form and lockfile resolution
 //! can never normalize differently.)
 
 use std::path::Path;
 
-use silt::file_discovery::files_under;
+use crate::file_discovery::files_under;
 
-use silt::package_graph::LockChange;
-use silt::session::{Config, LockPolicy, ProjectSetup, Session};
-use silt::source::FileId;
+use crate::package_graph::LockChange;
+use crate::session::{Config, LockPolicy, ProjectSetup, Session};
+use crate::source::FileId;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error};
 
@@ -55,7 +55,7 @@ pub(crate) fn path_arg(arg: &str) -> PathArg {
 pub(crate) fn refuse_path(command: &str, arg: &str, takes: &str) -> ! {
     eprintln!(
         "error: silt {command}: {} is not {takes}",
-        silt::git::escape_for_display(arg)
+        crate::git::escape_for_display(arg)
     );
     std::process::exit(1);
 }
@@ -73,7 +73,7 @@ pub(crate) const FILE_OR_DIRECTORY: &str = "a .silt file or a directory";
 /// walk leaves to their packages, the message names one (a package that
 /// holds no `.silt` file either is not named).
 pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
-    let enter = |path: &Path| !silt::file_discovery::should_skip_dir(path);
+    let enter = |path: &Path| !crate::file_discovery::should_skip_dir(path);
     let manifest = |path: &Path| path.file_name().is_some_and(|name| name == "silt.toml");
     let silt_file = |path: &Path| path.to_string_lossy().ends_with(".silt");
     let packages: Vec<String> = files_under(dir, &enter, &manifest)
@@ -84,11 +84,11 @@ pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
         .map(|package| {
             // `./pk` (`.\pk` on Windows) is shown as `pk`.
             let package = package.strip_prefix(".").unwrap_or(package);
-            silt::git::escape_for_display(&package.to_string_lossy())
+            crate::git::escape_for_display(&package.to_string_lossy())
         })
         .collect();
     let verb = if command == "fmt" { "format" } else { command };
-    let shown = silt::git::escape_for_display(shown);
+    let shown = crate::git::escape_for_display(shown);
     match packages.as_slice() {
         [] => eprintln!("error: silt {command}: no .silt files found in {shown}"),
         [one] => eprintln!(
@@ -141,7 +141,7 @@ pub(crate) fn unicode_path(path: std::path::PathBuf) -> String {
 /// path dependency kept inside this one), whose files are its own.
 /// `silt fmt`, `silt test` and `silt check` walk alike.
 fn enters_package_dir(path: &Path) -> bool {
-    !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
+    !crate::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
 }
 
 /// The test files under `root` (`*_test.silt`), sorted name by name,
@@ -173,7 +173,7 @@ pub(crate) fn open_entry(path: &str, lock: LockPolicy) -> std::io::Result<(Sessi
         project: ProjectSetup::Discover(dir),
         lock,
         host: Vec::new(),
-        builtins: silt::session::Builtins::All,
+        builtins: crate::session::Builtins::All,
     });
     let file = session.open(Path::new(path))?;
     Ok(with_packages(session, file))
@@ -191,7 +191,7 @@ pub(crate) fn open_stdin(lock: LockPolicy) -> std::io::Result<(Session, FileId)>
         project: ProjectSetup::Discover(std::env::current_dir().unwrap_or_else(|_| ".".into())),
         lock,
         host: Vec::new(),
-        builtins: silt::session::Builtins::All,
+        builtins: crate::session::Builtins::All,
     });
     let file = session.set_overlay(Path::new(STDIN_NAME), text);
     Ok(with_packages(session, file))
@@ -234,7 +234,7 @@ pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, File
             let why = if std::path::Path::new(path).is_dir() {
                 "it is a directory".to_string()
             } else {
-                silt::diagnostic::io_error_text(&e)
+                crate::diagnostic::io_error_text(&e)
             };
             eprintln!("error reading {path}: {why}");
             std::process::exit(1);
@@ -250,8 +250,8 @@ pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, File
 pub(crate) fn door_diagnostics(
     session: &mut Session,
     file: FileId,
-    compiled: &Result<silt::session::Program, Vec<silt::diagnostic::Diagnostic>>,
-) -> Vec<silt::diagnostic::Diagnostic> {
+    compiled: &Result<crate::session::Program, Vec<crate::diagnostic::Diagnostic>>,
+) -> Vec<crate::diagnostic::Diagnostic> {
     let analysis = session.analyze(file);
     let analysed_with_errors = analysis.has_errors();
     let mut diagnostics = analysis.diagnostics.clone();
@@ -262,7 +262,7 @@ pub(crate) fn door_diagnostics(
         Err(_) if analysed_with_errors => {}
         Err(errors) => diagnostics.extend(errors.iter().cloned()),
     }
-    silt::diagnostic::in_print_order(session.sources(), &mut diagnostics);
+    crate::diagnostic::in_print_order(session.sources(), &mut diagnostics);
     diagnostics
 }
 
@@ -270,7 +270,7 @@ pub(crate) fn door_diagnostics(
 /// or a link and what it points to) are the first of them.
 pub(crate) fn once_each(mut paths: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
-    paths.retain(|p| seen.insert(silt::source::canonical_path(Path::new(p))));
+    paths.retain(|p| seen.insert(crate::source::canonical_path(Path::new(p))));
     paths
 }
 
@@ -278,17 +278,17 @@ pub(crate) fn once_each(mut paths: Vec<String>) -> Vec<String> {
 /// diagnostic is rendered with to tell whether it was shown already,
 /// whichever spelling of a file's path the program it was found in was
 /// given.
-pub(crate) struct CanonicalFiles<'a>(pub(crate) &'a silt::source::SourceMap);
+pub(crate) struct CanonicalFiles<'a>(pub(crate) &'a crate::source::SourceMap);
 
-impl silt::diagnostic::SourceView for CanonicalFiles<'_> {
-    fn locate(&self, span: silt::source::Span) -> Option<silt::diagnostic::Located> {
-        use silt::source::SourceName;
+impl crate::diagnostic::SourceView for CanonicalFiles<'_> {
+    fn locate(&self, span: crate::source::Span) -> Option<crate::diagnostic::Located> {
+        use crate::source::SourceName;
         let file = self.0.get(span.file)?;
         let name = match &file.path {
-            SourceName::Path(p) => silt::source::canonical_path(p).display().to_string(),
-            other => silt::diagnostic::source_name_for_display(other).unwrap_or_default(),
+            SourceName::Path(p) => crate::source::canonical_path(p).display().to_string(),
+            other => crate::diagnostic::source_name_for_display(other).unwrap_or_default(),
         };
-        Some(silt::diagnostic::Located {
+        Some(crate::diagnostic::Located {
             file: name,
             position: self.0.position(span),
         })
@@ -303,38 +303,38 @@ impl silt::diagnostic::SourceView for CanonicalFiles<'_> {
 pub(crate) struct ProgramFiles<'a> {
     /// The entry file, as the user typed it.
     path: &'a str,
-    sources: &'a silt::source::SourceMap,
+    sources: &'a crate::source::SourceMap,
 }
 
 impl<'a> ProgramFiles<'a> {
-    pub(crate) fn new(path: &'a str, sources: &'a silt::source::SourceMap) -> Self {
+    pub(crate) fn new(path: &'a str, sources: &'a crate::source::SourceMap) -> Self {
         ProgramFiles { path, sources }
     }
 
     /// The name of the file `file`.
-    fn name(&self, file: &silt::source::SourceFile) -> String {
-        use silt::source::SourceName;
+    fn name(&self, file: &crate::source::SourceFile) -> String {
+        use crate::source::SourceName;
         match &file.path {
             SourceName::Path(p) if p == Path::new(self.path) && p.is_relative() => {
                 self.path.to_string()
             }
-            SourceName::Path(p) => silt::manifest::display_path(p).display().to_string(),
-            other => silt::diagnostic::source_name_for_display(other).unwrap_or_default(),
+            SourceName::Path(p) => crate::manifest::display_path(p).display().to_string(),
+            other => crate::diagnostic::source_name_for_display(other).unwrap_or_default(),
         }
     }
 }
 
-impl silt::diagnostic::SourceView for ProgramFiles<'_> {
-    fn locate(&self, span: silt::source::Span) -> Option<silt::diagnostic::Located> {
+impl crate::diagnostic::SourceView for ProgramFiles<'_> {
+    fn locate(&self, span: crate::source::Span) -> Option<crate::diagnostic::Located> {
         let file = self.sources.get(span.file)?;
-        Some(silt::diagnostic::Located {
+        Some(crate::diagnostic::Located {
             file: self.name(file),
             position: self.sources.position(span),
         })
     }
 
     /// A frame in code silt adds itself is put in the entry file.
-    fn frame(&self, span: silt::source::Span) -> String {
+    fn frame(&self, span: crate::source::Span) -> String {
         match self.locate(span) {
             Some(located) => {
                 let p = located.position.expect("a file of the map has positions");
@@ -342,7 +342,7 @@ impl silt::diagnostic::SourceView for ProgramFiles<'_> {
             }
             None => format!(
                 "{}:<unknown location>",
-                silt::manifest::display_path(Path::new(self.path)).display()
+                crate::manifest::display_path(Path::new(self.path)).display()
             ),
         }
     }

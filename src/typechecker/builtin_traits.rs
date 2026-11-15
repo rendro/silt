@@ -18,7 +18,7 @@ use super::*;
 /// - `Hash`:    `fn hash(self) -> Int`.
 /// - `Number`:  `fn from_int(n: Int) -> Self`.
 /// - the traits of type constructors (`CONSTRUCTOR_TRAITS`).
-pub fn builtin_trait_decls() -> Vec<TraitDecl> {
+pub(crate) fn builtin_trait_decls() -> Vec<TraitDecl> {
     let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
     let other_sym = intern("other");

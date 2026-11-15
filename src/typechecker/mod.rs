@@ -23,7 +23,7 @@ mod infer;
 mod inference;
 mod init_order;
 mod json_decode;
-pub mod names;
+pub(crate) mod names;
 mod opaque;
 mod order;
 mod resolve;
@@ -33,7 +33,7 @@ mod solve;
 mod structural;
 mod tables;
 pub(crate) mod typeexpr;
-pub use show::ModuleWritten;
+pub(crate) use show::ModuleWritten;
 #[cfg(feature = "lsp")]
 pub(crate) use typeexpr::type_expr_text;
 mod unify;
@@ -49,19 +49,25 @@ pub(super) use crate::intern::{Symbol, intern, resolve};
 pub(super) use crate::source::Span;
 pub(super) use crate::types::*;
 
-pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
+pub(crate) use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
-pub use builtin_env::*;
-pub use builtin_traits::builtin_trait_decls;
+#[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
+pub use builtin_env::builtin_type_signatures;
+use builtin_env::*;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use builtin_env::{
+    __builtin_trait_registration_fingerprint, __trait_init_fingerprint_check_program,
+};
+pub(crate) use builtin_traits::builtin_trait_decls;
 use builtin_traits::*;
 use declare_fns::FnSig;
 use env::TypeEnv;
 use infer::pattern::collect_pattern_vars;
 use solve::{Goal, Origin, Wanted};
 use std::rc::Rc;
-pub use tables::*;
-pub use unify::*;
+pub(crate) use tables::*;
+pub(crate) use unify::*;
 
 /// Names of the builtin traits, which the checker registers itself.
 /// User code cannot redeclare a trait with any of these names — doing
@@ -117,7 +123,7 @@ pub(crate) enum Reading {
 }
 
 #[derive(Clone)]
-pub struct TypeChecker {
+pub(crate) struct TypeChecker {
     /// Accumulated type errors.
     pub errors: Vec<Diagnostic>,
     /// Tracks the types of bindings in the enclosing `loop` (if any),
@@ -273,23 +279,23 @@ pub struct TypeChecker {
     /// definition's body owes: what the body hands the type to, each
     /// with the modules of the definitions on that way, in the order of
     /// the body, for the note of a refusal at a use (`encoded_through`).
-    pub(super) encode_askers: HashMap<TyVar, Vec<(Vec<crate::session::ModuleId>, Asker)>>,
+    pub(super) encode_askers: HashMap<TyVar, Vec<(Vec<crate::defs::ModuleId>, Asker)>>,
     /// While such a definition is instantiated: its
     /// `TypeTables::def_encoders`.
     pub(super) def_encoders_now: Option<HashMap<TyVar, Asked>>,
     /// While a definition of another module (or an earlier REPL input)
     /// is instantiated: the owners of each of its `json.Decode` and
     /// `json.Encode` bounds that has some (`TypeTables::def_owners`).
-    pub(super) def_owners_now: Option<HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>>,
+    pub(super) def_owners_now: Option<HashMap<(TyVar, bool), Vec<crate::defs::ModuleId>>>,
     /// Of each json bound a scheme takes from its value's uses, by its
     /// variable: the modules on every route it was owed by (a top-level
     /// `let`'s `TypeTables::def_owners`).
-    pub(super) scheme_owners: HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>,
+    pub(super) scheme_owners: HashMap<(TyVar, bool), Vec<crate::defs::ModuleId>>,
     /// Of each place of `decoded_at`: the module of the definition the
     /// type is given to, if another module's.
-    pub(super) decoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
+    pub(super) decoded_owner: HashMap<Span, Vec<crate::defs::ModuleId>>,
     /// As `decoded_owner`, of what is encoded at a place.
-    pub(super) encoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
+    pub(super) encoded_owner: HashMap<Span, Vec<crate::defs::ModuleId>>,
     /// And what another module's bound there hands it to (`encode_asked`),
     /// for a type variable inside what is encoded.
     pub(super) encoded_asked: HashMap<Span, Asked>,
@@ -322,7 +328,7 @@ pub struct TypeChecker {
     /// Of each of `builtin_needs`, at its place: the modules of the
     /// definitions of other modules the body gives the variable to, on
     /// the way to the builtin (`toml.parse` through `mail.load_toml`).
-    pub(super) need_owners: HashMap<(TyVar, Option<Symbol>), Vec<Vec<crate::session::ModuleId>>>,
+    pub(super) need_owners: HashMap<(TyVar, Option<Symbol>), Vec<Vec<crate::defs::ModuleId>>>,
     /// Of each of `builtin_needs`, at its place: the type the body gives
     /// the decoder with the variable inside it (`Box(a)` of
     /// `json.parse(s, Box(a))`), which a use judges whole.
@@ -649,16 +655,16 @@ pub struct TypeChecker {
     pub(super) spelled: HashMap<crate::defs::DefId, Symbol>,
     /// The names the module binds the modules it imports to (`sh` for
     /// `import shapes as sh`).
-    pub(super) module_spelled: HashMap<crate::session::ModuleId, Symbol>,
+    pub(super) module_spelled: HashMap<crate::defs::ModuleId, Symbol>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
-    pub(super) seen_modules: std::collections::HashSet<crate::session::ModuleId>,
+    pub(super) seen_modules: std::collections::HashSet<crate::defs::ModuleId>,
     /// The builtin modules the module imports, by any import: `import
     /// json`, `import json as j`, `import json.{ stringify }`. Their
     /// traits it sees (`json.Encode`), as it sees a `pub` trait of a
     /// module it imports anything of.
-    pub(super) builtin_imports: std::collections::HashSet<crate::session::ModuleId>,
+    pub(super) builtin_imports: std::collections::HashSet<crate::defs::ModuleId>,
     /// The modules the module checked imports, and theirs, and so on:
     /// the modules that are initialised before it, found when asked for.
     /// `None` for a REPL cell, which follows every earlier cell and what
@@ -666,7 +672,7 @@ pub struct TypeChecker {
     pub(super) reach: Option<Reach>,
     /// For a REPL cell, the cells of its session: for where an impl may
     /// be written they count as one module.
-    pub(super) cells: std::sync::Arc<std::collections::HashSet<crate::session::ModuleId>>,
+    pub(super) cells: std::sync::Arc<std::collections::HashSet<crate::defs::ModuleId>>,
     /// The session's definitions, which the resolver's `Res` slots
     /// name. `None` for a checker that has no program (the builtins).
     pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
@@ -696,39 +702,39 @@ pub struct TypeChecker {
     /// `Tables::statement_units`.)
     pub(super) local_statement_units: HashMap<Symbol, Vec<(usize, Span)>>,
     /// The module checked.
-    pub(super) module: crate::session::ModuleId,
+    pub(super) module: crate::defs::ModuleId,
     /// The variables of the uses of another module's definitions, each
     /// with that module: an opaque type of it may be decoded for such a
     /// variable, which the module's own code decodes.
-    pub(super) use_owners: HashMap<TyVar, crate::session::ModuleId>,
+    pub(super) use_owners: HashMap<TyVar, crate::defs::ModuleId>,
     /// The predicates, by their evidence, that a use of another module's
     /// definition owes for a variable of it (see `use_owners`), each with
     /// that module.
-    pub(super) owed_for: HashMap<evidence::EvRef, crate::session::ModuleId>,
+    pub(super) owed_for: HashMap<evidence::EvRef, crate::defs::ModuleId>,
     /// The module of the predicate being entered, for `owed_for`.
-    pub(super) owing: Option<crate::session::ModuleId>,
+    pub(super) owing: Option<crate::defs::ModuleId>,
     /// With `owing`: the modules of the definitions further down the
     /// route of the predicate being entered (`owed_also`).
-    pub(super) owing_also: Vec<crate::session::ModuleId>,
+    pub(super) owing_also: Vec<crate::defs::ModuleId>,
     /// With `instantiating`: the modules whose definitions the bound
     /// being instantiated hands its type on to, on every route
     /// (`TypeTables::def_owners`).
-    pub(super) instantiating_also: Vec<crate::session::ModuleId>,
+    pub(super) instantiating_also: Vec<crate::defs::ModuleId>,
     /// With `owed_for`: the further modules on the route of a predicate,
     /// any of which decodes or encodes its own opaque types there.
-    pub(super) owed_also: HashMap<evidence::EvRef, Vec<crate::session::ModuleId>>,
+    pub(super) owed_also: HashMap<evidence::EvRef, Vec<crate::defs::ModuleId>>,
     /// The module of the definition whose type is being instantiated
     /// for a use, while it is: its bounds are that module's.
-    pub(super) instantiating: Option<crate::session::ModuleId>,
+    pub(super) instantiating: Option<crate::defs::ModuleId>,
     /// The module each predicate of the scheme generalised last owes
     /// for, by its index, if another module's definition owes it.
-    pub(super) generalized_owners: Vec<Option<crate::session::ModuleId>>,
+    pub(super) generalized_owners: Vec<Option<crate::defs::ModuleId>>,
     /// The schemes of the module's `let`s and functions that hold what
     /// uses of another module's definitions owe (`let g = mail.name_any`,
     /// `fn wrap(r) { mail.name_any(r) }`), by their first variable: the
     /// module of each predicate, by its index. A use of the `let` or the
     /// function is that module's, as a use of the definition is.
-    pub(super) let_owners: HashMap<TyVar, Vec<Option<crate::session::ModuleId>>>,
+    pub(super) let_owners: HashMap<TyVar, Vec<Option<crate::defs::ModuleId>>>,
     /// Its name, for diagnostics.
     pub(super) module_name: Symbol,
     /// The types the module's own declarations declare, by name: what a
@@ -740,10 +746,10 @@ pub struct TypeChecker {
     /// The path each module this one imports anything of is imported
     /// by here (`dep` for a dependency's root module, whatever the
     /// module calls itself), for a help that says which import to add.
-    pub(super) import_paths: HashMap<crate::session::ModuleId, Symbol>,
+    pub(super) import_paths: HashMap<crate::defs::ModuleId, Symbol>,
     /// The library module of each dependency of the module's package the
     /// session has, by its key (`ModuleContext::dependencies`).
-    pub(super) dependency_keys: HashMap<crate::session::ModuleId, Symbol>,
+    pub(super) dependency_keys: HashMap<crate::defs::ModuleId, Symbol>,
     /// The module's type declarations that are rejected (a reserved or
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
@@ -822,7 +828,7 @@ impl Default for TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         TypeChecker {
             errors: Vec::new(),
             arm_mismatches: None,
@@ -982,7 +988,7 @@ impl TypeChecker {
             frame_owner: None,
             local_statement_units: HashMap::new(),
             fixed_statements: Vec::new(),
-            module: crate::session::ModuleId(0),
+            module: crate::defs::ModuleId(0),
             use_owners: HashMap::new(),
             owing_also: Vec::new(),
             instantiating_also: Vec::new(),
@@ -1902,7 +1908,7 @@ impl TypeChecker {
                 // program calls: its value is shown.)
                 if f.return_type.is_none()
                     && !f.is_recovery_stub
-                    && !crate::session::is_cell_name(&resolve(f.name))
+                    && !crate::program::is_cell_name(&resolve(f.name))
                 {
                     self.return_only_variables(&mut scheme, f.name, f.span);
                 }
@@ -2138,7 +2144,9 @@ pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_o
 
 /// A function's signature as an editor writes it, for a generic
 /// function.
+/// (The language server reads it.)
 #[derive(Debug, Clone)]
+#[cfg_attr(not(any(feature = "lsp", feature = "test-hooks")), allow(dead_code))]
 pub struct Signature {
     /// `fn twice(xs: m(Int)) -> m(Int) where m: Functor`.
     pub text: String,
@@ -2148,7 +2156,7 @@ pub struct Signature {
 }
 
 /// What checking one module gives.
-pub struct ModuleCheck {
+pub(crate) struct ModuleCheck {
     /// The module's errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
     /// The inferred type of each top-level value the module binds by a
@@ -2169,7 +2177,7 @@ pub struct ModuleCheck {
     /// How the module writes each other module of the program where it
     /// names one of its types (`ModuleWritten`): for the editor, which
     /// writes types as the messages do. Empty unless `for_editor`.
-    pub modules_written: HashMap<crate::session::ModuleId, ModuleWritten>,
+    pub(crate) modules_written: HashMap<crate::defs::ModuleId, ModuleWritten>,
 }
 
 impl TypeChecker {
@@ -2205,8 +2213,8 @@ impl TypeChecker {
             };
             let text = resolve(name);
             let who = match () {
-                _ if text == crate::session::ENTRY_POINT => EntryWho::Main,
-                _ if crate::session::test_kind(&text).is_some() => EntryWho::Test(text),
+                _ if text == crate::program::ENTRY_POINT => EntryWho::Main,
+                _ if crate::program::test_kind(&text).is_some() => EntryWho::Test(text),
                 _ => continue,
             };
             let Some(scheme) = env.lookup(name) else {
@@ -2285,41 +2293,41 @@ enum EntryWho {
 }
 
 /// The context a module is checked in, from the session.
-pub struct ModuleContext<'a> {
+pub(crate) struct ModuleContext<'a> {
     /// The module checked.
-    pub module: crate::session::ModuleId,
+    pub(crate) module: crate::defs::ModuleId,
     /// The package it is of: a help offers an import of a module of the
     /// same package by its name.
-    pub package: crate::package_graph::PackageId,
+    pub(crate) package: crate::package_graph::PackageId,
     /// The keys of the package's `[dependencies]` whose library module
     /// the session has, each with that module: a help offers an import
     /// of one by its key.
-    pub dependencies: Vec<(Symbol, crate::session::ModuleId)>,
+    pub(crate) dependencies: Vec<(Symbol, crate::defs::ModuleId)>,
     /// The name of the package, from its `silt.toml`.
-    pub package_name: Symbol,
+    pub(crate) package_name: Symbol,
     /// Its name, for diagnostics.
-    pub module_name: Symbol,
+    pub(crate) module_name: Symbol,
     /// A file, a REPL cell, or an embedder's host module, whose
     /// functions are bodiless signatures.
-    pub kind: names::ModuleKind,
+    pub(crate) kind: names::ModuleKind,
     /// The modules it imports, and theirs, and so on, found when asked
     /// for. `None` for a REPL cell.
-    pub reach: Option<Reach>,
+    pub(crate) reach: Option<Reach>,
     /// For a REPL cell, the cells of its session.
-    pub cells: std::sync::Arc<std::collections::HashSet<crate::session::ModuleId>>,
+    pub(crate) cells: std::sync::Arc<std::collections::HashSet<crate::defs::ModuleId>>,
     /// The module's top-level names, from the resolver.
-    pub scope: &'a names::ModuleScope,
+    pub(crate) scope: &'a names::ModuleScope,
     /// For a REPL cell, the values it imports from the earlier cells,
     /// with their definitions. Empty for any other module.
-    pub earlier: &'a [(Symbol, crate::defs::DefId)],
+    pub(crate) earlier: &'a [(Symbol, crate::defs::DefId)],
     /// The session's definitions; the module is resolved already.
-    pub defs: std::sync::Arc<crate::defs::DefTable>,
+    pub(crate) defs: std::sync::Arc<crate::defs::DefTable>,
     /// What the checks of the session share. What the module adds to
     /// them is recorded, see [`Tables::forget`].
-    pub tables: &'a mut Tables,
+    pub(crate) tables: &'a mut Tables,
     /// Whether to keep what only an editor reads
     /// (`ModuleCheck::modules_written`).
-    pub for_editor: bool,
+    pub(crate) for_editor: bool,
 }
 
 /// The modules a module imports, and theirs, and so on: the modules that
@@ -2329,16 +2337,16 @@ pub struct ModuleContext<'a> {
 /// then kept: a check that does not ask walks nothing. (Each check
 /// walking all it reaches made a chain of n modules take time n squared.)
 #[derive(Clone, Debug)]
-pub struct Reach {
-    module: crate::session::ModuleId,
-    edges: std::sync::Arc<HashMap<crate::session::ModuleId, Vec<crate::session::ModuleId>>>,
-    found: std::cell::OnceCell<std::collections::HashSet<crate::session::ModuleId>>,
+pub(crate) struct Reach {
+    module: crate::defs::ModuleId,
+    edges: std::sync::Arc<HashMap<crate::defs::ModuleId, Vec<crate::defs::ModuleId>>>,
+    found: std::cell::OnceCell<std::collections::HashSet<crate::defs::ModuleId>>,
 }
 
 impl Reach {
-    pub fn new(
-        module: crate::session::ModuleId,
-        edges: std::sync::Arc<HashMap<crate::session::ModuleId, Vec<crate::session::ModuleId>>>,
+    pub(crate) fn new(
+        module: crate::defs::ModuleId,
+        edges: std::sync::Arc<HashMap<crate::defs::ModuleId, Vec<crate::defs::ModuleId>>>,
     ) -> Reach {
         Reach {
             module,
@@ -2348,10 +2356,10 @@ impl Reach {
     }
 
     /// The modules reached, as `ModuleGraph::reach` finds them.
-    pub(crate) fn get(&self) -> &std::collections::HashSet<crate::session::ModuleId> {
+    pub(crate) fn get(&self) -> &std::collections::HashSet<crate::defs::ModuleId> {
         self.found.get_or_init(|| {
             let imports =
-                |m: &crate::session::ModuleId| self.edges.get(m).cloned().unwrap_or_default();
+                |m: &crate::defs::ModuleId| self.edges.get(m).cloned().unwrap_or_default();
             let mut seen = std::collections::HashSet::new();
             let mut stack = imports(&self.module);
             while let Some(next) = stack.pop() {
@@ -2368,7 +2376,7 @@ impl Reach {
 /// session's tables: the module's types, traits and impls join them,
 /// and the scheme of each definition it declares is entered once it is
 /// checked.
-pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
+pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
     let ModuleContext {
         module,
         package,

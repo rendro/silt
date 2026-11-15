@@ -727,8 +727,8 @@ fn a_task_that_never_waits_reads_what_an_import_that_failed_once_defines() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_session_sets_no_slot_twice() {
-    use silt::repl::Repl;
     use silt::session::ProjectSetup;
+    use silt::testing::repl::Repl;
 
     let dir = std::env::temp_dir().join(format!("silt_repl_slots_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a directory for the session");
@@ -741,7 +741,7 @@ fn a_session_sets_no_slot_twice() {
     }
     std::fs::write(dir.join("late.silt"), late).expect("a module is written");
     let mut repl = Repl::new(ProjectSetup::Discover(dir.clone()));
-    let before = silt::vm::slots_set_again();
+    let before = silt::testing::vm::slots_set_again();
     let mut run = |entry: &str| -> Result<String, String> {
         let evaluation = repl.eval(entry);
         let errors: Vec<String> = (evaluation.diagnostics.iter())
@@ -812,7 +812,7 @@ fn a_session_sets_no_slot_twice() {
         assert_eq!(run(entry), ok("()"), "{entry}");
     }
     assert_eq!(run("call(Q { r: 1 })"), ok("again r"));
-    assert_eq!(silt::vm::slots_set_again(), before);
+    assert_eq!(silt::testing::vm::slots_set_again(), before);
     drop(repl);
     let _ = std::fs::remove_dir_all(&dir);
 }

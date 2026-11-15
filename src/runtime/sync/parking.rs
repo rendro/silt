@@ -60,7 +60,7 @@ struct Entry<T> {
 /// look at it without a lock is never behind the wait that was last
 /// committed or ended.
 #[derive(Default)]
-pub struct Counts {
+pub(crate) struct Counts {
     /// The committed entries.
     pub waiting: AtomicUsize,
     /// Of those, the ones whose wait will end without anybody's doing:
@@ -70,7 +70,7 @@ pub struct Counts {
 }
 
 /// A task that is counted in [`Counts`] of its kind while it waits.
-pub trait Counted {
+pub(crate) trait Counted {
     fn counts(&self) -> &Counts;
 }
 
@@ -108,7 +108,7 @@ type Tasks<T> = HashMap<TaskId, Entry<T>, BuildHasherDefault<NameHasher>>;
 const SHARDS: usize = 16;
 
 /// A task that waits, as [`Parking::inspect`] shows it.
-pub struct Waiting<'a, T> {
+pub(crate) struct Waiting<'a, T> {
     pub task: TaskId,
     /// What the scheduler parked.
     pub sleeper: &'a T,
@@ -118,7 +118,7 @@ pub struct Waiting<'a, T> {
     pub deadline: Option<std::time::Duration>,
 }
 
-pub struct Parking<T> {
+pub(crate) struct Parking<T> {
     timer: Arc<Timer>,
     ready: Box<dyn Fn(T, Resumed) + Send + Sync>,
     shards: Vec<Mutex<Tasks<T>>>,
@@ -138,7 +138,10 @@ impl<T: Send + Counted> Parking<T> {
     /// gets a task whose wait has ended, from whichever thread ended
     /// it, with no lock of this module held: it counts the task as
     /// runnable and queues it.
-    pub fn new(timer: Arc<Timer>, ready: impl Fn(T, Resumed) + Send + Sync + 'static) -> Self {
+    pub(crate) fn new(
+        timer: Arc<Timer>,
+        ready: impl Fn(T, Resumed) + Send + Sync + 'static,
+    ) -> Self {
         Parking {
             timer,
             ready: Box::new(ready),
@@ -152,7 +155,7 @@ impl<T: Send + Counted> Parking<T> {
 
     /// Test-only: how many times [`Parking::inspect`] has looked.
     #[cfg(test)]
-    pub fn inspections(&self) -> usize {
+    pub(crate) fn inspections(&self) -> usize {
         self.inspections.load(Ordering::SeqCst)
     }
 
@@ -167,7 +170,7 @@ impl<T: Send + Counted> Parking<T> {
         }
     }
 
-    pub fn timer(&self) -> &Arc<Timer> {
+    pub(crate) fn timer(&self) -> &Arc<Timer> {
         &self.timer
     }
 
@@ -195,7 +198,7 @@ impl<T: Send + Counted> Parking<T> {
     /// holds when it gets here completes no arm. Whoever makes it hold
     /// then ends the waits of the tasks that are parked, as a
     /// canceller does.
-    pub fn park(
+    pub(crate) fn park(
         &self,
         id: TaskId,
         task: T,
@@ -257,7 +260,7 @@ impl<T: Send + Counted> Parking<T> {
     /// End the wait of the parked task `id` because the task is
     /// cancelled. `false` when the task is not parked or its wait has
     /// already ended: what it took or sent stands.
-    pub fn cancel(&self, id: TaskId) -> bool {
+    pub(crate) fn cancel(&self, id: TaskId) -> bool {
         let token = {
             let tasks = self.shard(id);
             tasks.get(&id).map(|entry| entry.parked.token().clone())
@@ -266,11 +269,13 @@ impl<T: Send + Counted> Parking<T> {
     }
 
     /// How many tasks wait.
-    pub fn waiting(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> usize {
         self.waiting.load(Ordering::SeqCst)
     }
 
-    pub fn is_parked(&self, id: TaskId) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_parked(&self, id: TaskId) -> bool {
         let tasks = self.shard(id);
         tasks.get(&id).is_some_and(|entry| entry.committed)
     }
@@ -280,7 +285,7 @@ impl<T: Send + Counted> Parking<T> {
     /// `look`. What the scheduler counts outside (its live tasks, what
     /// is pending) is to be read inside `look`, so that it belongs to
     /// the same moment (see the [module documentation](self)).
-    pub fn inspect<R>(&self, look: impl FnOnce(&[Waiting<'_, T>]) -> R) -> R {
+    pub(crate) fn inspect<R>(&self, look: impl FnOnce(&[Waiting<'_, T>]) -> R) -> R {
         #[cfg(test)]
         self.inspections.fetch_add(1, Ordering::SeqCst);
         let shards: Vec<_> = self.shards.iter().map(|shard| shard.lock()).collect();
@@ -302,7 +307,7 @@ impl<T: Send + Counted> Parking<T> {
     /// The runtime ends: every parked task comes back, by id, off every
     /// queue and out of the timer, to be dropped. A task that parks
     /// from now on is handed back at once as cancelled.
-    pub fn shutdown(&self) -> Vec<(TaskId, T)> {
+    pub(crate) fn shutdown(&self) -> Vec<(TaskId, T)> {
         self.shut_down.store(true, Ordering::SeqCst);
         let mut entries = Vec::new();
         for shard in &self.shards {

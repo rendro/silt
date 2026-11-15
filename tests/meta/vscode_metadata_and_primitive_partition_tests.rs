@@ -102,7 +102,7 @@ fn iter_all_partitions_into_primitives_and_containers() {
     // pins the same partition from outside the module so a future
     // edit that introduces a new `BuiltinKind` variant can't silently
     // bypass either branch.
-    use silt::types::builtins::{BuiltinKind, iter_all};
+    use silt::testing::types::builtins::{BuiltinKind, iter_all};
 
     let prim_count = iter_all()
         .filter(|b| b.kind == BuiltinKind::Primitive)

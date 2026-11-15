@@ -3,7 +3,7 @@
 //! still be shown on a real line of the file, with that line's text, and
 //! must never index past the source.
 
-use silt::source::{FileId, SourceMap, SourceName, Span};
+use silt::testing::source::{FileId, SourceMap, SourceName, Span};
 
 fn sources(text: &str) -> SourceMap {
     let mut map = SourceMap::new();

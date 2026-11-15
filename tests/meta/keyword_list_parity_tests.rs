@@ -35,7 +35,7 @@ fn lexer_keywords_const_contains_core_set() {
     // assert that the authoritative const itself contains the core set.
     for kw in EXPECTED_CORE_KEYWORDS {
         assert!(
-            silt::lexer::KEYWORDS.contains(kw),
+            silt::testing::lexer::KEYWORDS.contains(kw),
             "lexer::KEYWORDS missing core keyword `\"{kw}\"`. \
              If a keyword was removed from the lexer's match arms, also \
              remove the EXPECTED_CORE_KEYWORDS entry. If the const \
@@ -51,13 +51,12 @@ fn lexer_keywords_const_equals_expected_core_set() {
     // `lexer_keywords_const_contains_core_set` above only asserts
     // `lexer::KEYWORDS ⊇ EXPECTED_CORE_KEYWORDS`. If a NEW keyword is
     // added to `lexer::KEYWORDS` (and the lexer match arms), neither
-    // `EXPECTED_CORE_KEYWORDS` here nor its parallel copy in
-    // `tests/meta/editor_grammar_keywords_tests.rs` would notice — the
-    // editor grammars (vim/vscode) would then silently miss the new
-    // keyword. This test closes that gap by asserting the two sets are
-    // exactly equal.
+    // `EXPECTED_CORE_KEYWORDS` here would notice. This test closes that
+    // gap by asserting the two sets are exactly equal. (The editor
+    // grammars' keywords are written from `lexer::KEYWORDS` by
+    // `tests/meta/editor_grammar_names_tests.rs`.)
     let lexer_set: std::collections::HashSet<&str> =
-        silt::lexer::KEYWORDS.iter().copied().collect();
+        silt::testing::lexer::KEYWORDS.iter().copied().collect();
     let expected_set: std::collections::HashSet<&str> =
         EXPECTED_CORE_KEYWORDS.iter().copied().collect();
 
@@ -68,10 +67,9 @@ fn lexer_keywords_const_equals_expected_core_set() {
         extra_in_lexer.is_empty() && extra_in_expected.is_empty(),
         "lexer::KEYWORDS drift: a new keyword was added to lexer/match \
          arms but EXPECTED_CORE_KEYWORDS was not updated; add the \
-         keyword name to EXPECTED_CORE_KEYWORDS in this file AND in \
-         tests/meta/editor_grammar_keywords_tests.rs, plus the editor \
-         grammar files (editors/vim/syntax/silt.vim and \
-         editors/vscode/syntaxes/silt.tmLanguage.json).\n  \
+         keyword name to EXPECTED_CORE_KEYWORDS in this file, and write \
+         the editor grammars' names again (the meta test \
+         editor_grammar_names with SILT_BLESS=1).\n  \
          in lexer::KEYWORDS but not EXPECTED_CORE_KEYWORDS: {:?}\n  \
          in EXPECTED_CORE_KEYWORDS but not lexer::KEYWORDS: {:?}",
         extra_in_lexer,
@@ -86,11 +84,11 @@ fn lexer_keyword_literals_const_contains_true_false() {
     // as keyword tokens. Rename consults BOTH constants so renaming a
     // binding to `true`/`false` is rejected.
     assert!(
-        silt::lexer::KEYWORD_LITERALS.contains(&"true"),
+        silt::testing::lexer::KEYWORD_LITERALS.contains(&"true"),
         "lexer::KEYWORD_LITERALS must include \"true\""
     );
     assert!(
-        silt::lexer::KEYWORD_LITERALS.contains(&"false"),
+        silt::testing::lexer::KEYWORD_LITERALS.contains(&"false"),
         "lexer::KEYWORD_LITERALS must include \"false\""
     );
 }
@@ -106,8 +104,10 @@ const EXPECTED_KEYWORD_LITERALS: &[&str] = &["true", "false"];
 #[test]
 fn lexer_keyword_literals_const_equals_expected_set() {
     // Round-65 LATENT X1 bidirectional lock for KEYWORD_LITERALS.
-    let lexer_set: std::collections::HashSet<&str> =
-        silt::lexer::KEYWORD_LITERALS.iter().copied().collect();
+    let lexer_set: std::collections::HashSet<&str> = silt::testing::lexer::KEYWORD_LITERALS
+        .iter()
+        .copied()
+        .collect();
     let expected_set: std::collections::HashSet<&str> =
         EXPECTED_KEYWORD_LITERALS.iter().copied().collect();
     assert_eq!(
@@ -130,7 +130,7 @@ fn repl_keywords_contain_core_set() {
     // keyword now lives at the runtime/API level: call
     // `repl::builtin_names()` and check membership.
     let names: std::collections::HashSet<String> =
-        silt::repl::builtin_names().into_iter().collect();
+        silt::testing::repl::builtin_names().into_iter().collect();
     for kw in EXPECTED_CORE_KEYWORDS {
         assert!(
             names.contains(*kw),

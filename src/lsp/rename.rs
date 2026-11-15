@@ -187,14 +187,14 @@ impl Server {
         if !self.is_top_level_fn(target) {
             return None;
         }
-        let entry = crate::session::ENTRY_POINT;
+        let entry = crate::program::ENTRY_POINT;
         if (old == entry) != (new == entry) {
             return Some(format!(
                 "a program starts at its top-level function `{entry}`, and the rename would \
                  change where"
             ));
         }
-        let test = crate::session::test_kind;
+        let test = crate::program::test_kind;
         (test(old) != test(new)).then(|| {
             "a top-level function whose name starts with `test_` or `skip_test_` is a test, \
              and the rename would change which functions are tests"

@@ -15,9 +15,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use silt::diagnostic::Code;
-use silt::package_graph::{LockPolicy, resolve_packages};
-use silt::source::SourceMap;
+use silt::testing::diagnostic::Code;
+use silt::testing::package_graph::{LockPolicy, resolve_packages};
+use silt::testing::source::SourceMap;
 
 /// The git cache of the workspace `ws`, whose cache directory the
 /// tests point `XDG_CACHE_HOME` (Unix) and `LOCALAPPDATA` (Windows) at:

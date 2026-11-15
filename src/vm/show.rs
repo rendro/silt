@@ -36,6 +36,7 @@ pub(crate) enum Limit {
     /// which writes the text out itself).
     Discard,
     /// All of it (a REPL entry's value, as the released REPL shows it).
+    #[cfg_attr(not(feature = "repl"), allow(dead_code))]
     Whole,
 }
 

@@ -95,7 +95,7 @@ fn opening_a_file_fetches_no_git_dependency() {
     // (Canonical for a temporary directory behind a link, as on macOS,
     // and without the `\\?\` prefix Windows gives a canonical path,
     // which git cannot take.)
-    let ws = silt::source::canonical_path(&ws);
+    let ws = silt::testing::source::canonical_path(&ws);
     fs::write(ws.join("gitconfig"), "").unwrap();
 
     // A repository holding a library package.

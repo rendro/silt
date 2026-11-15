@@ -1,8 +1,9 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use silt::disassemble::disassemble_function;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::ProgramInside;
+use silt::testing::disassemble::disassemble_function;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 // Compiler-stage fuzz target (the stage between the typechecker and
 // the VM). The round-92 string-interpolation bug — >255 segments
@@ -30,7 +31,7 @@ fuzz_target!(|data: &[u8]| {
 
     // 2. Lex — skip inputs that don't lex; lexer panic-freedom is
     //    fuzz_lexer's subject.
-    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s)
+    let Ok(tokens) = Lexer::new(silt::testing::source::FileId::default(), s)
         .tokenize()
         .checked()
     else {
@@ -46,10 +47,10 @@ fuzz_target!(|data: &[u8]| {
     //    inputs are the typechecker target's domain: a program with an
     //    error is not compiled. A compile error is fine (the "too many
     //    segments of a string interpolation" limit); a panic is not.
-    let Ok(program) = silt::session::testing::compile_decls_str(s) else {
+    let Ok(program) = silt::testing::compile_decls_str(s) else {
         return;
     };
-    let functions = &program.functions;
+    let functions = program.functions();
 
     // 5. A successful compile must produce at least one function: the
     //    script.
@@ -65,7 +66,7 @@ fuzz_target!(|data: &[u8]| {
     //    encodings — the round-92 bug class — are caught here without
     //    ever executing the program.
     for func in functions {
-        let text = disassemble_function(func, &program.globals);
+        let text = disassemble_function(func, program.globals());
         assert!(
             !text.is_empty(),
             "disassembly of function {:?} produced empty output",

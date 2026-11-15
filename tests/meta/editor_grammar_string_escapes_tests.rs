@@ -26,11 +26,8 @@
 //! changes without the grammars following.
 //!
 //! Sibling locks in this family:
-//!   - tests/meta/editor_grammar_keywords_tests.rs
-//!   - tests/meta/editor_grammar_primitives_tests.rs
-//!   - tests/meta/editor_grammar_constructors_tests.rs
-//!   - tests/meta/editor_grammar_builtins_tests.rs
-//!   - tests/meta/editor_grammar_modules_tests.rs
+//!   - tests/meta/editor_grammar_names_tests.rs (the names, written
+//!     from the lexer and the builtin registry)
 //! (the round-86 operator parity lock covers operators; this file adds
 //! the previously missing escape-class coverage).
 
@@ -54,7 +51,7 @@ fn read_grammar(rel: &str) -> String {
 /// error, so `is_ok()` is exactly "this escape is valid".
 fn lexer_accepts_escape(c: char) -> bool {
     let src = format!("\"\\{c}\"");
-    silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
+    silt::testing::lexer::Lexer::new(silt::testing::source::FileId::default(), &src)
         .tokenize()
         .checked()
         .is_ok()
@@ -210,7 +207,7 @@ fn lexer_accepted_escape_set_baseline() {
 #[test]
 fn unicode_escape_is_in_both_grammars_and_the_lexer() {
     let lexes = |src: &str| {
-        silt::lexer::Lexer::new(silt::source::FileId::default(), src)
+        silt::testing::lexer::Lexer::new(silt::testing::source::FileId::default(), src)
             .tokenize()
             .checked()
             .is_ok()

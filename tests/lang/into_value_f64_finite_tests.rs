@@ -5,7 +5,7 @@
 //! conversion fails (and the call raises a runtime error that names the
 //! function: see `host_module_tests`).
 
-use silt::value::{Float, IntoValue, Value};
+use silt::testing::value::{Float, IntoValue, Value};
 
 #[test]
 fn into_value_f64_finite_builds_float() {

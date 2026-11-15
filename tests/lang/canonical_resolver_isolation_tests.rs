@@ -27,9 +27,9 @@
 //!    alias; the second references the same name without import and
 //!    sees an "unknown type" diagnostic. Locks the LSP isolation goal.
 
-use silt::diagnostic::Severity;
-use silt::types::Type;
-use silt::types::canonical::{AliasInfo, Resolver};
+use silt::testing::diagnostic::Severity;
+use silt::testing::types::Type;
+use silt::testing::types::canonical::{AliasInfo, Resolver};
 
 // ── 1. Resolver instances are independent ──────────────────────────
 
@@ -45,9 +45,9 @@ fn two_resolvers_do_not_share_aliases() {
     let mut a = Resolver::new();
     let b = Resolver::new();
 
-    let name = silt::types::TypeRef {
-        id: silt::defs::TypeId(silt::defs::DefId(u32::MAX - 1)),
-        name: silt::intern::intern("ResolverIso_Mass"),
+    let name = silt::testing::types::TypeRef {
+        id: silt::testing::defs::TypeId(silt::testing::defs::DefId(u32::MAX - 1)),
+        name: silt::testing::intern::intern("ResolverIso_Mass"),
     };
     a.register_alias(
         name,
@@ -85,10 +85,8 @@ fn two_resolvers_do_not_share_aliases() {
 #[test]
 fn lsp_pull_does_not_inherit_other_files_aliases() {
     // First "pull": file with the alias declaration.
-    let errs_first = silt::session::testing::analyze_str(
-        "type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n",
-    )
-    .1;
+    let errs_first =
+        silt::testing::analyze_str("type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n").1;
     let hard_first: Vec<_> = errs_first
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -102,7 +100,7 @@ fn lsp_pull_does_not_inherit_other_files_aliases() {
     // declaring or importing it. Post-refactor the second
     // analysis allocates a fresh Resolver internally, so
     // the alias the first pull registered is invisible.
-    let errs_second = silt::session::testing::analyze_str("fn use_other(x: FooLsp_Mass) { x }\n").1;
+    let errs_second = silt::testing::analyze_str("fn use_other(x: FooLsp_Mass) { x }\n").1;
     let saw_unknown = errs_second.iter().any(|e| {
         e.severity == Severity::Error
             && (e.message.contains("undefined type")

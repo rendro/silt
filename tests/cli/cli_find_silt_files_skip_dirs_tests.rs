@@ -53,7 +53,7 @@ fn build_fixture() -> PathBuf {
     fs::write(sub.join("keepme2.silt"), mis_formatted).expect("write sub/keepme2.silt");
 
     // Files that should NOT be visited. Each lives under a directory
-    // name in the shared skip-list (`silt::file_discovery::should_skip_dir`).
+    // name in the shared skip-list (`silt::testing::file_discovery::should_skip_dir`).
     for skip_parent in &["target", ".git", "node_modules"] {
         let d = tmp.join(skip_parent);
         fs::create_dir_all(&d).unwrap_or_else(|e| panic!("create {skip_parent}: {e}"));

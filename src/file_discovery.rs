@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 /// The files under `root` that `wanted` takes, in the directories
 /// `enter` lets the walk into, in the order of names (see
 /// [`walk_files`]).
-pub fn files_under(
+pub(crate) fn files_under(
     root: &Path,
     enter: &dyn Fn(&Path) -> bool,
     wanted: &dyn Fn(&Path) -> bool,
@@ -50,10 +50,12 @@ enum FileKey {
 }
 
 /// What [`walk_files`] finds.
-pub enum Found {
+pub(crate) enum Found {
     /// A file `wanted` takes.
     File(PathBuf),
     /// A directory that could not be read: it is skipped.
+    /// (The language server reports it; the command does not.)
+    #[cfg_attr(not(feature = "lsp"), allow(dead_code))]
     Unreadable(PathBuf, std::io::Error),
 }
 
@@ -69,7 +71,7 @@ pub enum Found {
 /// named once, by the first. Only a link costs a look at where it
 /// leads: the place of anything else is that of its directory and its
 /// name (on Unix, its directory's device and its own inode).
-pub fn walk_files(
+pub(crate) fn walk_files(
     root: &Path,
     enter: &dyn Fn(&Path) -> bool,
     wanted: &dyn Fn(&Path) -> bool,
@@ -180,7 +182,7 @@ pub fn walk_files(
 ///     occasionally carry `.silt` examples we don't want to ingest.
 ///   * any directory under `fuzz/corpus/…` — each fuzz-target's corpus
 ///     dir carries thousands of 1-byte files we don't want to parse.
-pub fn should_skip_dir(path: &Path) -> bool {
+pub(crate) fn should_skip_dir(path: &Path) -> bool {
     let name = match path.file_name().and_then(|s| s.to_str()) {
         Some(n) => n,
         None => return false,

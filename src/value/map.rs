@@ -983,7 +983,7 @@ fn walked(n: usize) {
 /// function ([`Set::holds_fn`]): what the test of the gate of the
 /// operations on two sets counts.
 #[cfg(test)]
-pub mod walks {
+pub(super) mod walks {
     use std::cell::Cell;
 
     thread_local! {
@@ -991,7 +991,7 @@ pub mod walks {
     }
 
     /// The members walked on this thread so far.
-    pub fn count() -> u64 {
+    pub(crate) fn count() -> u64 {
         WALKED.get()
     }
 }

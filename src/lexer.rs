@@ -283,7 +283,7 @@ impl Lexed {
     /// Where a string was meant to start or end is unknown then, so
     /// what the tokens in front and behind are is unknown too: only the
     /// lexer's first error is worth reporting for such a text.
-    pub fn is_cut_short(&self) -> bool {
+    pub(crate) fn is_cut_short(&self) -> bool {
         self.cut_short || self.quotes_off
     }
 
@@ -299,7 +299,8 @@ impl Lexed {
     /// meant to close. A closer with nothing of its kind open closes
     /// nothing; the end of an interpolation closes what was opened
     /// inside it.
-    pub fn ends_open(&self) -> bool {
+    #[cfg(any(feature = "repl", test))]
+    pub(crate) fn ends_open(&self) -> bool {
         #[derive(PartialEq)]
         enum Open {
             Code,
@@ -340,7 +341,8 @@ impl Lexed {
     /// value follows: a binary operator, `|>`, `=` or `->`. In a file
     /// the next line goes on from such a token, and the REPL reads
     /// another line of such an input.
-    pub fn ends_in_operator(&self) -> bool {
+    #[cfg(feature = "repl")]
+    pub(crate) fn ends_in_operator(&self) -> bool {
         let last = self.tokens.iter().rev().find(|tok| tok.kind != Token::Eof);
         matches!(
             last.map(|tok| &tok.kind),
@@ -367,7 +369,7 @@ impl Lexed {
     }
 
     /// The comments between the token before `tok` and `tok`.
-    pub fn comments_before(&self, tok: &Tok) -> &[Comment] {
+    pub(crate) fn comments_before(&self, tok: &Tok) -> &[Comment] {
         &self.comments[tok.comments.start as usize..tok.comments.end as usize]
     }
 
@@ -375,7 +377,7 @@ impl Lexed {
     /// token before it and `tok`, in front of or behind the comments
     /// between them. (A `{- -}` comment that spans lines is no line
     /// break: what follows it stands on the line it ends on.)
-    pub fn line_break_before(&self, tok: &Tok) -> bool {
+    pub(crate) fn line_break_before(&self, tok: &Tok) -> bool {
         tok.newlines_before > 0
             || self
                 .comments_before(tok)
@@ -511,7 +513,7 @@ impl Lexer {
     /// formatter's result has those of the text it formatted): room for
     /// them is made at once, and a large text's tokens are not copied
     /// each time they outgrow it.
-    pub fn expecting(mut self, tokens: usize) -> Self {
+    pub(crate) fn expecting(mut self, tokens: usize) -> Self {
         self.expected = tokens;
         self
     }
@@ -1871,7 +1873,7 @@ fn escaped_in_quotes(c: char, first: bool) -> bool {
 /// written by it. Nothing is allocated: a text none of whose bytes can
 /// need an escape is one write, and any other is written as the slices
 /// between its escapes.
-pub fn escape_into(out: &mut impl fmt::Write, s: &str) -> fmt::Result {
+pub(crate) fn escape_into(out: &mut impl fmt::Write, s: &str) -> fmt::Result {
     if !may_need_escape(s.as_bytes()) {
         return out.write_str(s);
     }

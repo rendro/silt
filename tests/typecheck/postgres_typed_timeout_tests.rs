@@ -17,8 +17,8 @@
 
 #[cfg(feature = "postgres")]
 mod with_feature {
-    use silt::builtins::postgres::pg_timeout_err_for_tests;
-    use silt::value::Value;
+    use silt::testing::builtins::postgres::pg_timeout_err_for_tests;
+    use silt::testing::value::Value;
 
     /// The typed-timeout factory must produce exactly the shape the
     /// silt-side `Result(_, PostgresError)` signature expects: an outer `Err`

@@ -28,10 +28,13 @@ const CARGO_TOML: &str = include_str!("../../Cargo.toml");
 /// * `test-hooks` — internal-only: exposes `scheduler::test_hooks` /
 ///   `scheduler::test_support` for external test binaries. Never a
 ///   user-facing capability (see the comment above it in Cargo.toml).
+/// * `playground` — internal-only: `silt::playground`, what the
+///   playground crate (playground/) takes of silt beyond the embedding
+///   API. It adds no capability to the `silt` command.
 ///
 /// Adding a key here silences the parity lock for that feature. Do it
 /// only for genuinely internal features, and say why in this doc.
-const INTERNAL_FEATURES: &[&str] = &["default", "test-hooks"];
+const INTERNAL_FEATURES: &[&str] = &["default", "test-hooks", "playground"];
 
 /// Extract the keys of the `[features]` table from Cargo.toml text.
 ///

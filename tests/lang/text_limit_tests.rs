@@ -6,7 +6,7 @@
 //! length, in pieces; a panic's message and the text of `main`'s `Err`
 //! are cut, with how much more there was.
 
-use silt::session::testing::run_str;
+use silt::testing::run_str;
 use std::process::Command;
 
 /// The error of running `body` in a `main` that has `s`, a string of

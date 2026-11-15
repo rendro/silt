@@ -34,7 +34,7 @@ use fallible_iterator::FallibleIterator;
 use postgres_protocol::types as wire;
 use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 
-use crate::builtins::data::{self, Data};
+use crate::builtins::data::Data;
 use crate::builtins::decode::{Hole, Holes, Reader};
 use crate::builtins::registry::decoding::Family;
 use crate::builtins::time::{make_date, make_datetime, make_time};
@@ -202,7 +202,7 @@ fn scalar_text(caller: &str, value: &Data) -> Result<String, VmError> {
 /// The text of the date `date` as Postgres reads it, and its era: a
 /// year before 1 is a year BC (year 0 is 1 BC), `0044-03-15` and
 /// `" BC"` for -43.
-fn date_text(date: &data::Date) -> (String, &'static str) {
+fn date_text(date: &crate::value::Date) -> (String, &'static str) {
     let (year, era) = match date.year < 1 {
         true => (1 - date.year, " BC"),
         false => (date.year, ""),
@@ -1452,7 +1452,12 @@ mod tests {
 
     /// `value` as the data of a parameter.
     fn pg(value: &Value) -> Data {
-        data::data("postgres.query", data::Format::Postgres, value).expect("data")
+        crate::builtins::data::data(
+            "postgres.query",
+            crate::builtins::data::Format::Postgres,
+            value,
+        )
+        .expect("data")
     }
 
     #[test]
@@ -1547,7 +1552,8 @@ mod tests {
     /// The parameter `value`, written as `postgres.query` writes it.
     fn written(value: &Value) -> Result<TextParam, VmError> {
         let caller = "postgres.query";
-        let value = data::data(caller, data::Format::Postgres, value)?;
+        let value =
+            crate::builtins::data::data(caller, crate::builtins::data::Format::Postgres, value)?;
         param(caller, value, &Unsendable::default())
     }
 

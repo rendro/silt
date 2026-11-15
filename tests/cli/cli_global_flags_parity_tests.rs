@@ -2,7 +2,7 @@
 //! unknown-command path suggests the flags.
 //!
 //! `src/cli/help.rs` declares the recognized top-level flag tokens as
-//! `GLOBAL_FLAGS`, and `run_main` in `src/main.rs` routes them. Adding
+//! `GLOBAL_FLAGS`, and `run_main` in `src/cli/mod.rs` routes them. Adding
 //! a new alias to one side without the other either leaves a token the
 //! binary then rejects as an unknown command, or drops it from the
 //! typo-suggestion pool (`silt --hlpe` would not surface `--help`).

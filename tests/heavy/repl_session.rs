@@ -159,17 +159,17 @@ fn a_task_left_waiting_in_every_round_adds_what_it_holds_itself() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn the_last_thousand_entries_copy_what_the_first_thousand_do() {
-    use silt::repl::Repl;
     use silt::session::ProjectSetup;
+    use silt::testing::repl::Repl;
 
     let (entries, _) = session(430, true);
     let mut repl = Repl::new(ProjectSetup::None);
-    let mut copied = vec![silt::layers::rows_copied()];
+    let mut copied = vec![silt::testing::layers::rows_copied()];
     for (n, entry) in entries.iter().enumerate() {
         let failing = entry.starts_with("let bad");
         assert_eq!(repl.eval(entry).committed, !failing, "{entry}");
         if [1_000, 2_000, 3_000].contains(&(n + 1)) {
-            copied.push(silt::layers::rows_copied());
+            copied.push(silt::testing::layers::rows_copied());
         }
     }
     let first = copied[1] - copied[0];
