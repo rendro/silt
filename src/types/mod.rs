@@ -327,7 +327,11 @@ impl Type {
             (Head::Named(r), _) if r.is_builtin(crate::defs::TYPE_OF) => None,
             (head, args) => {
                 let (first, rest) = args.split_first()?;
-                Some((head, rest.iter().map(|t| (*t).clone()).collect(), (*first).clone()))
+                Some((
+                    head,
+                    rest.iter().map(|t| (*t).clone()).collect(),
+                    (*first).clone(),
+                ))
             }
         }
     }

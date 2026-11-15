@@ -1013,7 +1013,9 @@ impl Expr {
                 Stmt::Expr(e) => f(Child::Expr(e)),
             }),
             ExprKind::Loop { bindings, body } => {
-                bindings.iter().try_for_each(|(_, _, e)| f(Child::Expr(e)))?;
+                bindings
+                    .iter()
+                    .try_for_each(|(_, _, e)| f(Child::Expr(e)))?;
                 f(Child::Expr(body))
             }
         }
@@ -1182,9 +1184,10 @@ impl Pattern {
             PatternKind::Tuple(ps)
             | PatternKind::Or(ps)
             | PatternKind::Constructor { args: ps, .. } => ps.iter().try_for_each(f),
-            PatternKind::Record { fields, .. } => {
-                fields.iter().filter_map(|(_, _, p)| p.as_ref()).try_for_each(f)
-            }
+            PatternKind::Record { fields, .. } => fields
+                .iter()
+                .filter_map(|(_, _, p)| p.as_ref())
+                .try_for_each(f),
             PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).try_for_each(f),
             PatternKind::Map(entries) => entries.iter().try_for_each(|(_, p)| f(p)),
         }

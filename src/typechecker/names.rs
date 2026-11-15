@@ -1926,7 +1926,8 @@ impl Resolver<'_> {
                     // (A shorthand field `{ x }` at the span of its record
                     // pattern.)
                     let mut binders = Vec::new();
-                    pattern.for_each_binder(&mut |name, _, binder| binders.push((name, binder.span)));
+                    pattern
+                        .for_each_binder(&mut |name, _, binder| binders.push((name, binder.span)));
                     for (name, at) in binders {
                         if let Some(binding) = self.earlier_cell_value(name) {
                             self.previous.insert(name, binding);

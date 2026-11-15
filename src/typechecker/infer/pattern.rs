@@ -761,11 +761,9 @@ impl TypeChecker {
                 // All alternatives bind the same names: an error points
                 // at the alternative that binds others.
                 if let Some((first, others)) = alts.split_first() {
-                    let first_vars: BTreeSet<Symbol> =
-                        first.binder_names().into_iter().collect();
+                    let first_vars: BTreeSet<Symbol> = first.binder_names().into_iter().collect();
                     for (i, alt) in others.iter().enumerate() {
-                        let alt_vars: BTreeSet<Symbol> =
-                            alt.binder_names().into_iter().collect();
+                        let alt_vars: BTreeSet<Symbol> = alt.binder_names().into_iter().collect();
                         if first_vars != alt_vars {
                             self.error(
                                 Code::InvalidPatternUse,
