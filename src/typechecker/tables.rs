@@ -362,7 +362,9 @@ impl ImplMethods {
             .map_or(&[], |traits| traits.as_slice())
     }
 
-    /// Every row's key.
+    /// Every row's key (for the editor's and the REPL tests' walks of
+    /// every row; a check asks for its own, `own_keys`, or a trait's).
+    #[cfg(any(feature = "lsp", all(test, feature = "repl")))]
     pub(super) fn keys(&self) -> impl Iterator<Item = &ImplMethodKey> {
         self.rows.keys()
     }
