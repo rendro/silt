@@ -25,6 +25,7 @@ pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
 pub(crate) use io::{
     PIECE, Printed, Stream, StreamEnd, drain_process_output, unraised_process_stdout_failure,
 };
+pub(crate) use io::{stdout_and_stderr_are_one, stdout_ends_a_line};
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};

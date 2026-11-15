@@ -171,3 +171,28 @@ fn watch_gate_error_names_runnable_subcommands() {
         "gate error must mention --watch and the runnable subcommands; got: {stderr}"
     );
 }
+
+/// A runnable subcommand with an argument it refuses (an unknown flag, a
+/// second file) is refused with `--watch` as without it, before anything
+/// is watched. FAIL on the base: the first run printed "unknown flag" and
+/// the watcher then waited for a change for ever.
+#[cfg(feature = "watch")]
+#[test]
+fn watch_refuses_what_the_subcommand_refuses() {
+    for args in [
+        &["check", "--watch", "--nope", "main.silt"][..],
+        &["check", "--nope", "--watch", "main.silt"],
+        &["run", "--watch", "--nope", "main.silt"],
+        &["run", "-w", "a.silt", "b.silt"],
+        &["test", "--watch", "--nope"],
+        &["disasm", "--watch", "--nope", "main.silt"],
+    ] {
+        assert_gate_rejection(args);
+        let (_, _, stderr, _) = run_with_timeout(args, Duration::from_secs(5));
+        assert!(
+            stderr.contains("unknown flag '--nope'")
+                || stderr.contains("unexpected extra argument 'b.silt'"),
+            "{args:?}: {stderr}"
+        );
+    }
+}

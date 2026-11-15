@@ -183,6 +183,100 @@ fn plain_value(
     }
 }
 
+/// The nodes of `nodes` that reach themselves over `needs` (each node's
+/// successors): those of a strongly connected part of more than one, and
+/// one that needs itself. Tarjan's search, without recursion.
+fn on_a_ring(
+    nodes: &[usize],
+    needs: &HashMap<usize, Vec<usize>>,
+) -> std::collections::HashSet<usize> {
+    let mut index: HashMap<usize, usize> = HashMap::new();
+    let mut low: HashMap<usize, usize> = HashMap::new();
+    let mut stack: Vec<usize> = Vec::new();
+    let mut on_stack: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut found = std::collections::HashSet::new();
+    let next_of = |n: usize| needs.get(&n).map_or(&[][..], Vec::as_slice);
+    for &root in nodes {
+        if index.contains_key(&root) {
+            continue;
+        }
+        // (The node, and how many of its successors are looked at.)
+        let mut work: Vec<(usize, usize)> = vec![(root, 0)];
+        while let Some(&mut (node, ref mut at)) = work.last_mut() {
+            if *at == 0 && !index.contains_key(&node) {
+                let i = index.len();
+                index.insert(node, i);
+                low.insert(node, i);
+                stack.push(node);
+                on_stack.insert(node);
+            }
+            if let Some(&next) = next_of(node).get(*at) {
+                *at += 1;
+                if !index.contains_key(&next) {
+                    work.push((next, 0));
+                } else if on_stack.contains(&next) {
+                    let l = low[&node].min(index[&next]);
+                    low.insert(node, l);
+                }
+                continue;
+            }
+            work.pop();
+            if let Some(&(parent, _)) = work.last() {
+                let l = low[&parent].min(low[&node]);
+                low.insert(parent, l);
+            }
+            if low[&node] == index[&node] {
+                let mut part = Vec::new();
+                while let Some(member) = stack.pop() {
+                    on_stack.remove(&member);
+                    part.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                if part.len() > 1 || next_of(node).contains(&node) {
+                    found.extend(part);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The way from the node `start` to the node `goal` that the search of
+/// `init_order` for what `start` needs finds (breadth first over
+/// `edges`, in their order): the nodes after `start`, `goal` last. Empty
+/// where `goal` is not reached.
+fn way_to(edges: &[Vec<usize>], start: usize, goal: usize) -> Vec<usize> {
+    let mut from: HashMap<usize, usize> = HashMap::new();
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for &target in &edges[start] {
+        if let std::collections::hash_map::Entry::Vacant(unseen) = from.entry(target) {
+            unseen.insert(start);
+            queue.push_back(target);
+        }
+    }
+    while let Some(node) = queue.pop_front() {
+        if node == goal {
+            let mut way = vec![node];
+            let mut at = node;
+            while from[&at] != start {
+                at = from[&at];
+                way.push(at);
+            }
+            way.reverse();
+            return way;
+        }
+        for &target in &edges[node] {
+            if let std::collections::hash_map::Entry::Vacant(unseen) = from.entry(target) {
+                unseen.insert(node);
+                queue.push_back(target);
+            }
+        }
+    }
+    Vec::new()
+}
+
 /// What showing a value of the type `ty` can call: the types `ty` is
 /// made of that are another module's or unknown (`outside`), and the
 /// types of the module among them (`own`), fields included.
@@ -741,12 +835,16 @@ impl TypeChecker {
             }
         }
 
-        // The `let`s each `let` needs, with the way to each (the
-        // functions between, then the `let`).
+        // The `let`s each `let` needs. The way to one (the functions
+        // between, then the `let`) is found again where a ring is
+        // reported (`way_to`): kept for every pair, the ways of a chain
+        // of n `let`s that each read the one before were n cubed in all
+        // (800 `let`s took a gigabyte).
         let lets: Vec<usize> = (0..nodes.len())
             .filter(|&n| nodes[n].let_decl.is_some())
             .collect();
         let mut needs: HashMap<usize, Vec<usize>> = HashMap::new();
+        // The ways of the `let`s whose value is plain: the `let` read.
         let mut ways: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         for &start in &lets {
             // A plain value runs nothing: it needs the `let`s it reads.
@@ -781,14 +879,6 @@ impl TypeChecker {
             let mut reached: Vec<usize> = Vec::new();
             while let Some(node) = queue.pop_front() {
                 if nodes[node].let_decl.is_some() {
-                    let mut way = vec![node];
-                    let mut at = node;
-                    while from[&at] != start {
-                        at = from[&at];
-                        way.push(at);
-                    }
-                    way.reverse();
-                    ways.insert((start, node), way);
                     reached.push(node);
                     // (What the `let` holds may be called through it:
                     // what its value mentions is reached too.)
@@ -806,8 +896,12 @@ impl TypeChecker {
         // no place in the order: one error for each such ring, at the
         // first written of its `let`s, with the way round.
         let mut in_ring: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // (Searched only from a `let` that reaches itself: one search
+        // from each `let` of a chain of n, each needing all before it,
+        // took time n cubed.)
+        let on_a_ring = on_a_ring(&lets, &needs);
         for &start in &lets {
-            if in_ring.contains(&start) {
+            if in_ring.contains(&start) || !on_a_ring.contains(&start) {
                 continue;
             }
             // The shortest way back to `start` over the `let`s.
@@ -843,7 +937,10 @@ impl TypeChecker {
             // `let` may bind several).
             let mut way: Vec<usize> = vec![start];
             for pair in ring.windows(2) {
-                way.extend(&ways[&(pair[0], pair[1])]);
+                match ways.get(&(pair[0], pair[1])) {
+                    Some(read) => way.extend(read),
+                    None => way.extend(way_to(&edges, pair[0], pair[1])),
+                }
             }
             let mut names: Vec<String> = Vec::with_capacity(way.len());
             for step in way.windows(2) {

@@ -35,6 +35,37 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("  silt disasm main.silt");
         process::exit(0);
     }
+    let positional = arguments(args);
+    // The path given is what the five commands that take one make of
+    // it (`paths::path_arg`): a package's directory is its program.
+    let path = match positional.as_deref().map(path_arg) {
+        Some(PathArg::File(p)) => p,
+        Some(PathArg::Package(dir)) => {
+            match resolve_package_entry_point_in(Path::new(&dir), EntryPointKind::RequireMain) {
+                Ok(Some(p)) => p.to_string_lossy().into_owned(),
+                Ok(None) => dir,
+                Err(()) => process::exit(1),
+            }
+        }
+        Some(PathArg::Dir(p) | PathArg::NotSilt(p)) => refuse_path("disasm", &p, FILE_OR_PACKAGE),
+        None => match resolve_package_entry_point() {
+            Ok(Some(p)) => p.to_string_lossy().into_owned(),
+            Ok(None) => {
+                crate::cli::no_file("disasm");
+                eprintln!("Usage: {}", disasm_usage_banner());
+                process::exit(1);
+            }
+            Err(()) => process::exit(1),
+        },
+    };
+    disasm_file(&path);
+}
+
+/// The path of `silt disasm <args>` (`args[0]` is the binary, `args[1]`
+/// the command). A usage error (an unknown flag, a second path) ends
+/// the process with 1, before anything is read: also before `silt
+/// disasm --watch` watches.
+pub(crate) fn arguments(args: &[String]) -> Option<String> {
     // Reject unknown flags before interpreting args as filenames, and
     // every positional after the first.
     let mut positional: Option<String> = None;
@@ -59,29 +90,7 @@ pub(crate) fn dispatch(args: &[String]) {
             }
         }
     }
-    // The path given is what the five commands that take one make of
-    // it (`paths::path_arg`): a package's directory is its program.
-    let path = match positional.as_deref().map(path_arg) {
-        Some(PathArg::File(p)) => p,
-        Some(PathArg::Package(dir)) => {
-            match resolve_package_entry_point_in(Path::new(&dir), EntryPointKind::RequireMain) {
-                Ok(Some(p)) => p.to_string_lossy().into_owned(),
-                Ok(None) => dir,
-                Err(()) => process::exit(1),
-            }
-        }
-        Some(PathArg::Dir(p) | PathArg::NotSilt(p)) => refuse_path("disasm", &p, FILE_OR_PACKAGE),
-        None => match resolve_package_entry_point() {
-            Ok(Some(p)) => p.to_string_lossy().into_owned(),
-            Ok(None) => {
-                crate::cli::no_file("disasm");
-                eprintln!("Usage: {}", disasm_usage_banner());
-                process::exit(1);
-            }
-            Err(()) => process::exit(1),
-        },
-    };
-    disasm_file(&path);
+    positional
 }
 
 /// Disassemble a file's bytecode without running it: the program that

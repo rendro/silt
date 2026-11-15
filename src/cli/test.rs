@@ -19,6 +19,16 @@ use crate::cli::run::render_runtime_error;
 
 /// Dispatch `silt test [--filter <pat>] [path]`.
 pub(crate) fn dispatch(args: &[String]) {
+    let (file, filter) = arguments(args);
+    crate::cli::refuse_bad_settings("test");
+    run_tests(file.as_deref(), filter);
+}
+
+/// The path and the `--filter` of `silt test <args>` (`args[0]` is the
+/// binary, `args[1]` the command). A usage error (an unknown flag, a
+/// second path) ends the process with 1, before anything is read: also
+/// before `silt test --watch` watches.
+pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
     let mut file: Option<String> = None;
     let mut filter: Option<String> = None;
     let mut i = 2;
@@ -94,8 +104,7 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
-    crate::cli::refuse_bad_settings("test");
-    run_tests(file.as_deref(), filter);
+    (file, filter)
 }
 
 /// Print what the session found in `path` (`diagnostics`) and was not

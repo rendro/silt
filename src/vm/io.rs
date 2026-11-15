@@ -81,6 +81,42 @@ struct ProcessStdout;
 /// The program ends by a failure ([`HostIo::drain_failing`]).
 static FAILING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Whether what was written to the process's stdout last ended with a
+/// line end (or nothing was written): see [`stdout_ends_a_line`].
+static AT_LINE_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether the text written to the process's stdout so far ends with a
+/// line end, or none was written: where it does not, a report of the
+/// command's that goes to the same place starts on a line of its own
+/// ([`crate::scheduler::report_on_stderr`]).
+pub(crate) fn stdout_ends_a_line() -> bool {
+    AT_LINE_START.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Whether the process's stdout and stderr are one place: one file, one
+/// pipe or one terminal (`2>&1`, or both left on the terminal). On
+/// Windows only two consoles are known to be one; a file or a pipe there
+/// counts as another place.
+pub(crate) fn stdout_and_stderr_are_one() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        use std::os::unix::fs::MetadataExt;
+        let id = |fd: std::os::fd::BorrowedFd<'_>| {
+            let file = std::fs::File::from(fd.try_clone_to_owned().ok()?);
+            let meta = file.metadata().ok()?;
+            Some((meta.dev(), meta.ino()))
+        };
+        let out = id(io::stdout().as_fd());
+        out.is_some() && out == id(io::stderr().as_fd())
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::IsTerminal;
+        io::stdout().is_terminal() && io::stderr().is_terminal()
+    }
+}
+
 impl ProcessStdout {
     /// Write out what stdout holds (a line with no end yet), as
     /// [`ProcessStdout::write`] writes.
@@ -101,6 +137,9 @@ impl ProcessStdout {
 impl Output for ProcessStdout {
     fn write(&self, text: &str) -> io::Result<()> {
         use std::io::Write;
+        if !text.is_empty() {
+            AT_LINE_START.store(text.ends_with('\n'), std::sync::atomic::Ordering::SeqCst);
+        }
         match io::stdout().lock().write_all(text.as_bytes()) {
             Err(e)
                 if e.kind() == io::ErrorKind::BrokenPipe

@@ -217,6 +217,14 @@ impl<K: Copy + Eq + std::hash::Hash, V> Table<HashMap<K, V>, K> {
         self.own.contains(key)
     }
 
+    /// The keys of the rows the check under way entered, in no order:
+    /// as many as it entered, however many rows the session has (a walk
+    /// of every row for its own made a chain of n modules with a trait
+    /// each take time n squared).
+    pub(super) fn own_keys(&self) -> impl Iterator<Item = &K> + '_ {
+        (self.own.iter()).filter(|key| self.rows.contains_key(key))
+    }
+
     /// How often the check under way tried to write over a row that is
     /// not its own, since this was last asked.
     fn take_overwritten(&mut self) -> usize {
@@ -283,6 +291,8 @@ pub(super) struct ImplMethods {
     /// For a type, a method name and a trait, the trait arguments of the
     /// impls that have rows.
     args_of: HashMap<(TypeRef, Symbol, TraitKey), Vec<ImplArgs>>,
+    /// For a trait, the keys of its impls' rows.
+    of_trait: HashMap<TraitKey, Vec<ImplMethodKey>>,
 }
 
 impl ImplMethods {
@@ -302,7 +312,16 @@ impl ImplMethods {
                 traits.push(tr);
             }
             self.args_of.entry((ty, method, tr)).or_default().push(args);
+            self.of_trait
+                .entry(tr)
+                .or_default()
+                .push((ty, method, tr, args));
         }
+    }
+
+    /// The keys of the rows of the impls of `tr`.
+    pub(super) fn of_trait(&self, tr: TraitKey) -> &[ImplMethodKey] {
+        self.of_trait.get(&tr).map_or(&[], Vec::as_slice)
     }
 
     /// The method `method` of the impl of `tr` for `ty` at the trait
@@ -343,7 +362,9 @@ impl ImplMethods {
             .map_or(&[], |traits| traits.as_slice())
     }
 
-    /// Every row's key.
+    /// Every row's key (for the editor's and the REPL tests' walks of
+    /// every row; a check asks for its own, `own_keys`, or a trait's).
+    #[cfg(any(feature = "lsp", all(test, feature = "repl")))]
     pub(super) fn keys(&self) -> impl Iterator<Item = &ImplMethodKey> {
         self.rows.keys()
     }
@@ -364,6 +385,12 @@ impl ImplMethods {
     fn remove(&mut self, key: &ImplMethodKey) {
         if self.rows.remove(key).is_none() {
             return;
+        }
+        if let Some(keys) = self.of_trait.get_mut(&key.2) {
+            keys.retain(|k| k != key);
+            if keys.is_empty() {
+                self.of_trait.remove(&key.2);
+            }
         }
         let of = (key.0, key.1, key.2);
         if let Some(args) = self.args_of.get_mut(&of) {

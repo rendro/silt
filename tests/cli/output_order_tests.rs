@@ -31,3 +31,70 @@ fn a_stdout_line_with_no_end_yet_comes_before_a_later_stderr_text() {
     assert!(status.success(), "{written}");
     assert_eq!(written, "out err out2 err2\nend\n");
 }
+
+/// `silt run` of a program that prints `printed` and then fails, with
+/// stdout and stderr into one file (`one`) or into two: what the file
+/// holds, or the two files.
+fn run_failing(tag: &str, printed: &str, one: bool) -> (Option<i32>, String, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_output_order_fail_{tag}_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("a directory");
+    let program = dir.join("main.silt");
+    std::fs::write(
+        &program,
+        format!(
+            "import list\nfn main() {{\n  print({printed:?})\n  let n = 1 / (list.length([1]) - 1)\n  println(n)\n}}\n"
+        ),
+    )
+    .expect("the program is written");
+    let (out, err) = (dir.join("out"), dir.join("err"));
+    let out_file = std::fs::File::create(&out).expect("the output file");
+    let err_file = match one {
+        true => out_file.try_clone().expect("a second handle"),
+        false => std::fs::File::create(&err).expect("the error file"),
+    };
+    let status = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&program)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(out_file)
+        .stderr(err_file)
+        .status()
+        .expect("silt runs");
+    let read = |path: &std::path::Path| std::fs::read_to_string(path).unwrap_or_default();
+    let written = (status.code(), read(&out), read(&err));
+    let _ = std::fs::remove_dir_all(&dir);
+    written
+}
+
+/// A stdout line with no end yet comes before the report of the runtime
+/// error that ends the program, where both go to one place, and the
+/// report starts on a line of its own; a program whose output ended its
+/// line gets no blank line, and where stdout and stderr are two files
+/// nothing is added to either. FAIL on the base: the report was written
+/// first and "partial " at the exit; on 478805d4 the report followed the
+/// partial text on its line. (On Windows only two consoles are known to
+/// be one place: one file there gets no line end added.)
+#[test]
+fn a_stdout_line_with_no_end_yet_comes_before_the_report_of_a_failure() {
+    let report = "error[runtime]: division by zero\n";
+    let (code, both, _) = run_failing("partial", "partial ", true);
+    assert_eq!(code, Some(1), "{both}");
+    let expected = match cfg!(unix) {
+        true => format!("partial \n{report}"),
+        false => format!("partial {report}"),
+    };
+    assert!(both.starts_with(&expected), "{both}");
+
+    let (code, both, _) = run_failing("line", "whole\n", true);
+    assert_eq!(code, Some(1), "{both}");
+    assert!(both.starts_with(&format!("whole\n{report}")), "{both}");
+
+    let (code, out, err) = run_failing("apart", "partial ", false);
+    assert_eq!(code, Some(1), "{err}");
+    assert_eq!(out, "partial ");
+    assert!(err.starts_with(report), "{err}");
+}
