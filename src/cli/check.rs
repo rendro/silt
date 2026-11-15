@@ -27,6 +27,31 @@ pub(crate) enum OutputFormat {
 
 /// Dispatch `silt check [--format json] [--deny-warnings] <file>...`.
 pub(crate) fn dispatch(args: &[String]) {
+    let (files, format, deny_warnings) = arguments(args);
+    if format == OutputFormat::Json {
+        crate::cli::package::print_manifest_errors_as_json();
+    }
+    let programs: Vec<PackageFiles> = match files.is_empty() {
+        false => programs_of(&files),
+        true => match package_files() {
+            Ok(Some(files)) => vec![files],
+            Ok(None) => {
+                crate::cli::no_file("check");
+                eprintln!("Usage: {}", check_usage_banner());
+                process::exit(1);
+            }
+            Err(()) => process::exit(1),
+        },
+    };
+    check_files(&programs, format, deny_warnings);
+}
+
+/// The paths, the output format and `--deny-warnings` of `silt check
+/// <args>` (`args[0]` is the binary, `args[1]` the command). A usage
+/// error (an unknown flag, `-` with another file) ends the process with
+/// 1, before anything is read: also before `silt check --watch`
+/// watches.
+pub(crate) fn arguments(args: &[String]) -> (Vec<String>, OutputFormat, bool) {
     let mut files: Vec<String> = Vec::new();
     let mut format = OutputFormat::Human;
     let mut deny_warnings = false;
@@ -108,22 +133,7 @@ pub(crate) fn dispatch(args: &[String]) {
         eprintln!("Run 'silt check --help' for usage.");
         process::exit(1);
     }
-    if format == OutputFormat::Json {
-        crate::cli::package::print_manifest_errors_as_json();
-    }
-    let programs: Vec<PackageFiles> = match files.is_empty() {
-        false => programs_of(&files),
-        true => match package_files() {
-            Ok(Some(files)) => vec![files],
-            Ok(None) => {
-                crate::cli::no_file("check");
-                eprintln!("Usage: {}", check_usage_banner());
-                process::exit(1);
-            }
-            Err(()) => process::exit(1),
-        },
-    };
-    check_files(&programs, format, deny_warnings);
+    (files, format, deny_warnings)
 }
 
 /// The programs `silt check <paths>` checks: a file as a program of its
