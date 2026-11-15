@@ -636,13 +636,28 @@ fn promised_members() -> Vec<(String, String, bool)> {
     members
 }
 
-/// The member names a code span of the guide uses: a bare name
-/// (`take()`, `out_of_steps`), each name after a `.` (`vm.set_exit(..)`
-/// names `set_exit`), and each name after `Type::` (`Tag::new`). The
-/// names of silt itself are none: a span with a space (an output, a
-/// line of a program), a builtin module or function (`list`, `print`),
-/// and what follows a builtin module (`task.deadline`).
+/// The receivers the guide writes for a value of a promised type, with
+/// the type: `vm.settle()` is Vm's `settle`.
+const RECEIVERS: &[(&str, &str)] = &[
+    ("vm", "Vm"),
+    ("session", "Session"),
+    ("call", "HostCall"),
+    ("program", "Program"),
+];
+
+/// [`member_uses`] without the types.
 fn member_names(span: &str) -> Vec<String> {
+    member_uses(span).into_iter().map(|(_, name)| name).collect()
+}
+
+/// The members a code span of the guide uses, each with the type the
+/// span names it on where it says one (`Tag::new`, or a receiver of
+/// [`RECEIVERS`]: `vm.set_exit(..)` is Vm's `set_exit`): a bare name
+/// (`take()`, `out_of_steps`), each name after a `.`, and each name after
+/// `Type::`. The names of silt itself are none: a span with a space (an
+/// output, a line of a program), a builtin module or function (`list`,
+/// `print`), and what follows a builtin module (`task.deadline`).
+fn member_uses(span: &str) -> Vec<(Option<String>, String)> {
     let modules = silt::testing::module::builtin_modules();
     let functions = silt::testing::module::builtin_free_function_names();
     // A span with a space (a line of a program, an output) names no bare
@@ -680,7 +695,7 @@ fn member_names(span: &str) -> Vec<String> {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
     {
-        return vec![bare.to_string()];
+        return vec![(None, bare.to_string())];
     }
     let mut names = Vec::new();
     for (at, _) in span.match_indices('.') {
@@ -690,42 +705,68 @@ fn member_names(span: &str) -> Vec<String> {
             .next()
             .unwrap_or("");
         if name.starts_with(|c: char| c.is_ascii_lowercase()) && !modules.contains(&receiver) {
-            names.push(name);
+            let ty = (RECEIVERS.iter())
+                .find(|(written, _)| *written == receiver)
+                .map(|(_, ty)| ty.to_string());
+            names.push((ty, name));
         }
     }
     for (at, _) in span.match_indices("::") {
         let name = ident(&span[at + 2..]);
-        let before = &span[..at];
-        let head_is_type = before
+        let head = span[..at]
             .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
             .next()
-            .is_some_and(|h| h.starts_with(|c: char| c.is_ascii_uppercase()));
-        if head_is_type && name.starts_with(|c: char| c.is_ascii_lowercase()) {
-            names.push(name);
+            .filter(|h| h.starts_with(|c: char| c.is_ascii_uppercase()));
+        if let Some(head) = head
+            && name.starts_with(|c: char| c.is_ascii_lowercase())
+        {
+            names.push((Some(head.to_string()), name));
         }
     }
     names
 }
 
+/// The uses of `uses` (a type where the span names one, the member's
+/// name, the span) that name a member of a promised type that is not
+/// public: on the type the span names, where it is one of `members`
+/// that has a member of that name; else where no promised type has a
+/// public member of that name. (A name no promised type has a member
+/// of, `main` or `print`, is not the crate's API.)
+fn hidden_members(
+    uses: &[(Option<String>, String, String)],
+    members: &[(String, String, bool)],
+) -> Vec<(String, String)> {
+    (uses.iter())
+        .filter(|(ty, name, _)| {
+            let of_name: Vec<_> = members.iter().filter(|(_, n, _)| n == name).collect();
+            let on_type = |t: &String| -> Vec<_> {
+                of_name.iter().filter(|(owner, _, _)| owner == t).collect()
+            };
+            match ty.as_ref().map(on_type).filter(|on| !on.is_empty()) {
+                Some(on) => !on.iter().any(|(_, _, public)| *public),
+                None => !of_name.is_empty() && !of_name.iter().any(|(_, _, public)| *public),
+            }
+        })
+        .map(|(_, name, span)| (name.clone(), span.clone()))
+        .collect()
+}
+
 /// A member of a promised type that the guide names in a code span, in
 /// any form, is public: the guide does not tell an embedder to use what
-/// the crate keeps to itself. (A name no promised type has a member of,
-/// `main` or `print`, is not the crate's API.)
+/// the crate keeps to itself. Where the span says the type (`Session::`,
+/// `session.`), the member of that type ([`hidden_members`]).
 #[test]
 fn every_member_the_guide_names_is_public() {
     let members = promised_members();
     assert!(members.len() > 50, "{} members read", members.len());
-    let hidden: Vec<(String, String)> = (prose_code_spans(&guide()).iter())
+    let uses: Vec<(Option<String>, String, String)> = (prose_code_spans(&guide()).iter())
         .flat_map(|span| {
-            member_names(span)
+            member_uses(span)
                 .into_iter()
-                .map(move |n| (n, span.clone()))
-        })
-        .filter(|(name, _)| {
-            let of_promised: Vec<_> = members.iter().filter(|(_, n, _)| n == name).collect();
-            !of_promised.is_empty() && !of_promised.iter().any(|(_, _, public)| *public)
+                .map(move |(ty, name)| (ty, name, span.clone()))
         })
         .collect();
+    let hidden = hidden_members(&uses, &members);
     assert!(
         hidden.is_empty(),
         "docs/ffi.md tells an embedder to use members of promised types that are not public \
@@ -752,4 +793,42 @@ fn the_member_names_of_a_code_span_are_read() {
     assert_eq!(member_names("'mylib.f' panicked"), Vec::<String>::new());
     assert_eq!(member_names("session.graph(a, b)"), ["graph"]);
     assert_eq!(member_names("let x = vm.settle()"), ["settle"]);
+}
+
+/// The type a span names a member on is the one asked: a name hidden on
+/// it is hidden, though another promised type has a public member of the
+/// name. FAILS on the base: any promised type's public member of the
+/// name passed (`Session::name` for Tag's).
+#[test]
+fn a_member_is_asked_of_the_type_the_span_names() {
+    let members: Vec<(String, String, bool)> = [
+        ("Session", "name", false),
+        ("Tag", "name", true),
+        ("Vm", "exit", false),
+        ("VmError", "exit", true),
+        ("Session", "entry", false),
+        ("Program", "entry", true),
+        ("Session", "sources", true),
+    ]
+    .iter()
+    .map(|(t, n, p)| (t.to_string(), n.to_string(), *p))
+    .collect();
+    let hidden = |span: &str| {
+        let uses: Vec<_> = (member_uses(span).into_iter())
+            .map(|(ty, name)| (ty, name, span.to_string()))
+            .collect();
+        hidden_members(&uses, &members)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(hidden("Session::name"), ["name"]);
+    assert_eq!(hidden("vm.exit"), ["exit"]);
+    assert_eq!(hidden("session.entry"), ["entry"]);
+    assert_eq!(hidden("let p = program.entry"), Vec::<String>::new());
+    assert_eq!(hidden("Tag::name"), Vec::<String>::new());
+    assert_eq!(hidden("failure.note(session.sources())"), Vec::<String>::new());
+    // A receiver the guide does not tie to a type: any public one does.
+    assert_eq!(hidden("e.exit"), Vec::<String>::new());
+    assert_eq!(hidden("name"), Vec::<String>::new());
 }
