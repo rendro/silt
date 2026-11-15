@@ -1,0 +1,5 @@
+error[type]: duplicate binding 'a' in pattern
+ --> pattern_duplicate_bind__trait_method_without_a_body.silt:6:25
+   |
+ 6 |   fn pick(self, a: Int, a: Int) -> Int
+   |                         ^ duplicate binding 'a' in pattern

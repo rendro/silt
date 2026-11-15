@@ -484,8 +484,14 @@ pub(crate) mod fs {
             result(names, path, Value::list)
         }
 
+        // (The system makes "" without a word: it is no path, as for
+        // every other function of the module.)
         fn mkdir(path: &str) -> Value {
-            result(std::fs::create_dir_all(path), path, unit)
+            let made = match path.is_empty() {
+                true => Err(std::io::ErrorKind::NotFound.into()),
+                false => std::fs::create_dir_all(path),
+            };
+            result(made, path, unit)
         }
 
         // The path itself is removed, never what a link leads to: a link
@@ -601,6 +607,18 @@ pub(crate) mod fs {
                     bv::IO_INVALID_INPUT,
                     [Value::string(format!("not a symlink: {path}"))],
                 )),
+                // (A target that is no UTF-8 is shown by no String: with
+                // U+FFFD in it, it named no file.)
+                Ok(target) if target.to_str().is_none() => {
+                    let why = std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "the target of {path} is not UTF-8: {}",
+                            target.to_string_lossy()
+                        ),
+                    );
+                    path_err(&why, path)
+                }
                 done => result(done, path, |target| {
                     Value::string(target.to_string_lossy().into_owned())
                 }),
@@ -621,6 +639,18 @@ pub(crate) mod fs {
             // never as the path it leads to.
             let base = std::path::Path::new(root);
             let shown_root = crate::source::canonical_path(base);
+            // (A root whose links lead to a path that is no UTF-8 is shown
+            // by no String: with U+FFFD in it, each path named no file.)
+            if shown_root.to_str().is_none() {
+                let why = std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "the path of {root} is not UTF-8: {}",
+                        shown_root.to_string_lossy()
+                    ),
+                );
+                return path_err(&why, root);
+            }
             let mut out: Vec<Value> = Vec::new();
             for entry in walker {
                 let entry = match entry {

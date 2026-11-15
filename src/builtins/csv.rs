@@ -222,7 +222,7 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
         at = next;
     }
     let mut records = records.into_iter();
-    let Some((header, header_at, _, _, _)) = records.next() else {
+    let Some((header, header_at, _, _, header_blank)) = records.next() else {
         return Ok(Table {
             header: Vec::new(),
             header_at: Vec::new(),
@@ -250,6 +250,13 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
                 fields_of(header.len())
             );
             return Err(syntax_at(line, why, at));
+        }
+        // (A text that begins with a blank line has a header of one empty
+        // column: the rows that follow are not what is wrong, nor is a
+        // field of the type that no column names.)
+        if header_blank {
+            let why = "the header is a blank line: the first line of the text names the columns";
+            return Err(syntax_at(1, why, start));
         }
         if fields.len() != header.len() {
             let why = format!(

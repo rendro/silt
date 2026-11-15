@@ -82,6 +82,23 @@ struct ProcessStdout;
 /// The program ends by a failure ([`HostIo::drain_failing`]).
 static FAILING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+impl ProcessStdout {
+    /// Write out what stdout holds (a line with no end yet), as
+    /// [`ProcessStdout::write`] writes.
+    fn flush() -> io::Result<()> {
+        use std::io::Write;
+        match io::stdout().lock().flush() {
+            Err(e)
+                if e.kind() == io::ErrorKind::BrokenPipe
+                    && !FAILING.load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                crate::scheduler::exit_with_status(141)
+            }
+            result => result,
+        }
+    }
+}
+
 impl Output for ProcessStdout {
     fn write(&self, text: &str) -> io::Result<()> {
         use std::io::Write;
@@ -104,6 +121,11 @@ struct ProcessStderr;
 
 impl Output for ProcessStderr {
     fn write(&self, text: &str) -> io::Result<()> {
+        // What stdout holds of a line that has no end yet is written
+        // first: stdout keeps it until the line's end, and it came after
+        // this text where the two outputs go to one place (`2>&1`).
+        // (Its failure is the next print's to stdout.)
+        let _ = ProcessStdout::flush();
         write_stderr(text)
     }
 }

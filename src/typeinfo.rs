@@ -729,7 +729,7 @@ pub mod bv {
     pub(crate) const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
     pub(crate) const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
     pub(crate) const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
-    pub(crate) const JSON_NULL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 0);
+    pub const JSON_NULL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 0);
     pub(crate) const JSON_BOOL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 1);
     pub(crate) const JSON_INT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 2);
     pub(crate) const JSON_FLOAT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 3);

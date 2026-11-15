@@ -146,6 +146,7 @@ src/ast.rs: pub unknown
 src/ast.rs: pub where_clauses
 src/ast.rs: pub where_clauses
 src/builtins/http.rs: pub fn redact_http_url_userinfo
+src/builtins/http.rs: pub fn redact_url
 src/builtins/mod.rs: pub mod http
 src/builtins/mod.rs: pub mod postgres
 src/builtins/mod.rs: pub mod registry
@@ -1121,6 +1122,7 @@ src/typechecker/names.rs: pub values
 src/typechecker/names.rs: pub values
 src/typeinfo.rs: pub arity
 src/typeinfo.rs: pub const ERR
+src/typeinfo.rs: pub const JSON_NULL
 src/typeinfo.rs: pub const NONE
 src/typeinfo.rs: pub const OK
 src/typeinfo.rs: pub const SOME

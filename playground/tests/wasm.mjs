@@ -236,5 +236,75 @@ await test('the output stops at a million bytes with a runtime error', (mod) => 
   assert.match(ran.error, /cannot write to stdout: the playground shows at most 1000000 bytes of output/);
 });
 
+// The stops of streams: one thread runs every task, and the stops that a
+// task, a park or a deadline leaves are run on it too (a stop that nobody
+// ran held every look at the tasks, and the program waited for ever).
+await test('streams left, closed and cut short stop their stages', (mod) => {
+  const ran = run(mod, `import channel
+import list
+import stream
+import task
+import time
+
+fn main() {
+  -- Left by main inside a loop, and by tasks.
+  1..20 |> list.each { _ ->
+    let never: Channel(Int) = channel.new(0)
+    let ends = stream.map(never) { x -> x }
+    let _t = task.spawn { ->
+      let s = stream.map(ends) { x -> x }
+      let _ = s
+      ()
+    }
+    let _ = channel.receive(ends)
+  }
+  println("left: stopped 20 times")
+  -- Closed at once.
+  let c = channel.new(3)
+  let s = c |> stream.buffered(4) |> stream.map { x -> x }
+  let _ = channel.try_receive(s)
+  channel.close(s)
+  channel.send(c, 1)
+  channel.send(c, 2)
+  channel.send(c, 3)
+  channel.close(c)
+  println("closed: the input still holds {stream.length(c)} of 3")
+  -- Cut short.
+  println(stream.repeat(7) |> stream.take(3) |> stream.collect)
+  println(stream.first(stream.repeat(8)))
+  -- Held by a task that its deadline ends.
+  let r = task.deadline(time.ms(5)) { ->
+    let held = stream.repeat(1) |> stream.map { x -> x }
+    let never: Channel(Int) = channel.new(0)
+    let _ = channel.receive(never)
+    held
+  }
+  match r {
+    Ok(_) -> println("ran out")
+    Err(e) -> println("ended: {e}")
+  }
+  -- A deadline that ends a function of a task lets go of the stream it
+  -- held, whose stop wakes main.
+  let never2: Channel(Int) = channel.new(0)
+  let ends2 = stream.map(never2) { x -> x }
+  let _d = task.spawn { ->
+    task.deadline(time.ms(5)) { ->
+      let held = stream.map(ends2) { x -> x }
+      let _ = channel.receive(never2)
+      held
+    }
+  }
+  println(channel.receive(ends2))
+  -- A failure in a stream main leaves is not reported.
+  let a = stream.from_list([1, 2, 3]) |> stream.map { x -> 10 / (x - 2) }
+  let _b = stream.buffered(a, 4)
+  println("done")
+}
+`);
+  assert.equal(ran.error, '');
+  assert.equal(ran.output, 'left: stopped 20 times\nclosed: the input still holds 3 of 3\n[7, 7, 7]\nSome(8)\nended: the function was ended by its deadline\nNone\ndone\n');
+  assert.equal(ran.ok, true);
+});
+
 console.log(failed === 0 ? '\nall passed' : `\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
