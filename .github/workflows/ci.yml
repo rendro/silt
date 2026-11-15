@@ -72,6 +72,11 @@ jobs:
       - name: cargo fmt
         run: cargo fmt -- --check
 
+      # The fuzz crate is a crate of its own, which the step above does
+      # not reach (the playground's is checked in its own job).
+      - name: cargo fmt (fuzz)
+        run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+
   rust-version:
     # The oldest Rust that builds silt is the package's `rust-version` in
     # Cargo.toml. Check the library and the binary on it, with no
