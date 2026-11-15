@@ -4,9 +4,10 @@ import list
 
 -- InvalidDigit(offset) is the first byte of the text as written that
 -- cannot continue the number, or the end of the number where it stops
--- short; a lone sign is the same error for both parsers.
+-- short ("1e"); a text with no digits (a sign or a point alone) is
+-- Empty, shown as "no digits", in both parsers.
 fn main() {
-  ["1_000", "  12x", "--5", "+", "-", "12 ", " -", "", "  "]
+  ["1_000", "  12x", "--5", "+", "-", "12 ", " -", "-x", "+5", "", "  "]
   |> list.each { s ->
     match int.parse(s) {
       Ok(n) -> println("int '{s}': Ok({n})")
@@ -14,7 +15,7 @@ fn main() {
       Err(e) -> println("int '{s}': {e}")
     }
   }
-  ["1_000.5", "  1_000.5 ", "1.5.5", "1e5e5", "1e", "1e+", ".", ".e5", "0x10", "+", "-", " 2.5x", "", " "]
+  ["1_000.5", "  1_000.5 ", "1.5.5", "1e5e5", "1e", "1e+", ".", ".e5", "0x10", "+", "-", " -", "-.", "-x", "-e5", "1e-", " 2.5x", "", " "]
   |> list.each { s ->
     match float.parse(s) {
       Ok(f) -> println("float '{s}': Ok({f})")
