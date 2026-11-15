@@ -43,7 +43,7 @@ fn main() {
 ```
 > hover 14:15
 ```silt
-Fn(String, type a) -> Result(a, JsonError)
+Fn(String, type a) -> Result(a, json.JsonError)
 ```
 
 ---
@@ -136,11 +136,11 @@ Fn(Int) -> Int
 The size.
 > hover 15:27
 ```silt
-Fn(Float) -> Shape
+Fn(Float) -> geo.Shape
 ```
 > hover 16:13
 ```silt
-Fn(String) -> IoError
+Fn(String) -> io.IoError
 ```
 
 ---

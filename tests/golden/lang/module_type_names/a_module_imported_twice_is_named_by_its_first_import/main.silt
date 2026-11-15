@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- A module imported twice, once plainly and once under another name, is
+-- named in messages by its first import: here `da`; in `other.silt`,
+-- which imports it under `errs` first, `errs`.
+-- stderr-contains: operator '+' requires Int or Float, got 'da.AppError'
+-- stderr-contains: operator '+' requires Int or Float, got 'errs.AppError'
+import da
+import da as errs
+import other
+
+fn g(e: errs.AppError) -> Int {
+  1 + e
+}
+
+fn main() {
+  println(g(da.Io))
+  println(other.f(da.Io))
+}

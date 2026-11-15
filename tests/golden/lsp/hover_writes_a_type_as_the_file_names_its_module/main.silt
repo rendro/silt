@@ -1,0 +1,19 @@
+-- cmd: lsp
+-- lsp: hover 15:7
+-- lsp: hover 16:7
+-- lsp: hover 17:7
+-- lsp: hover 15:16
+-- Hover writes a type of another module as the messages do, with the
+-- name the file gives the module: `errs.AppError` under `import da as
+-- errs`, `geo.Pt` under `import geo`, `j.JsonError` under `import json
+-- as j` (audit R9, card ALS-1).
+import da as errs
+import geo
+import json as j
+
+fn main() {
+  let a = errs.app()
+  let p = geo.pt()
+  let e = j.parse("x", Int)
+  println((a, p, e))
+}

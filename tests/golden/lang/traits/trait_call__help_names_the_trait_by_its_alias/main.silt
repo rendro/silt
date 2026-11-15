@@ -1,7 +1,7 @@
 -- exit: 1
--- The help writes the trait as this module reaches it: through the
--- alias of its module.
--- stderr-contains: error[type]: type 'shapes.Sq' has no field 'area'
+-- The message and the help write the type and the trait as this module
+-- reaches them: through the alias of their module.
+-- stderr-contains: error[type]: type 'sh.Sq' has no field 'area'
 -- stderr-contains: help: `area` is a method of trait `sh.Area`: call it as `sh.Area.area(s)`
 import shapes as sh
 fn main() {

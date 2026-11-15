@@ -1,0 +1,26 @@
+error[type]: operator '+' requires Int or Float, got 'errs.AppError'
+ --> main.silt:17:7
+    |
+ 17 |   1 + e
+    |       ^ operator '+' requires Int or Float, got 'errs.AppError'
+
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> main.silt:21:3
+    |
+ 21 |   errs.load()?
+    |   ^^^^^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Result(Int, errs.AppError), but the enclosing function returns Int
+
+error[type]: operator '+' requires Int or Float, got 'Result(Int, j.JsonError)'
+ --> main.silt:26:3
+    |
+ 26 |   r + 1
+    |   ^ operator '+' requires Int or Float, got 'Result(Int, j.JsonError)'
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
+
+error[type]: undefined variable 'Io'
+ --> main.silt:30:3
+    |
+ 30 |   Io
+    |   ^^ undefined variable 'Io'
+  = help: did you mean `errs.Io`? or import the name: `import da.{ Io }`

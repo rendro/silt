@@ -2447,6 +2447,26 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
             _ => {}
         }
     }
+    // A module imported twice (`import da`, then `import da as errs`) is
+    // named by its first import, in messages and in the editor alike:
+    // the bindings above come in no order.
+    let mut named_first = std::collections::HashSet::new();
+    for decl in &program.decls {
+        let Decl::Import(target, _) = decl else {
+            continue;
+        };
+        let bound = match target {
+            crate::ast::ImportTarget::Module(name) | crate::ast::ImportTarget::Alias(_, name, _) => {
+                *name
+            }
+            crate::ast::ImportTarget::Items(..) => continue,
+        };
+        if let Some(names::Binding::Module(id)) = scope.values.get(&bound)
+            && named_first.insert(*id)
+        {
+            checker.module_spelled.insert(*id, bound);
+        }
+    }
     // A builtin module is imported when the module binds a name of it,
     // or the module itself.
     for binding in scope.types.values().chain(scope.values.values()) {
