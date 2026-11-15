@@ -467,6 +467,65 @@ fn a_chain_of_eight_times_the_modules_takes_at_most_ten_times_as_long() {
     }
 }
 
+/// A program of `n` modules in a chain beside its `main.silt`, where each
+/// module declares a trait with an impl and calls the trait method of
+/// the next module's: `m0` calls `m1.Heavy1.weight1(m1.mk())`, and so on.
+fn program_of_a_trait_chain(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    for i in 0..n {
+        let (import, call) = match i + 1 < n {
+            true => {
+                let j = i + 1;
+                (
+                    format!("import m{j}\n"),
+                    format!("m{j}.Heavy{j}.weight{j}(m{j}.mk())"),
+                )
+            }
+            false => (String::new(), "1".to_string()),
+        };
+        let module = format!(
+            "{import}pub type T {{ v: Int }}\n\
+             pub trait Heavy{i} {{ fn weight{i}(self) -> Int }}\n\
+             trait Heavy{i} for T {{ fn weight{i}(self) -> Int {{ self.v }} }}\n\
+             pub fn mk() -> T {{ T {{ v: 1 }} }}\n\
+             pub fn f() -> Int {{ {call} }}\n"
+        );
+        std::fs::write(dir.join(format!("m{i}.silt")), module).expect("a module is written");
+    }
+    let main = "import m0\n\nfn main() {\n  println(m0.f())\n}\n";
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// A chain of eight times the modules that call each other's trait
+/// methods takes at most eleven times as long to check, from 500 to
+/// 4,000: about seven and a half times. Each module's check looked at
+/// every trait and every impl of the session (for its own traits, and
+/// for the traits whose impls ask something of what they are given):
+/// eighteen times (debug build, rv-zc N18); now only at its own and at
+/// those it calls.
+#[test]
+fn a_chain_of_trait_calls_of_eight_times_the_modules_takes_at_most_eleven_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_trait_chain_{}",
+        std::process::id()
+    ));
+    let (small, large) = (500, 4_000);
+    for n in [small, large] {
+        program_of_a_trait_chain(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(11.0, || best_times(&main_of(large), &main_of(small), 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of a chain of {large} modules that call each other's trait methods \
+             took more than eleven times as long as that of one of {small} in each of three \
+             measurements ({}): a module's check looks at every trait or impl of the session",
+            shown(&over)
+        );
+    }
+}
+
 /// Four times the modules take about four times as long to check, from
 /// 250 to 1,000 and from 1,000 to 4,000: at most six times. (When every
 /// module's check read the whole session's tables, 1,000 modules took
