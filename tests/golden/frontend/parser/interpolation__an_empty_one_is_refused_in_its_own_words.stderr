@@ -1,0 +1,5 @@
+error[parse]: an interpolation `{}` holds no expression: write the value inside, `{name}`, or `\{` for a literal brace
+ --> interpolation__an_empty_one_is_refused_in_its_own_words.silt:6:14
+   |
+ 6 |   println("{}")
+   |              ^ an interpolation `{}` holds no expression: write the value inside, `{name}`, or `\{` for a literal brace

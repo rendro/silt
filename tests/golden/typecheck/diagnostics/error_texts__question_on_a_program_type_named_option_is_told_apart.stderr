@@ -1,0 +1,6 @@
+error[type]: '?' operator requires Result or Option type, got 'Option(Int)', a type of this program that is not the builtin Option
+ --> error_texts__question_on_a_program_type_named_option_is_told_apart.silt:15:11
+    |
+ 15 |   let w = h(1)?
+    |           ^^^^^ '?' operator requires Result or Option type, got 'Option(Int)', a type of this program that is not the builtin Option
+  = help: `?` takes only the builtin Result and Option: return one of those, or take a value of this type apart with `match`

@@ -276,6 +276,17 @@ enum Foreign<'a> {
 /// shape.
 pub(crate) const NO_IF: &str =
     "silt has no `if`; a `match` without a scrutinee branches on conditions";
+/// The help of a line that starts with `+` behind a line that ends a
+/// value.
+const LINE_START_PLUS: &str =
+    "a line cannot start with `+`; to add to the line above, end that line with the `+`";
+
+/// The hint for `while` or `for`, a loop of another language.
+pub(crate) const NO_WHILE_FOR: &str =
+    "silt has no `while` or `for`: write a `loop`, or `list.each` / `list.map` over a list";
+/// The hint for `break` or `continue`.
+pub(crate) const NO_BREAK: &str =
+    "silt has no `break` or `continue`: return early, or restructure the recursion";
 pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> value` arm per \
      line, and last `_ -> value` for when no condition is true";
 
@@ -904,6 +915,64 @@ impl<'src> Parser<'src> {
             )
     }
 
+    /// Whether the `{` at the cursor holds the fields of a record as
+    /// other languages write them: everything in the braces is `name =
+    /// value` items, apart by commas or line breaks, and no value names
+    /// one of the items' names (`{ n = n + 1 }`, a variable changed,
+    /// is an assignment: the block's error says a `let` is immutable).
+    fn braces_hold_assigned_fields(&self) -> bool {
+        let kind = |i: usize| self.tokens.get(i).map(|t| &t.kind);
+        let mut names = Vec::new();
+        let mut used = Vec::new();
+        let mut at = self.pos + 1;
+        loop {
+            // An item: `name =` (not `=>`, `==`), then its value.
+            let Some(Token::Ident(name)) = kind(at) else {
+                return false;
+            };
+            if kind(at + 1) != Some(&Token::Eq) || self.fat_arrow_at(at + 1).is_some() {
+                return false;
+            }
+            names.push(*name);
+            at += 2;
+            let mut depth = 0usize;
+            let mut empty = true;
+            loop {
+                let Some(tok) = self.tokens.get(at) else {
+                    return false;
+                };
+                match &tok.kind {
+                    Token::Eof => return false,
+                    Token::RBrace if depth == 0 => {
+                        return !empty && !used.iter().any(|u| names.contains(u));
+                    }
+                    Token::Comma if depth == 0 => {
+                        at += 1;
+                        // (A comma before the `}`.)
+                        if kind(at) == Some(&Token::RBrace) {
+                            return !empty && !used.iter().any(|u| names.contains(u));
+                        }
+                        break;
+                    }
+                    _ if depth == 0 && !empty && tok.newlines_before > 0 => break,
+                    Token::LParen | Token::LBracket | Token::LBrace | Token::StringStart(_) => {
+                        depth += 1
+                    }
+                    Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => {
+                        depth = depth.saturating_sub(1)
+                    }
+                    Token::Ident(used_name) => used.push(*used_name),
+                    _ => {}
+                }
+                empty = false;
+                at += 1;
+            }
+            if empty {
+                return false;
+            }
+        }
+    }
+
     /// The error for a field named by the keyword at `span`, written
     /// alone, where `what` (a value or a pattern) belongs behind it.
     fn keyword_field_alone(span: Span, keyword: &str, what: &str, example: &str) -> Diagnostic {
@@ -938,10 +1007,11 @@ impl<'src> Parser<'src> {
             None => "P".to_string(),
         };
         let field = self.source.get(span.start as usize..span.end as usize);
+        // (`{ name = "a" }`: a field is given with `:`.)
+        let after = self.tokens.get(self.pos + 2).map(|t| &t.kind);
+        let given_with_eq = after == Some(&Token::Eq);
         let example = match field {
-            Some(field)
-                if self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Colon) =>
-            {
+            Some(field) if after == Some(&Token::Colon) || given_with_eq => {
                 format!("{ty} {{ {field}: ... }}")
             }
             Some(field) => format!("{ty} {{ {field}, ... }}"),
@@ -951,6 +1021,10 @@ impl<'src> Parser<'src> {
             Some(name) => format!(
                 "'{name}' is no type name: a record literal starts with the name of its type, \
                  which starts with an uppercase letter, `{example}`"
+            ),
+            None if given_with_eq => format!(
+                "a record literal starts with the name of its type and gives each field with \
+                 `:`, `{example}`; braces alone hold a block"
             ),
             None => format!(
                 "a record literal starts with the name of its type, `{example}`; braces alone \
@@ -3063,9 +3137,7 @@ impl<'src> Parser<'src> {
     fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
         match text {
             "if" => Some(NO_IF),
-            "while" | "for" => Some(
-                "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
-            ),
+            "while" | "for" => Some(NO_WHILE_FOR),
             _ => None,
         }
     }
@@ -3689,7 +3761,7 @@ impl<'src> Parser<'src> {
                     Code::UnsupportedSyntax,
                     span,
                     format!(
-                        "'let' bindings in silt are immutable — rebind with 'let {text} = ...' in a new scope"
+                        "`let` bindings are immutable: rebind with `let {text} = ...` in a new scope"
                     ),
                 ));
             }
@@ -4319,6 +4391,19 @@ impl<'src> Parser<'src> {
                     // `{ x: ...` or `{ x, ...` starts no block and no
                     // closure: the fields of a record, without its type.
                     Err(self.record_without_a_name(first.span))
+                } else if let Some(first) = self.tokens.get(self.pos + 1)
+                    && (self.pos.checked_sub(1)).is_some_and(|at| {
+                        matches!(
+                            self.tokens[at].kind,
+                            Token::Eq | Token::LParen | Token::Comma | Token::LBracket
+                        )
+                    })
+                    && self.braces_hold_assigned_fields()
+                {
+                    // `let u = { name = "a" }`: braces given as a value
+                    // that hold only `name = value` items, the fields of
+                    // a record as other languages write them.
+                    Err(self.record_without_a_name(first.span))
                 } else if let Some(dots) = self.tokens.get(self.pos + 1)
                     && dots.kind == Token::DotDot
                 {
@@ -4367,10 +4452,7 @@ impl<'src> Parser<'src> {
                 // A `+` that starts a statement: it was meant to go on
                 // with the line above, outside any bracket.
                 if self.at(&Token::Plus) && self.nl_before() && self.prev_ends_value() {
-                    return Err(d.with_help(
-                        "a line cannot start with `+`; to add to the line above, end that \
-                         line with the `+`",
-                    ));
+                    return Err(d.with_help(LINE_START_PLUS));
                 }
                 Err(self.with_line_start_help(d))
             }
@@ -4466,7 +4548,7 @@ impl<'src> Parser<'src> {
         }
 
         // Parse expression inside interpolation
-        let expr = self.parse_expr()?;
+        let expr = self.parse_interpolated()?;
         parts.push(StringPart::Expr(expr));
 
         // Now we should see StringMiddle or StringEnd
@@ -4477,7 +4559,7 @@ impl<'src> Parser<'src> {
                     if !text.is_empty() {
                         parts.push(StringPart::Literal(text));
                     }
-                    let expr = self.parse_expr()?;
+                    let expr = self.parse_interpolated()?;
                     parts.push(StringPart::Expr(expr));
                 }
                 Token::StringEnd(text) => {
@@ -4488,16 +4570,40 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 _ => {
-                    return Err(Diagnostic::error(
+                    // (`"{x⏎+ 1}"`: as outside a string, a line that
+                    // starts with an operator is no going on of the line
+                    // above.)
+                    let d = Diagnostic::error(
                         Code::ExpectedExpression,
                         self.span(),
                         "invalid expression in string interpolation; use \\{ for a literal brace",
-                    ));
+                    );
+                    return Err(
+                        match self.at(&Token::Plus) && self.nl_before() && self.prev_ends_value() {
+                            true => d.with_help(LINE_START_PLUS),
+                            false => self.with_line_start_help(d),
+                        },
+                    );
                 }
             }
         }
 
         Ok(self.mk_expr(ExprKind::StringInterp(parts), span))
+    }
+
+    /// The expression of an interpolation, behind its `{`. An empty one
+    /// (`"{}"`) is refused in its own words: the token that ends it,
+    /// `}"`, is no expression a program wrote.
+    fn parse_interpolated(&mut self) -> Result<Expr> {
+        if matches!(self.peek(), Token::StringMiddle(_) | Token::StringEnd(_)) {
+            return Err(Diagnostic::error(
+                Code::ExpectedExpression,
+                self.span(),
+                "an interpolation `{}` holds no expression: write the value inside, `{name}`, \
+                 or `\\{` for a literal brace",
+            ));
+        }
+        self.parse_expr()
     }
 
     // ── Function calls ───────────────────────────────────────────────

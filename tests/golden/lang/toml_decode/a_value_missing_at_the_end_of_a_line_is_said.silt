@@ -1,0 +1,13 @@
+-- A toml line that ends where a value is missing (`a = ` then a line break,
+-- a comment or a carriage return) says so, not that a string was expected;
+-- a value that is there and no TOML value keeps the crate's words.
+import toml
+
+type C { a: Int, b: Int }
+
+fn main() {
+  println(toml.parse("a = \nb = 2", C))
+  println(toml.parse("a =   # c\nb = 2", C))
+  println(toml.parse("a = \r\nb = 2", C))
+  println(toml.parse("a = x\nb = 2", C))
+}

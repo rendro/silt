@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[parse]
--- stderr-contains: silt has no 'while'/'for' keywords
--- stderr-contains: use tail-recursive 'loop'
+-- stderr-contains: silt has no `while` or `for`
+-- stderr-contains: write a `loop`, or `list.each` / `list.map` over a list
 fn main() {
     let x: Bool = true
     let r = while x { 1 }

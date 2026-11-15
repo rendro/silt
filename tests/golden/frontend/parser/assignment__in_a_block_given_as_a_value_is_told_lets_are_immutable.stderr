@@ -1,0 +1,5 @@
+error[parse]: `let` bindings are immutable: rebind with `let count = ...` in a new scope
+ --> assignment__in_a_block_given_as_a_value_is_told_lets_are_immutable.silt:8:5
+   |
+ 8 |     count = count + 1
+   |     ^^^^^ `let` bindings are immutable: rebind with `let count = ...` in a new scope

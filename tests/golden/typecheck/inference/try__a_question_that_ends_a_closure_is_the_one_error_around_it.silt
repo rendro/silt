@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A `?` in a closure whose body gives no Result is reported at the `?`, and
+-- only there: not again where the closure's result is used, in a call
+-- of the function's result or through a `let`.
+import int
+import list
+
+fn f(xs: List(String)) -> Result(List(Int), int.IntError) {
+  Ok(list.map(xs) { s -> int.parse(s)? + 1 })
+}
+
+fn main() {
+  let g = { s -> int.parse(s)? * 2 }
+  println(g("2") + 1)
+  println(f(["1"]))
+}

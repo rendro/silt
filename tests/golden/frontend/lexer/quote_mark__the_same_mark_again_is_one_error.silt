@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- The same quotation mark written in many places is one mistake: one error,
+-- with a note of how often it is written again, as a semicolon is.
+fn main() {
+  let x0 = `a`
+  let x1 = `a`
+  let x2 = `a`
+  let x3 = `a`
+  let x4 = `a`
+  println(x0)
+}
