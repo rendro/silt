@@ -67,7 +67,8 @@ fn session_of(text: &str) -> (Session, silt::session::FileId) {
 
 #[test]
 fn a_rendered_diagnostic_is_what_the_check_command_prints() {
-    let text = "import list\n\nfn main() {\n  let x: Int = \"no\"\n  let y = 1 + true\n  println(x)\n}\n";
+    let text =
+        "import list\n\nfn main() {\n  let x: Int = \"no\"\n  let y = 1 + true\n  println(x)\n}\n";
     let dir = fixture("check", text);
     let printed = command_stderr(&dir, "check");
     let (mut session, file) = session_of(text);

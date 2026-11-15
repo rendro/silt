@@ -70,7 +70,9 @@ macro_rules! codes {
         }
 
         impl Code {
-            /// Every code, in id order.
+            /// Every code, in id order (for the tests: the error-code page,
+            /// the soundness manifest).
+            #[cfg(any(test, feature = "test-hooks"))]
             pub const ALL: &'static [Code] = &[$(Code::$name),*];
 
             /// The stable id, `E` or `W` and four digits.

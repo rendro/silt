@@ -39,9 +39,7 @@ fn quick_start() {
     let slot = given.clone();
     let mylib = HostModule::new("mylib")
         .fn1("fn double(x: Int) -> Int", |x: i64| x * 2)
-        .fn1("fn give(x: Int) -> ()", move |x: i64| {
-            *slot.lock().unwrap() = x
-        });
+        .fn1("fn give(x: Int) -> ()", move |x: i64| *slot.lock().unwrap() = x);
 
     // 2. Open the program in a session that knows the module.
     let mut session = Session::new(Config {
@@ -130,16 +128,11 @@ fn supported_types() {
     use silt::session::HostModule;
     let users = HostModule::new("users")
         .fn1("fn find(id: Int) -> Option(String)", |id: i64| {
-            if id == 1 {
-                Some("alice".to_string())
-            } else {
-                None
-            }
+            if id == 1 { Some("alice".to_string()) } else { None }
         })
-        .fn1(
-            "fn parse_int(s: String) -> Result(Int, String)",
-            |s: String| s.parse::<i64>().map_err(|e| e.to_string()),
-        );
+        .fn1("fn parse_int(s: String) -> Result(Int, String)", |s: String| {
+            s.parse::<i64>().map_err(|e| e.to_string())
+        });
     let _ = users;
 }
 
@@ -319,9 +312,7 @@ mod showing_errors_as_silt_does {
         let (text, failed) = check(&mut session, file);
         assert!(failed);
         assert!(
-            text.starts_with(
-                "error[type]: type mismatch: expected Int, got String\n --> main.silt:2:16"
-            ),
+            text.starts_with("error[type]: type mismatch: expected Int, got String\n --> main.silt:2:16"),
             "{text}"
         );
         let d = session.analyze(file).diagnostics[0].clone();
@@ -332,9 +323,7 @@ mod showing_errors_as_silt_does {
 
         let div = "fn main() {\n  let z = 0\n  println(1 / z)\n}\n";
         let file = session.set_overlay(Path::new("main.silt"), div.to_string());
-        let program = session
-            .compile(file, silt::session::Entry::Main)
-            .expect("compiles");
+        let program = session.compile(file, silt::session::Entry::Main).expect("compiles");
         let out = silt::Buffer::new();
         let e = silt::Vm::new(silt::HostIo::buffer(&out))
             .run_program(&program)
@@ -382,9 +371,7 @@ fn every_block_of_the_guide_is_here() {
     let missing: Vec<&String> = (blocks.iter())
         .filter(|block| {
             let block = lines(block);
-            !here
-                .windows(block.len())
-                .any(|window| window == block.as_slice())
+            !here.windows(block.len()).any(|window| window == block.as_slice())
         })
         .collect();
     assert!(
