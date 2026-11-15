@@ -1,0 +1,3 @@
+pub type UErr { UA, UB }
+
+pub fn mk() -> UErr { UB }

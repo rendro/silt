@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Braces given as a value whose first statement would assign a name hold
+-- the fields of a record as other languages write them: the error says how
+-- a record literal is written, not that a let cannot be assigned.
+fn main() {
+  let u = { name = "a", age = 3 }
+  println(u)
+}

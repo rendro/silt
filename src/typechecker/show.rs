@@ -142,6 +142,7 @@ impl TypeChecker {
             (clash
                 || (session && self.type_name_clashes(r))
                 || self.other_module(r).is_some()
+                || self.described_type(r).is_some()
                 || self.shadowed_cell_type(r))
             .then(|| self.qualified_type(r))
         })
@@ -196,12 +197,48 @@ impl TypeChecker {
     }
 
     /// The name this module knows the module `module` by in a message:
-    /// its own name, but a module of another package (a dependency's
-    /// root module, which calls itself `lib`) by the path this module
-    /// imports it by (`dep`).
+    /// its own name, but a module of another package by the path an
+    /// import here writes for it (`da`, the key of a dependency whose
+    /// library it is, imported here or not), never by the name the
+    /// module calls itself (`lib`); None for another package's module no
+    /// import here can reach (its names are written bare, its types
+    /// described: `described_type`).
     pub(super) fn module_name_here(&self, module: crate::session::ModuleId) -> Option<Symbol> {
-        let path = self.import_paths.get(&module).copied();
-        module_name_in(&self.tables, self.module, module, path)
+        let package = |m| self.tables.module_packages.get(&m);
+        if package(module) != package(self.module) {
+            return self.import_path(module);
+        }
+        self.tables.module_names.get(&module).copied()
+    }
+
+    /// How this module writes the module `module` of the program where a
+    /// message, or the editor, names one of its types (see
+    /// [`ModuleWritten`]): by the name `module_name_here` gives, or
+    /// described where no import written here can reach it. None for
+    /// this module itself and for a builtin module.
+    pub(super) fn module_written(&self, module: crate::session::ModuleId) -> Option<ModuleWritten> {
+        if module.is_builtin() || module == self.module {
+            return None;
+        }
+        let package = |m| self.tables.module_packages.get(&m);
+        if package(module) != package(self.module) && self.import_path(module).is_none() {
+            return Some(ModuleWritten::Described {
+                package: *self.tables.package_names.get(package(module)?)?,
+                module: (self.tables.module_names.get(&module).copied())
+                    .filter(|name| resolve(*name) != "lib"),
+            });
+        }
+        self.module_name_here(module).map(ModuleWritten::Named)
+    }
+
+    /// [`TypeChecker::module_written`] for every module of the program
+    /// the session knows but this one: what the module's analysis keeps
+    /// for the editor, so that hover writes another module's types as
+    /// the messages do.
+    pub(super) fn modules_written(&self) -> HashMap<crate::session::ModuleId, ModuleWritten> {
+        (self.tables.module_names.keys())
+            .filter_map(|module| Some((*module, self.module_written(*module)?)))
+            .collect()
     }
 
     /// The variant `name` of the enum `enum_ty` as a program writes it:
@@ -213,11 +250,28 @@ impl TypeChecker {
     /// name where none does.
     pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
         match self.other_module(enum_ty) {
+            // (Of a module no import here reaches, by its own name: the
+            // module's name is none the program can write.)
+            Some(_) if self.variant_out_of_reach(enum_ty, name) => name.to_string(),
             Some(module) => (self.module_of_type(enum_ty))
                 .and_then(|id| self.spelling_in_reach(id, &resolve(name)))
                 .unwrap_or_else(|| format!("{module}.{name}")),
             None => name.to_string(),
         }
+    }
+
+    /// Whether the variant `name` of `enum_ty`, a type of another module,
+    /// is one this module cannot write in any form: no import here puts
+    /// it in reach, and none written here can (a module of a dependency's
+    /// dependency, a dependency's module other than its library).
+    pub(super) fn variant_out_of_reach(&self, enum_ty: TypeRef, name: Symbol) -> bool {
+        let package = |m| self.tables.module_packages.get(&m);
+        self.def(enum_ty.id.0).is_some_and(|def| {
+            !def.module.is_builtin()
+                && package(def.module) != package(self.module)
+                && self.spelling_in_reach(def.module, &resolve(name)).is_none()
+                && self.import_path(def.module).is_none()
+        })
     }
 
     /// The variant `name` of `enum_ty` as this module can write it, or
@@ -262,13 +316,37 @@ impl TypeChecker {
 
     /// The path an import of `module` would write here, for a help that
     /// names the import to add: the path an import of the module uses
-    /// already (`import dep.{ T }`), a builtin module's name, or the name
+    /// already (`import dep.{ T }`), the key of a dependency of the
+    /// package whose library it is, a builtin module's name, or the name
     /// of a module of the same package. None for any other module (a
-    /// module of another package that is not imported here: no import
-    /// written here reaches it by the name it calls itself).
+    /// module of a dependency's dependency, a dependency's module other
+    /// than its library: no import written here reaches it), and for a
+    /// path the file binds already (`bound_here`): that import would
+    /// bind it twice. The one rule of every "after `import X`" a help
+    /// offers.
     pub(super) fn import_path(&self, module: crate::session::ModuleId) -> Option<Symbol> {
         if let Some(path) = self.import_paths.get(&module) {
             return Some(*path);
+        }
+        self.path_to_import(module)
+            .filter(|path| !self.bound_here(*path))
+    }
+
+    /// Whether the file binds the name `name` at its top level: to a
+    /// module it imports (`import da as errs`), to an item it imports, or
+    /// to a definition of its own.
+    pub(super) fn bound_here(&self, name: Symbol) -> bool {
+        (self.module_spelled.values().chain(self.spelled.values())).any(|b| *b == name)
+            || (self.defs.as_ref()).is_some_and(|defs| !defs.named(self.module, name).is_empty())
+    }
+
+    /// The path of `import_path` before the file's own names are
+    /// looked at.
+    fn path_to_import(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+        // (A dependency's library that another module of the package
+        // imports: by its key.)
+        if let Some(key) = self.dependency_keys.get(&module) {
+            return Some(*key);
         }
         if let Some(name) = module.builtin_name() {
             return Some(intern(name));
@@ -294,6 +372,9 @@ impl TypeChecker {
     /// that the cell names by its name (`<repl:1>.H` is the `H` an
     /// earlier cell declared again).
     fn qualified_type(&self, r: TypeRef) -> String {
+        if let Some(described) = self.described_type(r) {
+            return described;
+        }
         let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
             Some((_, module)) => Some(intern(module.unwrap_or("prelude"))),
             None => self
@@ -304,11 +385,30 @@ impl TypeChecker {
                         && self.cells.contains(&def.module)
                         && self.named_types.contains(&r.id.0))
                 })
-                .and_then(|def| self.module_name_here(def.module)),
+                // (A described type is written whole, above.)
+                .and_then(|def| match self.module_written(def.module)? {
+                    ModuleWritten::Named(module) => Some(module),
+                    ModuleWritten::Described { .. } => None,
+                }),
         };
         match module {
             Some(module) => format!("{module}.{}", r.name),
             None => r.name.to_string(),
+        }
+    }
+
+    /// The type `r` of a module of another package that no import
+    /// written here can reach (a dependency's dependency, a dependency's
+    /// module other than its library), in the one form a message writes
+    /// such a type in, which is no code: `InErr of package inner`, `UErr
+    /// of module util of package da` (the arguments of a generic one
+    /// before the description, see [`crate::types::AFTER_ARGUMENTS`]).
+    /// None for any other type.
+    fn described_type(&self, r: TypeRef) -> Option<String> {
+        let def = self.def(r.id.0)?;
+        match self.module_written(def.module)? {
+            written @ ModuleWritten::Described { .. } => Some(written.type_name(r.name)),
+            ModuleWritten::Named(_) => None,
         }
     }
 
@@ -317,7 +417,9 @@ impl TypeChecker {
     /// (`time.Date`); in a REPL cell the types of the earlier cells are
     /// in scope by name.
     pub(super) fn written_type(&self, r: TypeRef) -> String {
-        let qualified = self.qualified_type(r);
+        let qualified = self
+            .qualified_type(r)
+            .replace(crate::types::AFTER_ARGUMENTS, "");
         // (An earlier cell's "module" has no name a program writes.)
         match self.is_cell && qualified.starts_with('<') {
             true => r.name.to_string(),
@@ -492,14 +594,53 @@ impl TypeChecker {
     /// The "unknown type" error for `name`, with a hint when it is a
     /// known type in the wrong case (see `case_mismatched_type_name`).
     pub(super) fn unknown_type_message(&self, name: &str, applied: bool) -> String {
-        match self.case_mismatched_type_name(name, applied) {
+        match (self.case_mismatched_type_name(name, applied)).and_then(|t| self.type_offered(&t)) {
             Some(type_name) => format!(
-                "unknown type '{name}' — did you mean `{type_name}`? (type names are \
+                "unknown type '{name}' — did you mean {type_name}? (type names are \
                  case-sensitive and start with a capital letter; a lowercase name in a \
                  type is a type variable)"
             ),
             None => format!("unknown type '{name}'"),
         }
+    }
+
+    /// The type named `name` as this module can write it, for a "did
+    /// you mean": bare for the module's own and the prelude's, as an
+    /// import here puts it in reach (`regex.Regex` under `import regex`),
+    /// else with the import to add (`regex.Regex` (a type of module
+    /// `regex`, after `import regex`)). Of several types of that name the
+    /// first of those, in that order. None where no import written here
+    /// reaches any of them.
+    fn type_offered(&self, name: &str) -> Option<String> {
+        let builtin = crate::defs::builtin_type_id(name).map(|id| TypeRef {
+            id,
+            name: intern(name),
+        });
+        let declared = (self.tables.records.keys())
+            .chain(self.tables.enums.keys())
+            .chain(self.tables.type_aliases.iter())
+            .filter(|r| resolve(r.name) == name)
+            .copied();
+        builtin
+            .into_iter()
+            .chain(declared)
+            .filter_map(|r| match self.module_of_type(r) {
+                None => Some((0, format!("`{name}`"))),
+                Some(module) if module == self.module => Some((0, format!("`{name}`"))),
+                Some(module) => match self.spelling_in_reach(module, name) {
+                    Some(written) => Some((1, format!("`{written}`"))),
+                    None => self.import_path(module).map(|path| {
+                        (
+                            2,
+                            format!(
+                                "`{path}.{name}` (a type of module `{path}`, after `import {path}`)"
+                            ),
+                        )
+                    }),
+                },
+            })
+            .min()
+            .map(|(_, shown)| shown)
     }
 }
 
@@ -528,22 +669,41 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
     }
 }
 
-/// The name the module `here` knows the module `module` by in a message,
-/// of the session's `tables`: its own name, but a module of another
-/// package (a dependency's root module, which calls itself `lib`) by
-/// `import_path`, the path `here` imports it by (`dep`). The one rule the
-/// checker's messages and the editor's hover write a module by.
-pub(crate) fn module_name_in(
-    tables: &Tables,
-    here: crate::session::ModuleId,
-    module: crate::session::ModuleId,
-    import_path: Option<Symbol>,
-) -> Option<Symbol> {
-    let package = |m| tables.module_packages.get(&m);
-    if package(module) != package(here)
-        && let Some(path) = import_path
-    {
-        return Some(path);
+/// How a module writes another module of the program where it names one
+/// of its types: the one rule of the checker's messages and of the
+/// editor's hover, signature help, completion details and inlay hints
+/// (`TypeChecker::module_written`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModuleWritten {
+    /// By a name a program writes: its own (`shapes`), a dependency's
+    /// key for the dependency's library (`da`, imported here or not).
+    Named(Symbol),
+    /// Out of every import's reach (a dependency's dependency, a
+    /// dependency's module other than its library): described.
+    Described {
+        package: Symbol,
+        /// The module's name; None for a package's library.
+        module: Option<Symbol>,
+    },
+}
+
+impl ModuleWritten {
+    /// The type `name` of such a module: `da.AppError`; `InErr of
+    /// package inner`, `UErr of module util of package da` (the
+    /// arguments of a generic one stand before the description, at
+    /// [`crate::types::AFTER_ARGUMENTS`]).
+    pub fn type_name(&self, name: Symbol) -> String {
+        let after = crate::types::AFTER_ARGUMENTS;
+        match self {
+            ModuleWritten::Named(module) => format!("{module}.{name}"),
+            ModuleWritten::Described {
+                package,
+                module: Some(module),
+            } => format!("{name}{after} of module {module} of package {package}"),
+            ModuleWritten::Described {
+                package,
+                module: None,
+            } => format!("{name}{after} of package {package}"),
+        }
     }
-    tables.module_names.get(&module).copied()
 }

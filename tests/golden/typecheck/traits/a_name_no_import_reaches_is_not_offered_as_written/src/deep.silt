@@ -1,0 +1,11 @@
+import da
+
+pub fn deep() -> Int {
+  match da.deep() {
+  }
+}
+
+pub fn u() -> Int {
+  match da.u() {
+  }
+}

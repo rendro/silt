@@ -1,0 +1,20 @@
+error[type]: method 'mk' writes the type variable `b` where trait 'Mk' declares `Int`
+ --> impl_method__a_type_variable_where_the_trait_declares_a_type_is_refused.silt:10:35
+    |
+ 10 | trait Mk for Int { fn mk(self) -> b { self } }
+    |                                   ^ method 'mk' writes the type variable `b` where trait 'Mk' declares `Int`
+  = help: a type variable stands for any type: write `Int`, as the trait does
+
+error[type]: method 'take' writes the type variable `b` where trait 'Take' declares `Int`
+ --> impl_method__a_type_variable_where_the_trait_declares_a_type_is_refused.silt:14:39
+    |
+ 14 | trait Take for Int { fn take(self, x: b) -> Int { self } }
+    |                                       ^ method 'take' writes the type variable `b` where trait 'Take' declares `Int`
+  = help: a type variable stands for any type: write `Int`, as the trait does
+
+error[type]: method 'conv' writes the type variable `c` where trait 'Conv' declares `Int`
+ --> impl_method__a_type_variable_where_the_trait_declares_a_type_is_refused.silt:18:47
+    |
+ 18 | trait Conv(Int) for String { fn conv(self) -> c { 1 } }
+    |                                               ^ method 'conv' writes the type variable `c` where trait 'Conv' declares `Int`
+  = help: a type variable stands for any type: write `Int`, as the trait does

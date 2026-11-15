@@ -1,0 +1,6 @@
+[package]
+name = "da"
+version = "0.1.0"
+
+[dependencies]
+inner = { path = "../inner" }

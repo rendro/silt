@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- Braces given as a value that hold only `name = value` items, one per line,
+-- are the fields of a record as other languages write them: the error says
+-- how a record literal is written.
+fn main() {
+  let cfg = {
+    name = "a",
+    port = 80
+  }
+  println(cfg)
+}

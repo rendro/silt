@@ -180,6 +180,9 @@ pub struct ModuleAnalysis {
     /// has no `Display`, the error reported where it is an entry point:
     /// `main` of a file run or checked, a test of a file tested.
     pub entry_display: HashMap<crate::intern::Symbol, Diagnostic>,
+    /// How the module writes each other module of the program where it
+    /// names one of its types, as the checker's messages do.
+    pub modules_written: HashMap<ModuleId, crate::typechecker::ModuleWritten>,
 }
 
 /// What the imports of `module` name, as the compiler looks them up:
@@ -635,11 +638,29 @@ impl Session {
             true => self.cells.ids(),
             false => Default::default(),
         };
+        // (Each key of the package's `[dependencies]` whose library the
+        // session has: a help offers its import by the key.)
+        let packages = match &self.packages {
+            Some(Ok(packages)) => packages,
+            _ => &self.fallback_packages,
+        };
+        let dependencies = (packages.packages.get(module.package.0 as usize))
+            .map_or(&[][..], |package| package.deps.as_slice())
+            .iter()
+            .filter_map(|(key, dep, _)| {
+                let src = packages.packages.get(dep.0 as usize)?.src.as_ref()?;
+                Some((*key, self.graph.module_at(&src.join("lib.silt"))?))
+            })
+            .collect();
+        let package_name = (packages.packages.get(module.package.0 as usize))
+            .map_or_else(|| intern(""), |package| package.name);
         let mut check = typechecker::check_module(
             &mut ast,
             ModuleContext {
                 module: id,
                 package: module.package,
+                dependencies,
+                package_name,
                 module_name: module.name,
                 kind,
                 reach,
@@ -696,6 +717,7 @@ impl Session {
             let_order: check.let_order,
             diagnostics,
             entry_display: check.entry_display,
+            modules_written: check.modules_written,
         }
     }
 

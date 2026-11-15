@@ -1,8 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- The `?` of a lambda whose body is no Result is reported once, at the `?`
--- (the lambda returns neither a Result nor an Option); the list of Results
--- the map then gives does not fit the annotation.
+-- (the lambda returns neither a Result nor an Option), and is the only
+-- error: the lambda's result is of no type then, so the list the map gives
+-- asks nothing of the annotation.
 import list
 fn main() {
   let xs = [Ok(1), Err("bad"), Ok(3)]

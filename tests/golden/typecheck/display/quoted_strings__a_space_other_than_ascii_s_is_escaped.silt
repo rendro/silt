@@ -1,0 +1,12 @@
+-- exit: 1
+-- A string shown quoted (in a structure, in a failed assertion) writes a
+-- space other than ASCII's as `\u{..}`: a no-break space, an em space or
+-- an ideographic space would look like ASCII's.
+-- stdout-contains: ["a\u{a0}b", "c\u{2003}d", "e\u{3000}f", "g\u{202f}h", "i j"]
+-- stderr-contains: assertion failed: "a b" != "a\u{a0}b"
+import test
+
+fn main() {
+  println(["a\u{a0}b", "c\u{2003}d", "e\u{3000}f", "g\u{202f}h", "i j"])
+  test.assert_eq("a b", "a\u{a0}b")
+}

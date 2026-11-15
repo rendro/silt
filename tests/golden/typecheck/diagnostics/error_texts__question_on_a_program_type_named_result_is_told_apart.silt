@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- `?` on a value of the program's own type named `Result` says
+-- that it is not the builtin type, where its type is known at the
+-- `?` and where a later function decides it.
+import channel
+
+type Result(a, e) { Ok(a), Err(e), Maybe }
+
+fn g(x: Int) -> Result(Int, String) {
+  match x {
+    0 -> Maybe
+    _ -> Ok(x)
+  }
+}
+
+let ch = channel.new(4)
+
+fn get() {
+  match channel.receive(ch) {
+    Some(m) -> m
+    None -> panic("closed")
+  }
+}
+
+fn q() {
+  let v = get()?
+  Ok(v)
+}
+
+fn main() {
+  channel.send(ch, g(2))
+  let v = g(1)?
+  println("{v} {q()}")
+}

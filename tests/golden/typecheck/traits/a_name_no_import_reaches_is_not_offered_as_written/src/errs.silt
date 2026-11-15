@@ -1,0 +1,5 @@
+pub trait Localt { fn loc(self) -> String }
+
+pub type Localy { l: Int }
+
+pub fn n() -> Int { 2 }

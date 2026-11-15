@@ -1,0 +1,6 @@
+error[lex]: unexpected character: `'`
+ --> quote_mark__a_single_quote_is_shown_in_backticks.silt:6:11
+   |
+ 6 |   let c = 'a'
+   |           ^ unexpected character: `'`
+  = help: a string is written in double quotes, with `{x}` for a value: `"hello {name}"`

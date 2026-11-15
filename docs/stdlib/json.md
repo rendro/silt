@@ -98,9 +98,10 @@ what the decoder does depends on where that `Option` in an `Option` is:
 
 - In a field of a record or a variant, or anywhere inside a field's type
   (`v: Option(t)`, `items: List(Option(t))`, a map's value or a tuple's
-  part in a field): the decoder refuses the field when it runs,
-  `Err(Other(...))`, "a value of type List(Option(Option(Int))) cannot be
-  decoded".
+  part in a field): the decoder refuses that record or enum type when it
+  runs, whatever the document holds (the field left out, another variant
+  of the enum): `Err(Other(...))`, "a value of type
+  List(Option(Option(Int))) cannot be decoded".
 - Outside every field (the type the decoder is given, and an element of a
   list, a value of a map or a part of a tuple of that type): a `null`
   reads as `None` and any other value as `Some(Some(...))`, so a

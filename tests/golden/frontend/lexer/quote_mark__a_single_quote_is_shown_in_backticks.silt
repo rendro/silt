@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A single quotation mark is shown in backticks (in quotes it would read
+-- as three), with the help that a string is written in double quotes.
+fn main() {
+  let c = 'a'
+  println(c)
+}

@@ -1,0 +1,10 @@
+import da
+import errs
+
+pub fn two() -> Int {
+  match da.deep() {
+    _ -> errs.n()
+  }
+}
+
+pub fn aerr() -> da.AppError { da.mk() }
