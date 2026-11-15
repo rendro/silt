@@ -242,7 +242,7 @@ impl TypeChecker {
         let written =
             |module: &crate::session::ModuleId| Some((*module, self.module_written(*module)?));
         match &self.reach {
-            Some(reach) => reach.iter().filter_map(written).collect(),
+            Some(reach) => reach.get().iter().filter_map(written).collect(),
             // A REPL cell (for `:type`) can name what the earlier cells
             // imported: every module of the program the session has.
             None => (self.tables.module_names.keys())

@@ -907,6 +907,27 @@ impl ModuleGraph {
         }
     }
 
+    /// The imports of every module that `starts` reach, and of `starts`:
+    /// each module's [`Module::imported_modules`], by module. One walk for
+    /// a program, from which each module's reach is found when it is
+    /// asked for (`typechecker::Reach`).
+    pub fn import_edges(
+        &self,
+        starts: impl IntoIterator<Item = ModuleId>,
+    ) -> HashMap<ModuleId, Vec<ModuleId>> {
+        let mut edges: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+        let mut stack: Vec<ModuleId> = starts.into_iter().collect();
+        while let Some(next) = stack.pop() {
+            if edges.contains_key(&next) {
+                continue;
+            }
+            let imports = self.module(next).imported_modules();
+            stack.extend(imports.iter().copied());
+            edges.insert(next, imports);
+        }
+        edges
+    }
+
     /// The modules `id` imports, and theirs, and so on: the modules
     /// that are initialised before it.
     pub fn reach(&self, id: ModuleId) -> HashSet<ModuleId> {

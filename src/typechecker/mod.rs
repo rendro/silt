@@ -660,9 +660,10 @@ pub struct TypeChecker {
     /// module it imports anything of.
     pub(super) builtin_imports: std::collections::HashSet<crate::session::ModuleId>,
     /// The modules the module checked imports, and theirs, and so on:
-    /// the modules that are initialised before it. `None` for a REPL
-    /// cell, which follows every earlier cell and what those imported.
-    pub(super) reach: Option<std::collections::HashSet<crate::session::ModuleId>>,
+    /// the modules that are initialised before it, found when asked for.
+    /// `None` for a REPL cell, which follows every earlier cell and what
+    /// those imported.
+    pub(super) reach: Option<Reach>,
     /// For a REPL cell, the cells of its session: for where an impl may
     /// be written they count as one module.
     pub(super) cells: std::sync::Arc<std::collections::HashSet<crate::session::ModuleId>>,
@@ -2301,9 +2302,9 @@ pub struct ModuleContext<'a> {
     /// A file, a REPL cell, or an embedder's host module, whose
     /// functions are bodiless signatures.
     pub kind: names::ModuleKind,
-    /// The modules it imports, and theirs, and so on. `None` for a REPL
-    /// cell.
-    pub reach: Option<std::collections::HashSet<crate::session::ModuleId>>,
+    /// The modules it imports, and theirs, and so on, found when asked
+    /// for. `None` for a REPL cell.
+    pub reach: Option<Reach>,
     /// For a REPL cell, the cells of its session.
     pub cells: std::sync::Arc<std::collections::HashSet<crate::session::ModuleId>>,
     /// The module's top-level names, from the resolver.
@@ -2319,6 +2320,48 @@ pub struct ModuleContext<'a> {
     /// Whether to keep what only an editor reads
     /// (`ModuleCheck::modules_written`).
     pub for_editor: bool,
+}
+
+/// The modules a module imports, and theirs, and so on: the modules that
+/// are initialised before it. Found from the program's import edges
+/// (`ModuleGraph::import_edges`) the first time a check asks (the hint
+/// that a trait's module is not imported, the editor's module names),
+/// then kept: a check that does not ask walks nothing. (Each check
+/// walking all it reaches made a chain of n modules take time n squared.)
+#[derive(Clone, Debug)]
+pub struct Reach {
+    module: crate::session::ModuleId,
+    edges: std::sync::Arc<HashMap<crate::session::ModuleId, Vec<crate::session::ModuleId>>>,
+    found: std::cell::OnceCell<std::collections::HashSet<crate::session::ModuleId>>,
+}
+
+impl Reach {
+    pub fn new(
+        module: crate::session::ModuleId,
+        edges: std::sync::Arc<HashMap<crate::session::ModuleId, Vec<crate::session::ModuleId>>>,
+    ) -> Reach {
+        Reach {
+            module,
+            edges,
+            found: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The modules reached, as `ModuleGraph::reach` finds them.
+    pub(crate) fn get(&self) -> &std::collections::HashSet<crate::session::ModuleId> {
+        self.found.get_or_init(|| {
+            let imports =
+                |m: &crate::session::ModuleId| self.edges.get(m).cloned().unwrap_or_default();
+            let mut seen = std::collections::HashSet::new();
+            let mut stack = imports(&self.module);
+            while let Some(next) = stack.pop() {
+                if seen.insert(next) {
+                    stack.extend(imports(&next));
+                }
+            }
+            seen
+        })
+    }
 }
 
 /// Check one module, which the resolver has resolved, against the

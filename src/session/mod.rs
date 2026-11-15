@@ -612,9 +612,15 @@ impl Session {
             .filter(|m| m.host.is_some() && !m.failed())
             .map(|m| m.id)
             .collect();
+        // The imports of every module checked here, in one walk: each
+        // check finds its module's reach from them only if it asks
+        // (`typechecker::Reach`), not by a walk of its own.
+        let edges = std::sync::Arc::new(
+            (self.graph).import_edges(std::iter::once(entry).chain(hosts.iter().copied())),
+        );
         for id in hosts {
             if !self.analyses.contains_key(&id) {
-                let analysis = self.check(id, &ordering);
+                let analysis = self.check(id, &ordering, &edges);
                 self.analyses.insert(id, analysis);
             }
         }
@@ -623,7 +629,7 @@ impl Session {
             if self.analyses.contains_key(&id) || (id != entry && module.failed()) {
                 continue;
             }
-            let analysis = self.check(id, &ordering);
+            let analysis = self.check(id, &ordering, &edges);
             self.analyses.insert(id, analysis);
         }
         Analysis {
@@ -635,7 +641,12 @@ impl Session {
 
     /// Check module `id`, whose imports are checked already, except those
     /// that failed or that close a cycle: those are poisoned.
-    fn check(&mut self, id: ModuleId, ordering: &Ordering) -> ModuleAnalysis {
+    fn check(
+        &mut self,
+        id: ModuleId,
+        ordering: &Ordering,
+        edges: &std::sync::Arc<HashMap<ModuleId, Vec<ModuleId>>>,
+    ) -> ModuleAnalysis {
         let module = self.graph.module(id);
         let mut ast = module.ast.clone().unwrap_or_default();
         let mut imported: HashMap<Symbol, Imported<'_>> = HashMap::new();
@@ -708,7 +719,7 @@ impl Session {
             },
         );
         let cell = kind == ModuleKind::Cell;
-        let reach = (!cell).then(|| self.graph.reach(id));
+        let reach = (!cell).then(|| typechecker::Reach::new(id, edges.clone()));
         let cells = match cell {
             true => self.cells.ids(),
             false => Default::default(),
