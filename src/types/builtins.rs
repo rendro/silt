@@ -5,19 +5,16 @@
 //! editor-grammar tests, etc.) historically drifted whenever a new
 //! built-in type was added. This module is the single place to add or
 //! remove a built-in type name; every consumer derives from
-//! `BUILTIN_TYPES` (or, for editor-grammar text files, is locked
-//! against it by `tests/meta/editor_grammar_primitives_tests.rs`).
+//! `BUILTIN_TYPES` (the editor grammars' type names are written from
+//! it by `tests/meta/editor_grammar_names_tests.rs`).
 //!
 //! ## Adding a new built-in type
 //!
 //! 1. Add an entry to `BUILTIN_TYPES` below.
-//! 2. Add the surface name to both editor grammars:
-//!    - `editors/vim/syntax/silt.vim` (siltType keyword line)
-//!    - `editors/vscode/syntaxes/silt.tmLanguage.json` (`primitives` regex)
-//! 3. Run `cargo test`. The parity-lock test asserts presence in both
-//!    grammars. Every other consumer (typechecker arity check, LSP
-//!    rename guard, editor-grammar primitive list test) takes its names
-//!    from this list.
+//! 2. Write the editor grammars' names again: run the meta test
+//!    `editor_grammar_names` with `SILT_BLESS=1` (it fails until they
+//!    are). Every other consumer (typechecker arity check, LSP rename
+//!    guard) takes its names from this list.
 //!
 //! ## Arity semantics
 //!

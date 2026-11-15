@@ -542,7 +542,7 @@ source of randomness of its own, so the embedder supplies them:
   is elsewhere.
 - **Randomness.** `getrandom` and `uuid` refuse to build for the target
   until the embedder's crate picks a source: in a browser, add
-  `getrandom = { version = "0.2", features = ["js"] }` and
+  `getrandom = { version = "0.4", features = ["wasm_js"] }` and
   `uuid = { version = "1", features = ["js"] }` to its dependencies.
 
 The crate in `playground/` is such an embedder: the playground of

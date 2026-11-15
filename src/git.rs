@@ -729,7 +729,7 @@ fn url_hash(url: &str) -> String {
     // 16 hex chars = 64 bits. Plenty of room to avoid collisions across
     // a developer's set of git deps; short enough to keep cache paths
     // readable.
-    let hex = format!("{:x}", digest);
+    let hex = crate::lockfile::lower_hex(&digest);
     hex[..16].to_string()
 }
 

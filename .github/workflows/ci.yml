@@ -72,6 +72,11 @@ jobs:
       - name: cargo fmt
         run: cargo fmt -- --check
 
+      # The fuzz crate is a crate of its own, which the step above does
+      # not reach (the playground's is checked in its own job).
+      - name: cargo fmt (fuzz)
+        run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+
   rust-version:
     # The oldest Rust that builds silt is the package's `rust-version` in
     # Cargo.toml. Check the library and the binary on it, with no
@@ -193,6 +198,11 @@ jobs:
       - name: cargo nextest (database)
         run: cargo nextest run --locked --all-features --no-fail-fast --no-tests=fail --test database
 
+      # The doc tests with every feature (see `test-default-features`):
+      # this job builds the crate with all of them, unpartitioned.
+      - name: cargo test --doc (all features)
+        run: cargo test --locked --all-features --doc
+
   test-default-features:
     # Everything else runs with --all-features. This job runs the unit
     # tests and the golden corpus against the default build; golden cases
@@ -219,6 +229,11 @@ jobs:
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
             cargo nextest run --locked --no-fail-fast --lib --bin silt --test golden
+      # nextest runs no doc tests: the examples in the crate's docs are
+      # compiled and run here, and in the jobs of the other two feature
+      # sets.
+      - name: cargo test --doc (default features)
+        run: cargo test --locked --doc
 
   test-no-default-features:
     # The same against a build with no features at all, beside the job
@@ -247,6 +262,8 @@ jobs:
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
             cargo nextest run --locked --no-default-features --no-fail-fast --lib --bin silt --test golden
+      - name: cargo test --doc (no default features)
+        run: cargo test --locked --no-default-features --doc
       - name: cargo build --tests (no default features)
         run: cargo build --locked --no-default-features --tests
 
@@ -324,7 +341,14 @@ jobs:
           tool: wasm-pack
       - name: cargo fmt
         run: cargo fmt --manifest-path playground/Cargo.toml -- --check
+      # `-- -D warnings` reaches the playground crate only: silt is a
+      # path dependency outside the playground's workspace, whose
+      # warnings cargo prints and does not fail on. RUSTFLAGS makes them
+      # errors too, so code of silt's that only the wasm32 build compiles
+      # (no other job builds it) is held to no warnings as well.
       - name: cargo clippy (wasm32)
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo clippy --locked --manifest-path playground/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
       - name: cargo test
         run: cargo test --locked --manifest-path playground/Cargo.toml

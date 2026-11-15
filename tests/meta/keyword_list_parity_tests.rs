@@ -51,11 +51,10 @@ fn lexer_keywords_const_equals_expected_core_set() {
     // `lexer_keywords_const_contains_core_set` above only asserts
     // `lexer::KEYWORDS ⊇ EXPECTED_CORE_KEYWORDS`. If a NEW keyword is
     // added to `lexer::KEYWORDS` (and the lexer match arms), neither
-    // `EXPECTED_CORE_KEYWORDS` here nor its parallel copy in
-    // `tests/meta/editor_grammar_keywords_tests.rs` would notice — the
-    // editor grammars (vim/vscode) would then silently miss the new
-    // keyword. This test closes that gap by asserting the two sets are
-    // exactly equal.
+    // `EXPECTED_CORE_KEYWORDS` here would notice. This test closes that
+    // gap by asserting the two sets are exactly equal. (The editor
+    // grammars' keywords are written from `lexer::KEYWORDS` by
+    // `tests/meta/editor_grammar_names_tests.rs`.)
     let lexer_set: std::collections::HashSet<&str> =
         silt::testing::lexer::KEYWORDS.iter().copied().collect();
     let expected_set: std::collections::HashSet<&str> =
@@ -68,10 +67,9 @@ fn lexer_keywords_const_equals_expected_core_set() {
         extra_in_lexer.is_empty() && extra_in_expected.is_empty(),
         "lexer::KEYWORDS drift: a new keyword was added to lexer/match \
          arms but EXPECTED_CORE_KEYWORDS was not updated; add the \
-         keyword name to EXPECTED_CORE_KEYWORDS in this file AND in \
-         tests/meta/editor_grammar_keywords_tests.rs, plus the editor \
-         grammar files (editors/vim/syntax/silt.vim and \
-         editors/vscode/syntaxes/silt.tmLanguage.json).\n  \
+         keyword name to EXPECTED_CORE_KEYWORDS in this file, and write \
+         the editor grammars' names again (the meta test \
+         editor_grammar_names with SILT_BLESS=1).\n  \
          in lexer::KEYWORDS but not EXPECTED_CORE_KEYWORDS: {:?}\n  \
          in EXPECTED_CORE_KEYWORDS but not lexer::KEYWORDS: {:?}",
         extra_in_lexer,

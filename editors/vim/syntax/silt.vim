@@ -6,42 +6,53 @@ if exists("b:current_syntax")
   finish
 endif
 
-" ── Keywords ────────────────────────────────────────────────────────
+" ── Names (generated) ──────────────────────────────────────────────
+" Written from the lexer and the builtin registry by
+" tests/meta/editor_grammar_names_tests.rs: do not edit by hand. After a
+" change of either, `SILT_BLESS=1 cargo nextest run --test meta
+" editor_grammar_names` writes these lines again.
 syntax keyword siltKeyword as else fn import let loop match opaque pub return trait type when where
 syntax keyword siltBoolean true false
-
-" ── Primitive type names ────────────────────────────────────────────
-" The variants of json.Value. Int, Float, Bool and String are types as
-" well; the siltType line below is defined later, so it wins for them.
+" The variants of the builtin enums, one enum a line. The types come
+" after them: a name that is both (json.Value's Int) is a type, as vim
+" takes the keyword defined last.
+syntax keyword siltConstructor Ok Err
+syntax keyword siltConstructor Some None
+syntax keyword siltConstructor Stop Continue
+syntax keyword siltConstructor Message Empty Closed
+syntax keyword siltConstructor Recv Send
+syntax keyword siltConstructor Received Sent
 syntax keyword siltConstructor Null Bool Int Float String Array Object
-" Sourced from src/types.rs `impl Display for Type` — these are the
-" names the compiler prints in diagnostics and the names accepted in
-" type-annotation position. Keep in sync with the lock test at
-" tests/editor_grammar_primitives_tests.rs.
-syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Handle Bytes TcpListener TcpStream Regex
-" The record and enum types the builtin modules declare
-" (`builtin_module_types` in src/module.rs). Lock test at
-" tests/meta/editor_grammar_primitives_tests.rs.
-syntax keyword siltType FileStat Instant Date Time DateTime Duration Weekday Method Response Request
-syntax keyword siltType IoError JsonError TomlError IntError FloatError HttpError RegexError TimeError BytesError PostgresError TcpError EncodingError CryptoError UuidError TaskError
-
-" ── Builtins ────────────────────────────────────────────────────────
-syntax keyword siltBuiltin print println panic
-syntax keyword siltConstructor Ok Err Some None Stop Continue Message Empty Closed Recv Send Received Sent
 syntax keyword siltConstructor Monday Tuesday Wednesday Thursday Friday Saturday Sunday
 syntax keyword siltConstructor GET POST PUT PATCH DELETE HEAD OPTIONS
-syntax keyword siltConstructor NotFound PermissionDenied AlreadyExists InvalidInput Interrupted UnexpectedEof WriteZero Other
-syntax keyword siltConstructor Syntax TypeMismatch MissingField
-syntax keyword siltConstructor InvalidDigit Overflow Underflow NotFinite
-syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse ClosedEarly
+syntax keyword siltConstructor NotFound PermissionDenied AlreadyExists InvalidInput Interrupted
+syntax keyword siltConstructor UnexpectedEof WriteZero Other
+syntax keyword siltConstructor InvalidDigit Overflow Underflow
+syntax keyword siltConstructor NotFinite
+syntax keyword siltConstructor Timeout
 syntax keyword siltConstructor InvalidPattern TooBig
-syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
+syntax keyword siltConstructor Syntax TypeMismatch MissingField
 syntax keyword siltConstructor ParseFormat OutOfRange InvalidFormat
+syntax keyword siltConstructor Connect Tls InvalidUrl InvalidResponse ClosedEarly
+syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
 syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange
-syntax keyword siltConstructor InvalidPercent InvalidLength Invalid Bind
-
-" ── Module names (before the dot) ───────────────────────────────────
-syntax match siltModule "\<\(list\|string\|int\|float\|map\|set\|result\|option\|io\|math\|channel\|task\|regex\|json\|test\|fs\|env\|http\|time\|toml\|postgres\|bytes\|crypto\|encoding\|tcp\|stream\|uuid\|process\|csv\)\>\ze\."
+syntax keyword siltConstructor InvalidLength
+syntax keyword siltConstructor InvalidPercent
+syntax keyword siltConstructor Bind
+syntax keyword siltConstructor Invalid
+" The builtin types, then the record and enum types of the modules.
+syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Handle Bytes TcpListener
+syntax keyword siltType TcpStream Regex
+syntax keyword siltType IoError IntError FloatError Step ChannelResult ChannelOp Selected TaskError
+syntax keyword siltType RegexError JsonError Value TomlError Instant Date Time DateTime Duration
+syntax keyword siltType Weekday TimeError Method Response Request HttpError FileStat PostgresError
+syntax keyword siltType Notification BytesError CryptoError EncodingError TcpError UuidError
+syntax keyword siltType CsvError
+" The free functions of the prelude.
+syntax keyword siltBuiltin panic print println
+" A builtin module's name before a dot.
+syntax match siltModule "\<\(io\|string\|int\|float\|list\|map\|result\|option\|test\|channel\|task\|regex\|json\|toml\|set\|math\|time\|http\|fs\|env\|postgres\|bytes\|crypto\|encoding\|tcp\|stream\|uuid\|process\|csv\)\>\ze\."
+" ── End of the generated names ──────────────────────────────────────────
 
 " ── Comments ────────────────────────────────────────────────────────
 syntax match siltLineComment "--.*$" contains=siltTodo

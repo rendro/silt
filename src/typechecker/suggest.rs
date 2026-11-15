@@ -4,35 +4,10 @@
 //! `undefined variable 'TYPO'` or `module 'MOD' has no member 'TYPO'`,
 //! it should append a `did you mean \`CANDIDATE\`?` hint when
 //! a close-enough identifier exists in scope. This module owns the
-//! string-distance math and the threshold policy so call sites stay
-//! one-line.
-//!
-//! Pure stdlib — no external deps.
+//! threshold policy so call sites stay one-line; the distance is
+//! [`crate::text::levenshtein`], which the command line's hint uses too.
 
-/// Levenshtein edit distance between two strings, O(n*m) time and O(m)
-/// extra space.
-pub(super) fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let (n, m) = (a.len(), b.len());
-    if n == 0 {
-        return m;
-    }
-    if m == 0 {
-        return n;
-    }
-    let mut prev: Vec<usize> = (0..=m).collect();
-    let mut curr = vec![0usize; m + 1];
-    for i in 1..=n {
-        curr[0] = i;
-        for j in 1..=m {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[m]
-}
+use crate::text::levenshtein;
 
 /// Return the closest candidate to `typo` from `candidates`, or `None`
 /// if no candidate is close enough.

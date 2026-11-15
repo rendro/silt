@@ -23,14 +23,19 @@
 //!   reads them through `&[Value]` only.
 //!
 //! The counting is that of `std::sync::Arc`: an increment `Relaxed`, a
-//! decrement `Release`, and an `Acquire` fence before the values are
-//! dropped.
+//! decrement `Release`, and an `Acquire` load of the count before the
+//! values are dropped. (`Arc` has an `Acquire` fence there, and the
+//! load in a build with the thread sanitizer, which does not see
+//! fences. The load is the same order as the fence: the count is
+//! changed by read-modify-writes only, so it reads the last decrement,
+//! which ends the release sequence of every one before it. With it the
+//! sanitizer checks this code as it runs everywhere else.)
 
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::{self, NonNull};
-use std::sync::atomic::{AtomicUsize, Ordering, fence};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::Value;
 
@@ -285,7 +290,8 @@ impl ThinSlice {
     #[cold]
     #[inline(never)]
     fn drop_last(&mut self) {
-        fence(Ordering::Acquire);
+        // (After every other holder's drop: see the module's notes.)
+        let _ = self.header().count.load(Ordering::Acquire);
         // SAFETY: this was the last holder: nobody else reads the
         // values, which are initialized, and the block was allocated
         // with `layout(len)`.

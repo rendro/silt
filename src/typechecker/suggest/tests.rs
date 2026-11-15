@@ -1,17 +1,6 @@
 use super::*;
 
 #[test]
-fn test_levenshtein_basic() {
-    assert_eq!(levenshtein("", ""), 0);
-    assert_eq!(levenshtein("abc", ""), 3);
-    assert_eq!(levenshtein("", "abc"), 3);
-    assert_eq!(levenshtein("abc", "abc"), 0);
-    assert_eq!(levenshtein("pintln", "println"), 1);
-    assert_eq!(levenshtein("lenght", "length"), 2);
-    assert_eq!(levenshtein("kitten", "sitting"), 3);
-}
-
-#[test]
 fn test_suggest_similar_close_match() {
     let cands = ["println", "print", "panic"];
     assert_eq!(

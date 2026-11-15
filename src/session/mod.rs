@@ -43,6 +43,8 @@ use crate::value::HostFn;
 pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
 pub use crate::value::HostCall;
 pub(crate) use analysis::ModuleAnalysis;
+// For `silt test` (crate::cli, which a WebAssembly build has not).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use entry::selected_tests;
 #[cfg(feature = "lsp")]
 pub(crate) use graph::parse_text;
