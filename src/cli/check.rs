@@ -276,7 +276,7 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
         path.parent().is_some_and(|dir| dir != src)
     });
     files.extend(below);
-    files.sort();
+    files.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
     without_entry_and_tests(files, entry, tests, crate::source::canonical_path)
 }
 
@@ -308,7 +308,9 @@ pub(crate) struct Checked {
     pub(crate) session: Session,
     /// The files that could not be read, each with why.
     pub(crate) unreadable: Vec<(String, std::io::Error)>,
-    /// What was found, each diagnostic once, in the order found.
+    /// What was found, each diagnostic once, in the one order of every
+    /// door (`diagnostic::in_print_order`), whichever file was checked
+    /// first.
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
@@ -323,7 +325,10 @@ impl Checked {
 /// and the modules `modules` of its package in one session. A module
 /// that the entry or a test imports is checked there, as an import (its
 /// errors show where it is imported); only the others are opened as files
-/// of their own. `Err` when the entry file cannot be read.
+/// of their own. What is found is in the one order of every door
+/// (`diagnostic::in_print_order`), the entry and the tests among the
+/// other files, for both callers (`silt check`, the package check of
+/// `silt test`). `Err` when the entry file cannot be read.
 pub(crate) fn check_package(
     path: &str,
     modules: &[String],
@@ -367,6 +372,7 @@ pub(crate) fn check_package(
             Err(e) => unreadable.push((module.clone(), e)),
         }
     }
+    crate::diagnostic::in_print_order(session.sources(), &mut diagnostics);
     Ok(Checked {
         session,
         unreadable,
@@ -376,16 +382,21 @@ pub(crate) fn check_package(
 
 /// Check each of `programs`, as a program of its own, and report what
 /// was found: each diagnostic once, also where two programs import one
-/// module; under `--format json` all of it as one JSON array.
+/// module; under `--format json` all of it as one JSON array. All of it
+/// in the one order of every door (`diagnostic::PrintKey`: by the
+/// canonical path of the file, whichever program found what and however
+/// the file is spelled, `./b.silt` or `b.silt`), each file's by line.
 fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: bool) {
     let mut failed = false;
     let mut warnings = 0;
-    let mut json: Vec<serde_json::Value> = Vec::new();
+    // Each diagnostic as it is shown, with its place in the one order
+    // of every door (`diagnostic::PrintKey`).
+    let mut found: Vec<(crate::diagnostic::PrintKey, Shown)> = Vec::new();
+    let mut json_unreadable: Vec<serde_json::Value> = Vec::new();
     // What was shown, as rendered with each file named by its canonical
     // path: a file reached by two spellings of its path (in two
     // programs) is one file.
     let mut shown: HashSet<String> = HashSet::new();
-    let mut printed = false;
     for program in programs {
         let path = match program.entry.as_str() {
             "-" => STDIN_NAME,
@@ -398,7 +409,7 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
                 failed = true;
                 let unreadable = [(path.to_string(), e)];
                 match format {
-                    OutputFormat::Json => json.extend(json_errors(
+                    OutputFormat::Json => json_unreadable.extend(json_errors(
                         &crate::source::SourceMap::new(),
                         &unreadable,
                         &[],
@@ -422,19 +433,38 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
             .cloned()
             .collect();
         warnings += diagnostics.iter().filter(|d| d.is_warning()).count();
+        let mut order = crate::diagnostic::PrintOrder::new(checked.session.sources());
+        let mut file_of = |d: &Diagnostic| order.key(d);
         match format {
             OutputFormat::Json => {
-                json.extend(json_errors(&files, &checked.unreadable, &diagnostics))
+                json_unreadable.extend(json_errors(&files, &checked.unreadable, &[]));
+                found.extend(diagnostics.iter().map(|d| {
+                    let entry = crate::diagnostic::render_json(&files, d);
+                    (file_of(d), Shown::Json(entry))
+                }));
             }
             OutputFormat::Human => {
                 report_unreadable(&checked.unreadable);
-                // F14: separate diagnostics with blank lines, also those
-                // of two programs.
-                if printed && !diagnostics.is_empty() {
+                found.extend(diagnostics.iter().map(|d| {
+                    let text = render_human(&files, d);
+                    (file_of(d), Shown::Human(text))
+                }));
+            }
+        }
+    }
+    // (A stable sort: what two programs found at one place keeps its
+    // order of finding.)
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut json = json_unreadable;
+    for (i, (_, shown)) in found.into_iter().enumerate() {
+        match shown {
+            Shown::Json(entry) => json.push(entry),
+            // F14: diagnostics are separated by blank lines.
+            Shown::Human(text) => {
+                if i > 0 {
                     eprintln!();
                 }
-                printed |= !diagnostics.is_empty();
-                crate::diagnostic::eprint_all(&files, &diagnostics);
+                eprintln!("{text}");
             }
         }
     }
@@ -456,6 +486,12 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         eprintln!("error: silt check: {warnings} {noun}, denied by --deny-warnings");
         process::exit(1);
     }
+}
+
+/// A diagnostic of `check_files` as it is shown.
+enum Shown {
+    Human(String),
+    Json(serde_json::Value),
 }
 
 /// The files that could not be read, each with why: `error reading

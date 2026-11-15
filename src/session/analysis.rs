@@ -32,4 +32,9 @@ pub struct ModuleAnalysis {
     /// has no `Display`, the error reported where it is an entry point:
     /// `main` of a file run or checked, a test of a file tested.
     pub entry_display: HashMap<crate::intern::Symbol, Diagnostic>,
+    /// How the module writes each other module of the program where it
+    /// names one of its types, as the checker's messages do. Kept only in
+    /// a session `for_editor` (empty otherwise).
+    #[cfg_attr(not(any(feature = "lsp", feature = "repl")), allow(dead_code))]
+    pub(crate) modules_written: HashMap<crate::defs::ModuleId, crate::typechecker::ModuleWritten>,
 }

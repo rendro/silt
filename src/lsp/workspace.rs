@@ -455,6 +455,22 @@ impl Server {
 
     /// Why `target`, found in the document `uri`, cannot be renamed, if
     /// it cannot: it is one of silt's own names, or `self`.
+    /// Whether `target` is a function declared at the top level of a
+    /// module: the kind of definition whose name `main` and the `test_`
+    /// prefixes give a meaning.
+    pub(super) fn is_top_level_fn(&self, target: &Target) -> bool {
+        let Target::Defs(keys) = target else {
+            return false;
+        };
+        self.projects.values().any(|project| {
+            let session = &project.session;
+            keys.iter().any(|key| {
+                def_of_key(session, key)
+                    .is_some_and(|id| matches!(session.defs().get(id).kind, DefKind::Fn))
+            })
+        })
+    }
+
     pub(super) fn not_renameable(&self, uri: &Uri, target: &Target) -> Option<String> {
         match target {
             Target::Defs(keys) => keys

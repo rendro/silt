@@ -1,0 +1,28 @@
+22:7 warning 'bad1' is never used\nhelp: remove it, or name it `_bad1`
+22:19 error type mismatch: expected Int, got shapes.Pt
+23:7 warning 'bad2' is never used\nhelp: remove it, or name it `_bad2`
+23:19 error type mismatch: expected Int, got da.AppError
+24:7 warning 'bad3' is never used\nhelp: remove it, or name it `_bad3`
+24:19 error type mismatch: expected Int, got UErr of module util of package da
+25:7 warning 'bad4' is never used\nhelp: remove it, or name it `_bad4`
+25:19 error type mismatch: expected Int, got InErr of package inner
+> hover 18:7
+```silt
+shapes.Pt
+```
+> hover 19:7
+```silt
+da.AppError
+```
+> hover 20:7
+```silt
+UErr of module util of package da
+```
+> hover 21:7
+```silt
+InErr of package inner
+```
+> hover 19:13
+```silt
+Fn() -> da.AppError
+```

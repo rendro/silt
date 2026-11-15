@@ -33,6 +33,7 @@ mod solve;
 mod structural;
 mod tables;
 pub(crate) mod typeexpr;
+pub(crate) use show::ModuleWritten;
 #[cfg(feature = "lsp")]
 pub(crate) use typeexpr::type_expr_text;
 mod unify;
@@ -665,9 +666,10 @@ pub(crate) struct TypeChecker {
     /// module it imports anything of.
     pub(super) builtin_imports: std::collections::HashSet<crate::defs::ModuleId>,
     /// The modules the module checked imports, and theirs, and so on:
-    /// the modules that are initialised before it. `None` for a REPL
-    /// cell, which follows every earlier cell and what those imported.
-    pub(super) reach: Option<std::collections::HashSet<crate::defs::ModuleId>>,
+    /// the modules that are initialised before it, found when asked for.
+    /// `None` for a REPL cell, which follows every earlier cell and what
+    /// those imported.
+    pub(super) reach: Option<Reach>,
     /// For a REPL cell, the cells of its session: for where an impl may
     /// be written they count as one module.
     pub(super) cells: std::sync::Arc<std::collections::HashSet<crate::defs::ModuleId>>,
@@ -2172,6 +2174,10 @@ pub(crate) struct ModuleCheck {
     /// no `Display`, the error the session reports where it is an entry
     /// point (`TypeChecker::entry_errors_shown`).
     pub entry_display: HashMap<Symbol, Diagnostic>,
+    /// How the module writes each other module of the program where it
+    /// names one of its types (`ModuleWritten`): for the editor, which
+    /// writes types as the messages do. Empty unless `for_editor`.
+    pub(crate) modules_written: HashMap<crate::defs::ModuleId, ModuleWritten>,
 }
 
 impl TypeChecker {
@@ -2304,9 +2310,9 @@ pub(crate) struct ModuleContext<'a> {
     /// A file, a REPL cell, or an embedder's host module, whose
     /// functions are bodiless signatures.
     pub(crate) kind: names::ModuleKind,
-    /// The modules it imports, and theirs, and so on. `None` for a REPL
-    /// cell.
-    pub(crate) reach: Option<std::collections::HashSet<crate::defs::ModuleId>>,
+    /// The modules it imports, and theirs, and so on, found when asked
+    /// for. `None` for a REPL cell.
+    pub(crate) reach: Option<Reach>,
     /// For a REPL cell, the cells of its session.
     pub(crate) cells: std::sync::Arc<std::collections::HashSet<crate::defs::ModuleId>>,
     /// The module's top-level names, from the resolver.
@@ -2319,6 +2325,51 @@ pub(crate) struct ModuleContext<'a> {
     /// What the checks of the session share. What the module adds to
     /// them is recorded, see [`Tables::forget`].
     pub(crate) tables: &'a mut Tables,
+    /// Whether to keep what only an editor reads
+    /// (`ModuleCheck::modules_written`).
+    pub(crate) for_editor: bool,
+}
+
+/// The modules a module imports, and theirs, and so on: the modules that
+/// are initialised before it. Found from the program's import edges
+/// (`ModuleGraph::import_edges`) the first time a check asks (the hint
+/// that a trait's module is not imported, the editor's module names),
+/// then kept: a check that does not ask walks nothing. (Each check
+/// walking all it reaches made a chain of n modules take time n squared.)
+#[derive(Clone, Debug)]
+pub(crate) struct Reach {
+    module: crate::defs::ModuleId,
+    edges: std::sync::Arc<HashMap<crate::defs::ModuleId, Vec<crate::defs::ModuleId>>>,
+    found: std::cell::OnceCell<std::collections::HashSet<crate::defs::ModuleId>>,
+}
+
+impl Reach {
+    pub(crate) fn new(
+        module: crate::defs::ModuleId,
+        edges: std::sync::Arc<HashMap<crate::defs::ModuleId, Vec<crate::defs::ModuleId>>>,
+    ) -> Reach {
+        Reach {
+            module,
+            edges,
+            found: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The modules reached, as `ModuleGraph::reach` finds them.
+    pub(crate) fn get(&self) -> &std::collections::HashSet<crate::defs::ModuleId> {
+        self.found.get_or_init(|| {
+            let imports =
+                |m: &crate::defs::ModuleId| self.edges.get(m).cloned().unwrap_or_default();
+            let mut seen = std::collections::HashSet::new();
+            let mut stack = imports(&self.module);
+            while let Some(next) = stack.pop() {
+                if seen.insert(next) {
+                    stack.extend(imports(&next));
+                }
+            }
+            seen
+        })
+    }
 }
 
 /// Check one module, which the resolver has resolved, against the
@@ -2339,6 +2390,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
         earlier,
         defs,
         tables,
+        for_editor,
     } = context;
     tables.forget(module);
     tables.vars.begin(module);
@@ -2488,6 +2540,12 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
             ),
         ));
     }
+    // (Only for an editor: the commands read none of it, and on a long
+    // chain of imports it costs as much as the check.)
+    let modules_written = match for_editor {
+        true => checker.modules_written(),
+        false => HashMap::new(),
+    };
     *tables = std::mem::take(&mut checker.tables);
     let rows = tables.take_rows();
     tables.rows.insert(module, rows);
@@ -2511,6 +2569,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
         signatures,
         let_order: checker.let_order,
         entry_display,
+        modules_written,
     }
 }
 

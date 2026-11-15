@@ -11,7 +11,6 @@
 
 use std::fmt::Write as _;
 
-#[cfg(any(test, feature = "lsp"))]
 use crate::source::FileId;
 use crate::source::{SourceMap, SourceName, Span};
 
@@ -618,6 +617,55 @@ pub(crate) fn io_error_text(err: &std::io::Error) -> String {
 
 // ── Human rendering ─────────────────────────────────────────────────
 
+/// Where a diagnostic stands in the one order every printer of them
+/// shows (every command, the REPL, the playground): its file, by the
+/// file's path made canonical and compared name by name (`a/b.silt`
+/// before `a-b.silt`, on every system; a file with no path, a REPL entry
+/// or stdin, after those with one, by its name); then its line, the errors
+/// of a line before its warnings (`let x = true / 1`: the operator's
+/// error, then "'x' is never used"); then its place. See [`PrintOrder`].
+pub(crate) type PrintKey = (u8, std::path::PathBuf, Option<u32>, bool, u32);
+
+/// The keys of [`PrintKey`] for the diagnostics of one source map: each
+/// file's path is made canonical once.
+pub(crate) struct PrintOrder<'a> {
+    sources: &'a SourceMap,
+    paths: std::collections::HashMap<FileId, (u8, std::path::PathBuf)>,
+}
+
+impl<'a> PrintOrder<'a> {
+    pub(crate) fn new(sources: &'a SourceMap) -> Self {
+        PrintOrder {
+            sources,
+            paths: Default::default(),
+        }
+    }
+
+    /// The key of `d`, a diagnostic in a file of the map.
+    pub(crate) fn key(&mut self, d: &Diagnostic) -> PrintKey {
+        let file = self.sources.get(d.span.file);
+        let (rank, path) = (self.paths.entry(d.span.file))
+            .or_insert_with(|| match file.map(|f| &f.path) {
+                Some(SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p)) => {
+                    (0, crate::source::canonical_path_lenient(p))
+                }
+                Some(other) => (1, source_name_for_display(other).unwrap_or_default().into()),
+                None => (2, std::path::PathBuf::new()),
+            })
+            .clone();
+        let line = file.map(|f| f.line_col(d.span.start).0);
+        (rank, path, line, !d.is_error(), d.span.start)
+    }
+}
+
+/// Sort `diagnostics`, of files of `sources`, into the order every
+/// printer of them shows (see [`PrintKey`]). A stable sort: one place
+/// keeps its order of finding.
+pub(crate) fn in_print_order(sources: &SourceMap, diagnostics: &mut [Diagnostic]) {
+    let mut order = PrintOrder::new(sources);
+    diagnostics.sort_by_cached_key(|d| order.key(d));
+}
+
 /// `d` as a terminal shows it, colored when stderr takes color:
 ///
 /// ```text
@@ -695,16 +743,17 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
     out
 }
 
-/// The longest message, in characters, that is said again under the
-/// caret: a longer one (a panic's message can be a long text) is in the
-/// headline only.
+/// The widest message, in display columns (a wide character, as in CJK,
+/// takes two), that is said again under the caret: a wider one (a panic's
+/// message can be a long text) is in the headline only.
 const CARET_LABEL_MAX: usize = 120;
 
 /// What stands after the caret of a diagnostic whose message is
 /// `message`: the message itself when it is one short line, else
 /// `here`, as the headline above says it already.
 fn caret_label(message: &str) -> &str {
-    match message.contains('\n') || message.chars().count() > CARET_LABEL_MAX {
+    let chars: Vec<char> = message.chars().collect();
+    match message.contains('\n') || mark_width(chars.iter()) > CARET_LABEL_MAX {
         true => "here",
         false => message,
     }
@@ -1169,6 +1218,22 @@ mod tests {
             &Diagnostic::error(Code::CompileLimit, span(4, 5), &short),
         );
         assert_eq!(out.matches(&short).count(), 2, "{out}");
+    }
+
+    /// The limit counts display columns: 61 wide characters are 122
+    /// columns and are not said again; 60 (120 columns) are. FAILS on
+    /// the base: characters were counted, so 100 wide ones were said
+    /// twice.
+    #[test]
+    fn the_caret_label_limit_counts_display_columns() {
+        let map = sources("let x = 1");
+        let wide = "\u{4e2d}".repeat(CARET_LABEL_MAX / 2 + 1);
+        let error = |message: &str| Diagnostic::error(Code::CompileLimit, span(4, 5), message);
+        let out = render_human(&map, &error(&wide));
+        assert_eq!(out.matches(&wide).count(), 1, "{out}");
+        let fits = "\u{4e2d}".repeat(CARET_LABEL_MAX / 2);
+        let out = render_human(&map, &error(&fits));
+        assert_eq!(out.matches(&fits).count(), 2, "{out}");
     }
 
     fn sources(text: &str) -> SourceMap {

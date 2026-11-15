@@ -1,0 +1,18 @@
+> rename 13:6 Self
+error: `Pattern` cannot be renamed to `Self`: `Self` stands only in a trait and in the methods of an impl, for the type they are for
+> rename 15:4 main
+error: `helper` cannot be renamed to `main`: a program starts at its top-level function `main`, and the rename would change where
+> rename 19:4 start
+error: `main` cannot be renamed to `start`: a program starts at its top-level function `main`, and the rename would change where
+> rename 15:4 test_helper
+error: `helper` cannot be renamed to `test_helper`: a top-level function whose name starts with `test_` or `skip_test_` is a test, and the rename would change which functions are tests
+> rename 17:4 one
+error: `test_one` cannot be renamed to `one`: a top-level function whose name starts with `test_` or `skip_test_` is a test, and the rename would change which functions are tests
+> rename 17:4 skip_test_one
+error: `test_one` cannot be renamed to `skip_test_one`: a top-level function whose name starts with `test_` or `skip_test_` is a test, and the rename would change which functions are tests
+> rename 17:4 test_two
+rename_to_a_name_with_a_fixed_meaning.silt:17:4-17:12 => test_two
+rename_to_a_name_with_a_fixed_meaning.silt:20:22-20:30 => test_two
+> rename 15:4 assist
+rename_to_a_name_with_a_fixed_meaning.silt:15:4-15:10 => assist
+rename_to_a_name_with_a_fixed_meaning.silt:20:11-20:17 => assist

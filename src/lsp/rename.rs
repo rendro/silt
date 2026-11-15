@@ -109,6 +109,11 @@ impl Server {
         if new_name == old_name {
             return Ok(None);
         }
+        if let Some(why) = self.fixed_meaning(&target, &old_name, &new_name) {
+            return Err(invalid(format!(
+                "`{old_name}` cannot be renamed to `{new_name}`: {why}"
+            )));
+        }
         if let Some(broken) = self.incomplete_for_rename(uri, &target) {
             return Err(invalid(format!(
                 "`{old_name}` cannot be renamed now: {broken}; what the names in the declaration \
@@ -166,6 +171,37 @@ impl Server {
 }
 
 impl Server {
+    /// Why renaming `target` from `old` to `new` would give the name, or
+    /// take from it, a meaning that no other name has, if it would:
+    /// `Self` names only the type of a trait or an impl; a top-level
+    /// function named `main` is where a program starts; one whose name
+    /// starts with `test_` or `skip_test_` is a test.
+    fn fixed_meaning(&self, target: &Target, old: &str, new: &str) -> Option<String> {
+        if new == "Self" {
+            return Some(
+                "`Self` stands only in a trait and in the methods of an impl, for the type \
+                 they are for"
+                    .to_string(),
+            );
+        }
+        if !self.is_top_level_fn(target) {
+            return None;
+        }
+        let entry = crate::program::ENTRY_POINT;
+        if (old == entry) != (new == entry) {
+            return Some(format!(
+                "a program starts at its top-level function `{entry}`, and the rename would \
+                 change where"
+            ));
+        }
+        let test = crate::program::test_kind;
+        (test(old) != test(new)).then(|| {
+            "a top-level function whose name starts with `test_` or `skip_test_` is a test, \
+             and the rename would change which functions are tests"
+                .to_string()
+        })
+    }
+
     /// For a field: why not every place of it can be known now (see
     /// `field_places_unknown`). The places are looked up first.
     fn unknown_field_reads(&self, target: &Target) -> Option<String> {

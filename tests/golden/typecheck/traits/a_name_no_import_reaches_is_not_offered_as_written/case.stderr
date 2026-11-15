@@ -1,10 +1,3 @@
-error[type]: trait 'Shwon' is not declared
- --> src/main.silt:22:1
-    |
- 22 | trait Shwon for T { fn shn(self) -> String { "a" } }
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Shwon' is not declared
-  = help: did you mean `da.Shown` (a trait of module `da`, after `import da`)?
-
 error[type]: trait 'Loclat' is not declared
  --> src/aliased.silt:5:1
    |
@@ -36,6 +29,13 @@ error[type]: non-exhaustive match: missing variants UA, UB
  9 |   match da.u() {
    |         ^^^^^^ non-exhaustive match: missing variants UA, UB
   = help: these are variants of UErr of module util of package da, whose module no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+
+error[type]: trait 'Shwon' is not declared
+ --> src/main.silt:22:1
+    |
+ 22 | trait Shwon for T { fn shn(self) -> String { "a" } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Shwon' is not declared
+  = help: did you mean `da.Shown` (a trait of module `da`, after `import da`)?
 
 error[type]: non-exhaustive match: missing variants da.Io, da.Other2
  --> src/reached.silt:4:17

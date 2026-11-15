@@ -1,0 +1,3 @@
+pub type InErr { I(Int) }
+
+pub fn make() -> InErr { I(3) }

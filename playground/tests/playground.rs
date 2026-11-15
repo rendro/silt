@@ -39,6 +39,31 @@ fn a_static_error_is_reported_as_silt_run_reports_it_and_nothing_runs() {
     );
 }
 
+/// The diagnostics come in the order `silt run` prints them: by line, the
+/// errors of a line before its warnings. FAIL on the base: in the order
+/// of finding (the undefined names first, the warnings last).
+#[test]
+fn the_diagnostics_come_in_source_order_as_silt_run_prints_them() {
+    let ran = run_it(
+        "import list\n\nfn main() {\n  let unused = 1\n  println(yy)\n  let w = true / 1\n  \
+         println(zz)\n}\n",
+    );
+    let places: Vec<&str> = (ran.diagnostics.lines())
+        .filter_map(|line| line.strip_prefix(" --> main.silt:"))
+        .collect();
+    assert_eq!(
+        places,
+        ["1:1", "4:7", "5:11", "6:11", "6:7", "7:11"],
+        "{}",
+        ran.diagnostics
+    );
+    let order: Vec<u32> =
+        (check("import list\n\nfn main() {\n  let unused = 1\n  println(yy)\n}\n").iter())
+            .map(|problem| problem.from)
+            .collect();
+    assert!(order.windows(2).all(|pair| pair[0] <= pair[1]), "{order:?}");
+}
+
 #[test]
 fn a_runtime_error_keeps_what_was_printed_before_it() {
     let ran =

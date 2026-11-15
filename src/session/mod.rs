@@ -213,6 +213,10 @@ pub struct Session {
     /// The module files of the project's packages named like builtin
     /// modules, found when the packages are resolved.
     module_name_problems: Vec<Diagnostic>,
+    /// Whether the checks keep what only an editor reads
+    /// (`ModuleAnalysis::modules_written`): set by the language server
+    /// (`Session::for_editor`); a command pays nothing for it.
+    for_editor: bool,
 }
 
 impl Session {
@@ -237,7 +241,76 @@ impl Session {
             results: HashMap::new(),
             cells: cells::Cells::default(),
             module_name_problems: Vec::new(),
+            for_editor: false,
         }
+    }
+
+    /// Have the checks keep what only an editor reads: how each module
+    /// writes the other modules' types (`ModuleAnalysis::modules_written`).
+    /// For the language server, and for the REPL's `:type` while it checks
+    /// its expression; the commands leave it unset and pay nothing for it.
+    #[cfg(any(feature = "lsp", feature = "repl"))]
+    pub(crate) fn set_for_editor(&mut self, on: bool) {
+        self.for_editor = on;
+    }
+
+    /// How the module `here` writes the type `r` of another module in the
+    /// editor (hover, signature help, completion, inlay hints) and in the
+    /// REPL's `:type`: with its module where another type the module can
+    /// name shares its name (`regex.Regex` beside the module's own
+    /// `Regex`, `a.Regex` beside `b.Regex`), described where no import
+    /// here can reach it (`InErr of package inner`), the module part as
+    /// the checker's messages write it (`ModuleWritten`). None for a type
+    /// written by its bare name, and where the module's check kept no
+    /// names (a session not `set_for_editor`).
+    #[cfg(any(feature = "lsp", feature = "repl"))]
+    pub(crate) fn written_type_name(
+        &self,
+        here: ModuleId,
+        r: crate::types::TypeRef,
+    ) -> Option<String> {
+        use crate::typechecker::ModuleWritten;
+        let analysis = self.analyses.get(&here)?;
+        let program = (crate::defs::builtin_types()
+            .get(r.id.0.0 as usize)
+            .is_none())
+        .then(|| analysis.modules_written.get(&self.defs.get(r.id.0).module))
+        .flatten();
+        // (A type no import here can reach is described, as in the
+        // messages: no name written here is its name.)
+        let described = matches!(program, Some(ModuleWritten::Described { .. }));
+        if !described && !self.shares_its_name(&analysis.scope, r) {
+            return None;
+        }
+        match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, Some(module))) => Some(format!("{module}.{}", r.name)),
+            Some((_, None)) => None,
+            None => program.map(|written| written.type_name(r.name)),
+        }
+    }
+
+    /// Whether another type than `r` has `r`'s name among the types the
+    /// module of `scope` can name: one its bare name stands for, or one of
+    /// a module it imports (`a.Regex` beside `b.Regex`).
+    #[cfg(any(feature = "lsp", feature = "repl"))]
+    fn shares_its_name(&self, scope: &names::ModuleScope, r: crate::types::TypeRef) -> bool {
+        use names::Binding;
+        let other =
+            |binding: Option<&Binding>| matches!(binding, Some(Binding::Def(id)) if *id != r.id.0);
+        if other(scope.types.get(&r.name)) {
+            return true;
+        }
+        let builtins = names::builtins().1;
+        scope.values.values().any(|binding| {
+            let Binding::Module(module) = binding else {
+                return false;
+            };
+            let exports = match module.is_builtin() {
+                true => builtins.modules.get(module),
+                false => self.module_analysis(*module).map(|a| &a.scope.exports),
+            };
+            exports.is_some_and(|exports| other(exports.types.get(&r.name)))
+        })
     }
 
     /// The text of every file the session has read.
@@ -471,9 +544,11 @@ impl Session {
     /// How a message about the REPL cell `file` writes the type or
     /// trait `def`, named `name`, when it is one of an earlier cell that
     /// a later cell declared again: with its cell (`<repl:1>.T`), as the
-    /// cell's diagnostics write it; or one of a builtin module whose
-    /// name the cell gives another type: with its module
-    /// (`regex.Regex`). `None` for any other, which keeps its name.
+    /// cell's diagnostics write it; or a type of another module (a builtin
+    /// module's, a module's of the program) as the editor writes it
+    /// (`written_type_name`: `regex.Regex`, `geo.Pt` where another type
+    /// the cell can name shares the name). `None` for any other, which
+    /// keeps its name.
     #[cfg(feature = "repl")]
     pub(crate) fn shadowed_cell_name(
         &self,
@@ -482,15 +557,21 @@ impl Session {
         name: Symbol,
     ) -> Option<String> {
         let owner = self.defs.get(def).module;
-        // A type of a builtin module whose bare name the cell binds to
-        // another type (`type Regex` of a cell beside `regex.Regex`):
-        // with its module, as messages write it.
-        if let Some(module) = owner.builtin_name() {
-            let scope = &self.analyses.get(&self.module_of(file))?.scope;
-            return match scope.types.get(&name) {
-                Some(names::Binding::Def(id)) if *id != def => Some(format!("{module}.{name}")),
-                _ => None,
+        // A type of a builtin module or of a module of the program whose
+        // name another type the cell can name shares (`regex.Regex`,
+        // `geo.Pt` beside the cell's own `Pt`): as the editor writes it,
+        // with the module part of the messages (`written_type_name`).
+        // (A trait keeps its name.)
+        if !self.cells.info.contains_key(&owner) {
+            let def_ref = self.defs.get(def);
+            if !def_ref.is_type() {
+                return None;
+            }
+            let r = crate::types::TypeRef {
+                id: crate::defs::TypeId(def),
+                name,
             };
+            return self.written_type_name(self.module_of(file), r);
         }
         let cell = self.cells.info.get(&owner)?;
         let scope = &self.analyses.get(&self.module_of(file))?.scope;
@@ -527,9 +608,15 @@ impl Session {
             .filter(|m| m.host.is_some() && !m.failed())
             .map(|m| m.id)
             .collect();
+        // The imports of every module checked here, in one walk: each
+        // check finds its module's reach from them only if it asks
+        // (`typechecker::Reach`), not by a walk of its own.
+        let edges = std::sync::Arc::new(
+            (self.graph).import_edges(std::iter::once(entry).chain(hosts.iter().copied())),
+        );
         for id in hosts {
             if !self.analyses.contains_key(&id) {
-                let analysis = self.check(id, &ordering);
+                let analysis = self.check(id, &ordering, &edges);
                 self.analyses.insert(id, analysis);
             }
         }
@@ -538,7 +625,7 @@ impl Session {
             if self.analyses.contains_key(&id) || (id != entry && module.failed()) {
                 continue;
             }
-            let analysis = self.check(id, &ordering);
+            let analysis = self.check(id, &ordering, &edges);
             self.analyses.insert(id, analysis);
         }
         Analysis {
@@ -550,7 +637,12 @@ impl Session {
 
     /// Check module `id`, whose imports are checked already, except those
     /// that failed or that close a cycle: those are poisoned.
-    fn check(&mut self, id: ModuleId, ordering: &Ordering) -> ModuleAnalysis {
+    fn check(
+        &mut self,
+        id: ModuleId,
+        ordering: &Ordering,
+        edges: &std::sync::Arc<HashMap<ModuleId, Vec<ModuleId>>>,
+    ) -> ModuleAnalysis {
         let module = self.graph.module(id);
         let mut ast = module.ast.clone().unwrap_or_default();
         let mut imported: HashMap<Symbol, Imported<'_>> = HashMap::new();
@@ -623,7 +715,7 @@ impl Session {
             },
         );
         let cell = kind == ModuleKind::Cell;
-        let reach = (!cell).then(|| self.graph.reach(id));
+        let reach = (!cell).then(|| typechecker::Reach::new(id, edges.clone()));
         let cells = match cell {
             true => self.cells.ids(),
             false => Default::default(),
@@ -659,6 +751,7 @@ impl Session {
                 earlier: &earlier,
                 defs: self.defs.clone(),
                 tables: &mut self.tables,
+                for_editor: self.for_editor,
             },
         );
         say_hidden_modules(
@@ -707,6 +800,7 @@ impl Session {
             let_order: check.let_order,
             diagnostics,
             entry_display: check.entry_display,
+            modules_written: check.modules_written,
         }
     }
 

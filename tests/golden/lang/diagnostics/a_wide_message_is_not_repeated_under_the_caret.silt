@@ -1,0 +1,6 @@
+-- exit: 1
+-- A message of 100 wide characters is 200 columns wide: it stands in the
+-- headline only, and the caret says "here", as for 200 narrow ones.
+fn main() {
+  panic("中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中")
+}

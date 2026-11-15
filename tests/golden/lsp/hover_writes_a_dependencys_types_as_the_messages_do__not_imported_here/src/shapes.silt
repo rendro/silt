@@ -1,0 +1,11 @@
+import da
+
+pub type Pt { x: Int }
+
+pub fn pt() -> Pt { Pt { x: 1 } }
+
+pub fn app() -> da.AppError { da.app() }
+
+pub fn util_err() { da.util_err() }
+
+pub fn inner_err() { da.inner_err() }

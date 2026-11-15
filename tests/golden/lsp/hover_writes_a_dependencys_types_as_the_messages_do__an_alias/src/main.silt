@@ -1,0 +1,27 @@
+-- cmd: lsp
+-- lsp: hover 18:7
+-- lsp: hover 19:7
+-- lsp: hover 20:7
+-- lsp: hover 21:7
+-- lsp: hover 19:13
+-- Hover writes a type of another module as the messages beside it do: a
+-- module of the package by its name, a dependency's library by its key
+-- (here imported under an alias), what no import can reach described.
+import da as d
+import shapes
+
+type Pt { y: Int }
+
+type AppError { Mine }
+
+fn main() {
+  let p = shapes.pt()
+  let a = d.app()
+  let u = d.util_err()
+  let i = d.inner_err()
+  let bad1: Int = p
+  let bad2: Int = a
+  let bad3: Int = u
+  let bad4: Int = i
+  println((Pt { y: 1 }, Mine))
+}

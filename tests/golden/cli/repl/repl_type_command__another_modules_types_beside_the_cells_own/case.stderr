@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected Int, got far.Pt
+ --> <repl:11>:1:1
+   |
+ 1 | let bad: Int = farther
+   | ^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got far.Pt

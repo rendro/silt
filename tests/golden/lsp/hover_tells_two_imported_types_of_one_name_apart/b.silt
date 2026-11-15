@@ -1,0 +1,5 @@
+pub type Regex { b: Int }
+
+pub fn mk() -> Regex { Regex { b: 2 } }
+
+pub type Only { o: Int }
