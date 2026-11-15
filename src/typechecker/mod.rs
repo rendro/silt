@@ -63,7 +63,6 @@ pub(crate) use builtin_traits::builtin_trait_decls;
 use builtin_traits::*;
 use declare_fns::FnSig;
 use env::TypeEnv;
-use infer::pattern::collect_pattern_vars;
 use solve::{Goal, Origin, Wanted};
 use std::rc::Rc;
 pub(crate) use tables::*;
@@ -1737,7 +1736,7 @@ impl TypeChecker {
                 }
                 // A `let` the group reaches before its value is checked.
                 (Decl::Let { pattern, .. }, _) if component.cyclic => {
-                    for name in collect_pattern_vars(pattern) {
+                    for name in pattern.binder_names() {
                         let ty = self.fresh_var();
                         env.define(name, Scheme::mono(ty.clone()));
                         awaited.push((name, ty));
@@ -1774,7 +1773,7 @@ impl TypeChecker {
                     },
                     _,
                 ) => {
-                    let names = collect_pattern_vars(pattern);
+                    let names = pattern.binder_names();
                     self.note_let_link(pattern, value);
                     let owed_from = self.wanted.len();
                     let is_value =
@@ -2119,13 +2118,6 @@ impl TypeChecker {
 /// of the prelude.
 fn rejected_type_name(name: &str) -> bool {
     name == "TypeOf" || crate::types::builtins::is_prelude_name(name)
-}
-
-/// The name of a builtin type; `None` for a type a module declares.
-pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
-    crate::defs::builtin_types()
-        .get(ty.id.0.0 as usize)
-        .map(|(name, _)| *name)
 }
 
 /// The definitions the type names written in `te` resolve to.

@@ -130,7 +130,7 @@ fn collect_expr_ranges(expr: &Expr, cursor: usize, out: &mut Vec<Extent>) {
         return;
     }
     out.push(extent);
-    super::ast_walk::visit_expr_children(expr, |child| {
+    expr.for_each_child(|child| {
         collect_expr_ranges(child, cursor, out);
     });
 }

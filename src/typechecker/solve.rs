@@ -1894,10 +1894,9 @@ impl TypeChecker {
         let given = self.apply(given);
         let shown = match &given {
             _ if free_vars_in(&given).is_empty() => self.show_type(&given),
-            Type::List(_) => "List".to_string(),
-            Type::Set(_) => "Set".to_string(),
-            Type::Map(..) => "Map".to_string(),
-            Type::Channel(_) => "Channel".to_string(),
+            _ if let Some(head) = given.container_head() => {
+                head.container_name().unwrap_or_default().to_string()
+            }
             Type::Generic(r, _) => self.show_type(&Type::Generic(*r, Vec::new())),
             other => self.show_type(other),
         };

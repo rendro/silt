@@ -8,7 +8,6 @@ use crate::ast::*;
 use crate::intern::{Symbol, resolve};
 use crate::types::Type;
 
-use super::ast_walk::visit_expr_children;
 use super::fields::{RecordFields, record_field_types};
 use super::state::DefInfo;
 
@@ -264,7 +263,7 @@ pub(super) fn find_param_type(expr: &Expr, name: Symbol) -> Option<Type> {
     }
     // Search children
     let mut result = None;
-    visit_expr_children(expr, |child| {
+    expr.for_each_child(|child| {
         if result.is_none() {
             result = find_param_type(child, name);
         }

@@ -277,20 +277,18 @@ pub(crate) fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
 /// lookup is by head constructor).
 pub(crate) fn canonical_name(ty: &Type) -> String {
     match ty {
-        // ── Primitives ─────────────────────────────────────────────
-        Type::Int => "Int".to_string(),
-        Type::Float => "Float".to_string(),
-        Type::Bool => "Bool".to_string(),
-        Type::String => "String".to_string(),
-        Type::Unit => "()".to_string(),
-
-        // ── Containers ─────────────────────────────────────────────
-        Type::List(_) => "List".to_string(),
-        Type::Map(_, _) => "Map".to_string(),
-        Type::Set(_) => "Set".to_string(),
-        Type::Channel(_) => "Channel".to_string(),
-        Type::Tuple(_) => "Tuple".to_string(),
-        Type::Fun(_, _) => "Fn".to_string(),
+        // ── Primitives, containers, tuples, functions ──────────────
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::List(_)
+        | Type::Map(..)
+        | Type::Set(_)
+        | Type::Channel(_)
+        | Type::Tuple(_)
+        | Type::Fun(..) => ty.builtin_name().unwrap_or_default().to_string(),
 
         Type::Generic(name, _) => crate::intern::resolve(name.name),
 
@@ -308,13 +306,7 @@ pub(crate) fn canonical_name(ty: &Type) -> String {
         // A constructor variable applied: as a variable. A constructor:
         // its head.
         Type::App(..) => "_".to_string(),
-        Type::Con(head, _) => match head {
-            crate::types::Head::Named(r) => crate::intern::resolve(r.name),
-            crate::types::Head::List => "List".to_string(),
-            crate::types::Head::Map => "Map".to_string(),
-            crate::types::Head::Set => "Set".to_string(),
-            crate::types::Head::Channel => "Channel".to_string(),
-        },
+        Type::Con(head, _) => crate::intern::resolve(head.type_ref().name),
     }
 }
 
@@ -344,30 +336,23 @@ pub(crate) fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
 /// Returns `None` for shapes that have no nominal head (raw
 /// type-variables, error / never sentinels).
 pub(crate) fn head_of_canon(ty: &Type) -> Option<TypeRef> {
-    let builtin = match ty {
-        Type::Int => "Int",
-        Type::Float => "Float",
-        Type::Bool => "Bool",
-        Type::String => "String",
-        Type::Unit => "()",
-        Type::List(_) => "List",
-        Type::Map(_, _) => "Map",
-        Type::Set(_) => "Set",
-        Type::Channel(_) => "Channel",
-        Type::Tuple(_) => "Tuple",
-        Type::Fun(_, _) => "Fn",
-        Type::Generic(name, _) => return Some(*name),
+    match ty {
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::List(_)
+        | Type::Map(..)
+        | Type::Set(_)
+        | Type::Channel(_)
+        | Type::Tuple(_)
+        | Type::Fun(..) => ty.builtin_name().map(TypeRef::builtin),
+        Type::Generic(name, _) => Some(*name),
         // A type constructor is keyed by its head, as its types are.
-        Type::Con(head, _) => match head {
-            crate::types::Head::Named(r) => return Some(*r),
-            crate::types::Head::List => "List",
-            crate::types::Head::Map => "Map",
-            crate::types::Head::Set => "Set",
-            crate::types::Head::Channel => "Channel",
-        },
-        Type::App(..) | Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => return None,
-    };
-    Some(TypeRef::builtin(builtin))
+        Type::Con(head, _) => Some(head.type_ref()),
+        Type::App(..) | Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,
+    }
 }
 
 /// The builtin type of each kind of value that is no record and no

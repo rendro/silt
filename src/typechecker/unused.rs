@@ -546,7 +546,7 @@ impl TypeChecker {
         found: &mut Vec<Diagnostic>,
         trailing: &mut Vec<TrailingClosure>,
     ) {
-        resolve::each_expr_mut(expr, &mut |expr| {
+        expr.for_each_expr_mut(&mut |expr| {
             let ExprKind::Block(stmts) = &expr.kind else {
                 return;
             };

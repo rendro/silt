@@ -25,7 +25,7 @@ use crate::source::{SourceFile, Span};
 use crate::types::Type;
 
 use super::Server;
-use super::ast_walk::{has_unresolved_vars, visit_expr_children};
+use super::ast_walk::has_unresolved_vars;
 use super::conversions::position_to_offset;
 
 impl Server {
@@ -171,7 +171,7 @@ fn walk_expr(expr: &Expr, out: &mut Vec<HintRecord>) {
             }
         }
     }
-    visit_expr_children(expr, |child| walk_expr(child, out));
+    expr.for_each_child(|child| walk_expr(child, out));
 }
 
 fn emit_ident_hint(pattern: &Pattern, ty: &Type, out: &mut Vec<HintRecord>) {

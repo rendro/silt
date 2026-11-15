@@ -114,38 +114,21 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // A primitive type written as a value is its descriptor, of the type
     // `TypeOf(T)`, not a value of the type: `Int * 2` does not check.
     for name in crate::module::BUILTIN_PRIMITIVE_NAMES {
-        let inner = match *name {
-            "Int" => Type::Int,
-            "Float" => Type::Float,
-            "String" => Type::String,
-            "Bool" => Type::Bool,
-            _ => unreachable!(),
-        };
+        let inner = Type::named(TypeRef::builtin(name), Vec::new());
         env.define(intern(name), Scheme::mono(Type::type_of(inner)));
     }
     // A container type written as a value (`make(List)` for a `type a`
     // parameter) is a descriptor of any of its instances. `Tuple` has a
     // descriptor at run time only.
     for name in crate::module::BUILTIN_GENERIC_CONTAINER_NAMES {
-        let (vars, ty) = match *name {
-            "List" => {
-                let (a, av) = checker.fresh_tv();
-                (vec![av], Type::List(Box::new(a)))
-            }
-            "Set" => {
-                let (a, av) = checker.fresh_tv();
-                (vec![av], Type::Set(Box::new(a)))
-            }
-            "Channel" => {
-                let (a, av) = checker.fresh_tv();
-                (vec![av], Type::Channel(Box::new(a)))
-            }
-            "Map" => {
-                let (k, kv) = checker.fresh_tv();
-                let (v, vv) = checker.fresh_tv();
-                (vec![kv, vv], Type::Map(Box::new(k), Box::new(v)))
-            }
-            _ => continue,
+        let Some(head) = Head::container(name) else {
+            continue;
+        };
+        let (args, vars): (Vec<Type>, Vec<_>) = (0..head.container_arity().unwrap_or(0))
+            .map(|_| checker.fresh_tv())
+            .unzip();
+        let Some(ty) = head.with_args(args) else {
+            continue;
         };
         env.define(
             intern(name),

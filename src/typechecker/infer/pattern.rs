@@ -53,22 +53,7 @@ impl BindingSite {
 /// Whether `pattern` holds a constructor or record name the resolver
 /// resolved to nothing.
 pub(in crate::typechecker) fn names_unresolved(pattern: &Pattern) -> bool {
-    if pattern.res == Some(crate::defs::Res::Error) {
-        return true;
-    }
-    match &pattern.kind {
-        PatternKind::Tuple(ps)
-        | PatternKind::Or(ps)
-        | PatternKind::Constructor { args: ps, .. } => ps.iter().any(names_unresolved),
-        PatternKind::Record { fields, .. } => fields
-            .iter()
-            .any(|(_, _, sub)| sub.as_ref().is_some_and(names_unresolved)),
-        PatternKind::List(elems, rest) => {
-            elems.iter().any(names_unresolved) || rest.as_deref().is_some_and(names_unresolved)
-        }
-        PatternKind::Map(entries) => entries.iter().any(|(_, p)| names_unresolved(p)),
-        _ => false,
-    }
+    pattern.res == Some(crate::defs::Res::Error) || pattern.any_child(names_unresolved)
 }
 
 /// What the check of one pattern, with the patterns inside it, shares.
@@ -89,9 +74,7 @@ fn pinned_names(pattern: &Pattern, out: &mut Vec<Symbol>) {
     if let PatternKind::Pin(name) = &pattern.kind {
         out.push(*name);
     }
-    for sub in sub_patterns(pattern) {
-        pinned_names(sub, out);
-    }
+    pattern.for_each_child(|sub| pinned_names(sub, out));
 }
 
 /// The variant a constructor pattern names, for the checker. See
@@ -155,7 +138,7 @@ impl TypeChecker {
         // the value does.
         match self.apply(expected) {
             Type::Error => {
-                for name in collect_pattern_vars(pattern) {
+                for name in pattern.binder_names() {
                     env.define(name, Scheme::mono(Type::Error));
                 }
             }
@@ -163,7 +146,7 @@ impl TypeChecker {
             // of `Cfg { port, .. }` is an Int. Only a name the pattern
             // leaves undecided, `p` of `(p, q)` or of `Some(p)`, is.)
             Type::Never => {
-                for name in collect_pattern_vars(pattern) {
+                for name in pattern.binder_names() {
                     let undecided = env
                         .lookup(name)
                         .is_some_and(|scheme| matches!(self.apply(&scheme.ty), Type::Var(_)));
@@ -276,9 +259,12 @@ impl TypeChecker {
         if form_can_fail {
             return Some(pattern);
         }
-        sub_patterns(pattern)
-            .into_iter()
-            .find_map(|p| self.refutable_part(p))
+        let mut part = None;
+        pattern.any_child(|p| {
+            part = self.refutable_part(p);
+            part.is_some()
+        });
+        part
     }
 
     /// Why `part`, the refutable part of a pattern bound against `ty`,
@@ -435,32 +421,11 @@ impl TypeChecker {
         on_dup: &mut dyn FnMut(Symbol, Span),
     ) {
         match &pattern.kind {
-            PatternKind::Wildcard
-            | PatternKind::Int(_)
-            | PatternKind::Float(_)
-            | PatternKind::Bool(_)
-            | PatternKind::StringLit(..)
-            | PatternKind::Range(_, _)
-            | PatternKind::FloatRange(_, _)
-            | PatternKind::Pin(_) => {}
             PatternKind::Ident(name) => {
                 if seen.contains_key(name) {
                     on_dup(*name, pattern.span);
                 } else {
                     seen.insert(*name, pattern.span);
-                }
-            }
-            PatternKind::Tuple(pats) | PatternKind::Constructor { args: pats, .. } => {
-                for p in pats {
-                    Self::collect_pattern_binders_into(p, seen, on_dup);
-                }
-            }
-            PatternKind::List(pats, rest) => {
-                for p in pats {
-                    Self::collect_pattern_binders_into(p, seen, on_dup);
-                }
-                if let Some(rest_pat) = rest {
-                    Self::collect_pattern_binders_into(rest_pat, seen, on_dup);
                 }
             }
             PatternKind::Record { fields, .. } => {
@@ -478,11 +443,6 @@ impl TypeChecker {
                             }
                         }
                     }
-                }
-            }
-            PatternKind::Map(entries) => {
-                for (_, p) in entries {
-                    Self::collect_pattern_binders_into(p, seen, on_dup);
                 }
             }
             PatternKind::Or(alts) => {
@@ -509,13 +469,14 @@ impl TypeChecker {
                     seen.insert(name, sp);
                 }
             }
+            _ => pattern.for_each_child(|p| Self::collect_pattern_binders_into(p, seen, on_dup)),
         }
     }
 
     /// Bind the names `pattern` binds to the error type: its head names
     /// something the resolver reported, so nothing is known of its parts.
     fn bind_unresolved(&mut self, pattern: &Pattern, env: &mut TypeEnv) {
-        for name in collect_pattern_vars(pattern) {
+        for name in pattern.binder_names() {
             env.define(name, Scheme::mono(Type::Error));
         }
     }
@@ -800,11 +761,9 @@ impl TypeChecker {
                 // All alternatives bind the same names: an error points
                 // at the alternative that binds others.
                 if let Some((first, others)) = alts.split_first() {
-                    let first_vars: BTreeSet<Symbol> =
-                        collect_pattern_vars(first).into_iter().collect();
+                    let first_vars: BTreeSet<Symbol> = first.binder_names().into_iter().collect();
                     for (i, alt) in others.iter().enumerate() {
-                        let alt_vars: BTreeSet<Symbol> =
-                            collect_pattern_vars(alt).into_iter().collect();
+                        let alt_vars: BTreeSet<Symbol> = alt.binder_names().into_iter().collect();
                         if first_vars != alt_vars {
                             self.error(
                                 Code::InvalidPatternUse,
@@ -1013,73 +972,5 @@ impl TypeChecker {
             })
             .collect();
         self.ctor_pat(CtorId::Variant(enum_ref, index), subs)
-    }
-}
-
-/// The patterns directly inside `pattern`, in source order.
-fn sub_patterns(pattern: &Pattern) -> Vec<&Pattern> {
-    match &pattern.kind {
-        PatternKind::Tuple(ps) | PatternKind::Or(ps) => ps.iter().collect(),
-        PatternKind::Constructor { args, .. } => args.iter().collect(),
-        PatternKind::Record { fields, .. } => {
-            fields.iter().filter_map(|(_, _, p)| p.as_ref()).collect()
-        }
-        PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).collect(),
-        PatternKind::Map(entries) => entries.iter().map(|(_, p)| p).collect(),
-        PatternKind::Wildcard
-        | PatternKind::Ident(_)
-        | PatternKind::Int(_)
-        | PatternKind::Float(_)
-        | PatternKind::Bool(_)
-        | PatternKind::StringLit(..)
-        | PatternKind::Range(..)
-        | PatternKind::FloatRange(..)
-        | PatternKind::Pin(_) => Vec::new(),
-    }
-}
-
-/// Collect the set of variable names bound by a pattern.
-pub(in crate::typechecker) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
-    match &pat.kind {
-        PatternKind::Ident(name) => vec![*name],
-        PatternKind::Tuple(pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
-        PatternKind::List(pats, rest) => {
-            let mut vars: Vec<Symbol> = pats.iter().flat_map(collect_pattern_vars).collect();
-            if let Some(rest_pat) = rest {
-                vars.extend(collect_pattern_vars(rest_pat));
-            }
-            vars
-        }
-        PatternKind::Constructor { args: pats, .. } => {
-            pats.iter().flat_map(collect_pattern_vars).collect()
-        }
-        PatternKind::Record { fields, .. } => {
-            let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, _, sub_pat) in fields {
-                if let Some(p) = sub_pat {
-                    vars.extend(collect_pattern_vars(p));
-                } else {
-                    // Shorthand field `{ x }` binds `x`
-                    vars.push(*field_name);
-                }
-            }
-            vars
-        }
-        PatternKind::Or(alts) => {
-            // Return vars from first alt (they should all be the same after validation)
-            alts.first().map(collect_pattern_vars).unwrap_or_default()
-        }
-        PatternKind::Map(entries) => entries
-            .iter()
-            .flat_map(|(_, p)| collect_pattern_vars(p))
-            .collect(),
-        PatternKind::Wildcard
-        | PatternKind::Int(_)
-        | PatternKind::Float(_)
-        | PatternKind::Bool(_)
-        | PatternKind::StringLit(..)
-        | PatternKind::Range(_, _)
-        | PatternKind::FloatRange(_, _)
-        | PatternKind::Pin(_) => vec![],
     }
 }

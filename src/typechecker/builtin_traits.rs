@@ -396,17 +396,15 @@ fn register_builtin_impls(checker: &mut TypeChecker) {
         let key = (tr, ty, ImplArgs::none());
         checker.tables.add_impl(key);
         let self_type = match *type_name {
-            "Int" => Type::Int,
-            "Float" => Type::Float,
+            "Int" | "Float" => Type::named(ty, Vec::new()),
             _ => {
                 // The constructor: the type with its first argument open.
                 let first = checker.fresh_var();
-                let full = match *type_name {
-                    "List" => Type::List(Box::new(first)),
-                    "Channel" => Type::Channel(Box::new(first)),
-                    "Result" => Type::Generic(ty, vec![first, checker.fresh_var()]),
-                    _ => Type::Generic(ty, vec![first]),
+                let args = match *type_name {
+                    "Result" => vec![first, checker.fresh_var()],
+                    _ => vec![first],
                 };
+                let full = Type::named(ty, args);
                 let Some((head, rest, _)) = full.split_constructor() else {
                     unreachable!("{type_name} takes a type argument");
                 };

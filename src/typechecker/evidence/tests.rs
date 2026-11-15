@@ -1,6 +1,5 @@
 //! The evidence the checker writes on the places that pass some on.
 
-use super::super::resolve::each_expr_mut;
 use crate::ast::{Decl, Expr, ExprKind, Program};
 use crate::evidence::{Evidence, Site};
 use crate::intern::resolve;
@@ -33,7 +32,7 @@ fn sites(source: &str) -> (Vec<(String, Site)>, Vec<(String, crate::source::Span
         match decl {
             Decl::Fn(f) => {
                 bodies.push((resolve(f.name), f.body.span));
-                each_expr_mut(&mut f.body, &mut record);
+                f.body.for_each_expr_mut(&mut record);
             }
             Decl::TraitImpl(ti) => {
                 for m in &mut ti.methods {
@@ -41,7 +40,7 @@ fn sites(source: &str) -> (Vec<(String, Site)>, Vec<(String, crate::source::Span
                         format!("{}.{}", resolve(ti.target_type), resolve(m.name)),
                         m.body.span,
                     ));
-                    each_expr_mut(&mut m.body, &mut record);
+                    m.body.for_each_expr_mut(&mut record);
                 }
             }
             Decl::Trait(t) => {
@@ -50,7 +49,7 @@ fn sites(source: &str) -> (Vec<(String, Site)>, Vec<(String, crate::source::Span
                         format!("{}.{}", resolve(t.name), resolve(m.name)),
                         m.body.span,
                     ));
-                    each_expr_mut(&mut m.body, &mut record);
+                    m.body.for_each_expr_mut(&mut record);
                 }
             }
             _ => {}

@@ -40,7 +40,7 @@ impl TypeChecker {
                     nodes.push(i);
                 }
                 Decl::Let { pattern, .. } => {
-                    for name in collect_pattern_vars(pattern) {
+                    for name in pattern.binder_names() {
                         by_name.insert(name, i);
                     }
                     nodes.push(i);
@@ -165,122 +165,13 @@ pub(super) fn references_in_expr<'a>(expr: &'a Expr, note: &mut impl FnMut(Menti
         res: expr.res,
         expr: Some(expr),
     });
-    match &expr.kind {
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::StringLit(..)
-        | ExprKind::Ident(_)
-        | ExprKind::Unit
-        | ExprKind::Return(None) => {}
-        ExprKind::StringInterp(parts) => {
-            for part in parts {
-                if let StringPart::Expr(e) = part {
-                    references_in_expr(e, note);
-                }
-            }
+    let _ = expr.try_for_each_node(&mut |child| {
+        match child {
+            Child::Expr(e) => references_in_expr(e, note),
+            Child::Pattern(p) => references_in_pattern(p, note),
         }
-        ExprKind::List(elems) => {
-            for elem in elems {
-                match elem {
-                    ListElem::Single(e) | ListElem::Spread(e) => references_in_expr(e, note),
-                }
-            }
-        }
-        ExprKind::Map(entries) => {
-            for (k, v) in entries {
-                references_in_expr(k, note);
-                references_in_expr(v, note);
-            }
-        }
-        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
-            for e in elems {
-                references_in_expr(e, note);
-            }
-        }
-        ExprKind::FieldAccess(e, _, _)
-        | ExprKind::Unary(_, e)
-        | ExprKind::QuestionMark(e)
-        | ExprKind::Ascription(e, _)
-        | ExprKind::Return(Some(e)) => references_in_expr(e, note),
-        ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-            references_in_expr(l, note);
-            references_in_expr(r, note);
-        }
-        ExprKind::Call(callee, args) => {
-            references_in_expr(callee, note);
-            for arg in args {
-                references_in_expr(arg, note);
-            }
-        }
-        ExprKind::Lambda { params, body } => {
-            for param in params {
-                references_in_pattern(&param.pattern, note);
-            }
-            references_in_expr(body, note);
-        }
-        ExprKind::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                references_in_expr(e, note);
-            }
-        }
-        ExprKind::RecordUpdate {
-            expr: base, fields, ..
-        } => {
-            references_in_expr(base, note);
-            for (_, e) in fields {
-                references_in_expr(e, note);
-            }
-        }
-        ExprKind::Match {
-            expr: scrutinee,
-            arms,
-        } => {
-            if let Some(scrutinee) = scrutinee {
-                references_in_expr(scrutinee, note);
-            }
-            for arm in arms {
-                references_in_pattern(&arm.pattern, note);
-                if let Some(guard) = &arm.guard {
-                    references_in_expr(guard, note);
-                }
-                references_in_expr(&arm.body, note);
-            }
-        }
-        ExprKind::Block(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Let { pattern, value, .. } => {
-                        references_in_pattern(pattern, note);
-                        references_in_expr(value, note);
-                    }
-                    Stmt::When {
-                        pattern,
-                        expr,
-                        else_body,
-                    } => {
-                        references_in_pattern(pattern, note);
-                        references_in_expr(expr, note);
-                        references_in_expr(else_body, note);
-                    }
-                    Stmt::WhenBool {
-                        condition,
-                        else_body,
-                    } => {
-                        references_in_expr(condition, note);
-                        references_in_expr(else_body, note);
-                    }
-                    Stmt::Expr(e) => references_in_expr(e, note),
-                }
-            }
-        }
-        ExprKind::Loop { bindings, body } => {
-            for (_, _, value) in bindings {
-                references_in_expr(value, note);
-            }
-            references_in_expr(body, note);
-        }
-    }
+        std::ops::ControlFlow::<()>::Continue(())
+    });
 }
 
 /// Call `note` with what each name written in `pattern` resolves to: a
@@ -290,45 +181,5 @@ pub(super) fn references_in_pattern<'a>(pattern: &'a Pattern, note: &mut impl Fn
         res: pattern.res,
         expr: None,
     });
-    match &pattern.kind {
-        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
-            for p in pats {
-                references_in_pattern(p, note);
-            }
-        }
-        PatternKind::List(pats, rest) => {
-            for p in pats {
-                references_in_pattern(p, note);
-            }
-            if let Some(rest) = rest {
-                references_in_pattern(rest, note);
-            }
-        }
-        PatternKind::Constructor { args, .. } => {
-            for p in args {
-                references_in_pattern(p, note);
-            }
-        }
-        PatternKind::Record { fields, .. } => {
-            for (_, _, p) in fields {
-                if let Some(p) = p {
-                    references_in_pattern(p, note);
-                }
-            }
-        }
-        PatternKind::Map(entries) => {
-            for (_, p) in entries {
-                references_in_pattern(p, note);
-            }
-        }
-        PatternKind::Wildcard
-        | PatternKind::Ident(_)
-        | PatternKind::Int(_)
-        | PatternKind::Float(_)
-        | PatternKind::Bool(_)
-        | PatternKind::StringLit(..)
-        | PatternKind::Range(_, _)
-        | PatternKind::FloatRange(_, _)
-        | PatternKind::Pin(_) => {}
-    }
+    pattern.for_each_child(|p| references_in_pattern(p, note));
 }
