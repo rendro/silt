@@ -205,36 +205,6 @@ fn run_main(args: Vec<String>) {
     }
 }
 
-/// Levenshtein edit distance between two strings, computed with the
-/// classic two-row dynamic-programming table. Used only by
-/// [`suggest_subcommand`] for the "did you mean" hint on unknown
-/// `silt <subcommand>` invocations, so we keep the implementation
-/// local rather than re-using `crate::typechecker::suggest::levenshtein`
-/// (which lives behind `pub(super)` visibility).
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let n = a.len();
-    let m = b.len();
-    if n == 0 {
-        return m;
-    }
-    if m == 0 {
-        return n;
-    }
-    let mut prev: Vec<usize> = (0..=m).collect();
-    let mut curr: Vec<usize> = vec![0; m + 1];
-    for i in 1..=n {
-        curr[0] = i;
-        for j in 1..=m {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[m]
-}
-
 /// Find the closest valid token to `typo` within edit distance 2.
 /// Returns `None` if no candidate is within that distance — in which
 /// case the caller should suppress the suggestion line entirely rather
@@ -254,7 +224,7 @@ fn suggest_subcommand(typo: &str) -> Option<&'static str> {
     };
     let mut best: Option<(&'static str, usize)> = None;
     for &candidate in pool {
-        let d = edit_distance(typo, candidate);
+        let d = silt::text::levenshtein(typo, candidate);
         if d <= 2 {
             match best {
                 Some((_, bd)) if d >= bd => {}

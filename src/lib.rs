@@ -67,6 +67,7 @@ pub mod repl;
 pub mod scheduler;
 pub mod session;
 pub mod source;
+pub mod text;
 pub mod typechecker;
 pub mod typeinfo;
 pub mod types;
