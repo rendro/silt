@@ -27,6 +27,31 @@ pub(crate) enum OutputFormat {
 
 /// Dispatch `silt check [--format json] [--deny-warnings] <file>...`.
 pub(crate) fn dispatch(args: &[String]) {
+    let (files, format, deny_warnings) = arguments(args);
+    if format == OutputFormat::Json {
+        crate::cli::package::print_manifest_errors_as_json();
+    }
+    let programs: Vec<PackageFiles> = match files.is_empty() {
+        false => programs_of(&files),
+        true => match package_files() {
+            Ok(Some(files)) => vec![files],
+            Ok(None) => {
+                crate::cli::no_file("check");
+                eprintln!("Usage: {}", check_usage_banner());
+                process::exit(1);
+            }
+            Err(()) => process::exit(1),
+        },
+    };
+    check_files(&programs, format, deny_warnings);
+}
+
+/// The paths, the output format and `--deny-warnings` of `silt check
+/// <args>` (`args[0]` is the binary, `args[1]` the command). A usage
+/// error (an unknown flag, `-` with another file) ends the process with
+/// 1, before anything is read: also before `silt check --watch`
+/// watches.
+pub(crate) fn arguments(args: &[String]) -> (Vec<String>, OutputFormat, bool) {
     let mut files: Vec<String> = Vec::new();
     let mut format = OutputFormat::Human;
     let mut deny_warnings = false;
@@ -108,22 +133,7 @@ pub(crate) fn dispatch(args: &[String]) {
         eprintln!("Run 'silt check --help' for usage.");
         process::exit(1);
     }
-    if format == OutputFormat::Json {
-        crate::cli::package::print_manifest_errors_as_json();
-    }
-    let programs: Vec<PackageFiles> = match files.is_empty() {
-        false => programs_of(&files),
-        true => match package_files() {
-            Ok(Some(files)) => vec![files],
-            Ok(None) => {
-                crate::cli::no_file("check");
-                eprintln!("Usage: {}", check_usage_banner());
-                process::exit(1);
-            }
-            Err(()) => process::exit(1),
-        },
-    };
-    check_files(&programs, format, deny_warnings);
+    (files, format, deny_warnings)
 }
 
 /// The programs `silt check <paths>` checks: a file as a program of its
@@ -155,7 +165,16 @@ fn programs_of(paths: &[String]) -> Vec<PackageFiles> {
                 if found.is_empty() {
                     refuse_empty_walk("check", Path::new(&dir), &dir);
                 }
-                programs.extend(found.into_iter().map(file));
+                // Each file named as an import of another names it,
+                // relative to where the command was given, without a
+                // leading `./` (`check .` finds `./b.silt`, which
+                // main.silt's `import b` reads as `b.silt`): one written
+                // form per file in one output.
+                let written = |found: String| match Path::new(&found).strip_prefix(".") {
+                    Ok(rest) if !rest.as_os_str().is_empty() => rest.to_string_lossy().into_owned(),
+                    _ => found,
+                };
+                programs.extend(found.into_iter().map(written).map(file));
             }
             PathArg::NotSilt(path) => refuse_path("check", &path, FILE_OR_DIRECTORY),
         }
@@ -393,10 +412,12 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
     // of every door (`diagnostic::PrintKey`).
     let mut found: Vec<(crate::diagnostic::PrintKey, Shown)> = Vec::new();
     let mut json_unreadable: Vec<serde_json::Value> = Vec::new();
-    // What was shown, as rendered with each file named by its canonical
-    // path: a file reached by two spellings of its path (in two
-    // programs) is one file.
-    let mut shown: HashSet<String> = HashSet::new();
+    // What was shown, each by its problem ([`ProblemKey`]), the file
+    // named by its canonical path: a file reached by two spellings of
+    // its path (in two programs) is one file, and a module that one
+    // program imports and another checks as its own shows its errors
+    // once.
+    let mut shown: HashSet<ProblemKey> = HashSet::new();
     for program in programs {
         let path = match program.entry.as_str() {
             "-" => STDIN_NAME,
@@ -422,14 +443,11 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         failed |= checked.failed();
         let files = ProgramFiles::new(path, checked.session.sources());
         // (One program's diagnostics are each once already: what two
-        // programs both found is told apart by its text, rendered once
-        // more, which a program with many thousands of warnings pays
-        // for. A single program does not.)
+        // programs both found is told apart by its problem. A single
+        // program does not pay for that.)
+        let canonical = CanonicalFiles(checked.session.sources());
         let diagnostics: Vec<Diagnostic> = (checked.diagnostics.iter())
-            .filter(|d| {
-                programs.len() == 1
-                    || shown.insert(render_human(&CanonicalFiles(checked.session.sources()), d))
-            })
+            .filter(|d| programs.len() == 1 || shown.insert(problem_key(&canonical, d)))
             .cloned()
             .collect();
         warnings += diagnostics.iter().filter(|d| d.is_warning()).count();
@@ -486,6 +504,20 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         eprintln!("error: silt check: {warnings} {noun}, denied by --deny-warnings");
         process::exit(1);
     }
+}
+
+/// What tells two programs' diagnostics apart in `check_files`: the
+/// file, by its canonical path, the place, the code and the message.
+/// The labels are not part of it: a module's parse error found as an
+/// import of one program carries "module 'm' is imported here", and is
+/// the same problem as the one found when the module is checked as a
+/// program of its own (`silt check .` in a directory of both). The
+/// first found is shown.
+type ProblemKey = (Option<String>, u32, u32, crate::diagnostic::Code, String);
+
+fn problem_key(files: &CanonicalFiles<'_>, d: &Diagnostic) -> ProblemKey {
+    let file = files.locate(d.span).map(|located| located.file);
+    (file, d.span.start, d.span.end, d.code, d.message.clone())
 }
 
 /// A diagnostic of `check_files` as it is shown.

@@ -1,0 +1,34 @@
+error[type]: method 'pick' writes two type variables, `a` and `b`, for one type
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:11:45
+    |
+ 11 | trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }
+    |                                             ^ method 'pick' writes two type variables, `a` and `b`, for one type
+  = help: the two places take the same type here: write `a` in both
+
+error[type]: method 'wrap' writes the type variable `c` where trait 'Wrap' declares `List(b)`
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:15:45
+    |
+ 15 | trait Wrap for Int { fn wrap(self, x: b) -> c { [x] } }
+    |                                             ^ method 'wrap' writes the type variable `c` where trait 'Wrap' declares `List(b)`
+  = help: a type variable stands for any type: write `List(b)`, as the trait does
+
+error[type]: method 'p' writes two type variables, `d` and `e`, for one type
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:19:48
+    |
+ 19 | trait Pair(c, c) for Int { fn p(self, x: d, y: e) -> d { x } }
+    |                                                ^ method 'p' writes two type variables, `d` and `e`, for one type
+  = help: the two places take the same type here: write `d` in both
+
+error[type]: method 'conv' writes two type variables, `c` and `d`, for one type
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:23:48
+    |
+ 23 | trait Conv(b) for Int { fn conv(self, x: c, y: d) -> c { x } }
+    |                                                ^ method 'conv' writes two type variables, `c` and `d`, for one type
+  = help: the two places take the same type here: write `c` in both
+
+error[type]: method 'same' writes two type variables, `b` and `c`, for one type
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:29:54
+    |
+ 29 | trait Same for Box(a) { fn same(self: Box(b), o: Box(c)) -> Bool { true } }
+    |                                                      ^ method 'same' writes two type variables, `b` and `c`, for one type
+  = help: the two places take the same type here: write `b` in both

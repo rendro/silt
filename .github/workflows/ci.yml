@@ -350,6 +350,16 @@ jobs:
         env:
           RUSTFLAGS: -D warnings
         run: cargo clippy --locked --manifest-path playground/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+      # Clippy's own lints run on no dependency, so the step above holds
+      # silt's wasm32-only code to rustc's warnings alone. silt itself is
+      # linted here for the target: as the playground takes it, and with
+      # no feature, as an embedder's build takes it (which no other job
+      # builds). The target needs a source of randomness picked for
+      # getrandom and uuid, as the playground picks the page's.
+      - name: cargo clippy (silt, wasm32)
+        run: |
+          cargo clippy --locked --target wasm32-unknown-unknown --lib --no-default-features --features getrandom/wasm_js,uuid/js,playground -- -D warnings
+          cargo clippy --locked --target wasm32-unknown-unknown --lib --no-default-features --features getrandom/wasm_js,uuid/js -- -D warnings
       - name: cargo test
         run: cargo test --locked --manifest-path playground/Cargo.toml
       - name: Build the module

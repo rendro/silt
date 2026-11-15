@@ -1078,10 +1078,7 @@ impl TypeChecker {
     /// what the `json.Decode` bounds of the module's traits' methods ask
     /// for, which another module reads.
     pub(super) fn settle_decode_gaps(&mut self) {
-        let own_traits: Vec<TraitKey> = (self.tables.traits.keys())
-            .filter(|key| self.tables.traits.is_own(key))
-            .copied()
-            .collect();
+        let own_traits: Vec<TraitKey> = self.tables.traits.own_keys().copied().collect();
         for key in own_traits {
             let Some(info) = self.tables.traits.get(&key) else {
                 continue;

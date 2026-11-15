@@ -203,6 +203,19 @@ fn handle_watch(args: &[String]) {
         eprintln!("error: silt check: --watch cannot watch stdin ('-'): name the files");
         process::exit(1);
     }
+    // What the subcommand refuses without `--watch` (an unknown flag, a
+    // second file) it refuses here, by its own reading of its arguments,
+    // before anything is watched: the first run would print the refusal,
+    // and the loop would wait for a change for ever.
+    let argv: Vec<String> = std::iter::once(args[0].clone())
+        .chain(filtered.iter().cloned())
+        .collect();
+    match sub {
+        "run" => drop(crate::cli::run::arguments(&argv)),
+        "check" => drop(crate::cli::check::arguments(&argv)),
+        "test" => drop(crate::cli::test::arguments(&argv)),
+        _ => drop(crate::cli::disasm::arguments(&argv)),
+    }
     let requires_file = matches!(sub, "run" | "check" | "disasm");
     // `silt test` takes an optional file / path, so it's NOT in
     // the list above — `silt test --watch` alone is legitimate
