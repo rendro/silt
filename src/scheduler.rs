@@ -1549,7 +1549,30 @@ pub(crate) fn with_report_lock<R>(write: impl FnOnce() -> R) -> R {
 /// stderr are: the report of a failed program under `silt run`, which
 /// a closed stderr must not turn into the death of a closed pipe
 /// (status 141).
+///
+/// What stdout holds of a line that has no end yet (`print("partial ")`
+/// before the failure) was printed first: it is written out before the
+/// report, as a program's own write to stderr writes it first, where the
+/// two go to one place (`2>&1`). That is waited for no longer than
+/// [`LAST_WORDS`], so that a stdout nobody reads cannot hold the report
+/// up (tests/cli/stuck_stdout_tests.rs): the line then comes at the
+/// exit, after the report, as before.
 pub(crate) fn report_on_stderr(text: &str) {
+    if !text.is_empty() {
+        use std::io::Write;
+        let (done, flushed) = std::sync::mpsc::channel();
+        let flushes = move || {
+            let _ = std::io::stdout().lock().flush();
+            let _ = done.send(());
+        };
+        if thread::Builder::new()
+            .name("silt-report-flush".into())
+            .spawn(flushes)
+            .is_ok()
+        {
+            let _ = flushed.recv_timeout(LAST_WORDS);
+        }
+    }
     report(|| {
         let _ = crate::vm::write_stderr(text);
     });
