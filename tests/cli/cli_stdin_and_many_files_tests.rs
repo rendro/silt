@@ -168,6 +168,52 @@ fn check_takes_several_files() {
     assert_eq!(files, ["missing.silt", "bad.silt"], "{json}");
 }
 
+/// A module that one program imports and that is checked as a program of
+/// its own too (`silt check .` of a directory of both, or both named, the
+/// module by another spelling of its path) has each error said once, as
+/// the first program that found it shows it: `check .` checks `./m.silt`
+/// first, `check main.silt ./m.silt` finds it as main's import, with its
+/// "imported here". FAIL on the base: the import's error carries that
+/// label, so it was told apart from the module's own by its text and
+/// shown twice (also as `./m.silt` beside `m.silt`).
+#[test]
+fn check_says_an_error_of_a_module_once_when_two_programs_find_it() {
+    let dir = fresh_dir("twice");
+    fs::write(
+        dir.join("main.silt"),
+        "import m\n\nfn main() {\n  println(m.add(3, 4))\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("m.silt"),
+        "pub fn add(a, b) = a + b\n\npub fn square(x) = x * x\n",
+    )
+    .unwrap();
+    let dot = format!(".{}m.silt", std::path::MAIN_SEPARATOR);
+    let cases = [
+        (vec!["check", "."], "./m.silt", 0),
+        (vec!["check", "main.silt", dot.as_str()], "m.silt", 2),
+    ];
+    for (args, file, imported) in cases {
+        let out = silt(&dir, &args, "");
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        let stderr = text(&out.stderr).replace('\\', "/");
+        let places: Vec<&str> = (stderr.lines())
+            .filter(|line| line.starts_with(" --> "))
+            .collect();
+        let expected = [format!(" --> {file}:1:18"), format!(" --> {file}:3:18")];
+        assert_eq!(places, expected, "{args:?}: {stderr}");
+        assert_eq!(
+            stderr.matches("module 'm' is imported here").count(),
+            imported,
+            "{args:?}: {stderr}"
+        );
+    }
+    let out = silt(&dir, &["check", "--format", "json", "."], "");
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 2, "{json}");
+}
+
 #[cfg(feature = "watch")]
 #[test]
 fn check_watch_refuses_stdin() {
