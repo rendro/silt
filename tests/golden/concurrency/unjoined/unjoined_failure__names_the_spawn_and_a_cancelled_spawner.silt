@@ -5,28 +5,33 @@
 -- task that spawned it was cancelled: here the worker, cancelled after
 -- its children had failed. (A cancel of the worker cancels the children
 -- that still run; one that has failed keeps its failure, which is
--- reported.) Each child says when it is at the send that fails, which
--- is its next step: main waits for both, not for a guessed time, and
--- then gives that one step time.
+-- reported.) main learns that both children have ended, without a
+-- guessed time, from a stream that only they hold: when the last of
+-- them has ended nobody holds it, so its stage is stopped and closes
+-- the stage's input, `ends`, on which main waits.
 import channel
 import list
+import stream
 import task
-import time
+
+fn children(held, gate, cmds) {
+  list.map(1..2) { i ->
+    task.spawn { ->
+      let _ = channel.receive(gate)
+      let _ = held
+      channel.send(cmds, i)
+    }
+  }
+}
 
 fn main() {
   let cmds = channel.new(16)
   let gate = channel.new(0)
   let ready = channel.new(1)
   let never = channel.new(0)
-  let failing = channel.new(2)
+  let ends = stream.map(never) { x -> x }
   let worker = task.spawn { ->
-    let kids = list.map(1..2) { i ->
-      task.spawn { ->
-        let _ = channel.receive(gate)
-        channel.send(failing, i)
-        channel.send(cmds, i)
-      }
-    }
+    let kids = children(stream.map(ends) { x -> x }, gate, cmds)
     channel.send(ready, ())
     let _ = channel.receive(never)
     list.each(kids, task.join)
@@ -34,10 +39,9 @@ fn main() {
   let _ = channel.receive(ready)
   channel.close(cmds)
   channel.close(gate)
-  -- The children fail at once on the closed channel.
-  let _ = channel.receive(failing)
-  let _ = channel.receive(failing)
-  time.sleep(time.ms(50))
+  -- The children fail at once on the closed channel, and `ends`
+  -- closes when both have ended.
+  let _ = channel.receive(ends)
   task.cancel(worker)
   println("stopped")
 }

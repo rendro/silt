@@ -408,6 +408,9 @@ impl PoolShared {
                 // The waiter went before the value was there.
                 op.unheard();
             }
+            // What the operation let go of (a stream in what it held):
+            // its stop runs here, where no lock is held.
+            crate::scheduler::run_deferred();
             if left {
                 // Not counted since its waiter left.
                 return;

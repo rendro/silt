@@ -668,8 +668,9 @@ pub struct Sending<'a> {
     pub head_only: bool,
 }
 
-/// The bytes of a response. `Content-Length`, `Date` and `Connection`
-/// are the server's to say: such headers among `headers` are left out,
+/// The bytes of a response. `Content-Length`, `Transfer-Encoding`,
+/// `Date` and `Connection` are the server's to say: such headers among
+/// `headers` are left out,
 /// as is a header whose name or value could not stand in a header
 /// line (a line end in it would start another header, or another
 /// response).
@@ -1403,6 +1404,7 @@ mod tests {
             // The server's own, and what cannot stand in a header line.
             ("Content-Length".to_string(), "999".to_string()),
             ("connection".to_string(), "keep-alive".to_string()),
+            ("Transfer-Encoding".to_string(), "chunked".to_string()),
             ("X-Split".to_string(), "a\r\nSet-Cookie: stolen".to_string()),
             ("Bad Name".to_string(), "x".to_string()),
         ];

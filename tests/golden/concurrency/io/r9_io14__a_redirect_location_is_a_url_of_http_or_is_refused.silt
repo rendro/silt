@@ -2,7 +2,8 @@
 -- requires-feature: http
 -- A redirect's location is read by its form (RFC 3986): one with a scheme
 -- other than http or https (`file:`, `ftp:`, `mailto:`) is not followed,
--- and is `InvalidUrl` with the location; `file:///etc/passwd` was taken
+-- and is `InvalidUrl` with the location (what stands before an `@` in it
+-- hidden, as a user and a password are); `file:///etc/passwd` was taken
 -- for a path and asked of the same server. A location with bytes a URL
 -- cannot hold (a space, `é`, a byte that is no UTF-8) is followed with
 -- those bytes percent-encoded, as browsers send them; it was handed back

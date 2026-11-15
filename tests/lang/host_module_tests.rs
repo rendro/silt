@@ -1435,3 +1435,75 @@ fn host_results_of_a_host_regex_and_of_regex_regex_are_told_apart() {
         "got: {err}"
     );
 }
+
+/// A host function whose signature returns a handle of `postgres` has
+/// its result checked, as one that returns a `regex.Regex` has: an `Int`
+/// in its place is the host function's error (it went into the program
+/// unchecked).
+#[cfg(feature = "postgres")]
+#[test]
+fn host_results_of_postgres_handles_are_checked() {
+    let host = HostModule::new("h")
+        .function("fn pool(n: Int) -> postgres.PgPool", |call: &HostCall| {
+            Ok(call.args[0].clone())
+        })
+        .function(
+            "fn tx(n: Int) -> Option(postgres.PgTx)",
+            |call: &HostCall| Ok(Value::variant(bv::SOME, [call.args[0].clone()])),
+        );
+    let program = |body: &str| {
+        format!("import h\nimport host\nimport postgres\nfn main() {{\n  host.give({body})\n}}")
+    };
+    let err = run(&program("h.pool(3)"), host.clone()).unwrap_err();
+    assert!(
+        err.contains("h.pool: its signature returns postgres.PgPool, but it returned Int 3"),
+        "got: {err}"
+    );
+    let err = run(&program("h.tx(4)"), host).unwrap_err();
+    assert!(
+        err.contains("h.tx: its signature returns Option(postgres.PgTx), but it returned"),
+        "got: {err}"
+    );
+}
+
+/// A host result of a builtin module's record or enum type where the
+/// signature names a host type of the same bare name: the message names
+/// the result's type with its module (it read "returned Variant Null").
+#[test]
+fn a_host_result_of_a_builtin_module_type_is_named_with_its_module() {
+    let host = HostModule::new("h")
+        .declare_type("type Value { n: Int }")
+        .function("fn f(n: Int) -> Value", |_call: &HostCall| {
+            Ok(Value::variant(bv::JSON_NULL, []))
+        });
+    let err = run(
+        "import h\nimport host\nfn main() {\n  host.give(h.f(1).n)\n}",
+        host,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("h.f: its signature returns Value, but it returned json.Value Null"),
+        "got: {err}"
+    );
+}
+
+/// A host signature that names a parameter twice is refused, as a program
+/// function's is (it was taken, and the second argument was the one the
+/// name had).
+#[test]
+fn a_host_signature_that_names_a_parameter_twice_is_refused() {
+    for (signature, name) in [
+        ("fn f(a: Int, a: Int) -> Int", "f"),
+        ("fn g(a: Int, (b, a): (Int, Int)) -> Int", "g"),
+    ] {
+        let host =
+            HostModule::new("h").function(signature, |call: &HostCall| Ok(call.args[0].clone()));
+        let err = run("import h\nfn main() {\n  println(1)\n}", host).unwrap_err();
+        assert!(
+            err.contains(&format!(
+                "the host function `{name}` names the parameter `a` twice"
+            )),
+            "got: {err}"
+        );
+    }
+}

@@ -2,16 +2,22 @@
 -- stderr-not-contains: never read
 -- A `channel.select` over two streams asks both. The one it did not take
 -- fails on the value it was asked for; closing that stream cuts it, as a
--- `stream.first` would, and its failure is not reported.
+-- `stream.first` would, and its failure is not reported. The stage of
+-- `b` fails only once main has taken the value of `a` (it waits for
+-- `go`), so the select never meets the failure. (It slept 20 ms and then
+-- failed: on a slow run the select got the failure first, 1 of 200 runs
+-- under load.) The sleep before the close only lets the failure come
+-- first in most runs; the output is the same when the close comes first.
 import channel
 import stream
 import time
 
 fn main() {
+  let go: Channel(()) = channel.new(1)
   let a = stream.from_list([1]) |> stream.map { x -> x }
   let b = stream.from_list([0])
     |> stream.map { x ->
-      time.sleep(time.ms(20))
+      let _ = channel.receive(go)
       10 / x
     }
   let got = match channel.select([channel.Recv(a), channel.Recv(b)]) {
@@ -19,6 +25,7 @@ fn main() {
     _ -> -1
   }
   println(got)
+  channel.send(go, ())
   time.sleep(time.ms(60))
   channel.close(a)
   channel.close(b)

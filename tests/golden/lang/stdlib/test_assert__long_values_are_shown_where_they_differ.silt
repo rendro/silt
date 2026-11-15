@@ -1,0 +1,30 @@
+-- cmd: test
+-- exit: 1
+-- test.assert says that the condition is false (it said "false", the value
+-- itself); test.assert_eq and assert_ne of two long values show where
+-- they first differ, not both whole on one line.
+import string
+import test
+
+fn test_false() {
+  test.assert(1 > 2)
+}
+
+fn test_long_strings_differ() {
+  let a = string.repeat("a", 1500)
+  test.assert_eq("{a}x{a}", "{a}y{a}")
+}
+
+fn test_one_is_the_start_of_the_other() {
+  let a = string.repeat("a", 1500)
+  test.assert_eq(a, "{a}b")
+}
+
+fn test_long_strings_the_same() {
+  let a = string.repeat("a", 1500)
+  test.assert_ne(a, a)
+}
+
+fn test_short_values() {
+  test.assert_eq([1, 2], [1, 3])
+}

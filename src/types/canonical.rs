@@ -460,7 +460,8 @@ fn kind_types() -> &'static KindTypes {
 
 /// Whether `id` is an opaque type of a builtin module whose values are a
 /// kind of their own: `task.Handle`, `tcp.TcpListener`, `tcp.TcpStream`,
-/// `regex.Regex`.
+/// `regex.Regex`, and the handles of `postgres` (`PgPool`, `PgTx`,
+/// `PgCursor`), variants of types of their own that no program can make.
 pub fn is_opaque_value_type(id: TypeId) -> bool {
     let kinds = kind_types();
     [
@@ -468,19 +469,30 @@ pub fn is_opaque_value_type(id: TypeId) -> bool {
         kinds.tcp_listener,
         kinds.tcp_stream,
         kinds.regex,
+        crate::typeinfo::ty::PG_POOL,
+        crate::typeinfo::ty::PG_TX,
+        crate::typeinfo::ty::PG_CURSOR,
     ]
     .contains(&id)
 }
 
-/// The kind of `val` as a message names it: [`Value::kind`], but for a
-/// value of an opaque type of a builtin module its type with its module
-/// (`regex.Regex`), which a program's own `Regex` is not.
-pub fn kind_name(val: &Value) -> String {
+/// The kind of `val` as a message names it, beside the type `written`
+/// that it was to be of: [`Value::kind`], but for a value of an opaque
+/// type of a builtin module its type with its module (`regex.Regex`),
+/// which a program's own `Regex` is not, and the same for a record or a
+/// variant of a type of a builtin module that `written` does not name
+/// (`json.Value` where a host's own `Value` was to be).
+pub fn kind_name(val: &Value, written: &str) -> String {
     let id = dispatch_type_for_value(val);
-    match crate::defs::builtin_types().get(id.0.0 as usize) {
-        Some((name, Some(module))) if is_opaque_value_type(id) => format!("{module}.{name}"),
-        _ => val.kind().to_string(),
+    if let Some((name, Some(module))) = crate::defs::builtin_types().get(id.0.0 as usize) {
+        let qualified = format!("{module}.{name}");
+        let named =
+            matches!(val, Value::Record(_) | Value::Variant(_)) && !written.contains(&qualified);
+        if is_opaque_value_type(id) || named {
+            return qualified;
+        }
     }
+    val.kind().to_string()
 }
 
 /// The name of the type [`dispatch_type_for_value`] gives, as messages
