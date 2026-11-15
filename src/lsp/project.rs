@@ -75,7 +75,7 @@ impl Project {
         // (The checks keep how each module writes another's types,
         // which hover and the hints read.)
         let mut session = Session::new(config);
-        session.for_editor();
+        session.set_for_editor(true);
         Project {
             session,
             stamps: stamps(dir),

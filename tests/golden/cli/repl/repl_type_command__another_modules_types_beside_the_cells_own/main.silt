@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: type Pt { n: Int }\nimport geo\nlet mine = Pt { n: 1 }\nlet theirs = geo.origin()\nlet farther = geo.far_pt()\n:type mine\n:type theirs\n:type farther\n:type (theirs, farther)\n:type [geo.origin]\nlet bad: Int = farther\n:quit\n
+-- exit: 0
+-- `:type` writes another module's type as the messages and hover do: with
+-- its module where the cell's own Pt shares the name: geo.Pt, and far.Pt of a
+-- module the cells do not import. The message beside them writes far.Pt too.

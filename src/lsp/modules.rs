@@ -56,33 +56,6 @@ pub(super) fn visible_fields(
     record_fields
 }
 
-/// Whether another type than `r` has `r`'s name among the types the
-/// module of `scope` can name: one its bare name stands for, or one of a
-/// module it imports (`a.Regex` beside `b.Regex`).
-fn shares_its_name(
-    session: &crate::session::Session,
-    scope: &crate::typechecker::names::ModuleScope,
-    r: TypeRef,
-) -> bool {
-    use crate::typechecker::names::Binding;
-    let other =
-        |binding: Option<&Binding>| matches!(binding, Some(Binding::Def(id)) if *id != r.id.0);
-    if other(scope.types.get(&r.name)) {
-        return true;
-    }
-    let builtins = crate::typechecker::names::builtins().1;
-    scope.values.values().any(|binding| {
-        let Binding::Module(module) = binding else {
-            return false;
-        };
-        let exports = match module.is_builtin() {
-            true => builtins.modules.get(module),
-            false => session.module_analysis(*module).map(|a| &a.scope.exports),
-        };
-        exports.is_some_and(|exports| other(exports.types.get(&r.name)))
-    })
-}
-
 /// The exported members of `program`.
 fn members(program: &Program) -> Vec<(Symbol, MemberKind)> {
     let mut out = Vec::new();
@@ -157,42 +130,19 @@ impl Server {
     /// name. The module part is the checker's own (`ModuleWritten`, which
     /// the module's analysis keeps).
     pub(super) fn written_here(&self, doc: &Document, ty: &Type) -> Type {
-        use crate::typechecker::ModuleWritten;
-        let found = doc.module.as_ref().and_then(|module| {
-            let session = &self.projects.get(&module.project)?.session;
-            Some((session, session.module_analysis(module.id)?))
-        });
-        let Some((session, analysis)) = found else {
+        let found = doc
+            .module
+            .as_ref()
+            .and_then(|module| Some((&self.projects.get(&module.project)?.session, module.id)));
+        let Some((session, here)) = found else {
             return ty.clone();
         };
-        crate::types::map_refs(ty, &|r: TypeRef| {
-            let program = (crate::defs::builtin_types()
-                .get(r.id.0.0 as usize)
-                .is_none())
-            .then(|| {
-                analysis
-                    .modules_written
-                    .get(&session.defs().get(r.id.0).module)
-            })
-            .flatten();
-            // (A type no import here can reach is described, as in the
-            // messages: no name written here is its name.)
-            let described = matches!(program, Some(ModuleWritten::Described { .. }));
-            if !described && !shares_its_name(session, &analysis.scope, r) {
-                return r;
-            }
-            let name = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-                Some((_, Some(module))) => format!("{module}.{}", r.name),
-                Some((_, None)) => return r,
-                None => match program {
-                    Some(written) => written.type_name(r.name),
-                    None => return r,
-                },
-            };
-            TypeRef {
+        crate::types::map_refs(ty, &|r: TypeRef| match session.written_type_name(here, r) {
+            Some(name) => TypeRef {
                 id: r.id,
                 name: crate::intern::intern(&name),
-            }
+            },
+            None => r,
         })
     }
 

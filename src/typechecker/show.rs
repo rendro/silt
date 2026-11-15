@@ -236,15 +236,20 @@ impl TypeChecker {
     /// hold: what the module's analysis keeps for the editor, so that
     /// hover writes another module's types as the messages do. (Not for
     /// every module the session knows: that made checking a program of n
-    /// modules take time n squared.) None for a REPL cell, which has no
-    /// reach and no editor.
+    /// modules take time n squared.) For a REPL cell, which has no reach,
+    /// every module of the program the session has.
     pub(super) fn modules_written(&self) -> HashMap<crate::session::ModuleId, ModuleWritten> {
-        let Some(reach) = &self.reach else {
-            return HashMap::new();
-        };
-        (reach.iter())
-            .filter_map(|module| Some((*module, self.module_written(*module)?)))
-            .collect()
+        let written =
+            |module: &crate::session::ModuleId| Some((*module, self.module_written(*module)?));
+        match &self.reach {
+            Some(reach) => reach.iter().filter_map(written).collect(),
+            // A REPL cell (for `:type`) can name what the earlier cells
+            // imported: every module of the program the session has.
+            None => (self.tables.module_names.keys())
+                .filter(|module| !self.cells.contains(module))
+                .filter_map(written)
+                .collect(),
+        }
     }
 
     /// The variant `name` of the enum `enum_ty` as a program writes it:

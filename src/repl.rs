@@ -683,8 +683,13 @@ impl Repl {
     /// have no value.
     pub fn type_of(&mut self, input: &str) -> Result<Typed, NotAnExpression> {
         let file = self.session.add_cell(input.to_string());
+        // (The check of the expression keeps how the cell writes the other
+        // modules' types, for `written_type_name`; an entry that runs does
+        // not pay for it.)
+        self.session.set_for_editor(true);
         let analysis = self.session.analyze(file);
         let (diagnostics, failed) = (analysis.diagnostics.clone(), analysis.has_errors());
+        self.session.set_for_editor(false);
         if failed {
             return Ok(Typed {
                 diagnostics: self.not_shown_yet(&diagnostics),
