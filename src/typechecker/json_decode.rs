@@ -1391,18 +1391,18 @@ impl TypeChecker {
         };
         for decl in &mut program.decls {
             match decl {
-                Decl::Fn(f) => super::resolve::each_expr_mut(&mut f.body, &mut visit),
+                Decl::Fn(f) => f.body.for_each_expr_mut(&mut visit),
                 Decl::TraitImpl(ti) => {
                     for m in &mut ti.methods {
-                        super::resolve::each_expr_mut(&mut m.body, &mut visit);
+                        m.body.for_each_expr_mut(&mut visit);
                     }
                 }
                 Decl::Trait(t) => {
                     for m in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
-                        super::resolve::each_expr_mut(&mut m.body, &mut visit);
+                        m.body.for_each_expr_mut(&mut visit);
                     }
                 }
-                Decl::Let { value, .. } => super::resolve::each_expr_mut(value, &mut visit),
+                Decl::Let { value, .. } => value.for_each_expr_mut(&mut visit),
                 _ => {}
             }
         }

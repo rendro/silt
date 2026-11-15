@@ -9,7 +9,6 @@ use crate::ast::*;
 use crate::intern::resolve;
 use crate::types::Type;
 
-use super::ast_walk::visit_expr_children;
 use super::state::LocalVar;
 
 // ── Local variable collection ─────────────────────────────────────
@@ -39,59 +38,16 @@ pub(super) fn locals_at_offset(program: &Program, cursor: usize) -> Vec<LocalVar
 
 /// Extract variable names from a pattern (for let/when bindings and params).
 fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
-    match &pattern.kind {
-        PatternKind::Ident(name) if resolve(*name) != "_" => {
-            locals.push(LocalVar {
-                name: name.to_string(),
-                ty: None,
-            });
+    pattern.for_each_binder(&mut |name, _, binder| {
+        // (A name pattern spelled `_` binds nothing.)
+        if matches!(binder.kind, PatternKind::Ident(_)) && resolve(name) == "_" {
+            return;
         }
-        PatternKind::Constructor { args: fields, .. } => {
-            for p in fields {
-                collect_pattern_names(p, locals);
-            }
-        }
-        PatternKind::Tuple(pats) => {
-            for p in pats {
-                collect_pattern_names(p, locals);
-            }
-        }
-        PatternKind::Record { fields, .. } => {
-            for (name, _, sub) in fields {
-                if let Some(p) = sub {
-                    collect_pattern_names(p, locals);
-                } else {
-                    locals.push(LocalVar {
-                        name: name.to_string(),
-                        ty: None,
-                    });
-                }
-            }
-        }
-        PatternKind::List(pats, rest) => {
-            for p in pats {
-                collect_pattern_names(p, locals);
-            }
-            if let Some(r) = rest {
-                collect_pattern_names(r, locals);
-            }
-        }
-        PatternKind::Or(alts) => {
-            // All alternatives are validated to bind the same
-            // names; mirror `collect_pattern_vars` and take the first.
-            if let Some(p) = alts.first() {
-                collect_pattern_names(p, locals);
-            }
-        }
-        PatternKind::Map(entries) => {
-            // Map-pattern values bind (`#{ "k": v }` binds
-            // `v`); keys are string literals, never binders.
-            for (_, p) in entries {
-                collect_pattern_names(p, locals);
-            }
-        }
-        _ => {}
-    }
+        locals.push(LocalVar {
+            name: name.to_string(),
+            ty: None,
+        });
+    });
 }
 
 /// Walk an expression tree, collecting locals defined before the cursor.
@@ -167,7 +123,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
             collect_locals_in_expr(body, cursor, locals);
         }
         _ => {
-            visit_expr_children(expr, |child| collect_locals_in_expr(child, cursor, locals));
+            expr.for_each_child(|child| collect_locals_in_expr(child, cursor, locals));
         }
     }
 }

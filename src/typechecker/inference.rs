@@ -5883,71 +5883,10 @@ impl TypeChecker {
                     self.check_recur_tail_positions(&arm.body, pos);
                 }
             }
-            ExprKind::Int(_)
-            | ExprKind::Float(_)
-            | ExprKind::Bool(_)
-            | ExprKind::StringLit(..)
-            | ExprKind::Ident(_)
-            | ExprKind::Unit
-            | ExprKind::Return(None) => {}
-            ExprKind::StringInterp(parts) => {
-                for part in parts {
-                    if let StringPart::Expr(e) = part {
-                        self.check_recur_tail_positions(e, inner);
-                    }
-                }
-            }
-            ExprKind::List(elems) => {
-                for elem in elems {
-                    match elem {
-                        ListElem::Single(e) | ListElem::Spread(e) => {
-                            self.check_recur_tail_positions(e, inner)
-                        }
-                    }
-                }
-            }
-            ExprKind::Map(entries) => {
-                for (k, v) in entries {
-                    self.check_recur_tail_positions(k, inner);
-                    self.check_recur_tail_positions(v, inner);
-                }
-            }
-            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
-                for e in elems {
-                    self.check_recur_tail_positions(e, inner);
-                }
-            }
-            ExprKind::FieldAccess(e, _, _)
-            | ExprKind::Unary(_, e)
-            | ExprKind::QuestionMark(e)
-            | ExprKind::Ascription(e, _)
-            | ExprKind::Return(Some(e)) => self.check_recur_tail_positions(e, inner),
-            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-                self.check_recur_tail_positions(l, inner);
-                self.check_recur_tail_positions(r, inner);
-            }
-            ExprKind::Call(callee, args) => {
-                self.check_recur_tail_positions(callee, inner);
-                for arg in args {
-                    self.check_recur_tail_positions(arg, inner);
-                }
-            }
             ExprKind::Lambda { body, .. } => {
                 self.check_recur_tail_positions(body, RecurPos::InClosure)
             }
-            ExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields {
-                    self.check_recur_tail_positions(e, inner);
-                }
-            }
-            ExprKind::RecordUpdate {
-                expr: base, fields, ..
-            } => {
-                self.check_recur_tail_positions(base, inner);
-                for (_, e) in fields {
-                    self.check_recur_tail_positions(e, inner);
-                }
-            }
+            _ => expr.for_each_child(|child| self.check_recur_tail_positions(child, inner)),
         }
     }
 
@@ -6084,7 +6023,7 @@ impl TypeChecker {
                         if is_value {
                             self.exit_level();
                             let mut bounds = Vec::new();
-                            for (name, at) in super::names::binders(pattern) {
+                            for (name, at) in pattern.binders() {
                                 if let Some(bound) = env.lookup(name).cloned() {
                                     let scheme = self.generalize_let(&bound.ty, &own);
                                     let places = self.pattern_places(&scheme, &mut bounds);
@@ -6600,7 +6539,7 @@ fn read_fields(body: &mut Expr, names: &[Option<Symbol>]) -> Vec<bool> {
 /// binding in `expr` hides it. A dot that is called (`name.f(..)`, `x |>
 /// name.f`) reads none.
 fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
-    let binds = |pattern: &Pattern| collect_pattern_vars(pattern).contains(&name);
+    let binds = |pattern: &Pattern| pattern.binder_names().contains(&name);
     // (The receiver of a dot that is called.)
     let callee_reads = |callee: &mut Expr| match &mut callee.kind {
         ExprKind::FieldAccess(obj, ..) => reads_field_of(obj, name),
@@ -6676,7 +6615,7 @@ fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
         }
         _ => {
             let mut found = false;
-            super::resolve::each_child_mut(expr, &mut |child| {
+            expr.for_each_child_mut(|child| {
                 found |= reads_field_of(child, name);
             });
             found

@@ -250,59 +250,10 @@ fn any_expr_in(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool, closures: boo
     if found(expr) {
         return true;
     }
-    let mut inner = |e: &Expr| any_expr_in(e, found, closures);
-    match &expr.kind {
-        ExprKind::Ident(_)
-        | ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::StringLit(_)
-        | ExprKind::Unit => false,
-        ExprKind::StringInterp(parts) => parts
-            .iter()
-            .any(|part| matches!(part, StringPart::Expr(e) if inner(e))),
-        ExprKind::List(elems) => elems.iter().any(|elem| match elem {
-            ListElem::Single(e) | ListElem::Spread(e) => inner(e),
-        }),
-        ExprKind::Map(entries) => entries.iter().any(|(k, v)| inner(k) || inner(v)),
-        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
-            elems.iter().any(&mut inner)
-        }
-        ExprKind::FieldAccess(e, ..)
-        | ExprKind::Unary(_, e)
-        | ExprKind::QuestionMark(e)
-        | ExprKind::Ascription(e, _) => inner(e),
-        ExprKind::Binary(a, _, b) | ExprKind::Pipe(a, b) | ExprKind::Range(a, b) => {
-            inner(a) || inner(b)
-        }
-        ExprKind::Call(callee, args) => inner(callee) || args.iter().any(&mut inner),
-        ExprKind::Lambda { body, .. } => closures && inner(body),
-        ExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| inner(e)),
-        ExprKind::RecordUpdate { expr, fields, .. } => {
-            inner(expr) || fields.iter().any(|(_, e)| inner(e))
-        }
-        ExprKind::Match { expr, arms } => {
-            expr.as_deref().is_some_and(&mut inner)
-                || arms
-                    .iter()
-                    .any(|arm| arm.guard.as_deref().is_some_and(&mut inner) || inner(&arm.body))
-        }
-        ExprKind::Return(e) => e.as_deref().is_some_and(&mut inner),
-        ExprKind::Block(stmts) => stmts.iter().any(|stmt| match stmt {
-            Stmt::Let { value, .. } => inner(value),
-            Stmt::When {
-                expr, else_body, ..
-            } => inner(expr) || inner(else_body),
-            Stmt::WhenBool {
-                condition,
-                else_body,
-            } => inner(condition) || inner(else_body),
-            Stmt::Expr(e) => inner(e),
-        }),
-        ExprKind::Loop { bindings, body } => {
-            bindings.iter().any(|(_, _, e)| inner(e)) || inner(body)
-        }
+    if !closures && matches!(expr.kind, ExprKind::Lambda { .. }) {
+        return false;
     }
+    expr.any_child(|e| any_expr_in(e, found, closures))
 }
 
 // ── Compiler ──────────────────────────────────────────────────────────
@@ -1065,7 +1016,7 @@ impl<'a> Compiler<'a> {
         value: &Expr,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        for (name, at) in crate::typechecker::names::binders(pattern) {
+        for (name, at) in pattern.binders() {
             if self.compile_pattern_thunk(pattern, value, name, at)? == 0 {
                 self.emit(Asm::Call { argc: 0 }, span)?;
             }
@@ -1242,7 +1193,7 @@ impl<'a> Compiler<'a> {
                     // Each name of a pattern: the function that makes its
                     // part, a local.
                     (_, Some(_)) => {
-                        for (name, at) in crate::typechecker::names::binders(pattern) {
+                        for (name, at) in pattern.binders() {
                             if self.compile_pattern_thunk(pattern, value, name, at)? == 0 {
                                 self.emit(Asm::Call { argc: 0 }, value.span)?;
                             }

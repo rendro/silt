@@ -91,21 +91,9 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
 }
 
 /// Recurse depth-first into `expr`, updating `best` with the deepest
-/// `expr.ty` whose span holds the cursor. Delegates the
-/// child enumeration to [`visit_expr_children`] — there is no second
-/// inlined copy of the `ExprKind::*` arms here. The pre-check on the
-/// outer expression runs first so a deeper match overwrites it.
-///
-/// Prior to this refactor this function inlined a
-/// ~100-line second copy of `visit_expr_children`'s arm table. Drift
-/// in either copy would silently miss expression kinds; the two are
-/// now collapsed to a single source of truth. The `Option<&'a Type>`
-/// previously used to avoid an intermediate clone is now `Option<Type>`
-/// because `visit_expr_children`'s `FnMut(&Expr)` closure must accept
-/// any borrow lifetime (HRTB) and cannot escape a `&'a Type` borrow.
-/// The clone is cheap (one per visited typed expression on the cursor
-/// path) and the only caller, `find_type_at_offset`, was already
-/// `.cloned()`-ing the final result anyway.
+/// `expr.ty` whose span holds the cursor. The children are the ones
+/// [`Expr::for_each_child`] lists. The pre-check on the outer expression
+/// runs first so a deeper match overwrites it.
 fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
     // The cursor must be inside this expression's span. We rely on
     // depth-first traversal: the deepest (most specific) match wins.
@@ -114,7 +102,7 @@ fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
     {
         *best = Some(ty.clone());
     }
-    visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
+    expr.for_each_child(|child| find_type_in_expr(child, cursor, best));
 }
 
 /// Whether the name at byte `cursor` is an expression (a name used as a
@@ -132,7 +120,7 @@ pub(super) fn rejected_type_value_at(program: &Program, cursor: usize) -> bool {
                 _ => false,
             });
         }
-        visit_expr_children(expr, |child| walk(child, cursor, found));
+        expr.for_each_child(|child| walk(child, cursor, found));
     }
     let mut found = None;
     for decl in &program.decls {
@@ -165,7 +153,7 @@ pub(super) fn find_field_access_at(program: &Program, cursor: usize) -> Option<(
         {
             *found = Some((ty.clone(), *field));
         }
-        visit_expr_children(expr, |child| walk(child, cursor, found));
+        expr.for_each_child(|child| walk(child, cursor, found));
     }
     let mut found = None;
     for decl in &program.decls {
@@ -204,7 +192,7 @@ pub(super) fn find_trait_method_at(
         {
             *found = Some((tr, *field));
         }
-        visit_expr_children(expr, |child| walk(child, cursor, found));
+        expr.for_each_child(|child| walk(child, cursor, found));
     }
     let mut found = None;
     for decl in &program.decls {
@@ -473,21 +461,11 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
                 *best = Some(*name);
             }
         }
-        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
-            for p in pats {
-                find_ident_in_pattern(p, cursor, best);
-            }
-        }
         PatternKind::Constructor {
-            name,
-            name_span,
-            args: fields,
-            ..
+            name, name_span, ..
         } => {
             check_span_match(*name, *name_span, cursor, best);
-            for p in fields {
-                find_ident_in_pattern(p, cursor, best);
-            }
+            pattern.for_each_child(|p| find_ident_in_pattern(p, cursor, best));
         }
         PatternKind::Record {
             name,
@@ -506,22 +484,7 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
                 }
             }
         }
-        PatternKind::List(pats, rest) => {
-            for p in pats {
-                find_ident_in_pattern(p, cursor, best);
-            }
-            if let Some(r) = rest {
-                find_ident_in_pattern(r, cursor, best);
-            }
-        }
-        PatternKind::Map(entries) => {
-            // Map-pattern values bind (`#{ "k": v }` binds
-            // `v`); keys are string literals, never binders.
-            for (_, p) in entries {
-                find_ident_in_pattern(p, cursor, best);
-            }
-        }
-        _ => {}
+        _ => pattern.for_each_child(|p| find_ident_in_pattern(p, cursor, best)),
     }
 }
 
@@ -551,7 +514,7 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
         }
     }
     // Ascription types (`expr: Point`) are type-position
-    // references; `visit_expr_children` only walks the value side.
+    // references; `Expr::for_each_child` only walks the value side.
     if let ExprKind::Ascription(_, te) = &expr.kind {
         find_ident_in_type_expr(te, cursor, best);
     }
@@ -580,124 +543,7 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
             }
         }
     }
-    visit_expr_children(expr, |child| find_ident_in_expr(child, cursor, best));
-}
-
-/// Visit all child expressions of an AST node.
-pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
-    match &expr.kind {
-        ExprKind::Binary(lhs, _, rhs) | ExprKind::Pipe(lhs, rhs) | ExprKind::Range(lhs, rhs) => {
-            f(lhs);
-            f(rhs);
-        }
-        ExprKind::Unary(_, e)
-        | ExprKind::QuestionMark(e)
-        | ExprKind::Ascription(e, _)
-        | ExprKind::Return(Some(e))
-        | ExprKind::FieldAccess(e, _, _) => f(e),
-        ExprKind::Call(callee, args) => {
-            f(callee);
-            for a in args {
-                f(a);
-            }
-        }
-        ExprKind::Lambda { body, .. } => f(body),
-        ExprKind::Match { expr, arms } => {
-            if let Some(e) = expr {
-                f(e);
-            }
-            for arm in arms {
-                if let Some(ref guard) = arm.guard {
-                    f(guard);
-                }
-                f(&arm.body);
-            }
-        }
-        ExprKind::Block(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Let { value, .. } => f(value),
-                    Stmt::Expr(e) => f(e),
-                    Stmt::When {
-                        expr, else_body, ..
-                    } => {
-                        f(expr);
-                        f(else_body);
-                    }
-                    Stmt::WhenBool {
-                        condition,
-                        else_body,
-                    } => {
-                        f(condition);
-                        f(else_body);
-                    }
-                }
-            }
-        }
-        ExprKind::List(elems) => {
-            for elem in elems {
-                match elem {
-                    ListElem::Single(e) | ListElem::Spread(e) => f(e),
-                }
-            }
-        }
-        ExprKind::Map(entries) => {
-            for (k, v) in entries {
-                f(k);
-                f(v);
-            }
-        }
-        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
-            for e in elems {
-                f(e);
-            }
-        }
-        ExprKind::RecordCreate { fields, .. } => {
-            for (_, v) in fields {
-                f(v);
-            }
-        }
-        ExprKind::RecordUpdate { expr, fields, .. } => {
-            f(expr);
-            for (_, v) in fields {
-                f(v);
-            }
-        }
-        ExprKind::Loop { bindings, body } => {
-            for (_, _, init) in bindings {
-                f(init);
-            }
-            f(body);
-        }
-        ExprKind::Recur(args) => {
-            for a in args {
-                f(a);
-            }
-        }
-        ExprKind::StringInterp(parts) => {
-            for part in parts {
-                if let StringPart::Expr(e) = part {
-                    f(e);
-                }
-            }
-        }
-        // ── Leaf variants: no child `Expr` to recurse into. ────────
-        // Listed exhaustively (rather than collapsed under a `_`
-        // wildcard) so that the Rust compiler enforces parity
-        // whenever a new `ExprKind` variant is added — the omission
-        // of a walker arm becomes a compile error rather than a
-        // silent functional regression in LSP find-references /
-        // hover / inlay-hints / selection-range / folding. There is
-        // no wildcard catch-all arm: the compiler's exhaustiveness
-        // check holds every kind of expression here.
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::StringLit(_)
-        | ExprKind::Ident(_)
-        | ExprKind::Unit
-        | ExprKind::Return(None) => {}
-    }
+    expr.for_each_child(|child| find_ident_in_expr(child, cursor, best));
 }
 
 /// Walk the entire AST to find the type of a variable by name.
@@ -728,7 +574,7 @@ fn find_ident_type_in_expr(expr: &Expr, name: Symbol, result: &mut Option<Type>)
     {
         *result = Some(ty.clone());
     }
-    visit_expr_children(expr, |child| find_ident_type_in_expr(child, name, result));
+    expr.for_each_child(|child| find_ident_type_in_expr(child, name, result));
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

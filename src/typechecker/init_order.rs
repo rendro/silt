@@ -360,7 +360,7 @@ impl TypeChecker {
                     span,
                     ..
                 } => {
-                    let binders = collect_pattern_vars(pattern);
+                    let binders = pattern.binder_names();
                     for name in &binders {
                         // (A name bound twice is the parser's error: what
                         // reads it is not ordered by it.)

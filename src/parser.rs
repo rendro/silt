@@ -122,60 +122,14 @@ pub(crate) fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)
             ImportTarget::Alias(_, alias, alias_span) => vec![(*alias, *alias_span, "import")],
         },
         Decl::Let { pattern, .. } => {
+            // (A shorthand field `{ x }` at the span of its record
+            // pattern.)
             let mut names = Vec::new();
-            pattern_binders(pattern, &mut names);
+            pattern.for_each_binder(&mut |name, _, binder| {
+                names.push((name, binder.span, "let binding"));
+            });
             names
-                .into_iter()
-                .map(|(name, span)| (name, span, "let binding"))
-                .collect()
         }
-    }
-}
-
-/// The names `pattern` binds, with their spans.
-pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
-    match &pattern.kind {
-        PatternKind::Ident(name) => out.push((*name, pattern.span)),
-        PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {
-            for part in parts {
-                pattern_binders(part, out);
-            }
-        }
-        PatternKind::Record { fields, .. } => {
-            for (field, _, sub) in fields {
-                match sub {
-                    Some(sub) => pattern_binders(sub, out),
-                    None => out.push((*field, pattern.span)),
-                }
-            }
-        }
-        PatternKind::List(elems, rest) => {
-            for elem in elems {
-                pattern_binders(elem, out);
-            }
-            if let Some(rest) = rest {
-                pattern_binders(rest, out);
-            }
-        }
-        // Every alternative binds the same names.
-        PatternKind::Or(alts) => {
-            if let Some(first) = alts.first() {
-                pattern_binders(first, out);
-            }
-        }
-        PatternKind::Map(entries) => {
-            for (_, sub) in entries {
-                pattern_binders(sub, out);
-            }
-        }
-        PatternKind::Wildcard
-        | PatternKind::Int(_)
-        | PatternKind::Float(_)
-        | PatternKind::Bool(_)
-        | PatternKind::StringLit(..)
-        | PatternKind::Range(..)
-        | PatternKind::FloatRange(..)
-        | PatternKind::Pin(_) => {}
     }
 }
 
