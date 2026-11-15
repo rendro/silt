@@ -2167,7 +2167,7 @@ pub struct ModuleCheck {
     pub entry_display: HashMap<Symbol, Diagnostic>,
     /// How the module writes each other module of the program where it
     /// names one of its types (`ModuleWritten`): for the editor, which
-    /// writes types as the messages do.
+    /// writes types as the messages do. Empty unless `for_editor`.
     pub modules_written: HashMap<crate::session::ModuleId, ModuleWritten>,
 }
 
@@ -2316,6 +2316,9 @@ pub struct ModuleContext<'a> {
     /// What the checks of the session share. What the module adds to
     /// them is recorded, see [`Tables::forget`].
     pub tables: &'a mut Tables,
+    /// Whether to keep what only an editor reads
+    /// (`ModuleCheck::modules_written`).
+    pub for_editor: bool,
 }
 
 /// Check one module, which the resolver has resolved, against the
@@ -2336,6 +2339,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         earlier,
         defs,
         tables,
+        for_editor,
     } = context;
     tables.forget(module);
     tables.vars.begin(module);
@@ -2485,7 +2489,12 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
             ),
         ));
     }
-    let modules_written = checker.modules_written();
+    // (Only for an editor: the commands read none of it, and on a long
+    // chain of imports it costs as much as the check.)
+    let modules_written = match for_editor {
+        true => checker.modules_written(),
+        false => HashMap::new(),
+    };
     *tables = std::mem::take(&mut checker.tables);
     let rows = tables.take_rows();
     tables.rows.insert(module, rows);

@@ -181,7 +181,8 @@ pub struct ModuleAnalysis {
     /// `main` of a file run or checked, a test of a file tested.
     pub entry_display: HashMap<crate::intern::Symbol, Diagnostic>,
     /// How the module writes each other module of the program where it
-    /// names one of its types, as the checker's messages do.
+    /// names one of its types, as the checker's messages do. Kept only in
+    /// a session `for_editor` (empty otherwise).
     pub modules_written: HashMap<ModuleId, crate::typechecker::ModuleWritten>,
 }
 
@@ -231,6 +232,10 @@ pub struct Session {
     /// The module files of the project's packages named like builtin
     /// modules, found when the packages are resolved.
     module_name_problems: Vec<Diagnostic>,
+    /// Whether the checks keep what only an editor reads
+    /// (`ModuleAnalysis::modules_written`): set by the language server
+    /// (`Session::for_editor`); a command pays nothing for it.
+    for_editor: bool,
 }
 
 impl Session {
@@ -255,7 +260,16 @@ impl Session {
             results: HashMap::new(),
             cells: cells::Cells::default(),
             module_name_problems: Vec::new(),
+            for_editor: false,
         }
+    }
+
+    /// Have the checks keep what only an editor reads: how each module
+    /// writes the other modules' types (`ModuleAnalysis::modules_written`).
+    /// For the language server; the commands leave it unset and pay
+    /// nothing for it.
+    pub fn for_editor(&mut self) {
+        self.for_editor = true;
     }
 
     /// The text of every file the session has read.
@@ -669,6 +683,7 @@ impl Session {
                 earlier: &earlier,
                 defs: self.defs.clone(),
                 tables: &mut self.tables,
+                for_editor: self.for_editor,
             },
         );
         say_hidden_modules(
