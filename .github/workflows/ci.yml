@@ -341,7 +341,14 @@ jobs:
           tool: wasm-pack
       - name: cargo fmt
         run: cargo fmt --manifest-path playground/Cargo.toml -- --check
+      # `-- -D warnings` reaches the playground crate only: silt is a
+      # path dependency outside the playground's workspace, whose
+      # warnings cargo prints and does not fail on. RUSTFLAGS makes them
+      # errors too, so code of silt's that only the wasm32 build compiles
+      # (no other job builds it) is held to no warnings as well.
       - name: cargo clippy (wasm32)
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo clippy --locked --manifest-path playground/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
       - name: cargo test
         run: cargo test --locked --manifest-path playground/Cargo.toml
