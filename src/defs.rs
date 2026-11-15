@@ -123,7 +123,7 @@ pub enum Res {
 pub struct BuiltinId(pub(crate) u16);
 
 /// A module: of a session's module graph, an index into
-/// [`crate::session::ModuleGraph::modules`]; or a builtin pseudo-module
+/// `crate::session::ModuleGraph::modules`; or a builtin pseudo-module
 /// (the prelude, `list`, ...). Defined here, below the session, as the
 /// checker and the compiler name modules too.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]

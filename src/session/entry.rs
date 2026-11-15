@@ -11,7 +11,8 @@ use crate::source::{FileId, Span};
 use crate::types::Type;
 
 /// The test functions that `program` declares, in source order.
-pub fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
+#[cfg(test)]
+fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
     selected_tests(program, None)
         .map(|(_, name, kind)| (name, kind))
         .collect()
@@ -21,7 +22,7 @@ pub fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
 /// them without one), in source order. This is the one selection: the
 /// tests compiled for [`super::Entry::Tests`] are these, and `silt test
 /// --filter` leaves a file alone when it has none.
-pub fn selected_tests<'a>(
+pub(crate) fn selected_tests<'a>(
     program: &'a Program,
     filter: Option<&'a str>,
 ) -> impl Iterator<Item = (&'a FnDecl, String, TestKind)> + 'a {

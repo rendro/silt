@@ -556,8 +556,7 @@ impl Vm {
     /// VM's own. If one of them fails, or cannot run to its end (it
     /// waits for something that never comes), the text is the value's
     /// plain structure, and what failed is given with it.
-    #[cfg(feature = "repl")]
-    pub(crate) fn show_text(&mut self, value: &Value) -> (String, Option<DisplayFailure>) {
+    pub fn show_text(&mut self, value: &Value) -> (String, Option<DisplayFailure>) {
         match self.show_or_fail(value, Limit::Whole) {
             Ok(text) => (text, None),
             Err(e) => (value.to_string(), Some(self.display_failure(&e, value))),

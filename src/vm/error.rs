@@ -30,7 +30,7 @@ pub struct VmError {
     /// ([`Vm::set_step_budget`](super::Vm::set_step_budget)) and was
     /// ended for it: this is the budget's error, the error of a join
     /// of a task it ended, or a deadlock that followed from it.
-    pub(crate) out_of_steps: bool,
+    pub out_of_steps: bool,
     /// The code the program called `process.exit` with, when that is
     /// what ended the run ([`Exit::EndsRun`](super::Exit::EndsRun)):
     /// the error of every run of the VM from then on.

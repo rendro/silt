@@ -58,8 +58,7 @@ impl Buffer {
     }
 
     /// What has been written so far, which the buffer then forgets.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn take(&self) -> String {
+    pub fn take(&self) -> String {
         std::mem::take(&mut *self.text.lock())
     }
 }

@@ -13,6 +13,7 @@
 //! compile(file, Entry::Main) -> Program       entry point checked by its type
 //! ```
 
+mod analysis;
 mod cells;
 mod entry;
 mod graph;
@@ -33,17 +34,22 @@ use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::program::ENTRY_POINT;
 use crate::source::{FileId, SourceMap, SourceName};
-use crate::typechecker::names::{self, Imported, ModuleKind, ModuleScope};
+use crate::typechecker::names::{self, Imported, ModuleKind};
 use crate::typechecker::{self, ModuleContext, Tables};
+#[cfg(feature = "repl")]
 use crate::types::Type;
 use crate::value::HostFn;
 
 pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
 pub use crate::value::HostCall;
-pub use entry::{selected_tests, test_functions};
-pub use graph::{Import, ImportResolution, Module, ModuleGraph, Ordering, parse_text};
-pub use host::{HostFunction, HostModule};
-pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
+pub(crate) use analysis::ModuleAnalysis;
+pub(crate) use entry::selected_tests;
+#[cfg(feature = "lsp")]
+pub(crate) use graph::parse_text;
+pub(crate) use graph::{ImportResolution, Module, ModuleGraph, Ordering};
+pub use host::HostModule;
+pub(crate) use packages::Packages;
+pub use packages::{LockPolicy, ProjectSetup};
 
 /// How a session finds and treats the files of a program.
 #[derive(Debug, Clone)]
@@ -157,29 +163,6 @@ impl Analysis {
     pub fn has_errors(&self) -> bool {
         self.diagnostics.iter().any(Diagnostic::is_error)
     }
-}
-
-/// One module after its check.
-pub struct ModuleAnalysis {
-    /// The declarations, with what the checker filled in (expression
-    /// types, what each field access means).
-    pub ast: Arc<ast::Program>,
-    /// The module's top-level names, and what it offers its importers.
-    pub scope: ModuleScope,
-    /// The inferred type of each top-level value the module binds.
-    pub top_level: HashMap<crate::intern::Symbol, Type>,
-    /// The signature an editor writes for each generic function (`fn
-    /// twice(xs: m(Int)) -> m(Int) where m: Functor`).
-    pub signatures: HashMap<crate::intern::Symbol, crate::typechecker::Signature>,
-    /// The module's top-level `let`s, by the span of each, in the order
-    /// they are initialised in.
-    pub let_order: Vec<crate::source::Span>,
-    /// The module's type errors and warnings.
-    pub diagnostics: Vec<Diagnostic>,
-    /// For each top-level `main` and test function whose error type
-    /// has no `Display`, the error reported where it is an entry point:
-    /// `main` of a file run or checked, a test of a file tested.
-    pub entry_display: HashMap<crate::intern::Symbol, Diagnostic>,
 }
 
 /// What the imports of `module` name, as the compiler looks them up:

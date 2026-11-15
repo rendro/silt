@@ -55,7 +55,7 @@ pub(super) enum Part {
 
 /// One function of a [`HostModule`].
 #[derive(Clone)]
-pub struct HostFunction {
+pub(crate) struct HostFunction {
     /// The function's signature, a `fn` header with typed parameters and
     /// return type and no body: `fn double(x: Int) -> Int`. Its name is
     /// the function's name in the module.

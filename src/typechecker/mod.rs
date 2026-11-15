@@ -2142,7 +2142,9 @@ pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_o
 
 /// A function's signature as an editor writes it, for a generic
 /// function.
+/// (The language server reads it.)
 #[derive(Debug, Clone)]
+#[cfg_attr(not(any(feature = "lsp", feature = "test-hooks")), allow(dead_code))]
 pub struct Signature {
     /// `fn twice(xs: m(Int)) -> m(Int) where m: Functor`.
     pub text: String,

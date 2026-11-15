@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use silt::playground::{Diagnostic, FileId, Severity, out_of_steps, render_diagnostic, returned};
+use silt::playground::{Diagnostic, FileId, Severity, render_diagnostic, returned};
 use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::{Clock, HostIo, Output, Vm};
 
@@ -161,7 +161,7 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
             exited = Some(code);
             None
         }
-        Err(e) if out_of_steps(&e) => Some(
+        Err(e) if e.out_of_steps => Some(
             silt::playground::error_diagnostic(&e)
                 .with_note(format!("the playground ends a program after {steps} steps")),
         ),

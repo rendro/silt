@@ -19,10 +19,6 @@
 //! pub enum LockChange { Unchanged, Created, Updated }
 //! pub fn resolve_packages(project_root: &Path, policy: LockPolicy, sources: &mut SourceMap)
 //!     -> Result<PackageGraph, Vec<Diagnostic>>;
-//! impl PackageGraph {
-//!     pub fn package(&self, id: PackageId) -> &PackageNode;
-//!     pub fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId>;
-//! }
 //! ```
 //!
 //! `packages[id.0]` is the node of `id`; the root is `packages[0]`, and

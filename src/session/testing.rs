@@ -262,8 +262,6 @@ impl ProgramInside for Program {
 pub trait VmInside {
     /// Tag the tasks spawned from now on with `owner`.
     fn set_task_owner(&mut self, owner: u64);
-    /// Stop the VM's tasks.
-    fn stop_tasks(&mut self);
     /// Whether `val` shows itself with `Display`.
     fn value_implements_display(val: &Value) -> bool;
     /// The name of the type of `val`, as a message gives it.
@@ -273,10 +271,6 @@ pub trait VmInside {
 impl VmInside for Vm {
     fn set_task_owner(&mut self, owner: u64) {
         Vm::set_task_owner(self, owner)
-    }
-
-    fn stop_tasks(&mut self) {
-        Vm::stop_tasks(self)
     }
 
     fn value_implements_display(val: &Value) -> bool {
@@ -314,8 +308,6 @@ impl ValueInside for Value {
 
 /// What the tests read of a [`crate::vm::VmError`] beyond the guide.
 pub trait VmErrorInside {
-    /// Whether the program ran out of its step budget.
-    fn out_of_steps(&self) -> bool;
     /// Whether a value was of a type the checker did not give it.
     fn is_type_confusion(&self) -> bool;
     /// The error with one more help line.
@@ -325,10 +317,6 @@ pub trait VmErrorInside {
 }
 
 impl VmErrorInside for crate::vm::VmError {
-    fn out_of_steps(&self) -> bool {
-        self.out_of_steps
-    }
-
     fn is_type_confusion(&self) -> bool {
         self.type_confusion
     }
@@ -339,17 +327,5 @@ impl VmErrorInside for crate::vm::VmError {
 
     fn to_diagnostic(&self) -> Diagnostic {
         crate::vm::VmError::to_diagnostic(self)
-    }
-}
-
-/// What the tests read of a [`crate::vm::Buffer`] beyond the guide.
-pub trait BufferInside {
-    /// What has been written so far, which the buffer then forgets.
-    fn take(&self) -> String;
-}
-
-impl BufferInside for crate::vm::Buffer {
-    fn take(&self) -> String {
-        crate::vm::Buffer::take(self)
     }
 }

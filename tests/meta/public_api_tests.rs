@@ -209,6 +209,20 @@ fn item_head(rest: &str) -> String {
     format!("pub {}", rest[..end].trim_end())
 }
 
+/// The items of the re-export `use a::b::{c, d as e};`: `pub use a::b::c`
+/// and `pub use a::b::d as e`, so that a name added inside the braces
+/// is an item of its own.
+fn braces_items(text: &str) -> Vec<String> {
+    let (path, rest) = text.split_once('{').expect("a re-export with braces");
+    let path = path.trim_start_matches("use ").trim();
+    let inside = rest.split('}').next().unwrap_or("");
+    (inside.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| format!("pub use {path}{name}"))
+        .collect()
+}
+
 /// The `pub` items of `text`, one head each (see [`item_head`]). A
 /// `pub(crate)`/`pub(super)` item is none, and text in strings and
 /// comments is skipped.
@@ -217,13 +231,27 @@ fn pub_items(text: &str) -> Vec<String> {
     let mut in_string = false;
     let mut raw_hashes: Option<usize> = None;
     let mut block_comments = 0usize;
+    // A `pub use a::{b, c};` re-export, until its `}`: one item per name.
+    let mut braces: Option<String> = None;
     for line in text.lines() {
+        if let Some(open) = &mut braces {
+            open.push_str(line);
+            if line.contains('}') {
+                items.extend(braces_items(open));
+                braces = None;
+            }
+            continue;
+        }
         if !in_string
             && raw_hashes.is_none()
             && block_comments == 0
             && let Some(rest) = line.trim_start().strip_prefix("pub ")
         {
-            items.push(item_head(rest));
+            match rest.starts_with("use ") && rest.contains('{') {
+                true if rest.contains('}') => items.extend(braces_items(rest)),
+                true => braces = Some(rest.to_string()),
+                false => items.push(item_head(rest)),
+            }
         }
         // Where the line leaves the reader: in a string or a comment, or not.
         let bytes = line.as_bytes();
@@ -361,14 +389,15 @@ fn every_public_item_is_on_the_list() {
 fn the_reader_of_public_items_skips_strings_and_comments() {
     let text = "pub fn a(x: i32) {}\n    pub name: String,\nlet s = \"\npub fn not_me() {}\n\";\n\
                 let r = r#\"\npub fn nor_me\n\"#;\n/* pub fn hidden\n*/\n// pub fn comment\n\
-                let c = '\"';\npub(crate) fn inside() {}\npub use crate::x::{\n\
+                let c = '\"';\npub(crate) fn inside() {}\npub use crate::x::{\n    a,\n    b,\n};\n\
                 pub struct S<T>;\npub mod m;\npub(super) mod n;\n";
     assert_eq!(
         pub_items(text),
         [
             "pub fn a",
             "pub name",
-            "pub use crate::x::",
+            "pub use crate::x::a",
+            "pub use crate::x::b",
             "pub struct S",
             "pub mod m"
         ]
@@ -507,4 +536,196 @@ fn the_guide_s_blocks_build_against_silt_as_an_embedder_sees_it() {
          no test-hooks):\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// The members of the promised types, read from src: each method and
+/// associated function of an inherent impl (`impl Session {`), each
+/// field of the type's struct (`pub struct Config {`) and each method of
+/// a promised trait (`pub trait Clock {`), with whether it is public.
+fn promised_members() -> Vec<(String, String, bool)> {
+    let promised: Vec<&str> = (PROMISED.iter())
+        .map(|path| path.rsplit("::").next().unwrap_or(path))
+        .collect();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    let mut dirs = vec![root.join("src")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("src is read") {
+            let path = entry.expect("an entry of src").path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    let mut members = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(&file).expect("a source file is read");
+        let mut depth = 0i32;
+        // (the depth its block opened at, the type, whether a trait's)
+        let mut open: Option<(i32, String, bool)> = None;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if depth == 0 && open.is_none() {
+                let head = |rest: &str| -> String {
+                    rest.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .next()
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let found = if let Some(rest) = trimmed.strip_prefix("impl") {
+                    // `impl X {` or `impl<'a> X<'a> {`, not `impl T for X {`.
+                    let rest = match rest.starts_with('<') {
+                        true => rest.split_once('>').map_or("", |(_, r)| r),
+                        false => rest,
+                    };
+                    let rest = rest.trim_start();
+                    (!trimmed.contains(" for ") && trimmed.ends_with('{'))
+                        .then(|| (head(rest), false))
+                } else if let Some(rest) = trimmed
+                    .strip_prefix("pub struct ")
+                    .or_else(|| trimmed.strip_prefix("pub(crate) struct "))
+                {
+                    trimmed.ends_with('{').then(|| (head(rest), false))
+                } else if let Some(rest) = trimmed.strip_prefix("pub trait ") {
+                    trimmed.ends_with('{').then(|| (head(rest), true))
+                } else {
+                    None
+                };
+                if let Some((ty, is_trait)) = found
+                    && promised.contains(&ty.as_str())
+                {
+                    open = Some((depth, ty, is_trait));
+                }
+            } else if let Some((at, ty, is_trait)) = &open
+                && depth == at + 1
+            {
+                let public = trimmed.starts_with("pub ");
+                let rest = (trimmed.strip_prefix("pub(crate) "))
+                    .or_else(|| trimmed.strip_prefix("pub(super) "))
+                    .or_else(|| trimmed.strip_prefix("pub "))
+                    .unwrap_or(trimmed);
+                let rest = rest.strip_prefix("const ").unwrap_or(rest);
+                let name = match rest.strip_prefix("fn ") {
+                    Some(f) => f.split(['(', '<']).next(),
+                    None if !rest.starts_with("//") && !rest.starts_with('#') => {
+                        rest.split_once(':').map(|(n, _)| n)
+                    }
+                    None => None,
+                };
+                if let Some(name) = name.map(str::trim)
+                    && !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                {
+                    members.push((ty.clone(), name.to_string(), public || *is_trait));
+                }
+            }
+            depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+            if open.as_ref().is_some_and(|(at, _, _)| depth <= *at) {
+                open = None;
+            }
+        }
+    }
+    members
+}
+
+/// The member names a code span of the guide uses: a bare name
+/// (`take()`, `out_of_steps`), each name after a `.` (`vm.set_exit(..)`
+/// names `set_exit`), and each name after `Type::` (`Tag::new`). The
+/// names of silt itself are none: a span with a space (an output, a
+/// line of a program), a builtin module or function (`list`, `print`),
+/// and what follows a builtin module (`task.deadline`).
+fn member_names(span: &str) -> Vec<String> {
+    let modules = silt::testing::module::builtin_modules();
+    let functions = silt::testing::module::builtin_free_function_names();
+    if span.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    let ident = |s: &str| -> String {
+        s.chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect()
+    };
+    let bare = span.trim_end_matches("()");
+    if modules.contains(&bare) || functions.contains(&bare) {
+        return Vec::new();
+    }
+    if !bare.is_empty()
+        && bare
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
+        return vec![bare.to_string()];
+    }
+    let mut names = Vec::new();
+    for (at, _) in span.match_indices('.') {
+        let name = ident(&span[at + 1..]);
+        let receiver = span[..at]
+            .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or("");
+        if name.starts_with(|c: char| c.is_ascii_lowercase()) && !modules.contains(&receiver) {
+            names.push(name);
+        }
+    }
+    for (at, _) in span.match_indices("::") {
+        let name = ident(&span[at + 2..]);
+        let before = &span[..at];
+        let head_is_type = before
+            .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .is_some_and(|h| h.starts_with(|c: char| c.is_ascii_uppercase()));
+        if head_is_type && name.starts_with(|c: char| c.is_ascii_lowercase()) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// A member of a promised type that the guide names in a code span, in
+/// any form, is public: the guide does not tell an embedder to use what
+/// the crate keeps to itself. (A name no promised type has a member of,
+/// `main` or `print`, is not the crate's API.)
+#[test]
+fn every_member_the_guide_names_is_public() {
+    let members = promised_members();
+    assert!(members.len() > 50, "{} members read", members.len());
+    let hidden: Vec<(String, String)> = (prose_code_spans(&guide()).iter())
+        .flat_map(|span| {
+            member_names(span)
+                .into_iter()
+                .map(move |n| (n, span.clone()))
+        })
+        .filter(|(name, _)| {
+            let of_promised: Vec<_> = members.iter().filter(|(_, n, _)| n == name).collect();
+            !of_promised.is_empty() && !of_promised.iter().any(|(_, _, public)| *public)
+        })
+        .collect();
+    assert!(
+        hidden.is_empty(),
+        "docs/ffi.md tells an embedder to use members of promised types that are not public \
+         (make each public, or take it out of the guide): {hidden:?}"
+    );
+}
+
+#[test]
+fn the_member_names_of_a_code_span_are_read() {
+    assert_eq!(member_names("take()"), ["take"]);
+    assert_eq!(member_names("out_of_steps"), ["out_of_steps"]);
+    assert_eq!(member_names("vm.set_exit(Exit::EndsProcess)"), ["set_exit"]);
+    assert_eq!(
+        member_names("failure.note(session.sources())"),
+        ["note", "sources"]
+    );
+    assert_eq!(member_names("Tag::new"), ["new"]);
+    assert_eq!(
+        member_names("std::panic::catch_unwind"),
+        Vec::<String>::new()
+    );
+    assert_eq!(member_names("task.deadline"), Vec::<String>::new());
+    assert_eq!(member_names("print"), Vec::<String>::new());
+    assert_eq!(member_names("'mylib.f' panicked"), Vec::<String>::new());
 }

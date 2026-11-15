@@ -53,7 +53,7 @@ pub struct Program {
     /// entry fails. For any other program: all of `globals`. (The VM
     /// of a task keeps this table, see `Vm::look_again`.)
     pub(crate) settled: Arc<Globals>,
-    pub(crate) entry: EntryPoint,
+    pub entry: EntryPoint,
 }
 
 /// What a [`Program`] was compiled for.

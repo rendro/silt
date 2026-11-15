@@ -265,6 +265,7 @@ impl Type {
     }
 
     /// `Result(t, e)`.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn result(t: Type, e: Type) -> Type {
         Type::builtin("Result", vec![t, e])
     }

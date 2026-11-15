@@ -554,7 +554,7 @@ impl Vm {
     /// is waited for, as after an error of `main` under `silt run`,
     /// where the process ends; `silt test` calls this after a test
     /// that failed, since the VM goes on to the next test.
-    pub(crate) fn stop_tasks(&mut self) {
+    pub fn stop_tasks(&mut self) {
         crate::scheduler::run_deferred();
         self.runtime.scheduler.stop_tasks();
         self.report_unjoined_failures();
@@ -564,8 +564,8 @@ impl Vm {
     /// wait stay, for code that this VM runs next and that may wake
     /// them. `silt test` calls this after a file's top-level code, the
     /// tasks of which may serve the file's tests
-    /// ([`Vm::set_task_owner_within`]).
-    pub(crate) fn wait_until_idle(&mut self) {
+    /// (`Vm::set_task_owner_within`).
+    pub fn wait_until_idle(&mut self) {
         crate::scheduler::run_deferred();
         self.runtime.scheduler.wait_until_idle();
         self.report_unjoined_failures();
@@ -575,7 +575,7 @@ impl Vm {
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
     /// arguments. As for `main`, a test function that returns `Err(e)`
     /// has failed: an error with [`VmError::returned`] set.
-    pub(crate) fn call_test(&mut self, test: &crate::program::TestFn) -> Result<(), VmError> {
+    pub fn call_test(&mut self, test: &crate::program::TestFn) -> Result<(), VmError> {
         let value = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,
         )));

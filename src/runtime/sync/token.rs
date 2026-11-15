@@ -15,8 +15,8 @@ pub struct TaskId(pub u64);
 /// The scheduler, as this module sees it.
 pub trait Wake: Send + Sync {
     /// The wait of the parked task `task` has ended: count it as
-    /// runnable and queue it. Called once for each park that
-    /// [`Parked::commit`](super::Parked::commit) confirmed, from
+    /// runnable and queue it. Called once for each park whose
+    /// [`Token::commit`] confirmed it (`Parking::park` commits), from
     /// whichever thread ended the wait, with no lock of this module
     /// held.
     fn wake(&self, task: TaskId);
@@ -175,7 +175,12 @@ impl Token {
         }
     }
 
-    /// See [`Parked::commit`](super::Parked::commit).
+    /// Give the task up: `true` when it is parked, and one
+    /// [`Wake::wake`] will name it when its wait ends; `false` when the
+    /// wait has ended already and no wake comes, so the caller still has
+    /// the task. The caller has already put the task where a wake finds
+    /// it: the wake can come before `commit` returns. (`Parking::park`
+    /// calls it, on `Parked::token`.)
     pub(super) fn commit(&self) -> bool {
         let mut state = self.state.lock();
         match *state {

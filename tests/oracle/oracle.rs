@@ -566,7 +566,7 @@ fn failures_of(owner: u64) -> Vec<TaskFailure> {
         failed.entry(failure.owner).or_default().push(TaskFailure {
             message: failure.error.message.clone(),
             type_confusion: failure.error.is_type_confusion(),
-            out_of_steps: failure.error.out_of_steps(),
+            out_of_steps: failure.error.out_of_steps,
         });
     }
     for silt::testing::scheduler::NotShown { owner, count, .. } in taken.not_shown {
@@ -927,7 +927,7 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
                     Err(error) => End::Error {
                         message: error.message.clone(),
                         type_confusion: error.is_type_confusion(),
-                        out_of_steps: error.out_of_steps(),
+                        out_of_steps: error.out_of_steps,
                         whole: format!("{error:?}"),
                     },
                 };

@@ -125,7 +125,8 @@ pub enum ExprKind {
     RecordUpdate {
         expr: Box<Expr>,
         fields: Vec<(Symbol, Expr)>,
-        /// As on `RecordCreate`.
+        /// As on `RecordCreate`. (The language server reads it.)
+        #[cfg_attr(not(any(feature = "lsp", feature = "test-hooks")), allow(dead_code))]
         punned: Vec<Symbol>,
     },
 

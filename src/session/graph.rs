@@ -127,7 +127,8 @@ pub enum ImportResolution {
 /// The declarations of the module file `file`, whose text is `text`,
 /// as far as they can be read, with their doc comments, and its lex and
 /// parse errors.
-pub fn parse_text(file: FileId, text: &str) -> (ast::Program, Vec<Diagnostic>) {
+#[cfg(feature = "lsp")]
+pub(crate) fn parse_text(file: FileId, text: &str) -> (ast::Program, Vec<Diagnostic>) {
     let (program, errors, ..) = parse_module(file, text, None, false);
     (program, errors)
 }

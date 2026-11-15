@@ -631,8 +631,16 @@ src/lib.rs: pub use crate::value::*
 src/lib.rs: pub use crate::vm::*
 src/lib.rs: pub use crate::vm::SystemClock
 src/lib.rs: pub use typeinfo::Tag
-src/lib.rs: pub use value::
-src/lib.rs: pub use vm::
+src/lib.rs: pub use value::FromValue
+src/lib.rs: pub use value::IntoValue
+src/lib.rs: pub use value::Value
+src/lib.rs: pub use vm::Buffer
+src/lib.rs: pub use vm::Clock
+src/lib.rs: pub use vm::Exit
+src/lib.rs: pub use vm::HostIo
+src/lib.rs: pub use vm::Output
+src/lib.rs: pub use vm::Vm
+src/lib.rs: pub use vm::VmError
 src/lockfile.rs: pub checksum
 src/lockfile.rs: pub enum ChecksumError
 src/lockfile.rs: pub enum LockedSource
@@ -702,13 +710,14 @@ src/playground.rs: pub const TOKEN_KINDS
 src/playground.rs: pub const VERSION
 src/playground.rs: pub fn completions
 src/playground.rs: pub fn error_diagnostic
-src/playground.rs: pub fn out_of_steps
 src/playground.rs: pub fn render_diagnostic
 src/playground.rs: pub fn returned
 src/playground.rs: pub fn tokens
-src/playground.rs: pub use crate::diagnostic::
+src/playground.rs: pub use crate::diagnostic::Diagnostic
+src/playground.rs: pub use crate::diagnostic::Severity
 src/playground.rs: pub use crate::format::format
 src/playground.rs: pub use crate::source::FileId
+src/program.rs: pub entry
 src/program.rs: pub enum EntryPoint
 src/program.rs: pub enum TestKind
 src/program.rs: pub kind
@@ -852,7 +861,10 @@ src/runtime/sync/channel.rs: pub fn waiting
 src/runtime/sync/channel.rs: pub stage
 src/runtime/sync/channel.rs: pub struct Channel
 src/runtime/sync/channel.rs: pub struct Close
-src/runtime/sync/mod.rs: pub use channel::
+src/runtime/sync/mod.rs: pub use channel::Channel
+src/runtime/sync/mod.rs: pub use channel::Close
+src/runtime/sync/mod.rs: pub use channel::TryReceive
+src/runtime/sync/mod.rs: pub use channel::TrySend
 src/runtime/sync/parking.rs: pub deadline
 src/runtime/sync/parking.rs: pub ending
 src/runtime/sync/parking.rs: pub on
@@ -913,13 +925,19 @@ src/scheduler/test_support.rs: pub struct TrialStats
 src/scheduler/test_support.rs: pub timed_out
 src/scheduler/test_support.rs: pub timed_out_count
 src/scheduler/test_support.rs: pub wrong_value_count
+src/session/analysis.rs: pub ast
+src/session/analysis.rs: pub diagnostics
+src/session/analysis.rs: pub entry_display
+src/session/analysis.rs: pub let_order
+src/session/analysis.rs: pub scope
+src/session/analysis.rs: pub signatures
+src/session/analysis.rs: pub struct ModuleAnalysis
+src/session/analysis.rs: pub top_level
 src/session/cells.rs: pub count
 src/session/cells.rs: pub file
 src/session/cells.rs: pub globals
 src/session/cells.rs: pub info
 src/session/cells.rs: pub n
-src/session/entry.rs: pub fn selected_tests
-src/session/entry.rs: pub fn test_functions
 src/session/graph.rs: pub ast
 src/session/graph.rs: pub back_edges
 src/session/graph.rs: pub cut_short
@@ -933,7 +951,6 @@ src/session/graph.rs: pub fn module
 src/session/graph.rs: pub fn module_at
 src/session/graph.rs: pub fn modules
 src/session/graph.rs: pub fn order
-src/session/graph.rs: pub fn parse_text
 src/session/graph.rs: pub fn reach
 src/session/graph.rs: pub fn reverse_dependents
 src/session/graph.rs: pub host
@@ -968,17 +985,13 @@ src/session/host.rs: pub id
 src/session/host.rs: pub lookup
 src/session/host.rs: pub name
 src/session/host.rs: pub signature
-src/session/host.rs: pub struct HostFunction
 src/session/host.rs: pub struct HostModule
 src/session/host.rs: pub tables
 src/session/host.rs: pub templates
 src/session/host.rs: pub types
-src/session/mod.rs: pub ast
 src/session/mod.rs: pub builtins
 src/session/mod.rs: pub diagnostics
-src/session/mod.rs: pub diagnostics
 src/session/mod.rs: pub entry
-src/session/mod.rs: pub entry_display
 src/session/mod.rs: pub enum Builtins
 src/session/mod.rs: pub enum Entry
 src/session/mod.rs: pub fn analyze
@@ -988,28 +1001,22 @@ src/session/mod.rs: pub fn new
 src/session/mod.rs: pub fn set_overlay
 src/session/mod.rs: pub fn sources
 src/session/mod.rs: pub host
-src/session/mod.rs: pub let_order
 src/session/mod.rs: pub lock
 src/session/mod.rs: pub modules
 src/session/mod.rs: pub project
-src/session/mod.rs: pub scope
-src/session/mod.rs: pub signatures
 src/session/mod.rs: pub struct Analysis
 src/session/mod.rs: pub struct Config
-src/session/mod.rs: pub struct ModuleAnalysis
 src/session/mod.rs: pub struct Session
-src/session/mod.rs: pub top_level
-src/session/mod.rs: pub use crate::program::
+src/session/mod.rs: pub use crate::program::EntryPoint
+src/session/mod.rs: pub use crate::program::Program
+src/session/mod.rs: pub use crate::program::TestFn
+src/session/mod.rs: pub use crate::program::TestKind
 src/session/mod.rs: pub use crate::value::HostCall
-src/session/mod.rs: pub use entry::
-src/session/mod.rs: pub use graph::
-src/session/mod.rs: pub use host::
-src/session/mod.rs: pub use packages::
+src/session/mod.rs: pub use host::HostModule
+src/session/mod.rs: pub use packages::LockPolicy
+src/session/mod.rs: pub use packages::ProjectSetup
 src/session/packages.rs: pub deps
 src/session/packages.rs: pub enum ProjectSetup
-src/session/packages.rs: pub fn dependency
-src/session/packages.rs: pub fn package
-src/session/packages.rs: pub fn unnamed
 src/session/packages.rs: pub id
 src/session/packages.rs: pub lock
 src/session/packages.rs: pub manifest
@@ -1017,8 +1024,6 @@ src/session/packages.rs: pub name
 src/session/packages.rs: pub packages
 src/session/packages.rs: pub root
 src/session/packages.rs: pub src
-src/session/packages.rs: pub struct Package
-src/session/packages.rs: pub struct Packages
 src/session/packages.rs: pub use crate::package_graph::LockPolicy
 src/session/testing.rs: pub fn analyze_files
 src/session/testing.rs: pub fn analyze_str
@@ -1037,7 +1042,6 @@ src/session/testing.rs: pub fn run_with_host
 src/session/testing.rs: pub fn session_with
 src/session/testing.rs: pub fn test_path
 src/session/testing.rs: pub struct Given
-src/session/testing.rs: pub trait BufferInside
 src/session/testing.rs: pub trait ProgramInside
 src/session/testing.rs: pub trait SessionInside
 src/session/testing.rs: pub trait ValueInside
@@ -1096,7 +1100,8 @@ src/typechecker/mod.rs: pub struct Signature
 src/typechecker/mod.rs: pub text
 src/typechecker/mod.rs: pub top_level
 src/typechecker/mod.rs: pub ty
-src/typechecker/mod.rs: pub use builtin_env::
+src/typechecker/mod.rs: pub use builtin_env::__builtin_trait_registration_fingerprint
+src/typechecker/mod.rs: pub use builtin_env::__trait_init_fingerprint_check_program
 src/typechecker/mod.rs: pub use builtin_env::builtin_type_signatures
 src/typechecker/names.rs: pub access
 src/typechecker/names.rs: pub by
@@ -1348,7 +1353,9 @@ src/value/mod.rs: pub fn set
 src/value/mod.rs: pub fn string
 src/value/mod.rs: pub fn variant
 src/value/mod.rs: pub struct Ascii
-src/value/mod.rs: pub use convert::
+src/value/mod.rs: pub use convert::FromValue
+src/value/mod.rs: pub use convert::HostCall
+src/value/mod.rs: pub use convert::IntoValue
 src/value/mod.rs: pub use float::Float
 src/value/mod.rs: pub use list::List
 src/value/mod.rs: pub use list::copies as list_copies
@@ -1379,6 +1386,7 @@ src/vm/error.rs: pub fn new
 src/vm/error.rs: pub fn note
 src/vm/error.rs: pub message
 src/vm/error.rs: pub message
+src/vm/error.rs: pub out_of_steps
 src/vm/error.rs: pub returned
 src/vm/error.rs: pub span
 src/vm/error.rs: pub span
@@ -1391,6 +1399,7 @@ src/vm/io.rs: pub fn contents
 src/vm/io.rs: pub fn new
 src/vm/io.rs: pub fn new
 src/vm/io.rs: pub fn process
+src/vm/io.rs: pub fn take
 src/vm/io.rs: pub struct Buffer
 src/vm/io.rs: pub struct HostIo
 src/vm/io.rs: pub struct SystemClock
@@ -1400,6 +1409,7 @@ src/vm/io_op.rs: pub enum IoFailure
 src/vm/io_op.rs: pub fn text
 src/vm/io_op.rs: pub struct Wanted
 src/vm/mod.rs: pub enum Exit
+src/vm/mod.rs: pub fn call_test
 src/vm/mod.rs: pub fn io_pool_live_threads
 src/vm/mod.rs: pub fn io_pool_threads
 src/vm/mod.rs: pub fn new
@@ -1410,14 +1420,22 @@ src/vm/mod.rs: pub fn set_step_budget
 src/vm/mod.rs: pub fn set_time_slice
 src/vm/mod.rs: pub fn settle
 src/vm/mod.rs: pub fn slots_set_again
+src/vm/mod.rs: pub fn stop_tasks
 src/vm/mod.rs: pub fn submit_panicking_io_for_test
+src/vm/mod.rs: pub fn wait_until_idle
 src/vm/mod.rs: pub struct Vm
-src/vm/mod.rs: pub use crate::runtime::handle::
+src/vm/mod.rs: pub use crate::runtime::handle::WriteMoment
+src/vm/mod.rs: pub use crate::runtime::handle::WriteWatching
+src/vm/mod.rs: pub use crate::runtime::handle::watch_writes
 src/vm/mod.rs: pub use crate::scheduler::PanicAt
 src/vm/mod.rs: pub use error::VmError
-src/vm/mod.rs: pub use io::
+src/vm/mod.rs: pub use io::Buffer
+src/vm/mod.rs: pub use io::Clock
+src/vm/mod.rs: pub use io::HostIo
+src/vm/mod.rs: pub use io::Output
 src/vm/mod.rs: pub use io::SystemClock
 src/vm/mod.rs: pub use io_op::IoFailure
+src/vm/show.rs: pub fn show_text
 src/watch.rs: pub discovery
 src/watch.rs: pub entries
 src/watch.rs: pub lock

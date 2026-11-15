@@ -32,11 +32,6 @@ pub fn render_diagnostic(session: &Session, diagnostic: &Diagnostic) -> String {
     crate::diagnostic::render_human(session.sources(), diagnostic)
 }
 
-/// Whether `error` ended the program because its steps ran out.
-pub fn out_of_steps(error: &VmError) -> bool {
-    error.out_of_steps
-}
-
 /// The line `silt run` writes for a `main` that returned `Err`, if that
 /// ended the program: `error: <text>`, and the note of a `Display` impl
 /// of the `Err` that failed.

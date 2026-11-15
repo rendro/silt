@@ -86,6 +86,7 @@ pub struct ModuleScope {
 impl ModuleScope {
     /// For a REPL cell: the variants of the enums it imports from the
     /// earlier cell.
+    #[cfg(any(feature = "repl", test, feature = "test-hooks"))]
     pub fn implied(&self) -> &HashMap<Symbol, Binding> {
         &self.implied
     }
