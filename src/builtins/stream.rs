@@ -582,6 +582,8 @@ fn stage_on(
     let stopped = handle.clone();
     let armed = stop.map(|stop| Arc::new(Armed::new(stop)));
     let shut = armed.clone();
+    // (Weakly: the output does not keep the stage's inputs.)
+    let feeds: Vec<Weak<Channel>> = inputs.iter().map(Arc::downgrade).collect();
     out.stop_feeder_with(move || {
         // The connection first: a stage that is cancelled before it has
         // run may be ended by a worker at once, and nothing of it runs
@@ -591,6 +593,14 @@ fn stage_on(
         }
         if let Some(scheduler) = scheduler.upgrade() {
             scheduler.cancel(&stopped);
+            // What feeds the stage stops now too, not when the stage
+            // looks next: one that was not waiting (it ran, or had not run
+            // yet) let its inputs' stages take on after `channel.close`
+            // had returned. (The stage abandons them again as it ends,
+            // which does nothing more.)
+            for input in feeds.iter().filter_map(Weak::upgrade) {
+                input.abandon(scheduler.wake());
+            }
         }
     });
     let mut pipe = Pipe::new(name, inputs, logic);
