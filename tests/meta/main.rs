@@ -41,4 +41,5 @@ mod scheduled_run_failure_tests;
 mod side_crate_lock_tests;
 mod stdlib_reference_tests;
 mod tcp_tls_stream_wrapper_tests;
+mod unsafe_code_tool_runs_tests;
 mod vscode_metadata_and_primitive_partition_tests;

@@ -21,6 +21,21 @@ features; they do not build with `--no-default-features`, which CI
 checks for the library and the binary only
 (`cargo check --no-default-features --lib --bins`).
 
+## Unsafe code under Miri and the sanitizers
+
+The nightly workflow (`.github/workflows/fuzz-nightly.yml`) runs the
+unit tests that reach silt's unsafe code under Miri and under the
+thread and address sanitizers. With a nightly toolchain (`rustup
+component add --toolchain nightly miri rust-src`), on x86_64 Linux:
+
+```
+bash .github/scripts/miri.sh
+bash .github/scripts/sanitizer.sh thread
+bash .github/scripts/sanitizer.sh address
+```
+
+Each script says which tests it runs, which it leaves out and why.
+
 ## One suite, one area
 
 ```

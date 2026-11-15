@@ -193,6 +193,11 @@ jobs:
       - name: cargo nextest (database)
         run: cargo nextest run --locked --all-features --no-fail-fast --no-tests=fail --test database
 
+      # The doc tests with every feature (see `test-default-features`):
+      # this job builds the crate with all of them, unpartitioned.
+      - name: cargo test --doc (all features)
+        run: cargo test --locked --all-features --doc
+
   test-default-features:
     # Everything else runs with --all-features. This job runs the unit
     # tests and the golden corpus against the default build; golden cases
@@ -219,6 +224,11 @@ jobs:
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
             cargo nextest run --locked --no-fail-fast --lib --bin silt --test golden
+      # nextest runs no doc tests: the examples in the crate's docs are
+      # compiled and run here, and in the jobs of the other two feature
+      # sets.
+      - name: cargo test --doc (default features)
+        run: cargo test --locked --doc
 
   test-no-default-features:
     # The same against a build with no features at all, beside the job
@@ -247,6 +257,8 @@ jobs:
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
             cargo nextest run --locked --no-default-features --no-fail-fast --lib --bin silt --test golden
+      - name: cargo test --doc (no default features)
+        run: cargo test --locked --no-default-features --doc
       - name: cargo build --tests (no default features)
         run: cargo build --locked --no-default-features --tests
 
