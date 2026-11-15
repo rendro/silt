@@ -1263,6 +1263,163 @@ impl Pattern {
 }
 
 #[cfg(test)]
+mod walk_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use crate::source::FileId;
+
+    /// The name of each form, by an exhaustive match: a new form does not
+    /// compile here until it is named, and then fails the test below
+    /// until the program there writes it.
+    fn form(kind: &ExprKind) -> &'static str {
+        match kind {
+            ExprKind::Int(_) => "Int",
+            ExprKind::Float(_) => "Float",
+            ExprKind::Bool(_) => "Bool",
+            ExprKind::StringLit(_) => "StringLit",
+            ExprKind::StringInterp(_) => "StringInterp",
+            ExprKind::List(_) => "List",
+            ExprKind::Map(_) => "Map",
+            ExprKind::SetLit(_) => "SetLit",
+            ExprKind::Tuple(_) => "Tuple",
+            ExprKind::Ident(_) => "Ident",
+            ExprKind::FieldAccess(..) => "FieldAccess",
+            ExprKind::Binary(..) => "Binary",
+            ExprKind::Unary(..) => "Unary",
+            ExprKind::Pipe(..) => "Pipe",
+            ExprKind::Range(..) => "Range",
+            ExprKind::QuestionMark(_) => "QuestionMark",
+            ExprKind::Ascription(..) => "Ascription",
+            ExprKind::Call(..) => "Call",
+            ExprKind::Lambda { .. } => "Lambda",
+            ExprKind::RecordCreate { .. } => "RecordCreate",
+            ExprKind::RecordUpdate { .. } => "RecordUpdate",
+            ExprKind::Match { .. } => "Match",
+            ExprKind::Return(_) => "Return",
+            ExprKind::Block(_) => "Block",
+            ExprKind::Loop { .. } => "Loop",
+            ExprKind::Recur(_) => "Recur",
+            ExprKind::Unit => "Unit",
+        }
+    }
+
+    const ALL_FORMS: &[&str] = &[
+        "Int",
+        "Float",
+        "Bool",
+        "StringLit",
+        "StringInterp",
+        "List",
+        "Map",
+        "SetLit",
+        "Tuple",
+        "Ident",
+        "FieldAccess",
+        "Binary",
+        "Unary",
+        "Pipe",
+        "Range",
+        "QuestionMark",
+        "Ascription",
+        "Call",
+        "Lambda",
+        "RecordCreate",
+        "RecordUpdate",
+        "Match",
+        "Return",
+        "Block",
+        "Loop",
+        "Recur",
+        "Unit",
+    ];
+
+    /// A program that writes every form of expression, every statement,
+    /// and every form inside another.
+    const EVERY_FORM: &str = r#"
+type P { x: Int, y: Int }
+fn f(r: Result(Int, String)) -> Result(Int, String) {
+  let v = r?
+  let t = (v, 1.5, true, "s", "i{v}", ())
+  let xs = [1, ..[2, 3]]
+  let m = #{ "k": -v }
+  let s = #[1, 2]
+  let p = P { x: v + 1, y: 2 }
+  let q = p.{ x: 3 }
+  let g = { a: Int -> a * 2 }
+  when let Ok(w) = r else { return Err("no") }
+  when v > 0 else { return Ok(0) }
+  let n = loop i = 0 {
+    match i >= 3 {
+      true -> i
+      false -> loop(i + 1)
+    }
+  }
+  let k = match q {
+    P { x, .. } when x > 0 -> x
+    _ -> 0
+  }
+  let z = 1..3
+  let c = v |> g
+  Ok(p.x + w + n + k + (c as Int) + xs.length() + q.y)
+}
+"#;
+
+    fn program() -> Program {
+        let lexed = (Lexer::new(FileId::default(), EVERY_FORM)
+            .tokenize()
+            .checked())
+        .expect("the program lexes");
+        Parser::new(lexed, EVERY_FORM)
+            .parse_program()
+            .expect("the program parses")
+    }
+
+    #[test]
+    fn the_shared_and_the_mutable_walk_visit_the_same_expressions_in_one_order() {
+        let mut program = program();
+        let mut shared = Vec::new();
+        for decl in &program.decls {
+            if let Decl::Fn(f) = decl {
+                f.body
+                    .for_each_expr(&mut |e| shared.push((form(&e.kind), e.span)));
+            }
+        }
+        let mut mutable = Vec::new();
+        for decl in &mut program.decls {
+            if let Decl::Fn(f) = decl {
+                f.body
+                    .for_each_expr_mut(&mut |e| mutable.push((form(&e.kind), e.span)));
+            }
+        }
+        assert_eq!(shared, mutable);
+        for name in ALL_FORMS {
+            assert!(
+                shared.iter().any(|(form, _)| form == name),
+                "the program writes no `{name}`, or a walk does not reach it"
+            );
+        }
+        // The shared walk reaches the patterns of a closure, an arm, a
+        // `let` and a `when`, in source order.
+        let mut patterns = 0;
+        if let Some(Decl::Fn(f)) = program.decls.iter().find(|d| matches!(d, Decl::Fn(_))) {
+            fn count(e: &Expr, n: &mut usize) {
+                let _ = e.try_for_each_node(&mut |child| {
+                    match child {
+                        Child::Expr(e) => count(e, n),
+                        Child::Pattern(_) => *n += 1,
+                    }
+                    ControlFlow::<()>::Continue(())
+                });
+            }
+            count(&f.body, &mut patterns);
+        }
+        // 12 lets, 1 `when let`, 1 closure parameter, 4 match arms.
+        assert_eq!(patterns, 12 + 1 + 1 + 4);
+    }
+}
+
+#[cfg(test)]
 mod import_order_tests {
     use super::{ImportTarget, import_order};
     use crate::intern::intern;
