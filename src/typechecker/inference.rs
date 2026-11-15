@@ -3,11 +3,20 @@
 //! This module contains the core inference logic: infer_expr, infer_stmt,
 //! and check_body.
 
+use std::ops::ControlFlow;
+
 use super::infer::pattern::*;
 use super::names::is_placeholder;
 use super::suggest::suggest_similar;
 use super::*;
 use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_WHILE_FOR};
+
+// The arms of `infer_expr_kind`, by family of forms.
+mod control;
+mod literal;
+mod name;
+mod operator;
+mod record;
 
 /// Where an expression stands relative to its enclosing `loop`, for the
 /// check that `loop(...)` is in tail position.
@@ -3392,15 +3401,12 @@ impl TypeChecker {
                     }
                     // A type given more or fewer types than it takes.
                     (head, _) => {
-                        let (ty, expected) = match &head {
-                            Type::List(_) => (TypeRef::builtin("List"), 1),
-                            Type::Set(_) => (TypeRef::builtin("Set"), 1),
-                            Type::Channel(_) => (TypeRef::builtin("Channel"), 1),
-                            Type::Map(..) => (TypeRef::builtin("Map"), 2),
-                            Type::Generic(r, params) if !r.is_builtin(crate::defs::TYPE_OF) => {
-                                (*r, params.len())
+                        let (ty, expected) = match head.head_and_args() {
+                            Some((Head::Named(r), _)) if r.is_builtin(crate::defs::TYPE_OF) => {
+                                return None;
                             }
-                            _ => return None,
+                            Some((head, params)) => (head.type_ref(), params.len()),
+                            None => return None,
                         };
                         if expected == args.len() {
                             return None;
@@ -4206,852 +4212,29 @@ impl TypeChecker {
             ExprKind::StringLit(..) => Type::String,
             ExprKind::Unit => Type::Unit,
 
-            ExprKind::StringInterp(parts) => {
-                // Each part is either a literal or an expression
-                for part in parts {
-                    if let StringPart::Expr(e) = part {
-                        let expr_span = e.span;
-                        let t = self.infer_expr(e, env);
-                        let resolved = self.apply(&t);
-                        self.want(
-                            Pred::Trait {
-                                tr: TraitKey::builtin("Display"),
-                                args: Vec::new(),
-                                subject: resolved,
-                                asker: None,
-                            },
-                            Origin {
-                                span: expr_span,
-                                callee: None,
-                                op: None,
-                                header: None,
-                            },
-                        );
-                    }
-                }
-                Type::String
-            }
+            ExprKind::StringInterp(..) => self.infer_string_interp(expr, env),
 
-            ExprKind::List(elems) => {
-                if elems.is_empty() {
-                    let tv = self.fresh_var();
-                    Type::List(Box::new(tv))
-                } else {
-                    // Each element is inferred first (without unifying),
-                    // so that one "list elements must have the same type"
-                    // error points at the first element that differs. What
-                    // `..xs` adds are the elements of `xs`, which must be
-                    // a list: a spread of anything else is reported as
-                    // that, and says nothing of the elements.
-                    let mut elem_infos: Vec<(usize, Type, Span)> = Vec::with_capacity(elems.len());
-                    for (idx, elem) in elems.iter_mut().enumerate() {
-                        match elem {
-                            ListElem::Single(e) => {
-                                let t = self.infer_expr(e, env);
-                                elem_infos.push((idx, t, e.span));
-                            }
-                            ListElem::Spread(e) => {
-                                let t = self.infer_expr(e, env);
-                                let inner = self.fresh_var();
-                                let list = Type::List(Box::new(inner.clone()));
-                                if self.unify_types(&t, &list).is_ok() {
-                                    elem_infos.push((idx, inner, e.span));
-                                } else {
-                                    let shown = self.show_type(&self.apply(&t));
-                                    self.error(
-                                        Code::TypeMismatch,
-                                        format!("`..` needs a list to spread, got {shown}"),
-                                        e.span,
-                                    );
-                                }
-                            }
-                        }
-                    }
+            ExprKind::List(..) => self.infer_list(expr, env),
 
-                    let elem_type = self.fresh_var();
-                    if let Some((_, first_ty, first_span)) = elem_infos.first().cloned() {
-                        self.unify(&elem_type, &first_ty, first_span);
-                        for (idx, t, espan) in &elem_infos {
-                            if self.unify_types(&elem_type, t).is_err() {
-                                // A list-level message, clearer than the
-                                // mismatch of the two types.
-                                let (first, elem) = (self.apply(&first_ty), self.apply(t));
-                                let (first_shown, elem_shown) = self.show_apart(&first, &elem);
-                                // Two channel operations of different
-                                // message types: what `channel.select`
-                                // is given, which takes one.
-                                let channel_op = |ty: &Type| matches!(ty, Type::Generic(name, _) if name.is_builtin("ChannelOp"));
-                                let help = (channel_op(&first) && channel_op(&elem)).then(|| {
-                                    "channel.select takes channels of one message type: give the \
-                                     signal channel the same type and close it to signal (a closed \
-                                     channel is received as None), or wrap the messages in one enum"
-                                        .to_string()
-                                });
-                                self.error_help(
-                                    Code::TypeMismatch,
-                                    (
-                                        format!(
-                                            "list elements must have the same type: first element is {}, but element {} is {}",
-                                            first_shown,
-                                            idx + 1,
-                                            elem_shown
-                                        ),
-                                        help,
-                                    ),
-                                    *espan,
-                                );
-                            }
-                        }
-                    }
+            ExprKind::Map(..) => self.infer_map(expr, env, span),
 
-                    Type::List(Box::new(elem_type))
-                }
-            }
-
-            ExprKind::Map(entries) => {
-                if entries.is_empty() {
-                    let k = self.fresh_var();
-                    let v = self.fresh_var();
-                    Type::Map(Box::new(k), Box::new(v))
-                } else {
-                    let mut iter = entries.iter_mut();
-                    let first_entry = iter.next().unwrap();
-                    let first_k = self.infer_expr(&mut first_entry.0, env);
-                    let first_k = self.kept(first_k);
-                    let first_v = self.infer_expr(&mut first_entry.1, env);
-                    let first_v = self.kept(first_v);
-                    // The unify calls here pass the deviant entry as t1 and
-                    // the established type as t2, the documented
-                    // t1=got/t2=expected convention (`#{ "a": 1, 2: 3 }`
-                    // expects String, got Int), and, mirroring the list-
-                    // literal arm above, replace the raw unify mismatch
-                    // with a curated map-level message.
-                    for (idx, (k, v)) in iter.enumerate() {
-                        let entry_num = idx + 2; // 1-based; entry 1 set the type
-                        let k_span = k.span;
-                        let v_span = v.span;
-                        let kt = self.infer_expr(k, env);
-                        let vt = self.infer_expr(v, env);
-                        if self.unify_types(&kt, &first_k).is_err() {
-                            let first_resolved = self.apply(&first_k);
-                            let kt_resolved = self.apply(&kt);
-                            self.error(Code::TypeMismatch,
-                                format!(
-                                    "map keys must have the same type: first key is {first_resolved}, but key {entry_num} is {kt_resolved}"
-                                ),
-                                k_span,
-                            );
-                        }
-                        if self.unify_types(&vt, &first_v).is_err() {
-                            let first_resolved = self.apply(&first_v);
-                            let vt_resolved = self.apply(&vt);
-                            self.error(Code::TypeMismatch,
-                                format!(
-                                    "map values must have the same type: first value is {first_resolved}, but value {entry_num} is {vt_resolved}"
-                                ),
-                                v_span,
-                            );
-                        }
-                    }
-                    // A map hashes its keys.
-                    self.want_hash(&first_k, span);
-                    Type::Map(Box::new(first_k), Box::new(first_v))
-                }
-            }
-
-            ExprKind::SetLit(elems) => {
-                if elems.is_empty() {
-                    let tv = self.fresh_var();
-                    Type::Set(Box::new(tv))
-                } else {
-                    // The same direction and curated message as the map arm
-                    // above (`#[1, 2, "x"]` expects Int, got String), in the
-                    // list-literal wording for set elements.
-                    let elem_type = self.fresh_var();
-                    for (idx, e) in elems.iter_mut().enumerate() {
-                        let espan = e.span;
-                        let t = self.infer_expr(e, env);
-                        if self.unify_types(&t, &elem_type).is_err() {
-                            let first_resolved = self.apply(&elem_type);
-                            let t_resolved = self.apply(&t);
-                            self.error(Code::TypeMismatch,
-                                format!(
-                                    "set elements must have the same type: first element is {}, but element {} is {}",
-                                    first_resolved,
-                                    idx + 1,
-                                    t_resolved
-                                ),
-                                espan,
-                            );
-                        }
-                    }
-                    // A set hashes its elements.
-                    self.want_hash(&elem_type, span);
-                    Type::Set(Box::new(elem_type))
-                }
-            }
+            ExprKind::SetLit(..) => self.infer_set(expr, env, span),
 
             ExprKind::Tuple(elems) => {
                 let types: Vec<Type> = elems.iter_mut().map(|e| self.infer_expr(e, env)).collect();
                 Type::Tuple(types)
             }
 
-            ExprKind::Ident(name) => {
-                let name = *name;
-                if expr.res == Some(crate::defs::Res::Error) {
-                    // The resolver reported the name, or it comes from a
-                    // module that failed to load.
-                    Type::Error
-                } else if let Some(scheme) = self
-                    .def_scheme(expr.res, env)
-                    .or_else(|| env.lookup(name).cloned())
-                {
-                    // A name used as a value owes what a call of it does.
-                    self.named_use.get_or_insert(Origin {
-                        span,
-                        callee: Some(name),
-                        op: None,
-                        header: None,
-                    });
-                    let ty = self.instantiate_def(&scheme, expr.res);
-                    // (A generic type's name, `List`: its value names the
-                    // type alone.)
-                    if self.names_generic_type(expr) {
-                        self.open_vars.extend(free_vars_in(&ty));
-                    }
-                    ty
-                } else if name == intern("self") {
-                    // `self` is resolved at runtime — allow without error
-                    self.fresh_var()
-                } else if name == intern("Self")
-                    && expr.res == Some(crate::defs::Res::Local)
-                    && let Some(ty) = self.sig_type_var(name)
-                {
-                    // A trait's default body gives `Self` to a call as a
-                    // type (the resolver allows it there alone).
-                    Type::type_of(ty)
-                } else if expr.res == Some(crate::defs::Res::Local)
-                    && self.decode_params.contains(&name)
-                    && let Some(ty) = self.sig_type_var(name)
-                {
-                    // A type parameter of an impl's header the call gives
-                    // (`decode_params`), as a type: `json.decode(v, Tree(a))`.
-                    Type::type_of(ty)
-                } else if self.type_receiver
-                    && expr.res == Some(crate::defs::Res::Local)
-                    && let Some(ty) = self.sig_type_var(name)
-                {
-                    // A type variable of the signature among the arguments
-                    // of a type before a dot, as a type: `Box(a).zero()`.
-                    Type::type_of(ty)
-                } else if let Some(ty) = self.alias_value(expr.res, env) {
-                    ty
-                } else if self.res_def(expr.res).is_some_and(|def| {
-                    matches!(
-                        def.kind,
-                        crate::defs::DefKind::TypeAlias | crate::defs::DefKind::Trait(_)
-                    )
-                }) {
-                    // A type alias or a trait used as a value.
-                    self.error(
-                        Code::UndefinedVariable,
-                        format!("'{name}' is not a value"),
-                        span,
-                    );
-                    Type::Error
-                } else {
-                    let (message, mut help) = format_undefined_variable_message(name, env, "");
-                    if let Some((at, tuple)) = &self.tuple_spelling
-                        && *at == span
-                    {
-                        help = Some(format!("a tuple type before a dot is written `{tuple}`"));
-                    }
-                    self.error_help(Code::UndefinedVariable, (message, help), span);
-                    self.fresh_var()
-                }
-            }
+            ExprKind::Ident(..) => self.infer_ident(expr, env, span),
 
-            ExprKind::FieldAccess(obj, field, _) => {
-                self.receiver_taken = false;
-                let field = *field;
-                // (An access that is no callee is a value: a message about
-                // it writes it as it is written.)
-                if !called && let ExprKind::Ident(name) = obj.kind {
-                    self.method_values.insert(span, format!("{name}.{field}"));
-                }
-                // What the resolver said the access names: nothing (it
-                // reported why, or the module failed to load), a variant
-                // (`m.Red`, `Shape.Red`, `m.Shape.Red`), whose constructor
-                // is bound as `Enum.Variant`, or a member of a module
-                // (`m.f`, `m.Pt`), bound as `m.f`.
-                if expr.res == Some(crate::defs::Res::Error) {
-                    expr.ty = Some(Type::Error);
-                    return Type::Error;
-                }
-                let names_member = self.res_variant_enum(expr.res).is_some()
-                    || matches!(obj.res, Some(crate::defs::Res::Module(_)));
-                if names_member {
-                    let ty = match self.def_scheme(expr.res, env) {
-                        Some(scheme) => {
-                            let ty = self.instantiate_def(&scheme, expr.res);
-                            self.apply(&ty)
-                        }
-                        None if let Some(ty) = self.alias_value(expr.res, env) => ty,
-                        // A member the resolver found that has no
-                        // scheme: a type alias or a trait used as a
-                        // value.
-                        None => {
-                            let module = match &obj.kind {
-                                ExprKind::Ident(m) => format!("{m}."),
-                                _ => String::new(),
-                            };
-                            let message = format!("'{module}{field}' is not a value");
-                            self.error(Code::UndefinedVariable, message, span);
-                            Type::Error
-                        }
-                    };
-                    expr.ty = Some(ty.clone());
-                    return ty;
-                }
-                // `Trait.method`: a method of a trait, called through it
-                // (`Greet.greet(x)`, `m.Greet.greet`, `Compare.compare`).
-                if let Some(tr) = self.trait_named(obj) {
-                    let receiver = self.trait_receiver.take();
-                    let ty = self.trait_method(tr, field, receiver, span);
-                    expr.ty = Some(ty.clone());
-                    return ty;
-                }
-                // `Type.method`: a method that makes a value, called
-                // through its type (`Int.empty`, `m.Shape.default`).
-                let type_ref = match (&obj.kind, obj.res) {
-                    (ExprKind::Ident(name), None) => self.named_type(None, *name),
-                    (ExprKind::Ident(_) | ExprKind::FieldAccess(..), res) => self.res_type(res),
-                    _ => None,
-                };
-                if let Some(ty) = type_ref {
-                    let key = (canonical_head(&self.tables.resolver, ty), field);
-                    // A trait with an impl for the type at each of several
-                    // trait arguments (`From`): the method as the trait
-                    // declares it; which impl the use reaches its trait
-                    // arguments say.
-                    if let Some(tr) = self.trait_of_impls_by_args(key.0, field)
-                        && self.self_param(tr, field).is_none()
-                        && self.private_owner(tr).is_none()
-                    {
-                        if self.bare_type_receiver(obj, ty, Some(tr)) {
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        let instance = (self.type_instance(ty))
-                            .unwrap_or_else(|| Type::Generic(key.0, Vec::new()));
-                        // (The receiver is the value of that type, an
-                        // alias's in full: `BI.decode` of `type BI =
-                        // Box(Int)` is `Box(Int)`'s.)
-                        let instance =
-                            crate::types::canonical::canonicalize(&self.tables.resolver, &instance);
-                        obj.ty = Some(Type::type_of(instance.clone()));
-                        self.method_trait = Some(tr);
-                        let ty = self.through_trait(tr, field, instance, None, span);
-                        expr.ty = Some(ty.clone());
-                        return ty;
-                    }
-                    if let Some(entry) = self.method_entry(key.0, key.1) {
-                        if let Some(trait_name) = entry.trait_name
-                            && self.private_owner(trait_name).is_some()
-                        {
-                            self.private_method(trait_name, field, span);
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        // A method that takes a value of the type is
-                        // called through its trait.
-                        if let Some(tr) = self.entry_trait(&entry, field)
-                            && self.self_param(tr, field).is_some()
-                        {
-                            // (The help names the traits whose method is
-                            // called: a program's, not `Display`'s.)
-                            let mut traits = self.method_providers(key.0, field);
-                            if traits.is_empty() {
-                                traits.push(tr);
-                            }
-                            let on = self.show_type(&Type::Generic(key.0, Vec::new()));
-                            self.through_its_trait(&on, &traits, field, span);
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        if self.ambiguous_method_call(key.0, field, span) {
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        if self.of_every_shape(key.0, &entry, field, span) {
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        if self.bare_type_receiver(obj, ty, self.entry_trait(&entry, field)) {
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        // Written through an alias, the instance is the
-                        // alias's (`Ints` for `type Ints = List(Int)` is
-                        // a `List(Int)`), with its arguments.
-                        let instance = self.type_instance(ty).map(|instance| {
-                            crate::types::canonical::canonicalize(&self.tables.resolver, &instance)
-                        });
-                        // (The receiver is the value of that type.)
-                        obj.ty = instance.clone().map(Type::type_of);
-                        if entry.structural {
-                            let ty = match instance {
-                                Some(inner) => {
-                                    self.structural_type_method(key.0, &inner, field, span)
-                                }
-                                // A type of every shape (`Tuple`): its
-                                // values have the method, not the type.
-                                None => {
-                                    self.of_every_shape_error(key.0, field, span);
-                                    Type::Error
-                                }
-                            };
-                            expr.ty = Some(ty.clone());
-                            return ty;
-                        }
-                        self.method_trait = self.entry_trait(&entry, field);
-                        // (The type is given for `Self`, as to a bound of
-                        // the trait.)
-                        if let Some(tr) = self.method_trait
-                            && let Some(refusal) = self.opaque_through_trait(
-                                tr,
-                                &Type::Generic(key.0, Vec::new()),
-                                span,
-                            )
-                        {
-                            self.refuse_opaque(span, refusal);
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        let scheme = self.method_scheme(&entry);
-                        self.instance_header = self.entry_impl(key.0, &entry, field);
-                        let ty = self.instantiate_method(&scheme, field, span);
-                        if let (Some(tr), Some(named)) = (self.method_trait, &instance) {
-                            // (An alias of a type with its arguments.)
-                            let written = (self.res_def(obj.res))
-                                .is_some_and(|def| def.kind == crate::defs::DefKind::TypeAlias)
-                                && free_vars_in(named).is_empty();
-                            self.self_is(tr, field, (&ty, named, written), span);
-                            let callee = format!("{}.{field}", key.0.name);
-                            self.decoded_through_type(tr, named, callee, span);
-                        }
-                        let full = self.full_self(key.0, &entry, field, &ty);
-                        self.type_method_site(key.0, &entry, field, full, span);
-                        let ty = self.apply(&ty);
-                        expr.ty = Some(ty.clone());
-                        return ty;
-                    }
-                    // A type with no such method, whose name is no value
-                    // either (`Option.compare`, `time.Weekday.nope`): the
-                    // method is what is missing.
-                    if matches!(obj.kind, ExprKind::FieldAccess(..))
-                        || self.def_scheme(obj.res, env).is_none()
-                    {
-                        // (An alias is named as written: `L` of `type L(a)
-                        // = List(a)`.)
-                        match self.res_def(obj.res) {
-                            Some(def) if def.kind == crate::defs::DefKind::TypeAlias => {
-                                let written = super::names::shown_arg(obj);
-                                self.no_type_method(&written, field, span, None);
-                            }
-                            _ => self.no_type_method(&resolve(ty.name), field, span, Some(key.0)),
-                        }
-                        expr.ty = Some(Type::Error);
-                        return Type::Error;
-                    }
-                }
+            ExprKind::FieldAccess(..) => match self.infer_field_access(expr, env, span, called) {
+                ControlFlow::Continue(ty) => ty,
+                ControlFlow::Break(ty) => return ty,
+            },
 
-                // `a.empty()`: a type variable of the signature (or the
-                // impl's header) that no value is named, as a type: the
-                // method of a bound of it that makes a value.
-                if let ExprKind::Ident(name) = obj.kind
-                    && obj.res == Some(crate::defs::Res::Local)
-                    && env.lookup(name).is_none()
-                    && let Some(ty) = self.sig_type_var(name)
-                {
-                    self.var_as_type = Some(name);
-                    let resolved = self.resolve_type_descriptor_method(&ty, field, span);
-                    self.var_as_type = None;
-                    // (`Self` in a trait's default method is a type held
-                    // where the code runs, as a `type a` is: the method is
-                    // found by it, `Self.decode(v)`.)
-                    if name == intern("Self") && self.default_body_of.is_some() {
-                        obj.ty = Some(Type::type_of(ty));
-                    }
-                    let ty = resolved.unwrap_or(Type::Error);
-                    expr.ty = Some(ty.clone());
-                    return ty;
-                }
+            ExprKind::Binary(..) => self.infer_binary(expr, env, span),
 
-                // A type named like its variant, given types before a dot,
-                // is the type (`Cell(Int).default()`), as it is alone.
-                // (So is a type of the module named like a variant of
-                // another type.)
-                if let ExprKind::Call(callee, args) = &mut obj.kind
-                    && args.iter().all(|arg| self.writes_types(arg))
-                {
-                    self.type_named_like_its_variant(callee);
-                    if let ExprKind::Ident(name) = callee.kind
-                        && let Some(crate::defs::Res::Def(id)) = callee.res
-                        && (self.defs.as_ref()).is_some_and(|defs| defs.variant_type(id).is_some())
-                        && let Some(ty) = self.own_types.get(&name)
-                    {
-                        callee.res = Some(crate::defs::Res::Def(ty.id.0));
-                    }
-                }
-
-                // Could be record.field — infer the object type
-                let around = std::mem::replace(
-                    &mut self.type_receiver,
-                    matches!(obj.kind, ExprKind::Call(..)),
-                );
-                // A tuple of types before a dot is the tuple type
-                // (`(Int, Int).empty()`), as `Box(Int)` is that type.
-                let spelled = match obj.kind {
-                    ExprKind::Tuple(_) => self.spelled_type(obj, env),
-                    _ => None,
-                };
-                // `Tuple(Int, Int).empty()` is no spelling of the tuple
-                // type: the help of its `Tuple` writes the one that is.
-                // (The help is the outer `Tuple`'s, by its place: one in
-                // its arguments is a part of the type it writes. None when
-                // a part is no type.)
-                self.tuple_spelling = match &obj.kind {
-                    ExprKind::Call(callee, _) if super::names::is_tuple_name(callee) => {
-                        super::names::shown_type(obj).map(|tuple| (callee.span, tuple))
-                    }
-                    _ => None,
-                };
-                let obj_ty = match spelled {
-                    Some(ty) => Type::type_of(ty),
-                    None => self.infer_expr(obj, env),
-                };
-                self.tuple_spelling = None;
-                self.type_receiver = around;
-                self.receiver_taken = false;
-                let obj_ty = self.apply(&obj_ty);
-                // Canonicalise before dispatch so a receiver whose type
-                // is written through an alias lands in the arm of the
-                // type it stands for.
-                let obj_ty = crate::types::canonical::canonicalize(&self.tables.resolver, &obj_ty);
-
-                // A dot after a value is a field of its record type, or,
-                // on a value whose type is still unknown, a field read
-                // when the type is known (`Goal::Select`).
-                //
-                // `TypeOf(inner)` values (descriptors produced by `type a`
-                // parameters or bare type names like `Int`) call the
-                // methods of `inner` that make a value of it.
-                if let Type::Generic(gname, gargs) = &obj_ty
-                    && gname.is_builtin(crate::defs::TYPE_OF)
-                    && gargs.len() == 1
-                {
-                    // A type not known yet (a parameter an earlier
-                    // `t.zero()`, or a call that takes a type, made a type):
-                    // its call of a method that makes a value of the one
-                    // trait in sight with the name owes that trait too.
-                    let inner = self.apply(&gargs[0]);
-                    let (makers, taking) = match (called, &inner) {
-                        (true, Type::Var(_)) => self.value_makers(field),
-                        _ => (Vec::new(), Vec::new()),
-                    };
-                    if let ([tr], []) = (makers.as_slice(), taking.as_slice()) {
-                        let tr = *tr;
-                        self.note_reading(obj, &obj_ty, |receiver| Reading::Type {
-                            receiver,
-                            tr,
-                            method: field,
-                        });
-                        self.method_trait = Some(tr);
-                        self.note_type_holder(obj, &inner);
-                        let ty = self.through_trait(tr, field, inner, None, span);
-                        expr.ty = Some(ty.clone());
-                        return ty;
-                    }
-                    // (Of a type not known yet: what the call names, by the
-                    // receiver as written, for none of the method's traits
-                    // is decided by it.)
-                    if let (true, Type::Var(_)) = (called, &inner) {
-                        let receiver = written_receiver(obj).unwrap_or_else(|| "_".to_string());
-                        match (makers.len(), taking.is_empty()) {
-                            (0, true) => self.no_type_method(&receiver, field, span, None),
-                            (0, false) => self.through_its_trait(&receiver, &taking, field, span),
-                            _ => self.ambiguous_method(
-                                field,
-                                &format!("`{receiver}`"),
-                                &makers,
-                                span,
-                            ),
-                        }
-                        return Type::Error;
-                    }
-                    // (A field of a type not known yet, which has none:
-                    // named by the parameter that holds it, or as written.)
-                    if let (false, Type::Var(v)) = (called, &inner) {
-                        let name = (self.type_holder(*v))
-                            .or_else(|| written_receiver(obj).map(|shown| intern(&shown)))
-                            .unwrap_or_else(|| intern("_"));
-                        let message = format!(
-                            "type mismatch: expected a value with a field `{field}`, got the type \
-                             `{name}`"
-                        );
-                        self.error(Code::TypeMismatch, message, span);
-                        return Type::Error;
-                    }
-                    let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
-                    if let Some(ty) = resolved {
-                        expr.ty = Some(ty.clone());
-                        return ty;
-                    }
-                    // A concrete type with no such method (a type
-                    // variable's case is reported above).
-                    let inner = self.apply(&gargs[0]);
-                    if !matches!(inner, Type::Var(_) | Type::Rigid(_) | Type::Error) {
-                        // (A generic type or alias written alone, `id(L)`:
-                        // named as written, not with its open arguments.)
-                        let alone = (free_vars_in(&inner).iter())
-                            .find_map(|v| self.open_var_names.get(v))
-                            .map(|name| resolve(*name))
-                            .or_else(|| match &inner {
-                                Type::List(_) | Type::Set(_) | Type::Map(..) | Type::Channel(_)
-                                    if self.holds_open_vars(&inner) =>
-                                {
-                                    let head = match &inner {
-                                        Type::List(_) => "List",
-                                        Type::Set(_) => "Set",
-                                        Type::Map(..) => "Map",
-                                        _ => "Channel",
-                                    };
-                                    Some(head.to_string())
-                                }
-                                Type::Generic(name, _) if self.holds_open_vars(&inner) => {
-                                    Some(self.show_type(&Type::Generic(*name, Vec::new())))
-                                }
-                                _ => None,
-                            });
-                        let shown = alone.unwrap_or_else(|| self.show_type(&inner));
-                        self.no_type_method(&shown, field, span, None);
-                    }
-                    return Type::Error;
-                }
-                match &obj_ty {
-                    Type::Generic(type_name, type_args)
-                        if let Some(module) = self.opaque_outside(*type_name)
-                            && (self.tables.records.get(type_name))
-                                .is_some_and(|rec| rec.fields.iter().any(|(n, _)| *n == field)) =>
-                    {
-                        let _ = type_args;
-                        let message = format!(
-                            "cannot read field '{field}' of a '{}' outside module '{module}': \
-                             the type is opaque",
-                            super::opaque::opaque_name(*type_name, module)
-                        );
-                        self.opaque_error(message, module, span);
-                        Type::Error
-                    }
-                    Type::Generic(type_name, type_args) => {
-                        // A field of a declared record, at the record's type
-                        // arguments.
-                        if self.tables.records.contains_key(type_name)
-                            && let Some((_, ft)) = self
-                                .instantiate_record_fields_with_args(*type_name, type_args)
-                                .into_iter()
-                                .find(|(n, _)| *n == field)
-                        {
-                            let resolved = self.apply(&ft);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        let fields = (self.tables.records.get(type_name))
-                            .map(|rec| rec.fields.clone())
-                            .unwrap_or_default();
-                        self.no_field(&obj_ty, field, Some(obj), &fields, span);
-                        Type::Error
-                    }
-                    // `t.0` parses as a FieldAccess with an
-                    // all-numeric field name, but tuple indexing is
-                    // intentionally unsupported: the
-                    // targeted diagnostic points at destructuring instead.
-                    Type::Tuple(_)
-                        if !resolve(field).is_empty()
-                            && resolve(field).bytes().all(|b| b.is_ascii_digit()) =>
-                    {
-                        self.error_help(
-                            Code::UnsupportedOperation,
-                            (
-                                format!(
-                                    "tuple indexing ('t.{field}') is not supported; \
-                                     destructure instead: 'let (a, b) = t'"
-                                ),
-                                Some(crate::parser::TUPLE_INDEX_HELP.to_string()),
-                            ),
-                            span,
-                        );
-                        Type::Error
-                    }
-                    // A value of the type a parameter holds (`t.zero().show2()`):
-                    // its dot names a field, which it has none of, as for a
-                    // `type t` parameter.
-                    Type::Var(r) if self.type_holder(*r).is_some() => {
-                        let name = self.type_holder(*r).unwrap_or_else(|| intern("_"));
-                        let held = Type::Rigid(RigidId { var: *r, name });
-                        self.no_field(&held, field, Some(obj), &[], span);
-                        Type::Error
-                    }
-                    Type::Var(_) => {
-                        let (makers, taking) = match called {
-                            true => self.value_makers(field),
-                            false => (Vec::new(), Vec::new()),
-                        };
-                        if let ([tr], []) = (makers.as_slice(), taking.as_slice())
-                            && !self.read_as_record(&obj_ty)
-                        {
-                            // `t.mk(s)` where one trait in sight has a
-                            // method `mk`, which makes a value: `t` is a
-                            // type, which owes the trait, as `json.parse(s,
-                            // t)` makes `t` a type that owes `json.Decode`.
-                            let tr = *tr;
-                            self.note_reading(obj, &obj_ty, |receiver| Reading::Type {
-                                receiver,
-                                tr,
-                                method: field,
-                            });
-                            let inner = self.fresh_var();
-                            self.note_type_holder(obj, &inner);
-                            self.unify(&obj_ty, &Type::type_of(inner.clone()), span);
-                            self.method_trait = Some(tr);
-                            self.through_trait(tr, field, inner, None, span)
-                        } else if called {
-                            // (Of several traits' methods that make a value
-                            // the call does not say which, and one of a trait
-                            // of type constructors is not taken for one: a
-                            // field.)
-                            let makers = match (makers.len(), taking.is_empty()) {
-                                (0, true) => self.constructor_makers(field),
-                                _ => makers,
-                            };
-                            let read_as_field = makers.len() > 1
-                                || (!makers.is_empty() && self.of_constructors_trait(makers[0]));
-                            if read_as_field {
-                                self.note_reading(obj, &obj_ty, |receiver| Reading::Field {
-                                    receiver,
-                                    traits: makers.clone(),
-                                    method: field,
-                                });
-                            }
-                            // `x.f(..)`: what it calls is decided with
-                            // the type of `x` (`check_call`).
-                            let traits = if read_as_field { makers } else { Vec::new() };
-                            let at = self.read_at(obj, &obj_ty, traits);
-                            self.unknown_receiver = Some((obj_ty.clone(), field, at));
-                            self.fresh_var()
-                        } else {
-                            // `x.f`: the field is read when the type of
-                            // `x` is known.
-                            let result = self.fresh_var();
-                            self.want_goal(
-                                Goal::Select {
-                                    recv: obj_ty.clone(),
-                                    name: field,
-                                    args: None,
-                                    result: result.clone(),
-                                    at: self.read_at(obj, &obj_ty, Vec::new()),
-                                },
-                                Origin {
-                                    span,
-                                    callee: None,
-                                    op: None,
-                                    header: None,
-                                },
-                            );
-                            result
-                        }
-                    }
-                    // Prior error — propagate to prevent cascading false positives
-                    Type::Error => Type::Error,
-                    // A value that never is (`panic("a").x`): its field
-                    // never is either, and meets every type, as the
-                    // value does (`v.x.y`, `let w = v.x` then `w.y`).
-                    Type::Never => Type::Never,
-                    // Any other type has no fields.
-                    _ => {
-                        self.no_field(&obj_ty, field, Some(obj), &[], span);
-                        Type::Error
-                    }
-                }
-            }
-
-            ExprKind::Binary(lhs, op, rhs) => {
-                let op = *op;
-                let lhs_span = lhs.span;
-                let rhs_span = rhs.span;
-                let lt = self.infer_expr(lhs, env);
-                let rt = self.infer_expr(rhs, env);
-
-                match op {
-                    // An operator is its trait: the operands have one
-                    // type, which owes it (`Number`, `Equal`, `Compare`).
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod | BinOp::Div => {
-                        let op_str = match op {
-                            BinOp::Add => "'+'",
-                            BinOp::Sub => "'-'",
-                            BinOp::Mul => "'*'",
-                            BinOp::Mod => "'%'",
-                            _ => "'/'",
-                        };
-                        // (`Type::Error` on a reported operand keeps an
-                        // ascribed `let` from reporting the result again.)
-                        match self
-                            .check_operator("Number", op_str, &lt, &rt, lhs_span, rhs_span, span)
-                        {
-                            true => lt,
-                            false => Type::Error,
-                        }
-                    }
-                    BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
-                        let (tr, op_str) = match op {
-                            BinOp::Eq => ("Equal", "'=='"),
-                            BinOp::Neq => ("Equal", "'!='"),
-                            BinOp::Lt => ("Compare", "'<'"),
-                            BinOp::Gt => ("Compare", "'>'"),
-                            BinOp::Leq => ("Compare", "'<='"),
-                            _ => ("Compare", "'>='"),
-                        };
-                        self.check_operator(tr, op_str, &lt, &rt, lhs_span, rhs_span, span);
-                        Type::Bool
-                    }
-                    BinOp::And | BinOp::Or => {
-                        self.unify(&lt, &Type::Bool, lhs_span);
-                        self.unify(&rt, &Type::Bool, rhs_span);
-                        Type::Bool
-                    }
-                }
-            }
-
-            ExprKind::Unary(op, operand) => {
-                let op = *op;
-                let operand_span = operand.span;
-                let t = self.infer_expr(operand, env);
-                match op {
-                    UnaryOp::Neg => {
-                        let reported = self.errors.len();
-                        self.want_operand("Number", &t, "unary '-'", operand_span);
-                        match self.errors.len() == reported {
-                            true => t,
-                            false => Type::Error,
-                        }
-                    }
-                    UnaryOp::Not => {
-                        self.unify(&t, &Type::Bool, operand_span);
-                        Type::Bool
-                    }
-                }
-            }
+            ExprKind::Unary(..) => self.infer_unary(expr, env),
 
             // `a |> f(b)` is the call `f(a, b)`, and `a |> f` the call
             // `f(a)`.
@@ -5088,79 +4271,7 @@ impl TypeChecker {
                 Type::List(Box::new(Type::Int))
             }
 
-            ExprKind::QuestionMark(inner) => {
-                let inner_ty = self.infer_expr(inner, env);
-                let inner_ty = self.apply(&inner_ty);
-
-                // Remember the `?` site so a later body/return
-                // unify failure can point back here (see
-                // `note_qmark_requirement_on_ret_mismatch`).
-                self.current_qmark_spans.push(span);
-
-                // A `?` returns from the function as `return` does: not
-                // from one that never returns. (A closure's `?` ends the
-                // closure: its body has a return type of its own.) A `?`
-                // of what never is never runs (below).
-                if let (Some(Type::Never), Some(name)) = (&self.current_return_type, self.never_fn)
-                    && !matches!(inner_ty, Type::Never)
-                {
-                    self.error(
-                        Code::InvalidControlFlow,
-                        format!(
-                            "'?' in '{name}', which is declared to return `Never`: `?` returns \
-                             the `Err` or `None` it meets, and such a function never returns"
-                        ),
-                        span,
-                    );
-                }
-
-                // ? operator on Result(a,e) returns a, propagates Err(e)
-                // ? operator on Option(a) returns a, propagates None
-                // (The one check, also of an operand known only later:
-                // `try_operand`.)
-                match &inner_ty {
-                    Type::Generic(name, args)
-                        if (name.is_builtin("Result") && args.len() == 2)
-                            || (name.is_builtin("Option") && args.len() == 1) =>
-                    {
-                        let ok = args[0].clone();
-                        let ret = self.current_return_type.clone();
-                        self.try_operand(&inner_ty, &ok, ret, span);
-                        ok
-                    }
-                    // An operand already reported (or from a module that
-                    // failed to load): nothing more to say.
-                    Type::Error => Type::Error,
-                    // An operand that never is (`todo()?`, `v.x?` of such
-                    // a `v`): the `?` never runs, and gives what never is,
-                    // as a call or a field read of it does, whatever the
-                    // function returns.
-                    Type::Never => Type::Never,
-                    Type::Var(_) => {
-                        // The operand's type is unknown: the `?` waits
-                        // for it (`Goal::Try`).
-                        let result_ty = self.fresh_var();
-                        self.want_goal(
-                            Goal::Try {
-                                operand: inner_ty.clone(),
-                                ok: result_ty.clone(),
-                                ret: self.current_return_type.clone(),
-                            },
-                            Origin {
-                                span,
-                                callee: None,
-                                op: None,
-                                header: None,
-                            },
-                        );
-                        result_ty
-                    }
-                    _ => {
-                        self.question_misfit(&inner_ty, span);
-                        self.fresh_var()
-                    }
-                }
-            }
+            ExprKind::QuestionMark(..) => self.infer_question_mark(expr, env, span),
 
             ExprKind::Ascription(inner, type_expr) => {
                 let inner_ty = self.infer_expr(inner, env);
@@ -5180,554 +4291,21 @@ impl TypeChecker {
                 result
             }
 
-            ExprKind::Lambda { params, body } => {
-                self.closure_spans.push((span, self.written_vars.clone()));
-                let owner = self.frame_owner.take();
-                env.push();
-                // Soundness: lambda param lists are a single conjunctive
-                // scope too — `|a, a| ...` must be rejected the same way
-                // `fn f(a, a)` is.
-                self.check_fn_params_duplicate_bindings(params);
-                // The parameter types the place the closure stands in
-                // expects (an argument of a call whose callee is known):
-                // an unannotated parameter has that type before the body
-                // is checked.
-                let expected = self
-                    .expected_closure
-                    .take()
-                    .filter(|expected| expected.len() == params.len());
-                let param_types: Vec<Type> = params
-                    .iter_mut()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let ty = if let Some(te) = &p.ty {
-                            // B2: annotation arity errors carry the
-                            // annotation's own span.
-                            let prev_type_span = self.current_type_anno_span.replace(te.span);
-                            let resolved = self.resolve_type_expr(te, &mut self.sig_names.clone());
-                            self.current_type_anno_span = prev_type_span;
-                            resolved
-                        } else if let Some(expected) = &expected {
-                            expected[i].clone()
-                        } else {
-                            self.fresh_var()
-                        };
-                        self.note_held_param(p, &ty);
-                        self.check_pattern(
-                            &mut p.pattern,
-                            &ty,
-                            env,
-                            span,
-                            PatternMode::Binding(BindingSite::ClosureParam),
-                        );
-                        ty
-                    })
-                    .collect();
-                for (p, ty) in params.iter().zip(&param_types) {
-                    if let (PatternKind::Ident(name), None) = (&p.pattern.kind, &p.ty) {
-                        self.closure_params.push((span, *name, ty.clone()));
-                    }
-                }
+            ExprKind::Lambda { .. } => self.infer_lambda(expr, env, span),
 
-                // A lambda is its own `?`/`return`
-                // boundary — the VM's Op::QuestionMark pops exactly ONE
-                // frame (the lambda's), so `?` inside a lambda must
-                // validate against the LAMBDA's return type, not the
-                // enclosing named fn's. Establish a fresh return-type
-                // context for the body, mirroring check_body: checked
-                // against the outer fn's return type, `{ x -> x? + 1 }`
-                // would let a Variant escape into a List(Int) at runtime.
-                let lambda_ret = self.fresh_var();
-                let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
-                let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
+            ExprKind::RecordCreate { .. } => match self.infer_record_create(expr, env, span) {
+                ControlFlow::Continue(ty) => ty,
+                ControlFlow::Break(ty) => return ty,
+            },
 
-                let names: Vec<Option<Symbol>> = (params.iter())
-                    .map(|p| match p.pattern.kind {
-                        PatternKind::Ident(name) => Some(name),
-                        _ => None,
-                    })
-                    .collect();
-                let read_fields = read_fields(body, &names);
-                self.fn_frames.push(unused::FnFrame {
-                    owner,
-                    params: param_types.clone(),
-                    names,
-                    read_fields,
-                });
-                self.closure_returns.push(Vec::new());
-                let body_type = self.infer_expr(body, env);
-                self.fn_frames.pop();
-                env.pop();
-                let before = self.errors.len();
-                // (A `?` that ends the closure with a type its body does
-                // not give is reported at the `?`: the closure's result is
-                // then of no type, which asks nothing more of its place,
-                // `Ok(list.map(xs) { s -> int.parse(s)? + 1 })`.)
-                let question_misfit = self.unify_body_result(body, &body_type, &lambda_ret);
-                let returns = self.closure_returns.pop().unwrap_or_default();
-                if let Some((first, returned)) = returns.first() {
-                    let misfits = (self.errors[before..].iter())
-                        .filter(|e| e.code == Code::TypeMismatch)
-                        .map(|e| e.span)
-                        .collect();
-                    let returned = self.show_type(&self.apply(returned));
-                    self.closure_return_misfits
-                        .push((span, *first, returned, misfits));
-                }
+            ExprKind::RecordUpdate { .. } => match self.infer_record_update(expr, env, span) {
+                ControlFlow::Continue(ty) => ty,
+                ControlFlow::Break(ty) => return ty,
+            },
 
-                self.current_return_type = prev_return_type;
-                self.current_qmark_spans = prev_qmark_spans;
+            ExprKind::Match { .. } => self.infer_match(expr, env, span),
 
-                // `lambda_ret` rather than `body_type`: identical when the
-                // unify above succeeded, and on failure it carries any
-                // `?`-imposed Result/Option constraint, which is the type
-                // the VM actually returns.
-                match question_misfit {
-                    true => Type::Fun(param_types, Box::new(Type::Error)),
-                    false => Type::Fun(param_types, Box::new(lambda_ret)),
-                }
-            }
-
-            ExprKind::RecordCreate { name, fields, .. } => {
-                let name = *name;
-                // A field written twice in a record literal
-                // (e.g. `User { name: "a", name: "b" }`) is an error:
-                // downstream processing goes through a HashSet that would
-                // silently dedupe them. Mirror the record type
-                // declaration's duplicate-field check: walk once and
-                // emit a diagnostic per duplicate.
-                {
-                    let mut seen: std::collections::HashSet<Symbol> =
-                        std::collections::HashSet::new();
-                    for (field_name, _) in fields.iter() {
-                        if !seen.insert(*field_name) {
-                            self.error(
-                                Code::DuplicateRecordField,
-                                format!(
-                                    "duplicate field '{}' in record literal for '{}'",
-                                    field_name, name
-                                ),
-                                span,
-                            );
-                        }
-                    }
-                }
-                // The type identity is the bare name: `util.Pt { x: 1 }`
-                // builds a `Pt`.
-                let looked = self.named_record(expr.res, name, span, false);
-                if let Some((rec_ty, ..)) = &looked
-                    && let Some(module) = self.opaque_outside(*rec_ty)
-                {
-                    let message = format!(
-                        "cannot build a '{}' outside module '{module}': the type is opaque",
-                        super::opaque::opaque_name(*rec_ty, module)
-                    );
-                    self.opaque_error(message, module, span);
-                    for (_, e) in fields.iter_mut() {
-                        let _ = self.infer_expr(e, env);
-                    }
-                    expr.ty = Some(Type::Error);
-                    return Type::Error;
-                }
-                if let Some((rec_ty, rec_info, param_ids, fixed)) = looked {
-                    // For parameterized record types, create fresh type variables
-                    // for each type parameter and substitute them into field types.
-                    // This prevents different instantiations from sharing the same
-                    // template variables (e.g., Box { value: 42 } and Box { value: "hi" }).
-                    let (instantiated_fields, type_args) =
-                        self.instantiate_record_fields(&rec_info, param_ids.as_deref());
-                    // An alias's arguments (`BI { .. }` for `type BI = B(Int)`).
-                    for (arg, fixed) in type_args.iter().zip(fixed.iter().flatten()) {
-                        self.unify(arg, fixed, span);
-                    }
-
-                    let field_types: Vec<(Symbol, Type)> = fields
-                        .iter_mut()
-                        .map(|(n, e)| {
-                            let ty = self.infer_expr(e, env);
-                            (*n, ty)
-                        })
-                        .collect();
-
-                    // Unify with declared field types (using instantiated
-                    // copies), each at its value.
-                    for ((field_name, inferred_ty), (_, value)) in field_types.iter().zip(&*fields)
-                    {
-                        if let Some((_, declared_ty)) =
-                            instantiated_fields.iter().find(|(n, _)| n == field_name)
-                        {
-                            self.unify_field(*field_name, inferred_ty, declared_ty, value.span);
-                        }
-                    }
-
-                    // Check for missing fields
-                    let provided: std::collections::HashSet<Symbol> =
-                        field_types.iter().map(|(n, _)| *n).collect();
-                    let missing: Vec<Symbol> = rec_info
-                        .fields
-                        .iter()
-                        .filter(|(n, _)| !provided.contains(n))
-                        .map(|(n, _)| *n)
-                        .collect();
-                    if !missing.is_empty() {
-                        let missing_str: Vec<String> =
-                            missing.iter().map(|s| format!("{s}")).collect();
-                        self.error(
-                            Code::MissingField,
-                            format!(
-                                "missing field{} in {}: {}",
-                                if missing.len() > 1 { "s" } else { "" },
-                                name,
-                                missing_str.join(", "),
-                            ),
-                            span,
-                        );
-                    }
-
-                    // Check for extra fields not in the record type
-                    let declared: std::collections::HashSet<Symbol> =
-                        rec_info.fields.iter().map(|(n, _)| *n).collect();
-                    for (field_name, _) in &field_types {
-                        if !declared.contains(field_name) {
-                            // Append a did-you-mean
-                            // hint for record-literal typos — e.g.
-                            // `User { nam: ... }` → `did you mean \`name\`?`.
-                            let base = format!("unknown field '{}' in {}", field_name, name);
-                            self.error_help(
-                                Code::UnknownField,
-                                format_record_field_suggestion(base, *field_name, &rec_info.fields),
-                                span,
-                            );
-                        }
-                    }
-
-                    Type::Generic(rec_ty, type_args)
-                } else {
-                    // An unknown record type (reported by `named_record`
-                    // or the resolver). The field expressions are still
-                    // walked so nested errors are reported, but the type
-                    // is Type::Error to prevent downstream cascades.
-                    for (_, e) in fields.iter_mut() {
-                        let _ = self.infer_expr(e, env);
-                    }
-                    Type::Error
-                }
-            }
-
-            ExprKind::RecordUpdate {
-                expr: base, fields, ..
-            } => {
-                let base_span = base.span;
-                let base_ty = self.infer_expr(base, env);
-                let resolved = self.apply(&base_ty);
-                if let Some((ty, module)) = self.opaque_value(&resolved) {
-                    let message = format!(
-                        "cannot update a '{}' outside module '{module}': the type is opaque",
-                        super::opaque::opaque_name(ty, module)
-                    );
-                    self.opaque_error(message, module, span);
-                    for (_, e) in fields.iter_mut() {
-                        let _ = self.infer_expr(e, env);
-                    }
-                    expr.ty = Some(Type::Error);
-                    return Type::Error;
-                }
-                // A field written twice in a record-update
-                // expression (e.g. `r.{ age: 1, age: 2 }`) would be
-                // silently deduped downstream. Emit a diagnostic per
-                // duplicate so the typo is surfaced at compile time.
-                {
-                    let mut seen: std::collections::HashSet<Symbol> =
-                        std::collections::HashSet::new();
-                    for (field_name, _) in fields.iter() {
-                        if !seen.insert(*field_name) {
-                            self.error(
-                                Code::DuplicateRecordField,
-                                format!("duplicate field '{}' in record update", field_name),
-                                span,
-                            );
-                        }
-                    }
-                }
-                // Two cases:
-                //  1. `Type::Generic(name, args)`, a declared record —
-                //     validate against the declared fields.
-                //  2. Anything else — compile-time reject.
-                let mut handled = false;
-                if let Type::Generic(type_name, type_args) = &resolved
-                    && self.tables.records.contains_key(type_name)
-                {
-                    let instantiated_fields =
-                        self.instantiate_record_fields_with_args(*type_name, type_args);
-                    let declared: std::collections::HashMap<Symbol, Type> = instantiated_fields
-                        .iter()
-                        .map(|(n, t)| (*n, t.clone()))
-                        .collect();
-                    for (field_name, field_expr) in &mut *fields {
-                        let ft = self.infer_expr(field_expr, env);
-                        if let Some(declared_ty) = declared.get(field_name) {
-                            self.unify_field(*field_name, &ft, declared_ty, field_expr.span);
-                        } else {
-                            // Did-you-mean on the
-                            // generic-record update path.
-                            let base = format!("unknown field '{field_name}' in {type_name}");
-                            self.error_help(
-                                Code::UnknownField,
-                                format_record_field_suggestion(
-                                    base,
-                                    *field_name,
-                                    &instantiated_fields,
-                                ),
-                                span,
-                            );
-                        }
-                    }
-                    handled = true;
-                }
-                if !handled {
-                    // The base's type is unknown: each field waits for
-                    // it (`Goal::Update`).
-                    let waits = matches!(resolved, Type::Var(_));
-                    for (field_name, field_expr) in &mut *fields {
-                        let value = self.infer_expr(field_expr, env);
-                        if waits {
-                            self.want_goal(
-                                Goal::Update {
-                                    base: base_ty.clone(),
-                                    field: *field_name,
-                                    value,
-                                },
-                                Origin {
-                                    span,
-                                    callee: None,
-                                    op: None,
-                                    header: None,
-                                },
-                            );
-                        }
-                    }
-                    if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
-                        let message = self.not_a_record_base(&resolved);
-                        self.error(Code::TypeMismatch, message, base_span);
-                    }
-                }
-                base_ty
-            }
-
-            ExprKind::Match {
-                expr: scrutinee,
-                arms,
-            } => {
-                match scrutinee {
-                    Some(scrutinee) => {
-                        let scrutinee_span = scrutinee.span;
-                        let scrutinee_ty = self.infer_expr(scrutinee, env);
-                        let result_ty = self.fresh_var();
-
-                        // Every arm checks its pattern against the SAME
-                        // scrutinee. A mismatch at a pattern that repeats
-                        // an earlier arm's is left out by `unify_pattern`
-                        // (`arm_mismatches`); what an arm's pattern reports
-                        // at the scrutinee itself (the key type of a map
-                        // pattern) would repeat at the same place: identical
-                        // (message, span, severity) diagnostics are reported
-                        // once across the arm loop.
-                        let mut seen_arm_diags: std::collections::HashSet<(
-                            std::string::String,
-                            crate::source::FileId,
-                            u32,
-                            bool,
-                        )> = std::collections::HashSet::new();
-                        let mut any_pattern_mismatch = false;
-                        // The texts of the mismatches the arms' patterns
-                        // reported (see `unify_pattern`).
-                        let mut arm_mismatches = std::collections::HashSet::new();
-                        // What each arm's pattern tests, for the
-                        // exhaustiveness check.
-                        let mut arm_pats = Vec::with_capacity(arms.len());
-                        // A match diverges when it has arms and every
-                        // arm diverges. `unify` leaves `result_ty`
-                        // unbound against `Never`, so the arms are
-                        // tracked here to type such a match `Never`.
-                        let mut every_arm_diverges = !arms.is_empty();
-                        for arm in arms.iter_mut() {
-                            env.push();
-                            // Soundness: `match e { (x, x) -> x }` used to
-                            // typecheck silently, binding the second `x` on
-                            // top of the first. Reject duplicate binders
-                            // in the arm pattern before check_pattern walks
-                            // it and defines them in the arm's frame.
-                            self.check_pattern_duplicate_bindings(&arm.pattern);
-                            // A name in the pattern the resolver reported:
-                            // what the arm covers is not known.
-                            if names_unresolved(&arm.pattern) {
-                                any_pattern_mismatch = true;
-                            }
-                            let pat_err_count = self.errors.len();
-                            self.arm_mismatches = Some(std::mem::take(&mut arm_mismatches));
-                            arm_pats.push(self.check_pattern(
-                                &mut arm.pattern,
-                                &scrutinee_ty,
-                                env,
-                                scrutinee_span,
-                                PatternMode::Arm,
-                            ));
-                            arm_mismatches = self.arm_mismatches.take().unwrap_or_default();
-                            if self.errors.len() > pat_err_count {
-                                let new_diags: Vec<Diagnostic> =
-                                    self.errors.drain(pat_err_count..).collect();
-                                for d in new_diags {
-                                    if matches!(d.severity, Severity::Error) {
-                                        any_pattern_mismatch = true;
-                                    }
-                                    let key = (
-                                        d.message.clone(),
-                                        d.span.file,
-                                        d.span.start,
-                                        matches!(d.severity, Severity::Error),
-                                    );
-                                    if seen_arm_diags.insert(key) {
-                                        // Re-inserting a pre-built Diagnostic drained
-                                        // above for dedup — not a new emission site,
-                                        // so `self.error(...)` does not apply.
-                                        self.errors.push(d);
-                                    }
-                                }
-                            }
-
-                            if let Some(ref mut guard) = arm.guard {
-                                let guard_span = guard.span;
-                                let guard_ty = self.infer_expr(guard, env);
-                                self.unify(&guard_ty, &Type::Bool, guard_span);
-                            }
-
-                            let body_span = arm.body.span;
-                            let arm_ty = self.infer_expr(&mut arm.body, env);
-                            env.pop();
-                            every_arm_diverges &= matches!(arm_ty, Type::Never);
-                            self.unify(&arm_ty, &result_ty, body_span);
-                        }
-
-                        // Check exhaustiveness after pattern checking, so the
-                        // scrutinee type is fully resolved through unification.
-                        // Skipped when the scrutinee type already failed to
-                        // match the arms — exhaustiveness over a broken match
-                        // is a cascade, not new information.
-                        // So is a scrutinee of a type already reported.
-                        let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
-                        if !any_pattern_mismatch && resolved_scrutinee_ty != Type::Error {
-                            self.check_exhaustiveness(
-                                arms,
-                                &arm_pats,
-                                &resolved_scrutinee_ty,
-                                scrutinee_span,
-                            );
-                        }
-
-                        if every_arm_diverges {
-                            Type::Never
-                        } else {
-                            result_ty
-                        }
-                    }
-                    None => {
-                        // Guardless match: each arm's guard is a boolean
-                        // condition. When no condition holds there is no
-                        // value, so the last arm must be the `_` default,
-                        // and there is exactly one: arms after a `_` never
-                        // run.
-                        let defaults: Vec<usize> = arms
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, arm)| arm.guard.is_none())
-                            .map(|(i, _)| i)
-                            .collect();
-                        match defaults.first() {
-                            None => self.error(
-                                Code::NonExhaustive,
-                                "a `match` without a scrutinee must end with a `_ -> ...` arm \
-                                 for when no condition is true"
-                                    .to_string(),
-                                span,
-                            ),
-                            Some(&first) => {
-                                if arms[first + 1..].iter().any(|arm| arm.guard.is_some()) {
-                                    self.error(
-                                        Code::UnreachablePattern,
-                                        "the `_` arm must be last: it always matches, so the \
-                                         arms after it never run"
-                                            .to_string(),
-                                        arms[first].pattern.span,
-                                    );
-                                }
-                                for &i in &defaults[1..] {
-                                    self.error(
-                                        Code::UnreachablePattern,
-                                        "unreachable `_` arm: an earlier `_` arm always matches"
-                                            .to_string(),
-                                        arms[i].pattern.span,
-                                    );
-                                }
-                            }
-                        }
-                        let result_ty = self.fresh_var();
-                        // Same rule as the scrutinee form: arms that all
-                        // diverge make the match diverge.
-                        let mut every_arm_diverges = !arms.is_empty();
-
-                        for arm in arms.iter_mut() {
-                            env.push();
-
-                            if let Some(ref mut guard) = arm.guard {
-                                let guard_span = guard.span;
-                                let guard_ty = self.infer_expr(guard, env);
-                                self.unify(&guard_ty, &Type::Bool, guard_span);
-                            }
-
-                            let body_span = arm.body.span;
-                            let arm_ty = self.infer_expr(&mut arm.body, env);
-                            env.pop();
-                            every_arm_diverges &= matches!(arm_ty, Type::Never);
-                            self.unify(&arm_ty, &result_ty, body_span);
-                        }
-
-                        if every_arm_diverges {
-                            Type::Never
-                        } else {
-                            result_ty
-                        }
-                    }
-                }
-            }
-
-            ExprKind::Return(maybe_expr) => {
-                let ret_val_ty = if let Some(e) = maybe_expr {
-                    self.infer_expr(e, env)
-                } else {
-                    Type::Unit
-                };
-                if let Some(returns) = self.closure_returns.last_mut() {
-                    returns.push((span, ret_val_ty.clone()));
-                }
-                match (&self.current_return_type, self.never_fn) {
-                    // (A closure's `return` ends the closure: its body
-                    // has a return type of its own.)
-                    (Some(Type::Never), Some(name)) => self.error(
-                        Code::InvalidControlFlow,
-                        format!(
-                            "'return' in '{name}', which is declared to return `Never`: such a \
-                             function never returns"
-                        ),
-                        span,
-                    ),
-                    (Some(expected_ret), _) => {
-                        let expected_ret = expected_ret.clone();
-                        self.unify(&ret_val_ty, &expected_ret, span);
-                    }
-                    (None, _) => {}
-                }
-                Type::Never
-            }
+            ExprKind::Return(..) => self.infer_return(expr, env, span),
 
             ExprKind::Block(stmts) => {
                 let mut last_ty = Type::Unit;
@@ -5744,67 +4322,9 @@ impl TypeChecker {
                 last_ty
             }
 
-            ExprKind::Loop { bindings, body } => {
-                // Each initialiser is checked outside the loop's frame: it
-                // does not see the bindings.
-                let mut binding_types = Vec::new();
-                for (_, _, value) in bindings.iter_mut() {
-                    let ty = self.infer_expr(value, env);
-                    binding_types.push(self.kept(ty));
-                }
-                env.push();
-                for ((name, _, _), ty) in bindings.iter().zip(&binding_types) {
-                    env.define(*name, Scheme::mono(ty.clone()));
-                }
-                self.check_recur_tail_positions(body, RecurPos::Tail);
-                let prev_loop = self.loop_binding_types.take();
-                self.loop_binding_types = Some(binding_types);
-                let result = self.infer_expr(body, env);
-                env.pop();
-                self.loop_binding_types = prev_loop;
-                result
-            }
+            ExprKind::Loop { .. } => self.infer_loop(expr, env),
 
-            ExprKind::Recur(args) => {
-                let recur_count = args.len();
-                let arg_types: Vec<Type> = args
-                    .iter_mut()
-                    .map(|arg| self.infer_expr(arg, env))
-                    .collect();
-                if let Some(binding_types) = self.loop_binding_types.clone() {
-                    if recur_count != binding_types.len() {
-                        let bindings_n = binding_types.len();
-                        self.error(
-                            Code::ArityMismatch,
-                            format!(
-                                "loop has {} {}, but `loop(...)` supplies {} {}",
-                                bindings_n,
-                                plural(bindings_n, "binding", "bindings"),
-                                recur_count,
-                                plural(recur_count, "argument", "arguments")
-                            ),
-                            span,
-                        );
-                    }
-                    // Unify each recur arg with its corresponding loop binding type
-                    for (i, arg_ty) in arg_types.iter().enumerate() {
-                        if let Some(binding_ty) = binding_types.get(i) {
-                            self.unify(arg_ty, binding_ty, span);
-                        }
-                    }
-                } else {
-                    self.error(
-                        Code::InvalidControlFlow,
-                        "`loop(...)` can only appear inside a `loop` body — it restarts \
-                         the enclosing loop with new binding values"
-                            .to_string(),
-                        span,
-                    );
-                }
-                // `loop(...)` jumps back to the top of the loop and never
-                // produces a value here.
-                Type::Never
-            }
+            ExprKind::Recur(..) => self.infer_recur(expr, env, span),
         };
         let resolved = self.apply(&ty);
         expr.ty = Some(resolved.clone());
@@ -5892,71 +4412,10 @@ impl TypeChecker {
                     self.check_recur_tail_positions(&arm.body, pos);
                 }
             }
-            ExprKind::Int(_)
-            | ExprKind::Float(_)
-            | ExprKind::Bool(_)
-            | ExprKind::StringLit(..)
-            | ExprKind::Ident(_)
-            | ExprKind::Unit
-            | ExprKind::Return(None) => {}
-            ExprKind::StringInterp(parts) => {
-                for part in parts {
-                    if let StringPart::Expr(e) = part {
-                        self.check_recur_tail_positions(e, inner);
-                    }
-                }
-            }
-            ExprKind::List(elems) => {
-                for elem in elems {
-                    match elem {
-                        ListElem::Single(e) | ListElem::Spread(e) => {
-                            self.check_recur_tail_positions(e, inner)
-                        }
-                    }
-                }
-            }
-            ExprKind::Map(entries) => {
-                for (k, v) in entries {
-                    self.check_recur_tail_positions(k, inner);
-                    self.check_recur_tail_positions(v, inner);
-                }
-            }
-            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
-                for e in elems {
-                    self.check_recur_tail_positions(e, inner);
-                }
-            }
-            ExprKind::FieldAccess(e, _, _)
-            | ExprKind::Unary(_, e)
-            | ExprKind::QuestionMark(e)
-            | ExprKind::Ascription(e, _)
-            | ExprKind::Return(Some(e)) => self.check_recur_tail_positions(e, inner),
-            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-                self.check_recur_tail_positions(l, inner);
-                self.check_recur_tail_positions(r, inner);
-            }
-            ExprKind::Call(callee, args) => {
-                self.check_recur_tail_positions(callee, inner);
-                for arg in args {
-                    self.check_recur_tail_positions(arg, inner);
-                }
-            }
             ExprKind::Lambda { body, .. } => {
                 self.check_recur_tail_positions(body, RecurPos::InClosure)
             }
-            ExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields {
-                    self.check_recur_tail_positions(e, inner);
-                }
-            }
-            ExprKind::RecordUpdate {
-                expr: base, fields, ..
-            } => {
-                self.check_recur_tail_positions(base, inner);
-                for (_, e) in fields {
-                    self.check_recur_tail_positions(e, inner);
-                }
-            }
+            _ => expr.for_each_child(|child| self.check_recur_tail_positions(child, inner)),
         }
     }
 
@@ -6093,7 +4552,7 @@ impl TypeChecker {
                         if is_value {
                             self.exit_level();
                             let mut bounds = Vec::new();
-                            for (name, at) in super::names::binders(pattern) {
+                            for (name, at) in pattern.binders() {
                                 if let Some(bound) = env.lookup(name).cloned() {
                                     let scheme = self.generalize_let(&bound.ty, &own);
                                     let places = self.pattern_places(&scheme, &mut bounds);
@@ -6335,14 +4794,12 @@ pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
 ///
-/// INVARIANT: the shapes produced here must be
-/// CANONICAL — identical to what `resolve_type_expr` builds for the
-/// same surface syntax on the impl side — because
+/// The shapes are the ones `resolve_type_expr` builds for the same
+/// surface syntax on the impl side, as both build a named type with
+/// [`Type::named`] / [`Type::container_or_generic`]:
 /// `trait_arg_compatible_canon` compares them structurally and
 /// `canonicalize()` does not collapse `Generic("List", …)` onto
-/// `Type::List` (etc.). Non-canonical output makes every builtin
-/// container / Unit supertrait arg spuriously incompatible
-/// with its own impl.
+/// `Type::List` (etc.).
 pub(super) fn resolve_supertrait_arg(
     te: &TypeExpr,
     trait_info: &TraitInfo,
@@ -6356,59 +4813,29 @@ pub(super) fn resolve_supertrait_arg(
                 return ty.clone();
             }
             // Bare type name that isn't a trait param — interpret as a
-            // concrete type reference (Int, String, or user type).
-            // Mirror `resolve_type_expr` (mod.rs Named arm)
-            // exactly for primitives: a Unit/() falling
-            // through to `Type::Generic` would never compare
-            // equal to the canonical `Type::Unit` the
-            // impl side produces, spuriously failing
-            // `trait_arg_compatible_canon` with identical Display
-            // strings on both sides of the error.
+            // concrete type reference (Int, String, or user type), in
+            // the shape `resolve_type_expr` builds (`Type::named`).
             let Some(ty) = written_type(te, *sym) else {
                 return Type::Error;
             };
-            match builtin_type_name(ty) {
-                Some("Int") => Type::Int,
-                Some("Float") => Type::Float,
-                Some("Bool") => Type::Bool,
-                Some("String") => Type::String,
-                Some("()") => Type::Unit,
-                _ => Type::Generic(ty, Vec::new()),
-            }
+            Type::named(ty, Vec::new())
         }
         TypeExprKind::Generic {
             name: sym, args, ..
         } => {
-            let mut resolved: Vec<Type> = args
+            let resolved: Vec<Type> = args
                 .iter()
                 .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
                 .collect();
-            // Builtin container heads must produce the same
-            // canonical `Type::…` shapes `resolve_type_expr` builds for
-            // the impl side (mod.rs Generic arm). `canonicalize()` does
-            // NOT collapse `Generic("List",[T])` onto `Type::List(T)`,
-            // so leaving these as `Type::Generic` would make supertrait args
-            // like `List(b)` incomparable with the registered impl's
-            // `Type::List(Int)`. Wrong-arity forms fall through to
-            // `Type::Generic` (they can't match any canonical impl
+            // A builtin container head in the shape `resolve_type_expr`
+            // builds (`Type::container_or_generic`). Wrong-arity forms
+            // stay `Type::Generic` (they can't match any canonical impl
             // shape, and resolve_type_expr diagnoses the arity at the
             // declaration site).
             let Some(ty) = written_type(te, *sym) else {
                 return Type::Error;
             };
-            match builtin_type_name(ty).unwrap_or_default() {
-                "List" if resolved.len() == 1 => Type::List(Box::new(resolved.pop().unwrap())),
-                "Set" if resolved.len() == 1 => Type::Set(Box::new(resolved.pop().unwrap())),
-                "Channel" if resolved.len() == 1 => {
-                    Type::Channel(Box::new(resolved.pop().unwrap()))
-                }
-                "Map" if resolved.len() == 2 => {
-                    let v = resolved.pop().unwrap();
-                    let k = resolved.pop().unwrap();
-                    Type::Map(Box::new(k), Box::new(v))
-                }
-                _ => Type::Generic(ty, resolved),
-            }
+            Type::container_or_generic(ty, resolved)
         }
         // `()` is the unit type, as `resolve_type_expr` reads it.
         TypeExprKind::Tuple(elems) if elems.is_empty() => Type::Unit,
@@ -6641,7 +5068,7 @@ fn read_fields(body: &mut Expr, names: &[Option<Symbol>]) -> Vec<bool> {
 /// binding in `expr` hides it. A dot that is called (`name.f(..)`, `x |>
 /// name.f`) reads none.
 fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
-    let binds = |pattern: &Pattern| collect_pattern_vars(pattern).contains(&name);
+    let binds = |pattern: &Pattern| pattern.binder_names().contains(&name);
     // (The receiver of a dot that is called.)
     let callee_reads = |callee: &mut Expr| match &mut callee.kind {
         ExprKind::FieldAccess(obj, ..) => reads_field_of(obj, name),
@@ -6717,7 +5144,7 @@ fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
         }
         _ => {
             let mut found = false;
-            super::resolve::each_child_mut(expr, &mut |child| {
+            expr.for_each_child_mut(|child| {
                 found |= reads_field_of(child, name);
             });
             found

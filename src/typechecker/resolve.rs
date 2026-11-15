@@ -54,118 +54,9 @@ impl TypeChecker {
     /// to determine whether an existing diagnostic was emitted somewhere
     /// inside the value expression.
     fn collect_sub_spans(expr: &Expr, out: &mut std::collections::HashSet<u32>) {
-        out.insert(expr.span.start);
-        match &expr.kind {
-            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-                Self::collect_sub_spans(l, out);
-                Self::collect_sub_spans(r, out);
-            }
-            ExprKind::Unary(_, e)
-            | ExprKind::QuestionMark(e)
-            | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _, _)
-            | ExprKind::Ascription(e, _) => {
-                Self::collect_sub_spans(e, out);
-            }
-            ExprKind::Call(callee, args) => {
-                Self::collect_sub_spans(callee, out);
-                for a in args {
-                    Self::collect_sub_spans(a, out);
-                }
-            }
-            ExprKind::Block(stmts) => {
-                for s in stmts {
-                    Self::collect_stmt_sub_spans(s, out);
-                }
-            }
-            ExprKind::Lambda { body, .. } => {
-                Self::collect_sub_spans(body, out);
-            }
-            ExprKind::Match {
-                expr: scrutinee,
-                arms,
-            } => {
-                if let Some(s) = scrutinee {
-                    Self::collect_sub_spans(s, out);
-                }
-                for arm in arms {
-                    if let Some(ref guard) = arm.guard {
-                        Self::collect_sub_spans(guard, out);
-                    }
-                    Self::collect_sub_spans(&arm.body, out);
-                }
-            }
-            ExprKind::List(elems) => {
-                for elem in elems {
-                    match elem {
-                        ListElem::Single(e) | ListElem::Spread(e) => {
-                            Self::collect_sub_spans(e, out);
-                        }
-                    }
-                }
-            }
-            ExprKind::Tuple(elems) | ExprKind::SetLit(elems) => {
-                for e in elems {
-                    Self::collect_sub_spans(e, out);
-                }
-            }
-            ExprKind::Map(pairs) => {
-                for (k, v) in pairs {
-                    Self::collect_sub_spans(k, out);
-                    Self::collect_sub_spans(v, out);
-                }
-            }
-            ExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields {
-                    Self::collect_sub_spans(e, out);
-                }
-            }
-            ExprKind::RecordUpdate { expr, fields, .. } => {
-                Self::collect_sub_spans(expr, out);
-                for (_, e) in fields {
-                    Self::collect_sub_spans(e, out);
-                }
-            }
-            ExprKind::StringInterp(parts) => {
-                for part in parts {
-                    if let StringPart::Expr(e) = part {
-                        Self::collect_sub_spans(e, out);
-                    }
-                }
-            }
-            ExprKind::Loop { bindings, body } => {
-                for (_, _, e) in bindings {
-                    Self::collect_sub_spans(e, out);
-                }
-                Self::collect_sub_spans(body, out);
-            }
-            ExprKind::Recur(args) => {
-                for a in args {
-                    Self::collect_sub_spans(a, out);
-                }
-            }
-            _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
-        }
-    }
-
-    fn collect_stmt_sub_spans(stmt: &Stmt, out: &mut std::collections::HashSet<u32>) {
-        match stmt {
-            Stmt::Let { value, .. } => Self::collect_sub_spans(value, out),
-            Stmt::When {
-                expr, else_body, ..
-            } => {
-                Self::collect_sub_spans(expr, out);
-                Self::collect_sub_spans(else_body, out);
-            }
-            Stmt::WhenBool {
-                condition,
-                else_body,
-            } => {
-                Self::collect_sub_spans(condition, out);
-                Self::collect_sub_spans(else_body, out);
-            }
-            Stmt::Expr(e) => Self::collect_sub_spans(e, out),
-        }
+        expr.for_each_expr(&mut |e| {
+            out.insert(e.span.start);
+        });
     }
 
     /// After all inference passes, walk let-bindings (both top-level and inside
@@ -203,115 +94,10 @@ impl TypeChecker {
     /// Recursively walk an expression tree looking for blocks that contain
     /// let-bindings with unresolved bare type variables.
     fn check_unresolved_in_expr(&mut self, expr: &Expr) {
-        match &expr.kind {
-            ExprKind::Block(stmts) => {
-                self.check_unresolved_in_block(stmts);
-                // Also recurse into sub-expressions of each statement
-                for stmt in stmts {
-                    match stmt {
-                        Stmt::Let { value, .. } => self.check_unresolved_in_expr(value),
-                        Stmt::When {
-                            expr, else_body, ..
-                        } => {
-                            self.check_unresolved_in_expr(expr);
-                            self.check_unresolved_in_expr(else_body);
-                        }
-                        Stmt::WhenBool {
-                            condition,
-                            else_body,
-                        } => {
-                            self.check_unresolved_in_expr(condition);
-                            self.check_unresolved_in_expr(else_body);
-                        }
-                        Stmt::Expr(e) => self.check_unresolved_in_expr(e),
-                    }
-                }
-            }
-            ExprKind::Lambda { body, .. } => {
-                self.check_unresolved_in_expr(body);
-            }
-            ExprKind::Match {
-                expr: scrutinee,
-                arms,
-            } => {
-                if let Some(s) = scrutinee {
-                    self.check_unresolved_in_expr(s);
-                }
-                for arm in arms {
-                    if let Some(ref guard) = arm.guard {
-                        self.check_unresolved_in_expr(guard);
-                    }
-                    self.check_unresolved_in_expr(&arm.body);
-                }
-            }
-            ExprKind::Call(callee, args) => {
-                self.check_unresolved_in_expr(callee);
-                for a in args {
-                    self.check_unresolved_in_expr(a);
-                }
-            }
-            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-                self.check_unresolved_in_expr(l);
-                self.check_unresolved_in_expr(r);
-            }
-            ExprKind::Unary(_, e)
-            | ExprKind::QuestionMark(e)
-            | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _, _)
-            | ExprKind::Ascription(e, _) => {
-                self.check_unresolved_in_expr(e);
-            }
-            ExprKind::Loop { bindings, body } => {
-                for (_, _, e) in bindings {
-                    self.check_unresolved_in_expr(e);
-                }
-                self.check_unresolved_in_expr(body);
-            }
-            ExprKind::List(elems) => {
-                for elem in elems {
-                    match elem {
-                        ListElem::Single(e) | ListElem::Spread(e) => {
-                            self.check_unresolved_in_expr(e);
-                        }
-                    }
-                }
-            }
-            ExprKind::Tuple(elems) | ExprKind::SetLit(elems) => {
-                for e in elems {
-                    self.check_unresolved_in_expr(e);
-                }
-            }
-            ExprKind::Map(pairs) => {
-                for (k, v) in pairs {
-                    self.check_unresolved_in_expr(k);
-                    self.check_unresolved_in_expr(v);
-                }
-            }
-            ExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields {
-                    self.check_unresolved_in_expr(e);
-                }
-            }
-            ExprKind::RecordUpdate { expr, fields, .. } => {
-                self.check_unresolved_in_expr(expr);
-                for (_, e) in fields {
-                    self.check_unresolved_in_expr(e);
-                }
-            }
-            ExprKind::StringInterp(parts) => {
-                for part in parts {
-                    if let StringPart::Expr(e) = part {
-                        self.check_unresolved_in_expr(e);
-                    }
-                }
-            }
-            ExprKind::Recur(args) => {
-                for a in args {
-                    self.check_unresolved_in_expr(a);
-                }
-            }
-            _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
+        if let ExprKind::Block(stmts) = &expr.kind {
+            self.check_unresolved_in_block(stmts);
         }
+        expr.for_each_child(|child| self.check_unresolved_in_expr(child));
     }
 
     /// Check let-bindings in a block of statements. For each `Stmt::Let` where
@@ -364,7 +150,7 @@ impl TypeChecker {
                 }
 
                 // Collect names bound by this let pattern
-                let bound_names = collect_pattern_vars(pattern);
+                let bound_names = pattern.binder_names();
                 if bound_names.is_empty() {
                     continue;
                 }
@@ -415,70 +201,7 @@ impl TypeChecker {
 
     /// Check if an expression tree contains any `Ident` reference to the given name.
     fn expr_references_name(expr: &Expr, name: Symbol) -> bool {
-        match &expr.kind {
-            ExprKind::Ident(n) => *n == name,
-            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-                Self::expr_references_name(l, name) || Self::expr_references_name(r, name)
-            }
-            ExprKind::Unary(_, e)
-            | ExprKind::QuestionMark(e)
-            | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _, _)
-            | ExprKind::Ascription(e, _) => Self::expr_references_name(e, name),
-            ExprKind::Call(callee, args) => {
-                Self::expr_references_name(callee, name)
-                    || args.iter().any(|a| Self::expr_references_name(a, name))
-            }
-            ExprKind::Block(stmts) => stmts.iter().any(|s| Self::stmt_references_name(s, name)),
-            ExprKind::Lambda { body, .. } => Self::expr_references_name(body, name),
-            ExprKind::Match {
-                expr: scrutinee,
-                arms,
-            } => {
-                scrutinee
-                    .as_ref()
-                    .map(|s| Self::expr_references_name(s, name))
-                    .unwrap_or(false)
-                    || arms.iter().any(|arm| {
-                        arm.guard
-                            .as_ref()
-                            .map(|g| Self::expr_references_name(g, name))
-                            .unwrap_or(false)
-                            || Self::expr_references_name(&arm.body, name)
-                    })
-            }
-            ExprKind::List(elems) => elems.iter().any(|elem| match elem {
-                ListElem::Single(e) | ListElem::Spread(e) => Self::expr_references_name(e, name),
-            }),
-            ExprKind::Tuple(elems) | ExprKind::SetLit(elems) => {
-                elems.iter().any(|e| Self::expr_references_name(e, name))
-            }
-            ExprKind::Map(pairs) => pairs.iter().any(|(k, v)| {
-                Self::expr_references_name(k, name) || Self::expr_references_name(v, name)
-            }),
-            ExprKind::RecordCreate { fields, .. } => fields
-                .iter()
-                .any(|(_, e)| Self::expr_references_name(e, name)),
-            ExprKind::RecordUpdate { expr, fields, .. } => {
-                Self::expr_references_name(expr, name)
-                    || fields
-                        .iter()
-                        .any(|(_, e)| Self::expr_references_name(e, name))
-            }
-            ExprKind::StringInterp(parts) => parts.iter().any(|part| match part {
-                StringPart::Expr(e) => Self::expr_references_name(e, name),
-                _ => false,
-            }),
-            ExprKind::Loop { bindings, body } => {
-                bindings
-                    .iter()
-                    .any(|(_, _, e)| Self::expr_references_name(e, name))
-                    || Self::expr_references_name(body, name)
-            }
-            ExprKind::Recur(args) => args.iter().any(|a| Self::expr_references_name(a, name)),
-            ExprKind::Return(None) => false,
-            _ => false, // Int, Float, Bool, StringLit, Unit
-        }
+        expr.any_expr(&mut |e| matches!(e.kind, ExprKind::Ident(n) if n == name))
     }
 
     // ── Post-inference type resolution ─────────────────────────────────
@@ -511,7 +234,7 @@ impl TypeChecker {
     }
 
     fn resolve_expr_types(&self, expr: &mut Expr) {
-        each_expr_mut(expr, &mut |expr| {
+        expr.for_each_expr_mut(&mut |expr| {
             if let Some(ty) = &expr.ty {
                 expr.ty = Some(self.apply(ty));
             }
@@ -599,135 +322,6 @@ impl TypeChecker {
                 _ => Selection::Native { tr: tr.id },
             },
         }
-    }
-}
-
-/// Call `f` with `expr` and then with each expression inside it.
-pub(super) fn each_expr_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
-    f(expr);
-    each_child_mut(expr, &mut |child| each_expr_mut(child, f));
-}
-
-/// Call `f` with each expression directly inside `expr`.
-pub(super) fn each_child_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
-    match &mut expr.kind {
-        ExprKind::Binary(l, _, r) => {
-            f(l);
-            f(r);
-        }
-        ExprKind::Unary(_, e)
-        | ExprKind::QuestionMark(e)
-        | ExprKind::Ascription(e, _)
-        | ExprKind::Return(Some(e)) => {
-            f(e);
-        }
-        ExprKind::Call(callee, args) => {
-            f(callee);
-            for a in args {
-                f(a);
-            }
-        }
-        ExprKind::List(elems) => {
-            for elem in elems {
-                match elem {
-                    ListElem::Single(e) => f(e),
-                    ListElem::Spread(e) => f(e),
-                }
-            }
-        }
-        ExprKind::Tuple(elems) => {
-            for e in elems {
-                f(e);
-            }
-        }
-        ExprKind::Map(pairs) => {
-            for (k, v) in pairs {
-                f(k);
-                f(v);
-            }
-        }
-        ExprKind::SetLit(elems) => {
-            for e in elems {
-                f(e);
-            }
-        }
-        ExprKind::Lambda { body, .. } => {
-            f(body);
-        }
-        ExprKind::Match {
-            expr: scrutinee,
-            arms,
-        } => {
-            if let Some(s) = scrutinee {
-                f(s);
-            }
-            for arm in arms {
-                if let Some(ref mut guard) = arm.guard {
-                    f(guard);
-                }
-                f(&mut arm.body);
-            }
-        }
-        ExprKind::Block(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Let { value, .. } => f(value),
-                    Stmt::When {
-                        expr, else_body, ..
-                    } => {
-                        f(expr);
-                        f(else_body);
-                    }
-                    Stmt::WhenBool {
-                        condition,
-                        else_body,
-                    } => {
-                        f(condition);
-                        f(else_body);
-                    }
-                    Stmt::Expr(e) => f(e),
-                }
-            }
-        }
-        ExprKind::Pipe(l, r) => {
-            f(l);
-            f(r);
-        }
-        ExprKind::Range(l, r) => {
-            f(l);
-            f(r);
-        }
-        ExprKind::FieldAccess(e, _, _) => f(e),
-        ExprKind::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                f(e);
-            }
-        }
-        ExprKind::RecordUpdate { expr, fields, .. } => {
-            f(expr);
-            for (_, e) in fields {
-                f(e);
-            }
-        }
-        ExprKind::StringInterp(parts) => {
-            for part in parts {
-                if let StringPart::Expr(e) = part {
-                    f(e);
-                }
-            }
-        }
-        ExprKind::Loop { bindings, body } => {
-            for (_, _, e) in bindings {
-                f(e);
-            }
-            f(body);
-        }
-        ExprKind::Recur(args) => {
-            for a in args {
-                f(a);
-            }
-        }
-        _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
     }
 }
 

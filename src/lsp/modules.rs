@@ -412,7 +412,6 @@ fn find_qualified_access(
     program: &Program,
     hit: impl Fn(std::ops::Range<usize>, std::ops::Range<usize>) -> bool,
 ) -> Option<(Symbol, Symbol)> {
-    use super::ast_walk::visit_expr_children;
     use crate::ast::{Expr, ExprKind};
 
     fn walk(
@@ -429,7 +428,7 @@ fn find_qualified_access(
         {
             *found = Some((*module, *field));
         }
-        visit_expr_children(expr, |child| walk(child, hit, found));
+        expr.for_each_child(|child| walk(child, hit, found));
     }
     let mut found = None;
     for decl in &program.decls {

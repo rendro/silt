@@ -1,3 +1,5 @@
+use std::ops::ControlFlow;
+
 use crate::defs::Res;
 use crate::intern::Symbol;
 use crate::source::Span;
@@ -902,6 +904,519 @@ pub struct StatementMarks {
     /// (`(a + 1) * 2`, `(f)()`, `((a))`), and the statement's extent,
     /// from its first token to its last.
     pub parenthesised: Vec<(Span, Span)>,
+}
+
+// ── Walking the tree ─────────────────────────────────────────────────
+//
+// The one listing of what is inside each form: a pass that only needs
+// "every expression", "every pattern" or "every name a pattern binds"
+// walks the tree with these and matches on the forms it cares about,
+// so a new form is added here and nowhere else. Each listing is an
+// exhaustive match: a new variant does not compile until it is listed.
+
+/// A node directly inside an expression: an expression or a pattern.
+#[derive(Clone, Copy)]
+pub(crate) enum Child<'a> {
+    Expr(&'a Expr),
+    Pattern(&'a Pattern),
+}
+
+impl Expr {
+    /// Call `f` with each node directly inside `self`, in source order,
+    /// until it breaks: the subexpressions, and the patterns of a
+    /// closure's parameters, of a `match` arm, of a `let` and a `when`.
+    pub(crate) fn try_for_each_node<'a, B>(
+        &'a self,
+        f: &mut impl FnMut(Child<'a>) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        match &self.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Unit
+            | ExprKind::Return(None) => ControlFlow::Continue(()),
+            ExprKind::StringInterp(parts) => parts.iter().try_for_each(|part| match part {
+                StringPart::Expr(e) => f(Child::Expr(e)),
+                StringPart::Literal(_) => ControlFlow::Continue(()),
+            }),
+            ExprKind::List(elems) => elems.iter().try_for_each(|elem| match elem {
+                ListElem::Single(e) | ListElem::Spread(e) => f(Child::Expr(e)),
+            }),
+            ExprKind::Map(entries) => entries.iter().try_for_each(|(k, v)| {
+                f(Child::Expr(k))?;
+                f(Child::Expr(v))
+            }),
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
+                elems.iter().try_for_each(|e| f(Child::Expr(e)))
+            }
+            ExprKind::FieldAccess(e, ..)
+            | ExprKind::Unary(_, e)
+            | ExprKind::QuestionMark(e)
+            | ExprKind::Ascription(e, _)
+            | ExprKind::Return(Some(e)) => f(Child::Expr(e)),
+            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
+                f(Child::Expr(l))?;
+                f(Child::Expr(r))
+            }
+            ExprKind::Call(callee, args) => {
+                f(Child::Expr(callee))?;
+                args.iter().try_for_each(|e| f(Child::Expr(e)))
+            }
+            ExprKind::Lambda { params, body } => {
+                for param in params {
+                    f(Child::Pattern(&param.pattern))?;
+                }
+                f(Child::Expr(body))
+            }
+            ExprKind::RecordCreate { fields, .. } => {
+                fields.iter().try_for_each(|(_, e)| f(Child::Expr(e)))
+            }
+            ExprKind::RecordUpdate { expr, fields, .. } => {
+                f(Child::Expr(expr))?;
+                fields.iter().try_for_each(|(_, e)| f(Child::Expr(e)))
+            }
+            ExprKind::Match { expr, arms } => {
+                if let Some(e) = expr {
+                    f(Child::Expr(e))?;
+                }
+                arms.iter().try_for_each(|arm| {
+                    f(Child::Pattern(&arm.pattern))?;
+                    if let Some(guard) = &arm.guard {
+                        f(Child::Expr(guard))?;
+                    }
+                    f(Child::Expr(&arm.body))
+                })
+            }
+            ExprKind::Block(stmts) => stmts.iter().try_for_each(|stmt| match stmt {
+                Stmt::Let { pattern, value, .. } => {
+                    f(Child::Pattern(pattern))?;
+                    f(Child::Expr(value))
+                }
+                Stmt::When {
+                    pattern,
+                    expr,
+                    else_body,
+                } => {
+                    f(Child::Pattern(pattern))?;
+                    f(Child::Expr(expr))?;
+                    f(Child::Expr(else_body))
+                }
+                Stmt::WhenBool {
+                    condition,
+                    else_body,
+                } => {
+                    f(Child::Expr(condition))?;
+                    f(Child::Expr(else_body))
+                }
+                Stmt::Expr(e) => f(Child::Expr(e)),
+            }),
+            ExprKind::Loop { bindings, body } => {
+                bindings
+                    .iter()
+                    .try_for_each(|(_, _, e)| f(Child::Expr(e)))?;
+                f(Child::Expr(body))
+            }
+        }
+    }
+
+    /// Call `f` with each expression directly inside `self`, in source
+    /// order.
+    pub(crate) fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Expr)) {
+        let _ = self.try_for_each_node(&mut |child| {
+            if let Child::Expr(e) = child {
+                f(e);
+            }
+            ControlFlow::<()>::Continue(())
+        });
+    }
+
+    /// Whether `f` holds of an expression directly inside `self` (the
+    /// first one it holds of ends the walk).
+    pub(crate) fn any_child<'a>(&'a self, mut f: impl FnMut(&'a Expr) -> bool) -> bool {
+        self.try_for_each_node(&mut |child| match child {
+            Child::Expr(e) if f(e) => ControlFlow::Break(()),
+            _ => ControlFlow::Continue(()),
+        })
+        .is_break()
+    }
+
+    /// Call `f` with `self` and with every expression inside it, each
+    /// before the ones inside it.
+    pub(crate) fn for_each_expr<'a>(&'a self, f: &mut impl FnMut(&'a Expr)) {
+        f(self);
+        self.for_each_child(|child| child.for_each_expr(f));
+    }
+
+    /// Whether `f` holds of `self` or of an expression inside it.
+    pub(crate) fn any_expr<'a>(&'a self, f: &mut impl FnMut(&'a Expr) -> bool) -> bool {
+        f(self) || self.any_child(|child| child.any_expr(f))
+    }
+
+    /// Call `f` with each expression directly inside `self`, in source
+    /// order, to change it: the expressions [`Expr::for_each_child`]
+    /// visits.
+    pub(crate) fn for_each_child_mut(&mut self, mut f: impl FnMut(&mut Expr)) {
+        match &mut self.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Unit
+            | ExprKind::Return(None) => {}
+            ExprKind::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        f(e);
+                    }
+                }
+            }
+            ExprKind::List(elems) => {
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) | ListElem::Spread(e) => f(e),
+                    }
+                }
+            }
+            ExprKind::Map(entries) => {
+                for (k, v) in entries {
+                    f(k);
+                    f(v);
+                }
+            }
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
+                elems.iter_mut().for_each(f);
+            }
+            ExprKind::FieldAccess(e, ..)
+            | ExprKind::Unary(_, e)
+            | ExprKind::QuestionMark(e)
+            | ExprKind::Ascription(e, _)
+            | ExprKind::Return(Some(e)) => f(e),
+            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
+                f(l);
+                f(r);
+            }
+            ExprKind::Call(callee, args) => {
+                f(callee);
+                args.iter_mut().for_each(f);
+            }
+            ExprKind::Lambda { body, .. } => f(body),
+            ExprKind::RecordCreate { fields, .. } => {
+                for (_, e) in fields {
+                    f(e);
+                }
+            }
+            ExprKind::RecordUpdate { expr, fields, .. } => {
+                f(expr);
+                for (_, e) in fields {
+                    f(e);
+                }
+            }
+            ExprKind::Match { expr, arms } => {
+                if let Some(e) = expr {
+                    f(e);
+                }
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        f(guard);
+                    }
+                    f(&mut arm.body);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { value, .. } => f(value),
+                        Stmt::When {
+                            expr, else_body, ..
+                        } => {
+                            f(expr);
+                            f(else_body);
+                        }
+                        Stmt::WhenBool {
+                            condition,
+                            else_body,
+                        } => {
+                            f(condition);
+                            f(else_body);
+                        }
+                        Stmt::Expr(e) => f(e),
+                    }
+                }
+            }
+            ExprKind::Loop { bindings, body } => {
+                for (_, _, e) in bindings {
+                    f(e);
+                }
+                f(body);
+            }
+        }
+    }
+
+    /// Call `f` with `self` and with every expression inside it, each
+    /// before the ones inside it, to change it.
+    pub(crate) fn for_each_expr_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        f(self);
+        self.for_each_child_mut(|child| child.for_each_expr_mut(f));
+    }
+}
+
+impl Pattern {
+    /// Call `f` with each pattern directly inside `self`, in source
+    /// order, until it breaks: every alternative of an or-pattern, the
+    /// rest of a list pattern after its elements.
+    pub(crate) fn try_for_each_child<'a, B>(
+        &'a self,
+        f: &mut impl FnMut(&'a Pattern) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        match &self.kind {
+            PatternKind::Wildcard
+            | PatternKind::Ident(_)
+            | PatternKind::Int(_)
+            | PatternKind::Float(_)
+            | PatternKind::Bool(_)
+            | PatternKind::StringLit(_)
+            | PatternKind::Range(..)
+            | PatternKind::FloatRange(..)
+            | PatternKind::Pin(_) => ControlFlow::Continue(()),
+            PatternKind::Tuple(ps)
+            | PatternKind::Or(ps)
+            | PatternKind::Constructor { args: ps, .. } => ps.iter().try_for_each(f),
+            PatternKind::Record { fields, .. } => fields
+                .iter()
+                .filter_map(|(_, _, p)| p.as_ref())
+                .try_for_each(f),
+            PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).try_for_each(f),
+            PatternKind::Map(entries) => entries.iter().try_for_each(|(_, p)| f(p)),
+        }
+    }
+
+    /// Call `f` with each pattern directly inside `self`, in source order.
+    pub(crate) fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Pattern)) {
+        let _ = self.try_for_each_child(&mut |p| {
+            f(p);
+            ControlFlow::<()>::Continue(())
+        });
+    }
+
+    /// Whether `f` holds of a pattern directly inside `self`.
+    pub(crate) fn any_child<'a>(&'a self, mut f: impl FnMut(&'a Pattern) -> bool) -> bool {
+        self.try_for_each_child(&mut |p| match f(p) {
+            true => ControlFlow::Break(()),
+            false => ControlFlow::Continue(()),
+        })
+        .is_break()
+    }
+
+    /// Call `f` with each name `self` binds, in source order: the name,
+    /// the span of the name, and the pattern that binds it (the name
+    /// itself, or the record pattern of a shorthand field `{ x }`). The
+    /// alternatives of an or-pattern bind the same names: they are those
+    /// of the first.
+    pub(crate) fn for_each_binder<'a>(&'a self, f: &mut impl FnMut(Symbol, Span, &'a Pattern)) {
+        match &self.kind {
+            PatternKind::Ident(name) => f(*name, self.span, self),
+            PatternKind::Record { fields, .. } => {
+                for (field, field_span, sub) in fields {
+                    match sub {
+                        Some(sub) => sub.for_each_binder(f),
+                        None => f(*field, *field_span, self),
+                    }
+                }
+            }
+            PatternKind::Or(alts) => {
+                if let Some(first) = alts.first() {
+                    first.for_each_binder(f);
+                }
+            }
+            _ => self.for_each_child(|child| child.for_each_binder(f)),
+        }
+    }
+
+    /// The names `self` binds, with the span of each, in source order.
+    pub(crate) fn binders(&self) -> Vec<(Symbol, Span)> {
+        let mut out = Vec::new();
+        self.for_each_binder(&mut |name, span, _| out.push((name, span)));
+        out
+    }
+
+    /// The names `self` binds, in source order.
+    pub(crate) fn binder_names(&self) -> Vec<Symbol> {
+        let mut out = Vec::new();
+        self.for_each_binder(&mut |name, _, _| out.push(name));
+        out
+    }
+
+    /// Whether `self`, or any alternative of an or-pattern in it, binds a
+    /// name.
+    pub(crate) fn binds_any(&self) -> bool {
+        match &self.kind {
+            PatternKind::Ident(_) => true,
+            PatternKind::Record { fields, .. } if fields.iter().any(|(_, _, p)| p.is_none()) => {
+                true
+            }
+            _ => self.any_child(Pattern::binds_any),
+        }
+    }
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use crate::source::FileId;
+
+    /// The name of each form, by an exhaustive match: a new form does not
+    /// compile here until it is named, and then fails the test below
+    /// until the program there writes it.
+    fn form(kind: &ExprKind) -> &'static str {
+        match kind {
+            ExprKind::Int(_) => "Int",
+            ExprKind::Float(_) => "Float",
+            ExprKind::Bool(_) => "Bool",
+            ExprKind::StringLit(_) => "StringLit",
+            ExprKind::StringInterp(_) => "StringInterp",
+            ExprKind::List(_) => "List",
+            ExprKind::Map(_) => "Map",
+            ExprKind::SetLit(_) => "SetLit",
+            ExprKind::Tuple(_) => "Tuple",
+            ExprKind::Ident(_) => "Ident",
+            ExprKind::FieldAccess(..) => "FieldAccess",
+            ExprKind::Binary(..) => "Binary",
+            ExprKind::Unary(..) => "Unary",
+            ExprKind::Pipe(..) => "Pipe",
+            ExprKind::Range(..) => "Range",
+            ExprKind::QuestionMark(_) => "QuestionMark",
+            ExprKind::Ascription(..) => "Ascription",
+            ExprKind::Call(..) => "Call",
+            ExprKind::Lambda { .. } => "Lambda",
+            ExprKind::RecordCreate { .. } => "RecordCreate",
+            ExprKind::RecordUpdate { .. } => "RecordUpdate",
+            ExprKind::Match { .. } => "Match",
+            ExprKind::Return(_) => "Return",
+            ExprKind::Block(_) => "Block",
+            ExprKind::Loop { .. } => "Loop",
+            ExprKind::Recur(_) => "Recur",
+            ExprKind::Unit => "Unit",
+        }
+    }
+
+    const ALL_FORMS: &[&str] = &[
+        "Int",
+        "Float",
+        "Bool",
+        "StringLit",
+        "StringInterp",
+        "List",
+        "Map",
+        "SetLit",
+        "Tuple",
+        "Ident",
+        "FieldAccess",
+        "Binary",
+        "Unary",
+        "Pipe",
+        "Range",
+        "QuestionMark",
+        "Ascription",
+        "Call",
+        "Lambda",
+        "RecordCreate",
+        "RecordUpdate",
+        "Match",
+        "Return",
+        "Block",
+        "Loop",
+        "Recur",
+        "Unit",
+    ];
+
+    /// A program that writes every form of expression, every statement,
+    /// and every form inside another.
+    const EVERY_FORM: &str = r#"
+type P { x: Int, y: Int }
+fn f(r: Result(Int, String)) -> Result(Int, String) {
+  let v = r?
+  let t = (v, 1.5, true, "s", "i{v}", ())
+  let xs = [1, ..[2, 3]]
+  let m = #{ "k": -v }
+  let s = #[1, 2]
+  let p = P { x: v + 1, y: 2 }
+  let q = p.{ x: 3 }
+  let g = { a: Int -> a * 2 }
+  when let Ok(w) = r else { return Err("no") }
+  when v > 0 else { return Ok(0) }
+  let n = loop i = 0 {
+    match i >= 3 {
+      true -> i
+      false -> loop(i + 1)
+    }
+  }
+  let k = match q {
+    P { x, .. } when x > 0 -> x
+    _ -> 0
+  }
+  let z = 1..3
+  let c = v |> g
+  Ok(p.x + w + n + k + (c as Int) + xs.length() + q.y)
+}
+"#;
+
+    fn program() -> Program {
+        let lexed = (Lexer::new(FileId::default(), EVERY_FORM)
+            .tokenize()
+            .checked())
+        .expect("the program lexes");
+        Parser::new(lexed, EVERY_FORM)
+            .parse_program()
+            .expect("the program parses")
+    }
+
+    #[test]
+    fn the_shared_and_the_mutable_walk_visit_the_same_expressions_in_one_order() {
+        let mut program = program();
+        let mut shared = Vec::new();
+        for decl in &program.decls {
+            if let Decl::Fn(f) = decl {
+                f.body
+                    .for_each_expr(&mut |e| shared.push((form(&e.kind), e.span)));
+            }
+        }
+        let mut mutable = Vec::new();
+        for decl in &mut program.decls {
+            if let Decl::Fn(f) = decl {
+                f.body
+                    .for_each_expr_mut(&mut |e| mutable.push((form(&e.kind), e.span)));
+            }
+        }
+        assert_eq!(shared, mutable);
+        for name in ALL_FORMS {
+            assert!(
+                shared.iter().any(|(form, _)| form == name),
+                "the program writes no `{name}`, or a walk does not reach it"
+            );
+        }
+        // The shared walk reaches the patterns of a closure, an arm, a
+        // `let` and a `when`, in source order.
+        let mut patterns = 0;
+        if let Some(Decl::Fn(f)) = program.decls.iter().find(|d| matches!(d, Decl::Fn(_))) {
+            fn count(e: &Expr, n: &mut usize) {
+                let _ = e.try_for_each_node(&mut |child| {
+                    match child {
+                        Child::Expr(e) => count(e, n),
+                        Child::Pattern(_) => *n += 1,
+                    }
+                    ControlFlow::<()>::Continue(())
+                });
+            }
+            count(&f.body, &mut patterns);
+        }
+        // 12 lets, 1 `when let`, 1 closure parameter, 4 match arms.
+        assert_eq!(patterns, 12 + 1 + 1 + 4);
+    }
 }
 
 #[cfg(test)]

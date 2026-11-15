@@ -74,7 +74,7 @@ fn walk_expr_folds(expr: &Expr, source: &SourceFile, out: &mut Vec<FoldingRange>
     match &expr.kind {
         ExprKind::Block(_) => {
             push_span_fold(&expr.span, source, out);
-            super::ast_walk::visit_expr_children(expr, |c| walk_expr_folds(c, source, out));
+            expr.for_each_child(|c| walk_expr_folds(c, source, out));
         }
         ExprKind::Match { arms, .. } => {
             // Fold arm bodies that are themselves blocks.
@@ -86,7 +86,7 @@ fn walk_expr_folds(expr: &Expr, source: &SourceFile, out: &mut Vec<FoldingRange>
             }
         }
         _ => {
-            super::ast_walk::visit_expr_children(expr, |c| walk_expr_folds(c, source, out));
+            expr.for_each_child(|c| walk_expr_folds(c, source, out));
         }
     }
 }

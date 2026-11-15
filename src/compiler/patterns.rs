@@ -616,7 +616,7 @@ impl Compiler<'_> {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, pat)| {
-                            if self.pattern_has_bindings(pat) {
+                            if pat.binds_any() {
                                 Some((BindDestructKind::Variant(i), pat.clone()))
                             } else {
                                 None
@@ -632,7 +632,7 @@ impl Compiler<'_> {
                     pats.iter()
                         .enumerate()
                         .filter_map(|(i, pat)| {
-                            if self.pattern_has_bindings(pat) {
+                            if pat.binds_any() {
                                 Some((BindDestructKind::Tuple(i), pat.clone()))
                             } else {
                                 None
@@ -648,7 +648,7 @@ impl Compiler<'_> {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, pat)| {
-                        if self.pattern_has_bindings(pat) {
+                        if pat.binds_any() {
                             Some((BindDestructKind::List(i), pat.clone()))
                         } else {
                             None
@@ -656,7 +656,7 @@ impl Compiler<'_> {
                     })
                     .collect();
                 if let Some(rest_pat) = rest
-                    && self.pattern_has_bindings(rest_pat)
+                    && rest_pat.binds_any()
                 {
                     items.push((
                         BindDestructKind::ListRest(elements.len()),
@@ -673,7 +673,7 @@ impl Compiler<'_> {
                     let field = Self::field_read(ty.as_deref(), *field_name, span)?;
                     match sub_pat {
                         Some(pat) => {
-                            if self.pattern_has_bindings(pat) {
+                            if pat.binds_any() {
                                 items.push((BindDestructKind::RecordField(field), pat.clone()));
                             }
                         }
@@ -693,7 +693,7 @@ impl Compiler<'_> {
                 let items: Vec<(BindDestructKind, Pattern)> = entries
                     .iter()
                     .filter_map(|(key, sub_pat)| {
-                        if self.pattern_has_bindings(sub_pat) {
+                        if sub_pat.binds_any() {
                             Some((BindDestructKind::MapValue(key.clone()), sub_pat.clone()))
                         } else {
                             None
@@ -1279,112 +1279,22 @@ impl Compiler<'_> {
 
     // ── Pattern analysis helpers ─────────────────────────────────
 
-    /// Returns true if the pattern (or any sub-pattern) binds any variable.
-    pub(super) fn pattern_has_bindings(&self, pattern: &Pattern) -> bool {
-        match &pattern.kind {
-            PatternKind::Ident(_) => true,
-            PatternKind::Wildcard
-            | PatternKind::Int(_)
-            | PatternKind::Float(_)
-            | PatternKind::Bool(_)
-            | PatternKind::StringLit(..)
-            | PatternKind::Range(..)
-            | PatternKind::FloatRange(..)
-            | PatternKind::Pin(_) => false,
-            PatternKind::Constructor { args: fields, .. } => {
-                fields.iter().any(|p| self.pattern_has_bindings(p))
-            }
-            PatternKind::Tuple(pats) => pats.iter().any(|p| self.pattern_has_bindings(p)),
-            PatternKind::List(elems, rest) => {
-                elems.iter().any(|p| self.pattern_has_bindings(p))
-                    || rest.as_ref().is_some_and(|r| self.pattern_has_bindings(r))
-            }
-            PatternKind::Record { fields, .. } => fields.iter().any(|(_, _, p)| {
-                match p {
-                    Some(pat) => self.pattern_has_bindings(pat),
-                    None => true, // shorthand {name} always binds
-                }
-            }),
-            PatternKind::Or(alts) => alts.iter().any(|p| self.pattern_has_bindings(p)),
-            PatternKind::Map(entries) => entries.iter().any(|(_, p)| self.pattern_has_bindings(p)),
-        }
-    }
-
     /// The names `pattern` binds, in the order they are written (an
     /// or-pattern's as its first alternative has them): an order a
     /// renaming keeps.
     fn binding_names_in_order(pattern: &Pattern) -> Vec<Symbol> {
         let mut names = Vec::new();
-        Self::collect_binding_names(pattern, &mut |name| {
+        for name in pattern.binder_names() {
             if !names.contains(&name) {
                 names.push(name);
             }
-        });
+        }
         names
     }
 
     /// Collect the set of variable names bound by a pattern.
     pub(super) fn pattern_binding_names(pattern: &Pattern) -> std::collections::BTreeSet<Symbol> {
-        let mut names = std::collections::BTreeSet::new();
-        Self::collect_binding_names(pattern, &mut |name| {
-            names.insert(name);
-        });
-        names
-    }
-
-    fn collect_binding_names(pattern: &Pattern, names: &mut impl FnMut(Symbol)) {
-        match &pattern.kind {
-            PatternKind::Ident(name) => {
-                names(*name);
-            }
-            PatternKind::Constructor { args: fields, .. } => {
-                for p in fields {
-                    Self::collect_binding_names(p, names);
-                }
-            }
-            PatternKind::Tuple(pats) => {
-                for p in pats {
-                    Self::collect_binding_names(p, names);
-                }
-            }
-            PatternKind::List(elems, rest) => {
-                for p in elems {
-                    Self::collect_binding_names(p, names);
-                }
-                if let Some(r) = rest {
-                    Self::collect_binding_names(r, names);
-                }
-            }
-            PatternKind::Record { fields, .. } => {
-                for (field_name, _, sub_pat) in fields {
-                    match sub_pat {
-                        Some(pat) => Self::collect_binding_names(pat, names),
-                        None => {
-                            names(*field_name);
-                        }
-                    }
-                }
-            }
-            PatternKind::Or(alts) => {
-                // Collect from first alternative (all should be the same).
-                if let Some(first) = alts.first() {
-                    Self::collect_binding_names(first, names);
-                }
-            }
-            PatternKind::Map(entries) => {
-                for (_, p) in entries {
-                    Self::collect_binding_names(p, names);
-                }
-            }
-            PatternKind::Wildcard
-            | PatternKind::Int(_)
-            | PatternKind::Float(_)
-            | PatternKind::Bool(_)
-            | PatternKind::StringLit(..)
-            | PatternKind::Range(..)
-            | PatternKind::FloatRange(..)
-            | PatternKind::Pin(_) => {}
-        }
+        pattern.binder_names().into_iter().collect()
     }
 }
 

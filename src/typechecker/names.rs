@@ -525,9 +525,7 @@ fn declare(
             Decl::Let {
                 pattern, is_pub, ..
             } => {
-                let mut binders = Vec::new();
-                pattern_binders(pattern, &mut binders);
-                for (name, span) in binders {
+                for (name, span) in pattern.binders() {
                     let id = defs.add(Def {
                         module,
                         name,
@@ -1008,61 +1006,6 @@ fn ambiguous_import(
     d
 }
 
-/// The names `pattern` binds, with their spans, in order.
-pub(crate) fn binders(pattern: &Pattern) -> Vec<(Symbol, Span)> {
-    let mut out = Vec::new();
-    pattern_binders(pattern, &mut out);
-    out
-}
-
-/// The names `pattern` binds, with their spans.
-fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
-    match &pattern.kind {
-        PatternKind::Ident(name) => out.push((*name, pattern.span)),
-        PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {
-            for part in parts {
-                pattern_binders(part, out);
-            }
-        }
-        PatternKind::Record { fields, .. } => {
-            for (field, field_span, sub) in fields {
-                match sub {
-                    Some(sub) => pattern_binders(sub, out),
-                    None => out.push((*field, *field_span)),
-                }
-            }
-        }
-        PatternKind::List(elems, rest) => {
-            for elem in elems {
-                pattern_binders(elem, out);
-            }
-            if let Some(rest) = rest {
-                pattern_binders(rest, out);
-            }
-        }
-        // Every alternative binds the same names: they are the names of
-        // the first.
-        PatternKind::Or(alts) => {
-            if let Some(first) = alts.first() {
-                pattern_binders(first, out);
-            }
-        }
-        PatternKind::Map(entries) => {
-            for (_, sub) in entries {
-                pattern_binders(sub, out);
-            }
-        }
-        PatternKind::Wildcard
-        | PatternKind::Int(_)
-        | PatternKind::Float(_)
-        | PatternKind::Bool(_)
-        | PatternKind::StringLit(..)
-        | PatternKind::Range(..)
-        | PatternKind::FloatRange(..)
-        | PatternKind::Pin(_) => {}
-    }
-}
-
 // ── The walk ─────────────────────────────────────────────────────────
 
 /// What a name in a value position is.
@@ -1278,9 +1221,6 @@ fn binder_renames(pattern: &Pattern) -> Vec<(Symbol, Span, Vec<(Span, std::strin
             PatternKind::Ident(name) => {
                 out.push((*name, p.span, vec![(p.span, format!("_{name}"))]))
             }
-            PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {
-                parts.iter().for_each(|part| walk(part, out));
-            }
             PatternKind::Record { fields, .. } => {
                 for (field, field_span, sub) in fields {
                     match sub {
@@ -1291,12 +1231,6 @@ fn binder_renames(pattern: &Pattern) -> Vec<(Symbol, Span, Vec<(Span, std::strin
                             vec![(*field_span, format!("{field}: _{field}"))],
                         )),
                     }
-                }
-            }
-            PatternKind::List(elems, rest) => {
-                elems.iter().for_each(|elem| walk(elem, out));
-                if let Some(rest) = rest {
-                    walk(rest, out);
                 }
             }
             // The names are the first alternative's; each is renamed in
@@ -1317,15 +1251,7 @@ fn binder_renames(pattern: &Pattern) -> Vec<(Symbol, Span, Vec<(Span, std::strin
                 }
                 out.extend(first);
             }
-            PatternKind::Map(entries) => entries.iter().for_each(|(_, sub)| walk(sub, out)),
-            PatternKind::Wildcard
-            | PatternKind::Int(_)
-            | PatternKind::Float(_)
-            | PatternKind::Bool(_)
-            | PatternKind::StringLit(..)
-            | PatternKind::Range(..)
-            | PatternKind::FloatRange(..)
-            | PatternKind::Pin(_) => {}
+            _ => p.for_each_child(|sub| walk(sub, out)),
         }
     }
     let mut out = Vec::new();
@@ -1592,9 +1518,7 @@ impl Resolver<'_> {
 
     /// Bind the names of `pattern`, a parameter's.
     fn bind_params(&mut self, pattern: &Pattern) {
-        let mut binders = Vec::new();
-        pattern_binders(pattern, &mut binders);
-        for (name, at) in binders {
+        for (name, at) in pattern.binders() {
             self.bind_local(name, at, None);
         }
     }
@@ -1999,8 +1923,11 @@ impl Resolver<'_> {
                 // A REPL cell's `let` that binds a name an earlier cell
                 // bound reads the earlier value in its initializer.
                 if self.kind == ModuleKind::Cell {
+                    // (A shorthand field `{ x }` at the span of its record
+                    // pattern.)
                     let mut binders = Vec::new();
-                    crate::parser::pattern_binders(pattern, &mut binders);
+                    pattern
+                        .for_each_binder(&mut |name, _, binder| binders.push((name, binder.span)));
                     for (name, at) in binders {
                         if let Some(binding) = self.earlier_cell_value(name) {
                             self.previous.insert(name, binding);

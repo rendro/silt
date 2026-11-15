@@ -742,7 +742,7 @@ impl TypeChecker {
                         // is: the value's bounds are all the names'.)
                         _ => {
                             let mut bounds = Vec::new();
-                            for (name, at) in super::names::binders(pattern) {
+                            for (name, at) in pattern.binders() {
                                 if let Some(scheme) = env.lookup(name) {
                                     let places = self.pattern_places(scheme, &mut bounds);
                                     if !places.is_empty() {
@@ -1320,9 +1320,7 @@ impl TypeChecker {
                     }
                 }
             }
-            _ => super::resolve::each_child_mut(expr, &mut |child| {
-                self.cell_walk(child, owners, false, cell, out)
-            }),
+            _ => expr.for_each_child_mut(|child| self.cell_walk(child, owners, false, cell, out)),
         }
     }
 
@@ -1430,9 +1428,7 @@ impl TypeChecker {
             }
             return;
         }
-        super::resolve::each_child_mut(expr, &mut |child| {
-            self.needs_walk(child, owners, local, out)
-        });
+        expr.for_each_child_mut(|child| self.needs_walk(child, owners, local, out));
     }
 
     fn evidence_walk(&self, expr: &mut Expr, owners: &mut Vec<Owner>) {
@@ -1488,7 +1484,7 @@ impl TypeChecker {
             }
             return;
         }
-        super::resolve::each_child_mut(expr, &mut |child| self.evidence_walk(child, owners));
+        expr.for_each_child_mut(|child| self.evidence_walk(child, owners));
     }
 }
 

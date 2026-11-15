@@ -14,7 +14,7 @@ use crate::types::Type;
 use crate::defs::Res;
 use crate::typechecker::Tables;
 
-use super::ast_walk::{visit_expr_children, written_general};
+use super::ast_walk::written_general;
 use super::definitions::find_param_type;
 use super::fields::{RecordFields, record_field_types};
 use super::state::{LocalBinding, PatternName};
@@ -250,7 +250,7 @@ fn collect_local_bindings_in_expr(expr: &Expr, scope_end: usize, out: &mut Colle
             collect_local_bindings_in_expr(body, body_end, out);
         }
         _ => {
-            visit_expr_children(expr, |child| {
+            expr.for_each_child(|child| {
                 collect_local_bindings_in_expr(child, scope_end, out);
             });
         }

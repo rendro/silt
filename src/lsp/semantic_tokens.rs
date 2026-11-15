@@ -17,7 +17,6 @@ use crate::intern::{Symbol, resolve};
 use crate::source::{SourceFile, Span};
 
 use super::Server;
-use super::ast_walk::visit_expr_children;
 use super::state::Document;
 
 // ── Token legend ───────────────────────────────────────────────────
@@ -344,7 +343,7 @@ fn emit_expr_tokens(
             emit_expr_tokens(body, source, doc, server, out);
         }
         _ => {
-            visit_expr_children(expr, |child| {
+            expr.for_each_child(|child| {
                 emit_expr_tokens(child, source, doc, server, out);
             });
         }
@@ -391,37 +390,12 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &SourceFile, out: &mut
         PatternKind::Ident(name) if resolve(*name) != "_" => {
             emit_binding_token(source, &pattern.span, *name, TT_VARIABLE, out);
         }
-        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
-            for p in pats {
-                emit_pattern_binding_tokens(p, source, out);
-            }
-        }
-        PatternKind::List(pats, rest) => {
-            for p in pats {
-                emit_pattern_binding_tokens(p, source, out);
-            }
-            // The rest sub-pattern (`[h, ..t]`) binds `t`;
-            // it carries its own span, so recursion emits a precise token.
-            if let Some(r) = rest {
-                emit_pattern_binding_tokens(r, source, out);
-            }
-        }
-        PatternKind::Constructor { args: fields, .. } => {
-            for p in fields {
-                emit_pattern_binding_tokens(p, source, out);
-            }
-        }
         PatternKind::Record { fields, .. } => {
             emit_shorthand_field_tokens(fields, source, out);
         }
-        PatternKind::Map(entries) => {
-            // Map-pattern values bind (`#{ "k": v }` binds
-            // `v`); keys are string literals, never binders.
-            for (_, p) in entries {
-                emit_pattern_binding_tokens(p, source, out);
-            }
-        }
-        _ => {}
+        // (Every alternative of an or-pattern; the rest of a list
+        // pattern, `[h, ..t]`, binds `t` at its own span.)
+        _ => pattern.for_each_child(|p| emit_pattern_binding_tokens(p, source, out)),
     }
 }
 

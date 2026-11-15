@@ -6,6 +6,25 @@ use super::*;
 /// variable, the trait and the trait arguments (none: any).
 type Need = (TyVar, TraitKey, Vec<Type>);
 
+/// What the methods of an impl share, from its header and its `where`
+/// clauses: `declare_trait_impl` hands it to `declare_impl_method`.
+#[derive(Clone, Copy)]
+struct ImplMethods<'a> {
+    trait_key: TraitKey,
+    impl_trait: TraitKey,
+    target_type: TypeRef,
+    args_key: ImplArgs,
+    impl_key: ImplKey,
+    self_type: &'a Type,
+    body_self: &'a Type,
+    impl_level_constraints: &'a Vec<Pred>,
+    rigid: &'a Vec<RigidId>,
+    impl_names: &'a HashMap<Symbol, Type>,
+    trait_info: &'a Option<TraitInfo>,
+    seed: &'a HashMap<TyVar, Type>,
+    self_sym: Symbol,
+}
+
 impl TypeChecker {
     /// Whether the impl of `tr` for `head` was reported for a type
     /// variable of its type that its header does not give a trait the
@@ -1575,23 +1594,6 @@ impl TypeChecker {
 
     // ── Register trait implementations ──────────────────────────────
 
-    /// Convert a type name Symbol to a Type.
-    ///
-    /// The `()` arm gives a user-declared `trait T for () { ... }`
-    /// impl a `Type::Unit` self_type rather than the
-    /// `Type::Generic("()", [])` fallback, which never unifies with the
-    /// canonical `Type::Unit` receiver.
-    fn type_from_name(ty: TypeRef) -> Type {
-        match builtin_type_name(ty) {
-            Some("Int") => Type::Int,
-            Some("Float") => Type::Float,
-            Some("Bool") => Type::Bool,
-            Some("String") => Type::String,
-            Some("()") => Type::Unit,
-            _ => Type::Generic(ty, vec![]),
-        }
-    }
-
     /// Reject every hand-written impl of `Equal`, `Compare` or `Hash` and
     /// drop it from `decls`. These traits are sealed: every type has
     /// them by its structure, and `==` / `<` never dispatch to an impl,
@@ -2264,180 +2266,15 @@ impl TypeChecker {
         let mut refused_trait_arg_bounds = Vec::new();
         let impl_trait = trait_key;
         for wc in &ti.where_clauses {
-            let unknown = wc.trait_res == Some(crate::defs::Res::Error)
-                || self
-                    .named_trait(wc.trait_res, wc.trait_name)
-                    .is_none_or(|t| !self.tables.traits.contains_key(&t));
-            if unknown && let Some(Type::Var(tv)) = impl_param_map.get(&wc.type_param) {
-                self.unknown_bounds.insert(*tv);
-            }
-            // A bound the resolver resolved to nothing: it reported why.
-            if wc.trait_res == Some(crate::defs::Res::Error) {
-                continue;
-            }
-            let type_param = &wc.type_param;
-            let trait_args = &wc.trait_args;
-            let Some(trait_key) = self
-                .named_trait(wc.trait_res, wc.trait_name)
-                .filter(|t| self.tables.traits.contains_key(t))
-            else {
-                self.error(
-                    Code::UnknownTrait,
-                    format!(
-                        "unknown trait '{}' in where clause on trait impl '{} for {}'",
-                        resolve(wc.trait_name),
-                        self.impl_trait_name(ti),
-                        resolve(ti.target_type)
-                    ),
-                    ti.span,
-                );
-                continue;
-            };
-            let trait_name = &trait_key;
-            // The runtime runs an impl of a builtin trait found by the
-            // value (println shows a value, json.stringify encodes it)
-            // with no caller to pass what a bound of a program's trait
-            // needs: such an impl asks only builtin traits. (`Number`
-            // too: its operators are found by the values; a method that
-            // reads its dictionary, `a.from_int`, is refused when the
-            // evidence is written, `settle_silent_numbers`.)
-            if !super::evidence::has_dictionary(impl_trait)
-                && super::evidence::has_dictionary(*trait_name)
-                && !trait_name.is_builtin("Number")
-            {
-                let shown = self.show_trait(impl_trait);
-                let message = format!(
-                    "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \
-                     'json.Encode', 'json.Decode' or 'Number' of its type's variables: \
-                     the runtime runs it with nothing else"
-                );
-                // (Each help points at what the impl can do instead.)
-                let help = [
-                    (
-                        "Display",
-                        "show the part with `{x}` and bound it by Display",
-                    ),
-                    (
-                        "Encode",
-                        "encode the part with `json.encode(x)` and bound it by json.Encode",
-                    ),
-                    (
-                        "Decode",
-                        "decode the part with `json.decode` and bound it by json.Decode",
-                    ),
-                ]
-                .iter()
-                .find(|(tr, _)| impl_trait.is_builtin(tr))
-                .map(|(_, help)| help.to_string());
-                self.error_help(Code::InvalidTraitImpl, (message, help), ti.span);
-                // (What the body asks of the variable is not reported
-                // again.)
-                if let Some(Type::Var(tv)) = impl_param_map.get(type_param) {
-                    self.unknown_bounds.insert(*tv);
-                }
-                continue;
-            }
-            // The bound's arity must match the trait's
-            // declared param count in BOTH directions (see
-            // check_where_bound_arity). Skip registering the malformed
-            // bound — a length-mismatched arg list would sail past
-            // verify_trait_obligation's equal-length zip guard and
-            // degrade to a bare "implements the trait" check.
-            if !self.check_where_bound_arity(*trait_name, trait_args.len(), ti.span) {
-                continue;
-            }
-            // Resolve the bound's trait args through the impl's
-            // param_map so any lowercase tyvars from the impl header
-            // bind to the impl's fresh tyvars. For concrete args
-            // (e.g. `where a: Conv(Int)`) this is the identity walk.
-            // Empty when the bound trait has no args.
-            let resolved_bound_args: Vec<Type> = trait_args
-                .iter()
-                .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
-                .collect();
-            let names_it = |te: &TypeExpr| {
-                let mut vars = Vec::new();
-                super::names::type_vars_of(te, &mut vars);
-                vars.contains(type_param)
-            };
-            match impl_param_map.get(type_param) {
-                Some(ty) => {
-                    let resolved = self.apply(ty);
-                    if !self.bound_fits_kind(
-                        &resolved,
-                        (*type_param, false),
-                        *trait_name,
-                        wc.trait_name_span,
-                    ) {
-                        if let Type::Var(tv) = resolved {
-                            self.unknown_bounds.insert(tv);
-                        }
-                        continue;
-                    }
-                    if let Type::Var(tv) = resolved {
-                        // (A note follows the type a use gives the
-                        // variable through the impl: `json_decode`'s
-                        // `impl_asker`.)
-                        if Self::is_decode(*trait_name) {
-                            let at = (impl_trait, target_type.name);
-                            self.impl_decode_vars.insert(self.rigid_rep_var(tv), at);
-                        }
-                        impl_level_constraints.push(Pred::bound(
-                            tv,
-                            *trait_name,
-                            resolved_bound_args.clone(),
-                        ));
-                    }
-                    // If resolved is concrete (shouldn't happen — impl_param_map
-                    // only inserts fresh Var entries) treat it as a tautology
-                    // and register no positional obligation.
-                }
-                // A trait argument of the impl (`trait Conv(a) for W`): its
-                // bound goes on the method that needs it. (What the body
-                // asks of the variable is not reported again.)
-                None if ti.trait_args.iter().any(names_it) => {
-                    let method = ti.methods.iter().find(|m| {
-                        (m.params.iter().filter_map(|p| p.ty.as_ref())).any(names_it)
-                            || m.return_type.as_ref().is_some_and(names_it)
-                    });
-                    let example = match method {
-                        Some(m) => format!(
-                            ": `fn {}(...) where {}: {}`",
-                            m.name,
-                            resolve(*type_param),
-                            self.show_bound(*trait_name, &resolved_bound_args)
-                        ),
-                        None => String::new(),
-                    };
-                    // (The one place a call through the trait owes it: the
-                    // trait's own method.)
-                    self.error(
-                        Code::InvalidTypeAnnotation,
-                        format!(
-                            "type variable '{}' in impl-level where clause is a trait argument, \
-                             not a target type argument; declare the bound on the method in trait \
-                             '{}'{example}",
-                            resolve(*type_param),
-                            self.impl_trait_name(ti),
-                        ),
-                        ti.span,
-                    );
-                    refused_trait_arg_bounds.push(*type_param);
-                }
-                None => {
-                    self.error(Code::InvalidTypeAnnotation,
-                        format!(
-                            "type variable '{}' in impl-level where clause is not declared in the target type arguments; \
-                             declare it as a target parameter: `trait {} for {}({}, ...)`",
-                            resolve(*type_param),
-                            self.impl_trait_name(ti),
-                            resolve(ti.target_type),
-                            resolve(*type_param)
-                        ),
-                        ti.span,
-                    );
-                }
-            }
+            self.impl_where_clause(
+                ti,
+                wc,
+                impl_trait,
+                target_type,
+                &mut impl_param_map,
+                &mut impl_level_constraints,
+                &mut refused_trait_arg_bounds,
+            );
         }
         self.refuse_past_limit(impl_level_constraints.len(), IMPL_BOUNDS, ti.span);
         if !impl_level_constraints.is_empty() {
@@ -2642,385 +2479,23 @@ impl TypeChecker {
         }
 
         let self_sym = intern("self");
+        let shared = ImplMethods {
+            trait_key,
+            impl_trait,
+            target_type,
+            args_key,
+            impl_key,
+            self_type: &self_type,
+            body_self: &body_self,
+            impl_level_constraints: &impl_level_constraints,
+            rigid: &rigid,
+            impl_names: &impl_names,
+            trait_info: &trait_info,
+            seed: &seed,
+            self_sym,
+        };
         for method in &ti.methods {
-            // The declared type, for this impl. The method's own type
-            // variables are new ones for this impl, rigid in its body
-            // under the names the trait wrote.
-            let mut method_rigid = rigid.clone();
-            let declared = trait_info.as_ref().and_then(|info| {
-                let (_, ty) = info.methods.iter().find(|(n, _)| *n == method.name)?;
-                Some((info, ty))
-            });
-            // The bounds the trait declares for the method, on this
-            // impl's variables.
-            let mut declared_bounds: Vec<Pred> = Vec::new();
-            let seeded: Option<Type> = declared.map(|(info, ty)| {
-                let mut mapping = seed.clone();
-                // (By a map: a method may have thousands of variables.)
-                let mut names: HashMap<TyVar, Symbol> = HashMap::new();
-                for (known, name) in info.var_names.iter().rev() {
-                    names.insert(*known, *name);
-                }
-                for v in free_vars_in(ty) {
-                    if mapping.contains_key(&v) {
-                        continue;
-                    }
-                    let (fresh, fresh_id) = self.fresh_tv();
-                    mapping.insert(v, fresh);
-                    if let Some(name) = names.get(&v) {
-                        method_rigid.push(RigidId {
-                            var: fresh_id,
-                            name: *name,
-                        });
-                    }
-                }
-                declared_bounds = Self::bounds_under(info, method.name, &mapping);
-                // A `json.Decode` bound asks what this body asks of its
-                // variable; a note names the method `Src.load`.
-                let passer = intern(&format!("{target_type}.{}", method.name));
-                for pred in &mut declared_bounds {
-                    if let Pred::Trait {
-                        subject: Type::Var(var),
-                        asker: Some(asker),
-                        ..
-                    } = pred
-                    {
-                        if let Asked::Bound(declared) = asker.by {
-                            self.bound_impls.entry(declared).or_default().push(*var);
-                        }
-                        *asker = Asker {
-                            by: Asked::Bound(*var),
-                            passer: Some(passer),
-                        };
-                    }
-                }
-                substitute_vars(ty, &mapping)
-            });
-            let has_declared_type = seeded.is_some();
-            // Whether the trait declares the method with a receiver.
-            let declared_receiver = declared.map(|(info, _)| info.receivers.contains(&method.name));
-            let expected = seeded.as_ref().map(|ty| rigidify(ty, &method_rigid));
-            let (expected_params, expected_ret) = match &expected {
-                Some(Type::Fun(params, ret)) => (params.clone(), Some((**ret).clone())),
-                _ => (Vec::new(), None),
-            };
-
-            // An impl's method takes the dictionaries of the bounds the
-            // trait declares for it: past what a function has, it does
-            // not run.
-            let passed = (declared_bounds.iter())
-                .filter(|pred| super::evidence::passes_dictionary(pred))
-                .count();
-            self.refuse_past_bounds(method, method.params.len(), passed);
-
-            // What the impl writes. A part it leaves out is the declared
-            // one.
-            let applied = self.check_signature_kinds(method);
-            let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
-            let mut param_map = impl_names.clone();
-            let mut param_types = Vec::new();
-            for (i, param) in method.params.iter().enumerate() {
-                let ty = match param.kind {
-                    ParamKind::Type => {
-                        let name = match &param.pattern.kind {
-                            PatternKind::Ident(n) => *n,
-                            _ => {
-                                unreachable!("parser guarantees `type` params use an Ident pattern")
-                            }
-                        };
-                        let var = self.type_param_var(&mut param_map, name, param.pattern.span);
-                        if let Type::Var(v) = var {
-                            self.valued_vars.insert(v);
-                        }
-                        Type::type_of(var)
-                    }
-                    ParamKind::Data => {
-                        if let Some(te) = &param.ty {
-                            self.resolve_type_expr(te, &mut param_map)
-                        } else if let Some(declared) = expected_params.get(i) {
-                            declared.clone()
-                        } else if i == 0
-                            && matches!(&param.pattern.kind, PatternKind::Ident(n) if *n == self_sym)
-                        {
-                            // Bare `self` of a method the trait does not
-                            // declare (reported above): the impl's type.
-                            body_self.clone()
-                        } else {
-                            self.fresh_var()
-                        }
-                    }
-                };
-                param_types.push(ty);
-            }
-            let ret_type = match (&method.return_type, expected_ret) {
-                (Some(te), _) => self.resolve_type_expr(te, &mut param_map),
-                (None, Some(declared)) => declared,
-                (None, None) => self.fresh_var(),
-            };
-            self.resolving_signature = outer_signature;
-            self.remember_constructor_labels(applied, &param_map);
-            let written = Type::Fun(param_types, Box::new(ret_type));
-            // Where the two disagree, the body is checked against what
-            // the impl wrote, so the disagreement is reported once.
-            // (Whether the impl's method is no method of the trait's
-            // shape: its variables are then not the trait's, and its
-            // bounds are not compared with the trait's.)
-            let mut misshapen = false;
-            let body_type = match &expected {
-                // The impl writes the parameters the trait declares, the
-                // receiver among them: one more or one less is not a
-                // method of the trait.
-                Some(Type::Fun(declared, _)) if declared.len() != method.params.len() => {
-                    self.impl_method_arity(ti, method, declared.len());
-                    misshapen = true;
-                    written
-                }
-                // And the receiver where the trait declares one, there
-                // only: `self` is no name for a parameter of a method
-                // that is called on the type.
-                Some(_) if declared_receiver.is_some_and(|takes| takes != writes_self(method)) => {
-                    self.impl_method_receiver(ti, method);
-                    misshapen = true;
-                    written
-                }
-                Some(expected) => {
-                    let unified = self.unify_types(&written, expected);
-                    match unified {
-                        Ok(()) => {
-                            self.refuse_variables_the_trait_types(
-                                ti,
-                                method,
-                                &param_map,
-                                &impl_names,
-                            );
-                            expected.clone()
-                        }
-                        Err(mismatch) => {
-                            self.report_mismatch(mismatch, method.span);
-                            written
-                        }
-                    }
-                }
-                None => written,
-            };
-            // Callers see the declared type.
-            let fn_type = match seeded {
-                Some(ty) => ty,
-                None => unrigidify(&self.apply(&body_type)).0,
-            };
-
-            // Two traits may each provide a method of one name for one
-            // type (two modules' `Show` for `Int`): each impl is kept, by
-            // its trait, and a call means the one whose trait the module
-            // of the call sees (`method_entry`); a call that
-            // sees both is ambiguous.
-
-            // What a use of the method owes: the bounds of the impl's
-            // header and the bounds the trait declares for the method.
-            // The method's own `where` clauses may restate these; one
-            // that adds a bound is an error below.
-            let passer = intern(&format!("{target_type}.{}", method.name));
-            let mut method_constraints =
-                Self::header_passed_to(&impl_level_constraints, impl_trait, passer);
-            method_constraints.extend(declared_bounds);
-            // What the declared bounds say of each variable, supertraits
-            // included: made once, not once for each bound the method
-            // writes.
-            let mut declared_of: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>> = HashMap::new();
-            for pred in &method_constraints {
-                if let Pred::Trait {
-                    tr,
-                    args,
-                    subject: Type::Var(var),
-                    ..
-                } = pred
-                {
-                    let said = declared_of.entry(*var).or_default();
-                    self.bound_closure(said, *tr, args.clone());
-                }
-            }
-            for wc in &method.where_clauses {
-                // A bound the resolver resolved to nothing: it reported why.
-                if wc.trait_res == Some(crate::defs::Res::Error) {
-                    continue;
-                }
-                let type_param = &wc.type_param;
-                let trait_args = &wc.trait_args;
-                let Some(trait_key) = self
-                    .named_trait(wc.trait_res, wc.trait_name)
-                    .filter(|t| self.tables.traits.contains_key(t))
-                else {
-                    self.error(
-                        Code::UnknownTrait,
-                        format!(
-                            "unknown trait '{}' in where clause on '{}.{}'",
-                            resolve(wc.trait_name),
-                            resolve(ti.target_type),
-                            resolve(method.name)
-                        ),
-                        method.span,
-                    );
-                    continue;
-                };
-                let trait_name = &trait_key;
-                // The bound's arity must match the trait's declared
-                // param count (see check_where_bound_arity — it dedupes
-                // against the identical diagnostic the check of the
-                // method's body emits for the same span).
-                if !self.check_where_bound_arity(*trait_name, trait_args.len(), method.span) {
-                    continue;
-                }
-                // Resolve the bound's trait args through the method's
-                // param_map (which sees both the impl-level binders
-                // and any method-local type annos). Empty for
-                // parameterless trait bounds. Without storing these
-                // alongside the (tv, trait) pair, downstream
-                // `verify_trait_obligation` would fall back to the
-                // bare "trait implemented" check — letting
-                // `where a: Conv(Int)` accept any `Conv(*) for ...`.
-                let resolved_bound_args: Vec<Type> = trait_args
-                    .iter()
-                    .map(|te| {
-                        let arg = self.resolve_type_expr(te, &mut param_map);
-                        unrigidify(&self.apply(&arg)).0
-                    })
-                    .collect();
-                match param_map.get(type_param) {
-                    Some(ty) => {
-                        // The bound is on the variable as callers see
-                        // it: the one the rigid variable is in the
-                        // method's type.
-                        let bounded = match self.apply(ty) {
-                            Type::Var(tv) => Some(tv),
-                            Type::Rigid(r) => Some(r.var),
-                            _ => None,
-                        };
-                        if let Some(tv) = bounded {
-                            // The trait's signature is what a caller
-                            // through the trait knows: the impl's method
-                            // may restate a bound the trait or the impl's
-                            // header declares, not add one.
-                            let declared = self.bound_follows(
-                                &declared_of,
-                                tv,
-                                *trait_name,
-                                &resolved_bound_args,
-                            );
-                            if !declared && has_declared_type && !misshapen {
-                                let of_trait_arg = (ti.trait_args.iter()).any(|te| {
-                                    let mut vars = Vec::new();
-                                    super::names::type_vars_of(te, &mut vars);
-                                    vars.contains(type_param)
-                                });
-                                self.errors.push(
-                                    Diagnostic::error(
-                                        Code::InvalidTraitImpl,
-                                        method.span,
-                                        format!(
-                                            "method '{}' of the impl of '{}' for '{}' adds the bound \
-                                             `{}: {}`, which the trait does not declare for it",
-                                            method.name,
-                                            self.impl_trait_name(ti),
-                                            self.impl_target_name(ti, target_type),
-                                            type_param,
-                                            self.show_bound(*trait_name, &resolved_bound_args)
-                                        ),
-                                    )
-                                    .with_help(match of_trait_arg {
-                                        // (A trait argument's bound is
-                                        // refused on the impl's header.)
-                                        true => format!(
-                                            "a call through the trait would not owe it: declare \
-                                             the bound on the method in trait '{}'",
-                                            self.impl_trait_name(ti)
-                                        ),
-                                        false => format!(
-                                            "a call through the trait would not owe it: declare \
-                                             the bound on the method in trait '{}', or on the \
-                                             impl's header",
-                                            self.impl_trait_name(ti)
-                                        ),
-                                    }),
-                                );
-                                // (A bound refused beside the trait's
-                                // own bound of its trait is not the
-                                // method's: its body has the trait's,
-                                // and no second error comes of the two.)
-                                let of_trait = method_constraints.iter().any(|pred| {
-                                    matches!(pred, Pred::Trait { tr, subject, .. }
-                                        if tr == trait_name && *subject == Type::Var(tv))
-                                });
-                                if of_trait {
-                                    continue;
-                                }
-                            }
-                            method_constraints.push(Pred::bound(
-                                tv,
-                                *trait_name,
-                                resolved_bound_args.clone(),
-                            ));
-                            let said = declared_of.entry(tv).or_default();
-                            self.bound_closure(said, *trait_name, resolved_bound_args.clone());
-                        }
-                    }
-                    None => {
-                        self.where_not_introduced(
-                            method,
-                            *type_param,
-                            wc.trait_name,
-                            Some(ti.target_type),
-                        );
-                    }
-                }
-            }
-
-            self.register_method_entry(
-                target_type,
-                method.name,
-                args_key,
-                MethodEntry {
-                    method_type: fn_type,
-                    structural: false,
-                    trait_name: Some(trait_key),
-                    preds: (method_constraints.iter().cloned())
-                        .chain(self.given_to(&method_rigid, impl_key, method.name))
-                        .collect(),
-                },
-            );
-
-            // What the body is checked against (`check_decl_bodies`).
-            // A self type that is a variable (an impl for every function
-            // or tuple) has the trait in the body: `self.other()` is
-            // the impl's own method.
-            let mut body_bounds = method_constraints;
-            if let Type::Var(var) = &self_type
-                && self.shape_vars.contains_key(var)
-            {
-                body_bounds.push(Pred::Trait {
-                    tr: trait_key,
-                    args: self
-                        .tables
-                        .impl_trait_args
-                        .get(&impl_key)
-                        .cloned()
-                        .unwrap_or_default(),
-                    subject: self_type.clone(),
-                    asker: None,
-                });
-            }
-            if let Type::Fun(params, ret) = body_type {
-                self.impl_sigs.insert(
-                    (target_type, method.name, trait_key, args_key),
-                    FnSig {
-                        params,
-                        ret: *ret,
-                        names: param_map,
-                        rigid: method_rigid,
-                        bounds: body_bounds,
-                        complete: true,
-                    },
-                );
-            }
+            self.declare_impl_method(ti, method, shared);
         }
 
         // A method the impl leaves out that the trait has a default for:
@@ -3076,6 +2551,584 @@ impl TypeChecker {
                     },
                 );
             }
+        }
+    }
+
+    /// One `where` clause of the impl `ti` in `declare_trait_impl`: the
+    /// bound it puts on the impl's type variables, or the error it is.
+    #[allow(clippy::too_many_arguments)]
+    fn impl_where_clause(
+        &mut self,
+        ti: &TraitImpl,
+        wc: &WhereClause,
+        impl_trait: TraitKey,
+        target_type: TypeRef,
+        impl_param_map: &mut HashMap<Symbol, Type>,
+        impl_level_constraints: &mut Vec<Pred>,
+        refused_trait_arg_bounds: &mut Vec<Symbol>,
+    ) {
+        let unknown = wc.trait_res == Some(crate::defs::Res::Error)
+            || self
+                .named_trait(wc.trait_res, wc.trait_name)
+                .is_none_or(|t| !self.tables.traits.contains_key(&t));
+        if unknown && let Some(Type::Var(tv)) = impl_param_map.get(&wc.type_param) {
+            self.unknown_bounds.insert(*tv);
+        }
+        // A bound the resolver resolved to nothing: it reported why.
+        if wc.trait_res == Some(crate::defs::Res::Error) {
+            return;
+        }
+        let type_param = &wc.type_param;
+        let trait_args = &wc.trait_args;
+        let Some(trait_key) = self
+            .named_trait(wc.trait_res, wc.trait_name)
+            .filter(|t| self.tables.traits.contains_key(t))
+        else {
+            self.error(
+                Code::UnknownTrait,
+                format!(
+                    "unknown trait '{}' in where clause on trait impl '{} for {}'",
+                    resolve(wc.trait_name),
+                    self.impl_trait_name(ti),
+                    resolve(ti.target_type)
+                ),
+                ti.span,
+            );
+            return;
+        };
+        let trait_name = &trait_key;
+        // The runtime runs an impl of a builtin trait found by the
+        // value (println shows a value, json.stringify encodes it)
+        // with no caller to pass what a bound of a program's trait
+        // needs: such an impl asks only builtin traits. (`Number`
+        // too: its operators are found by the values; a method that
+        // reads its dictionary, `a.from_int`, is refused when the
+        // evidence is written, `settle_silent_numbers`.)
+        if !super::evidence::has_dictionary(impl_trait)
+            && super::evidence::has_dictionary(*trait_name)
+            && !trait_name.is_builtin("Number")
+        {
+            let shown = self.show_trait(impl_trait);
+            let message = format!(
+                "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \
+                 'json.Encode', 'json.Decode' or 'Number' of its type's variables: \
+                 the runtime runs it with nothing else"
+            );
+            // (Each help points at what the impl can do instead.)
+            let help = [
+                (
+                    "Display",
+                    "show the part with `{x}` and bound it by Display",
+                ),
+                (
+                    "Encode",
+                    "encode the part with `json.encode(x)` and bound it by json.Encode",
+                ),
+                (
+                    "Decode",
+                    "decode the part with `json.decode` and bound it by json.Decode",
+                ),
+            ]
+            .iter()
+            .find(|(tr, _)| impl_trait.is_builtin(tr))
+            .map(|(_, help)| help.to_string());
+            self.error_help(Code::InvalidTraitImpl, (message, help), ti.span);
+            // (What the body asks of the variable is not reported
+            // again.)
+            if let Some(Type::Var(tv)) = impl_param_map.get(type_param) {
+                self.unknown_bounds.insert(*tv);
+            }
+            return;
+        }
+        // The bound's arity must match the trait's
+        // declared param count in BOTH directions (see
+        // check_where_bound_arity). Skip registering the malformed
+        // bound — a length-mismatched arg list would sail past
+        // verify_trait_obligation's equal-length zip guard and
+        // degrade to a bare "implements the trait" check.
+        if !self.check_where_bound_arity(*trait_name, trait_args.len(), ti.span) {
+            return;
+        }
+        // Resolve the bound's trait args through the impl's
+        // param_map so any lowercase tyvars from the impl header
+        // bind to the impl's fresh tyvars. For concrete args
+        // (e.g. `where a: Conv(Int)`) this is the identity walk.
+        // Empty when the bound trait has no args.
+        let resolved_bound_args: Vec<Type> = trait_args
+            .iter()
+            .map(|te| self.resolve_type_expr(te, impl_param_map))
+            .collect();
+        let names_it = |te: &TypeExpr| {
+            let mut vars = Vec::new();
+            super::names::type_vars_of(te, &mut vars);
+            vars.contains(type_param)
+        };
+        match impl_param_map.get(type_param) {
+            Some(ty) => {
+                let resolved = self.apply(ty);
+                if !self.bound_fits_kind(
+                    &resolved,
+                    (*type_param, false),
+                    *trait_name,
+                    wc.trait_name_span,
+                ) {
+                    if let Type::Var(tv) = resolved {
+                        self.unknown_bounds.insert(tv);
+                    }
+                    return;
+                }
+                if let Type::Var(tv) = resolved {
+                    // (A note follows the type a use gives the
+                    // variable through the impl: `json_decode`'s
+                    // `impl_asker`.)
+                    if Self::is_decode(*trait_name) {
+                        let at = (impl_trait, target_type.name);
+                        self.impl_decode_vars.insert(self.rigid_rep_var(tv), at);
+                    }
+                    impl_level_constraints.push(Pred::bound(
+                        tv,
+                        *trait_name,
+                        resolved_bound_args.clone(),
+                    ));
+                }
+                // If resolved is concrete (shouldn't happen — impl_param_map
+                // only inserts fresh Var entries) treat it as a tautology
+                // and register no positional obligation.
+            }
+            // A trait argument of the impl (`trait Conv(a) for W`): its
+            // bound goes on the method that needs it. (What the body
+            // asks of the variable is not reported again.)
+            None if ti.trait_args.iter().any(names_it) => {
+                let method = ti.methods.iter().find(|m| {
+                    (m.params.iter().filter_map(|p| p.ty.as_ref())).any(names_it)
+                        || m.return_type.as_ref().is_some_and(names_it)
+                });
+                let example = match method {
+                    Some(m) => format!(
+                        ": `fn {}(...) where {}: {}`",
+                        m.name,
+                        resolve(*type_param),
+                        self.show_bound(*trait_name, &resolved_bound_args)
+                    ),
+                    None => String::new(),
+                };
+                // (The one place a call through the trait owes it: the
+                // trait's own method.)
+                self.error(
+                    Code::InvalidTypeAnnotation,
+                    format!(
+                        "type variable '{}' in impl-level where clause is a trait argument, \
+                         not a target type argument; declare the bound on the method in trait \
+                         '{}'{example}",
+                        resolve(*type_param),
+                        self.impl_trait_name(ti),
+                    ),
+                    ti.span,
+                );
+                refused_trait_arg_bounds.push(*type_param);
+            }
+            None => {
+                self.error(Code::InvalidTypeAnnotation,
+                    format!(
+                        "type variable '{}' in impl-level where clause is not declared in the target type arguments; \
+                         declare it as a target parameter: `trait {} for {}({}, ...)`",
+                        resolve(*type_param),
+                        self.impl_trait_name(ti),
+                        resolve(ti.target_type),
+                        resolve(*type_param)
+                    ),
+                    ti.span,
+                );
+            }
+        }
+    }
+
+    /// One method of the impl `ti` in `declare_trait_impl`: its declared type
+    /// for this impl, its bounds, and its check against the trait's.
+    fn declare_impl_method(&mut self, ti: &TraitImpl, method: &FnDecl, shared: ImplMethods<'_>) {
+        let ImplMethods {
+            trait_key,
+            impl_trait,
+            target_type,
+            args_key,
+            impl_key,
+            self_type,
+            body_self,
+            impl_level_constraints,
+            rigid,
+            impl_names,
+            trait_info,
+            seed,
+            self_sym,
+        } = shared;
+        // The declared type, for this impl. The method's own type
+        // variables are new ones for this impl, rigid in its body
+        // under the names the trait wrote.
+        let mut method_rigid = rigid.clone();
+        let declared = trait_info.as_ref().and_then(|info| {
+            let (_, ty) = info.methods.iter().find(|(n, _)| *n == method.name)?;
+            Some((info, ty))
+        });
+        // The bounds the trait declares for the method, on this
+        // impl's variables.
+        let mut declared_bounds: Vec<Pred> = Vec::new();
+        let seeded: Option<Type> = declared.map(|(info, ty)| {
+            let mut mapping = seed.clone();
+            // (By a map: a method may have thousands of variables.)
+            let mut names: HashMap<TyVar, Symbol> = HashMap::new();
+            for (known, name) in info.var_names.iter().rev() {
+                names.insert(*known, *name);
+            }
+            for v in free_vars_in(ty) {
+                if mapping.contains_key(&v) {
+                    continue;
+                }
+                let (fresh, fresh_id) = self.fresh_tv();
+                mapping.insert(v, fresh);
+                if let Some(name) = names.get(&v) {
+                    method_rigid.push(RigidId {
+                        var: fresh_id,
+                        name: *name,
+                    });
+                }
+            }
+            declared_bounds = Self::bounds_under(info, method.name, &mapping);
+            // A `json.Decode` bound asks what this body asks of its
+            // variable; a note names the method `Src.load`.
+            let passer = intern(&format!("{target_type}.{}", method.name));
+            for pred in &mut declared_bounds {
+                if let Pred::Trait {
+                    subject: Type::Var(var),
+                    asker: Some(asker),
+                    ..
+                } = pred
+                {
+                    if let Asked::Bound(declared) = asker.by {
+                        self.bound_impls.entry(declared).or_default().push(*var);
+                    }
+                    *asker = Asker {
+                        by: Asked::Bound(*var),
+                        passer: Some(passer),
+                    };
+                }
+            }
+            substitute_vars(ty, &mapping)
+        });
+        let has_declared_type = seeded.is_some();
+        // Whether the trait declares the method with a receiver.
+        let declared_receiver = declared.map(|(info, _)| info.receivers.contains(&method.name));
+        let expected = seeded.as_ref().map(|ty| rigidify(ty, &method_rigid));
+        let (expected_params, expected_ret) = match &expected {
+            Some(Type::Fun(params, ret)) => (params.clone(), Some((**ret).clone())),
+            _ => (Vec::new(), None),
+        };
+
+        // An impl's method takes the dictionaries of the bounds the
+        // trait declares for it: past what a function has, it does
+        // not run.
+        let passed = (declared_bounds.iter())
+            .filter(|pred| super::evidence::passes_dictionary(pred))
+            .count();
+        self.refuse_past_bounds(method, method.params.len(), passed);
+
+        // What the impl writes. A part it leaves out is the declared
+        // one.
+        let applied = self.check_signature_kinds(method);
+        let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
+        let mut param_map = impl_names.clone();
+        let mut param_types = Vec::new();
+        for (i, param) in method.params.iter().enumerate() {
+            let ty = match param.kind {
+                ParamKind::Type => {
+                    let name = match &param.pattern.kind {
+                        PatternKind::Ident(n) => *n,
+                        _ => {
+                            unreachable!("parser guarantees `type` params use an Ident pattern")
+                        }
+                    };
+                    let var = self.type_param_var(&mut param_map, name, param.pattern.span);
+                    if let Type::Var(v) = var {
+                        self.valued_vars.insert(v);
+                    }
+                    Type::type_of(var)
+                }
+                ParamKind::Data => {
+                    if let Some(te) = &param.ty {
+                        self.resolve_type_expr(te, &mut param_map)
+                    } else if let Some(declared) = expected_params.get(i) {
+                        declared.clone()
+                    } else if i == 0
+                        && matches!(&param.pattern.kind, PatternKind::Ident(n) if *n == self_sym)
+                    {
+                        // Bare `self` of a method the trait does not
+                        // declare (reported above): the impl's type.
+                        body_self.clone()
+                    } else {
+                        self.fresh_var()
+                    }
+                }
+            };
+            param_types.push(ty);
+        }
+        let ret_type = match (&method.return_type, expected_ret) {
+            (Some(te), _) => self.resolve_type_expr(te, &mut param_map),
+            (None, Some(declared)) => declared,
+            (None, None) => self.fresh_var(),
+        };
+        self.resolving_signature = outer_signature;
+        self.remember_constructor_labels(applied, &param_map);
+        let written = Type::Fun(param_types, Box::new(ret_type));
+        // Where the two disagree, the body is checked against what
+        // the impl wrote, so the disagreement is reported once.
+        // (Whether the impl's method is no method of the trait's
+        // shape: its variables are then not the trait's, and its
+        // bounds are not compared with the trait's.)
+        let mut misshapen = false;
+        let body_type = match &expected {
+            // The impl writes the parameters the trait declares, the
+            // receiver among them: one more or one less is not a
+            // method of the trait.
+            Some(Type::Fun(declared, _)) if declared.len() != method.params.len() => {
+                self.impl_method_arity(ti, method, declared.len());
+                misshapen = true;
+                written
+            }
+            // And the receiver where the trait declares one, there
+            // only: `self` is no name for a parameter of a method
+            // that is called on the type.
+            Some(_) if declared_receiver.is_some_and(|takes| takes != writes_self(method)) => {
+                self.impl_method_receiver(ti, method);
+                misshapen = true;
+                written
+            }
+            Some(expected) => {
+                let unified = self.unify_types(&written, expected);
+                match unified {
+                    Ok(()) => {
+                        self.refuse_variables_the_trait_types(ti, method, &param_map, impl_names);
+                        expected.clone()
+                    }
+                    Err(mismatch) => {
+                        self.report_mismatch(mismatch, method.span);
+                        written
+                    }
+                }
+            }
+            None => written,
+        };
+        // Callers see the declared type.
+        let fn_type = match seeded {
+            Some(ty) => ty,
+            None => unrigidify(&self.apply(&body_type)).0,
+        };
+
+        // Two traits may each provide a method of one name for one
+        // type (two modules' `Show` for `Int`): each impl is kept, by
+        // its trait, and a call means the one whose trait the module
+        // of the call sees (`method_entry`); a call that
+        // sees both is ambiguous.
+
+        // What a use of the method owes: the bounds of the impl's
+        // header and the bounds the trait declares for the method.
+        // The method's own `where` clauses may restate these; one
+        // that adds a bound is an error below.
+        let passer = intern(&format!("{target_type}.{}", method.name));
+        let mut method_constraints =
+            Self::header_passed_to(impl_level_constraints, impl_trait, passer);
+        method_constraints.extend(declared_bounds);
+        // What the declared bounds say of each variable, supertraits
+        // included: made once, not once for each bound the method
+        // writes.
+        let mut declared_of: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>> = HashMap::new();
+        for pred in &method_constraints {
+            if let Pred::Trait {
+                tr,
+                args,
+                subject: Type::Var(var),
+                ..
+            } = pred
+            {
+                let said = declared_of.entry(*var).or_default();
+                self.bound_closure(said, *tr, args.clone());
+            }
+        }
+        for wc in &method.where_clauses {
+            // A bound the resolver resolved to nothing: it reported why.
+            if wc.trait_res == Some(crate::defs::Res::Error) {
+                continue;
+            }
+            let type_param = &wc.type_param;
+            let trait_args = &wc.trait_args;
+            let Some(trait_key) = self
+                .named_trait(wc.trait_res, wc.trait_name)
+                .filter(|t| self.tables.traits.contains_key(t))
+            else {
+                self.error(
+                    Code::UnknownTrait,
+                    format!(
+                        "unknown trait '{}' in where clause on '{}.{}'",
+                        resolve(wc.trait_name),
+                        resolve(ti.target_type),
+                        resolve(method.name)
+                    ),
+                    method.span,
+                );
+                continue;
+            };
+            let trait_name = &trait_key;
+            // The bound's arity must match the trait's declared
+            // param count (see check_where_bound_arity — it dedupes
+            // against the identical diagnostic the check of the
+            // method's body emits for the same span).
+            if !self.check_where_bound_arity(*trait_name, trait_args.len(), method.span) {
+                continue;
+            }
+            // Resolve the bound's trait args through the method's
+            // param_map (which sees both the impl-level binders
+            // and any method-local type annos). Empty for
+            // parameterless trait bounds. Without storing these
+            // alongside the (tv, trait) pair, downstream
+            // `verify_trait_obligation` would fall back to the
+            // bare "trait implemented" check — letting
+            // `where a: Conv(Int)` accept any `Conv(*) for ...`.
+            let resolved_bound_args: Vec<Type> = trait_args
+                .iter()
+                .map(|te| {
+                    let arg = self.resolve_type_expr(te, &mut param_map);
+                    unrigidify(&self.apply(&arg)).0
+                })
+                .collect();
+            match param_map.get(type_param) {
+                Some(ty) => {
+                    // The bound is on the variable as callers see
+                    // it: the one the rigid variable is in the
+                    // method's type.
+                    let bounded = match self.apply(ty) {
+                        Type::Var(tv) => Some(tv),
+                        Type::Rigid(r) => Some(r.var),
+                        _ => None,
+                    };
+                    if let Some(tv) = bounded {
+                        // The trait's signature is what a caller
+                        // through the trait knows: the impl's method
+                        // may restate a bound the trait or the impl's
+                        // header declares, not add one.
+                        let declared =
+                            self.bound_follows(&declared_of, tv, *trait_name, &resolved_bound_args);
+                        if !declared && has_declared_type && !misshapen {
+                            let of_trait_arg = (ti.trait_args.iter()).any(|te| {
+                                let mut vars = Vec::new();
+                                super::names::type_vars_of(te, &mut vars);
+                                vars.contains(type_param)
+                            });
+                            self.errors.push(
+                                Diagnostic::error(
+                                    Code::InvalidTraitImpl,
+                                    method.span,
+                                    format!(
+                                        "method '{}' of the impl of '{}' for '{}' adds the bound \
+                                         `{}: {}`, which the trait does not declare for it",
+                                        method.name,
+                                        self.impl_trait_name(ti),
+                                        self.impl_target_name(ti, target_type),
+                                        type_param,
+                                        self.show_bound(*trait_name, &resolved_bound_args)
+                                    ),
+                                )
+                                .with_help(match of_trait_arg {
+                                    // (A trait argument's bound is
+                                    // refused on the impl's header.)
+                                    true => format!(
+                                        "a call through the trait would not owe it: declare \
+                                         the bound on the method in trait '{}'",
+                                        self.impl_trait_name(ti)
+                                    ),
+                                    false => format!(
+                                        "a call through the trait would not owe it: declare \
+                                         the bound on the method in trait '{}', or on the \
+                                         impl's header",
+                                        self.impl_trait_name(ti)
+                                    ),
+                                }),
+                            );
+                            // (A bound refused beside the trait's
+                            // own bound of its trait is not the
+                            // method's: its body has the trait's,
+                            // and no second error comes of the two.)
+                            let of_trait = method_constraints.iter().any(|pred| {
+                                matches!(pred, Pred::Trait { tr, subject, .. }
+                                    if tr == trait_name && *subject == Type::Var(tv))
+                            });
+                            if of_trait {
+                                continue;
+                            }
+                        }
+                        method_constraints.push(Pred::bound(
+                            tv,
+                            *trait_name,
+                            resolved_bound_args.clone(),
+                        ));
+                        let said = declared_of.entry(tv).or_default();
+                        self.bound_closure(said, *trait_name, resolved_bound_args.clone());
+                    }
+                }
+                None => {
+                    self.where_not_introduced(
+                        method,
+                        *type_param,
+                        wc.trait_name,
+                        Some(ti.target_type),
+                    );
+                }
+            }
+        }
+
+        self.register_method_entry(
+            target_type,
+            method.name,
+            args_key,
+            MethodEntry {
+                method_type: fn_type,
+                structural: false,
+                trait_name: Some(trait_key),
+                preds: (method_constraints.iter().cloned())
+                    .chain(self.given_to(&method_rigid, impl_key, method.name))
+                    .collect(),
+            },
+        );
+
+        // What the body is checked against (`check_decl_bodies`).
+        // A self type that is a variable (an impl for every function
+        // or tuple) has the trait in the body: `self.other()` is
+        // the impl's own method.
+        let mut body_bounds = method_constraints;
+        if let Type::Var(var) = &self_type
+            && self.shape_vars.contains_key(var)
+        {
+            body_bounds.push(Pred::Trait {
+                tr: trait_key,
+                args: self
+                    .tables
+                    .impl_trait_args
+                    .get(&impl_key)
+                    .cloned()
+                    .unwrap_or_default(),
+                subject: self_type.clone(),
+                asker: None,
+            });
+        }
+        if let Type::Fun(params, ret) = body_type {
+            self.impl_sigs.insert(
+                (target_type, method.name, trait_key, args_key),
+                FnSig {
+                    params,
+                    ret: *ret,
+                    names: param_map,
+                    rigid: method_rigid,
+                    bounds: body_bounds,
+                    complete: true,
+                },
+            );
         }
     }
 
@@ -3382,7 +3435,7 @@ impl TypeChecker {
 
         // Construct the self_type. Three cases:
         //   1. Bare-target form (`trait X for Int`): target_type_args is
-        //      empty. For primitive types, fall through to type_from_name.
+        //      empty. For primitive types, fall through to `Type::named`.
         //      A generic type written bare (`trait X for Box`) is refused
         //      (`impl_header_fits`); what reads such an impl's header
         //      after sees its type with a fresh variable per parameter.
@@ -3466,12 +3519,11 @@ impl TypeChecker {
                     // `List(a)`: `self` is some function, to be handed
                     // on but not called, and not a function of any
                     // signature one may wish for.
+                    let container = Head::of(target_type);
                     match builtin_type_name(target_type) {
-                        Some("List") => Type::List(Box::new(self.fresh_var())),
-                        Some("Set") => Type::Set(Box::new(self.fresh_var())),
-                        Some("Channel") => Type::Channel(Box::new(self.fresh_var())),
-                        Some("Map") => {
-                            Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
+                        _ if let Some(arity) = container.container_arity() => {
+                            let args = (0..arity).map(|_| self.fresh_var()).collect();
+                            container.with_args(args).unwrap_or(Type::Error)
                         }
                         Some(shape @ ("Fn" | "Tuple")) => {
                             let (ty, var) = self.fresh_tv();
@@ -3482,7 +3534,7 @@ impl TypeChecker {
                             self.shape_vars.insert(var, about);
                             ty
                         }
-                        _ => Self::type_from_name(target_type),
+                        _ => Type::named(target_type, Vec::new()),
                     }
                 } else {
                     let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
@@ -3560,30 +3612,16 @@ impl TypeChecker {
                 crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
             } else {
                 match builtin_type_name(written).unwrap_or_default() {
-                    "List" if resolved_args.len() == 1 => {
-                        Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Set" if resolved_args.len() == 1 => {
-                        Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Channel" if resolved_args.len() == 1 => {
-                        Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Map" if resolved_args.len() == 2 => {
-                        let mut iter = resolved_args.into_iter();
-                        Type::Map(
-                            Box::new(iter.next().unwrap()),
-                            Box::new(iter.next().unwrap()),
-                        )
-                    }
                     // A tuple of the impl's arity: `(a, b)` of
                     // `Tuple(a, b)`, which a pair's type is.
                     "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
                     // A primitive takes no arguments (the error above
                     // says so): the impl is for the type itself, not a
                     // phantom `Int(_)` that no value has.
-                    _ if builtin_arity == Some(0) => Self::type_from_name(target_type),
-                    _ => Type::Generic(written, resolved_args),
+                    _ if builtin_arity == Some(0) => Type::named(target_type, Vec::new()),
+                    // A builtin container of its arity is its own
+                    // variant (`List(a)`), any other type `Generic`.
+                    _ => Type::container_or_generic(written, resolved_args),
                 }
             }
         };
