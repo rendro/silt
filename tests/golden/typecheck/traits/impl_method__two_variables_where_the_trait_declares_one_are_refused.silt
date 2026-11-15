@@ -1,9 +1,11 @@
 -- cmd: check
 -- exit: 1
--- Two type variables of an impl method where its trait declares one are
--- refused: they stand for one type only because the trait says so. The
--- help of a type the trait declares names its variables as the method
--- does (`List(b)`, where the trait writes `List(a)`).
+-- Two type variables of an impl method that stand for one type are
+-- refused: one where the trait declares one, the impl's header makes them
+-- one (`Pair(c, c)`, `Conv(b)`), or `Self` does (`Box(b)` and `Box(c)` for
+-- `Self`). The text says no more than that they are one type. The help of
+-- a type the trait declares names its variables as the method does
+-- (`List(b)`, where the trait writes `List(a)`).
 trait Pick { fn pick(self, x: t, y: t) -> t }
 
 trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }
@@ -11,6 +13,20 @@ trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }
 trait Wrap { fn wrap(self, x: a) -> List(a) }
 
 trait Wrap for Int { fn wrap(self, x: b) -> c { [x] } }
+
+trait Pair(a, b) { fn p(self, x: a, y: b) -> a }
+
+trait Pair(c, c) for Int { fn p(self, x: d, y: e) -> d { x } }
+
+trait Conv(a) { fn conv(self, x: a, y: a) -> a }
+
+trait Conv(b) for Int { fn conv(self, x: c, y: d) -> c { x } }
+
+type Box(a) { v: a }
+
+trait Same { fn same(self, o: Self) -> Bool }
+
+trait Same for Box(a) { fn same(self: Box(b), o: Box(c)) -> Bool { true } }
 
 fn main() {
   println((Pick.pick(1, 2, 3), Wrap.wrap(1, 2)))

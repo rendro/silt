@@ -3083,9 +3083,9 @@ impl TypeChecker {
     /// own (`fn mk(self) -> b`) where its trait declares a type (`->
     /// Int`): the two agree only because the variable takes the type,
     /// and a variable of a signature stands for any type. And refuse two
-    /// of its variables where the trait declares one (`x: a, y: b` for
-    /// `x: t, y: t`): they stand for one type only because the trait
-    /// says so. `names` are the variables of the method's signature,
+    /// of its variables that stand for one type (`x: a, y: b` for the
+    /// trait's `x: t, y: t`, or where the impl's header or `Self` makes
+    /// them one): they are one only because the trait says so. `names` are the variables of the method's signature,
     /// `impl_names` the impl header's. A type the help writes names the
     /// trait's variables as the method does (`List(b)` where the method
     /// calls the trait's `a` `b`).
@@ -3127,12 +3127,11 @@ impl TypeChecker {
                         (
                             format!(
                                 "method '{}' writes two type variables, `{first}` and `{name}`, \
-                                 where trait '{}' declares one",
-                                method.name, ti.trait_name
+                                 for one type",
+                                method.name
                             ),
                             Some(format!(
-                                "the trait gives both places one type: write `{first}` in both, \
-                                 as the trait does"
+                                "the two places take the same type here: write `{first}` in both"
                             )),
                         ),
                         at(self, var),
