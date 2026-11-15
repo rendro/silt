@@ -21,6 +21,7 @@
 //! `silt::FromValue`, `silt::HostIo`, `silt::IntoValue`, `silt::Output`,
 //! `silt::Tag`, `silt::Value`, `silt::Vm`, `silt::VmError`,
 //! `silt::session::Builtins`, `silt::session::Config`, `silt::session::Entry`,
+//! `silt::session::EntryPoint`, `silt::session::TestFn`, `silt::session::TestKind`,
 //! `silt::session::HostCall`, `silt::session::HostModule`,
 //! `silt::session::LockPolicy`, `silt::session::Program`,
 //! `silt::session::ProjectSetup` and `silt::session::Session`, with

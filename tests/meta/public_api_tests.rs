@@ -12,7 +12,8 @@ use std::path::Path;
 // is gone or moved.
 #[allow(unused_imports)]
 use silt::session::{
-    Builtins, Config, Entry, HostCall, HostModule, LockPolicy, Program, ProjectSetup, Session,
+    Builtins, Config, Entry, EntryPoint, HostCall, HostModule, LockPolicy, Program, ProjectSetup,
+    Session, TestFn, TestKind,
 };
 #[allow(unused_imports)]
 use silt::{Buffer, Clock, Exit, FromValue, HostIo, IntoValue, Output, Tag, Value, Vm, VmError};
@@ -33,12 +34,15 @@ const PROMISED: &[&str] = &[
     "silt::session::Builtins",
     "silt::session::Config",
     "silt::session::Entry",
+    "silt::session::EntryPoint",
     "silt::session::HostCall",
     "silt::session::HostModule",
     "silt::session::LockPolicy",
     "silt::session::Program",
     "silt::session::ProjectSetup",
     "silt::session::Session",
+    "silt::session::TestFn",
+    "silt::session::TestKind",
 ];
 
 fn guide() -> String {
@@ -641,19 +645,37 @@ fn promised_members() -> Vec<(String, String, bool)> {
 fn member_names(span: &str) -> Vec<String> {
     let modules = silt::testing::module::builtin_modules();
     let functions = silt::testing::module::builtin_free_function_names();
-    if span.contains(char::is_whitespace) {
-        return Vec::new();
-    }
+    // A span with a space (a line of a program, an output) names no bare
+    // member, but each name after a `.` or a `Type::` outside its quotes.
+    let unquoted: String;
+    let span = if span.contains(char::is_whitespace) {
+        let mut kept = String::new();
+        let mut quote: Option<char> = None;
+        for c in span.chars() {
+            match quote {
+                Some(q) if c == q => quote = None,
+                Some(_) => {}
+                None if c == '\'' || c == '"' => quote = Some(c),
+                None => kept.push(c),
+            }
+        }
+        unquoted = kept;
+        unquoted.as_str()
+    } else {
+        span
+    };
+    let spaced = span.contains(char::is_whitespace);
     let ident = |s: &str| -> String {
         s.chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
             .collect()
     };
     let bare = span.trim_end_matches("()");
-    if modules.contains(&bare) || functions.contains(&bare) {
+    if !spaced && (modules.contains(&bare) || functions.contains(&bare)) {
         return Vec::new();
     }
-    if !bare.is_empty()
+    if !spaced
+        && !bare.is_empty()
         && bare
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -728,4 +750,6 @@ fn the_member_names_of_a_code_span_are_read() {
     assert_eq!(member_names("task.deadline"), Vec::<String>::new());
     assert_eq!(member_names("print"), Vec::<String>::new());
     assert_eq!(member_names("'mylib.f' panicked"), Vec::<String>::new());
+    assert_eq!(member_names("session.graph(a, b)"), ["graph"]);
+    assert_eq!(member_names("let x = vm.settle()"), ["settle"]);
 }
