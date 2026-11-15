@@ -82,8 +82,8 @@ fn silt_help_lists_help_global_flag() {
 
 #[test]
 fn silt_verison_typo_suggests_version_flag() {
-    // Pre-fix the unknown-subcommand arm only searched the SUBCOMMANDS
-    // const, which has no entries starting with `-`, so a flag typo
+    // Pre-fix the unknown-subcommand arm only searched the list of
+    // commands (`COMMANDS`), which has no entries starting with `-`, so a flag typo
     // routed to "Unknown command" with no hint. `silt chek` correctly
     // suggested `check`; `silt --verison` should now do the same for
     // `--version`.

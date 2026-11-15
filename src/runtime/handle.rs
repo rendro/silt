@@ -1068,7 +1068,6 @@ impl TcpStreamHandle {
                 let _ = socket.shutdown(std::net::Shutdown::Both);
             }
             TcpIo::Tls {
-                both,
                 socket,
                 shutter,
                 shut,
@@ -1078,13 +1077,12 @@ impl TcpStreamHandle {
                 if let Some(shut) = shut {
                     shut.wake();
                 }
-                // What the TLS writer still buffers, if nobody is in
-                // it: a blocked read or write holds the lock, and
-                // waiting for it here would wait for the very thing
-                // this is to end.
-                if let Some(mut both) = both.try_lock() {
-                    let _ = std::io::Write::flush(&mut *both);
-                }
+                // (What the TLS writer still buffers is not flushed: a
+                // write flushes before it returns, so bytes are left only
+                // after a write that failed, and a flush of them is a
+                // write that blocks while the peer reads nothing, with no
+                // bound: a stop, and the end of a program that waits for
+                // it, would wait with it.)
                 #[allow(unused_mut)]
                 let mut other = socket.lock();
                 if let Some(other) = other.as_ref() {
@@ -2516,6 +2514,55 @@ mod tests {
             assert!(std::time::Instant::now() < limit, "the read still blocks");
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    /// A TLS connection whose writer still buffers bytes it cannot send
+    /// (a peer that reads nothing) is shut down at once: nothing is
+    /// flushed. FAIL on the base: the shutdown flushed what the writer
+    /// held, a write that waited here for the flush to be let go.
+    #[test]
+    fn a_tls_shut_down_waits_for_no_flush() {
+        struct HeldFlush {
+            sock: TcpStream,
+            release: std::sync::mpsc::Receiver<()>,
+        }
+        impl std::io::Read for HeldFlush {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.sock.read(buf)
+            }
+        }
+        impl std::io::Write for HeldFlush {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            // As a write to a peer that reads nothing waits: until the
+            // test lets it go.
+            fn flush(&mut self) -> std::io::Result<()> {
+                let _ = self.release.recv();
+                Ok(())
+            }
+        }
+        impl ReadWrite for HeldFlush {}
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let _peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (sock, _) = listener.accept().expect("accept");
+        let other = sock.try_clone().expect("clone");
+        let shutter = Shutter::default();
+        assert!(shutter.set(&sock));
+        let (let_go, release) = std::sync::mpsc::channel();
+        let conn = TcpStreamHandle::whole(0, &other, &shutter, move || {
+            Ok(Box::new(HeldFlush { sock, release }) as Box<dyn ReadWrite>)
+        })
+        .expect("a connection");
+        let (done, shut) = std::sync::mpsc::channel();
+        let closer = conn.clone();
+        std::thread::spawn(move || {
+            closer.shut_down();
+            let _ = done.send(());
+        });
+        let returned = shut.recv_timeout(std::time::Duration::from_secs(10));
+        drop(let_go);
+        assert!(returned.is_ok(), "the shutdown waited for the flush");
     }
 
     /// A task that is cancelled after it started an accept, and

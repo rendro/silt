@@ -1064,10 +1064,18 @@ impl TypeChecker {
         }
         // (The traits an impl's method of which asks something of what it
         // is given, or calls a trait method that may: a call on a type of
-        // another trait's method has nothing to place.)
-        let asking: std::collections::HashSet<TraitKey> = (self.tables.impl_methods.keys())
-            .filter(|key| {
-                (self.tables.impl_methods.get_at(key.0, key.1, key.2, key.3)).is_some_and(|entry| {
+        // another trait's method has nothing to place. Asked of the traits
+        // called here only, each once: a look at every impl of the
+        // session for each module's check made a chain of n modules with
+        // an impl each take time n squared.)
+        let mut asking: HashMap<TraitKey, bool> = HashMap::new();
+        let asks = |checker: &Self, tr: TraitKey| {
+            (checker.tables.impl_methods.of_trait(tr).iter()).any(|key| {
+                (checker
+                    .tables
+                    .impl_methods
+                    .get_at(key.0, key.1, key.2, key.3))
+                .is_some_and(|entry| {
                     (entry.preds.iter()).any(|pred| {
                         matches!(
                             pred,
@@ -1076,8 +1084,7 @@ impl TypeChecker {
                     })
                 })
             })
-            .map(|key| key.2)
-            .collect();
+        };
         for use_ in std::mem::take(&mut self.via_waiting) {
             // (A call on a type whose method asks nothing of what it is
             // given has nothing to place.)
@@ -1087,7 +1094,8 @@ impl TypeChecker {
                 Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never
             ) {
                 let need = &use_.need;
-                if !asking.contains(&need.tr)
+                let asked = *asking.entry(need.tr).or_insert_with(|| asks(self, need.tr));
+                if !asked
                     || self
                         .leaves(need.tr, need.method, &receiver, &need.method_ty)
                         .is_empty()
@@ -1131,10 +1139,7 @@ impl TypeChecker {
                 entry.preds = settled;
             }
         }
-        let own_traits: Vec<TraitKey> = (self.tables.traits.keys())
-            .filter(|key| self.tables.traits.is_own(key))
-            .copied()
-            .collect();
+        let own_traits: Vec<TraitKey> = self.tables.traits.own_keys().copied().collect();
         for key in own_traits {
             let Some(info) = self.tables.traits.get(&key) else {
                 continue;

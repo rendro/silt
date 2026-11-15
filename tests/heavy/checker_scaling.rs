@@ -467,6 +467,65 @@ fn a_chain_of_eight_times_the_modules_takes_at_most_ten_times_as_long() {
     }
 }
 
+/// A program of `n` modules in a chain beside its `main.silt`, where each
+/// module declares a trait with an impl and calls the trait method of
+/// the next module's: `m0` calls `m1.Heavy1.weight1(m1.mk())`, and so on.
+fn program_of_a_trait_chain(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    for i in 0..n {
+        let (import, call) = match i + 1 < n {
+            true => {
+                let j = i + 1;
+                (
+                    format!("import m{j}\n"),
+                    format!("m{j}.Heavy{j}.weight{j}(m{j}.mk())"),
+                )
+            }
+            false => (String::new(), "1".to_string()),
+        };
+        let module = format!(
+            "{import}pub type T {{ v: Int }}\n\
+             pub trait Heavy{i} {{ fn weight{i}(self) -> Int }}\n\
+             trait Heavy{i} for T {{ fn weight{i}(self) -> Int {{ self.v }} }}\n\
+             pub fn mk() -> T {{ T {{ v: 1 }} }}\n\
+             pub fn f() -> Int {{ {call} }}\n"
+        );
+        std::fs::write(dir.join(format!("m{i}.silt")), module).expect("a module is written");
+    }
+    let main = "import m0\n\nfn main() {\n  println(m0.f())\n}\n";
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// A chain of eight times the modules that call each other's trait
+/// methods takes at most eleven times as long to check, from 500 to
+/// 4,000: about seven and a half times. Each module's check looked at
+/// every trait and every impl of the session (for its own traits, and
+/// for the traits whose impls ask something of what they are given):
+/// eighteen times (debug build, rv-zc N18); now only at its own and at
+/// those it calls.
+#[test]
+fn a_chain_of_trait_calls_of_eight_times_the_modules_takes_at_most_eleven_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_trait_chain_{}",
+        std::process::id()
+    ));
+    let (small, large) = (500, 4_000);
+    for n in [small, large] {
+        program_of_a_trait_chain(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(11.0, || best_times(&main_of(large), &main_of(small), 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of a chain of {large} modules that call each other's trait methods \
+             took more than eleven times as long as that of one of {small} in each of three \
+             measurements ({}): a module's check looks at every trait or impl of the session",
+            shown(&over)
+        );
+    }
+}
+
 /// Four times the modules take about four times as long to check, from
 /// 250 to 1,000 and from 1,000 to 4,000: at most six times. (When every
 /// module's check read the whole session's tables, 1,000 modules took
@@ -501,4 +560,97 @@ fn checking_four_times_the_modules_takes_about_four_times_as_long() {
             );
         }
     }
+}
+
+/// A program of `n` top-level `let`s beside its `main.silt`, each
+/// reading the one before (`let a1 = a0 + 1`).
+fn program_of_a_let_chain(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    let mut main = String::from("let a0 = 1\n");
+    for i in 1..n {
+        main.push_str(&format!("let a{i} = a{} + 1\n", i - 1));
+    }
+    main.push_str(&format!("\nfn main() {{\n  println(a{})\n}}\n", n - 1));
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// A chain of four times the top-level `let`s, each reading the one
+/// before, takes at most twelve times as long to check, from 200 to
+/// 800: about seven times. The order of the `let`s kept the way to
+/// every `let` each one needs (n cubed in all) and searched for a ring
+/// from every `let` over all it needs (n cubed too): 800 took more than
+/// thirty times as long as 200 in a debug build, and a gigabyte
+/// (rv-a1b). The way is found again where a ring is reported, and a ring
+/// is searched for only from a `let` that reaches itself.
+#[test]
+fn a_chain_of_four_times_the_top_level_lets_takes_at_most_twelve_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_let_chain_{}",
+        std::process::id()
+    ));
+    let (small, large) = (200, 800);
+    for n in [small, large] {
+        program_of_a_let_chain(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(12.0, || best_times(&main_of(large), &main_of(small), 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of a chain of {large} top-level lets took more than twelve times as \
+             long as that of one of {small} in each of three measurements ({}): the order of \
+             the lets keeps or searches all each one needs for every let",
+            shown(&over)
+        );
+    }
+}
+
+/// The most memory `silt check` of `file` had resident, in kB.
+#[cfg(target_os = "linux")]
+fn check_peak_kb(file: &Path) -> i64 {
+    use std::process::Stdio;
+    // (`wait4` below reaps it, for the memory it had.)
+    #[allow(clippy::zombie_processes)]
+    let child = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("check")
+        .arg(file)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("silt runs");
+    let mut status = 0;
+    // SAFETY: an all-zero `rusage` is a valid value of it.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: the pid is of our child, not waited for yet; `status` and
+    // `usage` are valid for writes.
+    let waited = unsafe { libc::wait4(child.id() as libc::pid_t, &mut status, 0, &mut usage) };
+    assert_eq!(waited, child.id() as libc::pid_t);
+    assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
+    usage.ru_maxrss
+}
+
+/// The chain of 800 top-level `let`s takes at most three times the
+/// memory of the chain of 200 (about 1.2 times: the rest of the program
+/// is the same). The ways to every `let` each one needs took twenty times
+/// as much, a gigabyte (debug build, rv-a1b).
+#[test]
+#[cfg(target_os = "linux")]
+fn a_chain_of_four_times_the_top_level_lets_takes_at_most_three_times_the_memory() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_let_memory_{}",
+        std::process::id()
+    ));
+    let (small, large) = (200, 800);
+    for n in [small, large] {
+        program_of_a_let_chain(&dir.join(n.to_string()), n);
+    }
+    let peak = |n: usize| check_peak_kb(&dir.join(n.to_string()).join("main.silt"));
+    let (at_small, at_large) = (peak(small), peak(large));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        at_large <= 3 * at_small,
+        "`silt check` of a chain of {large} top-level lets had {at_large} kB resident, more than \
+         three times the {at_small} kB of one of {small}: the order of the lets keeps all each \
+         one needs for every let"
+    );
 }

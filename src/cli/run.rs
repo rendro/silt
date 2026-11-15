@@ -24,50 +24,7 @@ pub(crate) fn dispatch(args: &[String]) {
         print!("{}", run_help_text());
         process::exit(0);
     }
-    let mut file: Option<String> = None;
-    // Positionals after `--` are forwarded to the running
-    // program (surfaced via `io.args()`), not interpreted as silt CLI
-    // flags / files. This restores the ability to pass user args to
-    // scripts (e.g. `silt run text_stats.silt -- input.txt`) which
-    // the rejection of bare extra positionals had broken — there
-    // was no other channel to reach `io.args()`.
-    let mut program_args: Vec<String> = Vec::new();
-    let mut iter = args[2..].iter();
-    while let Some(arg) = iter.next() {
-        if arg == "--" {
-            // Everything past the separator is verbatim program args.
-            for rest in iter.by_ref() {
-                program_args.push(rest.clone());
-            }
-            break;
-        } else if arg.starts_with('-') {
-            let suggestion = match arg.as_str() {
-                "--h" | "-help" => " (did you mean --help?)",
-                _ => "",
-            };
-            eprintln!("error: silt run: unknown flag '{arg}'{suggestion}");
-            eprintln!("Run 'silt run --help' for usage.");
-            process::exit(1);
-        } else if file.is_none() {
-            file = Some(arg.clone());
-        } else {
-            // Reject extra positionals — `silt run` takes at most one
-            // file. Pre-fix the loop silently dropped subsequent
-            // positionals (only the first won), which made
-            // `silt run a.silt b.silt` look like it had run both files.
-            // Mirror the rejection pattern used by `silt update`,
-            // `silt repl`, `silt lsp`, and `silt add`.
-            //
-            // To forward args to the running program, use
-            // `--` as a separator (`silt run a.silt -- foo bar`).
-            eprintln!("error: silt run: unexpected extra argument '{arg}'");
-            eprintln!(
-                "If '{arg}' is meant for the program, separate it with '--' (e.g. 'silt run <file>.silt -- {arg}')."
-            );
-            eprintln!("Run 'silt run --help' for usage.");
-            process::exit(1);
-        }
-    }
+    let (file, program_args) = arguments(args);
     // Publish the forwarded args before compile/run so `io.args()`
     // sees them. Always set (even when empty) so a stale snapshot
     // from a prior in-process invocation doesn't leak through.
@@ -121,6 +78,58 @@ pub(crate) fn dispatch(args: &[String]) {
         },
     };
     vm_run_file(&file);
+}
+
+/// The file and the program's arguments of `silt run <args>` (`args[0]`
+/// is the binary, `args[1]` the command). A usage error (an unknown
+/// flag, a second file) ends the process with 1, before anything is
+/// read: also before `silt run --watch` watches.
+pub(crate) fn arguments(args: &[String]) -> (Option<String>, Vec<String>) {
+    let mut file: Option<String> = None;
+    // Positionals after `--` are forwarded to the running
+    // program (surfaced via `io.args()`), not interpreted as silt CLI
+    // flags / files. This restores the ability to pass user args to
+    // scripts (e.g. `silt run text_stats.silt -- input.txt`) which
+    // the rejection of bare extra positionals had broken — there
+    // was no other channel to reach `io.args()`.
+    let mut program_args: Vec<String> = Vec::new();
+    let mut iter = args[2..].iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--" {
+            // Everything past the separator is verbatim program args.
+            for rest in iter.by_ref() {
+                program_args.push(rest.clone());
+            }
+            break;
+        } else if arg.starts_with('-') {
+            let suggestion = match arg.as_str() {
+                "--h" | "-help" => " (did you mean --help?)",
+                _ => "",
+            };
+            eprintln!("error: silt run: unknown flag '{arg}'{suggestion}");
+            eprintln!("Run 'silt run --help' for usage.");
+            process::exit(1);
+        } else if file.is_none() {
+            file = Some(arg.clone());
+        } else {
+            // Reject extra positionals — `silt run` takes at most one
+            // file. Pre-fix the loop silently dropped subsequent
+            // positionals (only the first won), which made
+            // `silt run a.silt b.silt` look like it had run both files.
+            // Mirror the rejection pattern used by `silt update`,
+            // `silt repl`, `silt lsp`, and `silt add`.
+            //
+            // To forward args to the running program, use
+            // `--` as a separator (`silt run a.silt -- foo bar`).
+            eprintln!("error: silt run: unexpected extra argument '{arg}'");
+            eprintln!(
+                "If '{arg}' is meant for the program, separate it with '--' (e.g. 'silt run <file>.silt -- {arg}')."
+            );
+            eprintln!("Run 'silt run --help' for usage.");
+            process::exit(1);
+        }
+    }
+    (file, program_args)
 }
 
 /// Run a file using the bytecode VM (default path): the session analyses
