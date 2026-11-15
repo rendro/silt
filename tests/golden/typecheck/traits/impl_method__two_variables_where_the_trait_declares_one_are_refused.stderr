@@ -1,0 +1,13 @@
+error[type]: method 'pick' writes two type variables, `a` and `b`, where trait 'Pick' declares one
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:9:45
+   |
+ 9 | trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }
+   |                                             ^ method 'pick' writes two type variables, `a` and `b`, where trait 'Pick' declares one
+  = help: the trait gives both places one type: write `a` in both, as the trait does
+
+error[type]: method 'wrap' writes the type variable `c` where trait 'Wrap' declares `List(b)`
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:13:45
+    |
+ 13 | trait Wrap for Int { fn wrap(self, x: b) -> c { [x] } }
+    |                                             ^ method 'wrap' writes the type variable `c` where trait 'Wrap' declares `List(b)`
+  = help: a type variable stands for any type: write `List(b)`, as the trait does

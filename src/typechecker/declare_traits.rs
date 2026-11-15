@@ -3082,9 +3082,13 @@ impl TypeChecker {
     /// Refuse each type variable the impl method `method` writes of its
     /// own (`fn mk(self) -> b`) where its trait declares a type (`->
     /// Int`): the two agree only because the variable takes the type,
-    /// and a variable of a signature stands for any type. `names` are
-    /// the variables of the method's signature, `impl_names` the impl
-    /// header's.
+    /// and a variable of a signature stands for any type. And refuse two
+    /// of its variables where the trait declares one (`x: a, y: b` for
+    /// `x: t, y: t`): they stand for one type only because the trait
+    /// says so. `names` are the variables of the method's signature,
+    /// `impl_names` the impl header's. A type the help writes names the
+    /// trait's variables as the method does (`List(b)` where the method
+    /// calls the trait's `a` `b`).
     fn refuse_variables_the_trait_types(
         &mut self,
         ti: &TraitImpl,
@@ -3100,12 +3104,56 @@ impl TypeChecker {
             })
             .collect();
         own.sort_by_key(|(_, var)| self.var_written.get(var).map(|s| (s.start, s.end)));
+        let at = |checker: &Self, var: &TyVar| {
+            checker.var_written.get(var).copied().unwrap_or(method.span)
+        };
+        // The method's name for each variable of the trait it writes one
+        // for, the first written.
+        let mut written: HashMap<TyVar, Symbol> = HashMap::new();
+        for (name, var) in &own {
+            let variable = match self.apply(&Type::Var(*var)) {
+                Type::Var(v) => v,
+                Type::Rigid(r) => r.var,
+                _ => continue,
+            };
+            match written.get(&variable) {
+                None => {
+                    written.insert(variable, *name);
+                }
+                Some(first) => {
+                    let first = *first;
+                    self.error_help(
+                        Code::TypeMismatch,
+                        (
+                            format!(
+                                "method '{}' writes two type variables, `{first}` and `{name}`, \
+                                 where trait '{}' declares one",
+                                method.name, ti.trait_name
+                            ),
+                            Some(format!(
+                                "the trait gives both places one type: write `{first}` in both, \
+                                 as the trait does"
+                            )),
+                        ),
+                        at(self, var),
+                    );
+                }
+            }
+        }
+        let as_written = |ty: &Type| {
+            let rename = |var: TyVar| written.get(&var).map(|name| RigidId { var, name: *name });
+            let ty = map_rigid(ty, &mut |r| Type::Rigid(rename(r.var).unwrap_or(r)));
+            let vars: HashMap<TyVar, Type> = (written.keys())
+                .filter_map(|var| Some((*var, Type::Rigid(rename(*var)?))))
+                .collect();
+            substitute_vars(&ty, &vars)
+        };
         for (name, var) in own {
             let declared = self.apply(&Type::Var(var));
             if matches!(declared, Type::Var(_) | Type::Rigid(_) | Type::Error) {
                 continue;
             }
-            let declared = self.show_type(&declared);
+            let declared = self.show_type(&as_written(&declared));
             self.error_help(
                 Code::TypeMismatch,
                 (
@@ -3118,7 +3166,7 @@ impl TypeChecker {
                         "a type variable stands for any type: write `{declared}`, as the trait does"
                     )),
                 ),
-                self.var_written.get(&var).copied().unwrap_or(method.span),
+                at(self, &var),
             );
         }
     }

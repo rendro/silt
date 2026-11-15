@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- Two type variables of an impl method where its trait declares one are
+-- refused: they stand for one type only because the trait says so. The
+-- help of a type the trait declares names its variables as the method
+-- does (`List(b)`, where the trait writes `List(a)`).
+trait Pick { fn pick(self, x: t, y: t) -> t }
+
+trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }
+
+trait Wrap { fn wrap(self, x: a) -> List(a) }
+
+trait Wrap for Int { fn wrap(self, x: b) -> c { [x] } }
+
+fn main() {
+  println((Pick.pick(1, 2, 3), Wrap.wrap(1, 2)))
+}
