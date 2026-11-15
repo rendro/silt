@@ -193,7 +193,7 @@ fn round75_manifest_load_rejects_builtin_package_name() {
         &mut silt::testing::source::SourceMap::new(),
     )
     .expect_err("Manifest::load must reject builtin-colliding package name `io`");
-    let msg = err.message;
+    let msg = err.message();
     assert!(
         msg.contains("io"),
         "error should name the offending package: {msg}"

@@ -181,10 +181,8 @@ pub(crate) fn vm_run_file(path: &str) {
     // `error: <e>`, with no place of silt's (see `Vm::run_program`).
     // A `Display` impl of the `Err` that failed is told in a note under
     // the line.
-    let main_text = (run_result.as_ref().err()).map(|e| match &e.returned {
-        Some(text) => returned_err_text(e, text, &ProgramFiles::new(path, &sources)),
-        None => render_runtime_error(e, path, &sources),
-    });
+    let main_text =
+        (run_result.as_ref().err()).map(|e| e.render_in(&ProgramFiles::new(path, &sources)));
     let failed = tasks_failed || main_text.is_some();
     if failed {
         crate::scheduler::claim_program_failure();
@@ -200,20 +198,6 @@ pub(crate) fn vm_run_file(path: &str) {
     crate::scheduler::report_on_stderr(&report);
     if failed {
         crate::scheduler::exit_with_status(1);
-    }
-}
-
-/// The `Err` that `main` returned, as `silt run` writes it: the line
-/// `error: <text>`, and where the payload's `Display` impl failed and
-/// `text` is its structure, the line `note: <what failed>`.
-pub(crate) fn returned_err_text(
-    e: &VmError,
-    text: &str,
-    view: &dyn crate::diagnostic::SourceView,
-) -> String {
-    match &e.display_failure {
-        Some(failure) => format!("error: {text}\nnote: {}", failure.note(view)),
-        None => format!("error: {text}"),
     }
 }
 
@@ -287,12 +271,5 @@ fn task_failure_texts(path: &str, sources: &SourceMap) -> (Vec<String>, bool) {
 /// meaningful frame. `silt test` renders the failures of tasks with it as
 /// well.
 pub(crate) fn render_runtime_error(e: &VmError, path: &str, sources: &SourceMap) -> String {
-    let view = ProgramFiles::new(path, sources);
-    let mut d = e.to_diagnostic();
-    // (A test that returned an `Err` whose `Display` impl failed: what
-    // failed, as a note.)
-    if let Some(failure) = &e.display_failure {
-        d.notes.push(failure.note(&view));
-    }
-    render_human(&view, &d)
+    e.diagnostic_text(&ProgramFiles::new(path, sources))
 }

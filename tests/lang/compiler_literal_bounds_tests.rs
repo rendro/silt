@@ -28,7 +28,7 @@ fn try_compile(source: &str) -> Result<(), String> {
         .into_iter()
         .find(|d| d.is_error())
     {
-        Some(d) => Err(d.message),
+        Some(d) => Err(d.message().to_string()),
         None => Ok(()),
     }
 }

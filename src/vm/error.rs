@@ -181,6 +181,50 @@ impl VmError {
     /// The labels are the call stack, innermost frame first. An error
     /// with no span is about no place of the program, and has
     /// `Span::BUILTIN`.
+    /// The error as `silt run` prints it, its places read from the files
+    /// of `session`: the header, the place with its source line, and the
+    /// call stack when it has more than one frame; for a `main` that
+    /// returned `Err`, the one line `error: <text>` (and the note of its
+    /// `Display` impl where that failed).
+    pub fn render(&self, session: &crate::session::Session) -> String {
+        self.render_in(session.sources())
+    }
+
+    /// [`VmError::render`], the files named by `view`: what `silt run`
+    /// prints for the error that ended `main`.
+    pub(crate) fn render_in(&self, view: &dyn crate::diagnostic::SourceView) -> String {
+        match &self.returned {
+            Some(text) => self.returned_text(text, view),
+            None => self.diagnostic_text(view),
+        }
+    }
+
+    /// The `Err` that `main` returned, as `silt run` writes it: the line
+    /// `error: <text>`, and where the payload's `Display` impl failed and
+    /// `text` is its structure, the line `note: <what failed>`.
+    pub(crate) fn returned_text(
+        &self,
+        text: &str,
+        view: &dyn crate::diagnostic::SourceView,
+    ) -> String {
+        match &self.display_failure {
+            Some(failure) => format!("error: {text}\nnote: {}", failure.note(view)),
+            None => format!("error: {text}"),
+        }
+    }
+
+    /// The error as a diagnostic of `silt run` is printed, the files named
+    /// by `view`: the header, the place with its source line, then the
+    /// call stack when it has more than one meaningful frame; a `Display`
+    /// impl that failed (of a test that returned `Err`) as a note.
+    pub(crate) fn diagnostic_text(&self, view: &dyn crate::diagnostic::SourceView) -> String {
+        let mut d = self.to_diagnostic();
+        if let Some(failure) = &self.display_failure {
+            d.notes.push(failure.note(view));
+        }
+        crate::diagnostic::render_human(view, &d)
+    }
+
     pub(crate) fn to_diagnostic(&self) -> Diagnostic {
         let (head, rest) = match self.message.split_once('\n') {
             Some((head, rest)) => (head, Some(rest)),

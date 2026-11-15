@@ -2456,9 +2456,8 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
             continue;
         };
         let bound = match target {
-            crate::ast::ImportTarget::Module(name) | crate::ast::ImportTarget::Alias(_, name, _) => {
-                *name
-            }
+            crate::ast::ImportTarget::Module(name)
+            | crate::ast::ImportTarget::Alias(_, name, _) => *name,
             crate::ast::ImportTarget::Items(..) => continue,
         };
         if let Some(names::Binding::Module(id)) = scope.values.get(&bound)

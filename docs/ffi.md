@@ -43,7 +43,7 @@ let file = session.set_overlay(Path::new("main.silt"), source.to_string());
 // 3. Check it. Every static error is in the analysis.
 let analysis = session.analyze(file);
 for d in &analysis.diagnostics {
-    eprintln!("{}", d.message);
+    eprintln!("{}", d.message());
 }
 assert!(!analysis.has_errors());
 
@@ -738,6 +738,76 @@ fault of the program itself, a division by zero or a `panic`, keeps it
 match vm.run_program(&program) {
     Ok(()) => println!("the program ran to its end"),
     Err(e) => eprintln!("silt error: {}", e.message),
+}
+```
+
+### Showing errors as silt does
+
+The session hands out five more types, which a function of yours can
+take and a struct of yours can keep: `silt::session::{FileId, Span, SourceMap, Diagnostic, Severity}`.
+
+- `FileId` names a file of the session: what `session.set_overlay`
+  returns, and what `session.analyze` and `session.compile` take.
+- `Span` is a place, the bytes `start..end` of the file `file`: where a
+  diagnostic is (`d.span()`) and where a runtime error happened
+  (`e.span`).
+- `SourceMap` is what `session.sources()` returns, the text of every
+  file the session has read: `sources.line_col((span.file, span.start))`
+  is the line and the column, from 1, where a place starts.
+- `Diagnostic` is an error or a warning that the session found: an item
+  of `analysis.diagnostics`, and of the `Err` of `session.compile`. It
+  has a `message()` of one line, a `severity()`, a place (`span()`), its
+  `notes()`, and its help lines (`help(session.sources())`, a place in
+  them written as `main.silt:3:5`).
+- `Severity` is `Severity::Error`, which stops a program from being
+  compiled, or `Severity::Warning`, which does not.
+
+`session.render(&d)` is the diagnostic as `silt check` prints it: the
+header, the place with its line of source and a caret, then its other
+places, notes and help. `e.render(&session)` is a runtime error as
+`silt run` prints it: the header, the place with its line of source,
+and the call stack; for a `main` that returned `Err`, the one line
+`error: <text>`. Both come from the code the `silt` command prints
+with, and use colour as it does: only where stderr is a terminal, and
+never with `NO_COLOR` set.
+
+```rust
+use silt::VmError;
+use silt::session::{Diagnostic, FileId, Session, Severity, SourceMap, Span};
+
+/// Where `span` starts: its line and column, from 1.
+fn place(sources: &SourceMap, span: Span) -> (u32, u32) {
+    sources.line_col((span.file, span.start))
+}
+
+/// The diagnostic in one line of your own: `2:16 error: type mismatch: ...`.
+fn one_line(session: &Session, d: &Diagnostic) -> String {
+    let (line, col) = place(session.sources(), d.span());
+    let word = match d.severity() {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+    };
+    let mut text = format!("{line}:{col} {word}: {}", d.message());
+    for note in d.notes() {
+        text += &format!(" (note: {note})");
+    }
+    for help in d.help(session.sources()) {
+        text += &format!(" (help: {help})");
+    }
+    text
+}
+
+/// What `silt check` prints for `file`, and whether it found an error.
+fn check(session: &mut Session, file: FileId) -> (String, bool) {
+    let diagnostics: Vec<Diagnostic> = session.analyze(file).diagnostics.clone();
+    let text: Vec<String> = diagnostics.iter().map(|d| session.render(d)).collect();
+    let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
+    (text.join("\n"), failed)
+}
+
+/// What `silt run` prints for the error that ended the program.
+fn report(session: &Session, e: &VmError) -> String {
+    e.render(session)
 }
 ```
 

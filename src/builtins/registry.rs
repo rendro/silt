@@ -724,10 +724,7 @@ pub type Option(a) { Some(a), None }
 /// [`is_prelude_name`]: crate::types::builtins::is_prelude_name
 pub(crate) fn is_prelude_type(name: &str) -> bool {
     (crate::types::builtins::is_prelude_name(name) && name != "()")
-        || registry()
-            .prelude_types
-            .iter()
-            .any(|ty| ty.name == name)
+        || registry().prelude_types.iter().any(|ty| ty.name == name)
 }
 
 /// Every builtin module, and what is derived from all of them at once.

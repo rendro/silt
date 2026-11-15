@@ -931,7 +931,8 @@ fn report_private_in_public(
 /// a builtin type that no builtin module declares, or `Option` and
 /// `Result`. The bare name is the type.
 fn prelude_type_help(name: &str) -> Option<String> {
-    crate::builtins::registry::is_prelude_type(name).then(|| format!("`{name}` is in the prelude: write `{name}` without a module"))
+    crate::builtins::registry::is_prelude_type(name)
+        .then(|| format!("`{name}` is in the prelude: write `{name}` without a module"))
 }
 
 /// `import m.{ item }` where `m` does not offer `item`.

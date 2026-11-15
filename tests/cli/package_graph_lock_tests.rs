@@ -137,10 +137,12 @@ fn an_unpinned_git_dependency_is_stale_when_the_lock_is_read_only() {
     let errors = resolve_packages(&ws, LockPolicy::ReadOnly, &mut sources)
         .expect_err("an unpinned dependency under a read-only lock is an error");
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::LockfileStale, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::LockfileStale, "{errors:?}");
     assert!(
-        errors[0].message.contains("`remote`")
-            && errors[0].message.ends_with("it has no pin for this source"),
+        errors[0].message().contains("`remote`")
+            && errors[0]
+                .message()
+                .ends_with("it has no pin for this source"),
         "{errors:?}"
     );
 }

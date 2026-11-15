@@ -11,7 +11,7 @@ fn type_errors(input: &str) -> Vec<String> {
     silt::testing::check_str(input)
         .into_iter()
         .filter(|d| d.is_error())
-        .map(|d| d.message)
+        .map(|d| d.message().to_string())
         .collect()
 }
 

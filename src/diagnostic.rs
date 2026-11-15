@@ -16,6 +16,8 @@ use crate::source::{SourceMap, SourceName, Span};
 
 // ── Severity, phase, code ───────────────────────────────────────────
 
+/// Whether a [`Diagnostic`] is an error, which stops a program from
+/// running, or a warning, which does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Severity {
     Error,
@@ -300,30 +302,91 @@ pub struct Fix {
     pub edits: Vec<(Span, String)>,
 }
 
+/// An error or a warning that silt found in a program: what an analysis
+/// lists and what `Session::compile` refuses a program for. An embedder
+/// reads it by its methods (its message, severity, place, notes and
+/// help) and prints it as `silt check` does with `Session::render`; its
+/// code and its quick fixes are the crate's own.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Diagnostic {
-    pub code: Code,
-    pub severity: Severity,
+    pub(crate) code: Code,
+    pub(crate) severity: Severity,
     /// Where the problem is. Every diagnostic has one.
-    pub span: Span,
+    pub(crate) span: Span,
     /// One line: what is wrong.
-    pub message: String,
+    pub(crate) message: String,
     /// Other places that matter, each with what it is: "first bound here".
     /// The labels of a runtime error are its call stack, innermost frame
     /// first, each labelled with the function's name.
-    pub labels: Vec<(Span, String)>,
-    pub notes: Vec<String>,
-    pub help: Vec<String>,
+    pub(crate) labels: Vec<(Span, String)>,
+    pub(crate) notes: Vec<String>,
+    pub(crate) help: Vec<String>,
     /// The help lines that name a place: the line at the index has
     /// `{at}` where the place of the span is shown, as a frame of a
     /// call stack is (`file:line:col`). The place is known only where
     /// the diagnostic is shown, to the [`SourceView`].
-    pub help_at: Box<[(usize, Span)]>,
-    pub fixes: Vec<Fix>,
+    pub(crate) help_at: Box<[(usize, Span)]>,
+    pub(crate) fixes: Vec<Fix>,
 }
 
 impl Diagnostic {
-    pub fn new(code: Code, severity: Severity, span: Span, message: impl Into<String>) -> Self {
+    /// What is wrong, in one line: `type mismatch: expected Int, got
+    /// String`.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Whether it is an error or a warning.
+    pub fn severity(&self) -> Severity {
+        self.severity
+    }
+
+    /// Where the problem is: every diagnostic has a place.
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    /// The notes under the message, one line each.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    /// What to do about it, one line each, a place in a line written as
+    /// `sources` names it (`main.silt:3:5`).
+    pub fn help(&self, sources: &SourceMap) -> Vec<String> {
+        self.help_lines(sources)
+    }
+
+    /// The diagnostic's code (for the tests).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn code(&self) -> Code {
+        self.code
+    }
+
+    /// The other places that matter, each with what it is (for the tests).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn labels(&self) -> &[(Span, String)] {
+        &self.labels
+    }
+
+    /// The quick fixes (for the tests).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fixes(&self) -> &[Fix] {
+        &self.fixes
+    }
+
+    /// The help lines as written, a place as `{at}` (for the tests).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn help_as_written(&self) -> &[String] {
+        &self.help
+    }
+
+    pub(crate) fn new(
+        code: Code,
+        severity: Severity,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Self {
         let message = message.into();
         debug_assert!(
             !message.contains('\n'),
@@ -348,32 +411,32 @@ impl Diagnostic {
         }
     }
 
-    pub fn error(code: Code, span: Span, message: impl Into<String>) -> Self {
+    pub(crate) fn error(code: Code, span: Span, message: impl Into<String>) -> Self {
         Diagnostic::new(code, Severity::Error, span, message)
     }
 
-    pub fn warning(code: Code, span: Span, message: impl Into<String>) -> Self {
+    pub(crate) fn warning(code: Code, span: Span, message: impl Into<String>) -> Self {
         Diagnostic::new(code, Severity::Warning, span, message)
     }
 
-    pub fn with_label(mut self, span: Span, label: impl Into<String>) -> Self {
+    pub(crate) fn with_label(mut self, span: Span, label: impl Into<String>) -> Self {
         self.labels.push((span, label.into()));
         self
     }
 
-    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+    pub(crate) fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
     }
 
-    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+    pub(crate) fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help.push(help.into());
         self
     }
 
     /// The help lines as `view` shows them: each that names a place
     /// ([`Diagnostic::help_at`]) with the place in it.
-    pub fn help_lines(&self, view: &dyn SourceView) -> Vec<String> {
+    pub(crate) fn help_lines(&self, view: &dyn SourceView) -> Vec<String> {
         let mut lines = self.help.clone();
         for (index, span) in &self.help_at {
             if let Some(line) = lines.get_mut(*index) {
@@ -383,7 +446,7 @@ impl Diagnostic {
         lines
     }
 
-    pub fn with_fix(mut self, title: impl Into<String>, edits: Vec<(Span, String)>) -> Self {
+    pub(crate) fn with_fix(mut self, title: impl Into<String>, edits: Vec<(Span, String)>) -> Self {
         self.fixes.push(Fix {
             title: title.into(),
             edits,
@@ -399,7 +462,7 @@ impl Diagnostic {
         self.severity == Severity::Warning
     }
 
-    pub fn phase(&self) -> Phase {
+    pub(crate) fn phase(&self) -> Phase {
         self.code.phase()
     }
 }

@@ -30,17 +30,21 @@ use crate::ast;
 use crate::bytecode::Globals;
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
 use crate::defs::{DefTable, ModuleId};
-use crate::diagnostic::{Code, Diagnostic};
+use crate::diagnostic::Code;
 use crate::intern::{Symbol, intern, resolve};
 use crate::program::ENTRY_POINT;
-use crate::source::{FileId, SourceMap, SourceName};
+use crate::source::SourceName;
 use crate::typechecker::names::{self, Imported, ModuleKind};
 use crate::typechecker::{self, ModuleContext, Tables};
 #[cfg(feature = "repl")]
 use crate::types::Type;
 use crate::value::HostFn;
 
+// What a session hands out: a file's id, a place, the files read, and
+// what an analysis finds.
+pub use crate::diagnostic::{Diagnostic, Severity};
 pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
+pub use crate::source::{FileId, SourceMap, Span};
 pub use crate::value::HostCall;
 pub(crate) use analysis::ModuleAnalysis;
 // For `silt test` (crate::cli, which a WebAssembly build has not).
@@ -274,14 +278,19 @@ impl Session {
         let written = |module: ModuleId| analysis.modules_written.get(&module);
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
             Some((_, None)) => None,
-            Some((_, Some(module))) => Some(
-                match ModuleId::builtin(module).and_then(written) {
-                    Some(written) => written.type_name(r.name),
-                    None => format!("{module}.{}", r.name),
-                },
-            ),
+            Some((_, Some(module))) => Some(match ModuleId::builtin(module).and_then(written) {
+                Some(written) => written.type_name(r.name),
+                None => format!("{module}.{}", r.name),
+            }),
             None => written(self.defs.get(r.id.0).module).map(|w| w.type_name(r.name)),
         }
+    }
+
+    /// `diagnostic` as `silt check` prints it, its places read from the
+    /// session's files: the header, the place with its source line and a
+    /// caret, the other places, the notes and the help.
+    pub fn render(&self, diagnostic: &Diagnostic) -> String {
+        crate::diagnostic::render_human(&self.sources, diagnostic)
     }
 
     /// The text of every file the session has read.

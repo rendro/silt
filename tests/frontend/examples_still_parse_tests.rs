@@ -16,7 +16,7 @@ fn parse_ok(input: &str) -> Result<(), String> {
     Parser::new(tokens, input)
         .parse_program()
         .map(|_| ())
-        .map_err(|e| e.message)
+        .map_err(|e| e.message().to_string())
 }
 
 // ────────────────────────────────────────────────────────────────────

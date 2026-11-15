@@ -6,7 +6,7 @@ use silt::testing::diagnostic::{Code, Diagnostic};
 
 /// `text` with the edits of the first fix of `d` applied.
 fn fixed(text: &str, d: &Diagnostic) -> String {
-    let fix = d.fixes.first().expect("the warning has a quick fix");
+    let fix = d.fixes().first().expect("the warning has a quick fix");
     let mut edits = fix.edits.clone();
     edits.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
     let mut out = text.to_string();
@@ -20,7 +20,7 @@ fn fixed(text: &str, d: &Diagnostic) -> String {
 fn warnings(text: &str, code: Code) -> Vec<Diagnostic> {
     check_str(text)
         .into_iter()
-        .filter(|d| d.code == code)
+        .filter(|d| d.code() == code)
         .collect()
 }
 
@@ -29,7 +29,7 @@ fn removing_an_unused_import_removes_its_line() {
     let text = "import list\nimport string\n\nfn main() {\n  println(string.length(\"ab\"))\n}\n";
     let found = warnings(text, Code::UnusedImport);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].fixes[0].title, "remove the line `import list`");
+    assert_eq!(found[0].fixes()[0].title, "remove the line `import list`");
     let after = fixed(text, &found[0]);
     assert_eq!(
         after,
@@ -56,7 +56,7 @@ fn removing_an_unused_item_keeps_the_others() {
     ] {
         let found = warnings(text, Code::UnusedImport);
         assert_eq!(found.len(), 1, "{text}: {found:?}");
-        assert_eq!(found[0].fixes[0].title, "remove `trim` from the import");
+        assert_eq!(found[0].fixes()[0].title, "remove `trim` from the import");
         let fixed_text = fixed(text, &found[0]);
         assert_eq!(fixed_text, after);
         assert!(check_str(&fixed_text).is_empty(), "{fixed_text}");

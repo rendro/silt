@@ -70,18 +70,18 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
         );
         for (idx, err) in errors.iter().enumerate() {
             assert!(
-                !err.message.is_empty(),
+                !err.message().is_empty(),
                 "corpus seed {:?} produced empty-message diagnostic #{}",
                 entry.path(),
                 idx
             );
             assert!(
-                err.span.end as usize <= s.len(),
+                err.span().end as usize <= s.len(),
                 "corpus seed {:?} produced diagnostic #{} with \
                  span end {} > source len {}",
                 entry.path(),
                 idx,
-                err.span.end,
+                err.span().end,
                 s.len()
             );
         }

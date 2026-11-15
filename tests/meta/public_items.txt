@@ -418,7 +418,6 @@ src/defs.rs: pub struct TraitId
 src/defs.rs: pub struct TypeId
 src/defs.rs: pub variants
 src/defs.rs: pub vis
-src/diagnostic.rs: pub code
 src/diagnostic.rs: pub col
 src/diagnostic.rs: pub const ALL
 src/diagnostic.rs: pub edits
@@ -428,34 +427,26 @@ src/diagnostic.rs: pub enum Code
 src/diagnostic.rs: pub enum Phase
 src/diagnostic.rs: pub enum Severity
 src/diagnostic.rs: pub file
-src/diagnostic.rs: pub fixes
-src/diagnostic.rs: pub fn error
-src/diagnostic.rs: pub fn help_lines
+src/diagnostic.rs: pub fn code
+src/diagnostic.rs: pub fn fixes
+src/diagnostic.rs: pub fn help
+src/diagnostic.rs: pub fn help_as_written
 src/diagnostic.rs: pub fn id
 src/diagnostic.rs: pub fn is_error
 src/diagnostic.rs: pub fn is_warning
-src/diagnostic.rs: pub fn new
-src/diagnostic.rs: pub fn phase
+src/diagnostic.rs: pub fn labels
+src/diagnostic.rs: pub fn message
+src/diagnostic.rs: pub fn notes
 src/diagnostic.rs: pub fn phase
 src/diagnostic.rs: pub fn position
 src/diagnostic.rs: pub fn render_human
 src/diagnostic.rs: pub fn severity
-src/diagnostic.rs: pub fn warning
-src/diagnostic.rs: pub fn with_fix
-src/diagnostic.rs: pub fn with_help
-src/diagnostic.rs: pub fn with_label
-src/diagnostic.rs: pub fn with_note
+src/diagnostic.rs: pub fn severity
+src/diagnostic.rs: pub fn span
 src/diagnostic.rs: pub fn word
-src/diagnostic.rs: pub help
-src/diagnostic.rs: pub help_at
-src/diagnostic.rs: pub labels
 src/diagnostic.rs: pub line
 src/diagnostic.rs: pub line_text
-src/diagnostic.rs: pub message
-src/diagnostic.rs: pub notes
 src/diagnostic.rs: pub position
-src/diagnostic.rs: pub severity
-src/diagnostic.rs: pub span
 src/diagnostic.rs: pub struct Diagnostic
 src/diagnostic.rs: pub struct Fix
 src/diagnostic.rs: pub struct Located
@@ -714,6 +705,7 @@ src/playground.rs: pub fn in_print_order
 src/playground.rs: pub fn render_diagnostic
 src/playground.rs: pub fn returned
 src/playground.rs: pub fn tokens
+src/playground.rs: pub fn with_note
 src/playground.rs: pub use crate::diagnostic::Diagnostic
 src/playground.rs: pub use crate::diagnostic::Severity
 src/playground.rs: pub use crate::format::format
@@ -999,6 +991,7 @@ src/session/mod.rs: pub fn analyze
 src/session/mod.rs: pub fn compile
 src/session/mod.rs: pub fn has_errors
 src/session/mod.rs: pub fn new
+src/session/mod.rs: pub fn render
 src/session/mod.rs: pub fn set_overlay
 src/session/mod.rs: pub fn sources
 src/session/mod.rs: pub host
@@ -1008,10 +1001,15 @@ src/session/mod.rs: pub project
 src/session/mod.rs: pub struct Analysis
 src/session/mod.rs: pub struct Config
 src/session/mod.rs: pub struct Session
+src/session/mod.rs: pub use crate::diagnostic::Diagnostic
+src/session/mod.rs: pub use crate::diagnostic::Severity
 src/session/mod.rs: pub use crate::program::EntryPoint
 src/session/mod.rs: pub use crate::program::Program
 src/session/mod.rs: pub use crate::program::TestFn
 src/session/mod.rs: pub use crate::program::TestKind
+src/session/mod.rs: pub use crate::source::FileId
+src/session/mod.rs: pub use crate::source::SourceMap
+src/session/mod.rs: pub use crate::source::Span
 src/session/mod.rs: pub use crate::value::HostCall
 src/session/mod.rs: pub use host::HostModule
 src/session/mod.rs: pub use packages::LockPolicy
@@ -1385,6 +1383,7 @@ src/vm/error.rs: pub display_failure
 src/vm/error.rs: pub exit
 src/vm/error.rs: pub fn new
 src/vm/error.rs: pub fn note
+src/vm/error.rs: pub fn render
 src/vm/error.rs: pub message
 src/vm/error.rs: pub message
 src/vm/error.rs: pub out_of_steps

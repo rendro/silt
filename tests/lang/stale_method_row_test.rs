@@ -32,7 +32,7 @@ fn c_after_b_drops_its_trait(b_first: bool) -> Vec<String> {
         .analyze(c)
         .diagnostics
         .iter()
-        .map(|d| d.message.clone())
+        .map(|d| d.message().to_string())
         .collect()
 }
 

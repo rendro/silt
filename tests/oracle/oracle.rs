@@ -775,7 +775,7 @@ fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), (Verdict, Str
     };
     let first = |diagnostics: &[silt::testing::diagnostic::Diagnostic]| {
         let error = diagnostics.iter().find(|d| d.is_error());
-        error.map(|d| d.message.clone()).unwrap_or_default()
+        error.map(|d| d.message().to_string()).unwrap_or_default()
     };
 
     let (mut session, entry) = match open(source) {
@@ -792,9 +792,9 @@ fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), (Verdict, Str
         Err(errors) => {
             let bug = errors
                 .iter()
-                .find(|d| d.code == Code::CompilerBug || d.message.starts_with("internal"));
+                .find(|d| d.code() == Code::CompilerBug || d.message().starts_with("internal"));
             return match bug {
-                Some(bug) => finding(Kind::CompilerBug, bug.message.clone()),
+                Some(bug) => finding(Kind::CompilerBug, bug.message().to_string()),
                 None => not_run(NotRun::NotCompiled, first(&errors)),
             };
         }

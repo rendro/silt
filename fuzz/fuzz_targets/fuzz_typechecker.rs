@@ -58,16 +58,16 @@ fuzz_target!(|data: &[u8]| {
     let src_len = s.len();
     for (idx, err) in errors.iter().enumerate() {
         assert!(
-            !err.message.is_empty(),
+            !err.message().is_empty(),
             "diagnostic #{idx} has empty message: {err:?}"
         );
         assert!(
-            err.span.end as usize <= src_len,
+            err.span().end as usize <= src_len,
             "diagnostic #{idx} span end {} exceeds source length {} \
              (message: {:?})",
-            err.span.end,
+            err.span().end,
             src_len,
-            err.message
+            err.message()
         );
     }
 });

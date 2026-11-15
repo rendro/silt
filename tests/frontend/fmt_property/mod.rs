@@ -55,7 +55,7 @@ pub enum Formatted {
 fn format(source: &str) -> Formatted {
     match silt::testing::format::format(FileId::default(), source) {
         Ok(text) => Formatted::Ok(text),
-        Err(e) if e.code == Code::FormatRefused => Formatted::Refused(e.message),
+        Err(e) if e.code() == Code::FormatRefused => Formatted::Refused(e.message().to_string()),
         Err(_) => Formatted::Unparseable,
     }
 }

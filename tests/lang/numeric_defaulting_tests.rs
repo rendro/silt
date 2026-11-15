@@ -65,7 +65,7 @@ fn errors_only(
     errs: &[silt::testing::diagnostic::Diagnostic],
 ) -> Vec<&silt::testing::diagnostic::Diagnostic> {
     errs.iter()
-        .filter(|e| e.severity == Severity::Error)
+        .filter(|e| e.severity() == Severity::Error)
         .collect()
 }
 
@@ -93,6 +93,6 @@ fn main() {
     assert!(
         real_errors.is_empty(),
         "let-bound arithmetic template must stay polymorphic across Int & Float callers: {:?}",
-        real_errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        real_errors.iter().map(|e| e.message()).collect::<Vec<_>>()
     );
 }

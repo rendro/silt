@@ -12,8 +12,8 @@ use std::path::Path;
 // is gone or moved.
 #[allow(unused_imports)]
 use silt::session::{
-    Builtins, Config, Entry, EntryPoint, HostCall, HostModule, LockPolicy, Program, ProjectSetup,
-    Session, TestFn, TestKind,
+    Builtins, Config, Diagnostic, Entry, EntryPoint, FileId, HostCall, HostModule, LockPolicy,
+    Program, ProjectSetup, Session, Severity, SourceMap, Span, TestFn, TestKind,
 };
 #[allow(unused_imports)]
 use silt::{Buffer, Clock, Exit, FromValue, HostIo, IntoValue, Output, Tag, Value, Vm, VmError};
@@ -33,14 +33,19 @@ const PROMISED: &[&str] = &[
     "silt::VmError",
     "silt::session::Builtins",
     "silt::session::Config",
+    "silt::session::Diagnostic",
     "silt::session::Entry",
     "silt::session::EntryPoint",
+    "silt::session::FileId",
     "silt::session::HostCall",
     "silt::session::HostModule",
     "silt::session::LockPolicy",
     "silt::session::Program",
     "silt::session::ProjectSetup",
     "silt::session::Session",
+    "silt::session::Severity",
+    "silt::session::SourceMap",
+    "silt::session::Span",
     "silt::session::TestFn",
     "silt::session::TestKind",
 ];

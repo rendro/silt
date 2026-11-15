@@ -19,6 +19,7 @@ mod error_tests;
 mod examples_check;
 // (The blocks are the guide's, as written there: not reformatted.)
 #[rustfmt::skip]
+mod embedder_render_tests;
 mod ffi_doc_blocks_tests;
 mod fs_walk_stat_tests;
 mod fuzz_corpus_presence_tests;

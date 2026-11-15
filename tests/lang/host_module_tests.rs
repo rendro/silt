@@ -86,21 +86,21 @@ fn wrong_argument_type_is_a_type_error_at_check_time() {
         mylib(),
     );
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::TypeMismatch, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::TypeMismatch, "{errors:?}");
 }
 
 #[test]
 fn wrong_arity_is_a_type_error_at_check_time() {
     let errors = errors("import mylib\nfn main() { mylib.add(1) }", mylib());
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].message.contains("argument"), "{errors:?}");
+    assert!(errors[0].message().contains("argument"), "{errors:?}");
 }
 
 #[test]
 fn undeclared_host_function_is_unknown_at_check_time() {
     let errors = errors("import mylib\nfn main() { mylib.triple(3) }", mylib());
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::NotExported, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::NotExported, "{errors:?}");
 }
 
 #[test]
@@ -276,12 +276,12 @@ fn bad_signatures_are_reported() {
         // Reported whether or not the program imports the module.
         let errors = errors("fn main() { let _ = 1 }", host);
         assert!(
-            errors.iter().any(|e| e.message.contains(expected)),
+            errors.iter().any(|e| e.message().contains(expected)),
             "{signature}: {errors:?}"
         );
         // `_` is no type variable, in the return type as in a parameter.
         if signature.contains("_") {
-            let variable = errors.iter().any(|e| e.message.contains("variable '_"));
+            let variable = errors.iter().any(|e| e.message().contains("variable '_"));
             assert!(!variable, "{signature}: {errors:?}");
         }
     }
@@ -298,10 +298,10 @@ fn a_return_only_type_variable_is_refused() {
         any,
     );
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::HostSignature, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::HostSignature, "{errors:?}");
     assert!(
         errors[0]
-            .message
+            .message()
             .contains("type variable 'a' in the return type of the host function `any`"),
         "{errors:?}"
     );
@@ -344,17 +344,17 @@ fn a_type_of_around_more_than_a_variable_is_refused() {
         let errors = errors("fn main() { let _ = 1 }", host);
         assert_eq!(errors.len(), 1, "{signature}: {errors:?}");
         assert_eq!(
-            errors[0].code,
+            errors[0].code(),
             Code::HostSignature,
             "{signature}: {errors:?}"
         );
         assert!(
             errors[0]
-                .message
+                .message()
                 .contains(&format!("takes a type as `{written}`")),
             "{signature}: {errors:?}"
         );
-        let help = errors[0].help.join("\n");
+        let help = errors[0].help_as_written().join("\n");
         assert!(help.contains("take `type a`"), "{signature}: {errors:?}");
     }
     for signature in [
@@ -373,7 +373,7 @@ fn a_signature_that_does_not_parse_is_reported_once() {
     let host = HostModule::new("h").function("fn (", |_: &HostCall| Ok(Value::Unit));
     let errors = errors("fn main() { let _ = 1 }", host);
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(!errors[0].message.contains("no body"), "{errors:?}");
+    assert!(!errors[0].message().contains("no body"), "{errors:?}");
 }
 
 #[test]
@@ -381,9 +381,9 @@ fn typed_function_arity_must_match_the_signature() {
     let host = HostModule::new("h").fn1("fn arity() -> Int", |x: i64| x);
     let errors = errors("import h\nfn main() { h.arity() }", host);
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::HostSignature, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::HostSignature, "{errors:?}");
     assert!(
-        errors[0].message.contains(
+        errors[0].message().contains(
             "is given a Rust function of 1 argument, but its signature declares 0 parameters"
         ),
         "{errors:?}"
@@ -753,7 +753,7 @@ fn compile_without_analyze_returns_the_analysis_errors() {
         Err(errors) => errors,
     };
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::TypeMismatch, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::TypeMismatch, "{errors:?}");
 }
 
 #[test]
@@ -762,10 +762,8 @@ fn host_module_name_must_be_an_identifier() {
         let host = HostModule::new(name).fn0("fn answer() -> Int", || 42_i64);
         let errors = errors("fn main() { let _ = 1 }", host);
         assert!(
-            errors
-                .iter()
-                .any(|e| e.code == Code::HostModuleCollision
-                    && e.message.contains("not an identifier")),
+            errors.iter().any(|e| e.code() == Code::HostModuleCollision
+                && e.message().contains("not an identifier")),
             "{name:?}: {errors:?}"
         );
     }
@@ -812,10 +810,10 @@ fn host_module_named_like_a_dependency_key_is_rejected_at_the_import() {
         .collect();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::HostModuleCollision, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::HostModuleCollision, "{errors:?}");
     assert!(
         errors[0]
-            .help
+            .help_as_written()
             .iter()
             .any(|h| h.contains("rename the dependency key `mylib` in silt.toml")),
         "{errors:?}"
@@ -827,7 +825,7 @@ fn host_module_named_like_a_builtin_module_is_rejected() {
     let host = HostModule::new("list").fn0("fn answer() -> Int", || 42_i64);
     let errors = errors("fn main() { let _ = 1 }", host);
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::HostModuleCollision, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::HostModuleCollision, "{errors:?}");
 }
 
 #[test]
@@ -843,7 +841,7 @@ fn host_module_named_like_a_module_file_is_rejected_at_the_import() {
     .filter(Diagnostic::is_error)
     .collect();
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::HostModuleCollision, "{errors:?}");
+    assert_eq!(errors[0].code(), Code::HostModuleCollision, "{errors:?}");
 }
 
 /// The Quick Start of docs/ffi.md, as written there.
@@ -878,7 +876,7 @@ fn docs_ffi_quick_start() {
     // 3. Check it. Every static error is in the analysis.
     let analysis = session.analyze(file);
     for d in &analysis.diagnostics {
-        eprintln!("{}", d.message);
+        eprintln!("{}", d.message());
     }
     assert!(!analysis.has_errors());
 
@@ -1226,9 +1224,9 @@ fn a_host_chooses_the_builtin_modules_a_program_may_import() {
     ] {
         let errors = errors_with_builtins(&files, only());
         assert_eq!(errors.len(), 1, "{files:?}: {errors:?}");
-        assert_eq!(errors[0].code, Code::ModuleNotFound, "{errors:?}");
+        assert_eq!(errors[0].code(), Code::ModuleNotFound, "{errors:?}");
         assert_eq!(
-            errors[0].message,
+            errors[0].message(),
             format!(
                 "the builtin module '{module}' is not offered to this program: the application \
                  that runs it lets it import only list, string"
@@ -1242,7 +1240,7 @@ fn a_host_chooses_the_builtin_modules_a_program_may_import() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
         errors[0]
-            .message
+            .message()
             .ends_with("the application that runs it lets it import no builtin module"),
         "{errors:?}"
     );
@@ -1292,7 +1290,7 @@ fn a_session_is_used_on_another_thread() {
         );
         let messages: Vec<String> = (session.analyze(wrong).diagnostics.iter())
             .filter(|d| d.is_error())
-            .map(|d| d.message.clone())
+            .map(|d| d.message().to_string())
             .collect();
         assert_eq!(messages, ["type mismatch: expected Int, got String"]);
         session.compile(file, Entry::Main).expect("compiles")

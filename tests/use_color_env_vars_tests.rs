@@ -29,21 +29,23 @@
 //! `FORCE_COLOR` to be affected — silt code only reads these vars from
 //! `use_color()`, and no other test exercises that path concurrently.
 
-use silt::testing::diagnostic::{Code, Diagnostic, render_human};
-use silt::testing::source::{FileId, SourceMap, SourceName, Span};
+use std::path::Path;
+
+use silt::session::{Builtins, Config, LockPolicy, ProjectSetup, Session};
 
 /// Render a minimal diagnostic that exercises every color hook (header
 /// label, locator arrow, gutter, caret). The exact content doesn't
 /// matter — we only inspect for ANSI escape bytes.
 fn make_error() -> String {
-    let mut sources = SourceMap::new();
-    sources.add(SourceName::Path("<round83>".into()), "x".into());
-    let d = Diagnostic::error(
-        Code::CompileLimit,
-        Span::point(FileId::default(), 0),
-        "round83 probe",
-    );
-    render_human(&sources, &d)
+    let mut session = Session::new(Config {
+        project: ProjectSetup::None,
+        lock: LockPolicy::ReadOnly,
+        host: Vec::new(),
+        builtins: Builtins::All,
+    });
+    let file = session.set_overlay(Path::new("round83.silt"), "fn main() { x }\n".to_string());
+    let d = session.analyze(file).diagnostics[0].clone();
+    session.render(&d)
 }
 
 /// Does the rendered output contain at least one ANSI CSI escape?
@@ -140,7 +142,7 @@ fn use_color_honors_no_color_and_force_color_env_vars() {
     unset("FORCE_COLOR");
     let rendered = make_error();
     assert!(
-        rendered.contains("round83 probe"),
+        rendered.contains("undefined variable"),
         "fallthrough render must include the error message body, got:\n{rendered}"
     );
 

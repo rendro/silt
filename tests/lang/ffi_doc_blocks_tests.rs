@@ -39,7 +39,9 @@ fn quick_start() {
     let slot = given.clone();
     let mylib = HostModule::new("mylib")
         .fn1("fn double(x: Int) -> Int", |x: i64| x * 2)
-        .fn1("fn give(x: Int) -> ()", move |x: i64| *slot.lock().unwrap() = x);
+        .fn1("fn give(x: Int) -> ()", move |x: i64| {
+            *slot.lock().unwrap() = x
+        });
 
     // 2. Open the program in a session that knows the module.
     let mut session = Session::new(Config {
@@ -54,7 +56,7 @@ fn quick_start() {
     // 3. Check it. Every static error is in the analysis.
     let analysis = session.analyze(file);
     for d in &analysis.diagnostics {
-        eprintln!("{}", d.message);
+        eprintln!("{}", d.message());
     }
     assert!(!analysis.has_errors());
 
@@ -128,11 +130,16 @@ fn supported_types() {
     use silt::session::HostModule;
     let users = HostModule::new("users")
         .fn1("fn find(id: Int) -> Option(String)", |id: i64| {
-            if id == 1 { Some("alice".to_string()) } else { None }
+            if id == 1 {
+                Some("alice".to_string())
+            } else {
+                None
+            }
         })
-        .fn1("fn parse_int(s: String) -> Result(Int, String)", |s: String| {
-            s.parse::<i64>().map_err(|e| e.to_string())
-        });
+        .fn1(
+            "fn parse_int(s: String) -> Result(Int, String)",
+            |s: String| s.parse::<i64>().map_err(|e| e.to_string()),
+        );
     let _ = users;
 }
 
@@ -252,6 +259,94 @@ fn error_surfacing() {
     }
 }
 
+/// "Showing errors as silt does": the block, and a run of it.
+mod showing_errors_as_silt_does {
+    use std::path::Path;
+
+    use silt::VmError;
+    use silt::session::{Diagnostic, FileId, Session, Severity, SourceMap, Span};
+
+    /// Where `span` starts: its line and column, from 1.
+    fn place(sources: &SourceMap, span: Span) -> (u32, u32) {
+        sources.line_col((span.file, span.start))
+    }
+
+    /// The diagnostic in one line of your own: `2:16 error: type mismatch: ...`.
+    fn one_line(session: &Session, d: &Diagnostic) -> String {
+        let (line, col) = place(session.sources(), d.span());
+        let word = match d.severity() {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        let mut text = format!("{line}:{col} {word}: {}", d.message());
+        for note in d.notes() {
+            text += &format!(" (note: {note})");
+        }
+        for help in d.help(session.sources()) {
+            text += &format!(" (help: {help})");
+        }
+        text
+    }
+
+    /// What `silt check` prints for `file`, and whether it found an error.
+    fn check(session: &mut Session, file: FileId) -> (String, bool) {
+        let diagnostics: Vec<Diagnostic> = session.analyze(file).diagnostics.clone();
+        let text: Vec<String> = diagnostics.iter().map(|d| session.render(d)).collect();
+        let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
+        (text.join("\n"), failed)
+    }
+
+    /// What `silt run` prints for the error that ended the program.
+    fn report(session: &Session, e: &VmError) -> String {
+        e.render(session)
+    }
+
+    fn session() -> Session {
+        use silt::session::{Builtins, Config, LockPolicy, ProjectSetup};
+        Session::new(Config {
+            project: ProjectSetup::None,
+            lock: LockPolicy::ReadOnly,
+            host: vec![],
+            builtins: Builtins::All,
+        })
+    }
+
+    #[test]
+    fn the_block_shows_a_static_and_a_runtime_error() {
+        let mut session = session();
+        let bad = "fn main() {\n  let x: Int = \"no\"\n  println(x)\n}\n";
+        let file = session.set_overlay(Path::new("main.silt"), bad.to_string());
+        let (text, failed) = check(&mut session, file);
+        assert!(failed);
+        assert!(
+            text.starts_with(
+                "error[type]: type mismatch: expected Int, got String\n --> main.silt:2:16"
+            ),
+            "{text}"
+        );
+        let d = session.analyze(file).diagnostics[0].clone();
+        assert_eq!(
+            one_line(&session, &d),
+            "2:16 error: type mismatch: expected Int, got String"
+        );
+
+        let div = "fn main() {\n  let z = 0\n  println(1 / z)\n}\n";
+        let file = session.set_overlay(Path::new("main.silt"), div.to_string());
+        let program = session
+            .compile(file, silt::session::Entry::Main)
+            .expect("compiles");
+        let out = silt::Buffer::new();
+        let e = silt::Vm::new(silt::HostIo::buffer(&out))
+            .run_program(&program)
+            .expect_err("divides by zero");
+        let text = report(&session, &e);
+        assert!(
+            text.starts_with("error[runtime]: division by zero\n --> main.silt:3:11"),
+            "{text}"
+        );
+    }
+}
+
 /// The lines of `text` that are not blank, without their indentation.
 fn lines(text: &str) -> Vec<&str> {
     (text.lines())
@@ -287,7 +382,9 @@ fn every_block_of_the_guide_is_here() {
     let missing: Vec<&String> = (blocks.iter())
         .filter(|block| {
             let block = lines(block);
-            !here.windows(block.len()).any(|window| window == block.as_slice())
+            !here
+                .windows(block.len())
+                .any(|window| window == block.as_slice())
         })
         .collect();
     assert!(

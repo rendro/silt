@@ -62,7 +62,11 @@ fn every_example_is_canonical_formatted() {
         ) {
             Ok(f) => f,
             Err(e) => {
-                failures.push(format!("{}: not formatted: {}", file.display(), e.message));
+                failures.push(format!(
+                    "{}: not formatted: {}",
+                    file.display(),
+                    e.message()
+                ));
                 continue;
             }
         };
