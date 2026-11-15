@@ -575,12 +575,15 @@ impl Repl {
         }
     }
 
-    /// `diagnostics` without the warnings shown under an earlier input.
+    /// `diagnostics` without the warnings shown under an earlier input,
+    /// in the order every printer shows them (`in_print_order`).
     fn not_shown_yet(&mut self, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
-        (diagnostics.iter())
+        let mut new: Vec<Diagnostic> = (diagnostics.iter())
             .filter(|d| d.is_error() || self.warned.insert((d.span, d.message.clone())))
             .cloned()
-            .collect()
+            .collect();
+        crate::diagnostic::in_print_order(self.session.sources(), &mut new);
+        new
     }
 
     /// The problems of the project the session is in, which no input
@@ -623,12 +626,17 @@ impl Repl {
             .unwrap_or_default();
         if !refusals.is_empty() {
             evaluation.diagnostics.extend(refusals);
+            crate::diagnostic::in_print_order(self.session.sources(), &mut evaluation.diagnostics);
             return evaluation;
         }
         let program = match self.session.compile(file, Entry::Cell) {
             Ok(program) => program,
             Err(errors) => {
                 evaluation.diagnostics.extend(errors);
+                crate::diagnostic::in_print_order(
+                    self.session.sources(),
+                    &mut evaluation.diagnostics,
+                );
                 return evaluation;
             }
         };
@@ -658,8 +666,13 @@ impl Repl {
     /// have no value.
     pub(crate) fn type_of(&mut self, input: &str) -> Result<Typed, NotAnExpression> {
         let file = self.session.add_cell(input.to_string());
+        // (The check of the expression keeps how the cell writes the other
+        // modules' types, for `written_type_name`; an entry that runs does
+        // not pay for it.)
+        self.session.set_for_editor(true);
         let analysis = self.session.analyze(file);
         let (diagnostics, failed) = (analysis.diagnostics.clone(), analysis.has_errors());
+        self.session.set_for_editor(false);
         if failed {
             return Ok(Typed {
                 diagnostics: self.not_shown_yet(&diagnostics),

@@ -1,0 +1,19 @@
+> hover 16:7
+```silt
+a.Regex
+```
+> hover 17:7
+```silt
+b.Regex
+```
+> hover 13:4
+```silt
+Fn(a.Regex, b.Regex) -> Int
+```
+> signature 18:16
+fn both(x: a.Regex, y: b.Regex) -> Int
+argument 1: x: a.Regex
+> hover 19:7
+```silt
+Only
+```

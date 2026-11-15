@@ -421,6 +421,52 @@ fn program_of_modules(dir: &Path, n: usize) {
     std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
 }
 
+/// A program of `n` modules in a chain beside its `main.silt`: `m0`
+/// imports `m1`, which imports `m2`, and so on, each with a type and a
+/// function that calls the next one's.
+fn program_of_a_chain(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    for i in 0..n {
+        let (import, call) = match i + 1 < n {
+            true => (format!("import m{}\n", i + 1), format!("m{}.f()", i + 1)),
+            false => (String::new(), "1".to_string()),
+        };
+        let module =
+            format!("{import}pub type T{i} {{ v: Int }}\npub fn f() -> Int {{ {call} }}\n");
+        std::fs::write(dir.join(format!("m{i}.silt")), module).expect("a module is written");
+    }
+    let main = "import m0\n\nfn main() {\n  println(m0.f())\n}\n";
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// A chain of eight times the modules takes at most ten times as long to
+/// check, from 250 to 2,000: about six and a half times (a fixed cost of
+/// each run is in both). Every module's check used to walk all the
+/// modules behind it for its reach (sixteen to eighteen times, main
+/// d732e072), and also to work out how it names each of them for the
+/// editor (twenty-five to thirty times, 5c053c37); it now walks them only
+/// where a check asks.
+#[test]
+fn a_chain_of_eight_times_the_modules_takes_at_most_ten_times_as_long() {
+    let dir =
+        std::env::temp_dir().join(format!("silt_checker_scaling_chain_{}", std::process::id()));
+    let (small, large) = (250, 2_000);
+    for n in [small, large] {
+        program_of_a_chain(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(10.0, || best_times(&main_of(large), &main_of(small), 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of a chain of {large} modules took more than ten times as long as \
+             that of one of {small} in each of three measurements ({}): a module's check walks \
+             every module it reaches",
+            shown(&over)
+        );
+    }
+}
+
 /// Four times the modules take about four times as long to check, from
 /// 250 to 1,000 and from 1,000 to 4,000: at most six times. (When every
 /// module's check read the whole session's tables, 1,000 modules took

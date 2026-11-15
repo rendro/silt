@@ -2684,7 +2684,7 @@ impl TypeChecker {
             return (!self.imports_builtin_trait(t, module)).then(|| intern(name));
         }
         let reach = self.reach.as_ref()?;
-        if module == self.module || module.is_builtin() || reach.contains(&module) {
+        if module == self.module || module.is_builtin() || reach.get().contains(&module) {
             return None;
         }
         Some(

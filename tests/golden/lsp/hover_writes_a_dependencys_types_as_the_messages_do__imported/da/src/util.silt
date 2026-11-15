@@ -1,0 +1,3 @@
+pub type UErr { U(Int) }
+
+pub fn make() -> UErr { U(2) }

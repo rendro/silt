@@ -1,0 +1,27 @@
+error[type]: operator '/' requires Int or Float, got 'Bool'
+ --> <repl:1>:2:11
+   |
+ 2 |   let w = true / 1
+   |           ^^^^ operator '/' requires Int or Float, got 'Bool'
+warning[type]: 'w' is never used
+ --> <repl:1>:2:7
+   |
+ 2 |   let w = true / 1
+   |       ^ 'w' is never used
+  = help: remove it, or name it `_w`
+error[type]: undefined variable 'zz'
+ --> <repl:1>:3:11
+   |
+ 3 |   println(zz)
+   |           ^^ undefined variable 'zz'
+warning[type]: 'u' is never used
+ --> <repl:1>:4:7
+   |
+ 4 |   let u = (
+   |       ^ 'u' is never used
+  = help: remove it, or name it `_u`
+error[type]: undefined variable 'yy'
+ --> <repl:1>:5:5
+   |
+ 5 |     yy
+   |     ^^ undefined variable 'yy'

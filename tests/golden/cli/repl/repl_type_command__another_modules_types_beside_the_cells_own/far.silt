@@ -1,0 +1,3 @@
+pub type Pt { f: Int }
+
+pub fn make() -> Pt { Pt { f: 1 } }

@@ -211,6 +211,47 @@ impl TypeChecker {
         self.tables.module_names.get(&module).copied()
     }
 
+    /// How this module writes the module `module` of the program where a
+    /// message, or the editor, names one of its types (see
+    /// [`ModuleWritten`]): by the name `module_name_here` gives, or
+    /// described where no import written here can reach it. None for
+    /// this module itself and for a builtin module.
+    pub(super) fn module_written(&self, module: crate::defs::ModuleId) -> Option<ModuleWritten> {
+        if module.is_builtin() || module == self.module {
+            return None;
+        }
+        let package = |m| self.tables.module_packages.get(&m);
+        if package(module) != package(self.module) && self.import_path(module).is_none() {
+            return Some(ModuleWritten::Described {
+                package: *self.tables.package_names.get(package(module)?)?,
+                module: (self.tables.module_names.get(&module).copied())
+                    .filter(|name| resolve(*name) != "lib"),
+            });
+        }
+        self.module_name_here(module).map(ModuleWritten::Named)
+    }
+
+    /// [`TypeChecker::module_written`] for every module this one reaches
+    /// through its imports, the only modules whose types its code can
+    /// hold: what the module's analysis keeps for the editor, so that
+    /// hover writes another module's types as the messages do. (Not for
+    /// every module the session knows: that made checking a program of n
+    /// modules take time n squared.) For a REPL cell, which has no reach,
+    /// every module of the program the session has.
+    pub(super) fn modules_written(&self) -> HashMap<crate::defs::ModuleId, ModuleWritten> {
+        let written =
+            |module: &crate::defs::ModuleId| Some((*module, self.module_written(*module)?));
+        match &self.reach {
+            Some(reach) => reach.get().iter().filter_map(written).collect(),
+            // A REPL cell (for `:type`) can name what the earlier cells
+            // imported: every module of the program the session has.
+            None => (self.tables.module_names.keys())
+                .filter(|module| !self.cells.contains(module))
+                .filter_map(written)
+                .collect(),
+        }
+    }
+
     /// The variant `name` of the enum `enum_ty` as a program writes it:
     /// with its module where the enum is another module's (`json.Bool`,
     /// `shapes.Circle`), bare otherwise (`Some`, a variant of the
@@ -355,7 +396,11 @@ impl TypeChecker {
                         && self.cells.contains(&def.module)
                         && self.named_types.contains(&r.id.0))
                 })
-                .and_then(|def| self.module_name_here(def.module)),
+                // (A described type is written whole, above.)
+                .and_then(|def| match self.module_written(def.module)? {
+                    ModuleWritten::Named(module) => Some(module),
+                    ModuleWritten::Described { .. } => None,
+                }),
         };
         match module {
             Some(module) => format!("{module}.{}", r.name),
@@ -372,21 +417,10 @@ impl TypeChecker {
     /// None for any other type.
     fn described_type(&self, r: TypeRef) -> Option<String> {
         let def = self.def(r.id.0)?;
-        let package = |m| self.tables.module_packages.get(&m);
-        if def.module.is_builtin()
-            || package(def.module) == package(self.module)
-            || self.import_path(def.module).is_some()
-        {
-            return None;
+        match self.module_written(def.module)? {
+            written @ ModuleWritten::Described { .. } => Some(written.type_name(r.name)),
+            ModuleWritten::Named(_) => None,
         }
-        let name = self.tables.package_names.get(package(def.module)?)?;
-        let after = crate::types::AFTER_ARGUMENTS;
-        Some(match self.tables.module_names.get(&def.module) {
-            Some(module) if resolve(*module) != "lib" => {
-                format!("{}{after} of module {module} of package {name}", r.name)
-            }
-            _ => format!("{}{after} of package {name}", r.name),
-        })
     }
 
     /// The name of `r` as the module being checked writes it, for a
@@ -643,5 +677,44 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
             ts.iter().for_each(|t| collect_app_heads(t, f))
         }
         _ => {}
+    }
+}
+
+/// How a module writes another module of the program where it names one
+/// of its types: the one rule of the checker's messages and of the
+/// editor's hover, signature help, completion details and inlay hints
+/// (`TypeChecker::module_written`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ModuleWritten {
+    /// By a name a program writes: its own (`shapes`), a dependency's
+    /// key for the dependency's library (`da`, imported here or not).
+    Named(Symbol),
+    /// Out of every import's reach (a dependency's dependency, a
+    /// dependency's module other than its library): described.
+    Described {
+        package: Symbol,
+        /// The module's name; None for a package's library.
+        module: Option<Symbol>,
+    },
+}
+
+impl ModuleWritten {
+    /// The type `name` of such a module: `da.AppError`; `InErr of
+    /// package inner`, `UErr of module util of package da` (the
+    /// arguments of a generic one stand before the description, at
+    /// [`crate::types::AFTER_ARGUMENTS`]).
+    pub(crate) fn type_name(&self, name: Symbol) -> String {
+        let after = crate::types::AFTER_ARGUMENTS;
+        match self {
+            ModuleWritten::Named(module) => format!("{module}.{name}"),
+            ModuleWritten::Described {
+                package,
+                module: Some(module),
+            } => format!("{name}{after} of module {module} of package {package}"),
+            ModuleWritten::Described {
+                package,
+                module: None,
+            } => format!("{name}{after} of package {package}"),
+        }
     }
 }

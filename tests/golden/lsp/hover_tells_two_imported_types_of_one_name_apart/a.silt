@@ -1,0 +1,3 @@
+pub type Regex { a: Int }
+
+pub fn mk() -> Regex { Regex { a: 1 } }

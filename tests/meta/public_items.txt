@@ -710,6 +710,7 @@ src/playground.rs: pub const TOKEN_KINDS
 src/playground.rs: pub const VERSION
 src/playground.rs: pub fn completions
 src/playground.rs: pub fn error_diagnostic
+src/playground.rs: pub fn in_print_order
 src/playground.rs: pub fn render_diagnostic
 src/playground.rs: pub fn returned
 src/playground.rs: pub fn tokens

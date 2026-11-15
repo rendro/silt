@@ -74,8 +74,9 @@ fn open(source: &str) -> (Session, FileId) {
 }
 
 /// Every static diagnostic of `file`, in the order the `silt` command
-/// prints them: the analysis's, then what compiling found. `compiled`
-/// is what [`Session::compile`] returned for it.
+/// prints them (`playground::in_print_order`): the analysis's and what
+/// compiling found. `compiled` is what [`Session::compile`] returned for
+/// it.
 fn static_diagnostics(
     session: &mut Session,
     file: FileId,
@@ -91,6 +92,7 @@ fn static_diagnostics(
         Err(_) if analysed_with_errors => {}
         Err(errors) => diagnostics.extend(errors.iter().cloned()),
     }
+    silt::playground::in_print_order(session, &mut diagnostics);
     diagnostics
 }
 

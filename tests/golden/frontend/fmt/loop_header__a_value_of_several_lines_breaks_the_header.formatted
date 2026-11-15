@@ -1,0 +1,30 @@
+-- cmd: fmt
+-- A loop header whose value has lines of its own (a `match`, a block) is
+-- not on one line, so each binding stands on a line of its own and the
+-- body's `{` on the next one, as for a header too long for its line: the
+-- end of the header is never a `} {` inside a line.
+fn main() {
+  loop
+    i = match 1 {
+      1 -> 2
+      _ -> 3
+    }
+  {
+    match {
+      i < 5 -> loop(i + 1)
+      _ -> println(i)
+    }
+  }
+  loop
+    a = {
+      let b = 1
+      b + 1
+    },
+    c = 2
+  {
+    match {
+      a < c -> loop(a + 1, c)
+      _ -> println(a)
+    }
+  }
+}

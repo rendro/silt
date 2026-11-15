@@ -1,0 +1,8 @@
+-- cmd: check src
+-- exit: 1
+-- `silt check src` reports the files in path order, the entry and the
+-- test file among the others, as the package check does (the case beside
+-- this one): alpha, main, util/aaa, zz_test.
+fn main() {
+  println(in_main)
+}

@@ -56,31 +56,6 @@ pub(super) fn visible_fields(
     record_fields
 }
 
-/// The name the module `here` knows the program module `module` by, as
-/// the checker's messages write it: its own name (`shapes`), a module of
-/// another package (a dependency's root module, which calls itself `lib`)
-/// by the path `here` imports it by. None for `here` itself and for a
-/// module that is not of the graph.
-fn program_module_name(
-    session: &crate::session::Session,
-    here: crate::defs::ModuleId,
-    module: crate::defs::ModuleId,
-) -> Option<Symbol> {
-    let graph = session.graph();
-    if module == here || module.index() >= graph.modules().len() {
-        return None;
-    }
-    let (this, that) = (graph.module(here), graph.module(module));
-    if this.package != that.package
-        && let Some(import) = (this.imports.iter()).find(
-            |import| matches!(import.resolution, ImportResolution::Module(id) if id == module),
-        )
-    {
-        return Some(import.name);
-    }
-    Some(that.name)
-}
-
 /// The exported members of `program`.
 fn members(program: &Program) -> Vec<(Symbol, MemberKind)> {
     let mut out = Vec::new();
@@ -145,45 +120,29 @@ impl Server {
         Some(self.projects.get(&module.project)?.session.tables())
     }
 
-    /// `ty` as the open document `doc` writes it: a type of a builtin
-    /// module whose bare name the document gives another type (its own
-    /// `type Regex` beside `regex.Regex`, `type Weekday` beside
-    /// `time.Weekday`), or of another module of the program (`shapes.Regex`
-    /// beside the file's own `type Regex`), with its module, as the
-    /// checker's messages and the REPL's `:type` write it; any other type
-    /// by its name.
+    /// `ty` as the open document `doc` writes it: a type of another module
+    /// whose name another type the document can name shares (its own `type
+    /// Regex` beside `regex.Regex`, `type Weekday` beside `time.Weekday`,
+    /// `a.Regex` beside `b.Regex`) with its module, as the checker's
+    /// messages and the REPL's `:type` tell two such types apart; a type
+    /// no import here can reach described, as they describe it (`InErr of
+    /// package inner`); any other type, and the document's own, by its
+    /// name. The module part is the checker's own (`ModuleWritten`, which
+    /// the module's analysis keeps).
     pub(super) fn written_here(&self, doc: &Document, ty: &Type) -> Type {
-        let found = doc.module.as_ref().and_then(|module| {
-            let session = &self.projects.get(&module.project)?.session;
-            Some((
-                module.id,
-                session,
-                &session.module_analysis(module.id)?.scope,
-            ))
-        });
-        let Some((here, session, scope)) = found else {
+        let found = doc
+            .module
+            .as_ref()
+            .and_then(|module| Some((&self.projects.get(&module.project)?.session, module.id)));
+        let Some((session, here)) = found else {
             return ty.clone();
         };
-        crate::types::map_refs(ty, &|r: TypeRef| {
-            // (Only where the bare name is another type's here.)
-            if !matches!(scope.types.get(&r.name),
-                Some(crate::typechecker::names::Binding::Def(id)) if *id != r.id.0)
-            {
-                return r;
-            }
-            let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-                Some((_, Some(module))) => crate::intern::intern(module),
-                Some((_, None)) => return r,
-                None => match program_module_name(session, here, session.defs().get(r.id.0).module)
-                {
-                    Some(module) => module,
-                    None => return r,
-                },
-            };
-            TypeRef {
+        crate::types::map_refs(ty, &|r: TypeRef| match session.written_type_name(here, r) {
+            Some(name) => TypeRef {
                 id: r.id,
-                name: crate::intern::intern(&format!("{module}.{}", r.name)),
-            }
+                name: crate::intern::intern(&name),
+            },
+            None => r,
         })
     }
 

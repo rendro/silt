@@ -1,0 +1,7 @@
+import far
+
+pub type Pt { g: Int }
+
+pub fn origin() -> Pt { Pt { g: 0 } }
+
+pub fn far_pt() -> far.Pt { far.make() }

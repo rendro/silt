@@ -32,6 +32,13 @@ pub fn render_diagnostic(session: &Session, diagnostic: &Diagnostic) -> String {
     crate::diagnostic::render_human(session.sources(), diagnostic)
 }
 
+/// Sort `diagnostics`, of `session`'s files, into the order the `silt`
+/// command prints them: by file, then by line, the errors of a line
+/// before its warnings, then by place.
+pub fn in_print_order(session: &Session, diagnostics: &mut [Diagnostic]) {
+    crate::diagnostic::in_print_order(session.sources(), diagnostics)
+}
+
 /// The line `silt run` writes for a `main` that returned `Err`, if that
 /// ended the program: `error: <text>`, and the note of a `Display` impl
 /// of the `Err` that failed.

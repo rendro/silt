@@ -73,8 +73,12 @@ impl Project {
             host: Vec::new(),
             builtins: crate::session::Builtins::All,
         };
+        // (The checks keep how each module writes another's types,
+        // which hover and the hints read.)
+        let mut session = Session::new(config);
+        session.set_for_editor(true);
         Project {
-            session: Session::new(config),
+            session,
             stamps: stamps(dir),
             overlays: HashMap::new(),
             texts_given: 0,

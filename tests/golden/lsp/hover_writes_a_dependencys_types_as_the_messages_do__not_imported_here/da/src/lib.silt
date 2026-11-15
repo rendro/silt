@@ -1,0 +1,10 @@
+import inner
+import util
+
+pub type AppError { Bad(Int) }
+
+pub fn app() -> AppError { Bad(1) }
+
+pub fn inner_err() -> inner.InErr { inner.make() }
+
+pub fn util_err() -> util.UErr { util.make() }
