@@ -398,6 +398,10 @@ struct Inner {
     /// ([`PanicAt::BuiltinOfATask`]).
     #[cfg(any(test, feature = "test-hooks"))]
     panic_in_a_builtin_of_a_task: AtomicBool,
+    /// Test-only: how often the stop of a stream stage of this scheduler
+    /// has done its work (`Scheduler::count_a_stage_stop`).
+    #[cfg(test)]
+    stage_stops: AtomicUsize,
 }
 
 /// The panic of a thread of the runtime ([`Inner::fail`]).
@@ -631,6 +635,8 @@ impl Scheduler {
                 panic_in_a_builtin: AtomicBool::new(false),
                 #[cfg(any(test, feature = "test-hooks"))]
                 panic_in_a_builtin_of_a_task: AtomicBool::new(false),
+                #[cfg(test)]
+                stage_stops: AtomicUsize::new(0),
             }
         });
         Scheduler {
@@ -862,6 +868,13 @@ impl Scheduler {
     pub(crate) fn set_owner(&self, owner: u64, outer: u64) {
         self.inner.outer.store(outer, Ordering::SeqCst);
         self.inner.owner.store(owner, Ordering::SeqCst);
+    }
+
+    /// Test-only: the stop of a stream stage of this scheduler does its
+    /// work (src/builtins/stream.rs, `stage_on`).
+    #[cfg(test)]
+    pub(crate) fn count_a_stage_stop(&self) {
+        self.inner.stage_stops.fetch_add(1, Ordering::SeqCst);
     }
 
     /// The owner tag of a task spawned here and now.
@@ -4092,6 +4105,45 @@ fn main() {
         super::defer(move || stops.cancel(&stopped));
         scheduler.settle();
         assert_eq!(scheduler.report_unjoined_failures(), 0, "{}", out.take());
+    }
+
+    /// Stopping a chain of stages does the work of each stage's stop
+    /// once: closing the end of a chain of 300 stages runs 300 stops. (Each
+    /// stage abandons its inputs again as it ends, and each abandon ran the
+    /// stop again, which walked the rest of the chain: 2,000 stages took 6 s
+    /// to close, 12,000 did not end.)
+    #[test]
+    fn a_chain_of_stages_stops_in_one_pass() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import list
+import stream
+
+fn main() {
+  let c = channel.new(4)
+  let s = 1..299 |> list.fold(stream.map(c) { x -> x }) { acc, _ -> stream.map(acc) { x -> x + 1 } }
+  channel.send(c, 1)
+  println(channel.receive(s))
+  channel.close(s)
+  channel.send(c, 2)
+  channel.close(c)
+  println("the input holds {stream.length(c)} of 1")
+}
+"#,
+        )
+        .expect("the program compiles");
+        let out = crate::vm::Buffer::new();
+        let mut vm = Vm::new(HostIo::buffer(&out));
+        let result = vm.run_program(&program);
+        vm.settle();
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
+        assert_eq!(out.take(), "Some(300)\nthe input holds 1 of 1\n");
+        let stops = vm.scheduler().inner.stage_stops.load(Ordering::SeqCst);
+        assert_eq!(
+            stops, 300,
+            "the stops of 300 stages did their work {stops} times"
+        );
     }
 
     /// A look at the tasks while a thread takes stops out of the queue
