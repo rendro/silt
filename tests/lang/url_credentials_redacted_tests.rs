@@ -304,10 +304,24 @@ fn a_url_hides_its_credentials_however_it_is_spelt() {
         ("http://u:p/w@h/x", "http://***@h/x"),
         ("http://u:p?w@h/x", "http://***@h/x"),
         ("http://u:p#w@h/x y", "http://***@h/x y"),
+        ("https://user:pa/ss@host/x", "https://***@host/x"),
         ("u:p/w@h", "***@h"),
-        // So an `@` in a path or a query hides what stands before it.
-        ("http://h/?next=ftp://u:pw@x/", "http://***@x/"),
-        ("http://h/a@b", "http://***@b"),
+        // An `@` in the path or the query of a URL with no userinfo is
+        // shown, and so are the host and the port.
+        (
+            "https://host.example:99999/users/@me",
+            "https://host.example:99999/users/@me",
+        ),
+        (
+            "https://host.example/search?email=ann@example.com&page=2",
+            "https://host.example/search?email=ann@example.com&page=2",
+        ),
+        ("http://h/a@b", "http://h/a@b"),
+        ("http://h:8080/a@b", "http://h:8080/a@b"),
+        (
+            "http://h/?next=ftp://u:pw@x/",
+            "http://h/?next=ftp://***@x/",
+        ),
         ("http://@h/", "http://@h/"),
         ("http://h", "http://h"),
     ] {

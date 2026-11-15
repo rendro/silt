@@ -288,13 +288,16 @@ fn redact_counting(msg: &str, looked: &mut usize) -> String {
 /// it. Its authority begins after its scheme (`scheme_of`) and the
 /// slashes that follow (`http:/u:p@h` has one too), or after the
 /// slashes it begins with when no slash follows a scheme of it
-/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too).
-/// From there everything before the URL's last `@` is hidden: a raw `/`,
-/// `?`, `#`, space or tab in a password ends the authority for the client
-/// (it sends no credential then), but it is the text the program wrote.
-/// So an `@` in a path or a query hides what stands before it too
-/// (`http://h/a@b` is `http://***@b`), which shows less than it could and
-/// never a password. The rest of the URL is scrubbed as a message is.
+/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too), and
+/// ends at the first `/`, `?` or `#` (a space or a tab in it is part of
+/// the password the program wrote). What stands before its last `@` is the
+/// userinfo, and is hidden. An authority with no `@` that reads as the start
+/// of one cut by a raw `/`, `?` or `#` in the password (a `:` followed by
+/// what is no port, which is digits only, and an `@` later in the URL:
+/// `https://user:pa/ss@host/x`) has all that stands before the URL's last
+/// `@` hidden. Any other URL is shown as it is, an `@` in its path or query
+/// too (`https://host:99999/users/@me`). The rest of the URL is scrubbed as a
+/// message is.
 #[cfg(feature = "http")]
 pub fn redact_url(url: &str) -> String {
     let slashes_from = |at: usize| url.len() - url[at..].trim_start_matches('/').len();
@@ -304,13 +307,25 @@ pub fn redact_url(url: &str) -> String {
         Some(scheme) if url[scheme.len() + 1..].starts_with('/') => slashes_from(scheme.len() + 1),
         _ => slashes_from(0),
     };
-    let authority = &url[host_start..];
-    match authority.rfind('@') {
-        Some(last @ 1..) => format!(
+    let rest = &url[host_start..];
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    let hidden = |last: usize| {
+        format!(
             "{}***{}",
             &url[..host_start],
-            redact_http_url_userinfo(&authority[last..])
-        ),
+            redact_http_url_userinfo(&rest[last..])
+        )
+    };
+    if let Some(last @ 1..) = authority.rfind('@') {
+        return hidden(last);
+    }
+    // A password cut by a raw `/`, `?` or `#`: what follows the last `:`
+    // of the authority is no port.
+    let cut = authority
+        .rsplit_once(':')
+        .is_some_and(|(_, after)| after.is_empty() || !after.bytes().all(|b| b.is_ascii_digit()));
+    match rest.rfind('@') {
+        Some(last @ 1..) if cut => hidden(last),
         _ => redact_http_url_userinfo(url),
     }
 }
