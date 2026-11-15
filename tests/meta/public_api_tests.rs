@@ -647,7 +647,10 @@ const RECEIVERS: &[(&str, &str)] = &[
 
 /// [`member_uses`] without the types.
 fn member_names(span: &str) -> Vec<String> {
-    member_uses(span).into_iter().map(|(_, name)| name).collect()
+    member_uses(span)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
 }
 
 /// The members a code span of the guide uses, each with the type the
@@ -827,7 +830,10 @@ fn a_member_is_asked_of_the_type_the_span_names() {
     assert_eq!(hidden("session.entry"), ["entry"]);
     assert_eq!(hidden("let p = program.entry"), Vec::<String>::new());
     assert_eq!(hidden("Tag::name"), Vec::<String>::new());
-    assert_eq!(hidden("failure.note(session.sources())"), Vec::<String>::new());
+    assert_eq!(
+        hidden("failure.note(session.sources())"),
+        Vec::<String>::new()
+    );
     // A receiver the guide does not tie to a type: any public one does.
     assert_eq!(hidden("e.exit"), Vec::<String>::new());
     assert_eq!(hidden("name"), Vec::<String>::new());
