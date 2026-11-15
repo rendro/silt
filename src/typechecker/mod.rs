@@ -2115,13 +2115,6 @@ fn rejected_type_name(name: &str) -> bool {
     name == "TypeOf" || crate::types::builtins::is_prelude_name(name)
 }
 
-/// The name of a builtin type; `None` for a type a module declares.
-pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
-    crate::defs::builtin_types()
-        .get(ty.id.0.0 as usize)
-        .map(|(name, _)| *name)
-}
-
 /// The definitions the type names written in `te` resolve to.
 fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::DefId>) {
     if let Some(crate::defs::Res::Def(id)) = te.res {

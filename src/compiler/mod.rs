@@ -31,7 +31,7 @@ use crate::source::Span;
 use crate::typechecker::decodable::shown;
 use crate::typeinfo::{FieldType, Shape, Tag, TypeInfo, TypeTable, VariantInfo};
 use crate::types::canonical::{Resolver, canonical_head};
-use crate::types::{Type, TypeRef};
+use crate::types::{Head, Type, TypeRef};
 use crate::value::{HostFn, Value};
 
 mod dicts;
@@ -2896,16 +2896,13 @@ impl<'a> Compiler<'a> {
     /// and the types it is applied to.
     fn type_parts<'t>(&self, ty: &'t Type) -> Option<(Arc<TypeInfo>, Vec<&'t Type>)> {
         let builtin = |name: &str| crate::typeinfo::builtin_type_named(name).cloned();
-        match ty {
-            Type::List(t) => Some((builtin("List")?, vec![&**t])),
-            Type::Set(t) => Some((builtin("Set")?, vec![&**t])),
-            Type::Channel(t) => Some((builtin("Channel")?, vec![&**t])),
-            Type::Map(k, v) => Some((builtin("Map")?, vec![&**k, &**v])),
-            Type::Tuple(ts) if !ts.is_empty() => Some((builtin("Tuple")?, ts.iter().collect())),
-            Type::Generic(t, args) if !args.is_empty() => {
-                Some((self.type_info(t.id), args.iter().collect()))
-            }
-            _ => None,
+        if let Type::Tuple(ts) = ty {
+            return (!ts.is_empty()).then(|| Some((builtin("Tuple")?, ts.iter().collect())))?;
+        }
+        match ty.head_and_args()? {
+            (Head::Named(t), args) if !args.is_empty() => Some((self.type_info(t.id), args)),
+            (Head::Named(_), _) => None,
+            (container, args) => Some((builtin(container.container_name()?)?, args)),
         }
     }
 

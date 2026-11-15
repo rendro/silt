@@ -110,20 +110,13 @@ impl TypeChecker {
     pub(super) fn type_instance(&mut self, ty: TypeRef) -> Option<Type> {
         if let Some(builtin) = builtin_type_name(ty) {
             match builtin {
-                "Int" => return Some(Type::Int),
-                "Float" => return Some(Type::Float),
-                "Bool" => return Some(Type::Bool),
-                "String" => return Some(Type::String),
-                "()" => return Some(Type::Unit),
-                "List" => return Some(Type::List(Box::new(self.fresh_var()))),
-                "Map" => {
-                    return Some(Type::Map(
-                        Box::new(self.fresh_var()),
-                        Box::new(self.fresh_var()),
-                    ));
+                "Int" | "Float" | "Bool" | "String" | "()" => {
+                    return Some(Type::named(ty, Vec::new()));
                 }
-                "Set" => return Some(Type::Set(Box::new(self.fresh_var()))),
-                "Channel" => return Some(Type::Channel(Box::new(self.fresh_var()))),
+                _ if let Some(arity) = Head::of(ty).container_arity() => {
+                    let args = (0..arity).map(|_| self.fresh_var()).collect();
+                    return Some(Type::container_or_generic(ty, args));
+                }
                 // Opaque resource / value types from builtin
                 // modules: the shape the builtin schemes produce.
                 _ if let Some(arity) = opaque_arity(builtin) => {
@@ -158,7 +151,7 @@ impl TypeChecker {
         }
         let arity = match builtin_type_name(ty) {
             Some("Map") => return vec!["k".to_string(), "v".to_string()],
-            Some("List" | "Set" | "Channel") => 1,
+            Some(_) if let Some(arity) = Head::of(ty).container_arity() => arity,
             Some(b) => opaque_arity(b).unwrap_or(0),
             // (A record named in a field before the declarations are in.)
             None => self.type_arity(ty).unwrap_or(0),
@@ -778,21 +771,15 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 let shown = Qualifier::written(*module, *name);
-                if let Some(builtin) = ty.and_then(builtin_type_name) {
+                if let Some(ty) = ty
+                    && let Some(builtin) = builtin_type_name(ty)
+                {
                     let n = resolved_args.len();
-                    let mut it = resolved_args.clone().into_iter();
-                    let mut arg = |this: &mut Self| it.next().unwrap_or_else(|| this.fresh_var());
                     match (builtin, n) {
-                        ("List", 1) => return Type::List(Box::new(arg(self))),
-                        ("Map", 2) => {
-                            let k = arg(self);
-                            let v = arg(self);
-                            return Type::Map(Box::new(k), Box::new(v));
+                        _ if Head::of(ty).container_arity() == Some(n) => {
+                            return Type::container_or_generic(ty, resolved_args);
                         }
-                        ("Set", 1) => return Type::Set(Box::new(arg(self))),
-                        ("Channel", 1) => return Type::Channel(Box::new(arg(self))),
                         (b, n) if let Some(arity) = opaque_arity(b) => {
-                            let ty = ty.expect("a builtin type");
                             if n == arity {
                                 return Type::Generic(ty, resolved_args);
                             }

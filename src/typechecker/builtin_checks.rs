@@ -423,15 +423,9 @@ impl TypeChecker {
                 .find_map(|part| self.part_refusal(builtin_name, decoding, ty, part, owner, span));
         }
         let head = match ty {
-            Type::Generic(t, _) => *t,
-            Type::Int => TypeRef::builtin("Int"),
-            Type::Float => TypeRef::builtin("Float"),
-            Type::String => TypeRef::builtin("String"),
-            Type::Bool => TypeRef::builtin("Bool"),
-            Type::List(_) => TypeRef::builtin("List"),
-            Type::Map(..) => TypeRef::builtin("Map"),
-            Type::Set(_) => TypeRef::builtin("Set"),
-            Type::Channel(_) => TypeRef::builtin("Channel"),
+            Type::Int | Type::Float | Type::String | Type::Bool => {
+                TypeRef::builtin(ty.builtin_name()?)
+            }
             // A tuple of types (`json.parse(text, (Int, String))`).
             Type::Tuple(_) => {
                 let accepted = decoding.type_arguments(str::to_string);
@@ -447,7 +441,7 @@ impl TypeChecker {
                     .with_help(decoding.family.type_argument_help()),
                 );
             }
-            _ => return None,
+            _ => head_ref(ty)?,
         };
         let family = decoding.family;
         let decodable_types_help = family.help();
@@ -1119,22 +1113,15 @@ pub(super) fn decoded_variables(ty: &Type) -> Vec<Type> {
 pub(super) fn head_ref(ty: &Type) -> Option<TypeRef> {
     match ty {
         Type::Generic(t, _) => Some(*t),
-        Type::List(_) => Some(TypeRef::builtin("List")),
-        Type::Map(..) => Some(TypeRef::builtin("Map")),
-        Type::Set(_) => Some(TypeRef::builtin("Set")),
-        Type::Channel(_) => Some(TypeRef::builtin("Channel")),
-        _ => None,
+        _ => Some(ty.container_head()?.type_ref()),
     }
 }
 
 /// The first part of `ty` below its top whose head is `head`.
 fn part_with_head(ty: &Type, head: TypeRef) -> Option<&Type> {
     let parts: Vec<&Type> = match ty {
-        Type::Generic(_, args) => args.iter().collect(),
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => vec![&**t],
-        Type::Map(k, v) => vec![&**k, &**v],
         Type::Tuple(ts) => ts.iter().collect(),
-        _ => Vec::new(),
+        _ => ty.head_and_args().map(|(_, args)| args).unwrap_or_default(),
     };
     (parts.iter().copied())
         .find(|part| head_ref(part) == Some(head))

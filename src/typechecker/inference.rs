@@ -3392,15 +3392,12 @@ impl TypeChecker {
                     }
                     // A type given more or fewer types than it takes.
                     (head, _) => {
-                        let (ty, expected) = match &head {
-                            Type::List(_) => (TypeRef::builtin("List"), 1),
-                            Type::Set(_) => (TypeRef::builtin("Set"), 1),
-                            Type::Channel(_) => (TypeRef::builtin("Channel"), 1),
-                            Type::Map(..) => (TypeRef::builtin("Map"), 2),
-                            Type::Generic(r, params) if !r.is_builtin(crate::defs::TYPE_OF) => {
-                                (*r, params.len())
+                        let (ty, expected) = match head.head_and_args() {
+                            Some((Head::Named(r), _)) if r.is_builtin(crate::defs::TYPE_OF) => {
+                                return None;
                             }
-                            _ => return None,
+                            Some((head, params)) => (head.type_ref(), params.len()),
+                            None => return None,
                         };
                         if expected == args.len() {
                             return None;
@@ -4818,16 +4815,10 @@ impl TypeChecker {
                             .find_map(|v| self.open_var_names.get(v))
                             .map(|name| resolve(*name))
                             .or_else(|| match &inner {
-                                Type::List(_) | Type::Set(_) | Type::Map(..) | Type::Channel(_)
-                                    if self.holds_open_vars(&inner) =>
+                                _ if let Some(head) = inner.container_head()
+                                    && self.holds_open_vars(&inner) =>
                                 {
-                                    let head = match &inner {
-                                        Type::List(_) => "List",
-                                        Type::Set(_) => "Set",
-                                        Type::Map(..) => "Map",
-                                        _ => "Channel",
-                                    };
-                                    Some(head.to_string())
+                                    head.container_name().map(str::to_string)
                                 }
                                 Type::Generic(name, _) if self.holds_open_vars(&inner) => {
                                     Some(self.show_type(&Type::Generic(*name, Vec::new())))
@@ -6335,14 +6326,12 @@ pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
 ///
-/// INVARIANT: the shapes produced here must be
-/// CANONICAL — identical to what `resolve_type_expr` builds for the
-/// same surface syntax on the impl side — because
+/// The shapes are the ones `resolve_type_expr` builds for the same
+/// surface syntax on the impl side, as both build a named type with
+/// [`Type::named`] / [`Type::container_or_generic`]:
 /// `trait_arg_compatible_canon` compares them structurally and
 /// `canonicalize()` does not collapse `Generic("List", …)` onto
-/// `Type::List` (etc.). Non-canonical output makes every builtin
-/// container / Unit supertrait arg spuriously incompatible
-/// with its own impl.
+/// `Type::List` (etc.).
 pub(super) fn resolve_supertrait_arg(
     te: &TypeExpr,
     trait_info: &TraitInfo,
@@ -6356,59 +6345,29 @@ pub(super) fn resolve_supertrait_arg(
                 return ty.clone();
             }
             // Bare type name that isn't a trait param — interpret as a
-            // concrete type reference (Int, String, or user type).
-            // Mirror `resolve_type_expr` (mod.rs Named arm)
-            // exactly for primitives: a Unit/() falling
-            // through to `Type::Generic` would never compare
-            // equal to the canonical `Type::Unit` the
-            // impl side produces, spuriously failing
-            // `trait_arg_compatible_canon` with identical Display
-            // strings on both sides of the error.
+            // concrete type reference (Int, String, or user type), in
+            // the shape `resolve_type_expr` builds (`Type::named`).
             let Some(ty) = written_type(te, *sym) else {
                 return Type::Error;
             };
-            match builtin_type_name(ty) {
-                Some("Int") => Type::Int,
-                Some("Float") => Type::Float,
-                Some("Bool") => Type::Bool,
-                Some("String") => Type::String,
-                Some("()") => Type::Unit,
-                _ => Type::Generic(ty, Vec::new()),
-            }
+            Type::named(ty, Vec::new())
         }
         TypeExprKind::Generic {
             name: sym, args, ..
         } => {
-            let mut resolved: Vec<Type> = args
+            let resolved: Vec<Type> = args
                 .iter()
                 .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
                 .collect();
-            // Builtin container heads must produce the same
-            // canonical `Type::…` shapes `resolve_type_expr` builds for
-            // the impl side (mod.rs Generic arm). `canonicalize()` does
-            // NOT collapse `Generic("List",[T])` onto `Type::List(T)`,
-            // so leaving these as `Type::Generic` would make supertrait args
-            // like `List(b)` incomparable with the registered impl's
-            // `Type::List(Int)`. Wrong-arity forms fall through to
-            // `Type::Generic` (they can't match any canonical impl
+            // A builtin container head in the shape `resolve_type_expr`
+            // builds (`Type::container_or_generic`). Wrong-arity forms
+            // stay `Type::Generic` (they can't match any canonical impl
             // shape, and resolve_type_expr diagnoses the arity at the
             // declaration site).
             let Some(ty) = written_type(te, *sym) else {
                 return Type::Error;
             };
-            match builtin_type_name(ty).unwrap_or_default() {
-                "List" if resolved.len() == 1 => Type::List(Box::new(resolved.pop().unwrap())),
-                "Set" if resolved.len() == 1 => Type::Set(Box::new(resolved.pop().unwrap())),
-                "Channel" if resolved.len() == 1 => {
-                    Type::Channel(Box::new(resolved.pop().unwrap()))
-                }
-                "Map" if resolved.len() == 2 => {
-                    let v = resolved.pop().unwrap();
-                    let k = resolved.pop().unwrap();
-                    Type::Map(Box::new(k), Box::new(v))
-                }
-                _ => Type::Generic(ty, resolved),
-            }
+            Type::container_or_generic(ty, resolved)
         }
         // `()` is the unit type, as `resolve_type_expr` reads it.
         TypeExprKind::Tuple(elems) if elems.is_empty() => Type::Unit,

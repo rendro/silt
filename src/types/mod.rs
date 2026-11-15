@@ -205,7 +205,88 @@ pub enum Head {
     Channel,
 }
 
+/// The name of a builtin type; `None` for a type a module declares.
+pub(crate) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
+    crate::defs::builtin_types()
+        .get(ty.id.0.0 as usize)
+        .map(|(name, _)| *name)
+}
+
+/// The builtin containers, each with its name and its number of type
+/// arguments: the one place a container's name meets its variant.
+const CONTAINERS: [(Head, &str, usize); 4] = [
+    (Head::List, "List", 1),
+    (Head::Map, "Map", 2),
+    (Head::Set, "Set", 1),
+    (Head::Channel, "Channel", 1),
+];
+
 impl Head {
+    /// The builtin container named `name`; `None` for any other name.
+    pub(crate) fn container(name: &str) -> Option<Head> {
+        CONTAINERS
+            .iter()
+            .find(|(_, n, _)| *n == name)
+            .map(|(h, _, _)| *h)
+    }
+
+    /// The head of the type `ty`: the builtin container it is, else the
+    /// named type.
+    pub(crate) fn of(ty: TypeRef) -> Head {
+        builtin_type_name(ty)
+            .and_then(Head::container)
+            .unwrap_or(Head::Named(ty))
+    }
+
+    /// The name of a builtin container; `None` for a named type.
+    pub(crate) fn container_name(self) -> Option<&'static str> {
+        CONTAINERS
+            .iter()
+            .find(|(h, _, _)| *h == self)
+            .map(|(_, n, _)| *n)
+    }
+
+    /// The number of type arguments of a builtin container; `None` for a
+    /// named type.
+    pub(crate) fn container_arity(self) -> Option<usize> {
+        CONTAINERS
+            .iter()
+            .find(|(h, _, _)| *h == self)
+            .map(|(_, _, k)| *k)
+    }
+
+    /// The type this head names: a builtin container is the builtin type
+    /// of its name.
+    pub(crate) fn type_ref(self) -> TypeRef {
+        match self {
+            Head::Named(r) => r,
+            container => TypeRef::builtin(container.container_name().unwrap_or_default()),
+        }
+    }
+
+    /// The full type of this head at `args`: a builtin container takes
+    /// exactly its number of type arguments (`None` for any other
+    /// number), a named type any.
+    pub(crate) fn with_args(self, args: Vec<Type>) -> Option<Type> {
+        let Head::Named(r) = self else {
+            if Some(args.len()) != self.container_arity() {
+                return None;
+            }
+            let mut it = args.into_iter().map(Box::new);
+            let mut next = || it.next().unwrap_or_else(|| Box::new(Type::Error));
+            return Some(match self {
+                Head::List => Type::List(next()),
+                Head::Set => Type::Set(next()),
+                Head::Channel => Type::Channel(next()),
+                _ => {
+                    let k = next();
+                    Type::Map(k, next())
+                }
+            });
+        };
+        Some(Type::Generic(r, args))
+    }
+
     /// The full type of the constructor `self` with the arguments `rest`
     /// after its first, applied to `arg`.
     pub fn apply(self, mut rest: Vec<Type>, arg: Type) -> Type {
@@ -242,14 +323,95 @@ impl Type {
     /// `String`. A type of no type arguments, a function, a tuple, a
     /// record and a type of types (`type a`) have none.
     pub fn split_constructor(&self) -> Option<(Head, Vec<Type>, Type)> {
-        match self {
-            Type::Generic(r, args) if !args.is_empty() && !r.is_builtin(crate::defs::TYPE_OF) => {
-                Some((Head::Named(*r), args[1..].to_vec(), args[0].clone()))
+        match self.head_and_args()? {
+            (Head::Named(r), _) if r.is_builtin(crate::defs::TYPE_OF) => None,
+            (head, args) => {
+                let (first, rest) = args.split_first()?;
+                Some((head, rest.iter().map(|t| (*t).clone()).collect(), (*first).clone()))
             }
-            Type::List(x) => Some((Head::List, Vec::new(), (**x).clone())),
-            Type::Set(x) => Some((Head::Set, Vec::new(), (**x).clone())),
-            Type::Channel(x) => Some((Head::Channel, Vec::new(), (**x).clone())),
-            Type::Map(k, v) => Some((Head::Map, vec![(**v).clone()], (**k).clone())),
+        }
+    }
+
+    /// The type `ty` names at `args`: a builtin scalar given none is its
+    /// own variant (`Int`, `()`), a builtin container given its number of
+    /// type arguments its own (`List(a)`, `Map(k, v)`); any other is
+    /// `Generic(ty, args)`.
+    pub(crate) fn named(ty: TypeRef, args: Vec<Type>) -> Type {
+        if args.is_empty() {
+            let scalar = match builtin_type_name(ty) {
+                Some("Int") => Some(Type::Int),
+                Some("Float") => Some(Type::Float),
+                Some("Bool") => Some(Type::Bool),
+                Some("String") => Some(Type::String),
+                Some("()") => Some(Type::Unit),
+                _ => None,
+            };
+            if let Some(scalar) = scalar {
+                return scalar;
+            }
+        }
+        Type::container_or_generic(ty, args)
+    }
+
+    /// The type `ty` at `args`: a builtin container given its number of
+    /// type arguments is its own variant (`List(a)`, `Map(k, v)`); any
+    /// other is `Generic(ty, args)`.
+    pub(crate) fn container_or_generic(ty: TypeRef, args: Vec<Type>) -> Type {
+        let head = Head::of(ty);
+        if head.container_arity().is_some_and(|n| n != args.len()) {
+            return Type::Generic(ty, args);
+        }
+        head.with_args(args).unwrap_or(Type::Error)
+    }
+
+    /// The name of the builtin type `self` is when the type representation
+    /// writes it as a variant of its own: a scalar (`Int`, `()`), a
+    /// container (`List`, `Map`), a tuple (`Tuple`) or a function (`Fn`).
+    /// `None` for any other type.
+    pub(crate) fn builtin_name(&self) -> Option<&'static str> {
+        Some(match self {
+            Type::Int => "Int",
+            Type::Float => "Float",
+            Type::Bool => "Bool",
+            Type::String => "String",
+            Type::Unit => "()",
+            Type::Tuple(_) => "Tuple",
+            Type::Fun(..) => "Fn",
+            Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Channel(_) => {
+                return self.container_head()?.container_name();
+            }
+            Type::Var(_)
+            | Type::Rigid(_)
+            | Type::Generic(..)
+            | Type::Error
+            | Type::Never
+            | Type::App(..)
+            | Type::Con(..) => return None,
+        })
+    }
+
+    /// The builtin container `self` is; `None` for any other type.
+    pub(crate) fn container_head(&self) -> Option<Head> {
+        match self {
+            Type::List(_) => Some(Head::List),
+            Type::Map(..) => Some(Head::Map),
+            Type::Set(_) => Some(Head::Set),
+            Type::Channel(_) => Some(Head::Channel),
+            _ => None,
+        }
+    }
+
+    /// The head of `self` and its type arguments: `List(Int)` is `List`
+    /// at `[Int]`, `Map(k, v)` is `Map` at `[k, v]`, a named type is
+    /// itself at its arguments (none for `Bytes`). `None` for any other
+    /// type.
+    pub(crate) fn head_and_args(&self) -> Option<(Head, Vec<&Type>)> {
+        match self {
+            Type::List(t) => Some((Head::List, vec![&**t])),
+            Type::Set(t) => Some((Head::Set, vec![&**t])),
+            Type::Channel(t) => Some((Head::Channel, vec![&**t])),
+            Type::Map(k, v) => Some((Head::Map, vec![&**k, &**v])),
+            Type::Generic(r, args) => Some((Head::Named(*r), args.iter().collect())),
             _ => None,
         }
     }
@@ -543,13 +705,12 @@ impl std::fmt::Display for Shown<'_> {
                     write!(f, ")")
                 };
                 match head {
-                    Head::Named(r) => return self.named(f, r, args),
-                    Head::List => write!(f, "List")?,
-                    Head::Map => write!(f, "Map")?,
-                    Head::Set => write!(f, "Set")?,
-                    Head::Channel => write!(f, "Channel")?,
+                    Head::Named(r) => self.named(f, r, args),
+                    container => {
+                        write!(f, "{}", container.container_name().unwrap_or_default())?;
+                        args(f)
+                    }
                 }
-                args(f)
             }
         }
     }
@@ -1264,6 +1425,35 @@ pub(crate) fn substitute_enum_params(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── The table of builtin containers ─────────────────────────────
+
+    #[test]
+    fn the_container_table_agrees_with_the_builtin_types() {
+        for (head, name, arity) in CONTAINERS {
+            let entry = builtins::lookup(name).expect("a builtin type");
+            assert_eq!(entry.arity, Some(arity as u32), "{name}");
+            assert!(crate::module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&name));
+            assert_eq!(Head::of(TypeRef::builtin(name)), head);
+            assert_eq!(head.type_ref(), TypeRef::builtin(name));
+            // A container at its arity is its own variant, and reads back
+            // as its head at those arguments.
+            let args: Vec<Type> = (0..arity).map(|k| Type::Var(k)).collect();
+            let ty = Type::named(TypeRef::builtin(name), args.clone());
+            assert_eq!(ty.container_head(), Some(head));
+            assert_eq!(ty.builtin_name(), Some(name));
+            let (back, back_args) = ty.head_and_args().expect("a head");
+            assert_eq!(back, head);
+            assert_eq!(back_args, args.iter().collect::<Vec<_>>());
+            // At another number of arguments it is the named type.
+            let odd = Type::named(TypeRef::builtin(name), vec![Type::Int; arity + 1]);
+            assert!(matches!(odd, Type::Generic(..)), "{name}");
+        }
+        for scalar in ["Int", "Float", "Bool", "String", "()"] {
+            let ty = Type::named(TypeRef::builtin(scalar), Vec::new());
+            assert_eq!(ty.builtin_name(), Some(scalar));
+        }
+    }
 
     // ── Regression: substitute_enum_params recurses into Map/Set ───────
     // Locks in 3a4edd6 B3: prior to the fix these branches fell through

@@ -1575,23 +1575,6 @@ impl TypeChecker {
 
     // ── Register trait implementations ──────────────────────────────
 
-    /// Convert a type name Symbol to a Type.
-    ///
-    /// The `()` arm gives a user-declared `trait T for () { ... }`
-    /// impl a `Type::Unit` self_type rather than the
-    /// `Type::Generic("()", [])` fallback, which never unifies with the
-    /// canonical `Type::Unit` receiver.
-    fn type_from_name(ty: TypeRef) -> Type {
-        match builtin_type_name(ty) {
-            Some("Int") => Type::Int,
-            Some("Float") => Type::Float,
-            Some("Bool") => Type::Bool,
-            Some("String") => Type::String,
-            Some("()") => Type::Unit,
-            _ => Type::Generic(ty, vec![]),
-        }
-    }
-
     /// Reject every hand-written impl of `Equal`, `Compare` or `Hash` and
     /// drop it from `decls`. These traits are sealed: every type has
     /// them by its structure, and `==` / `<` never dispatch to an impl,
@@ -3335,7 +3318,7 @@ impl TypeChecker {
 
         // Construct the self_type. Three cases:
         //   1. Bare-target form (`trait X for Int`): target_type_args is
-        //      empty. For primitive types, fall through to type_from_name.
+        //      empty. For primitive types, fall through to `Type::named`.
         //      A generic type written bare (`trait X for Box`) is refused
         //      (`impl_header_fits`); what reads such an impl's header
         //      after sees its type with a fresh variable per parameter.
@@ -3419,12 +3402,11 @@ impl TypeChecker {
                     // `List(a)`: `self` is some function, to be handed
                     // on but not called, and not a function of any
                     // signature one may wish for.
+                    let container = Head::of(target_type);
                     match builtin_type_name(target_type) {
-                        Some("List") => Type::List(Box::new(self.fresh_var())),
-                        Some("Set") => Type::Set(Box::new(self.fresh_var())),
-                        Some("Channel") => Type::Channel(Box::new(self.fresh_var())),
-                        Some("Map") => {
-                            Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
+                        _ if let Some(arity) = container.container_arity() => {
+                            let args = (0..arity).map(|_| self.fresh_var()).collect();
+                            container.with_args(args).unwrap_or(Type::Error)
                         }
                         Some(shape @ ("Fn" | "Tuple")) => {
                             let (ty, var) = self.fresh_tv();
@@ -3435,7 +3417,7 @@ impl TypeChecker {
                             self.shape_vars.insert(var, about);
                             ty
                         }
-                        _ => Self::type_from_name(target_type),
+                        _ => Type::named(target_type, Vec::new()),
                     }
                 } else {
                     let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
@@ -3513,30 +3495,16 @@ impl TypeChecker {
                 crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
             } else {
                 match builtin_type_name(written).unwrap_or_default() {
-                    "List" if resolved_args.len() == 1 => {
-                        Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Set" if resolved_args.len() == 1 => {
-                        Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Channel" if resolved_args.len() == 1 => {
-                        Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Map" if resolved_args.len() == 2 => {
-                        let mut iter = resolved_args.into_iter();
-                        Type::Map(
-                            Box::new(iter.next().unwrap()),
-                            Box::new(iter.next().unwrap()),
-                        )
-                    }
                     // A tuple of the impl's arity: `(a, b)` of
                     // `Tuple(a, b)`, which a pair's type is.
                     "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
                     // A primitive takes no arguments (the error above
                     // says so): the impl is for the type itself, not a
                     // phantom `Int(_)` that no value has.
-                    _ if builtin_arity == Some(0) => Self::type_from_name(target_type),
-                    _ => Type::Generic(written, resolved_args),
+                    _ if builtin_arity == Some(0) => Type::named(target_type, Vec::new()),
+                    // A builtin container of its arity is its own
+                    // variant (`List(a)`), any other type `Generic`.
+                    _ => Type::container_or_generic(written, resolved_args),
                 }
             }
         };
