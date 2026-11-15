@@ -1,0 +1,6 @@
+error[parse]: invalid expression in string interpolation; use \{ for a literal brace
+ --> interpolation__a_line_that_starts_with_plus_gets_the_help_it_gets_outside.silt:9:1
+   |
+ 9 | + 1}")
+   | ^ invalid expression in string interpolation; use \{ for a literal brace
+  = help: a line cannot start with `+`; to add to the line above, end that line with the `+`

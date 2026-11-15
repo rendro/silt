@@ -1,0 +1,14 @@
+import inner
+import util
+
+pub trait Shown { fn shn(self) -> String }
+
+pub type AppError { Io, Other2 }
+
+pub fn deep() -> inner.InErr { inner.mk() }
+
+pub fn u() -> util.UErr { util.mk() }
+
+pub fn w() -> List(inner.Wrap(Int)) { [inner.w()] }
+
+pub fn mk() -> AppError { Other2 }

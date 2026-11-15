@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- `n = 2` as the first statement of an arm's block is an assignment: the
+-- error says that a let cannot be assigned (braces given as the value of a
+-- let, `let u = { name = "a" }`, are a record instead).
+fn main() {
+  let n = 1
+  let m = match n {
+    _ -> { n = 2 }
+  }
+  println(m)
+}

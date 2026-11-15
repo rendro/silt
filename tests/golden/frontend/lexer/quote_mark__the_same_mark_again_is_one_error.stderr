@@ -1,0 +1,7 @@
+error[lex]: unexpected character: '`'
+ --> quote_mark__the_same_mark_again_is_one_error.silt:6:12
+   |
+ 6 |   let x0 = `a`
+   |            ^ unexpected character: '`'
+  = note: '`' is written in 4 more places
+  = help: a string is written in double quotes, with `{x}` for a value: `"hello {name}"`

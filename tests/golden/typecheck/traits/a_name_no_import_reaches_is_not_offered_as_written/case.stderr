@@ -1,0 +1,68 @@
+error[type]: trait 'Shwon' is not declared
+ --> src/main.silt:22:1
+    |
+ 22 | trait Shwon for T { fn shn(self) -> String { "a" } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Shwon' is not declared
+  = help: did you mean `da.Shown` (a trait of module `da`, after `import da`)?
+
+error[type]: trait 'Loclat' is not declared
+ --> src/aliased.silt:5:1
+   |
+ 5 | trait Loclat for T { fn loc(self) -> String { "a" } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Loclat' is not declared
+
+error[type]: unknown type 'localy'
+ --> src/aliased.silt:7:15
+   |
+ 7 | pub fn one(v: localy) -> Int {
+   |               ^^^^^^ unknown type 'localy'
+
+error[type]: unknown type 'apperror'
+ --> src/bound.silt:5:17
+   |
+ 5 | pub fn bound(x: apperror) -> Int { mid.two() + da() }
+   |                 ^^^^^^^^ unknown type 'apperror'
+
+error[type]: non-exhaustive match: missing variants InIo, InOther
+ --> src/deep.silt:4:9
+   |
+ 4 |   match da.deep() {
+   |         ^^^^^^^^^ non-exhaustive match: missing variants InIo, InOther
+  = help: these are variants of InErr of package inner, whose module no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+
+error[type]: non-exhaustive match: missing variants UA, UB
+ --> src/deep.silt:9:9
+   |
+ 9 |   match da.u() {
+   |         ^^^^^^ non-exhaustive match: missing variants UA, UB
+  = help: these are variants of UErr of module util of package da, whose module no import here reaches, so no pattern here can name them: an arm `_ -> ...` matches them
+
+error[type]: non-exhaustive match: missing variants da.Io, da.Other2
+ --> src/reached.silt:4:17
+   |
+ 4 |   let n = match mid.aerr() {
+   |                 ^^^^^^^^^^ non-exhaustive match: missing variants da.Io, da.Other2
+
+error[type]: type mismatch: expected Int, got da.AppError
+ --> src/reached.silt:6:16
+   |
+ 6 |   let a: Int = mid.aerr()
+   |                ^^^^^^^^^^ type mismatch: expected Int, got da.AppError
+
+error[type]: type mismatch: expected Int, got InErr of package inner
+ --> src/types.silt:4:16
+   |
+ 4 |   let x: Int = da.deep()
+   |                ^^^^^^^^^ type mismatch: expected Int, got InErr of package inner
+
+error[type]: type mismatch: expected Int, got UErr of module util of package da
+ --> src/types.silt:5:16
+   |
+ 5 |   let y: Int = da.u()
+   |                ^^^^^^ type mismatch: expected Int, got UErr of module util of package da
+
+error[type]: type mismatch: expected Int, got List(Wrap(Int) of package inner)
+ --> src/types.silt:6:16
+   |
+ 6 |   let z: Int = da.w()
+   |                ^^^^^^ type mismatch: expected Int, got List(Wrap(Int) of package inner)

@@ -643,11 +643,29 @@ impl Session {
             true => self.cells.ids(),
             false => Default::default(),
         };
+        // (Each key of the package's `[dependencies]` whose library the
+        // session has: a help offers its import by the key.)
+        let packages = match &self.packages {
+            Some(Ok(packages)) => packages,
+            _ => &self.fallback_packages,
+        };
+        let dependencies = (packages.packages.get(module.package.0 as usize))
+            .map_or(&[][..], |package| package.deps.as_slice())
+            .iter()
+            .filter_map(|(key, dep, _)| {
+                let src = packages.packages.get(dep.0 as usize)?.src.as_ref()?;
+                Some((*key, self.graph.module_at(&src.join("lib.silt"))?))
+            })
+            .collect();
+        let package_name = (packages.packages.get(module.package.0 as usize))
+            .map_or_else(|| intern(""), |package| package.name);
         let mut check = typechecker::check_module(
             &mut ast,
             ModuleContext {
                 module: id,
                 package: module.package,
+                dependencies,
+                package_name,
                 module_name: module.name,
                 kind,
                 reach,

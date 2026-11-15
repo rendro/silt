@@ -236,10 +236,12 @@ impl Family {
             true => "record and enum types",
             false => "record types",
         };
+        // (`time.Instant` and `time.Duration` are decoded as the records
+        // they are written as: no leaves.)
         format!(
             "decodable field types are {}, List(T), Option(T), Map(String, T), tuples, \
-             {named} (a generic one with its type arguments), types with a `json.Decode` \
-             impl, and aliases of these",
+             time.Instant, time.Duration, {named} (a generic one with its type arguments), \
+             types with a `json.Decode` impl, and aliases of these",
             leaves.join(", ")
         )
     }
@@ -320,7 +322,11 @@ impl Decoding {
                 .collect(),
             false => [record].into_iter().chain(json_value).collect(),
         };
-        if self.family.decodes_enums() {
+        if self == Decoding::TOML_RECORD {
+            // (A toml document is a table: of an enum, a variant with
+            // fields.)
+            types.push("an enum type that has a variant with fields".to_string());
+        } else if self.family.decodes_enums() {
             types.push("an enum type".to_string());
         }
         if self.family.honours_impls() {

@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- What a help offers of another package is written as this package can
+-- write it. A trait of the dependency `da`, which another module of the
+-- package imports and this one does not, is offered with `import da`
+-- (main.silt). No `import errs` is offered where `errs` is bound already, to
+-- `da` (aliased.silt): following it would bind the name twice. A variant of a
+-- type of a dependency's dependency (`inner`) or of a dependency's module
+-- other than its library (`da`'s util) has no name here: it is written bare,
+-- with a help that an arm `_` matches it (deep.silt). Such a type is written
+-- in one form, which is no code: `InErr of package inner`, `UErr of module
+-- util of package da`, a generic one with its arguments before the
+-- description (types.silt). No import is offered whose name the file binds
+-- (aliased.silt: no type `errs.Localy` after `import errs`; bound.silt: no
+-- `da.AppError` beside a function `da`), and a type of the dependency `da`,
+-- which an import here could reach, is written by that import's path, never
+-- by the name its library calls itself: `da.Io`, `da.AppError` (reached.silt).
+import mid
+
+type T { A }
+
+trait Shwon for T { fn shn(self) -> String { "a" } }
+
+fn main() {
+  println(mid.two())
+}

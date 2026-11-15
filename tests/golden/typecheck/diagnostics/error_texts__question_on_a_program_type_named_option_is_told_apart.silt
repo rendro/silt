@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- `?` on a value of the program's own type named `Option` says that it
+-- is not the builtin type.
+type Option(a) { Some(a), Gone }
+
+fn h(x: Int) -> Option(Int) {
+  match x {
+    0 -> Gone
+    _ -> Some(x)
+  }
+}
+
+fn main() {
+  let w = h(1)?
+  println("{w}")
+}

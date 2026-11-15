@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A name of a builtin module that the file does not import is offered with
+-- the import to add; where the file binds the module's name already (a
+-- function `list`, a function `json`), only the import of the name itself,
+-- as `import list` would bind `list` twice.
+fn list() -> Int { 1 }
+
+fn json() -> Int { 2 }
+
+fn main() {
+  println(map([1], { x -> x }))
+  println(Null)
+  println(list() + json())
+}

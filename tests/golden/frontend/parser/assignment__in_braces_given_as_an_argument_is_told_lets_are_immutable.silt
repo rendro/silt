@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- Braces given as a value whose item changes a variable (`n = n + 1`: the
+-- value names the name) are a block with an assignment, not a record: the
+-- error says that a let cannot be assigned.
+import list
+
+fn main() {
+  let n = 0
+  list.each([1, 2], { n = n + 1 })
+}

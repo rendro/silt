@@ -1312,11 +1312,12 @@ impl TypeChecker {
         // c`).
         let mut writers: Vec<(Span, Symbol)> = Vec::new();
         let mut visit = |expr: &mut Expr| {
-            if let ExprKind::Pipe(_, rhs) = &expr.kind
+            // (A pipe hands its left side over: the refusal stands there.)
+            if let ExprKind::Pipe(lhs, rhs) = &expr.kind
                 && self.writer_called(rhs)
                 && let Some(label) = Self::callee_label(rhs)
             {
-                writers.push((expr.span, label));
+                writers.push((lhs.span, label));
             }
             let ExprKind::Call(callee, args) = &expr.kind else {
                 return;

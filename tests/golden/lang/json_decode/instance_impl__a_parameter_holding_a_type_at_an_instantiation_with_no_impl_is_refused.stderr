@@ -11,7 +11,7 @@ error[type]: `json.parse` cannot decode `List(Box(Bool))`: `Box(Bool)` has no de
  40 |   println(listed(Bool))
     |                  ^^^^ `json.parse` cannot decode `List(Box(Bool))`: `Box(Bool)` has no decoder
   = note: `listed` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: type 'Box(Bool)' does not implement trait 'json.Decode'
  --> instance_impl__a_parameter_holding_a_type_at_an_instantiation_with_no_impl_is_refused.silt:41:17
@@ -26,7 +26,7 @@ error[type]: `json.parse` cannot decode `(Box(Int), Box(Bool))`: `Box(Bool)` has
  42 |   println(pair(Int, Bool))
     |           ^^^^^^^^^^^^^^^ `json.parse` cannot decode `(Box(Int), Box(Bool))`: `Box(Bool)` has no decoder
   = note: `pair` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: type 'Box(Bool)' does not implement trait 'json.Decode'
  --> instance_impl__a_parameter_holding_a_type_at_an_instantiation_with_no_impl_is_refused.silt:44:13

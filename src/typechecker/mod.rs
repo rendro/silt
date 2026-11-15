@@ -745,6 +745,9 @@ pub(crate) struct TypeChecker {
     /// by here (`dep` for a dependency's root module, whatever the
     /// module calls itself), for a help that says which import to add.
     pub(super) import_paths: HashMap<crate::defs::ModuleId, Symbol>,
+    /// The library module of each dependency of the module's package the
+    /// session has, by its key (`ModuleContext::dependencies`).
+    pub(super) dependency_keys: HashMap<crate::defs::ModuleId, Symbol>,
     /// The module's type declarations that are rejected (a reserved or
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
@@ -997,6 +1000,7 @@ impl TypeChecker {
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
             import_paths: HashMap::new(),
+            dependency_keys: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
@@ -2283,30 +2287,36 @@ enum EntryWho {
 /// The context a module is checked in, from the session.
 pub(crate) struct ModuleContext<'a> {
     /// The module checked.
-    pub module: crate::defs::ModuleId,
+    pub(crate) module: crate::defs::ModuleId,
     /// The package it is of: a help offers an import of a module of the
     /// same package by its name.
-    pub package: crate::package_graph::PackageId,
+    pub(crate) package: crate::package_graph::PackageId,
+    /// The keys of the package's `[dependencies]` whose library module
+    /// the session has, each with that module: a help offers an import
+    /// of one by its key.
+    pub(crate) dependencies: Vec<(Symbol, crate::defs::ModuleId)>,
+    /// The name of the package, from its `silt.toml`.
+    pub(crate) package_name: Symbol,
     /// Its name, for diagnostics.
-    pub module_name: Symbol,
+    pub(crate) module_name: Symbol,
     /// A file, a REPL cell, or an embedder's host module, whose
     /// functions are bodiless signatures.
-    pub kind: names::ModuleKind,
+    pub(crate) kind: names::ModuleKind,
     /// The modules it imports, and theirs, and so on. `None` for a REPL
     /// cell.
-    pub reach: Option<std::collections::HashSet<crate::defs::ModuleId>>,
+    pub(crate) reach: Option<std::collections::HashSet<crate::defs::ModuleId>>,
     /// For a REPL cell, the cells of its session.
-    pub cells: std::sync::Arc<std::collections::HashSet<crate::defs::ModuleId>>,
+    pub(crate) cells: std::sync::Arc<std::collections::HashSet<crate::defs::ModuleId>>,
     /// The module's top-level names, from the resolver.
-    pub scope: &'a names::ModuleScope,
+    pub(crate) scope: &'a names::ModuleScope,
     /// For a REPL cell, the values it imports from the earlier cells,
     /// with their definitions. Empty for any other module.
-    pub earlier: &'a [(Symbol, crate::defs::DefId)],
+    pub(crate) earlier: &'a [(Symbol, crate::defs::DefId)],
     /// The session's definitions; the module is resolved already.
-    pub defs: std::sync::Arc<crate::defs::DefTable>,
+    pub(crate) defs: std::sync::Arc<crate::defs::DefTable>,
     /// What the checks of the session share. What the module adds to
     /// them is recorded, see [`Tables::forget`].
-    pub tables: &'a mut Tables,
+    pub(crate) tables: &'a mut Tables,
 }
 
 /// Check one module, which the resolver has resolved, against the
@@ -2317,6 +2327,8 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     let ModuleContext {
         module,
         package,
+        dependencies,
+        package_name,
         module_name,
         kind,
         reach,
@@ -2332,6 +2344,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     let (mut checker, mut env) = builtin_env().start();
     tables.module_names.insert(module, module_name);
     tables.module_packages.insert(module, package);
+    tables.package_names.insert(package, package_name);
     checker.tables = std::mem::take(tables);
     // A REPL cell that binds a name an earlier cell binds reads the
     // earlier value where its own is not bound yet (`let n = n + 1`):
@@ -2353,6 +2366,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;
+    checker.dependency_keys = dependencies.into_iter().map(|(key, m)| (m, key)).collect();
     for binding in scope.types.values() {
         if let names::Binding::Def(id) = binding {
             checker.seen_traits.insert(*id);
