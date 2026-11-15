@@ -754,6 +754,9 @@ pub(crate) struct TypeChecker {
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
     pub(super) rejected_types: std::collections::HashSet<TypeRef>,
+    /// The module's trait declarations refused for a prelude type's name
+    /// (`trait Int`): an impl of one is already reported.
+    pub(super) refused_traits: std::collections::HashSet<Symbol>,
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
@@ -1004,6 +1007,7 @@ impl TypeChecker {
             import_paths: HashMap::new(),
             dependency_keys: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
+            refused_traits: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
             blanket_traits: std::collections::HashSet::new(),

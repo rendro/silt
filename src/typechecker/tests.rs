@@ -2499,3 +2499,39 @@ fn test_a_generic_type_given_a_value_names_the_value() {
         ]
     );
 }
+
+/// A trait named like any type of the prelude, taken from the one table
+/// of builtin types and the prelude's enums, is refused at its
+/// declaration with one error, and the type keeps its name: a function
+/// of the module that writes the type is checked as written (audit R9,
+/// card TRT-1).
+#[test]
+fn test_a_trait_named_like_a_prelude_type_is_refused() {
+    let prelude_enums = crate::builtins::registry::registry()
+        .prelude_types
+        .iter()
+        .map(|ty| ty.name);
+    let names: Vec<&str> = crate::types::builtins::BUILTIN_TYPES
+        .iter()
+        .map(|b| b.name)
+        .chain(["Never"])
+        .chain(prelude_enums)
+        .filter(|name| crate::builtins::registry::is_prelude_type(name))
+        .collect();
+    for required in ["Int", "List", "Bytes", "Never", "Option", "Result"] {
+        assert!(names.contains(&required), "{required} in {names:?}");
+    }
+    for name in names {
+        let source = format!("trait {name} {{\n  fn go(self) -> Int\n}}\nfn main() {{}}\n");
+        let errors = check_errors(&source);
+        let errors: Vec<_> = errors.iter().filter(|e| e.is_error()).collect();
+        assert_eq!(errors.len(), 1, "{name}: {errors:?}");
+        assert_eq!(
+            errors[0].message,
+            format!("trait '{name}' shadows builtin type '{name}'")
+        );
+        assert_eq!(errors[0].help, ["choose a different name"]);
+    }
+    // A type of a builtin module reserves no name.
+    assert_no_errors("trait Regex {\n  fn go(self) -> Int\n}\nfn main() {}\n");
+}

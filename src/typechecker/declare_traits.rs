@@ -1053,6 +1053,23 @@ impl TypeChecker {
             );
             return;
         }
+        // A trait named like a type of the prelude (`trait Int`, `trait
+        // Option`) would take the name from the type in the module: every
+        // `Int` written there, the trait's own methods included, would be
+        // an unknown type. It is refused at its declaration, as a type of
+        // such a name is (`register_type_decl`).
+        if crate::builtins::registry::is_prelude_type(&trait_name_str) {
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidTraitDeclaration,
+                    t.name_span,
+                    format!("trait '{trait_name_str}' shadows builtin type '{trait_name_str}'"),
+                )
+                .with_help("choose a different name"),
+            );
+            self.refused_traits.insert(t.name);
+            return;
+        }
         self.register_trait_decl_inner(t);
     }
 
@@ -2000,8 +2017,11 @@ impl TypeChecker {
     fn declare_trait_impl(&mut self, ti: &TraitImpl) {
         // An impl of a trait or for a type the resolver resolved to
         // nothing: it reported why.
+        // So is an impl of a trait of the module refused at its
+        // declaration (`trait Int`).
         if ti.trait_res == Some(crate::defs::Res::Error)
             || ti.target_res == Some(crate::defs::Res::Error)
+            || (ti.trait_module.is_none() && self.refused_traits.contains(&ti.trait_name))
         {
             self.unresolved_impl_methods
                 .extend(ti.methods.iter().map(|m| m.name));

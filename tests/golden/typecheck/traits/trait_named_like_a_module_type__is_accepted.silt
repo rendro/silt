@@ -1,0 +1,15 @@
+-- A type of a builtin module reserves no name (as for a type
+-- declaration): a trait named `Regex` or `Weekday` is a trait.
+trait Regex {
+  fn pattern(self) -> String
+}
+
+type Literal { text: String }
+
+trait Regex for Literal {
+  fn pattern(self) -> String { self.text }
+}
+
+fn main() {
+  println(Regex.pattern(Literal { text: "a+" }))
+}

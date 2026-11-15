@@ -1,0 +1,49 @@
+-- cmd: check
+-- exit: 1
+-- A trait named like a type of the prelude is refused at its
+-- declaration, for every such name (`Never`, `Option` and `Result`
+-- too), and takes no name: `Int`, `List`, `Option` written in the
+-- module stay the types, and an impl of the refused trait is not
+-- reported again (audit R9, card TRT-1).
+import list
+
+trait Int {
+  fn go(self) -> Int
+}
+
+trait List {
+  fn size(self) -> Int
+}
+
+trait Never {
+  fn go(self) -> Int
+}
+
+trait Option {
+  fn get(self) -> Int
+}
+
+trait Result {
+  fn ok(self) -> Bool
+}
+
+trait Bytes {
+  fn len(self) -> Int
+}
+
+type Box { n: Int }
+
+trait Int for Box {
+  fn go(self) -> Int { self.n }
+}
+
+fn add(a: Int, b: Int) -> Int { a + b }
+
+fn first(xs: List(Int)) -> Option(Int) { xs |> list.first }
+
+fn todo() -> Never { panic("todo") }
+
+fn main() {
+  println(add(1, 2))
+  println(first([1]))
+}
