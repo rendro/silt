@@ -276,7 +276,7 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
         path.parent().is_some_and(|dir| dir != src)
     });
     files.extend(below);
-    files.sort();
+    files.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
     without_entry_and_tests(files, entry, tests, silt::source::canonical_path)
 }
 
@@ -308,8 +308,9 @@ pub(crate) struct Checked {
     pub(crate) session: Session,
     /// The files that could not be read, each with why.
     pub(crate) unreadable: Vec<(String, std::io::Error)>,
-    /// What was found, each diagnostic once: the files in path order,
-    /// whichever was checked first, each file's in source order.
+    /// What was found, each diagnostic once, in the one order of every
+    /// door (`diagnostic::in_print_order`), whichever file was checked
+    /// first.
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
@@ -324,9 +325,10 @@ impl Checked {
 /// and the modules `modules` of its package in one session. A module
 /// that the entry or a test imports is checked there, as an import (its
 /// errors show where it is imported); only the others are opened as files
-/// of their own. What is found is in path order of the files (the entry
-/// and the tests among the others), as `silt check src` reports the
-/// same files. `Err` when the entry file cannot be read.
+/// of their own. What is found is in the one order of every door
+/// (`diagnostic::in_print_order`), the entry and the tests among the
+/// other files, for both callers (`silt check`, the package check of
+/// `silt test`). `Err` when the entry file cannot be read.
 pub(crate) fn check_package(
     path: &str,
     modules: &[String],
@@ -370,13 +372,7 @@ pub(crate) fn check_package(
             Err(e) => unreadable.push((module.clone(), e)),
         }
     }
-    // (A stable sort: a file's diagnostics keep their source order.)
-    let sources = session.sources();
-    let path_of = |d: &Diagnostic| {
-        (sources.get(d.span.file))
-            .and_then(|file| silt::diagnostic::source_name_for_display(&file.path))
-    };
-    diagnostics.sort_by_cached_key(path_of);
+    silt::diagnostic::in_print_order(session.sources(), &mut diagnostics);
     Ok(Checked {
         session,
         unreadable,
@@ -386,15 +382,16 @@ pub(crate) fn check_package(
 
 /// Check each of `programs`, as a program of its own, and report what
 /// was found: each diagnostic once, also where two programs import one
-/// module; under `--format json` all of it as one JSON array. The files
-/// come in path order, whichever program found what (a package's entry
-/// and test files among its other files, as `silt check src` lists
-/// them), each file's diagnostics in source order.
+/// module; under `--format json` all of it as one JSON array. All of it
+/// in the one order of every door (`diagnostic::PrintKey`: by the
+/// canonical path of the file, whichever program found what and however
+/// the file is spelled, `./b.silt` or `b.silt`), each file's by line.
 fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: bool) {
     let mut failed = false;
     let mut warnings = 0;
-    // Each diagnostic as it is shown, with the name of its file.
-    let mut found: Vec<(String, Shown)> = Vec::new();
+    // Each diagnostic as it is shown, with its place in the one order
+    // of every door (`diagnostic::PrintKey`).
+    let mut found: Vec<(silt::diagnostic::PrintKey, Shown)> = Vec::new();
     let mut json_unreadable: Vec<serde_json::Value> = Vec::new();
     // What was shown, as rendered with each file named by its canonical
     // path: a file reached by two spellings of its path (in two
@@ -436,8 +433,8 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
             .cloned()
             .collect();
         warnings += diagnostics.iter().filter(|d| d.is_warning()).count();
-        let file_of =
-            |d: &Diagnostic| (files.locate(d.span)).map_or(String::new(), |located| located.file);
+        let mut order = silt::diagnostic::PrintOrder::new(checked.session.sources());
+        let mut file_of = |d: &Diagnostic| order.key(d);
         match format {
             OutputFormat::Json => {
                 json_unreadable.extend(json_errors(&files, &checked.unreadable, &[]));
@@ -455,7 +452,8 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
             }
         }
     }
-    // (A stable sort: a file's diagnostics keep their source order.)
+    // (A stable sort: what two programs found at one place keeps its
+    // order of finding.)
     found.sort_by(|a, b| a.0.cmp(&b.0));
     let mut json = json_unreadable;
     for (i, (_, shown)) in found.into_iter().enumerate() {

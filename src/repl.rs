@@ -593,13 +593,13 @@ impl Repl {
     }
 
     /// `diagnostics` without the warnings shown under an earlier input,
-    /// in the order every printer shows them (`in_source_order`).
+    /// in the order every printer shows them (`in_print_order`).
     fn not_shown_yet(&mut self, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
         let mut new: Vec<Diagnostic> = (diagnostics.iter())
             .filter(|d| d.is_error() || self.warned.insert((d.span, d.message.clone())))
             .cloned()
             .collect();
-        crate::diagnostic::in_source_order(self.session.sources(), &mut new);
+        crate::diagnostic::in_print_order(self.session.sources(), &mut new);
         new
     }
 
@@ -643,14 +643,14 @@ impl Repl {
             .unwrap_or_default();
         if !refusals.is_empty() {
             evaluation.diagnostics.extend(refusals);
-            crate::diagnostic::in_source_order(self.session.sources(), &mut evaluation.diagnostics);
+            crate::diagnostic::in_print_order(self.session.sources(), &mut evaluation.diagnostics);
             return evaluation;
         }
         let program = match self.session.compile(file, Entry::Cell) {
             Ok(program) => program,
             Err(errors) => {
                 evaluation.diagnostics.extend(errors);
-                crate::diagnostic::in_source_order(
+                crate::diagnostic::in_print_order(
                     self.session.sources(),
                     &mut evaluation.diagnostics,
                 );

@@ -110,7 +110,9 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     let wanted = |path: &Path| path.to_string_lossy().ends_with(".silt");
     let names = files_under(dir, &enters_package_dir, &wanted).into_iter();
     let mut results: Vec<String> = names.map(unicode_path).collect();
-    results.sort();
+    // (Name by name, `a/b.silt` before `a-b.silt`, on every system: the
+    // order the diagnostics of the files are printed in, `PrintKey`.)
+    results.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
     results
 }
 
@@ -142,7 +144,7 @@ fn enters_package_dir(path: &Path) -> bool {
     !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
 }
 
-/// The test files under `root` (`*_test.silt`), sorted,
+/// The test files under `root` (`*_test.silt`), sorted name by name,
 /// as `silt test` and `silt check` find them, in the directories
 /// [`enters_package_dir`] lets the walk into.
 pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
@@ -152,7 +154,7 @@ pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
     };
     let names = files_under(root, &enters_package_dir, &wanted).into_iter();
     let mut out: Vec<String> = names.map(unicode_path).collect();
-    out.sort();
+    out.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
     out
 }
 
@@ -242,10 +244,9 @@ pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, File
 
 /// Every diagnostic a door shows for the entry file `file`, in the order
 /// it prints them: the analysis's and what compiling found (its errors,
-/// or the compiler's warnings), each file's in source order (the errors
-/// of a line before its warnings), the files in the order the first of
-/// their diagnostics was found. `compiled` is what [`Session::compile`]
-/// returned for it.
+/// or the compiler's warnings), in the one order of every door
+/// (`diagnostic::in_print_order`: the files by path, each file's by
+/// line). `compiled` is what [`Session::compile`] returned for it.
 pub(crate) fn door_diagnostics(
     session: &mut Session,
     file: FileId,
@@ -261,7 +262,7 @@ pub(crate) fn door_diagnostics(
         Err(_) if analysed_with_errors => {}
         Err(errors) => diagnostics.extend(errors.iter().cloned()),
     }
-    silt::diagnostic::in_source_order(session.sources(), &mut diagnostics);
+    silt::diagnostic::in_print_order(session.sources(), &mut diagnostics);
     diagnostics
 }
 
