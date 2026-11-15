@@ -439,28 +439,29 @@ fn program_of_a_chain(dir: &Path, n: usize) {
     std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
 }
 
-/// A chain of four times the modules takes at most six times as long to
-/// check, from 250 to 1,000 (about five times: each module's place in the
-/// graph is found from all it reaches). (When every module's check also
-/// worked out, for the editor, how it names each module it reaches, the
-/// commands paid for it: about seven times, 2.60 s for 1,000 where main
-/// took 1.62 s. That is the language server's alone now.)
+/// A chain of eight times the modules takes at most ten times as long to
+/// check, from 250 to 2,000: about six and a half times (a fixed cost of
+/// each run is in both). Every module's check used to walk all the
+/// modules behind it for its reach (sixteen to eighteen times, main
+/// d732e072), and also to work out how it names each of them for the
+/// editor (twenty-five to thirty times, 5c053c37); it now walks them only
+/// where a check asks.
 #[test]
-fn a_chain_of_four_times_the_modules_takes_at_most_six_times_as_long() {
+fn a_chain_of_eight_times_the_modules_takes_at_most_ten_times_as_long() {
     let dir =
         std::env::temp_dir().join(format!("silt_checker_scaling_chain_{}", std::process::id()));
-    let (small, large) = (250, 1_000);
+    let (small, large) = (250, 2_000);
     for n in [small, large] {
         program_of_a_chain(&dir.join(n.to_string()), n);
     }
     let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
-    let measured = within(6.0, || best_times(&main_of(large), &main_of(small), 3));
+    let measured = within(10.0, || best_times(&main_of(large), &main_of(small), 3));
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(over) = measured {
         panic!(
-            "`silt check` of a chain of {large} modules took more than six times as long as \
-             that of one of {small} in each of three measurements ({}): a module's check does \
-             work for every module it reaches",
+            "`silt check` of a chain of {large} modules took more than ten times as long as \
+             that of one of {small} in each of three measurements ({}): a module's check walks \
+             every module it reaches",
             shown(&over)
         );
     }
