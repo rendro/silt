@@ -93,6 +93,7 @@ mod runtime;
 mod scheduler;
 pub mod session;
 mod source;
+mod text;
 mod typechecker;
 mod typeinfo;
 mod types;

@@ -18,32 +18,10 @@
 //! | [`Emitter::assume_height`]`(height)` | In unreachable code, what the height would be. |
 //! | [`Emitter::finish`]`(upvalues)` | Verify the code and give the function, which captures `upvalues` values. |
 //!
-//! `if x { 1 } else { 2 }` for a function of one parameter `x`:
-//!
-//! ```
-//! use silt::bytecode::{Asm, Emitter};
-//! use silt::source::Span;
-//! use silt::value::Value;
-//!
-//! let span = Span::BUILTIN;
-//! let mut e = Emitter::new("pick".to_string(), 1, span)?;
-//! let one = e.constant(Value::Int(1), span)?;
-//! let two = e.constant(Value::Int(2), span)?;
-//! let otherwise = e.label();
-//! let end = e.label();
-//! e.emit(Asm::GetLocal { slot: 0 }, span)?; // height 2
-//! e.emit(Asm::JumpIfFalse { to: otherwise }, span)?; // height 1
-//! e.emit(Asm::Constant { k: one }, span)?; // height 2
-//! e.emit(Asm::Jump { to: end }, span)?; // the next instruction is unreachable
-//! e.bind(otherwise, span)?; // reachable again, height 1
-//! e.emit(Asm::Constant { k: two }, span)?;
-//! e.bind(end, span)?;
-//! assert_eq!(e.height(), 2);
-//! e.emit(Asm::Return, span)?;
-//! let function = e.finish(0)?;
-//! assert_eq!(function.arity(), 1);
-//! # Ok::<(), silt::diagnostic::Diagnostic>(())
-//! ```
+//! `if x { 1 } else { 2 }` for a function of one parameter `x` is the
+//! unit test `an_if_with_an_else_is_two_labels` among this file's tests
+//! (a test, not a doc example: the module is the crate's own, which a
+//! doc example cannot reach).
 //!
 //! # Operands
 //!
@@ -587,6 +565,31 @@ mod tests {
 
     fn span() -> Span {
         Span::BUILTIN
+    }
+
+    /// The module's example: `if x { 1 } else { 2 }` for a function of
+    /// one parameter `x`.
+    #[test]
+    fn an_if_with_an_else_is_two_labels() -> Result<(), crate::diagnostic::Diagnostic> {
+        use crate::value::Value;
+        let span = Span::BUILTIN;
+        let mut e = Emitter::new("pick".to_string(), 1, span)?;
+        let one = e.constant(Value::Int(1), span)?;
+        let two = e.constant(Value::Int(2), span)?;
+        let otherwise = e.label();
+        let end = e.label();
+        e.emit(Asm::GetLocal { slot: 0 }, span)?; // height 2
+        e.emit(Asm::JumpIfFalse { to: otherwise }, span)?; // height 1
+        e.emit(Asm::Constant { k: one }, span)?; // height 2
+        e.emit(Asm::Jump { to: end }, span)?; // the next instruction is unreachable
+        e.bind(otherwise, span)?; // reachable again, height 1
+        e.emit(Asm::Constant { k: two }, span)?;
+        e.bind(end, span)?;
+        assert_eq!(e.height(), 2);
+        e.emit(Asm::Return, span)?;
+        let function = e.finish(0)?;
+        assert_eq!(function.arity(), 1);
+        Ok(())
     }
 
     #[test]

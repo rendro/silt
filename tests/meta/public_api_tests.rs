@@ -146,7 +146,7 @@ fn the_names_of_an_import_are_read() {
 // here, and so does one on the list that went. `SILT_BLESS=1` rewrites
 // the list; read its diff, so that nothing is promised by accident.
 
-use super::stdlib_reference_tests::env_switch;
+use crate::env_switch;
 
 /// The public lines of src/lib.rs outside the test API's module, each
 /// with the attributes above it.

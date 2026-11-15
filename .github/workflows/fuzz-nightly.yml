@@ -19,6 +19,15 @@ name: Fuzz (nightly deep)
 # deterministic, and what it reports is a finding that has no line in
 # tests/oracle/skip.txt, or a line whose finding is gone.
 #
+# The `miri` and `sanitizer` jobs check silt's unsafe code with tools
+# that see what a test alone does not: Miri runs the tests of the shared
+# slice of values and of the values built on it, and finds undefined
+# behaviour (.github/scripts/miri.sh); ThreadSanitizer runs the tests of
+# the scheduler and the runtime and finds data races, AddressSanitizer
+# the tests of the values and the I/O handles and finds memory errors
+# (.github/scripts/sanitizer.sh). They are too slow for every push. A
+# report of either fails the job.
+#
 # A failed job of a scheduled run opens a GitHub issue, "nightly: <job>
 # failed" (the `report` job), and a release is refused while the newest
 # finished run of this workflow on main is not green (release.yml).
@@ -164,13 +173,55 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+  # No cache in the two jobs below: the repository's cache is over its
+  # limit, and their builds (Miri's, and the standard library's with a
+  # sanitizer) share nothing with the other jobs'.
+  miri:
+    name: Miri (values)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
+          components: miri, rust-src
+
+      - name: cargo miri setup
+        run: cargo +nightly miri setup
+
+      - name: Miri
+        run: bash .github/scripts/miri.sh
+
+  sanitizer:
+    name: Sanitizer (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [thread, address]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
+          components: rust-src
+
+      - name: Tests under the ${{ matrix.sanitizer }} sanitizer
+        run: bash .github/scripts/sanitizer.sh ${{ matrix.sanitizer }}
+
   # Each failed job of a scheduled run opens one issue, "nightly: <job>
   # failed", or adds the run to it while it is open. A run started by
   # hand is watched by whoever started it, and a fork's scheduled runs
   # are its own business: neither reports.
   report:
     name: Report failed jobs
-    needs: [fuzz, oracle]
+    needs: [fuzz, oracle, miri, sanitizer]
     if: ${{ !cancelled() && github.event_name == 'schedule' && github.repository == 'rendro/silt' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

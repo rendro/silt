@@ -94,7 +94,7 @@ fn base64_reason(s: &str, error: &base64::DecodeError) -> String {
         DecodeError::InvalidByte(at, _) => {
             format!("invalid character at position {at}: {}", character(at))
         }
-        DecodeError::InvalidLastSymbol(at, _) => format!(
+        DecodeError::InvalidLastSymbol { offset: at, .. } => format!(
             "invalid last character at position {at}: {}: its unused bits are not zero",
             character(at)
         ),

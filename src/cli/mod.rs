@@ -182,88 +182,45 @@ fn run_main(args: Vec<String>) {
             print!("{}", usage_text());
             process::exit(0);
         }
-        "run" => run::dispatch(&args),
-        "disasm" => disasm::dispatch(&args),
-        "test" => test::dispatch(&args),
-        "check" => check::dispatch(&args),
-        "lsp" => lsp::dispatch(&args),
-        "repl" => repl::dispatch(&args),
-        "fmt" => fmt::dispatch(&args),
-        "init" => init::dispatch(&args),
-        "self-update" => self_update::dispatch(&args),
-        // `silt update` regenerates the lock of the package's
-        // dependencies.
-        "update" => update::dispatch(&args),
-        // `silt add <name> --path <path>` or
-        // `silt add <name> --git <url> (--rev|--branch|--tag) <ref>` —
-        // append a dep to `silt.toml` and regenerate `silt.lock`.
-        // Implemented in `run_add_command`; dispatch keeps the parsing
-        // local to that function so the main switch stays a one-liner.
-        "add" => add::dispatch(&args),
-        // `silt remove <name>`: drop a dep from `silt.toml` and
-        // regenerate `silt.lock`.
-        "remove" => remove::dispatch(&args),
-        // A file is run by `silt run`, with what follows it.
-        other if other.ends_with(".silt") => help::file_is_no_command(other, &args[1..]),
-        other => {
-            eprintln!("error: silt: unknown command '{other}'");
-            if let Some(suggestion) = suggest_subcommand(other) {
-                eprintln!("  Did you mean '{suggestion}'?");
+        name => match COMMANDS.iter().find(|(command, _)| *command == name) {
+            Some((_, dispatch)) => dispatch(&args),
+            // A file is run by `silt run`, with what follows it.
+            None if name.ends_with(".silt") => help::file_is_no_command(name, &args[1..]),
+            None => {
+                eprintln!("error: silt: unknown command '{name}'");
+                if let Some(suggestion) = suggest_subcommand(name) {
+                    eprintln!("  Did you mean '{suggestion}'?");
+                }
+                eprintln!("Run 'silt' with no arguments to see available commands.");
+                process::exit(1);
             }
-            eprintln!("Run 'silt' with no arguments to see available commands.");
-            process::exit(1);
-        }
+        },
     }
 }
 
-/// Levenshtein edit distance between two strings, computed with the
-/// classic two-row dynamic-programming table. Used only by
-/// [`suggest_subcommand`] for the "did you mean" hint on unknown
-/// `silt <subcommand>` invocations, so we keep the implementation
-/// local rather than re-using `crate::typechecker::suggest::levenshtein`
-/// (which lives behind `pub(super)` visibility).
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let n = a.len();
-    let m = b.len();
-    if n == 0 {
-        return m;
-    }
-    if m == 0 {
-        return n;
-    }
-    let mut prev: Vec<usize> = (0..=m).collect();
-    let mut curr: Vec<usize> = vec![0; m + 1];
-    for i in 1..=n {
-        curr[0] = i;
-        for j in 1..=m {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[m]
-}
-
-/// List of valid `silt` subcommands, used to power the "did you mean"
-/// hint for unknown commands. Must stay in sync with the match arms in
-/// [`run_main`] — a regression test in
-/// `tests/cli/cli_help_and_unknown_subcommand_tests.rs` exercises a typo of
-/// each of these to lock them together.
-const SUBCOMMANDS: &[&str] = &[
-    "run",
-    "disasm",
-    "test",
-    "check",
-    "lsp",
-    "repl",
-    "fmt",
-    "init",
-    "self-update",
-    "update",
-    "add",
-    "remove",
+/// The commands of `silt`, each with what runs it: the one list of them.
+/// `run_main` dispatches by it, the "did you mean" hint of an unknown
+/// command searches it, and the usage text has a row for each of them
+/// and for no other (a test of `help` holds that). The order is the
+/// hint's: of two commands as close to a typo, the first is named.
+pub(crate) const COMMANDS: &[(&str, fn(&[String]))] = &[
+    ("run", run::dispatch),
+    ("disasm", disasm::dispatch),
+    ("test", test::dispatch),
+    ("check", check::dispatch),
+    ("lsp", lsp::dispatch),
+    ("repl", repl::dispatch),
+    ("fmt", fmt::dispatch),
+    ("init", init::dispatch),
+    ("self-update", self_update::dispatch),
+    // Regenerates the lock of the package's dependencies.
+    ("update", update::dispatch),
+    // `silt add <name> --path <path>` or `silt add <name> --git <url>
+    // (--rev|--branch|--tag) <ref>`: a dependency into `silt.toml`, and
+    // `silt.lock` regenerated.
+    ("add", add::dispatch),
+    // A dependency out of `silt.toml`, and `silt.lock` regenerated.
+    ("remove", remove::dispatch),
 ];
 
 /// Find the closest valid token to `typo` within edit distance 2.
@@ -277,14 +234,15 @@ const SUBCOMMANDS: &[&str] = &[
 /// suggested for `silt -ru` (edit distance 2 to `--run`-shaped flags),
 /// which is more confusing than helpful.
 fn suggest_subcommand(typo: &str) -> Option<&'static str> {
+    let commands: Vec<&'static str> = COMMANDS.iter().map(|(name, _)| *name).collect();
     let pool: &[&'static str] = if typo.starts_with('-') {
         GLOBAL_FLAGS
     } else {
-        SUBCOMMANDS
+        &commands
     };
     let mut best: Option<(&'static str, usize)> = None;
     for &candidate in pool {
-        let d = edit_distance(typo, candidate);
+        let d = crate::text::levenshtein(typo, candidate);
         if d <= 2 {
             match best {
                 Some((_, bd)) if d >= bd => {}
