@@ -43,7 +43,7 @@ harness = false
 [dependencies]
 lsp-server = { version = "0.7", optional = true }
 lsp-types = { version = "0.97", optional = true }
-notify = { version = "6", optional = true }
+notify = { version = "8", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
 # The engine under `regex`, for the compiled patterns of the regex

@@ -368,7 +368,9 @@ pub fn watch_and_rerun(target: Target, args: &[String]) {
     let mut watcher =
         notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
             Ok(event) => {
-                let _ = tx.send(event.paths);
+                if may_change_a_file(&event.kind) {
+                    let _ = tx.send(event.paths);
+                }
             }
             Err(e) => eprintln!("watch error: {e}"),
         })
@@ -424,6 +426,15 @@ pub fn watch_and_rerun(target: Target, args: &[String]) {
         &mut runner,
         SETTLE,
     );
+}
+
+/// Whether an event of this kind can be a change of a file: every kind
+/// but a file being opened. (On Linux the watcher is told of every open
+/// of a watched file; the watcher's own reads, to see whether the files
+/// changed, would wake it again and again.)
+fn may_change_a_file(kind: &notify::EventKind) -> bool {
+    use notify::event::{AccessKind, EventKind};
+    !matches!(kind, EventKind::Access(AccessKind::Open(_)))
 }
 
 /// The watch loop. Before each run it takes the program's files
@@ -514,6 +525,31 @@ mod tests {
         );
         assert_eq!(clear_screen_seq_for(Some(OsStr::new("1")), true), "");
         assert_eq!(clear_screen_seq_for(None, false), "");
+    }
+
+    /// An open of a file changes nothing; a write, a creation, a removal
+    /// or a rename may. (notify 8 reports opens on Linux: the watcher's
+    /// own reads then woke it without end, and it never said it was
+    /// watching.)
+    #[test]
+    fn an_open_of_a_file_is_no_change() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, DataChange, EventKind, ModifyKind, RemoveKind,
+            RenameMode,
+        };
+        assert!(!may_change_a_file(&EventKind::Access(AccessKind::Open(
+            AccessMode::Any
+        ))));
+        for kind in [
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Any,
+        ] {
+            assert!(may_change_a_file(&kind), "{kind:?}");
+        }
     }
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
