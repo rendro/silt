@@ -203,7 +203,7 @@ impl TypeChecker {
     /// module calls itself (`lib`); None for another package's module no
     /// import here can reach (its names are written bare, its types
     /// described: `described_type`).
-    pub(super) fn module_name_here(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    pub(super) fn module_name_here(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         let package = |m| self.tables.module_packages.get(&m);
         if package(module) != package(self.module) {
             return self.import_path(module);
@@ -256,9 +256,9 @@ impl TypeChecker {
 
     /// The module that declares the type `r`: a builtin module's
     /// pseudo-module, or a module of the graph. None for the prelude.
-    pub(super) fn module_of_type(&self, r: TypeRef) -> Option<crate::session::ModuleId> {
+    pub(super) fn module_of_type(&self, r: TypeRef) -> Option<crate::defs::ModuleId> {
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, module)) => crate::session::ModuleId::builtin(module.as_ref()?),
+            Some((_, module)) => crate::defs::ModuleId::builtin(module.as_ref()?),
             None => self.def(r.id.0).map(|def| def.module),
         }
     }
@@ -271,7 +271,7 @@ impl TypeChecker {
     /// one rule for every help that writes a name of another module.
     pub(super) fn spelling_in_reach(
         &self,
-        module: crate::session::ModuleId,
+        module: crate::defs::ModuleId,
         name: &str,
     ) -> Option<String> {
         let by_name = (self.spelled.iter()).find(|(id, _)| {
@@ -294,7 +294,7 @@ impl TypeChecker {
     /// path the file binds already (`bound_here`): that import would
     /// bind it twice. The one rule of every "after `import X`" a help
     /// offers.
-    pub(super) fn import_path(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    pub(super) fn import_path(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         if let Some(path) = self.import_paths.get(&module) {
             return Some(*path);
         }
@@ -312,7 +312,7 @@ impl TypeChecker {
 
     /// The path of `import_path` before the file's own names are
     /// looked at.
-    fn path_to_import(&self, module: crate::session::ModuleId) -> Option<Symbol> {
+    fn path_to_import(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
         // (A dependency's library that another module of the package
         // imports: by its key.)
         if let Some(key) = self.dependency_keys.get(&module) {

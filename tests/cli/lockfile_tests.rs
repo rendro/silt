@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use silt::git::GitRef;
-use silt::lockfile::{LockedPackage, LockedSource, Lockfile};
-use silt::source::SourceMap;
+use silt::testing::git::GitRef;
+use silt::testing::lockfile::{LockedPackage, LockedSource, Lockfile};
+use silt::testing::source::SourceMap;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -845,7 +845,7 @@ fn test_silt_run_with_git_dep_works() {
     let after = &lock[rev_idx + "rev = \"".len()..];
     let end = after.find('"').expect("rev string is closed");
     let sha = &after[..end];
-    let cache_path = silt::git::cache_for(&repo_url, sha).expect("cache path");
+    let cache_path = silt::testing::git::cache_for(&repo_url, sha).expect("cache path");
     assert!(
         cache_path.join("silt.toml").is_file(),
         "expected cache to contain silt.toml at {}",
@@ -959,7 +959,7 @@ fn test_lockfile_with_an_absolute_path_is_rewritten_relative() {
     let lock_path = app.join("silt.lock");
     let relative = read_lockfile(&lock_path);
     // The form a lockfile had before: the dependency's absolute path.
-    let absolute = silt::source::canonical_path(&ws.join("dep"));
+    let absolute = silt::testing::source::canonical_path(&ws.join("dep"));
     let shown = absolute.display().to_string().replace('\\', "\\\\");
     let old = relative.replace(
         "source = { path = \"../dep\" }",

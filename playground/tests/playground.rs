@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use silt::SystemClock;
+use silt::testing::SystemClock;
 use silt_playground::{PageClock, STEP_BUDGET, TOKEN_KINDS, check, complete, format, run, tokens};
 
 fn run_it(source: &str) -> silt_playground::Run {

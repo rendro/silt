@@ -17,11 +17,7 @@ impl TypeChecker {
     }
 
     /// The module of the opaque type `ty` when it is none of `viewers`.
-    fn opaque_outside_of(
-        &self,
-        ty: TypeRef,
-        viewers: &[crate::session::ModuleId],
-    ) -> Option<Symbol> {
+    fn opaque_outside_of(&self, ty: TypeRef, viewers: &[crate::defs::ModuleId]) -> Option<Symbol> {
         let def = self.def(ty.id.0)?;
         if def.vis != crate::defs::Vis::Opaque || viewers.contains(&def.module) {
             return None;
@@ -104,7 +100,7 @@ impl TypeChecker {
         head: TypeRef,
         args: &[Type],
         seen: &mut Vec<(crate::defs::TypeId, Vec<Type>)>,
-        viewer: &[crate::session::ModuleId],
+        viewer: &[crate::defs::ModuleId],
     ) -> Option<(TypeRef, Symbol)> {
         let instance = (head.id, args.to_vec());
         // (A type that grows with every level is refused as one no
@@ -194,7 +190,7 @@ impl TypeChecker {
         &self,
         ty: &Type,
         seen: &mut HashSet<crate::defs::TypeId>,
-        viewer: &[crate::session::ModuleId],
+        viewer: &[crate::defs::ModuleId],
     ) -> Option<(TypeRef, Symbol)> {
         let encode = TraitKey::builtin("Encode");
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
@@ -240,7 +236,7 @@ impl TypeChecker {
         check: crate::types::BuiltinCheck,
         ty: &Type,
         passer: Option<Symbol>,
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
         origin: super::solve::Origin,
     ) {
         fn walk(ty: &Type, top: bool, out: &mut Vec<Type>) {
@@ -296,7 +292,7 @@ impl TypeChecker {
         &self,
         ty: &Type,
         span: Span,
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
     ) -> Option<Diagnostic> {
         let mut found = self.opaque_encoded(ty, &mut HashSet::new(), &[self.module])?;
         if (self.def(found.0.id.0)).is_some_and(|def| owner.contains(&def.module)) {
@@ -353,7 +349,7 @@ impl TypeChecker {
         &self,
         ty: &Type,
         span: Span,
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
     ) -> Option<Diagnostic> {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
         let Type::Generic(head, args) = &ty else {

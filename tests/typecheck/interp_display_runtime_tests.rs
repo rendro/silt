@@ -50,11 +50,12 @@
 //! What stays here needs a live socket (TcpListener) or calls the
 //! VM-side predicate directly.
 
-use silt::runtime::handle::TaskHandle;
+use silt::testing::runtime::handle::TaskHandle;
 #[cfg(feature = "tcp")]
-use silt::scheduler::test_support::InProcessRunner;
-use silt::value::Value;
-use silt::vm::Vm;
+use silt::testing::scheduler::test_support::InProcessRunner;
+use silt::testing::value::Value;
+use silt::testing::vm::Vm;
+use silt::testing::{ValueInside, VmInside};
 use std::sync::Arc;
 #[cfg(feature = "tcp")]
 use std::time::Duration;
@@ -101,7 +102,7 @@ fn value_implements_display_predicate_covers_every_no_display_value() {
     // path; here we cover the cheaply-constructible no-Display values.)
     let handle = Value::Handle(Arc::new(TaskHandle::new(0)));
     let type_desc = Value::TypeDescriptor(
-        silt::typeinfo::builtin_type_named("List")
+        silt::testing::typeinfo::builtin_type_named("List")
             .expect("List")
             .clone(),
     );

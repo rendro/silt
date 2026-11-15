@@ -13,7 +13,9 @@ use libfuzzer_sys::fuzz_target;
 // is, and as the JSON and the TOML text its bytes choose (`json_text_of`,
 // `toml_text_of`), which reach the shapes of the types far more often
 // than random bytes do.
-use silt::fuzz_invariants::{check_json_decoding, check_toml_decoding, json_text_of, toml_text_of};
+use silt::testing::fuzz_invariants::{
+    check_json_decoding, check_toml_decoding, json_text_of, toml_text_of,
+};
 
 fuzz_target!(|data: &[u8]| {
     let checked = [

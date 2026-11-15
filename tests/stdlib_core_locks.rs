@@ -7,17 +7,17 @@
 //! behavior. If a refactor changes the return shape or error phrase,
 //! these tests should fail loudly so the audit record stays honest.
 
-use silt::typeinfo::bv;
-use silt::value::Value;
+use silt::testing::typeinfo::bv;
+use silt::testing::value::Value;
 
 // ── Helpers (mirrors tests/heavy/integration.rs) ──────────────────────────
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn run_err(input: &str) -> String {
-    silt::session::testing::run_str(input).expect_err("expected runtime error")
+    silt::testing::run_str(input).expect_err("expected runtime error")
 }
 
 // ════════════════════════════════════════════════════════════════════

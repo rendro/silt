@@ -144,7 +144,7 @@ fn init_project(lib: bool) {
     // Previously `mkdir io && cd io && silt init`
     // silently wrote `name = "io"`, producing a package whose top-level
     // name shadowed the stdlib `io` module.
-    if let Err(msg) = silt::manifest::validate_package_name(&package_name) {
+    if let Err(msg) = crate::manifest::validate_package_name(&package_name) {
         eprintln!("error: silt init: {msg}");
         eprintln!(
             "                  (the package name was derived from the directory name `{dirname}`;"

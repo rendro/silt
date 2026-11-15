@@ -242,7 +242,7 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration, requests: &[String]) 
     // The case directory as an editor names it, and as the server names
     // the files it publishes for: canonical (on Windows the long form of
     // a short 8.3 name such as `RUNNER~1`), without the `\\?\` prefix.
-    let root = silt::source::canonical_path(dir);
+    let root = silt::testing::source::canonical_path(dir);
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("lsp")
         .current_dir(&root)

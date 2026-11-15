@@ -507,7 +507,7 @@ fn a_wait_that_ends_before_the_commit_wakes_nobody() {
 
     // The double would fail the test on a wake: task 1 is not parked.
     assert!(matches!(ch.try_send(Value::Int(3), &d), TrySend::Sent));
-    assert!(!parked.commit());
+    assert!(!parked.token().commit());
     let Ok(Resumed::Fired(fired)) = parked.finish() else {
         panic!("the wait has ended");
     };
@@ -520,7 +520,7 @@ fn a_cancel_before_the_commit_wakes_nobody() {
     let ch = Channel::new(0, 0);
     let parked = park_only(&d, 1, recv(&ch));
     assert!(parked.token().cancel(&d));
-    assert!(!parked.commit());
+    assert!(!parked.token().commit());
     assert!(matches!(parked.finish(), Ok(Resumed::Cancelled)));
     assert!(matches!(ch.try_send(Value::Int(3), &d), TrySend::Full(_)));
 }
@@ -1623,7 +1623,7 @@ fn selects_on_threads_deliver_every_value_once() {
                 Park::Cancelled => panic!("nobody cancels"),
                 Park::Expired => panic!("no task has a deadline"),
             };
-            if parked.commit() {
+            if parked.token().commit() {
                 while !self.woken[task].swap(false, Ordering::SeqCst) {
                     thread::park();
                 }

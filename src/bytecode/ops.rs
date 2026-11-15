@@ -62,7 +62,7 @@
 use std::marker::PhantomData;
 
 use super::{Const, Label, Segment, UpvalueDesc};
-use crate::builtins::registry::BuiltinId;
+use crate::defs::BuiltinId;
 
 // ── What a row is made of ──────────────────────────────────────────
 
@@ -245,7 +245,7 @@ impl Values for &[Segment] {
 /// `max`. Every limit of the bytecode is one of these, and reads
 /// `too many <what>: <count> (the limit is <max>)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Limit {
+pub(crate) struct Limit {
     pub what: &'static str,
     pub count: usize,
     pub max: usize,
@@ -777,12 +777,12 @@ macro_rules! ops {
         /// An instruction as the compiler hands it to the emitter, with
         /// its operands at full width and its jumps to labels.
         #[derive(Debug, Clone, Copy)]
-        pub enum Asm<'a> {
+        pub(crate) enum Asm<'a> {
             $( $(#[$doc])* $name $( { $( $field: asm_ty!($kind, 'a), )* } )?, )*
         }
 
         impl Asm<'_> {
-            pub fn op(&self) -> Op {
+            pub(crate) fn op(&self) -> Op {
                 match self {
                     $( Self::$name { .. } => Op::$name, )*
                 }
@@ -792,7 +792,7 @@ macro_rules! ops {
             /// for both: a `Byte` operand, narrow in an [`Instr`], is a
             /// `usize` here already.)
             #[allow(clippy::useless_conversion)]
-            pub fn effect(&self) -> Effect {
+            pub(crate) fn effect(&self) -> Effect {
                 match *self {
                     $( Self::$name $( { $( $field, )* } )? => {
                         $( $( let _ = &$field; )* )?
@@ -862,7 +862,7 @@ macro_rules! ops {
         /// the one after it; `None` when no instruction is encoded there
         /// (an unknown opcode, operands past the end of the code).
         #[inline(always)]
-        pub fn decode(code: &[u8], at: usize) -> Option<(Instr, usize)> {
+        pub(crate) fn decode(code: &[u8], at: usize) -> Option<(Instr, usize)> {
             let byte = *code.get(at)?;
             let mut r = Reader { code, at: at + 1 };
             let instr = match byte {

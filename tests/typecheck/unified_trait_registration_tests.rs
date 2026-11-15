@@ -15,7 +15,7 @@
 /// covers the four sig-only traits).
 #[test]
 fn builtin_traits_registered_via_user_path() {
-    let fp = silt::typechecker::__builtin_trait_registration_fingerprint();
+    let fp = silt::testing::typechecker::__builtin_trait_registration_fingerprint();
     let names: Vec<String> = fp.iter().map(|e| e.0.clone()).collect();
     assert_eq!(
         names,

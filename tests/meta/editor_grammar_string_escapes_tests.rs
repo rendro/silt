@@ -51,7 +51,7 @@ fn read_grammar(rel: &str) -> String {
 /// error, so `is_ok()` is exactly "this escape is valid".
 fn lexer_accepts_escape(c: char) -> bool {
     let src = format!("\"\\{c}\"");
-    silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
+    silt::testing::lexer::Lexer::new(silt::testing::source::FileId::default(), &src)
         .tokenize()
         .checked()
         .is_ok()
@@ -207,7 +207,7 @@ fn lexer_accepted_escape_set_baseline() {
 #[test]
 fn unicode_escape_is_in_both_grammars_and_the_lexer() {
     let lexes = |src: &str| {
-        silt::lexer::Lexer::new(silt::source::FileId::default(), src)
+        silt::testing::lexer::Lexer::new(silt::testing::source::FileId::default(), src)
             .tokenize()
             .checked()
             .is_ok()

@@ -35,7 +35,7 @@ fn highlight_stays_in_the_document_and_references_are_walked_once() {
     let dir = std::env::temp_dir().join(format!("silt_lsp_perf_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let dir = silt::source::canonical_path(&dir);
+    let dir = silt::testing::source::canonical_path(&dir);
     let geo = "pub fn mk(w: Int) -> Int {\n  w + 1\n}\n";
     std::fs::write(dir.join("geo.silt"), geo).unwrap();
     for i in 0..FILES {
@@ -48,7 +48,7 @@ fn highlight_stays_in_the_document_and_references_are_walked_once() {
         std::fs::write(dir.join(format!("m{i}.silt")), text).unwrap();
     }
     let uri_of = |path: &std::path::Path| {
-        silt::lsp::path_to_file_uri(path)
+        silt::testing::lsp::path_to_file_uri(path)
             .expect("a file URI")
             .as_str()
             .to_string()

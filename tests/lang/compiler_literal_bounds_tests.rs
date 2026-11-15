@@ -24,7 +24,7 @@
 /// succeeded, or the `CompileError.message` string on failure. Parse /
 /// lex errors panic — we only care about the compiler stage here.
 fn try_compile(source: &str) -> Result<(), String> {
-    match silt::session::testing::check_str(source)
+    match silt::testing::check_str(source)
         .into_iter()
         .find(|d| d.is_error())
     {

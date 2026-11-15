@@ -3,7 +3,7 @@
 //!
 //! `silt fmt` sorts a file's imports, and a file's imports are compiled
 //! in that same order whatever order they are written in
-//! (`silt::ast::import_order` is the one function for both). So for
+//! (`silt::testing::ast::import_order` is the one function for both). So for
 //! every directory case of the corpus that has more than one `.silt`
 //! file, in a copy of it, `silt disasm` of the entry file gives the same
 //! sequence of `== <module:...> ==` headers before and after `silt fmt`

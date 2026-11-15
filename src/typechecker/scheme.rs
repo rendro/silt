@@ -202,7 +202,7 @@ impl TypeChecker {
         let mut preds: Vec<Pred> = Vec::new();
         // The module of each predicate, if another module's definition
         // owes it (`let_owners`).
-        let mut owners: Vec<Option<crate::session::ModuleId>> = Vec::new();
+        let mut owners: Vec<Option<crate::defs::ModuleId>> = Vec::new();
         // The evidence of each trait predicate the scheme takes: a bound
         // of the definition.
         let mut taken = Vec::new();
@@ -1462,9 +1462,9 @@ fn given_at(method_ty: &Type, at: Span) -> Option<Span> {
 /// and once for no such definition, is owed for none.)
 fn take_pred(
     preds: &mut Vec<Pred>,
-    owners: &mut Vec<Option<crate::session::ModuleId>>,
+    owners: &mut Vec<Option<crate::defs::ModuleId>>,
     pred: Pred,
-    owner: Option<crate::session::ModuleId>,
+    owner: Option<crate::defs::ModuleId>,
 ) {
     match preds.iter().position(|taken| *taken == pred) {
         Some(k) if owners[k] != owner => owners[k] = None,

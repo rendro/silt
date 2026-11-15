@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use silt::source::{SourceMap, SourceName};
+use crate::source::{SourceMap, SourceName};
 
 use crate::cli::package::{die_on_manifest_error_with, find_project_root};
 use crate::cli::paths::{
@@ -237,11 +237,11 @@ fn format_source(source: &str, path: &str, tamper: Option<&Tamper>) -> Result<St
     let mut sources = SourceMap::new();
     let file = sources.add(SourceName::Path(path.into()), source.into());
     let result = match tamper {
-        None => silt::format::format(file, source),
+        None => crate::format::format(file, source),
         #[cfg(debug_assertions)]
         Some((from, to)) => {
             let (from, to) = (from.clone(), to.clone());
-            silt::format::format_with(file, source, move |mut text| {
+            crate::format::format_with(file, source, move |mut text| {
                 if let Some(at) = text.rfind(&from) {
                     text.replace_range(at..at + from.len(), &to);
                 }
@@ -250,9 +250,9 @@ fn format_source(source: &str, path: &str, tamper: Option<&Tamper>) -> Result<St
         }
         // The flag that sets it does not exist in a release build.
         #[cfg(not(debug_assertions))]
-        Some(_) => silt::format::format(file, source),
+        Some(_) => crate::format::format(file, source),
     };
-    result.map_err(|diagnostic| silt::diagnostic::render_human(&sources, &diagnostic))
+    result.map_err(|diagnostic| crate::diagnostic::render_human(&sources, &diagnostic))
 }
 
 /// `silt fmt -`: format the program read from stdin and write the result
@@ -266,7 +266,7 @@ fn format_stdin(check_mode: bool, tamper: Option<&Tamper>) -> ! {
         Err(e) => {
             eprintln!(
                 "error reading {name}: {}",
-                silt::diagnostic::io_error_text(&e)
+                crate::diagnostic::io_error_text(&e)
             );
             process::exit(2);
         }
@@ -302,7 +302,7 @@ fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<bool, String> {
     let source = fs::read_to_string(path).map_err(|e| {
         format!(
             "error reading {path}: {}",
-            silt::diagnostic::io_error_text(&e)
+            crate::diagnostic::io_error_text(&e)
         )
     })?;
     let formatted = format_source(&source, path, tamper)?;
@@ -318,7 +318,7 @@ fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<bool, String> {
     replace_file(Path::new(path), &formatted).map_err(|e| {
         format!(
             "error writing {path}: {}",
-            silt::diagnostic::io_error_text(&e)
+            crate::diagnostic::io_error_text(&e)
         )
     })?;
     Ok(true)
@@ -378,7 +378,7 @@ fn check_format(path: &str, tamper: Option<&Tamper>) -> CheckOutcome {
         Err(e) => {
             eprintln!(
                 "error reading {path}: {}",
-                silt::diagnostic::io_error_text(&e)
+                crate::diagnostic::io_error_text(&e)
             );
             return CheckOutcome::InfraError;
         }

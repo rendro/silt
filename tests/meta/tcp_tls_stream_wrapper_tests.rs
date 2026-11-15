@@ -15,8 +15,8 @@
 #[cfg(feature = "tcp-tls")]
 #[test]
 fn tcp_tls_wrappers_observable_behavior_identical() {
-    fn run(input: &str) -> silt::value::Value {
-        silt::session::testing::run_str(input).expect("runtime error")
+    fn run(input: &str) -> silt::testing::value::Value {
+        silt::testing::run_str(input).expect("runtime error")
     }
 
     fn unbound_addr() -> String {
@@ -45,7 +45,7 @@ import host
 "#
     );
     let client_v = run(&client_src);
-    let silt::value::Value::String(client_msg, _) = client_v else {
+    let silt::testing::value::Value::String(client_msg, _) = client_v else {
         panic!("client_v not a string: {client_v:?}");
     };
     assert!(
@@ -88,7 +88,7 @@ import host
 "#
     .to_string();
     let server_v = run(&server_src);
-    let silt::value::Value::String(server_msg, _) = server_v else {
+    let silt::testing::value::Value::String(server_msg, _) = server_v else {
         panic!("server_v not a string: {server_v:?}");
     };
     assert!(

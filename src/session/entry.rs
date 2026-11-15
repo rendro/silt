@@ -6,26 +6,13 @@ use std::collections::HashMap;
 use crate::ast::{Decl, ExprKind, FnDecl, PatternKind, Program, Stmt};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-use crate::program::{TestFn, TestKind};
+use crate::program::{ENTRY_POINT, TestFn, TestKind, test_kind};
 use crate::source::{FileId, Span};
 use crate::types::Type;
 
-/// The name of the function a program starts from.
-pub const ENTRY_POINT: &str = "main";
-
-/// Classify a top-level function name. `None`: not a test.
-pub fn test_kind(name: &str) -> Option<TestKind> {
-    if name.starts_with("skip_test_") {
-        Some(TestKind::Skip)
-    } else if name.starts_with("test_") {
-        Some(TestKind::Run)
-    } else {
-        None
-    }
-}
-
 /// The test functions that `program` declares, in source order.
-pub fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
+#[cfg(test)]
+fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
     selected_tests(program, None)
         .map(|(_, name, kind)| (name, kind))
         .collect()
@@ -35,7 +22,7 @@ pub fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
 /// them without one), in source order. This is the one selection: the
 /// tests compiled for [`super::Entry::Tests`] are these, and `silt test
 /// --filter` leaves a file alone when it has none.
-pub fn selected_tests<'a>(
+pub(crate) fn selected_tests<'a>(
     program: &'a Program,
     filter: Option<&'a str>,
 ) -> impl Iterator<Item = (&'a FnDecl, String, TestKind)> + 'a {

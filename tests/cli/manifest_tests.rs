@@ -1,4 +1,4 @@
-//! Integration tests for the `silt::manifest` module.
+//! Integration tests for the `silt::testing::manifest` module.
 //!
 //! Each test writes its manifest into a temporary directory of its own.
 
@@ -6,10 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use silt::diagnostic::{Code, Diagnostic};
-use silt::intern;
-use silt::manifest::{Dependency, GitRef, Manifest};
-use silt::source::SourceMap;
+use silt::testing::diagnostic::{Code, Diagnostic};
+use silt::testing::intern;
+use silt::testing::manifest::{Dependency, GitRef, Manifest};
+use silt::testing::source::SourceMap;
 
 // ── Test scaffolding ──────────────────────────────────────────────────
 
@@ -67,7 +67,6 @@ version = "0.1.0"
     let manifest = load(&path).expect("load");
     assert_eq!(intern::resolve(manifest.package.name), "foo");
     assert_eq!(manifest.package.version, "0.1.0");
-    assert!(manifest.package.edition.is_none());
     assert!(manifest.dependencies.is_empty());
 }
 
@@ -97,22 +96,6 @@ bar = { path = "../bar" }
         }
         other => panic!("expected Path dep, got {other:?}"),
     }
-}
-
-#[test]
-fn test_manifest_with_edition() {
-    let dir = tempdir();
-    let path = write_manifest(
-        &dir,
-        r#"
-[package]
-name = "foo"
-version = "0.1.0"
-edition = "2026"
-"#,
-    );
-    let manifest = load(&path).expect("load");
-    assert_eq!(manifest.package.edition.as_deref(), Some("2026"));
 }
 
 // ── Schema errors ─────────────────────────────────────────────────────
@@ -553,30 +536,6 @@ fn test_malformed_toml() {
 // ── Path / discovery ──────────────────────────────────────────────────
 
 #[test]
-fn test_manifest_path_recorded() {
-    let dir = tempdir();
-    let path = write_manifest(
-        &dir,
-        r#"
-[package]
-name = "foo"
-version = "0.1.0"
-"#,
-    );
-    let manifest = load(&path).expect("load");
-    assert!(
-        manifest.manifest_path.is_absolute(),
-        "manifest_path should be absolute, got {:?}",
-        manifest.manifest_path
-    );
-    // The file name component should still be `silt.toml`.
-    assert_eq!(
-        manifest.manifest_path.file_name().and_then(|s| s.to_str()),
-        Some("silt.toml")
-    );
-}
-
-#[test]
 fn test_io_error_when_missing() {
     let dir = tempdir();
     let path = dir.join("silt.toml"); // never written
@@ -648,7 +607,7 @@ fn test_find_returns_none() {
 }
 
 #[test]
-fn test_discover_finds_and_loads() {
+fn test_find_then_load_from_a_nested_directory() {
     let root = tempdir();
     let nested = root.join("src");
     fs::create_dir_all(&nested).expect("mkdir -p");
@@ -663,35 +622,13 @@ version = "0.2.1"
 helper = { path = "../helper" }
 "#,
     );
-    let manifest = Manifest::discover(&nested, &mut SourceMap::new())
-        .expect("discover ok")
-        .expect("manifest found");
+    let dir = Manifest::find(&nested).expect("manifest found");
+    let manifest = Manifest::load(&dir.join("silt.toml"), &mut SourceMap::new()).expect("load ok");
     assert_eq!(intern::resolve(manifest.package.name), "demo_pkg");
     assert_eq!(manifest.package.version, "0.2.1");
     let helper = intern::intern("helper");
     match manifest.dependencies.get(&helper).map(|e| &e.source) {
         Some(Dependency::Path { path }) => assert_eq!(path, &PathBuf::from("../helper")),
         other => panic!("expected helper path dep, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_discover_returns_none_when_no_manifest() {
-    let root = tempdir();
-    let nested = root.join("a").join("b");
-    fs::create_dir_all(&nested).expect("mkdir -p");
-    // Same caveat as `test_find_returns_none` — don't fail the suite if
-    // an enclosing silt.toml exists outside our control.
-    match Manifest::discover(&nested, &mut SourceMap::new()) {
-        Ok(None) => {}
-        Ok(Some(m)) => {
-            let temp_root = std::env::temp_dir();
-            assert!(
-                !m.manifest_path.starts_with(&temp_root),
-                "unexpected manifest discovered inside our temp tree: {:?}",
-                m.manifest_path
-            );
-        }
-        Err(e) => panic!("discover failed: {e:?}"),
     }
 }

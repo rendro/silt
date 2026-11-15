@@ -9,23 +9,50 @@ use std::sync::Arc;
 use crate::bytecode::{Function, Globals};
 use crate::source::Span;
 
+/// The name of the function a program starts from.
+pub(crate) const ENTRY_POINT: &str = "main";
+
+/// Classify a top-level function name. `None`: not a test.
+pub(crate) fn test_kind(name: &str) -> Option<TestKind> {
+    if name.starts_with("skip_test_") {
+        Some(TestKind::Skip)
+    } else if name.starts_with("test_") {
+        Some(TestKind::Run)
+    } else {
+        None
+    }
+}
+
+/// The name of the `n`th REPL entry: its module, its file, and the
+/// function that holds its statements.
+pub(crate) fn cell_name(n: usize) -> String {
+    format!("<repl:{n}>")
+}
+
+/// Whether `name` is that of a REPL entry (see [`cell_name`]): of the
+/// function that holds the statements of an entry, whose value the REPL
+/// shows.
+pub(crate) fn is_cell_name(name: &str) -> bool {
+    name.starts_with("<repl:")
+}
+
 /// What the VM runs: the compiled functions, the first of which is the
 /// script that installs the program's globals (and, for
 /// [`crate::session::Entry::Main`], calls `main`).
 pub struct Program {
-    pub functions: Vec<Function>,
+    pub(crate) functions: Vec<Function>,
     /// The types its values are of, which the VM is given
     /// ([`crate::vm::Vm::run_program`]).
     pub types: crate::typeinfo::TypeTable,
     /// Its global slots, which the VM is given too.
-    pub globals: Arc<Globals>,
+    pub(crate) globals: Arc<Globals>,
     /// The part of `globals` that stands whatever becomes of the
     /// program's run. For a REPL entry: the slots, impl methods and
     /// `Display` impls of the entries before it that ran to their end,
     /// without the entry's own, which the session takes back if the
     /// entry fails. For any other program: all of `globals`. (The VM
     /// of a task keeps this table, see `Vm::look_again`.)
-    pub settled: Arc<Globals>,
+    pub(crate) settled: Arc<Globals>,
     pub entry: EntryPoint,
 }
 

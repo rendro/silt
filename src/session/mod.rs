@@ -13,13 +13,14 @@
 //! compile(file, Entry::Main) -> Program       entry point checked by its type
 //! ```
 
+mod analysis;
 mod cells;
 mod entry;
 mod graph;
 mod host;
 mod packages;
 #[cfg(any(test, feature = "test-hooks"))]
-pub mod testing;
+pub(crate) mod testing;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,22 +29,27 @@ use std::sync::Arc;
 use crate::ast;
 use crate::bytecode::Globals;
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
-use crate::defs::DefTable;
+use crate::defs::{DefTable, ModuleId};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
+use crate::program::ENTRY_POINT;
 use crate::source::{FileId, SourceMap, SourceName};
-use crate::typechecker::names::{self, Imported, ModuleKind, ModuleScope};
+use crate::typechecker::names::{self, Imported, ModuleKind};
 use crate::typechecker::{self, ModuleContext, Tables};
+#[cfg(feature = "repl")]
 use crate::types::Type;
 use crate::value::HostFn;
 
 pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
 pub use crate::value::HostCall;
-pub use entry::{ENTRY_POINT, selected_tests, test_functions, test_kind};
-pub(crate) use graph::is_cell_name;
-pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
-pub use host::{HostFunction, HostModule};
-pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
+pub(crate) use analysis::ModuleAnalysis;
+pub(crate) use entry::selected_tests;
+#[cfg(feature = "lsp")]
+pub(crate) use graph::parse_text;
+pub(crate) use graph::{ImportResolution, Module, ModuleGraph, Ordering};
+pub use host::HostModule;
+pub(crate) use packages::Packages;
+pub use packages::{LockPolicy, ProjectSetup};
 
 /// How a session finds and treats the files of a program.
 #[derive(Debug, Clone)]
@@ -72,7 +78,7 @@ pub enum Builtins {
 
 impl Builtins {
     /// Whether a program may import the builtin module `name`.
-    pub fn allows(&self, name: &str) -> bool {
+    pub(crate) fn allows(&self, name: &str) -> bool {
         match self {
             Builtins::All => true,
             Builtins::Only(names) => names.iter().any(|allowed| allowed == name),
@@ -127,7 +133,7 @@ pub enum Entry {
     /// name ends with `_test.silt`; in any other file such a function is
     /// an ordinary one, as `silt run` takes it.
     Module,
-    /// A REPL cell, added by [`Session::add_cell`]: its declarations are
+    /// A REPL cell, added by `Session::add_cell`: its declarations are
     /// installed, and a cell of statements runs them; the script returns
     /// their value. Any other file: its declarations, with nothing
     /// called. Such a program is run by the REPL
@@ -157,29 +163,6 @@ impl Analysis {
     pub fn has_errors(&self) -> bool {
         self.diagnostics.iter().any(Diagnostic::is_error)
     }
-}
-
-/// One module after its check.
-pub struct ModuleAnalysis {
-    /// The declarations, with what the checker filled in (expression
-    /// types, what each field access means).
-    pub ast: Arc<ast::Program>,
-    /// The module's top-level names, and what it offers its importers.
-    pub scope: ModuleScope,
-    /// The inferred type of each top-level value the module binds.
-    pub top_level: HashMap<crate::intern::Symbol, Type>,
-    /// The signature an editor writes for each generic function (`fn
-    /// twice(xs: m(Int)) -> m(Int) where m: Functor`).
-    pub signatures: HashMap<crate::intern::Symbol, crate::typechecker::Signature>,
-    /// The module's top-level `let`s, by the span of each, in the order
-    /// they are initialised in.
-    pub let_order: Vec<crate::source::Span>,
-    /// The module's type errors and warnings.
-    pub diagnostics: Vec<Diagnostic>,
-    /// For each top-level `main` and test function whose error type
-    /// has no `Display`, the error reported where it is an entry point:
-    /// `main` of a file run or checked, a test of a file tested.
-    pub entry_display: HashMap<crate::intern::Symbol, Diagnostic>,
 }
 
 /// What the imports of `module` name, as the compiler looks them up:
@@ -261,7 +244,7 @@ impl Session {
     }
 
     /// The module graph.
-    pub fn graph(&self) -> &ModuleGraph {
+    pub(crate) fn graph(&self) -> &ModuleGraph {
         &self.graph
     }
 
@@ -271,7 +254,7 @@ impl Session {
     /// policy allows it and it no longer pins the graph. When that
     /// fails, the session goes on as if there were no project, and every
     /// analysis reports the package diagnostics.
-    pub fn packages(&mut self) -> Result<&Packages, &[Diagnostic]> {
+    pub(crate) fn packages(&mut self) -> Result<&Packages, &[Diagnostic]> {
         if self.packages.is_none() {
             let resolved = packages::project_packages(
                 &self.config.project,
@@ -291,7 +274,7 @@ impl Session {
     }
 
     /// The text of every file the session has read, once it is done.
-    pub fn into_sources(self) -> SourceMap {
+    pub(crate) fn into_sources(self) -> SourceMap {
         self.sources
     }
 
@@ -306,7 +289,7 @@ impl Session {
     /// Read the file at `path` (an editor buffer set for it, if any) and
     /// enter it as an entry. `path` is kept as given: diagnostics name the
     /// file so.
-    pub fn open(&mut self, path: &Path) -> Result<FileId, std::io::Error> {
+    pub(crate) fn open(&mut self, path: &Path) -> Result<FileId, std::io::Error> {
         let key = graph::canonical_key(path);
         let (name, text) = match self.overlays.get(&key) {
             Some(text) => (SourceName::Overlay(path.to_path_buf()), text.clone()),
@@ -330,7 +313,8 @@ impl Session {
     /// Add a REPL entry as a file of its own, `<repl:n>`: declarations,
     /// or statements whose value [`Entry::Cell`] returns. It sees what
     /// the committed cells bind (see [`Session::commit_cell`]).
-    pub fn add_cell(&mut self, text: String) -> FileId {
+    #[cfg(feature = "repl")]
+    pub(crate) fn add_cell(&mut self, text: String) -> FileId {
         // What an earlier cell that was not committed declared is gone.
         for cell in self.cells.take_dropped() {
             self.tables.forget(cell);
@@ -339,7 +323,7 @@ impl Session {
         self.cells.count += 1;
         let n = self.cells.count;
         let file = self.enter_text(
-            &PathBuf::from(graph::cell_name(n)),
+            &PathBuf::from(crate::program::cell_name(n)),
             SourceName::Repl(n),
             &text,
         );
@@ -354,7 +338,8 @@ impl Session {
     /// after it sees what it binds, and the modules it imported are
     /// installed. A cell that is not committed leaves the session as it
     /// was.
-    pub fn commit_cell(&mut self, file: FileId) {
+    #[cfg(feature = "repl")]
+    pub(crate) fn commit_cell(&mut self, file: FileId) {
         let id = self.module_of(file);
         let (Some(analysis), Some(result)) = (self.analyses.get(&id), self.results.get(&id)) else {
             return;
@@ -377,6 +362,7 @@ impl Session {
     /// So a session keeps the analysis of one cell, not of every cell:
     /// its memory grows with what the entries declare, not with the
     /// entries times the names each of them sees.
+    #[cfg(feature = "repl")]
     fn release_cell(&mut self, cell: ModuleId) {
         self.analyses.remove(&cell);
         if let Some(program) = self.graph.ast_mut(cell) {
@@ -388,7 +374,8 @@ impl Session {
     /// lockfile, and its module files named like builtin modules. Every
     /// analysis reports them, but a REPL cell's: the REPL shows them
     /// once, when it starts.
-    pub fn project_problems(&mut self) -> Vec<Diagnostic> {
+    #[cfg(feature = "repl")]
+    pub(crate) fn project_problems(&mut self) -> Vec<Diagnostic> {
         let mut problems = match self.packages() {
             Ok(_) => Vec::new(),
             Err(diagnostics) => diagnostics.to_vec(),
@@ -436,25 +423,27 @@ impl Session {
     }
 
     /// The module of the file `file`.
-    pub fn module_of(&self, file: FileId) -> ModuleId {
+    pub(crate) fn module_of(&self, file: FileId) -> ModuleId {
         self.file_modules[&file]
     }
 
     /// The definitions the session's modules and the builtins declare.
-    pub fn defs(&self) -> &DefTable {
+    #[cfg(any(feature = "lsp", feature = "repl", test, feature = "test-hooks"))]
+    pub(crate) fn defs(&self) -> &DefTable {
         &self.defs
     }
 
     /// What the checks of the session's modules found: every type,
     /// trait, impl and method, and the scheme of each definition.
-    pub fn tables(&self) -> &Tables {
+    #[cfg(any(feature = "lsp", all(test, feature = "repl")))]
+    pub(crate) fn tables(&self) -> &Tables {
         &self.tables
     }
 
     /// The check of module `id`, once [`Session::analyze`] has made it.
     /// Of the REPL cells, the last committed one has it, and the one
     /// being evaluated: an earlier cell's is given up.
-    pub fn module_analysis(&self, id: ModuleId) -> Option<&ModuleAnalysis> {
+    pub(crate) fn module_analysis(&self, id: ModuleId) -> Option<&ModuleAnalysis> {
         self.analyses.get(&id)
     }
 
@@ -463,7 +452,8 @@ impl Session {
     /// its statements returns, general in what the statements leave
     /// open, with what its scheme asks of those variables. `None` for a
     /// cell of declarations.
-    pub fn cell_value_scheme(&self, file: FileId) -> Option<crate::types::Scheme> {
+    #[cfg(feature = "repl")]
+    pub(crate) fn cell_value_scheme(&self, file: FileId) -> Option<crate::types::Scheme> {
         let id = self.module_of(file);
         let wrapper = intern(&self.cells.info.get(&id)?.wrapper());
         let names::Binding::Def(def) = self.analyses.get(&id)?.scope.values.get(&wrapper)? else {
@@ -482,7 +472,8 @@ impl Session {
     /// cell's diagnostics write it; or one of a builtin module whose
     /// name the cell gives another type: with its module
     /// (`regex.Regex`). `None` for any other, which keeps its name.
-    pub fn shadowed_cell_name(
+    #[cfg(feature = "repl")]
+    pub(crate) fn shadowed_cell_name(
         &self,
         file: FileId,
         def: crate::defs::DefId,
@@ -830,7 +821,8 @@ impl Session {
     /// the name `opened_as`. An editor with one file open by two names (a
     /// link and the file it leads to) shares one analysis between them,
     /// and judges each document by its own name.
-    pub fn entry_name_problems(
+    #[cfg(feature = "lsp")]
+    pub(crate) fn entry_name_problems(
         &self,
         entry: ModuleId,
         opened_as: &Path,
@@ -1112,7 +1104,8 @@ impl Session {
 
     /// The files of the graph of `entry`, for a watcher: each module's
     /// file, as named in diagnostics. Host modules have none.
-    pub fn files(&self, entry: FileId) -> Vec<PathBuf> {
+    #[cfg(feature = "watch")]
+    pub(crate) fn files(&self, entry: FileId) -> Vec<PathBuf> {
         let id = self.module_of(entry);
         match self.results.get(&id) {
             Some(analysis) => analysis

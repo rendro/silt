@@ -4,13 +4,13 @@
 //! Background: `mkdir io && cd io && silt init` previously silently
 //! produced a `silt.toml` whose `name = "io"` shadowed the stdlib `io`
 //! module. Sibling `silt add` already correctly rejected
-//! builtin-colliding dep names via `silt::module::is_builtin_module` (see
+//! builtin-colliding dep names via `silt::testing::module::is_builtin_module` (see
 //! `src/cli/add.rs:273-279`), so init was the outlier.
 //!
 //! Fix: a single `validate_package_name` lives in `src/manifest.rs` and
 //! is consulted by:
 //!   - `silt::cli::init` before writing `silt.toml`
-//!   - `silt::manifest::Manifest::load` (rejects on-disk manifests with
+//!   - `silt::testing::manifest::Manifest::load` (rejects on-disk manifests with
 //!     builtin-colliding package names too)
 //! so the rule is enforced at every entry point — one way to do things.
 
@@ -118,7 +118,7 @@ fn round75_init_in_dir_named_http_is_rejected() {
 
 #[test]
 fn round75_init_rejects_every_builtin_module_name() {
-    for name in silt::module::builtin_modules() {
+    for name in silt::testing::module::builtin_modules() {
         let dir = temp_dir_named(name);
         let out = silt_cmd()
             .arg("init")
@@ -188,8 +188,11 @@ fn round75_manifest_load_rejects_builtin_package_name() {
         "[package]\nname = \"io\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let err = silt::manifest::Manifest::load(&manifest_path, &mut silt::source::SourceMap::new())
-        .expect_err("Manifest::load must reject builtin-colliding package name `io`");
+    let err = silt::testing::manifest::Manifest::load(
+        &manifest_path,
+        &mut silt::testing::source::SourceMap::new(),
+    )
+    .expect_err("Manifest::load must reject builtin-colliding package name `io`");
     let msg = err.message;
     assert!(
         msg.contains("io"),
@@ -213,8 +216,8 @@ fn round75_manifest_load_rejects_builtin_package_name() {
 #[test]
 fn round75_validate_package_name_rejects_builtins_accepts_others() {
     // Every builtin_modules() entry must be rejected.
-    for name in silt::module::builtin_modules() {
-        let result = silt::manifest::validate_package_name(name);
+    for name in silt::testing::module::builtin_modules() {
+        let result = silt::testing::manifest::validate_package_name(name);
         assert!(
             result.is_err(),
             "validate_package_name should reject builtin `{name}`, got Ok"
@@ -229,11 +232,11 @@ fn round75_validate_package_name_rejects_builtins_accepts_others() {
     // Every reserved keyword must be rejected too: a package named
     // after a keyword lexes as that keyword, so `import loop` can never
     // parse. Same import-shadowing footgun as the builtin collision.
-    for name in silt::lexer::KEYWORDS
+    for name in silt::testing::lexer::KEYWORDS
         .iter()
-        .chain(silt::lexer::KEYWORD_LITERALS.iter())
+        .chain(silt::testing::lexer::KEYWORD_LITERALS.iter())
     {
-        let result = silt::manifest::validate_package_name(name);
+        let result = silt::testing::manifest::validate_package_name(name);
         assert!(
             result.is_err(),
             "validate_package_name should reject reserved keyword `{name}`, got Ok"
@@ -251,7 +254,7 @@ fn round75_validate_package_name_rejects_builtins_accepts_others() {
 
     // A handful of non-builtin, non-keyword identifiers are accepted.
     for name in ["mypkg", "my_app", "calc", "_priv", "foo123"] {
-        let result = silt::manifest::validate_package_name(name);
+        let result = silt::testing::manifest::validate_package_name(name);
         assert!(
             result.is_ok(),
             "validate_package_name should accept non-builtin `{name}`, got {result:?}"
@@ -262,7 +265,7 @@ fn round75_validate_package_name_rejects_builtins_accepts_others() {
     // arm), so init/add can lean on this one helper for both shape and
     // collision checks.
     for bad in ["Foo", "foo-bar", "1foo", ""] {
-        let result = silt::manifest::validate_package_name(bad);
+        let result = silt::testing::manifest::validate_package_name(bad);
         assert!(
             result.is_err(),
             "validate_package_name should reject malformed name `{bad}`, got Ok"
@@ -327,9 +330,9 @@ fn keyword_init_in_dir_named_loop_is_rejected() {
 
 #[test]
 fn keyword_init_rejects_every_reserved_keyword() {
-    for name in silt::lexer::KEYWORDS
+    for name in silt::testing::lexer::KEYWORDS
         .iter()
-        .chain(silt::lexer::KEYWORD_LITERALS.iter())
+        .chain(silt::testing::lexer::KEYWORD_LITERALS.iter())
     {
         let dir = temp_dir_named(name);
         let out = silt_cmd()

@@ -187,7 +187,7 @@ impl TypeChecker {
         check: BuiltinCheck,
         subject: &Type,
         (passer, through): (Option<Symbol>, &[Symbol]),
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
         origin: Origin,
     ) {
         let ty = canonicalize(self.tables.resolver(), &self.apply(subject));
@@ -202,7 +202,7 @@ impl TypeChecker {
                 // (Given to another module's definition, which gives it to
                 // the builtin: that definition is a link, and its module
                 // decodes its own opaque types there.)
-                let owners: Vec<crate::session::ModuleId> = (owner.iter().copied())
+                let owners: Vec<crate::defs::ModuleId> = (owner.iter().copied())
                     .filter(|module| module.builtin_name().is_none())
                     .collect();
                 let path = match owners.is_empty() {
@@ -321,7 +321,7 @@ impl TypeChecker {
         decoding: Decoding,
         written: Option<Symbol>,
         ty: &Type,
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
         let refusal = self.read_refusal(builtin_name, decoding, written, ty, owner, span)?;
@@ -338,7 +338,7 @@ impl TypeChecker {
         decoding: Decoding,
         written: Option<Symbol>,
         ty: &Type,
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
         // (A generic alias written alone that reaches the decoder through
@@ -774,7 +774,7 @@ impl TypeChecker {
         decoding: Decoding,
         whole: &Type,
         part: &Type,
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
         use crate::builtins::registry::decoding::Leaf;

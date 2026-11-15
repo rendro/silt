@@ -4,10 +4,11 @@ use std::io::Write;
 use std::path::Path;
 use std::process;
 
-use silt::diagnostic::Diagnostic;
-use silt::disassemble::disassemble_function;
-use silt::intern::intern;
-use silt::session::{ENTRY_POINT, Entry, LockPolicy};
+use crate::diagnostic::Diagnostic;
+use crate::disassemble::disassemble_function;
+use crate::intern::intern;
+use crate::program::ENTRY_POINT;
+use crate::session::{Entry, LockPolicy};
 
 use crate::cli::help::{asks_for_help, disasm_usage_banner};
 use crate::cli::package::{
@@ -97,7 +98,7 @@ fn disasm_file(path: &str) {
     let target = if binds_main { Entry::Main } else { Entry::Cell };
     let compiled = session.compile(file, target);
     let diagnostics = door_diagnostics(&mut session, file, &compiled);
-    silt::diagnostic::eprint_all(&ProgramFiles::new(path, session.sources()), &diagnostics);
+    crate::diagnostic::eprint_all(&ProgramFiles::new(path, session.sources()), &diagnostics);
     let program = match compiled {
         Ok(program) if !diagnostics.iter().any(Diagnostic::is_error) => program,
         _ => process::exit(1),
@@ -114,7 +115,7 @@ fn disasm_file(path: &str) {
             }
             eprintln!(
                 "error: silt disasm: cannot write to stdout: {}",
-                silt::diagnostic::io_error_text(&e)
+                crate::diagnostic::io_error_text(&e)
             );
             process::exit(1);
         }

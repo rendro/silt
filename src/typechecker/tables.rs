@@ -95,7 +95,7 @@ pub(super) struct TraitInfo {
     /// The module that declares the trait without `pub`, and its name:
     /// the trait's methods can be called only in that module. `None` for
     /// a `pub` trait.
-    pub(super) private_to: Option<(crate::session::ModuleId, Symbol)>,
+    pub(super) private_to: Option<(crate::defs::ModuleId, Symbol)>,
     /// What the default methods' bodies ask of their annotation
     /// variables (`var_names`) for the builtins they give them to, once
     /// the trait's module is checked: an impl in another module that
@@ -389,7 +389,7 @@ impl ImplMethods {
 /// is checked. A module's own top-level values are in its check's
 /// environment while it is checked.
 #[derive(Clone, Default)]
-pub struct Tables {
+pub(crate) struct Tables {
     pub(super) vars: TyVarSupply,
     /// Declared enum types.
     pub(super) enums: Table<HashMap<TypeRef, EnumInfo>, TypeRef>,
@@ -434,7 +434,7 @@ pub struct Tables {
     /// which decodes or encodes its own opaque types in the type a use
     /// in another module (or a later REPL input) gives it.
     pub(super) def_owners:
-        HashMap<crate::defs::DefId, HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>>,
+        HashMap<crate::defs::DefId, HashMap<(TyVar, bool), Vec<crate::defs::ModuleId>>>,
     /// Of each function of a module (or a REPL input) whose `json.Encode`
     /// bound on a variable of its scheme hands the type to an encoder:
     /// the encoder and the functions on the way (`Asked::Through`), which
@@ -510,15 +510,15 @@ pub struct Tables {
     pub(super) statement_units: HashMap<crate::defs::DefId, Vec<(usize, Span)>>,
     /// What the check of each REPL cell left waiting for the type of a
     /// `let` that a later cell may decide (see [`Waiting`]).
-    pub(super) waiting: HashMap<crate::session::ModuleId, Waiting>,
+    pub(super) waiting: HashMap<crate::defs::ModuleId, Waiting>,
     /// What each module's check added to the tables, so that it can be
     /// forgotten when the module is checked again.
-    pub(super) rows: HashMap<crate::session::ModuleId, Rows>,
+    pub(super) rows: HashMap<crate::defs::ModuleId, Rows>,
     /// The name of each module checked, to tell two types of one name
     /// apart in a message (`a.Pt`, `b.Pt`).
-    pub(super) module_names: HashMap<crate::session::ModuleId, Symbol>,
+    pub(super) module_names: HashMap<crate::defs::ModuleId, Symbol>,
     /// The package of each module checked.
-    pub(super) module_packages: HashMap<crate::session::ModuleId, crate::package_graph::PackageId>,
+    pub(super) module_packages: HashMap<crate::defs::ModuleId, crate::package_graph::PackageId>,
     /// The name of each package a checked module is of, from its
     /// `silt.toml`: a type of a module no import reaches is described by
     /// it (`InErr of package inner`).
@@ -552,7 +552,7 @@ pub(super) struct CellDecl {
 
 /// What one module's check added to the session's [`Tables`].
 #[derive(Clone, Default)]
-pub struct Rows {
+pub(crate) struct Rows {
     /// The earlier modules' variables the check bound.
     trail: Vec<TyVar>,
     types: Vec<TypeRef>,
@@ -565,12 +565,13 @@ pub struct Rows {
 
 impl Tables {
     /// The tables a session starts from: the builtins'.
-    pub fn for_session() -> Tables {
+    pub(crate) fn for_session() -> Tables {
         builtin_env().tables.clone()
     }
 
     /// The records of the tables: each record type with its fields.
-    pub fn record_fields(&self) -> HashMap<TypeRef, Vec<(Symbol, Type)>> {
+    #[cfg(feature = "lsp")]
+    pub(crate) fn record_fields(&self) -> HashMap<TypeRef, Vec<(Symbol, Type)>> {
         self.records
             .iter()
             .map(|(ty, info)| (*ty, info.fields.clone()))
@@ -580,7 +581,8 @@ impl Tables {
     /// The methods called on the type `ty` (`Int.empty()`): each method
     /// that takes no value of its trait's type, of each impl `ty` has
     /// rows of, by trait and name.
-    pub fn makers_of(&self, ty: crate::defs::TypeId) -> Vec<(crate::defs::TraitId, Symbol)> {
+    #[cfg(feature = "lsp")]
+    pub(crate) fn makers_of(&self, ty: crate::defs::TypeId) -> Vec<(crate::defs::TraitId, Symbol)> {
         let mut found: Vec<(crate::defs::TraitId, Symbol)> = Vec::new();
         for (of, name, tr, _) in self.impl_methods.keys() {
             let Some(info) = (of.id == ty).then(|| self.traits.get(tr)).flatten() else {
@@ -600,7 +602,7 @@ impl Tables {
 
     /// The fields of the record type `ty`, with their types, in
     /// declaration order; none for a type that is no record.
-    pub fn record_fields_of(&self, ty: TypeRef) -> &[(Symbol, Type)] {
+    pub(crate) fn record_fields_of(&self, ty: TypeRef) -> &[(Symbol, Type)] {
         self.records.get(&ty).map_or(&[], |info| &info.fields)
     }
 
@@ -623,7 +625,7 @@ impl Tables {
 
     /// The variants of the enum type `ty`, each with the types of its
     /// fields, in declaration order; none for a type that is no enum.
-    pub fn variant_fields_of(&self, ty: TypeRef) -> Vec<(Symbol, &[Type])> {
+    pub(crate) fn variant_fields_of(&self, ty: TypeRef) -> Vec<(Symbol, &[Type])> {
         self.enums.get(&ty).map_or_else(Vec::new, |info| {
             (info.variants.iter())
                 .map(|v| (v.name, v.field_types.as_slice()))
@@ -634,7 +636,8 @@ impl Tables {
     /// The types of the fields of the variant `variant` of the enum type
     /// `ty` at the enum's type arguments `args` (`Some` of `Option(Int)`:
     /// `[Int]`); `None` if `ty` has no such variant.
-    pub fn variant_fields_at(
+    #[cfg(feature = "lsp")]
+    pub(crate) fn variant_fields_at(
         &self,
         ty: TypeRef,
         args: &[Type],
@@ -654,7 +657,8 @@ impl Tables {
 
     /// The scheme of the definition `id`: a builtin's as the builtin
     /// scope binds it, a module's as its check left it.
-    pub fn scheme_of(&self, id: crate::defs::DefId) -> Option<Scheme> {
+    #[cfg(any(feature = "lsp", feature = "repl"))]
+    pub(crate) fn scheme_of(&self, id: crate::defs::DefId) -> Option<Scheme> {
         match names::builtin_def(id) {
             Some(def) => builtin_scheme(&def),
             None => self.schemes.get(&id).cloned(),
@@ -675,9 +679,8 @@ impl Tables {
     /// Every row of every table, as text in a fixed order: for a test
     /// that compares two states of a session (what an entry that failed
     /// leaves behind is nothing).
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[doc(hidden)]
-    pub fn fingerprint(&self) -> Vec<String> {
+    #[cfg(all(test, feature = "repl"))]
+    pub(crate) fn fingerprint(&self) -> Vec<String> {
         fn keys<K: std::fmt::Debug>(table: &str, keys: impl Iterator<Item = K>) -> Vec<String> {
             keys.map(|key| format!("{table} {key:?}")).collect()
         }
@@ -757,7 +760,7 @@ impl Tables {
     }
 
     /// The type aliases of the session.
-    pub fn resolver(&self) -> &crate::types::canonical::Resolver {
+    pub(crate) fn resolver(&self) -> &crate::types::canonical::Resolver {
         &self.resolver
     }
 
@@ -787,7 +790,7 @@ impl Tables {
 
     /// Forget what the check of `module` added: it is checked again, or
     /// it was a REPL cell that is dropped.
-    pub fn forget(&mut self, module: crate::session::ModuleId) {
+    pub(crate) fn forget(&mut self, module: crate::defs::ModuleId) {
         self.waiting.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;
@@ -889,7 +892,7 @@ mod stamp_tests {
     fn impls_forgotten_and_entered_have_another_stamp() {
         let mut tables = Tables::default();
         let (tr, ty) = (TraitKey::builtin("Display"), TypeRef::builtin("Int"));
-        let module = crate::session::ModuleId(1);
+        let module = crate::defs::ModuleId(1);
         tables.begin_rows();
         tables.add_impl((tr, ty, ImplArgs::none()));
         let rows = tables.take_rows();

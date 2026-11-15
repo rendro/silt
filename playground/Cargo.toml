@@ -18,6 +18,13 @@ serde_json = "1"
 [dependencies.silt]
 path = ".."
 default-features = false
+features = ["playground"]
+
+# The tests read the system clock of the test API.
+[dev-dependencies.silt]
+path = ".."
+default-features = false
+features = ["playground", "test-hooks"]
 
 # The browser's side. `getrandom` and `uuid` refuse to build for the
 # target until a source of randomness is picked: the page's.

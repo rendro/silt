@@ -13,7 +13,7 @@
 //! on stderr for `silt run … | head`, and `silt disasm … | head`
 //! additionally exited 101 (the panic propagated through `main`'s
 //! `resume_unwind`). Fixed by resetting SIGPIPE to SIG_DFL at the very
-//! top of `main()` in src/main.rs (before any thread spawn or output).
+//! top of `main()` in src/cli/mod.rs (before any thread spawn or output).
 //!
 //! Unix-only by nature: SIGPIPE does not exist on Windows.
 #![cfg(unix)]

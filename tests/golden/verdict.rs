@@ -309,7 +309,7 @@ fn door_verdict_and_stderr(
 /// canonicalised, `/`-separated.
 fn roots(dir: &Path) -> Vec<String> {
     let mut roots = vec![dir.to_string_lossy().replace('\\', "/")];
-    let c = silt::source::canonical_path(dir)
+    let c = silt::testing::source::canonical_path(dir)
         .to_string_lossy()
         .replace('\\', "/");
     if !roots.contains(&c) {

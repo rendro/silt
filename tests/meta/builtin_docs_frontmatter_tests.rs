@@ -14,7 +14,7 @@
 
 #[test]
 fn no_builtin_doc_leaks_yaml_frontmatter() {
-    let docs = silt::builtins::registry::docs::builtin_docs();
+    let docs = silt::testing::builtins::registry::docs::builtin_docs();
     assert!(!docs.is_empty(), "no builtin name has a doc");
     for (name, body) in docs {
         assert!(
@@ -39,7 +39,7 @@ fn no_builtin_doc_leaks_yaml_frontmatter() {
 /// help show alike: not the whole page, and no frontmatter.
 #[test]
 fn a_prelude_name_s_doc_is_its_own_section() {
-    let docs = silt::builtins::registry::docs::builtin_docs();
+    let docs = silt::testing::builtins::registry::docs::builtin_docs();
     for (name, own) in [
         ("println", "println(value: a) -> () where a: Display"),
         ("Some", "Some(value: a) -> Option(a)"),
@@ -64,7 +64,7 @@ fn a_prelude_name_s_doc_is_its_own_section() {
 /// shows its module's whole page, minus frontmatter.
 #[test]
 fn module_overview_doc_starts_with_prose_not_frontmatter() {
-    let docs = silt::builtins::registry::docs::builtin_docs();
+    let docs = silt::testing::builtins::registry::docs::builtin_docs();
     let own = docs
         .get("crypto.sha256")
         .expect("`crypto.sha256` has a builtin doc");

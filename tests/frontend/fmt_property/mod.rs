@@ -37,10 +37,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use silt::diagnostic::Code;
-use silt::lexer::{Lexer, Token};
-use silt::parser::Parser;
-use silt::source::FileId;
+use silt::testing::diagnostic::Code;
+use silt::testing::lexer::{Lexer, Token};
+use silt::testing::parser::Parser;
+use silt::testing::source::FileId;
 
 /// What the formatter made of one text.
 pub enum Formatted {
@@ -53,7 +53,7 @@ pub enum Formatted {
 
 /// `silt fmt` on one text.
 fn format(source: &str) -> Formatted {
-    match silt::format::format(FileId::default(), source) {
+    match silt::testing::format::format(FileId::default(), source) {
         Ok(text) => Formatted::Ok(text),
         Err(e) if e.code == Code::FormatRefused => Formatted::Refused(e.message),
         Err(_) => Formatted::Unparseable,

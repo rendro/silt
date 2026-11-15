@@ -12,7 +12,7 @@ use crate::vm::VmError;
 
 /// The Rust side of a host function: it takes the call, with its
 /// arguments, and gives its result.
-pub type HostImpl = Arc<dyn Fn(&HostCall<'_>) -> Result<Value, VmError> + Send + Sync>;
+pub(crate) type HostImpl = Arc<dyn Fn(&HostCall<'_>) -> Result<Value, VmError> + Send + Sync>;
 
 /// One call of a host function, as its Rust side is given it: the
 /// arguments, and the record and enum types it can build values of.
@@ -261,7 +261,7 @@ pub enum HostShape {
 /// type parameter of the type is [`HostShape::Param`]. Each type is
 /// here once, whatever its depth in the result type or the number of its
 /// uses, so a check is no larger than the result it looks at.
-pub type HostTemplates = HashMap<TypeId, Vec<Vec<HostShape>>>;
+pub(crate) type HostTemplates = HashMap<TypeId, Vec<Vec<HostShape>>>;
 
 /// The type arguments of the `Named` shapes a check is inside of, the
 /// innermost first: `Param(i)` there is `args[i]`, which is read in the
@@ -398,7 +398,7 @@ fn found_at(value: &Value, path: &[HostStep], budget: &mut usize) -> Option<Valu
 /// elements. 64 pairs cover a small record, tuple or list whole and two
 /// or three levels of a nested one, at a cost of a few hundred
 /// nanoseconds a call.
-pub const SAME_TYPE_PARTS: usize = 64;
+pub(super) const SAME_TYPE_PARTS: usize = 64;
 
 /// Whether `value` could be of the type of `witness`: they differ in
 /// nothing both show, among the first `SAME_TYPE_PARTS` pairs of their
@@ -407,7 +407,7 @@ pub const SAME_TYPE_PARTS: usize = 64;
 /// shows (the elements of an empty list, the payload of another
 /// variant), nothing shows a difference: the value passes. A value that
 /// is the witness itself, or shares its parts, passes at once.
-pub fn same_type(witness: &Value, value: &Value) -> bool {
+pub(super) fn same_type(witness: &Value, value: &Value) -> bool {
     let mut budget = SAME_TYPE_PARTS;
     let mut work: Vec<(Value, Value)> = vec![(witness.clone(), value.clone())];
     // (What may still be added to the work, within the budget.)
@@ -524,7 +524,7 @@ fn shares(a: &[Value], b: &[Value]) -> bool {
 /// Whether `value` could be of the type `ty`, the value of a `type a`
 /// parameter: by the type's head (`Int`, `List`, a type of the program),
 /// as far as the value shows it.
-pub fn of_type(ty: &Value, value: &Value) -> bool {
+pub(super) fn of_type(ty: &Value, value: &Value) -> bool {
     match ty {
         Value::PrimitiveDescriptor(name) => match (*name, value) {
             ("Int", Value::Int(_))
@@ -563,13 +563,13 @@ pub fn of_type(ty: &Value, value: &Value) -> bool {
 /// empty list, the value of a `None`, what a channel carries) and for
 /// the parts past the first `SAME_TYPE_PARTS`. A function is an `Fn`,
 /// and a type given as a value is of the type `type Int`.
-pub fn witness_type(witness: &Value) -> String {
+pub(crate) fn witness_type(witness: &Value) -> String {
     shown_type(witness, &mut { SAME_TYPE_PARTS })
 }
 
 /// The type `ty`, the value of a `type a` parameter, denotes: `Int` of
 /// the value `Int`, `List(Int)` of `List(Int)`.
-pub fn given_type(ty: &Value) -> String {
+pub(crate) fn given_type(ty: &Value) -> String {
     match ty {
         Value::PrimitiveDescriptor(name) => (*name).to_string(),
         Value::TypeDescriptor(info) => info.name.clone(),
@@ -855,7 +855,7 @@ impl HostShape {
                 all(declared.iter().zip(fields), witnesses, budget, Some(&inner))
             }
             (HostShape::Opaque { id, .. }, value) => {
-                yes(crate::types::canonical::dispatch_type_for_value(value) == *id)
+                yes(crate::value::dispatch_type_for_value(value) == *id)
             }
             (HostShape::Param(at), value) => match env {
                 Some(frame) => match frame.args.get(usize::from(*at)) {

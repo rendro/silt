@@ -6,7 +6,7 @@
 /// The Levenshtein edit distance of `a` and `b`, by characters: the
 /// fewest insertions, removals and replacements that make one the
 /// other. O(n*m) time and O(m) extra space.
-pub fn levenshtein(a: &str, b: &str) -> usize {
+pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let (n, m) = (a.len(), b.len());

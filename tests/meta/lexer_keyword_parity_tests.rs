@@ -9,10 +9,10 @@
 //! These tests check the lists by behaviour: every listed keyword lexes
 //! as a keyword token (not an identifier), and rename refuses every one.
 
-use silt::lexer::{self, Lexer, Token};
+use silt::testing::lexer::{self, Lexer, Token};
 
 fn first_token(src: &str) -> Token {
-    let tokens = Lexer::new(silt::source::FileId::default(), src)
+    let tokens = Lexer::new(silt::testing::source::FileId::default(), src)
         .tokenize()
         .checked()
         .expect("lexer error");
@@ -52,7 +52,7 @@ fn lexer_keywords_const_matches_lexer_behaviour() {
 fn lsp_rename_rejects_every_keyword() {
     for kw in lexer::KEYWORDS.iter().chain(lexer::KEYWORD_LITERALS) {
         assert!(
-            !silt::lsp::is_valid_silt_ident(kw),
+            !silt::testing::lsp::is_valid_silt_ident(kw),
             "a rename accepts the reserved word `{kw}` as a new name"
         );
     }

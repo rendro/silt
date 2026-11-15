@@ -5,7 +5,7 @@
 //! it exists only so the test can reach into the otherwise `pub(super)`
 //! `trait_impl_set` state.
 
-use silt::typechecker::__trait_init_fingerprint_check_program;
+use silt::testing::typechecker::__trait_init_fingerprint_check_program;
 
 #[test]
 fn trait_impls_cover_every_builtin_trait_name() {

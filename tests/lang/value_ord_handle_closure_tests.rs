@@ -14,18 +14,19 @@
 //! backing `Map` will deduplicate values that the language layer
 //! considers distinct, losing user data.
 
-use silt::typeinfo::bv;
+use silt::testing::ValueInside;
+use silt::testing::typeinfo::bv;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use silt::bytecode::{Function, VmClosure};
-use silt::runtime::handle::TaskHandle;
-use silt::value::Value;
+use silt::testing::bytecode::{Function, VmClosure};
+use silt::testing::runtime::handle::TaskHandle;
+use silt::testing::value::Value;
 
 /// The builtin function `name` (`println`, `list.map`) as a value.
 fn builtin(name: &str) -> Value {
-    silt::builtins::registry::registry()
+    silt::testing::builtins::registry::registry()
         .named(name)
         .unwrap_or_else(|| panic!("the builtin {name}"))
         .value()
@@ -158,12 +159,12 @@ fn btreeset_of_distinct_builtin_fns_retains_all() {
 fn ord_variant_constructor_distinct_not_equal() {
     let a = Value::VariantConstructor(bv::SOME.tag());
     let b = Value::VariantConstructor(bv::OK.tag());
-    let other = silt::typeinfo::TypeInfo::new_enum(
-        silt::defs::TypeId(silt::defs::DefId(9000)),
+    let other = silt::testing::typeinfo::TypeInfo::new_enum(
+        silt::testing::defs::TypeId(silt::testing::defs::DefId(9000)),
         "Maybe",
         &[("Some", 1)],
     );
-    let c = Value::VariantConstructor(silt::typeinfo::Tag::new(other, 0)); // same name, another enum
+    let c = Value::VariantConstructor(silt::testing::typeinfo::Tag::new(other, 0)); // same name, another enum
     assert_ne!(a.cmp(&b), Ordering::Equal);
     assert_ne!(a.cmp(&c), Ordering::Equal);
     assert_ne!(b.cmp(&c), Ordering::Equal);
@@ -190,7 +191,8 @@ fn btreeset_of_distinct_variant_constructors_retains_all() {
 /// table in `Ord::cmp`).
 #[test]
 fn ord_discriminant_ordering_preserved() {
-    let float = |f: f64| Value::Float(silt::value::Float::new(f).expect("a finite number"));
+    let float =
+        |f: f64| Value::Float(silt::testing::value::Float::new(f).expect("a finite number"));
     assert_eq!(Value::Int(1).cmp(&float(0.0)), Ordering::Less);
     assert_eq!(float(1e9).cmp(&Value::string("")), Ordering::Less);
     assert_eq!(Value::string("").cmp(&Value::list(vec![])), Ordering::Less);

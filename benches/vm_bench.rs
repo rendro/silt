@@ -13,11 +13,11 @@ const ITERATIONS: u32 = 100;
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn compile(source: &str) -> Program {
-    silt::session::testing::compile_str(source).expect("compile error")
+    silt::testing::compile_str(source).expect("compile error")
 }
 
 fn run_once(program: &Program) {
-    silt::vm::Vm::new(silt::HostIo::process())
+    silt::testing::vm::Vm::new(silt::HostIo::process())
         .run_program(program)
         .expect("runtime error")
 }

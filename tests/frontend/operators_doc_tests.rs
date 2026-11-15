@@ -1,5 +1,5 @@
 //! The operator table of `docs/language/operators.md` against the
-//! parser's precedence table, `silt::ast::prec`.
+//! parser's precedence table, `silt::testing::ast::prec`.
 //!
 //! Two things are compared, neither by reading Rust source:
 //!
@@ -11,9 +11,9 @@
 //!   lower row is the root of the tree: the row order of the page is
 //!   the order the parser binds in.
 
-use silt::ast::{BinOp, Decl, Expr, ExprKind, Stmt, UnaryOp, prec};
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::ast::{BinOp, Decl, Expr, ExprKind, Stmt, UnaryOp, prec};
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 /// A row of the page's table: its precedence and its operators, as the
 /// page spells them (`-x`, `{ ... }`, `f(...)` included).
@@ -124,7 +124,7 @@ fn postfix(spelling: &str) -> &'static str {
 /// The last expression of `fn main() { <body> }`, parsed.
 fn parse(body: &str) -> Expr {
     let source = format!("fn main() {{\n  {body}\n}}\n");
-    let tokens = Lexer::new(silt::source::FileId::default(), &source)
+    let tokens = Lexer::new(silt::testing::source::FileId::default(), &source)
         .tokenize()
         .checked()
         .unwrap_or_else(|e| panic!("`{body}` does not lex: {e:?}"));
@@ -182,7 +182,7 @@ fn the_page_has_the_binding_powers_of_prec() {
     table.sort();
     assert_eq!(
         documented, table,
-        "the operator table of docs/language/operators.md (left) and silt::ast::prec (right) differ"
+        "the operator table of docs/language/operators.md (left) and silt::testing::ast::prec (right) differ"
     );
 }
 

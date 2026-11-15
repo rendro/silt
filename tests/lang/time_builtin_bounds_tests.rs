@@ -47,7 +47,7 @@ fn main() -> Int {{
         // Use the error path (this may succeed or fail; we just care
         // that no panic noise surfaces). Drive the VM manually so we
         // tolerate both success and VmError outcomes.
-        match silt::session::testing::run_str(&src) {
+        match silt::testing::run_str(&src) {
             Ok(_) => { /* valid datetime — fine */ }
             Err(e) => {
                 let msg = e;

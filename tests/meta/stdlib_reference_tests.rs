@@ -1,6 +1,6 @@
 //! The reference pages under `docs/stdlib/` agree with the builtin
 //! registry: each page is rendered again from the rows
-//! (`silt::builtins::registry::docs::render_page`: the summary tables'
+//! (`silt::testing::builtins::registry::docs::render_page`: the summary tables'
 //! signature and description cells, the signature block of each
 //! function's section, the cells of the tables of type arguments) and
 //! compared with the file.
@@ -11,11 +11,11 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use silt::builtins::registry::decoding::{Family, Leaf};
-use silt::builtins::registry::docs::{
+use silt::testing::builtins::registry::decoding::{Family, Leaf};
+use silt::testing::builtins::registry::docs::{
     iter_sections, pages, render_card, render_page, signature_block,
 };
-use silt::builtins::registry::registry;
+use silt::testing::builtins::registry::registry;
 
 use crate::env_switch;
 
@@ -44,7 +44,7 @@ fn the_reference_pages_are_what_the_registry_renders() {
 
 /// The standard library part of `docs/language-card.md`, below its
 /// marker line, is what the builtin registry renders
-/// (`silt::builtins::registry::docs::render_card`); `SILT_BLESS=1`
+/// (`silt::testing::builtins::registry::docs::render_card`); `SILT_BLESS=1`
 /// rewrites it.
 #[test]
 fn the_language_card_is_what_the_registry_renders() {
@@ -173,7 +173,7 @@ fn docs_stdlib_holds_exactly_the_registry_s_pages() {
 /// field types that hold no other (`Int`, `Bytes`, `json.Value`, ...)
 /// named in the bullet list after "may have these types:" are the
 /// leaves of the decoders' family in the registry
-/// (`silt::builtins::registry::decoding`), and the list names the
+/// (`silt::testing::builtins::registry::decoding`), and the list names the
 /// containers every family decodes.
 #[test]
 fn the_decodable_field_types_of_a_page_are_the_registry_s() {

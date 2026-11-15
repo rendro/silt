@@ -12,7 +12,7 @@ use super::*;
 /// a type lowers the variables of the type to its own level, so a
 /// variable an outer binding has reached is never generalised.
 #[derive(Clone, Default)]
-pub struct TyVarSupply {
+pub(crate) struct TyVarSupply {
     /// The substitution: maps type variables to their resolved types.
     pub(super) subst: Vec<Option<Type>>,
     /// The level of each variable.
@@ -28,7 +28,7 @@ pub struct TyVarSupply {
     pub(super) trail: Vec<TyVar>,
     /// The variables each checked module allocated, in the order of the
     /// checks, and whether the module was forgotten since.
-    ranges: Vec<(crate::session::ModuleId, TyVar, bool)>,
+    ranges: Vec<(crate::defs::ModuleId, TyVar, bool)>,
     /// The variables made for a `Never` inside a type a variable was
     /// bound to (`without_never`): each stands where a value that never
     /// is was, as a variable that met one does (`met_never`).
@@ -146,7 +146,7 @@ impl TyVarSupply {
     }
 
     /// Start the check of `module`: its variables come next.
-    pub(super) fn begin(&mut self, module: crate::session::ModuleId) {
+    pub(super) fn begin(&mut self, module: crate::defs::ModuleId) {
         self.level = 0;
         self.base = self.next;
         self.trail.clear();
@@ -157,7 +157,7 @@ impl TyVarSupply {
     /// modules' variables (`trail`), and give back the variables of the
     /// checks at the end of the supply that are all forgotten, so a long
     /// session (an editor, a REPL) does not grow with each check again.
-    pub(super) fn forget(&mut self, module: crate::session::ModuleId, trail: &[TyVar]) {
+    pub(super) fn forget(&mut self, module: crate::defs::ModuleId, trail: &[TyVar]) {
         for v in trail {
             if let Some(slot) = self.subst.get_mut(*v) {
                 *slot = None;
@@ -383,11 +383,6 @@ impl TypeChecker {
         } else {
             Vec::new()
         }
-    }
-
-    /// The one wording of the occurs-check diagnostic.
-    pub fn infinite_type_message(t: &Type) -> String {
-        format!("infinite type: the type variable appears inside {t}")
     }
 
     /// Resolve the variable `v` to `t`, unless that would take an

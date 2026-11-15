@@ -1,9 +1,9 @@
 //! The names the two editor grammars highlight are written from their
 //! sources, not kept by hand: the keywords and the boolean literals from
-//! the lexer (`silt::lexer::KEYWORDS`, `KEYWORD_LITERALS`), and from the
-//! builtin registry the builtin types (`silt::types::builtins`), the
+//! the lexer (`silt::testing::lexer::KEYWORDS`, `KEYWORD_LITERALS`), and from the
+//! builtin registry the builtin types (`silt::testing::types::builtins`), the
 //! record and enum types of the builtin modules
-//! (`silt::module::builtin_module_types`), the variants of the builtin
+//! (`silt::testing::module::builtin_module_types`), the variants of the builtin
 //! enums (`builtin_enum_variants`), the prelude's free functions
 //! (`builtin_free_function_names`) and the builtin modules
 //! (`builtin_modules`).
@@ -49,7 +49,7 @@ struct Names {
 
 fn names() -> Names {
     let mut seen = BTreeSet::new();
-    let variants = silt::module::builtin_enum_variants()
+    let variants = silt::testing::module::builtin_enum_variants()
         .iter()
         .map(|(_, variants)| {
             variants
@@ -61,16 +61,16 @@ fn names() -> Names {
         .filter(|vs| !vs.is_empty())
         .collect();
     Names {
-        keywords: silt::lexer::KEYWORDS.to_vec(),
-        literals: silt::lexer::KEYWORD_LITERALS.to_vec(),
+        keywords: silt::testing::lexer::KEYWORDS.to_vec(),
+        literals: silt::testing::lexer::KEYWORD_LITERALS.to_vec(),
         variants,
-        types: silt::types::builtins::iter_all()
+        types: silt::testing::types::builtins::iter_all()
             .map(|b| b.name)
             .filter(|n| *n != "()")
             .collect(),
-        module_types: silt::module::builtin_module_types().to_vec(),
-        functions: silt::module::builtin_free_function_names().to_vec(),
-        modules: silt::module::builtin_modules().to_vec(),
+        module_types: silt::testing::module::builtin_module_types().to_vec(),
+        functions: silt::testing::module::builtin_free_function_names().to_vec(),
+        modules: silt::testing::module::builtin_modules().to_vec(),
     }
 }
 

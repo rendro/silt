@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use silt::diagnostic::{Code, Phase};
+use silt::testing::diagnostic::{Code, Phase};
 
 use super::{Case, Directives, Output};
 

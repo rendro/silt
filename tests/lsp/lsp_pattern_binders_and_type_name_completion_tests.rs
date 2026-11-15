@@ -178,12 +178,12 @@ fn repl_builtin_names_includes_primitive_types() {
     // BUILTIN_TYPES so <Tab> completion in the REPL offers them; the
     // builtin modules' (`tcp.TcpStream`, `task.Handle`, `regex.Regex`)
     // come through their module once it is imported.
-    let names = silt::repl::builtin_names();
+    let names = silt::testing::repl::builtin_names();
 
     // Sourced from the authoritative constant.
-    let expected: Vec<&str> = silt::types::builtins::iter_all()
+    let expected: Vec<&str> = silt::testing::types::builtins::iter_all()
         .map(|b| b.name)
-        .filter(|n| *n != "()" && silt::types::builtins::is_prelude_name(n))
+        .filter(|n| *n != "()" && silt::testing::types::builtins::is_prelude_name(n))
         .collect();
 
     for entry in &expected {

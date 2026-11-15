@@ -455,7 +455,7 @@ impl TypeChecker {
         // (A trait of another module, as this one writes it
         // (`spelling_in_reach`), else with the import to add where one
         // written here can reach the module; else not offered.)
-        let spelled = |module: crate::session::ModuleId, name: &str| -> Option<String> {
+        let spelled = |module: crate::defs::ModuleId, name: &str| -> Option<String> {
             match self.spelling_in_reach(module, name) {
                 Some(written) => Some(format!("`{written}`")),
                 None => {
@@ -472,8 +472,8 @@ impl TypeChecker {
             match crate::defs::builtin_trait_of_id(key.id.0) {
                 Some((_, None)) => {}
                 Some((builtin, Some(module))) => {
-                    let spelling = crate::session::ModuleId::builtin(module)
-                        .and_then(|id| spelled(id, builtin));
+                    let spelling =
+                        crate::defs::ModuleId::builtin(module).and_then(|id| spelled(id, builtin));
                     if let Some(spelling) = spelling {
                         candidates.push((builtin.to_string(), spelling));
                     }
@@ -1691,7 +1691,7 @@ impl TypeChecker {
         };
         let of_trait = defs.get(tr.id.0).module;
         let of_type = defs.get(target_type.id.0).module;
-        let named = |module: crate::session::ModuleId| {
+        let named = |module: crate::defs::ModuleId| {
             (!module.is_builtin()).then(|| {
                 self.tables
                     .module_names
@@ -1981,7 +1981,7 @@ impl TypeChecker {
         let Some(tr) = self.impl_trait(ti) else {
             return true;
         };
-        let here = |module: crate::session::ModuleId| {
+        let here = |module: crate::defs::ModuleId| {
             module == self.module || (self.is_cell && self.cells.contains(&module))
         };
         here(defs.get(tr.id.0).module) || here(defs.get(target_type.id.0).module)

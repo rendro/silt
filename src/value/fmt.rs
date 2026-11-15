@@ -19,15 +19,15 @@ use std::fmt;
 
 use super::list::Runs;
 use super::{List, MapIter, Record, SetIter, TooLong, Value};
-use crate::builtins::data::{Date, Time};
 use crate::typeinfo::{FieldType, ty};
+use crate::value::{Date, Time};
 
 impl Value {
     /// Whether the value can be written out: `Err` if a list in it
-    /// cannot ([`List::writable`]). Showing a value to a program
+    /// cannot (`List::writable`). Showing a value to a program
     /// (`println`, interpolation, `io.inspect`) asks this first, and
     /// the error is the program's.
-    pub fn writable(&self) -> Result<(), TooLong> {
+    pub(crate) fn writable(&self) -> Result<(), TooLong> {
         // A value without parts is writable, and is answered before
         // the worklist is made: showing an Int allocates no worklist.
         match self {
@@ -69,7 +69,7 @@ impl Value {
     /// Unlike `Display` (which prints bare strings for user output),
     /// this produces the silt-source representation: strings are
     /// quoted, collections use silt syntax, etc.
-    pub fn format_silt(&self) -> String {
+    pub(crate) fn format_silt(&self) -> String {
         Inspected(self).to_string()
     }
 
@@ -82,11 +82,11 @@ impl Value {
 /// What writes a value in place of the formatter: for a value of a type
 /// with a `Display` impl a program wrote, what the impl gave. `None`
 /// for any other value, which the formatter writes itself.
-pub type Written<'a> = &'a dyn Fn(&Value, &mut fmt::Formatter<'_>) -> Option<fmt::Result>;
+pub(crate) type Written<'a> = &'a dyn Fn(&Value, &mut fmt::Formatter<'_>) -> Option<fmt::Result>;
 
 /// A value as it is shown (`println`, interpolation), with `written`
 /// asked first at each record and variant inside it.
-pub struct Shown<'a>(pub &'a Value, pub Written<'a>);
+pub(crate) struct Shown<'a>(pub &'a Value, pub Written<'a>);
 
 impl fmt::Display for Shown<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

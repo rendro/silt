@@ -5,7 +5,7 @@
 //! `import math ...` as the placeholder for a user-defined module,
 //! and `docs/getting-started.md`'s "Modules and imports" section used
 //! `import list ...`. Both `math` and `list` are stdlib modules
-//! registered in `silt::module::builtin_modules()`. Any reader who
+//! registered in `silt::testing::module::builtin_modules()`. Any reader who
 //! copy-pasted the snippet to learn the syntax — or to seed their own
 //! module file under `src/math.silt` / `src/list.silt` — would shadow
 //! a stdlib name, producing surprising "name already in scope" /
@@ -15,11 +15,11 @@
 //! `builtin_modules()`. This test locks both files to that invariant by
 //! parsing the `import <name>` lines in the targeted sections and
 //! asserting every extracted module-root name is absent from
-//! `silt::module::builtin_modules()`. Future drift (renaming back to a
+//! `silt::testing::module::builtin_modules()`. Future drift (renaming back to a
 //! stdlib name, or adding a new stdlib name with the same string)
 //! flips the assertion.
 
-use silt::module::builtin_modules;
+use silt::testing::module::builtin_modules;
 
 const MODULES_DOC: &str = include_str!("../../docs/language/modules.md");
 const GETTING_STARTED_DOC: &str = include_str!("../../docs/getting-started.md");

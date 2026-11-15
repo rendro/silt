@@ -3,7 +3,8 @@
 //! no server, no timing. Written by the stage 8 lane for the lane that
 //! owns the method table (src/typechecker/tables.rs, declare_traits.rs).
 
-use silt::session::testing::{session_with, test_path};
+use silt::testing::SessionInside;
+use silt::testing::{session_with, test_path};
 
 const A: &str = "pub type T { T(Int) }\npub trait Ta { fn m(self) -> String }\n\
                  trait Ta for T { fn m(self) -> String { \"a\" } }\n\
@@ -57,10 +58,9 @@ fn a_dropped_trait_not_yet_checked_leaves_no_row() {
 /// that is entered".)
 #[test]
 fn a_cleared_definition_is_found_as_nothing() {
-    use silt::defs::{BuiltinDefs, Def, DefKind, DefTable, Vis};
-    use silt::intern::intern;
-    use silt::session::ModuleId;
-    use silt::source::Span;
+    use silt::testing::defs::{BuiltinDefs, Def, DefKind, DefTable, ModuleId, Vis};
+    use silt::testing::intern::intern;
+    use silt::testing::source::Span;
     use std::sync::Arc;
 
     let mut table = DefTable::new(Arc::new(BuiltinDefs::default()));
@@ -79,5 +79,5 @@ fn a_cleared_definition_is_found_as_nothing() {
     let found = table.get(dropped);
     assert!(matches!(found.kind, DefKind::Let));
     assert_ne!(found.module, module);
-    assert_eq!(silt::intern::resolve(found.name), "_");
+    assert_eq!(silt::testing::intern::resolve(found.name), "_");
 }

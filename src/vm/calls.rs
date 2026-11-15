@@ -3,7 +3,8 @@
 
 use std::panic::AssertUnwindSafe;
 
-use crate::builtins::registry::{BuiltinId, Row, registry};
+use crate::builtins::registry::{Row, registry};
+use crate::defs::BuiltinId;
 use crate::value::Value;
 
 use super::dispatch::{catch_builtin_panic, invoke_host_fn};

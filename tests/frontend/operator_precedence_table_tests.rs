@@ -18,10 +18,10 @@
 //! below pins the parsed structure of one expression per operator
 //! family so any future drift in a single arm fails loudly.
 
-use silt::ast::{Expr, ExprKind};
-use silt::intern;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::testing::ast::{Expr, ExprKind};
+use silt::testing::intern;
+use silt::testing::lexer::Lexer;
+use silt::testing::parser::Parser;
 
 // ────────────────────────────────────────────────────────────────────
 // Finding 3 lock: precedence/associativity table
@@ -53,7 +53,7 @@ fn shape(e: &Expr) -> String {
 }
 
 fn expr_shape(src: &str) -> String {
-    let tokens = Lexer::new(silt::source::FileId::default(), src)
+    let tokens = Lexer::new(silt::testing::source::FileId::default(), src)
         .tokenize()
         .checked()
         .unwrap_or_else(|e| panic!("lex {src}: {e:?}"));

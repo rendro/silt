@@ -8,7 +8,7 @@
 //! the integrator rather than captured as a golden.
 
 fn type_errors(input: &str) -> Vec<String> {
-    silt::session::testing::check_str(input)
+    silt::testing::check_str(input)
         .into_iter()
         .filter(|d| d.is_error())
         .map(|d| d.message)

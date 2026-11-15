@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::common::{ok, too_long_text};
 use super::typed::{self, Text, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{MAX_TEXT_LEN, Value};
+use crate::value::{Compiled, MAX_TEXT_LEN, Value};
 use crate::vm::{Step, VmError, iterate, next};
 
 /// How `RegexError` shows the variant `tag` with `fields`:
@@ -23,13 +23,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("TooBig", []) => "compiled regex exceeds size budget".to_string(),
         _ => return None,
     })
-}
-
-/// A `Regex` value (`regex.compile`): the pattern as it was written,
-/// and the regex it compiled to. Two of one pattern are equal.
-pub struct Compiled {
-    pub(crate) pattern: Box<str>,
-    pub(crate) re: Arc<Regex>,
 }
 
 // ── The functions ───────────────────────────────────────────────────

@@ -42,10 +42,10 @@ pub(crate) struct GivenUse {
     pub(super) taken: bool,
     /// The module of the definition used, when it is another module's:
     /// what its body asks of its own opaque types holds (`opaque_encode_refusal`).
-    pub(super) owner: Option<crate::session::ModuleId>,
+    pub(super) owner: Option<crate::defs::ModuleId>,
     /// With `owner`: the modules the definition's bound hands the type on
     /// to (`TypeTables::def_owners`).
-    pub(super) also: Vec<crate::session::ModuleId>,
+    pub(super) also: Vec<crate::defs::ModuleId>,
 }
 
 /// What a body asks of the type an annotation variable of its signature
@@ -170,7 +170,7 @@ impl TypeChecker {
         var: TyVar,
         body: Option<Symbol>,
         index: usize,
-    ) -> Vec<crate::session::ModuleId> {
+    ) -> Vec<crate::defs::ModuleId> {
         (self.need_owners.get(&(self.rigid_rep_var(var), body)))
             .and_then(|owners| owners.get(index))
             .cloned()
@@ -231,7 +231,7 @@ impl TypeChecker {
         &self,
         check: BuiltinCheck,
         ty: &Type,
-        owner: &[crate::session::ModuleId],
+        owner: &[crate::defs::ModuleId],
     ) -> bool {
         let BuiltinCheck::Decodes {
             builtin, decoding, ..
@@ -332,7 +332,7 @@ impl TypeChecker {
         r: RigidId,
         check: BuiltinCheck,
         in_body: Option<Symbol>,
-        (path, owners): (Vec<Symbol>, Vec<crate::session::ModuleId>),
+        (path, owners): (Vec<Symbol>, Vec<crate::defs::ModuleId>),
         within: Option<Type>,
     ) -> bool {
         let key = (self.rigid_rep_var(r.var), in_body);
@@ -998,7 +998,7 @@ impl TypeChecker {
                     for (index, check) in needs.into_iter().enumerate() {
                         let mut path = vec![use_.passer];
                         path.extend(self.need_path(use_.given, use_.body, index));
-                        let mut owners: Vec<crate::session::ModuleId> =
+                        let mut owners: Vec<crate::defs::ModuleId> =
                             use_.owner.into_iter().collect();
                         owners.extend(use_.also.iter().copied());
                         owners.extend(self.need_owners_of(use_.given, use_.body, index));
@@ -1197,7 +1197,7 @@ impl TypeChecker {
                 let passer = (Some(use_.passer), through.as_slice());
                 // (The modules on the way: the definition's, those its
                 // bound hands the type to, those the body's need passes.)
-                let mut owners: Vec<crate::session::ModuleId> = use_.owner.into_iter().collect();
+                let mut owners: Vec<crate::defs::ModuleId> = use_.owner.into_iter().collect();
                 owners.extend(use_.also.iter().copied());
                 owners.extend(self.need_owners_of(use_.given, use_.body, index));
                 // (The type the body gives the decoder, judged whole where
@@ -1242,7 +1242,7 @@ impl TypeChecker {
         // (A note names a decoder of a module, `json.parse`; a type's
         // `decode` method, `Box(t).decode(v)`, is no link a note writes.)
         let note = use_.passer != builtin && resolve(builtin).contains('.');
-        let mut owners: Vec<crate::session::ModuleId> = use_.owner.into_iter().collect();
+        let mut owners: Vec<crate::defs::ModuleId> = use_.owner.into_iter().collect();
         owners.extend(use_.also.iter().copied());
         if self.decodes_whole_refused(check, &whole, &owners) {
             let passer = (note.then_some(use_.passer), &use_.through[..]);

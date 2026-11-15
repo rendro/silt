@@ -46,7 +46,7 @@ pub(super) enum MemberKind {
 pub(super) fn visible_fields(
     tables: &crate::typechecker::Tables,
     defs: &crate::defs::DefTable,
-    module: crate::session::ModuleId,
+    module: crate::defs::ModuleId,
 ) -> super::fields::RecordFields {
     let mut record_fields = tables.record_fields();
     record_fields.retain(|ty, _| {
@@ -63,8 +63,8 @@ pub(super) fn visible_fields(
 /// module that is not of the graph.
 fn program_module_name(
     session: &crate::session::Session,
-    here: crate::session::ModuleId,
-    module: crate::session::ModuleId,
+    here: crate::defs::ModuleId,
+    module: crate::defs::ModuleId,
 ) -> Option<Symbol> {
     let graph = session.graph();
     if module == here || module.index() >= graph.modules().len() {

@@ -1,5 +1,5 @@
 //! Top-level help text, usage banners, and the shared signature/description
-//! alignment plumbing. Pulled out of `main.rs` so the banner helpers can
+//! alignment plumbing. Kept apart from the dispatcher so the banner helpers can
 //! share one source-of-truth and the `tests/cli/cli_help_rows_and_banners_tests.rs` lockers
 //! keep passing across refactors.
 

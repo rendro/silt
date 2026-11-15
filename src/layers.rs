@@ -71,7 +71,7 @@ fn add_row<L: Clone>(
 
 /// A map that is cheap to copy. A key is given its value once.
 #[derive(Debug)]
-pub struct Layers<K, V, S = RandomState> {
+pub(crate) struct Layers<K, V, S = RandomState> {
     /// Oldest first, which is largest first.
     layers: Vec<Arc<HashMap<K, V, S>>>,
 }
@@ -99,7 +99,7 @@ where
     /// (A table of one layer, which a program's is, is asked as a map
     /// is: the walk over the layers is kept out of the caller's code.)
     #[inline]
-    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    pub(crate) fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: std::borrow::Borrow<Q>,
         Q: Eq + Hash + ?Sized,
@@ -120,13 +120,13 @@ where
         self.layers.iter().find_map(|layer| layer.get(key))
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.layers.is_empty()
     }
 
     /// Give `key` its value. (A key that has one keeps it: the layers
     /// are asked oldest first.)
-    pub fn insert(&mut self, key: K, value: V) {
+    pub(crate) fn insert(&mut self, key: K, value: V) {
         debug_assert!(self.get(&key).is_none(), "a key is given its value once");
         add_row(
             &mut self.layers,
@@ -142,7 +142,7 @@ where
 
 /// A list that is cheap to copy, and that grows at its end.
 #[derive(Debug)]
-pub struct Rows<T> {
+pub(crate) struct Rows<T> {
     /// Oldest first, which is largest first: the rows of the list in
     /// order.
     layers: Vec<Arc<Vec<T>>>,
@@ -168,17 +168,17 @@ impl<T> Clone for Rows<T> {
 }
 
 impl<T: Clone> Rows<T> {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.len
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// (As [`Layers::get`]: one layer is asked as a list is.)
     #[inline]
-    pub fn get(&self, index: usize) -> Option<&T> {
+    pub(crate) fn get(&self, index: usize) -> Option<&T> {
         match &self.layers[..] {
             [only] => only.get(index),
             _ => self.get_layered(index),
@@ -197,7 +197,7 @@ impl<T: Clone> Rows<T> {
         None
     }
 
-    pub fn push(&mut self, row: T) {
+    pub(crate) fn push(&mut self, row: T) {
         self.len += 1;
         add_row(
             &mut self.layers,

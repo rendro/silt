@@ -6,10 +6,10 @@
 //! don't race with each other if two env tests happen to run in
 //! parallel in the same test binary.
 
-use silt::value::Value;
+use silt::testing::value::Value;
 
 fn run(input: &str) -> Value {
-    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
+    silt::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn expect_string(v: Value) -> String {

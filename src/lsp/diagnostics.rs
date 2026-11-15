@@ -22,8 +22,9 @@ use lsp_server::Message;
 use lsp_types::notification::{Notification as _, PublishDiagnostics};
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, PublishDiagnosticsParams, Range, Uri};
 
+use crate::defs::ModuleId;
 use crate::diagnostic::Phase;
-use crate::session::{ModuleId, parse_text};
+use crate::session::parse_text;
 use crate::source::{FileId, SourceFile, SourceMap, SourceName};
 
 use super::Server;
