@@ -31,6 +31,31 @@ pub(crate) mod test;
 pub(crate) mod update;
 pub(crate) mod watch;
 
+/// The commands of `silt`, each with what runs it: the one list of them.
+/// `run_main` dispatches by it, the "did you mean" hint of an unknown
+/// command searches it, and the usage text has a row for each of them
+/// and for no other (a test of `help` holds that). The order is the
+/// hint's: of two commands as close to a typo, the first is named.
+pub(crate) const COMMANDS: &[(&str, fn(&[String]))] = &[
+    ("run", run::dispatch),
+    ("disasm", disasm::dispatch),
+    ("test", test::dispatch),
+    ("check", check::dispatch),
+    ("lsp", lsp::dispatch),
+    ("repl", repl::dispatch),
+    ("fmt", fmt::dispatch),
+    ("init", init::dispatch),
+    ("self-update", self_update::dispatch),
+    // Regenerates the lock of the package's dependencies.
+    ("update", update::dispatch),
+    // `silt add <name> --path <path>` or `silt add <name> --git <url>
+    // (--rev|--branch|--tag) <ref>`: a dependency into `silt.toml`, and
+    // `silt.lock` regenerated.
+    ("add", add::dispatch),
+    // A dependency out of `silt.toml`, and `silt.lock` regenerated.
+    ("remove", remove::dispatch),
+];
+
 /// The usage error of a flag given twice to `silt <command>`: exit 1.
 pub(crate) fn once_only(command: &str, flag: &str) -> ! {
     let command = match command {
