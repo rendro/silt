@@ -191,7 +191,7 @@ fn check_says_an_error_of_a_module_once_when_two_programs_find_it() {
     .unwrap();
     let dot = format!(".{}m.silt", std::path::MAIN_SEPARATOR);
     let cases = [
-        (vec!["check", "."], "./m.silt", 0),
+        (vec!["check", "."], "m.silt", 0),
         (vec!["check", "main.silt", dot.as_str()], "m.silt", 2),
     ];
     for (args, file, imported) in cases {
@@ -212,6 +212,34 @@ fn check_says_an_error_of_a_module_once_when_two_programs_find_it() {
     let out = silt(&dir, &["check", "--format", "json", "."], "");
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json.as_array().unwrap().len(), 2, "{json}");
+}
+
+/// `silt check` of a directory names each file one way: relative to
+/// where the command was given, without a leading `./`, as an import
+/// names it. FAIL on 478805d4: `check .` named the files it found
+/// `./b.silt`, and the import of them `b.silt`, in one output.
+#[test]
+fn check_of_a_directory_names_each_file_one_way() {
+    let dir = fresh_dir("spelling");
+    fs::write(
+        dir.join("main.silt"),
+        "import b\nfn main() { println(1) }\n",
+    )
+    .unwrap();
+    fs::write(dir.join("b.silt"), "import c\npub fn f() -> Int { 1 }\n").unwrap();
+    fs::write(dir.join("c.silt"), "import b\npub fn g() -> Int { 1 }\n").unwrap();
+    let out = silt(&dir, &["check", "."], "");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = text(&out.stderr).replace('\\', "/");
+    let mut places: Vec<&str> = (stderr.lines())
+        .filter_map(|line| line.strip_prefix(" --> "))
+        .collect();
+    places.dedup();
+    assert_eq!(
+        places,
+        ["b.silt:1:1", "c.silt:1:1", "main.silt:1:1"],
+        "{stderr}"
+    );
 }
 
 #[cfg(feature = "watch")]

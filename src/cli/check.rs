@@ -165,7 +165,16 @@ fn programs_of(paths: &[String]) -> Vec<PackageFiles> {
                 if found.is_empty() {
                     refuse_empty_walk("check", Path::new(&dir), &dir);
                 }
-                programs.extend(found.into_iter().map(file));
+                // Each file named as an import of another names it,
+                // relative to where the command was given, without a
+                // leading `./` (`check .` finds `./b.silt`, which
+                // main.silt's `import b` reads as `b.silt`): one written
+                // form per file in one output.
+                let written = |found: String| match Path::new(&found).strip_prefix(".") {
+                    Ok(rest) if !rest.as_os_str().is_empty() => rest.to_string_lossy().into_owned(),
+                    _ => found,
+                };
+                programs.extend(found.into_iter().map(written).map(file));
             }
             PathArg::NotSilt(path) => refuse_path("check", &path, FILE_OR_DIRECTORY),
         }
