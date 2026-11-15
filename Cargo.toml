@@ -59,10 +59,10 @@ rustyline = { version = "15", optional = true }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-md-5 = "0.10"
-blake2 = "0.10"
-hmac = "0.12"
+sha2 = "0.11"
+md-5 = "0.11"
+blake2 = "0.11"
+hmac = "0.13"
 # Constant-time comparison (`crypto.constant_time_eq`); already in the
 # graph through the RustCrypto crates.
 subtle = "2"

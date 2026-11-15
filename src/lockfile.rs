@@ -285,7 +285,7 @@ pub fn checksum_path_source(pkg_root: &Path) -> Result<String, ChecksumError> {
         hasher.update(hash.as_bytes());
         hasher.update(b"\n");
     }
-    Ok(format!("sha256:{:x}", hasher.finalize()))
+    Ok(format!("sha256:{}", lower_hex(&hasher.finalize())))
 }
 
 // ── Internals ──────────────────────────────────────────────────────────
@@ -369,7 +369,17 @@ impl From<std::io::Error> for ChecksumError {
 fn file_hash(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    lower_hex(&hasher.finalize())
+}
+
+/// `bytes` in lower-case hexadecimal, two digits a byte.
+pub(crate) fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(hex, "{byte:02x}").expect("a write to a String does not fail");
+    }
+    hex
 }
 
 /// Hash the `.silt` files under `dir` into `out`, keyed by their path

@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use blake2::Blake2b512;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use md5::Md5;
 use sha2::{Digest, Sha256, Sha512};
 use subtle::ConstantTimeEq;
@@ -87,14 +87,14 @@ builtins! {
         // `new_from_slice` on `Hmac<Sha256>` accepts any key length — it
         // never errors in practice for SHA-256, but we handle the Result
         // defensively rather than unwrapping.
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key.as_slice())
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key.as_slice())
             .map_err(|e| VmError::new(format!("crypto.hmac_sha256 key error: {e}")))?;
         mac.update(msg.as_slice());
         Ok(mac.finalize().into_bytes().to_vec())
     }
 
     fn hmac_sha512(key: Bytes, msg: Bytes) -> Result<Vec<u8>, VmError> {
-        let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(key.as_slice())
+        let mut mac = <Hmac<Sha512> as KeyInit>::new_from_slice(key.as_slice())
             .map_err(|e| VmError::new(format!("crypto.hmac_sha512 key error: {e}")))?;
         mac.update(msg.as_slice());
         Ok(mac.finalize().into_bytes().to_vec())
