@@ -1236,8 +1236,11 @@ impl Printer<'_> {
         docs.push(self.where_clauses(&t.param_where_clauses));
         docs.push(space());
         // (A comment between the header and its `{` belongs to the
-        // header, one level in, as a function's does.)
-        docs.push(Doc::nest(self.dangling()));
+        // header, one level in, as a function's does. Without the `{`,
+        // a comment there is the first member's: it stays above it.)
+        if self.cur.at(&Token::LBrace) {
+            docs.push(Doc::nest(self.dangling()));
+        }
         // The parser takes a trait body without its opening brace.
         docs.push(if self.cur.at(&Token::LBrace) {
             self.tok(Token::LBrace)
