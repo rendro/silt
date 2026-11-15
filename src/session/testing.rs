@@ -213,8 +213,6 @@ pub trait SessionInside {
     fn module_analysis(&self, id: crate::defs::ModuleId) -> Option<&super::ModuleAnalysis>;
     /// The definitions of every module analysed so far.
     fn defs(&self) -> &crate::defs::DefTable;
-    /// The session's source files.
-    fn sources(&self) -> &crate::source::SourceMap;
     /// The module graph of what the session has read.
     fn graph(&self) -> &super::ModuleGraph;
 }
@@ -234,10 +232,6 @@ impl SessionInside for Session {
 
     fn defs(&self) -> &crate::defs::DefTable {
         Session::defs(self)
-    }
-
-    fn sources(&self) -> &crate::source::SourceMap {
-        Session::sources(self)
     }
 
     fn graph(&self) -> &super::ModuleGraph {

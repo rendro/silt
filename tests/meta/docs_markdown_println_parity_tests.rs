@@ -728,6 +728,191 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
     );
 }
 
+/// The compile errors a fence's comments say its code has: each `--
+/// error: <message>` that is not on a `println` line (the walker above
+/// compares those with the run), behind a statement (`let a = 1 let b = 2
+/// -- error: ...`) or on a line of its own under what it is about. With
+/// its line in the fence. A `runtime error:` is the run's, not the
+/// check's.
+fn compile_error_comments(src: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, line) in src.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.contains("println(") {
+            continue;
+        }
+        let comment = match trimmed.strip_prefix("-- ") {
+            Some(own_line) => Some(own_line.trim().to_string()),
+            None => find_expected_comment(trimmed),
+        };
+        if let Some(message) = comment.as_deref().and_then(|c| c.strip_prefix("error: ")) {
+            out.push((i + 1, message.trim().to_string()));
+        }
+    }
+    out
+}
+
+/// A fence of declarations and statements as a program: each
+/// declaration (a line at the left edge that starts `type`, `trait`, `fn`
+/// or `pub`, with the lines below it up to its closing `}` at the left
+/// edge) stays at the top level, the rest is the body of `main`, after
+/// the imports the fence names.
+fn wrap_statements(src: &str) -> String {
+    let starts_decl = |l: &str| {
+        ["type ", "trait ", "fn ", "pub "]
+            .iter()
+            .any(|k| l.starts_with(k))
+    };
+    let (mut decls, mut body) = (String::new(), String::new());
+    let mut lines = src.lines().peekable();
+    while let Some(line) = lines.next() {
+        if !starts_decl(line) {
+            body.push_str(line);
+            body.push('\n');
+            continue;
+        }
+        decls.push_str(line);
+        decls.push('\n');
+        // A declaration on more lines than one ends at its `}`.
+        if line.trim_end().ends_with('{') {
+            for inner in lines.by_ref() {
+                decls.push_str(inner);
+                decls.push('\n');
+                if inner.starts_with('}') {
+                    break;
+                }
+            }
+        }
+    }
+    let wrapped = wrap_fragment(&body);
+    let (imports, main) = wrapped.split_at(wrapped.find("\nfn main()").unwrap_or(0));
+    format!("{imports}\n{decls}{main}")
+}
+
+/// Every first compile error a ```silt fence's comments name (see
+/// `compile_error_comments`) is one that `silt check` reports for the
+/// fence: the fence as a file, or, when it has no `main`, its statements
+/// wrapped in `main` (`wrap_statements`). Only the first: the
+/// declaration that holds an error is one error, so a second one in it
+/// is never reported. A sketch (`trait T for X { ... }`) is no program,
+/// and a fence that uses the names of an earlier one (the check finds an
+/// undefined name, not the error) does not stand alone: both are left
+/// out. FAIL on the base commit: such comments were read by nothing,
+/// and bindings-and-functions.md quoted an old text.
+#[test]
+fn docs_compile_error_comments_match_silt_check() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut targets: Vec<PathBuf> = Vec::new();
+    collect_md_files(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "silt_docs_md_error_comments_{}",
+        std::process::id()
+    ));
+    let mut failures = Vec::new();
+    let (mut checked, mut not_alone) = (0, 0);
+    for doc_path in &targets {
+        let body = std::fs::read_to_string(doc_path).expect("read a doc");
+        for (opener_line, src) in extract_silt_blocks(&body) {
+            let first = src.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+            if NOEXEC_MARKERS.contains(&first.trim()) || src.contains("...") {
+                continue;
+            }
+            let Some((line, message)) = compile_error_comments(&src).into_iter().next() else {
+                continue;
+            };
+            let stem = (doc_path.file_stem().and_then(|s| s.to_str()))
+                .unwrap_or("doc")
+                .to_lowercase()
+                .replace('-', "_");
+            let name = format!("{stem}_line{opener_line}");
+            let dir = tmp_dir.join(&name);
+            std::fs::create_dir_all(&dir).expect("create the fence's directory");
+            let file = dir.join(format!("{name}.silt"));
+            let mut forms = vec![src.clone()];
+            if !src.contains("fn main") {
+                forms.push(wrap_statements(&src));
+            }
+            let mut reported = String::new();
+            let mut found = false;
+            for form in &forms {
+                std::fs::write(&file, form).expect("write the fence");
+                let Some(out) = run_in_dir("check", &file) else {
+                    continue;
+                };
+                let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+                if (stderr.lines()).any(|l| l.starts_with("error[") && l.contains(&message)) {
+                    found = true;
+                    break;
+                }
+                reported = stderr;
+            }
+            if found {
+                checked += 1;
+                continue;
+            }
+            let headers: Vec<&str> = (reported.lines())
+                .filter(|l| l.starts_with("error["))
+                .collect();
+            if headers
+                .iter()
+                .any(|h| h.contains("undefined") || h.contains("unknown type"))
+            {
+                not_alone += 1;
+                continue;
+            }
+            failures.push(format!(
+                "{}:{} (```silt fence, line {line}): the comment says `silt check` reports \
+                 `{message}`; it reports:\n{}",
+                doc_path.display(),
+                opener_line,
+                headers.join("\n")
+            ));
+        }
+    }
+    eprintln!(
+        "[docs_compile_error_comments] compared {checked} fence(s); {not_alone} that do not \
+         stand alone were left out"
+    );
+    assert!(checked >= 5, "only {checked} fence(s) compared");
+    if failures.is_empty() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    assert!(
+        failures.is_empty(),
+        "{} fence(s) of docs/ name a compile error `silt check` does not report:\n\n{}",
+        failures.len(),
+        failures.join("\n---\n")
+    );
+}
+
+/// A fence of declarations and statements keeps its declarations at the
+/// top level.
+#[test]
+fn a_fence_of_declarations_and_statements_is_wrapped_around_its_statements() {
+    let src =
+        "type Job { name: String }\nfn f() {\n  1\n}\nprintln(list.length([f()]))\n-- error: x\n";
+    assert_eq!(
+        wrap_statements(src),
+        "import list\n\ntype Job { name: String }\nfn f() {\n  1\n}\n\nfn main() {\n  \
+         println(list.length([f()]))\n  -- error: x\n}\n"
+    );
+}
+
+/// The comments a fence's compile errors are read from.
+#[test]
+fn compile_error_comments_are_read_behind_a_statement_and_on_their_own_line() {
+    let src = "let a = 1 let b = 2 -- error: expected a newline\nprintln(1) -- error: overflow\n\
+               f(x)\n  -- error: no field 'g'\n-- help: write it\n";
+    assert_eq!(
+        compile_error_comments(src),
+        [
+            (1, "expected a newline".to_string()),
+            (4, "no field 'g'".to_string())
+        ]
+    );
+}
+
 /// A fragment is wrapped in `main` with the imports it needs: the
 /// modules it names and does not import, and none it names only inside
 /// a longer name or a string.

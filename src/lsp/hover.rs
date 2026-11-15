@@ -23,9 +23,17 @@ impl Server {
         let doc = self.documents.get(uri)?;
         let program = doc.program.as_ref()?;
 
-        // A position after the end of its line, or past the last line, is
-        // on no character, so there is nothing to describe.
+        // A position directly behind a name is on the name; one after
+        // the end of its line, or past the last line, is on no
+        // character, so there is nothing to describe.
         let cursor = char_offset_at(&doc.source, &pos)?;
+
+        // A comment, the space between tokens and the text of a string
+        // are no code: nothing to describe (an interpolation's code, `{x}`
+        // in a string, is).
+        if !on_code(doc.tokens(), cursor) {
+            return None;
+        }
 
         // Check if cursor is on a field name in a field access expression.
         // e.g., for `data.response`, hovering on `response` shows the field type.
@@ -45,6 +53,12 @@ impl Server {
                 }),
                 range: None,
             });
+        }
+
+        // A keyword (`let`, `match`) is no name and has no type; one that
+        // names a field (`r.type`, `type: 1`) is the field's name.
+        if on_keyword(doc.tokens(), cursor) {
+            return None;
         }
 
         // If the cursor is sitting on the BINDING (LHS) identifier of a local
@@ -267,6 +281,43 @@ impl Server {
             range: None,
         })
     }
+}
+
+/// Whether byte `cursor` is on a token of `tokens` that is code: not in a
+/// comment or the space between tokens (on no token), not in the text of
+/// a string (a string literal, or a part of one around its
+/// interpolations).
+fn on_code(tokens: &[crate::lexer::Tok], cursor: usize) -> bool {
+    use crate::lexer::Token;
+    let at = tokens
+        .iter()
+        .find(|tok| (tok.span.start as usize..tok.span.end as usize).contains(&cursor));
+    match at.map(|tok| &tok.kind) {
+        None => false,
+        Some(
+            Token::StringLit(_)
+            | Token::StringStart(_)
+            | Token::StringMiddle(_)
+            | Token::StringEnd(_),
+        ) => false,
+        Some(_) => true,
+    }
+}
+
+/// Whether byte `cursor` is on a keyword of `tokens` that is no field's
+/// name: not after a dot, not before a colon.
+fn on_keyword(tokens: &[crate::lexer::Tok], cursor: usize) -> bool {
+    use crate::lexer::Token;
+    let Some(at) = tokens
+        .iter()
+        .position(|tok| (tok.span.start as usize..tok.span.end as usize).contains(&cursor))
+    else {
+        return false;
+    };
+    let kind = |i: usize| tokens.get(i).map(|tok| &tok.kind);
+    tokens[at].kind.keyword().is_some()
+        && !(at > 0 && kind(at - 1) == Some(&Token::Dot))
+        && kind(at + 1) != Some(&Token::Colon)
 }
 
 /// A hover of the markdown `value`.

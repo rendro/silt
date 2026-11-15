@@ -2,7 +2,7 @@ error[type]: the type variable `a` would escape its declaration: inside it `a` s
  --> rigid__an_escape_is_said_once_and_a_later_mismatch_still_is.silt:13:22
     |
  13 |   channel.send(cell, x)
-    |                      ^ the type variable `a` would escape its declaration: inside it `a` stands for any type, but here it would become the type of a value defined outside
+    |                      ^ here
 
 error[type]: type mismatch: expected Int, got String
  --> rigid__an_escape_is_said_once_and_a_later_mismatch_still_is.silt:19:22

@@ -787,13 +787,30 @@ impl TypeChecker {
                     Some(callee) => format!("this use of '{callee}'"),
                     None => "this".to_string(),
                 };
+                // A value that never is (`tg(todo())`) decides no type,
+                // whatever is written of it later: it is given one by an
+                // annotated `let`, or by a stub of that type.
+                let help = match self.never_alone(subject) {
+                    true => match self.never_example(*tr, args) {
+                        Some((ty, name)) => format!(
+                            "a value that never is decides no type: give it the type it stands \
+                             for, as in `let v: {ty} = todo()`, or use a stub of that type, as in \
+                             `fn todo_{name}() -> {ty} {{ todo() }}`"
+                        ),
+                        None => "a value that never is decides no type: give it the type it \
+                                 stands for in an annotated `let`, or use a stub function that \
+                                 returns that type"
+                            .to_string(),
+                    },
+                    false => "annotate the value it is given".to_string(),
+                };
                 self.errors.push(
                     Diagnostic::error(
                         Code::AmbiguousType,
                         wanted.origin.span,
                         format!("cannot infer the type {what} needs to implement trait '{bound}'"),
                     )
-                    .with_help("annotate the value it is given"),
+                    .with_help(help),
                 );
             }
         }
@@ -1483,4 +1500,88 @@ fn in_full_head(message: &str) -> Option<String> {
     let (_, rest) = message.split_once("needs the type `")?;
     let (head, _) = rest.split_once('(')?;
     (!head.contains('`')).then(|| head.to_string())
+}
+
+impl TypeChecker {
+    /// Whether only a value that never is left the type variable
+    /// `subject` stands for undecided: a variable made one with it met
+    /// one (`met_never`, `for_never`), and none is the type of a name
+    /// bound to an open value of the program (`open_bindings`), such as
+    /// `x` of `Some(x)` of `none()` in `match b { true -> panic("p")
+    /// false -> x }`: there the help is the ordinary one.
+    fn never_alone(&self, subject: &Type) -> bool {
+        let Type::Var(root) = self.apply(subject) else {
+            return false;
+        };
+        let at_root = |v: &TyVar| self.apply(&Type::Var(*v)) == Type::Var(root);
+        self.met_never_class(root) && !self.open_bindings.iter().any(at_root)
+    }
+
+    /// Whether a variable made one with the variable `v` met a value
+    /// that never is.
+    pub(super) fn met_never_class(&self, v: TyVar) -> bool {
+        let root = self.apply(&Type::Var(v));
+        (self.met_never.iter().chain(&self.tables.vars.for_never))
+            .any(|m| self.apply(&Type::Var(*m)) == root)
+    }
+
+    /// A type that has `tr` (the bound's arguments `args`), for the help
+    /// of a value that never is given where `tr` is asked, as a program
+    /// writes it and with a lower-case name for a stub of it: `Int`
+    /// when it has it, else another primitive type that does, else the
+    /// shortest of the types the program's impls are for that ask
+    /// nothing of their parameters, each parameter `Int` (`List(Int)`
+    /// of `trait T for List(a)`). `None` where no such type is known to
+    /// work: a trait with arguments or of type constructors, impls that
+    /// ask something of their parameters, no impl.
+    fn never_example(&self, tr: TraitKey, args: &[Type]) -> Option<(String, String)> {
+        if !args.is_empty() || self.is_constructor_trait(tr) {
+            return None;
+        }
+        let impls = &self.tables.trait_impl_set;
+        for ty in [Type::Int, Type::Float, Type::String, Type::Bool] {
+            let name = ty.to_string();
+            if impls.contains(&(tr, TypeRef::builtin(&name))) {
+                let lower = name.to_lowercase();
+                return Some((name, lower));
+            }
+        }
+        let closed = |ty: &Type| {
+            let ints: HashMap<_, _> = free_vars_in(ty)
+                .into_iter()
+                .map(|v| (v, Type::Int))
+                .collect();
+            crate::types::substitute_vars(ty, &ints)
+        };
+        let mut found: Vec<(String, String)> = (self.tables.impl_keys.iter())
+            .filter(|key| key.0 == tr)
+            .filter(|key| self.tables.impl_preds.get(*key).is_none_or(Vec::is_empty))
+            .filter_map(|key| self.tables.impl_self_types.get(key))
+            .map(|ty| self.apply(ty))
+            .filter(|ty| !holds_constructor(ty))
+            .map(|ty| {
+                let ty = closed(&ty);
+                let head = (super::builtin_checks::head_ref(&ty))
+                    .map(|head| resolve(head.name).to_lowercase());
+                let shown = self.show_type(&ty);
+                let name = head.unwrap_or_else(|| "value".to_string());
+                (shown, name)
+            })
+            .collect();
+        found.sort_by(|a, b| (a.0.len(), &a.0).cmp(&(b.0.len(), &b.0)));
+        found.into_iter().next()
+    }
+}
+
+/// Whether `ty` has a type constructor applied or a variable of one,
+/// which no example type is written for.
+fn holds_constructor(ty: &Type) -> bool {
+    match ty {
+        Type::App(..) | Type::Con(..) => true,
+        Type::Fun(params, ret) => params.iter().any(holds_constructor) || holds_constructor(ret),
+        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => holds_constructor(inner),
+        Type::Map(k, v) => holds_constructor(k) || holds_constructor(v),
+        Type::Tuple(parts) | Type::Generic(_, parts) => parts.iter().any(holds_constructor),
+        _ => false,
+    }
 }

@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- `Never` is the checker's own type, as `Int` is: no program declares a
+-- type of that name (a record, an enum or an alias), and `Never` in a
+-- program and in its messages always means the one type. What names a
+-- refused declaration is not checked again.
+-- stderr-contains: error[type]: type 'Never' shadows builtin type 'Never'
+-- stderr-contains: --> never_return__no_program_declares_a_type_named_never.silt:11:6
+-- stderr-not-contains: expected Int
+-- stderr-not-contains: is written only as
+type Never {
+  n: Int,
+}
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn main() {
+  let v: Int = todo()
+  println(v)
+}

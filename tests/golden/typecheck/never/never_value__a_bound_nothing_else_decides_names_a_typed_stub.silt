@@ -1,0 +1,75 @@
+-- cmd: check
+-- exit: 1
+-- A value that never is decides no type: where a trait of the program,
+-- or `Number`, is asked of its type and nothing else decides it, the
+-- use stays refused, and the help names what gives the value its type
+-- (an annotated `let`, a stub of the type), with a type that has the
+-- trait. A type nothing decides for another reason keeps its own help.
+-- `fine` follows the help both ways and is accepted.
+import list
+
+trait Size {
+  fn size(self) -> Int
+}
+
+trait Size for Int {
+  fn size(self) -> Int {
+    self
+  }
+}
+
+type Celsius {
+  degrees: Int,
+}
+
+trait Warm {
+  fn warm(self) -> Bool
+}
+
+trait Warm for Celsius {
+  fn warm(self) -> Bool {
+    self.degrees > 20
+  }
+}
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn todo_int() -> Int {
+  todo()
+}
+
+fn none() -> Option(a) {
+  None
+}
+
+fn total(x: a) -> Int where a: Size {
+  Size.size(x)
+}
+
+fn is_warm(x: a) -> Bool where a: Warm {
+  Warm.warm(x)
+}
+
+fn stubs() -> Int {
+  println(list.sum([todo()]))
+  println(is_warm(todo()))
+  total(todo()) + Size.size(todo())
+}
+
+fn ordinary() -> Int {
+  match none() {
+    Some(x) -> total(x)
+    None -> 0
+  }
+}
+
+fn fine() -> Int {
+  let v: Int = todo()
+  total(v) + total(todo_int()) + list.sum([v, todo_int()])
+}
+
+fn main() {
+  println(stubs() + ordinary() + fine())
+}

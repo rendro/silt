@@ -1,0 +1,25 @@
+-- cmd: test
+-- exit: 1
+-- The `Err` a test returns whose Display impl fails is shown by its
+-- structure, with the note of what failed in the test's report. An
+-- assertion shows its values by their structure, whatever their impls
+-- (nothing of an impl runs there, and no note is written).
+import test
+
+type Code {
+  n: Int,
+}
+
+trait Display for Code {
+  fn display(self) -> String {
+    "code {100 / self.n}"
+  }
+}
+
+fn test_gives_up() -> Result((), Code) {
+  Err(Code { n: 0 })
+}
+
+fn test_compares() {
+  test.assert_eq(Code { n: 0 }, Code { n: 1 })
+}

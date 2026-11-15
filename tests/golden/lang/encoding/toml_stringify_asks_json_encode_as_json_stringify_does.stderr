@@ -9,4 +9,4 @@ error[type]: type 'S' does not implement trait 'json.Encode': field 's' is of ty
  --> toml_stringify_asks_json_encode_as_json_stringify_does.silt:14:26
     |
  14 |   println(toml.stringify(S { s: set.from_list([1]) }))
-    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'S' does not implement trait 'json.Encode': field 's' is of type 'Set(Int)', which does not implement trait 'json.Encode'
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ here

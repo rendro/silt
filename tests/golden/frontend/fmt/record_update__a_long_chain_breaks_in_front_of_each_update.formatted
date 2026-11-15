@@ -1,0 +1,25 @@
+-- cmd: fmt
+-- A chain of record updates too long for its line breaks in front of each
+-- update, as a chain of method calls does; a short one stays on one line.
+type Config {
+  name: String,
+  port: Int,
+  host: String,
+  retries: Int,
+  timeout_ms: Int,
+  verbose: Bool,
+}
+
+fn main() {
+  let c = Config { name: "s", port: 8080, host: "h", retries: 3, timeout_ms: 30000, verbose: true }
+  let e = c.{ port: 1 }
+    .{ retries: 2 }
+    .{ verbose: false }
+    .{ name: "x" }
+    .{ host: "h" }
+    .{ timeout_ms: 5 }
+    .{ port: 2 }
+    .{ port: 3 }
+  let f = c.{ port: 1 }.{ retries: 2 }
+  println((e, f))
+}

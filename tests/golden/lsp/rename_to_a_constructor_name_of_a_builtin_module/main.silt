@@ -1,0 +1,24 @@
+-- cmd: lsp
+-- A constructor of a builtin module (`io.NotFound`, `json.Other`) reserves
+-- no name: a rename to it is a rename to a name the program may declare.
+-- A rename to a name the file imports by name is refused as a top-level
+-- name of the file; one to a constructor of the prelude as one of silt's
+-- own names.
+-- lsp: rename 13:6 Other
+-- lsp: rename 13:6 NotFound
+-- lsp: rename 13:6 Some
+import io
+import shapes.{ Other }
+
+type Pattern { n: Int }
+
+fn uses(p: Pattern, o: Other, e: io.IoError) -> Int {
+  match e {
+    io.NotFound(_) -> p.n + o.n
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(uses(Pattern { n: 1 }, Other { n: 2 }, io.NotFound("x")))
+}

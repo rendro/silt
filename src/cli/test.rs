@@ -98,20 +98,21 @@ pub(crate) fn dispatch(args: &[String]) {
     run_tests(file.as_deref(), filter);
 }
 
-/// Print what the session found in `path`, in the order and the form
-/// `silt check` prints it, warnings included, with the file named
-/// `shown`. `compiled` says whether the file compiled. Returns `true`
-/// when the file failed to compile; a line that says so is printed last.
+/// Print what the session found in `path` (`diagnostics`) and was not
+/// shown for an earlier file (`new`), in the order and the form `silt
+/// check` prints it, warnings included, with the file named `shown`.
+/// `compiled` says whether the file compiled. Returns `true` when the
+/// file failed to compile; a line that says so is printed last.
 fn report_diagnostics(
     path: &str,
     shown: &str,
     sources: &SourceMap,
-    diagnostics: &[Diagnostic],
+    (diagnostics, new): (&[Diagnostic], &[Diagnostic]),
     compiled: bool,
 ) -> bool {
     // (Rendering a diagnostic runs no code of a program.)
     crate::scheduler::report(|| {
-        crate::diagnostic::eprint_all(&ProgramFiles::new(shown, sources), diagnostics)
+        crate::diagnostic::eprint_all(&ProgramFiles::new(shown, sources), new)
     });
     if compiled && !diagnostics.iter().any(Diagnostic::is_error) {
         return false;
@@ -238,9 +239,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     // charged to the test that spawned the task.
     crate::scheduler::collect_unjoined_failures();
     let mut owners = TaskOwners::default();
-    // The warnings shown so far, as rendered: a module that several
-    // test files import is warned about once.
-    let mut warned: HashSet<String> = HashSet::new();
+    // The diagnostics shown so far, as rendered: the errors and the
+    // warnings of a module that several test files import are shown
+    // once.
+    let mut shown_before: HashSet<String> = HashSet::new();
 
     for path in &paths {
         // A file found in the working directory is named `./a_test.silt`
@@ -294,14 +296,17 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 filter: filter.clone(),
             },
         );
-        let mut diagnostics = door_diagnostics(&mut session, file, &compiled);
+        let diagnostics = door_diagnostics(&mut session, file, &compiled);
         let files = ProgramFiles::new(shown, session.sources());
-        diagnostics.retain(|d| d.is_error() || warned.insert(render_human(&files, d)));
+        let new: Vec<Diagnostic> = (diagnostics.iter())
+            .filter(|d| shown_before.insert(render_human(&files, d)))
+            .cloned()
+            .collect();
         let failed_to_compile = report_diagnostics(
             path,
             shown,
             session.sources(),
-            &diagnostics,
+            (&diagnostics, &new),
             compiled.is_ok(),
         );
         let program = match compiled {

@@ -22,7 +22,7 @@ pub struct VmError {
     /// The help lines that name a place of the program: the line at the
     /// index has `{at}` where the place of the span is shown (see
     /// `Diagnostic::help_at`).
-    pub(crate) help_at: Vec<(usize, Span)>,
+    pub(crate) help_at: Box<[(usize, Span)]>,
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub(crate) type_confusion: bool,
@@ -47,19 +47,24 @@ pub struct VmError {
     /// The text of the `Err(e)` the program's own code returned when it ran
     /// to its end (`e` as `println` writes it): `main`
     /// ([`Vm::run_program`](super::Vm::run_program)), or a test function
-    /// ([`Vm::call_test`](super::Vm::call_test)). The span is the
+    /// (`Vm::call_test`). The span is the
     /// function's name, and there is no call stack. `silt run` and the
     /// playground write a `main` that returned `Err` as the one line
     /// `error: <text>`: it is the program's message to its user, not
     /// silt's.
-    pub(crate) returned: Option<String>,
+    pub returned: Option<String>,
+    /// With [`VmError::returned`]: the `Display` impl that showed the
+    /// `Err` failed, and the text is the payload's structure. What
+    /// failed, for the note a front door writes after the text
+    /// (`DisplayFailure::note`).
+    pub display_failure: Option<Box<DisplayFailure>>,
     /// The task whose failure this is, when a `task.join` took it from
     /// that task: a cancel that dismisses it hands it back to the task,
     /// whose failure is then reported as never joined
     /// (`Scheduler::cancel`).
     pub(crate) taken_from: Option<TakenFrom>,
     /// Source span where the error occurred (if available).
-    pub(crate) span: Option<Span>,
+    pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
     pub(crate) call_stack: Vec<(String, Span)>,
 }
@@ -69,12 +74,13 @@ impl VmError {
         VmError {
             message,
             help: Vec::new(),
-            help_at: Vec::new(),
+            help_at: Box::default(),
             type_confusion: false,
             out_of_steps: false,
             exit: None,
             exit_in_a_test: false,
             returned: None,
+            display_failure: None,
             taken_from: None,
             span: None,
             call_stack: Vec::new(),
@@ -137,10 +143,17 @@ impl VmError {
     }
 
     /// `function` (`main`, a test function), named at `at`, returned
-    /// `Err(payload)`; `shown` is the payload as `println` writes it.
-    pub(crate) fn of_a_returned_err(function: &str, shown: &str, at: Span) -> Self {
+    /// `Err(payload)`; `shown` is the payload as `println` writes it, or
+    /// its structure where its `Display` impl failed (`failure`).
+    pub(crate) fn of_a_returned_err(
+        function: &str,
+        shown: &str,
+        at: Span,
+        failure: Option<DisplayFailure>,
+    ) -> Self {
         VmError {
             returned: Some(shown.to_string()),
+            display_failure: failure.map(Box::new),
             span: Some(at),
             ..VmError::new(format!("{function} returned Err: {shown}"))
         }
@@ -155,7 +168,9 @@ impl VmError {
     /// The error with `help` as a help line that names the place `at`:
     /// its `{at}` shows where that is.
     pub(crate) fn with_help_at(mut self, help: impl Into<String>, at: Span) -> Self {
-        self.help_at.push((self.help.len(), at));
+        let mut help_at = std::mem::take(&mut self.help_at).into_vec();
+        help_at.push((self.help.len(), at));
+        self.help_at = help_at.into_boxed_slice();
         self.help.push(help.into());
         self
     }
@@ -181,13 +196,48 @@ impl VmError {
         let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));
         d.help = self.help.clone();
-        d.help_at = self.help_at.clone().into_boxed_slice();
+        d.help_at = self.help_at.clone();
         d.labels = self
             .call_stack
             .iter()
             .map(|(name, span)| (*span, name.clone()))
             .collect();
         d
+    }
+}
+
+/// A `Display` impl that failed while a value was shown where its
+/// structure is shown instead (the `Err` that `main` or a test returned,
+/// a REPL entry's value): the type whose impl it was, as values of it
+/// are shown, what its failure said, and where.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayFailure {
+    pub type_name: String,
+    /// The failure's message: its first line, cut at
+    /// [`DisplayFailure::MOST`] bytes, and `…` where more is left out.
+    pub message: String,
+    pub span: Option<Span>,
+}
+
+impl DisplayFailure {
+    /// The most of the failure's message a note gives: it is one line
+    /// under the text it is about.
+    pub(crate) const MOST: usize = 1_000;
+
+    /// The note, with the place as `view` shows it: `the Display impl
+    /// of E failed: panic: display panics (main.silt:3:32)`.
+    pub fn note(&self, view: &dyn crate::diagnostic::SourceView) -> String {
+        let place = (self.span)
+            .filter(|span| *span != Span::BUILTIN)
+            .map(|span| view.frame(span));
+        let head = format!(
+            "the Display impl of {} failed: {}",
+            self.type_name, self.message
+        );
+        match place {
+            Some(place) => format!("{head} ({place})"),
+            None => head,
+        }
     }
 }
 

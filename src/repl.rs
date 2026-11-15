@@ -352,8 +352,11 @@ fn evaluate(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input:
         for error in &errors {
             eprintln!("{error}");
         }
-        if let Some(shown) = &shown {
+        if let Some((shown, failure)) = &shown {
             println!("{shown}");
+            if let Some(failure) = failure {
+                eprintln!("note: {failure}");
+            }
         }
     });
 }
@@ -586,9 +589,18 @@ impl Repl {
         self.session.project_problems()
     }
 
-    /// The text of a value an entry gave, as `println` would write it.
-    pub fn show(&mut self, value: &Value) -> String {
-        self.vm.show_text(value)
+    /// The text of a value an entry gave, as `println` would write it,
+    /// and where a `Display` impl of it failed and the text is its
+    /// structure, the note that says so (its place as the session's
+    /// files show it).
+    pub fn show(&mut self, value: &Value) -> (String, Option<String>) {
+        let (text, failure) = self.vm.show_text(value);
+        let view = ReplFiles {
+            sources: self.session.sources(),
+            cwd: self.cwd.as_deref(),
+        };
+        let note = failure.map(|failure| failure.note(&view));
+        (text, note)
     }
 
     /// Check, compile and run `input` as the next cell.

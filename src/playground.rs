@@ -37,9 +37,14 @@ pub fn out_of_steps(error: &VmError) -> bool {
     error.out_of_steps
 }
 
-/// What `main` returned in its `Err`, if that ended the program.
-pub fn returned(error: &VmError) -> Option<&str> {
-    error.returned.as_deref()
+/// The line `silt run` writes for a `main` that returned `Err`, if that
+/// ended the program: `error: <text>`, and the note of a `Display` impl
+/// of the `Err` that failed.
+pub fn returned(session: &Session, error: &VmError) -> Option<String> {
+    let text = error.returned.as_deref()?;
+    let note = (error.display_failure.as_deref())
+        .map(|failure| format!("\nnote: {}", failure.note(session.sources())));
+    Some(format!("error: {text}{}", note.unwrap_or_default()))
 }
 
 /// `error` as the diagnostic `silt run` prints.

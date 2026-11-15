@@ -58,18 +58,6 @@ error[type]: `Channel` takes 1 type argument here: write `Channel(a)`
  21 |   let c: Channel = channel.new(1)
     |          ^^^^^^^ `Channel` takes 1 type argument here: write `Channel(a)`
 
-error[type]: `Pair` takes 2 type arguments here: write `Pair(k, v)`
- --> bare_generic__refused_in_every_type_position.silt:22:16
-    |
- 22 |   let g = { z: Pair -> z }
-    |                ^^^^ `Pair` takes 2 type arguments here: write `Pair(k, v)`
-
-error[type]: `List` takes 1 type argument here: write `List(a)`
- --> bare_generic__refused_in_every_type_position.silt:23:17
-    |
- 23 |   let n = [] as List
-    |                 ^^^^ `List` takes 1 type argument here: write `List(a)`
-
 warning[type]: 'c' is never used
  --> bare_generic__refused_in_every_type_position.silt:21:7
     |
@@ -77,12 +65,24 @@ warning[type]: 'c' is never used
     |       ^ 'c' is never used
   = help: remove it, or name it `_c`
 
+error[type]: `Pair` takes 2 type arguments here: write `Pair(k, v)`
+ --> bare_generic__refused_in_every_type_position.silt:22:16
+    |
+ 22 |   let g = { z: Pair -> z }
+    |                ^^^^ `Pair` takes 2 type arguments here: write `Pair(k, v)`
+
 warning[type]: 'g' is never used
  --> bare_generic__refused_in_every_type_position.silt:22:7
     |
  22 |   let g = { z: Pair -> z }
     |       ^ 'g' is never used
   = help: remove it, or name it `_g`
+
+error[type]: `List` takes 1 type argument here: write `List(a)`
+ --> bare_generic__refused_in_every_type_position.silt:23:17
+    |
+ 23 |   let n = [] as List
+    |                 ^^^^ `List` takes 1 type argument here: write `List(a)`
 
 warning[type]: 'n' is never used
  --> bare_generic__refused_in_every_type_position.silt:23:7

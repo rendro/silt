@@ -181,11 +181,10 @@ pub(crate) fn builtin_prelude_enum_variants_with_arity()
 
 /// The builtin enums as `(enum_name, variant_names)` pairs: the prelude
 /// enums (Result, Option) and the enums of the builtin modules, whose
-/// variants the language server and the playground offer
-/// (`all_builtin_constructor_names`). (Equality, order, hash and
-/// display of a builtin variant are the runtime's own: no derived impl
-/// names one.)
-#[cfg(any(feature = "lsp", feature = "playground", test, feature = "test-hooks"))]
+/// variants the playground offers (`all_builtin_constructor_names`).
+/// (Equality, order, hash and display of a builtin variant are the
+/// runtime's own: no derived impl names one.)
+#[cfg(any(feature = "playground", test, feature = "test-hooks"))]
 pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
     static ENUMS: OnceLock<Vec<(&'static str, Vec<&'static str>)>> = OnceLock::new();
     ENUMS.get_or_init(|| {
@@ -197,9 +196,9 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
     })
 }
 
-/// Every builtin enum variant name across all builtin enums, for LSP
-/// rename and completion and for REPL completion.
-#[cfg(any(feature = "lsp", feature = "playground"))]
+/// Every builtin enum variant name across all builtin enums, for
+/// completion in the playground.
+#[cfg(feature = "playground")]
 pub(crate) fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
     builtin_enum_variants()
         .iter()

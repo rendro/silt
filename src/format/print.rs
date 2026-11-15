@@ -1671,8 +1671,20 @@ impl Printer<'_> {
             }
             ExprKind::Block(_) => self.block(expr),
             ExprKind::Loop { bindings, body } => {
-                let mut docs = vec![self.tok(Token::Loop), space()];
+                let keyword = self.tok(Token::Loop);
+                if bindings.is_empty() {
+                    return Doc::concat(vec![keyword, space(), self.block(body)]);
+                }
+                // A header that does not fit its line has each binding on
+                // a line of its own, one level in, and the body's `{` on
+                // the next line:
+                //   loop
+                //     a = 0,
+                //     b = [],
+                //   {
+                let mut docs = vec![];
                 for (i, (_, _, init)) in bindings.iter().enumerate() {
+                    docs.push(Doc::Line);
                     // The last value, which the body's `{` follows, is
                     // written in parentheses when it ends in a stage
                     // written as a bare name, as a match's scrutinee is.
@@ -1707,10 +1719,12 @@ impl Printer<'_> {
                     if i + 1 < bindings.len() {
                         docs.push(self.tok(Token::Comma));
                     }
-                    docs.push(space());
                 }
-                docs.push(self.block(body));
-                Doc::concat(docs)
+                // (The keyword, with the comments in front of it, stays
+                // out of the group: a comment line above the loop is no
+                // reason to break its header.)
+                let header = Doc::group(Doc::concat(vec![Doc::nest(Doc::concat(docs)), Doc::Line]));
+                Doc::concat(vec![keyword, header, self.block(body)])
             }
             ExprKind::Recur(args) => {
                 let keyword = self.tok(Token::Loop);
@@ -1905,8 +1919,8 @@ impl Printer<'_> {
     }
 
     /// A chain of field accesses, calls, `?` and record updates on one
-    /// operand. If it holds two method calls or more, it may break in
-    /// front of each `.`, all or none.
+    /// operand. If it holds two method calls or record updates or more,
+    /// it may break in front of each `.`, all or none.
     fn postfix(&mut self, expr: &Expr, ctx: Ctx) -> Doc {
         // The links, the last one first, and the operand.
         let mut links: Vec<&Expr> = Vec::new();
@@ -1974,9 +1988,13 @@ impl Printer<'_> {
             .windows(2)
             .filter(|pair| is_dot(pair[0]) && is_call(&pair[1]))
             .count();
+        let updates = (links.iter())
+            .filter(|link| matches!(link.kind, ExprKind::RecordUpdate { .. }))
+            .count();
         // A chain with parentheses around a part of it is not laid out
-        // as one.
-        let breakable = method_calls >= 2 && kept.is_empty();
+        // as one. (A chain of record updates breaks in front of each, as
+        // one of method calls does.)
+        let breakable = method_calls + updates >= 2 && kept.is_empty();
 
         let Some(first) = links.first() else {
             return self.bare_expr(expr, ctx);

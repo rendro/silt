@@ -256,7 +256,7 @@ impl Session {
     }
 
     /// The text of every file the session has read.
-    pub(crate) fn sources(&self) -> &SourceMap {
+    pub fn sources(&self) -> &SourceMap {
         &self.sources
     }
 

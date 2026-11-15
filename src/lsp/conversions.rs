@@ -43,15 +43,30 @@ pub(super) fn position_to_offset(file: &SourceFile, pos: &Position) -> usize {
     file.offset_of_lsp_position(*pos) as usize
 }
 
-/// The byte offset of the character at `pos`, or `None` when there is no
-/// character there: `pos` is at or past the end of its line, or past the
-/// last line. What hover asks about is a character.
+/// The byte offset of the character that hover asks about at `pos`: the
+/// one at `pos`, or the last character of a name that `pos` stands
+/// directly behind (`yy|` at the end of a line or before a space), as
+/// definition and the other requests take a name's end. `None` where
+/// there is no such character: past the last line, past the end of its
+/// line, at the end of a line that ends in no name.
 pub(super) fn char_offset_at(file: &SourceFile, pos: &Position) -> Option<usize> {
     let line = file.line_text(pos.line + 1)?;
     let line = line.strip_suffix('\r').unwrap_or(line);
-    let line_end = file.line_start(pos.line + 1) as usize + line.len();
+    if pos.character as usize > utf16_len(line) {
+        return None;
+    }
+    let line_start = file.line_start(pos.line + 1) as usize;
+    let line_end = line_start + line.len();
     let offset = position_to_offset(file, pos);
-    (offset < line_end).then_some(offset)
+    let name_char = |c: char| c.is_alphanumeric() || c == '_';
+    let at = file.text[offset..line_end].chars().next();
+    if at.is_some_and(name_char) {
+        return Some(offset);
+    }
+    match file.text[line_start..offset].chars().next_back() {
+        Some(before) if name_char(before) => Some(offset - before.len_utf8()),
+        _ => at.map(|_| offset),
+    }
 }
 
 /// Return the UTF-16 code-unit length of a string (what LSP positions count).

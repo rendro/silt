@@ -1,0 +1,2 @@
+error: Waits {a: 1}
+note: the Display impl of Waits failed: deadlock on main thread: channel receive with no counterparty (main_err__a_wait_that_never_ends_in_a_display_impl_is_noted.silt:13:11)

@@ -59,6 +59,30 @@ fn a_main_that_returns_err_has_failed() {
 }
 
 #[test]
+fn a_display_impl_of_mains_err_that_fails_is_noted() {
+    let ran = run_it(
+        "type E { a: Int }\n\
+         trait Display for E {\n  fn display(self) -> String { panic(\"display panics\") }\n}\n\
+         fn main() -> Result((), E) {\n  Err(E { a: 1 })\n}\n",
+    );
+    assert!(!ran.ok);
+    // The structure, and the note of the impl that failed, as `silt
+    // run` writes them.
+    assert_eq!(
+        ran.error,
+        "error: E {a: 1}\nnote: the Display impl of E failed: panic: display panics \
+         (main.silt:3:32)"
+    );
+    // An impl that works is shown as it was.
+    let ran = run_it(
+        "type E { a: Int }\n\
+         trait Display for E {\n  fn display(self) -> String { \"E number {self.a}\" }\n}\n\
+         fn main() -> Result((), E) {\n  Err(E { a: 1 })\n}\n",
+    );
+    assert_eq!(ran.error, "error: E number 1");
+}
+
+#[test]
 fn a_program_without_main_is_an_error_of_run_and_not_of_check() {
     let source = "fn helper() {\n  1\n}\n";
     let ran = run_it(source);

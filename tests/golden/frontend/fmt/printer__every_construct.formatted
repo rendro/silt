@@ -54,9 +54,12 @@ fn h() {
   let l = loop {
     loop()
   }
-  let m = loop a = {
-    1
-  }, b = (P {}) {
+  let m = loop
+    a = {
+      1
+    },
+    b = (P {})
+  {
     loop(a, b)
   }
   let n = m.P { x: 1 }.{ x: 2 }

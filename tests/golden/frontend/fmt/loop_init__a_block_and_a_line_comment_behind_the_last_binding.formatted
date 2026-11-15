@@ -7,9 +7,11 @@ import list
 
 fn main() {
   let items = [1, 2, 3]
-  let n = loop xs = ({- a -} -- c
-    items |> list.reverse
-  ) {
+  let n = loop
+    xs = ({- a -} -- c
+      items |> list.reverse
+    )
+  {
     match xs {
       [] -> 0
       _ -> 1

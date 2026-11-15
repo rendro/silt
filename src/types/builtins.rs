@@ -201,9 +201,11 @@ pub(crate) fn module_of(name: &str) -> Option<&'static str> {
 
 /// Whether `name` is the name of a builtin type of the prelude, which
 /// every module sees and no program may declare (`Int`, `List`,
-/// `Bytes`); a type of a builtin module (`regex.Regex`) is not one.
+/// `Bytes`, and `Never`, the type of what never returns, which has no
+/// entry of its own); a type of a builtin module (`regex.Regex`) is not
+/// one.
 pub fn is_prelude_name(name: &str) -> bool {
-    lookup(name).is_some() && module_of(name).is_none()
+    name == "Never" || (lookup(name).is_some() && module_of(name).is_none())
 }
 
 #[cfg(test)]
@@ -265,6 +267,7 @@ mod tests {
             assert_eq!(module_of(name), None, "{name}");
             assert!(is_prelude_name(name), "{name}");
         }
+        assert!(is_prelude_name("Never"));
         assert!(!is_prelude_name("Weekday"));
         assert!(!is_prelude_name("NotABuiltin"));
     }

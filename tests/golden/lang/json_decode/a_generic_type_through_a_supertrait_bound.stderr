@@ -2,4 +2,4 @@ error[type]: trait `Dec` cannot be implemented for `V`: it has `json.Decode` as 
  --> a_generic_type_through_a_supertrait_bound.silt:44:1
     |
  44 | trait Dec for V {}
-    | ^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `V`: it has `json.Decode` as a supertrait, and `V` cannot be decoded: field `b` has type `Box(Set(Int))`, and `Set(Int)` has no decoder
+    | ^^^^^^^^^^^^^^^^^^ here

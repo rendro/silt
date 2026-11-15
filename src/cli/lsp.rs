@@ -49,7 +49,11 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
-    crate::lsp::run();
+    // (The protocol has a server end with 1 when the editor ended the
+    // session without asking for a shutdown.)
+    if !crate::lsp::run() {
+        process::exit(1);
+    }
 }
 
 #[cfg(not(feature = "lsp"))]

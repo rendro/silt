@@ -1,0 +1,15 @@
+  FAIL display__a_test_that_returned_err_notes_a_display_impl_that_failed.silt::test_gives_up
+    error[runtime]: test_gives_up returned Err: Code {n: 0}
+     --> display__a_test_that_returned_err_notes_a_display_impl_that_failed.silt:19:4
+        |
+     19 | fn test_gives_up() -> Result((), Code) {
+        |    ^^^^^^^^^^^^^ test_gives_up returned Err: Code {n: 0}
+      = note: the Display impl of Code failed: division by zero (display__a_test_that_returned_err_notes_a_display_impl_that_failed.silt:15:12)
+  FAIL display__a_test_that_returned_err_notes_a_display_impl_that_failed.silt::test_compares
+    error[runtime]: assertion failed: Code {n: 0} != Code {n: 1}
+     --> display__a_test_that_returned_err_notes_a_display_impl_that_failed.silt:24:3
+        |
+     24 |   test.assert_eq(Code { n: 0 }, Code { n: 1 })
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed: Code {n: 0} != Code {n: 1}
+
+2 tests: 0 passed, 2 failed, 0 skipped

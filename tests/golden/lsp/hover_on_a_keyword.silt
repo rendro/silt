@@ -1,0 +1,17 @@
+-- cmd: lsp
+-- lsp: hover 13:3
+-- lsp: hover 13:6
+-- lsp: hover 14:3
+-- lsp: hover 10:1
+-- lsp: hover 12:1
+-- lsp: hover 14:11
+-- A keyword has no hover: it is no name. A field named like one is the
+-- field's name.
+type Doc { type: String }
+
+fn main() {
+  let d = Doc { type: "x" }
+  match d.type {
+    t -> println(t)
+  }
+}

@@ -1,0 +1,25 @@
+error[parse]: expected parameter name, found {
+ --> a_files_diagnostics_come_in_source_order.silt:6:12
+   |
+ 6 | fn broken( {
+   |            ^ expected parameter name, found {
+
+error[compile]: cannot load module 'nosuch': no such file
+ --> a_files_diagnostics_come_in_source_order.silt:9:1
+   |
+ 9 | import nosuch
+   | ^^^^^^^^^^^^^ cannot load module 'nosuch': no such file
+  = note: looked for `nosuch.silt`
+  = help: if 'nosuch' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add nosuch --path <dir>`)
+
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> a_files_diagnostics_come_in_source_order.silt:12:15
+    |
+ 12 |   let x = 1 + "a"
+    |               ^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+
+error[type]: undefined variable 'undefined_name'
+ --> a_files_diagnostics_come_in_source_order.silt:13:11
+    |
+ 13 |   let y = undefined_name
+    |           ^^^^^^^^^^^^^^ undefined variable 'undefined_name'

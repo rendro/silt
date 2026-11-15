@@ -15,7 +15,9 @@ fn main() {
   when let Some(v) = Some(x) else { -- the option
     return
   }
-  loop i = 0 { -- the counter
+  loop
+    i = 0 -- the counter
+  {
     match i {
       3 -> return
       _ -> loop(i + 1)

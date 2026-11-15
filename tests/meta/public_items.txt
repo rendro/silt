@@ -985,6 +985,7 @@ src/session/mod.rs: pub fn compile
 src/session/mod.rs: pub fn has_errors
 src/session/mod.rs: pub fn new
 src/session/mod.rs: pub fn set_overlay
+src/session/mod.rs: pub fn sources
 src/session/mod.rs: pub host
 src/session/mod.rs: pub let_order
 src/session/mod.rs: pub lock
@@ -1380,10 +1381,18 @@ src/value/obj.rs: pub struct Record
 src/value/obj.rs: pub struct Variant
 src/value/regex.rs: pub struct Compiled
 src/value/tuple.rs: pub struct Tuple
+src/vm/error.rs: pub display_failure
 src/vm/error.rs: pub exit
 src/vm/error.rs: pub fn new
+src/vm/error.rs: pub fn note
 src/vm/error.rs: pub message
+src/vm/error.rs: pub message
+src/vm/error.rs: pub returned
+src/vm/error.rs: pub span
+src/vm/error.rs: pub span
+src/vm/error.rs: pub struct DisplayFailure
 src/vm/error.rs: pub struct VmError
+src/vm/error.rs: pub type_name
 src/vm/io.rs: pub fn buffer
 src/vm/io.rs: pub fn clock
 src/vm/io.rs: pub fn contents

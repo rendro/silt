@@ -661,12 +661,9 @@ impl TypeChecker {
                 }
                 // The type of what never returns: a builtin's signature
                 // says it anywhere (`panic`), a program only as a
-                // function's return type (`fn fail(..) -> Never`), unless
-                // it declares a type of that name.
-                if module.is_none()
-                    && name_str == "Never"
-                    && self.named_type(te.res, *name).is_none()
-                {
+                // function's return type (`fn fail(..) -> Never`). (No
+                // module declares a type of that name.)
+                if module.is_none() && name_str == "Never" {
                     if self.registry_rows || self.never_return {
                         return Type::Never;
                     }
@@ -743,13 +740,12 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 // `Never(..)`: `Never` takes no arguments, and is no type
-                // where it has them (unless a type of that name is
-                // declared). One error: its arguments are not looked at.
-                if module.is_none()
-                    && name_str == "Never"
-                    && self.named_type(te.res, *name).is_none()
-                {
-                    self.error(Code::InvalidTypeAnnotation, NEVER_ELSEWHERE, te.span);
+                // where it has them. One error: its arguments are not
+                // looked at. (Nor any, after a refused `type Never(a)`.)
+                if module.is_none() && name_str == "Never" {
+                    if !self.names_rejected(te.res, *name) {
+                        self.error(Code::InvalidTypeAnnotation, NEVER_ELSEWHERE, te.span);
+                    }
                     return Type::Error;
                 }
                 // `Self(a)`: the type constructor of a trait of type
