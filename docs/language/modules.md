@@ -298,7 +298,10 @@ imports are the package's modules, as `silt check src` and a check of the
 file itself do, so a script kept there (run by its path) is checked too.
 Test files (`*_test.silt`) are found
 anywhere under the package, in `src/`, its sub-directories or a `tests/`
-directory beside it, and import the package's modules by name.
+directory beside it, and import the package's modules by name. Any other
+`.silt` file under `tests/` is no module either (an import looks only in
+`src/`), and `silt check` of the package checks it the same way, as a
+program of its own.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url> --tag <tag>` (or

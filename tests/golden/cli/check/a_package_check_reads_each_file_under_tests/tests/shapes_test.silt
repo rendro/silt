@@ -1,0 +1,6 @@
+import shapes
+import test
+
+fn test_two() {
+  test.assert_eq(shapes.two(), 2)
+}
