@@ -86,7 +86,9 @@ tokio = { version = "1", optional = true, features = ["rt", "net", "time", "sync
 futures-util = { version = "0.3", optional = true, default-features = false }
 postgres-protocol = { version = "0.6", optional = true }
 r2d2 = { version = "0.8", optional = true }
-base64 = "0.22"
+# Without its SIMD engines (`simd-unsafe`), as ureq takes it: silt uses the
+# general-purpose engine only.
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 walkdir = "2"
 glob = "0.3"
 fallible-iterator = { version = "0.2", optional = true }
