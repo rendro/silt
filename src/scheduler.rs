@@ -3164,12 +3164,18 @@ impl Taken {
     /// Take what the queue has, counted; `None` when it has nothing.
     fn take() -> Option<Taken> {
         let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
-        DEFERRED_ANY.store(false, Ordering::SeqCst);
         if deferred.is_empty() {
+            DEFERRED_ANY.store(false, Ordering::SeqCst);
             return None;
         }
-        // (Counted before the queue's lock is let go.)
+        // Counted first, and only then no longer in the queue: a look
+        // between the two ([`stops_pending`], which takes neither lock of
+        // the queue) sees the batch one way or the other. (Cleared first,
+        // a look in between saw no stop pending: a false deadlock.)
         TAKEN.lock().unwrap_or_else(|e| e.into_inner()).batches += 1;
+        #[cfg(any(test, feature = "test-hooks"))]
+        take_gap_for_test();
+        DEFERRED_ANY.store(false, Ordering::SeqCst);
         Some(Taken(std::mem::take(&mut *deferred)))
     }
 
@@ -3292,6 +3298,35 @@ pub(crate) fn stop_race(at: StopRace) {
         eprintln!("silt test hook: a thread that counts for nothing ran the stops");
         drop(taken);
     });
+}
+
+/// Test-only: a take that is to wait between its two steps (counted,
+/// not yet out of the queue) tells the first and waits for the second.
+#[cfg(any(test, feature = "test-hooks"))]
+static TAKE_GAP: std::sync::Mutex<
+    Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+> = std::sync::Mutex::new(None);
+
+/// Test-only: the next take of stops waits between its two steps, there
+/// says so on the first channel given back, and goes on when the
+/// second is sent on.
+#[cfg(test)]
+fn pause_the_next_take() -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (in_gap, told) = std::sync::mpsc::channel();
+    let (go, gone) = std::sync::mpsc::channel();
+    *TAKE_GAP.lock().unwrap_or_else(|e| e.into_inner()) = Some((in_gap, gone));
+    (told, go)
+}
+
+/// Test-only: where a take waits between its two steps
+/// ([`pause_the_next_take`]).
+#[cfg(any(test, feature = "test-hooks"))]
+fn take_gap_for_test() {
+    let pause = TAKE_GAP.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some((in_gap, go)) = pause {
+        let _ = in_gap.send(());
+        let _ = go.recv();
+    }
 }
 
 /// Test-only: a look has found taken stops pending.
@@ -4048,6 +4083,24 @@ fn main() {
         super::defer(move || stops.cancel(&stopped));
         scheduler.settle();
         assert_eq!(scheduler.report_unjoined_failures(), 0, "{}", out.take());
+    }
+
+    /// A look at the tasks while a thread takes stops out of the queue
+    /// sees them pending, at every moment of the take: here between its
+    /// two steps. (The take cleared the queue's flag before it counted
+    /// the batch: a look in between saw nothing pending, and gave a
+    /// false deadlock.)
+    #[test]
+    fn a_look_during_a_take_sees_the_stops_pending() {
+        let scheduler = super::Scheduler::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        let (in_gap, go) = super::pause_the_next_take();
+        super::defer(|| {});
+        let taker = std::thread::spawn(super::run_deferred);
+        in_gap.recv().expect("the take is between its steps");
+        let pending = super::stops_pending(&scheduler.inner);
+        go.send(()).expect("the take goes on");
+        taker.join().expect("the stops ran");
+        assert!(pending, "a look in the take's gap saw no stop pending");
     }
 
     /// The most failed tasks of one owner the record may hold when
