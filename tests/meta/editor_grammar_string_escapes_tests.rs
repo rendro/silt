@@ -26,11 +26,8 @@
 //! changes without the grammars following.
 //!
 //! Sibling locks in this family:
-//!   - tests/meta/editor_grammar_keywords_tests.rs
-//!   - tests/meta/editor_grammar_primitives_tests.rs
-//!   - tests/meta/editor_grammar_constructors_tests.rs
-//!   - tests/meta/editor_grammar_builtins_tests.rs
-//!   - tests/meta/editor_grammar_modules_tests.rs
+//!   - tests/meta/editor_grammar_names_tests.rs (the names, written
+//!     from the lexer and the builtin registry)
 //! (the round-86 operator parity lock covers operators; this file adds
 //! the previously missing escape-class coverage).
 

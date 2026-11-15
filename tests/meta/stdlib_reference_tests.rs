@@ -17,8 +17,7 @@ use silt::builtins::registry::docs::{
 };
 use silt::builtins::registry::registry;
 
-#[path = "../support/env_switch.rs"]
-mod env_switch;
+use crate::env_switch;
 
 #[test]
 fn the_reference_pages_are_what_the_registry_renders() {
