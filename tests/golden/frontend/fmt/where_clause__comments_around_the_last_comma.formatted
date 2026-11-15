@@ -1,0 +1,36 @@
+-- cmd: fmt
+-- Comments around the comma behind the last where clause: one behind the
+-- clause, one behind the comma. Both stay, the second on a line of its
+-- own one level in under the header, for a function, a trait and an impl
+-- alike; a second pass keeps them so.
+fn show(x: a) -> String where a: Display -- c1
+  -- c2
+{
+  "{x}"
+}
+
+trait Table(k) where k: Hash + Equal -- c3
+  -- c4
+{
+  fn keys(self) -> List(k)
+}
+
+type Wrap(a) {
+  item: a,
+}
+
+trait Named {
+  fn name(self) -> String
+}
+
+trait Named for Wrap(a) where a: Display -- c5
+  -- c6
+{
+  fn name(self) -> String {
+    "{self.item}"
+  }
+}
+
+fn main() {
+  println(show(1))
+}

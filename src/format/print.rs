@@ -1102,8 +1102,11 @@ impl Printer<'_> {
         // A comma behind the last clause is not written. It is passed
         // here, so that a comment between it and the `{` that follows is
         // the comment in front of that `{`, as it is without the comma,
-        // for what follows the clauses to place.
-        Doc::concat(vec![clauses, self.cur.skip(&Token::Comma)])
+        // for what follows the clauses to place. The comments the comma
+        // itself carries (one in front of it, one behind it on its line)
+        // stand where the clauses' own would: one level in, as a comment
+        // in front of the `{` is placed (a second pass finds them so).
+        Doc::concat(vec![clauses, Doc::nest(self.cur.skip(&Token::Comma))])
     }
 
     /// `Trait`, `m.Trait`, `Trait(Int)`.
@@ -1232,6 +1235,9 @@ impl Printer<'_> {
         }
         docs.push(self.where_clauses(&t.param_where_clauses));
         docs.push(space());
+        // (A comment between the header and its `{` belongs to the
+        // header, one level in, as a function's does.)
+        docs.push(Doc::nest(self.dangling()));
         // The parser takes a trait body without its opening brace.
         docs.push(if self.cur.at(&Token::LBrace) {
             self.tok(Token::LBrace)
@@ -1275,6 +1281,9 @@ impl Printer<'_> {
         }
         docs.push(self.where_clauses(&t.where_clauses));
         docs.push(space());
+        // (A comment between the header and its `{` belongs to the
+        // header, one level in, as a function's does.)
+        docs.push(Doc::nest(self.dangling()));
         docs.push(self.tok(Token::LBrace));
         let mut methods = t.methods.iter();
         docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?, false))));
