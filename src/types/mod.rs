@@ -1442,7 +1442,7 @@ mod tests {
             assert_eq!(head.type_ref(), TypeRef::builtin(name));
             // A container at its arity is its own variant, and reads back
             // as its head at those arguments.
-            let args: Vec<Type> = (0..arity).map(|k| Type::Var(k)).collect();
+            let args: Vec<Type> = (0..arity).map(Type::Var).collect();
             let ty = Type::named(TypeRef::builtin(name), args.clone());
             assert_eq!(ty.container_head(), Some(head));
             assert_eq!(ty.builtin_name(), Some(name));

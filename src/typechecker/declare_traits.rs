@@ -2905,7 +2905,7 @@ impl TypeChecker {
                 let unified = self.unify_types(&written, expected);
                 match unified {
                     Ok(()) => {
-                        self.refuse_variables_the_trait_types(ti, method, &param_map, &impl_names);
+                        self.refuse_variables_the_trait_types(ti, method, &param_map, impl_names);
                         expected.clone()
                     }
                     Err(mismatch) => {
@@ -2934,7 +2934,7 @@ impl TypeChecker {
         // that adds a bound is an error below.
         let passer = intern(&format!("{target_type}.{}", method.name));
         let mut method_constraints =
-            Self::header_passed_to(&impl_level_constraints, impl_trait, passer);
+            Self::header_passed_to(impl_level_constraints, impl_trait, passer);
         method_constraints.extend(declared_bounds);
         // What the declared bounds say of each variable, supertraits
         // included: made once, not once for each bound the method
