@@ -209,15 +209,25 @@ Makes an HTTP request with full control over method, body, and headers. Use this
 The body is sent as it is, with its length: `bytes.from_string("...")` for
 a text, `bytes.empty()` for none. What the bytes are is the request's to
 say, in a `Content-Type` header among `headers`: none is added. A
-`user-agent` among `headers` is sent instead of `silt/<version>`. A
-`Content-Length` among `headers` is not sent: the body's own length is.
+`user-agent` among `headers` is sent instead of `silt/<version>`, and a
+`Host` instead of the URL's host. A `Content-Length`, a
+`Transfer-Encoding` and a `Connection` among `headers` are not sent: the
+body goes whole, with its own length, and the connection is the client's.
 
 A user and password in the URL (`https://user:pa%20ss@host/`) are sent
 as `authorization: Basic ...` (RFC 7617), unless `headers` has an
 `authorization` of its own, for `http.get` too. They are percent-decoded
 first: write a `@`, `:`, `/` or a space in them encoded (`pa%20ss` is the
-password `pa ss`). No error shows them: the URL of an `InvalidUrl` has
-`***` in their place.
+password `pa ss`). A user that has a colon once decoded (`us%3Aer`) is
+an `InvalidUrl`: RFC 7617 has none in it. A URL whose user and password
+are both empty (`http://@host/`) sends no `authorization`. No error
+shows them: the URL of an `InvalidUrl` has `***` in their place. A password
+is written percent-encoded, as the user is: a raw `/`, `?` or `#` in it
+ends the URL's host part, and the rest is read as a path.
+
+A byte of the URL's path or query that is no ASCII (the bytes of `é`)
+is sent percent-encoded (`/h%C3%A9llo` for `/héllo`), as a redirect's
+location is; a space in it is an `InvalidUrl`.
 
 A redirect is followed, up to ten of them: after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
@@ -351,8 +361,9 @@ dropped); `req.body` is the body's bytes, whichever way they came. A client that
 close` closes the connection after the response.
 
 A response is sent with `Content-Length`, `Date` and, where the
-connection ends with it, `Connection: close`. Those three are the
-server's: headers of these names in `Response.headers` are left out, and
+connection ends with it, `Connection: close`. Those three, and
+`Transfer-Encoding`, are the server's: headers of these names in
+`Response.headers` are left out (the body is sent whole, with its length), and
 so is a header whose name or value could not stand in one header line.
 The body is the bytes of `Response.body`, as they are, and what they are
 is the handler's to say: a response has the `Content-Type` that

@@ -1,11 +1,13 @@
 -- repeat: 5
 -- A read that does not wait asks the stream for a value; closing the
--- stream then stops every stage before it: the `stream.map` does not
--- run on what comes after the close, and the `stream.buffered` before it
--- takes none of it.
+-- stream then stops every stage before it, at once: when `channel.close`
+-- has returned, the `stream.map` does not run on what comes after, and
+-- the `stream.buffered` before it takes none of it. No time is waited
+-- for. (A stage that was not waiting when the stream was closed, because
+-- it ran or had not run yet, let the stage before it take on until it
+-- looked again: 21 of 200 runs without the sleeps the case had.)
 import channel
 import stream
-import time
 
 fn main() {
   let c = channel.new(3)
@@ -20,13 +22,10 @@ fn main() {
     channel.Empty -> println("nothing yet")
     channel.Closed -> println("closed")
   }
-  time.sleep(time.ms(20))
   channel.close(s)
-  time.sleep(time.ms(20))
   channel.send(c, 1)
   channel.send(c, 2)
   channel.send(c, 3)
   channel.close(c)
-  time.sleep(time.ms(20))
   println("the input still holds {stream.length(c)} of 3")
 }

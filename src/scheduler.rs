@@ -119,19 +119,45 @@ pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
 /// whose tasks keep failing must not grow without bound.
 const MAX_SHOWN_FAILURES: usize = 64;
 
+/// Why a text is no duration that silt can wait for ([`parse_duration`]).
+#[derive(Debug, PartialEq, Eq)]
+enum NoDuration {
+    /// It is no whole number above 0 with a unit.
+    NotOne,
+    /// It is one, longer than a count of seconds holds.
+    TooLong,
+}
+
 /// A duration like `"30s"`, `"500ms"`, `"5m"`, `"2h"`: a whole number
-/// above 0 with a unit. `None` for anything else.
-fn parse_duration(s: &str) -> Option<Duration> {
+/// above 0 with a unit.
+fn parse_duration(s: &str) -> Result<Duration, NoDuration> {
     let s = s.trim();
-    let unit_start = s.find(|c: char| c.is_alphabetic())?;
+    let unit_start = s
+        .find(|c: char| c.is_alphabetic())
+        .ok_or(NoDuration::NotOne)?;
     let (num_part, unit) = s.split_at(unit_start);
-    let n: u64 = num_part.trim().parse().ok().filter(|n| *n > 0)?;
-    match unit.trim().to_lowercase().as_str() {
-        "ms" => Some(Duration::from_millis(n)),
-        "s" | "sec" | "secs" => Some(Duration::from_secs(n)),
-        "m" | "min" | "mins" => Some(Duration::from_secs(n.checked_mul(60)?)),
-        "h" | "hr" | "hrs" => Some(Duration::from_secs(n.checked_mul(3600)?)),
-        _ => None,
+    let per = match unit.trim().to_lowercase().as_str() {
+        "ms" => None,
+        "s" | "sec" | "secs" => Some(1),
+        "m" | "min" | "mins" => Some(60),
+        "h" | "hr" | "hrs" => Some(3600),
+        _ => return Err(NoDuration::NotOne),
+    };
+    let digits = num_part.trim();
+    let n: u64 = match digits.parse() {
+        Ok(n @ 1..) => n,
+        // (Digits alone, too many for the count.)
+        Err(_) if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) => {
+            return Err(NoDuration::TooLong);
+        }
+        _ => return Err(NoDuration::NotOne),
+    };
+    match per {
+        None => Ok(Duration::from_millis(n)),
+        Some(per) => n
+            .checked_mul(per)
+            .map(Duration::from_secs)
+            .ok_or(NoDuration::TooLong),
     }
 }
 
@@ -150,9 +176,12 @@ fn io_timeout_setting() -> Result<Option<Duration>, String> {
         return Ok(None);
     };
     match parse_duration(&value) {
-        Some(timeout) => Ok(Some(timeout)),
-        None => Err(format!(
+        Ok(timeout) => Ok(Some(timeout)),
+        Err(NoDuration::NotOne) => Err(format!(
             "SILT_IO_TIMEOUT='{value}' is not a duration: write a whole number above 0 with a unit, as in 500ms, 5s, 2m or 1h"
+        )),
+        Err(NoDuration::TooLong) => Err(format!(
+            "SILT_IO_TIMEOUT='{value}' is longer than silt can wait: write a shorter duration, as in 500ms, 5s, 2m or 1h"
         )),
     }
 }
@@ -291,6 +320,9 @@ struct ThreadState {
 struct Inner {
     /// Which scheduler of the process this is.
     id: u64,
+    /// The scheduler itself, for a look that is to come again later
+    /// ([`stops_pending`]).
+    me: Weak<Inner>,
     queue: Mutex<RunQueue>,
     /// The length of the queue, for a look without its lock.
     queued: AtomicUsize,
@@ -366,6 +398,10 @@ struct Inner {
     /// ([`PanicAt::BuiltinOfATask`]).
     #[cfg(any(test, feature = "test-hooks"))]
     panic_in_a_builtin_of_a_task: AtomicBool,
+    /// Test-only: how often the stop of a stream stage of this scheduler
+    /// has done its work (`Scheduler::count_a_stage_stop`).
+    #[cfg(test)]
+    stage_stops: AtomicUsize,
 }
 
 /// The panic of a thread of the runtime ([`Inner::fail`]).
@@ -560,6 +596,7 @@ impl Scheduler {
             static SCHEDULERS: AtomicU64 = AtomicU64::new(0);
             Inner {
                 id: SCHEDULERS.fetch_add(1, Ordering::Relaxed),
+                me: inner.clone(),
                 queue: Mutex::default(),
                 queued: AtomicUsize::new(0),
                 spinning: AtomicUsize::new(0),
@@ -598,6 +635,8 @@ impl Scheduler {
                 panic_in_a_builtin: AtomicBool::new(false),
                 #[cfg(any(test, feature = "test-hooks"))]
                 panic_in_a_builtin_of_a_task: AtomicBool::new(false),
+                #[cfg(test)]
+                stage_stops: AtomicUsize::new(0),
             }
         });
         Scheduler {
@@ -831,6 +870,13 @@ impl Scheduler {
         self.inner.owner.store(owner, Ordering::SeqCst);
     }
 
+    /// Test-only: the stop of a stream stage of this scheduler does its
+    /// work (src/builtins/stream.rs, `stage_on`).
+    #[cfg(test)]
+    pub(crate) fn count_a_stage_stop(&self) {
+        self.inner.stage_stops.fetch_add(1, Ordering::SeqCst);
+    }
+
     /// The owner tag of a task spawned here and now.
     pub(crate) fn current_owner(&self) -> u64 {
         self.inner.current_owner()
@@ -866,7 +912,19 @@ impl Scheduler {
     /// for the owner it ran it for (`Vm::set_task_owner`): a test waits
     /// for its own tasks only.
     pub(crate) fn settle(&self) {
-        let _ = self.wait_for(MainWaits::Settling);
+        // The stops of the streams that the tasks left are run before
+        // the end, here if a thread outside a slice let one go (the
+        // timer's, as it ended a task by its deadline): a stop may wake
+        // a task again.
+        // (They are run here first: the look that ends the wait finds
+        // none pending, and one that came after it is run here too.)
+        loop {
+            run_deferred();
+            let _ = self.wait_for(MainWaits::Settling);
+            if !DEFERRED_ANY.load(Ordering::SeqCst) {
+                break;
+            }
+        }
         // What still waits is dropped, in one act: dropping a task can
         // wake another (a stage that is dropped closes its output, and
         // whoever reads that wakes), and the program has ended, so
@@ -882,9 +940,19 @@ impl Scheduler {
     /// Called like [`Scheduler::settle`], for the same owner.
     pub(crate) fn stop_tasks(&self) {
         let group = self.inner.group(self.inner.current_owner());
+        // What has failed by now is reported: a task that is dropped
+        // lets go of the streams it held, and the stops of their stages
+        // dismiss no failure of theirs, whenever they run.
+        self.inner.failed_tasks.lock().keep(group.owner);
+        collected_failures().lock().keep(group.owner);
         // The flag first: a task on its way into a wait reads it.
         group.stopped.store(true, Ordering::SeqCst);
         self.drop_waiting(&group);
+        #[cfg(any(test, feature = "test-hooks"))]
+        if END_RACE.swap(false, Ordering::SeqCst) {
+            run_deferred();
+            eprintln!("silt test hook: the deferred stops ran after the end");
+        }
         let _ = self.wait_for(MainWaits::Stopping);
         group.stopped.store(false, Ordering::SeqCst);
     }
@@ -1900,6 +1968,11 @@ impl Inner {
     /// waits for it (`task.deadline`) finds the function's I/O given
     /// up, a connection it was reading shut down.
     fn expire_task(&self, task: Task) {
+        self.expire(task, false);
+    }
+
+    /// [`Inner::expire_task`]; `after_slice` as for [`Inner::end`].
+    fn expire(&self, task: Task, after_slice: bool) {
         let Task {
             vm, handle, group, ..
         } = task;
@@ -1911,6 +1984,9 @@ impl Inner {
         handle.expire(&self.parking);
         handle.stop(&self.parking);
         drop(handle);
+        if after_slice {
+            run_deferred();
+        }
         self.ended(&group);
     }
 
@@ -1990,6 +2066,18 @@ impl Inner {
 
     /// A task has ended: it completed, failed, or was cancelled.
     fn end_task(&self, task: Task) {
+        self.end(task, false);
+    }
+
+    /// [`Inner::end_task`]. `after_slice` where the task's slice has
+    /// just run and the runtime holds no lock: the stops of the
+    /// streams that it let go of (in its frames, in its result) are
+    /// run here, while it still counts. (Another thread may have taken
+    /// them first: nothing is decided about the tasks while a stop is
+    /// pending, [`TAKEN`]; a stop dismisses a failure in the stream it
+    /// stops, and one after the end could not,
+    /// [`TaskHandle::keep_failure`].)
+    fn end(&self, task: Task, after_slice: bool) {
         // Its frames are abandoned before it stops counting.
         let Task {
             vm, handle, group, ..
@@ -1999,6 +2087,9 @@ impl Inner {
         // while it still counts: a wait for it is never seen as stuck.
         handle.stop(&self.parking);
         drop(handle);
+        if after_slice {
+            run_deferred();
+        }
         self.ended(&group);
     }
 
@@ -2084,6 +2175,11 @@ impl Inner {
                 let task = self.pop(&mut self.queue.lock());
                 if let Some(task) = task {
                     self.run_slice(task, false);
+                    // What the slice let go of, as a worker runs it after
+                    // its slice: a stop that nobody ran would hold every
+                    // look at the tasks ([`TAKEN`]), and this thread is
+                    // the only one there is.
+                    run_deferred();
                     if let Some(resumed) = park.state.lock().resumed.take() {
                         return resumed;
                     }
@@ -2099,6 +2195,8 @@ impl Inner {
                 if timer.fire_due(&self.parking) > 0 {
                     self.check_all();
                 }
+                // (What a task that its deadline ended let go of.)
+                run_deferred();
                 if let Some(resumed) = park.state.lock().resumed.take() {
                     return resumed;
                 }
@@ -2121,6 +2219,7 @@ impl Inner {
                 if timer.fire_due(&self.parking) > 0 {
                     self.check_all();
                 }
+                run_deferred();
                 continue;
             }
             if !state.poked {
@@ -2139,6 +2238,7 @@ impl Inner {
             if next.is_some() && timer.fire_due(&self.parking) > 0 {
                 self.check_all();
             }
+            run_deferred();
         }
     }
 
@@ -2233,7 +2333,7 @@ impl Inner {
             || self.exit.get().is_some()
             || (cancelled && !task.ran)
         {
-            self.end_task(task);
+            self.end(task, true);
             return None;
         }
         #[cfg(any(test, feature = "test-hooks"))]
@@ -2277,15 +2377,15 @@ impl Inner {
             SliceResult::Yielded | SliceResult::Blocked(_) if spent => {
                 // The cancel has given the handle its result.
                 match task.handle.is_cancelled() {
-                    true => self.end_task(task),
-                    false => self.expire_task(task),
+                    true => self.end(task, true),
+                    false => self.expire(task, true),
                 }
             }
             SliceResult::Yielded if on_worker && self.keeps_on() => return Some(task),
             SliceResult::Yielded => self.enqueue(task),
             SliceResult::Completed(value) => {
                 task.handle.complete(Ok(value), &self.parking);
-                self.end_task(task);
+                self.end(task, true);
             }
             SliceResult::Failed(error) => {
                 // A failure that no join receives is reported when the
@@ -2301,7 +2401,7 @@ impl Inner {
                 } else if let Some(joined) = taken_from {
                     self.hand_back(&joined.0);
                 }
-                self.end_task(task);
+                self.end(task, true);
             }
             SliceResult::Blocked(wait) => {
                 // What the task let go of before it waits is stopped
@@ -2384,6 +2484,11 @@ impl Inner {
             return;
         }
         if group.external.load(Ordering::SeqCst) > 0 {
+            return;
+        }
+        // A stop that is pending may wake a task: the look comes again
+        // when it has run ([`TAKEN`]).
+        if stops_pending(self) {
             return;
         }
         // A second look without a lock, at what the registry counts:
@@ -2749,6 +2854,8 @@ fn fire_timers(inner: &Inner) {
         if timer.fire_due(&inner.parking) > 0 {
             inner.check_all();
         }
+        // What a task that its deadline ended let go of (`expire_task`).
+        run_deferred();
     }
 }
 
@@ -2873,6 +2980,17 @@ impl FailedTasks {
         match self.owners.get_mut(&owner) {
             Some(failed) => failed.count_unreachable(),
             None => Vec::new(),
+        }
+    }
+
+    /// The code of `owner` has ended: the failures of its tasks that
+    /// nobody has handled are kept for the report
+    /// ([`TaskHandle::keep_failure`]).
+    fn keep(&self, owner: u64) {
+        if let Some(failed) = self.owners.get(&owner) {
+            for handle in &failed.handles {
+                handle.keep_failure();
+            }
         }
     }
 
@@ -3025,24 +3143,247 @@ static DEFERRED_ANY: AtomicBool = AtomicBool::new(false);
 
 /// Do `stop` where the runtime holds no lock ([`DEFERRED`]).
 pub(crate) fn defer(stop: impl FnOnce() + Send + 'static) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    let Some(stop) = stop_race(Box::new(stop)) else {
+        return;
+    };
     let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
     deferred.push(Box::new(stop));
     DEFERRED_ANY.store(true, Ordering::SeqCst);
+}
+
+/// How many batches of stops threads have taken from [`DEFERRED`] and
+/// not run to their end yet ([`Taken`]), and the schedulers whose look
+/// at their tasks found stops pending ([`stops_pending`]). A stop is in
+/// the queue or counted here from the moment it is deferred until it has
+/// run: it is taken and counted under the queue's lock.
+///
+/// The rule this keeps: nothing is decided about the tasks of a program
+/// (that it is deadlocked, that it has ended) while a stop is pending.
+/// A stop may wake a task, and whoever deferred or took it may count for
+/// nothing by then: a task that let go of a stream as it parked (its wait
+/// held the stream's output last), a worker that took the stop after its
+/// slice, whose task has parked or ended, the timer's thread. The look
+/// that found stops pending comes again when the last batch has run.
+static TAKEN: std::sync::Mutex<Pending> = std::sync::Mutex::new(Pending {
+    batches: 0,
+    looks: Vec::new(),
+});
+
+/// What [`TAKEN`] holds.
+struct Pending {
+    batches: usize,
+    looks: Vec<Weak<Inner>>,
+}
+
+/// A batch of stops taken from [`DEFERRED`]: counted in [`TAKEN`] until
+/// it is dropped, after its stops have run (or with them, if one
+/// panicked). The last one to end looks again for the schedulers that
+/// found stops pending.
+struct Taken(Vec<Box<dyn FnOnce() + Send>>);
+
+impl Taken {
+    /// Take what the queue has, counted; `None` when it has nothing.
+    fn take() -> Option<Taken> {
+        let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
+        if deferred.is_empty() {
+            DEFERRED_ANY.store(false, Ordering::SeqCst);
+            return None;
+        }
+        // Counted first, and only then no longer in the queue: a look
+        // between the two ([`stops_pending`], which takes neither lock of
+        // the queue) sees the batch one way or the other. (Cleared first,
+        // a look in between saw no stop pending: a false deadlock.)
+        TAKEN.lock().unwrap_or_else(|e| e.into_inner()).batches += 1;
+        #[cfg(any(test, feature = "test-hooks"))]
+        take_gap_for_test();
+        DEFERRED_ANY.store(false, Ordering::SeqCst);
+        Some(Taken(std::mem::take(&mut *deferred)))
+    }
+
+    fn run(mut self) {
+        for stop in std::mem::take(&mut self.0) {
+            stop();
+        }
+    }
+}
+
+impl Drop for Taken {
+    fn drop(&mut self) {
+        let looks = {
+            let mut taken = TAKEN.lock().unwrap_or_else(|e| e.into_inner());
+            taken.batches -= 1;
+            // (Stops deferred meanwhile are taken by whoever deferred
+            // them, and the end of that batch looks again.)
+            match taken.batches == 0 && !DEFERRED_ANY.load(Ordering::SeqCst) {
+                true => std::mem::take(&mut taken.looks),
+                false => Vec::new(),
+            }
+        };
+        for inner in looks.iter().filter_map(Weak::upgrade) {
+            inner.check_all();
+        }
+    }
 }
 
 /// Run what was deferred ([`defer`]), and what that defers in turn. The
 /// caller holds no lock of the runtime.
 pub(crate) fn run_deferred() {
     while DEFERRED_ANY.load(Ordering::SeqCst) {
-        let stops = {
-            let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
-            DEFERRED_ANY.store(false, Ordering::SeqCst);
-            std::mem::take(&mut *deferred)
-        };
-        for stop in stops {
-            stop();
+        if let Some(taken) = Taken::take() {
+            taken.run();
         }
     }
+}
+
+/// Whether a stop is deferred, or taken and not yet run; if so, `inner`
+/// looks at its tasks again when the last of them has run ([`TAKEN`]).
+fn stops_pending(inner: &Inner) -> bool {
+    let mut taken = TAKEN.lock().unwrap_or_else(|e| e.into_inner());
+    let pending = taken.batches > 0 || DEFERRED_ANY.load(Ordering::SeqCst);
+    if pending {
+        if !taken.looks.iter().any(|look| look.ptr_eq(&inner.me)) {
+            taken.looks.push(inner.me.clone());
+        }
+        #[cfg(any(test, feature = "test-hooks"))]
+        if taken.batches > 0 {
+            stop_race_waited();
+        }
+    }
+    pending
+}
+
+/// Test-only: where [`force_the_stop_race`] hands the stops to a thread
+/// of its own.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StopRace {
+    /// The program's first stop comes as a task lets go of a stream (as
+    /// the test's task ends).
+    TaskEnd,
+    /// The program's first stop comes as `main` lets go of a stream (as it
+    /// returns).
+    MainReturns,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+static STOP_RACE: std::sync::Mutex<Option<StopRace>> = std::sync::Mutex::new(None);
+
+/// Test-only: whether a look has found taken stops pending since the
+/// race was forced.
+#[cfg(any(test, feature = "test-hooks"))]
+static STOP_RACE_WAITED: (std::sync::Mutex<bool>, std::sync::Condvar) =
+    (std::sync::Mutex::new(false), std::sync::Condvar::new());
+
+/// Test-only (`SILT_TEST_STOP_RACE=task-end` or `main-returns` in a build with
+/// `test-hooks`): the first stop that is deferred (the test's program says
+/// where, `at` names it) is taken, as it is deferred, by a thread of the
+/// hook's own, which counts
+/// for nothing, as a worker after its slice does, and which runs it only
+/// once a look at the tasks has found it pending ([`stops_pending`]). (It
+/// is never in the queue, so no other thread can take it first.)
+/// That is the order in which such a worker took a stop an ending task
+/// had just deferred: the task stopped counting with its stop not yet
+/// run, and the program was judged deadlocked, or ended.
+/// Forced so, it needs no time; the hook says on stderr when the stops
+/// have run.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn force_the_stop_race(at: StopRace) {
+    *STOP_RACE.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+}
+
+/// Test-only: `stop` is deferred; the hook's thread takes it if a race
+/// is forced where this is ([`force_the_stop_race`]), else it is given
+/// back to be queued.
+#[cfg(any(test, feature = "test-hooks"))]
+fn stop_race(stop: Box<dyn FnOnce() + Send>) -> Option<Box<dyn FnOnce() + Send>> {
+    let mut race = STOP_RACE.lock().unwrap_or_else(|e| e.into_inner());
+    // (Whatever thread defers it: a stream's output is let go of last by
+    // whoever drops it last, the task or main, or a stage's park that held
+    // it for a moment.)
+    if race.is_none() {
+        return Some(stop);
+    }
+    *race = None;
+    drop(race);
+    // (Counted as taken from this moment: never in the queue.)
+    TAKEN.lock().unwrap_or_else(|e| e.into_inner()).batches += 1;
+    let taken = Taken(vec![stop]);
+    std::thread::spawn(move || {
+        let (waited, woken) = &STOP_RACE_WAITED;
+        let mut waited = waited.lock().unwrap_or_else(|e| e.into_inner());
+        while !*waited {
+            waited = woken.wait(waited).unwrap_or_else(|e| e.into_inner());
+        }
+        drop(waited);
+        // (Counted until the line is out: whoever waits sees it.)
+        let mut taken = taken;
+        for stop in std::mem::take(&mut taken.0) {
+            stop();
+        }
+        // (And what they deferred in turn, as `run_deferred` does.)
+        run_deferred();
+        eprintln!("silt test hook: a thread that counts for nothing ran the stops");
+        drop(taken);
+    });
+    None
+}
+
+/// Test-only: a take that is to wait between its two steps (counted,
+/// not yet out of the queue) tells the first and waits for the second.
+#[cfg(any(test, feature = "test-hooks"))]
+static TAKE_GAP: std::sync::Mutex<
+    Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+> = std::sync::Mutex::new(None);
+
+/// Test-only: the next take of stops waits between its two steps, there
+/// says so on the first channel given back, and goes on when the
+/// second is sent on.
+#[cfg(test)]
+fn pause_the_next_take() -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (in_gap, told) = std::sync::mpsc::channel();
+    let (go, gone) = std::sync::mpsc::channel();
+    *TAKE_GAP.lock().unwrap_or_else(|e| e.into_inner()) = Some((in_gap, gone));
+    (told, go)
+}
+
+/// Test-only: where a take waits between its two steps
+/// ([`pause_the_next_take`]).
+#[cfg(any(test, feature = "test-hooks"))]
+fn take_gap_for_test() {
+    let pause = TAKE_GAP.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some((in_gap, go)) = pause {
+        let _ = in_gap.send(());
+        let _ = go.recv();
+    }
+}
+
+/// Test-only: a look has found taken stops pending.
+#[cfg(any(test, feature = "test-hooks"))]
+fn stop_race_waited() {
+    let (waited, woken) = &STOP_RACE_WAITED;
+    *waited.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    woken.notify_all();
+}
+
+/// Test-only: [`force_the_end_race`] was called.
+#[cfg(any(test, feature = "test-hooks"))]
+static END_RACE: AtomicBool = AtomicBool::new(false);
+
+/// Test-only (`SILT_TEST_END_RACE` in a build with `test-hooks`): at the
+/// next end of the program, what was deferred is run right after the
+/// program's thread has dropped the tasks that still wait (the stops of
+/// the streams they held are deferred then), before the failures are
+/// taken. A worker that has just ended the last task may do that at
+/// that moment, after its slice; it once made such a stop dismiss a
+/// failure in a stream that a task held to the end. Forced so, the order
+/// needs no time; the hook says on stderr that it ran.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn force_the_end_race() {
+    END_RACE.store(true, Ordering::SeqCst);
 }
 
 /// The schedulers whose workers a thread has started.
@@ -3729,6 +4070,107 @@ fn main() {
         // The one that `kept` held, until it was dropped at the end of
         // `main`.
         assert_eq!(vm.scheduler().inner.parking.timer().pending(), 0);
+    }
+
+    /// A failed stage, recorded as the scheduler records one.
+    fn failed_stage(scheduler: &super::Scheduler, id: usize) -> Arc<super::TaskHandle> {
+        let handle = Arc::new(super::TaskHandle::new(id));
+        let error = VmError::new("division by zero".to_string());
+        assert!(handle.fail(error, &scheduler.inner.parking));
+        super::record_failed_task(&scheduler.inner, &handle);
+        handle
+    }
+
+    /// A failure that has happened when the owner's code ends is
+    /// reported, though a stop of its task comes after that: the stop
+    /// of a stream stage whose output a task held to the end, and let
+    /// go of as it was dropped with the end. The stop runs at the next
+    /// `run_deferred` of any thread, maybe a worker's while the report
+    /// is under way; it dismissed the failure then, and the program
+    /// ended with exit 0 and no report
+    /// (wave7_s1__a_failure_the_next_stage_raised_is_reported_once).
+    #[test]
+    fn a_stop_after_the_end_dismisses_no_failure() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = super::Scheduler::new(HostIo::buffer(&out));
+        let stage = failed_stage(&scheduler, 7);
+        scheduler.stop_tasks();
+        // What the stop of the stage does.
+        scheduler.cancel(&stage);
+        assert_eq!(scheduler.report_unjoined_failures(), 1);
+        assert!(out.take().contains("division by zero"));
+    }
+
+    /// A stop that is still to run when the tasks have come to a stop
+    /// (a thread outside a slice let the stream go: the timer's, as it
+    /// ended a task by its deadline) runs before the end: the stream
+    /// was left, and the failure in it is dismissed, on every run.
+    #[test]
+    fn a_stop_still_to_run_when_the_tasks_stop_runs_before_the_end() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = Arc::new(super::Scheduler::new(HostIo::buffer(&out)));
+        let stage = failed_stage(&scheduler, 7);
+        let (stops, stopped) = (scheduler.clone(), stage.clone());
+        super::defer(move || stops.cancel(&stopped));
+        scheduler.settle();
+        assert_eq!(scheduler.report_unjoined_failures(), 0, "{}", out.take());
+    }
+
+    /// Stopping a chain of stages does the work of each stage's stop
+    /// once: closing the end of a chain of 300 stages runs 300 stops. (Each
+    /// stage abandons its inputs again as it ends, and each abandon ran the
+    /// stop again, which walked the rest of the chain: 2,000 stages took 6 s
+    /// to close, 12,000 did not end.)
+    #[test]
+    fn a_chain_of_stages_stops_in_one_pass() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import list
+import stream
+
+fn main() {
+  let c = channel.new(4)
+  let s = 1..299 |> list.fold(stream.map(c) { x -> x }) { acc, _ -> stream.map(acc) { x -> x + 1 } }
+  channel.send(c, 1)
+  println(channel.receive(s))
+  channel.close(s)
+  channel.send(c, 2)
+  channel.close(c)
+  println("the input holds {stream.length(c)} of 1")
+}
+"#,
+        )
+        .expect("the program compiles");
+        let out = crate::vm::Buffer::new();
+        let mut vm = Vm::new(HostIo::buffer(&out));
+        let result = vm.run_program(&program);
+        vm.settle();
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
+        assert_eq!(out.take(), "Some(300)\nthe input holds 1 of 1\n");
+        let stops = vm.scheduler().inner.stage_stops.load(Ordering::SeqCst);
+        assert_eq!(
+            stops, 300,
+            "the stops of 300 stages did their work {stops} times"
+        );
+    }
+
+    /// A look at the tasks while a thread takes stops out of the queue
+    /// sees them pending, at every moment of the take: here between its
+    /// two steps. (The take cleared the queue's flag before it counted
+    /// the batch: a look in between saw nothing pending, and gave a
+    /// false deadlock.)
+    #[test]
+    fn a_look_during_a_take_sees_the_stops_pending() {
+        let scheduler = super::Scheduler::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        let (in_gap, go) = super::pause_the_next_take();
+        super::defer(|| {});
+        let taker = std::thread::spawn(super::run_deferred);
+        in_gap.recv().expect("the take is between its steps");
+        let pending = super::stops_pending(&scheduler.inner);
+        go.send(()).expect("the take goes on");
+        taker.join().expect("the stops ran");
+        assert!(pending, "a look in the take's gap saw no stop pending");
     }
 
     /// The most failed tasks of one owner the record may hold when

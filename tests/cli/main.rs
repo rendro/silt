@@ -26,6 +26,7 @@ mod cli_test_shared_module_errors_tests;
 mod cli_watch_subcommand_gate_tests;
 mod docs_watch_subcommands_parity_tests;
 mod empty_file_tests;
+mod end_race_tests;
 #[path = "../support/env_switch.rs"]
 mod env_switch;
 mod git_module_tests;
@@ -37,6 +38,7 @@ mod manifest_git_url_security_tests;
 mod manifest_tests;
 mod manifest_unknown_fields_rejected_tests;
 mod not_unicode_tests;
+mod output_order_tests;
 mod package_graph_lock_tests;
 mod process_exit_tests;
 mod repl_completion_scope_tests;

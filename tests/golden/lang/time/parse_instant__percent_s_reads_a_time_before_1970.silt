@@ -1,0 +1,22 @@
+-- %s reads the seconds since the epoch with a sign: a time before 1970
+-- is a negative count (it was ParseFormat). As time.to_datetime shows it.
+import time
+
+fn show(s: String) {
+  match time.parse_instant(s, "%s") {
+    Ok(i) -> println(time.to_datetime(i, 0))
+    Err(e) -> println(e)
+  }
+}
+
+fn main() {
+  show("-1")
+  show("-86400")
+  show("0")
+  show("86400")
+  show("-")
+  show("--1")
+  show("-99999999999999999999")
+  show("99999999999999999999")
+  println(time.parse("-1", "%s"))
+}

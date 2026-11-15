@@ -157,6 +157,9 @@ pub(crate) fn vm_run_file(path: &str) {
     vm.set_exit(Exit::EndsProcess);
     #[cfg(feature = "test-hooks")]
     panic_where_a_test_says(&vm);
+    // (A build with `test-hooks`: tests/cli/end_race_tests.rs.)
+    #[cfg(feature = "test-hooks")]
+    races_where_a_test_says();
     let run_result = vm.run_program(&program);
     // `main` has returned; the program ends when its tasks can do no
     // more. After an error of `main`, raised or returned as `Err`,
@@ -211,6 +214,22 @@ pub fn returned_err_text(
     match &e.display_failure {
         Some(failure) => format!("error: {text}\nnote: {}", failure.note(view)),
         None => format!("error: {text}"),
+    }
+}
+
+/// In a build with `test-hooks` only: force the orders of the end of a
+/// program that `SILT_TEST_END_RACE` and `SILT_TEST_STOP_RACE`
+/// (`task-end`, `main-returns`) name (tests/cli/end_race_tests.rs).
+#[cfg(feature = "test-hooks")]
+fn races_where_a_test_says() {
+    use silt::scheduler::{StopRace, force_the_end_race, force_the_stop_race};
+    if std::env::var_os("SILT_TEST_END_RACE").is_some() {
+        force_the_end_race();
+    }
+    match std::env::var("SILT_TEST_STOP_RACE").as_deref() {
+        Ok("task-end") => force_the_stop_race(StopRace::TaskEnd),
+        Ok("main-returns") => force_the_stop_race(StopRace::MainReturns),
+        _ => {}
     }
 }
 

@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- A trait method declared without a body names each parameter once, as a
+-- function does (it took `a` twice, and an implementation of it ran).
+trait Pick {
+  fn pick(self, a: Int, a: Int) -> Int
+}
+
+type Box { n: Int }
+
+trait Pick for Box {
+  fn pick(self, a: Int, b: Int) -> Int {
+    self.n + a + b
+  }
+}
+
+fn main() {
+  println(Pick.pick(Box { n: 1 }, 2, 3))
+}

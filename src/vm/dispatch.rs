@@ -61,7 +61,7 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
                 "{}: its signature returns {returns}{}, but it returned {} {shown}",
                 host.name,
                 here.unwrap_or_default(),
-                crate::types::canonical::kind_name(&value)
+                crate::types::canonical::kind_name(&value, &returns)
             )))
         }
         Ok(Err(e)) => Err(VmError {

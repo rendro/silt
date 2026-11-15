@@ -176,22 +176,64 @@ pub(crate) mod test {
         VmError::new(format!("assertion failed: {what}"))
     }
 
+    /// How many characters of each of two values that differ an
+    /// assertion shows, at most, around where they first differ.
+    const AROUND: usize = 40;
+
+    /// `left` and `right`, as silt source writes them, between `between`
+    /// (`!=`): whole when they are short; else each from a little before
+    /// the first character at which they differ to a little after it,
+    /// with `...` where a part is left out, and where that is. (Two texts
+    /// of 3,000 characters were written whole, on one line.)
+    fn two_values(left: &Value, right: &Value, between: &str) -> String {
+        let (left, right) = (left.format_silt(), right.format_silt());
+        let (l, r): (Vec<char>, Vec<char>) = (left.chars().collect(), right.chars().collect());
+        if l.len() + r.len() <= 4 * AROUND {
+            return format!("{left} {between} {right}");
+        }
+        let first = l.iter().zip(&r).take_while(|(a, b)| a == b).count();
+        let same = l == r;
+        let from = match same {
+            true => 0,
+            false => first.saturating_sub(AROUND / 2),
+        };
+        let part = |text: &[char]| {
+            let to = text.len().min(from + AROUND);
+            let mut shown = String::new();
+            if from > 0 {
+                shown.push_str("...");
+            }
+            shown.extend(text.get(from..to).unwrap_or_default());
+            if to < text.len() {
+                shown.push_str("...");
+            }
+            shown
+        };
+        let at = match first < l.len().min(r.len()) {
+            true => format!(
+                "they first differ at character {} of how they are written",
+                first + 1
+            ),
+            false => format!("one is the other's first {first} characters"),
+        };
+        match same {
+            true => format!("{} {between} {} (the same long value)", part(&l), part(&r)),
+            false => format!("{} {between} {} ({at})", part(&l), part(&r)),
+        }
+    }
+
     builtins! {
         fn assert(condition: bool) -> Result<(), VmError> {
             match condition {
                 true => Ok(()),
-                false => Err(failed("false".to_string())),
+                false => Err(failed("the condition is false".to_string())),
             }
         }
 
         fn assert_eq(left: &Value, right: &Value) -> Result<(), VmError> {
             match left == right {
                 true => Ok(()),
-                false => Err(failed(format!(
-                    "{} != {}",
-                    left.format_silt(),
-                    right.format_silt()
-                ))),
+                false => Err(failed(two_values(left, right, "!="))),
             }
         }
 
@@ -218,11 +260,7 @@ pub(crate) mod test {
         fn assert_ne(left: &Value, right: &Value) -> Result<(), VmError> {
             match left != right {
                 true => Ok(()),
-                false => Err(failed(format!(
-                    "{} == {}",
-                    left.format_silt(),
-                    right.format_silt()
-                ))),
+                false => Err(failed(two_values(left, right, "=="))),
             }
         }
     }

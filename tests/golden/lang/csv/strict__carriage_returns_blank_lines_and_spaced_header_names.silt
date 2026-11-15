@@ -1,8 +1,10 @@
 -- csv is strict where RFC 4180 is: a carriage return outside quotes that ends
 -- no line is a Syntax error (a text with only  line ends fails on line 1);
 -- a blank line is one, with its own text, but the line end of the last row
--- is no blank line; "a row of 1 field"; a header cell that is a field name
--- with spaces around it is said before a missing field.
+-- is no blank line; "a row of 1 field"; a text that begins with a blank line
+-- has a blank header (the row after it was said to have too many fields); a
+-- header cell that is a field name with spaces around it is said before a
+-- missing field.
 import csv
 type P { name: String, age: Int, email: Option(String) }
 type One { id: String }
@@ -20,9 +22,14 @@ fn main() {
   println(show(csv.parse("name,age\nA,1\n", P)))
   println(show(csv.parse("name,age\nA,1\r\n", P)))
   println(show(csv.parse("name,age\nA\n", P)))
+  println(show(csv.parse("\nname,age\nA,1\n", P)))
   println(show(csv.parse("name, age\nA,1\n", P)))
   println(show(csv.parse("name,age , email\nA,1,x\n", P)))
   match csv.parse("id\na\n\nb\n", One) {
+    Ok(rows) -> println(rows)
+    Err(e) -> println("{e}")
+  }
+  match csv.parse("\nid\na\n", One) {
     Ok(rows) -> println(rows)
     Err(e) -> println("{e}")
   }

@@ -47,10 +47,11 @@ pub(crate) fn print_in_pieces(
     newline: bool,
     write: crate::vm::show::Writer,
 ) -> Result<Step, VmError> {
-    /// The pieces of a text, each sent when it is full.
+    /// The pieces of a text, each sent when it is full, and then
+    /// `None`: the text is at its end.
     struct Pieces {
         piece: String,
-        send: std::sync::mpsc::SyncSender<String>,
+        send: std::sync::mpsc::SyncSender<Option<String>>,
     }
     impl Pieces {
         fn flush(&mut self) -> std::fmt::Result {
@@ -58,7 +59,7 @@ pub(crate) fn print_in_pieces(
                 return Ok(());
             }
             let piece = std::mem::take(&mut self.piece);
-            self.send.send(piece).map_err(|_| std::fmt::Error)
+            self.send.send(Some(piece)).map_err(|_| std::fmt::Error)
         }
     }
     impl std::fmt::Write for Pieces {
@@ -78,7 +79,7 @@ pub(crate) fn print_in_pieces(
             Ok(())
         }
     }
-    let (send, receive) = std::sync::mpsc::sync_channel::<String>(2);
+    let (send, receive) = std::sync::mpsc::sync_channel::<Option<String>>(2);
     let made = std::thread::Builder::new()
         .name("silt-print".into())
         .spawn(move || {
@@ -86,12 +87,16 @@ pub(crate) fn print_in_pieces(
                 piece: String::new(),
                 send,
             };
-            let _ = write(&mut pieces)
+            let written = write(&mut pieces)
                 .and_then(|()| match newline {
                     true => std::fmt::Write::write_str(&mut pieces, "\n"),
                     false => Ok(()),
                 })
                 .and_then(|()| pieces.flush());
+            // (A text that could not be sent has no reader any more.)
+            if written.is_ok() {
+                let _ = pieces.send.send(None);
+            }
         });
     if made.is_err() {
         return Err(VmError::new(format!(
@@ -109,7 +114,7 @@ pub(crate) fn print_in_pieces(
 
 /// A print in pieces under way ([`print_in_pieces`]).
 struct Printing {
-    pieces: std::sync::mpsc::Receiver<String>,
+    pieces: std::sync::mpsc::Receiver<Option<String>>,
     /// Lets the prints behind it go on when it is dropped.
     end: crate::vm::StreamEnd,
     stream: Stream,
@@ -121,8 +126,18 @@ struct Printing {
 fn next_piece(vm: &mut Vm, printing: Printing) -> Result<Step, VmError> {
     let scheduler = vm.scheduler().clone();
     loop {
-        let Ok(piece) = printing.pieces.recv() else {
-            return Ok(Step::Done(Value::Unit));
+        let piece = match printing.pieces.recv() {
+            Ok(Some(piece)) => piece,
+            Ok(None) => return Ok(Step::Done(Value::Unit)),
+            // The thread ended before the text's end, which it sends
+            // last: it failed (a fault of silt's), and the text is not
+            // all written.
+            Err(_) => {
+                return Err(VmError::new(format!(
+                    "{}: the thread that writes a long text stopped before the text's end",
+                    printing.call
+                )));
+            }
         };
         match (vm.runtime.io).print_piece(&printing.end, printing.stream, piece, &scheduler) {
             Printed::Queued => {}
@@ -156,5 +171,29 @@ builtins! {
 
     fn panic(vm, message: &Value) -> Result<Step, VmError> {
         vm.show(message, |_, text| Err(VmError::new(format!("panic: {text}"))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A long print whose text stops before its end, because the thread
+    /// that writes it fails (a fault of silt's formatter), is an error:
+    /// it ended as if the text were whole.
+    #[test]
+    fn a_long_print_whose_writer_fails_is_an_error() {
+        let out = crate::vm::Buffer::new();
+        let mut vm = Vm::new(crate::HostIo::buffer(&out));
+        let write: crate::vm::show::Writer = std::sync::Arc::new(|w: &mut dyn std::fmt::Write| {
+            w.write_str(&"x".repeat(3 * crate::vm::PIECE))?;
+            panic!("a fault of the formatter, for the test");
+        });
+        let result = print_in_pieces(&mut vm, Stream::Stdout, "println", true, write);
+        let error = result.err().expect("the print fails");
+        assert_eq!(
+            error.message,
+            "println: the thread that writes a long text stopped before the text's end"
+        );
     }
 }
