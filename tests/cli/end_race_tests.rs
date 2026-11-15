@@ -81,7 +81,11 @@ fn a_stop_that_runs_after_the_end_dismisses_no_failure() {
 }
 
 /// A task lets go of the stream `s`, whose stop closes `ends`, on which
-/// main waits (fix/rv-zb/probes/g2_stop_at_start_many.silt, once).
+/// main waits (fix/rv-zb/probes/g2_stop_at_start_many.silt, once). The
+/// task asks `s` for a value first, so its stage waits on its input, not
+/// to be asked: nothing but its stop ends that wait (a stage waiting to be
+/// asked ends by itself when its output is gone), and without the stop
+/// main is deadlocked.
 const LEFT_BY_A_TASK: &str = r#"import channel
 import stream
 import task
@@ -91,7 +95,7 @@ fn main() {
   let ends = stream.map(never) { x -> x }
   let _t = task.spawn { ->
     let s = stream.map(ends) { x -> x }
-    let _ = s
+    let _ = channel.try_receive(s)
     ()
   }
   let _ = channel.receive(ends)

@@ -1985,8 +1985,6 @@ impl Inner {
         handle.stop(&self.parking);
         drop(handle);
         if after_slice {
-            #[cfg(any(test, feature = "test-hooks"))]
-            stop_race(StopRace::TaskEnd);
             run_deferred();
         }
         self.ended(&group);
@@ -2090,8 +2088,6 @@ impl Inner {
         handle.stop(&self.parking);
         drop(handle);
         if after_slice {
-            #[cfg(any(test, feature = "test-hooks"))]
-            stop_race(StopRace::TaskEnd);
             run_deferred();
         }
         self.ended(&group);
@@ -3147,6 +3143,10 @@ static DEFERRED_ANY: AtomicBool = AtomicBool::new(false);
 
 /// Do `stop` where the runtime holds no lock ([`DEFERRED`]).
 pub(crate) fn defer(stop: impl FnOnce() + Send + 'static) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    let Some(stop) = stop_race(Box::new(stop)) else {
+        return;
+    };
     let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
     deferred.push(Box::new(stop));
     DEFERRED_ANY.store(true, Ordering::SeqCst);
@@ -3259,10 +3259,11 @@ fn stops_pending(inner: &Inner) -> bool {
 #[doc(hidden)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StopRace {
-    /// A task ends after its slice, having let go of a stream.
+    /// The program's first stop comes as a task lets go of a stream (as
+    /// the test's task ends).
     TaskEnd,
-    /// The program's thread has run its last slice: `main` has returned,
-    /// and let go of a stream.
+    /// The program's first stop comes as `main` lets go of a stream (as it
+    /// returns).
     MainReturns,
 }
 
@@ -3276,10 +3277,12 @@ static STOP_RACE_WAITED: (std::sync::Mutex<bool>, std::sync::Condvar) =
     (std::sync::Mutex::new(false), std::sync::Condvar::new());
 
 /// Test-only (`SILT_TEST_STOP_RACE=task-end` or `main-returns` in a build with
-/// `test-hooks`): the first time, at `at`, that there are deferred stops,
-/// they are taken by a thread of the hook's own, which counts for
-/// nothing, as a worker after its slice does, and which runs them only
-/// once a look at the tasks has found them pending ([`stops_pending`]).
+/// `test-hooks`): the first stop that is deferred (the test's program says
+/// where, `at` names it) is taken, as it is deferred, by a thread of the
+/// hook's own, which counts
+/// for nothing, as a worker after its slice does, and which runs it only
+/// once a look at the tasks has found it pending ([`stops_pending`]). (It
+/// is never in the queue, so no other thread can take it first.)
 /// That is the order in which such a worker took a stop an ending task
 /// had just deferred: the task stopped counting with its stop not yet
 /// run, and the program was judged deadlocked, or ended.
@@ -3291,18 +3294,23 @@ pub fn force_the_stop_race(at: StopRace) {
     *STOP_RACE.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
 }
 
-/// Test-only: the place `at` of [`force_the_stop_race`] is reached.
+/// Test-only: `stop` is deferred; the hook's thread takes it if a race
+/// is forced where this is ([`force_the_stop_race`]), else it is given
+/// back to be queued.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn stop_race(at: StopRace) {
+fn stop_race(stop: Box<dyn FnOnce() + Send>) -> Option<Box<dyn FnOnce() + Send>> {
     let mut race = STOP_RACE.lock().unwrap_or_else(|e| e.into_inner());
-    if *race != Some(at) {
-        return;
+    // (Whatever thread defers it: a stream's output is let go of last by
+    // whoever drops it last, the task or main, or a stage's park that held
+    // it for a moment.)
+    if race.is_none() {
+        return Some(stop);
     }
-    let Some(taken) = Taken::take() else {
-        return;
-    };
     *race = None;
     drop(race);
+    // (Counted as taken from this moment: never in the queue.)
+    TAKEN.lock().unwrap_or_else(|e| e.into_inner()).batches += 1;
+    let taken = Taken(vec![stop]);
     std::thread::spawn(move || {
         let (waited, woken) = &STOP_RACE_WAITED;
         let mut waited = waited.lock().unwrap_or_else(|e| e.into_inner());
@@ -3320,6 +3328,7 @@ pub(crate) fn stop_race(at: StopRace) {
         eprintln!("silt test hook: a thread that counts for nothing ran the stops");
         drop(taken);
     });
+    None
 }
 
 /// Test-only: a take that is to wait between its two steps (counted,
