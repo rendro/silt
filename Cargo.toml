@@ -121,7 +121,7 @@ libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
 # typedef, and the `SOCKET` typedef. Prefer `windows-sys` over
 # `winapi`: it is smaller and Microsoft-maintained.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Networking_WinSock",
     "Win32_System_IO",
