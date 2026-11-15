@@ -107,7 +107,7 @@ builtins! {
             return crypto_err(Value::variant(bv::CRYPTO_INVALID_LENGTH, [Value::Int(n)]));
         }
         let mut buf = vec![0u8; n as usize];
-        if let Err(e) = getrandom::getrandom(&mut buf) {
+        if let Err(e) = getrandom::fill(&mut buf) {
             let text = format!("CSPRNG failure: {e}");
             return crypto_err(Value::variant(
                 bv::CRYPTO_OTHER,

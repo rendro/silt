@@ -66,7 +66,7 @@ hmac = "0.13"
 # Constant-time comparison (`crypto.constant_time_eq`); already in the
 # graph through the RustCrypto crates.
 subtle = "2"
-getrandom = "0.2"
+getrandom = "0.4"
 percent-encoding = "2"
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 toml_edit = "0.22"
