@@ -1556,8 +1556,11 @@ pub(crate) fn with_report_lock<R>(write: impl FnOnce() -> R) -> R {
 /// two go to one place (`2>&1`). That is waited for no longer than
 /// [`LAST_WORDS`], so that a stdout nobody reads cannot hold the report
 /// up (tests/cli/stuck_stdout_tests.rs): the line then comes at the
-/// exit, after the report, as before.
+/// exit, after the report, as before. Where that line is out and stdout
+/// and stderr are one place, the report starts on a line of its own;
+/// nothing is added where stdout ended its last line, or goes elsewhere.
 pub(crate) fn report_on_stderr(text: &str) {
+    let mut own_line = false;
     if !text.is_empty() {
         use std::io::Write;
         let (done, flushed) = std::sync::mpsc::channel();
@@ -1569,12 +1572,16 @@ pub(crate) fn report_on_stderr(text: &str) {
             .name("silt-report-flush".into())
             .spawn(flushes)
             .is_ok()
+            && flushed.recv_timeout(LAST_WORDS).is_ok()
         {
-            let _ = flushed.recv_timeout(LAST_WORDS);
+            own_line = !crate::vm::stdout_ends_a_line() && crate::vm::stdout_and_stderr_are_one();
         }
     }
     report(|| {
-        let _ = crate::vm::write_stderr(text);
+        let _ = match own_line {
+            true => crate::vm::write_stderr(&format!("\n{text}")),
+            false => crate::vm::write_stderr(text),
+        };
     });
 }
 
