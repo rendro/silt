@@ -2166,6 +2166,11 @@ impl Inner {
                 let task = self.pop(&mut self.queue.lock());
                 if let Some(task) = task {
                     self.run_slice(task, false);
+                    // What the slice let go of, as a worker runs it after
+                    // its slice: a stop that nobody ran would hold every
+                    // look at the tasks ([`TAKEN`]), and this thread is
+                    // the only one there is.
+                    run_deferred();
                     if let Some(resumed) = park.state.lock().resumed.take() {
                         return resumed;
                     }
@@ -2181,6 +2186,8 @@ impl Inner {
                 if timer.fire_due(&self.parking) > 0 {
                     self.check_all();
                 }
+                // (What a task that its deadline ended let go of.)
+                run_deferred();
                 if let Some(resumed) = park.state.lock().resumed.take() {
                     return resumed;
                 }
@@ -2203,6 +2210,7 @@ impl Inner {
                 if timer.fire_due(&self.parking) > 0 {
                     self.check_all();
                 }
+                run_deferred();
                 continue;
             }
             if !state.poked {
@@ -2221,6 +2229,7 @@ impl Inner {
             if next.is_some() && timer.fire_due(&self.parking) > 0 {
                 self.check_all();
             }
+            run_deferred();
         }
     }
 
