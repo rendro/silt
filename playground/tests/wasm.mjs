@@ -166,18 +166,20 @@ fn main() {
 });
 
 await test('the page gives the time and the randomness', (mod) => {
-  const ran = run(mod, `import math
+  const ran = run(mod, `import crypto
+import math
 import time
 import uuid
 
 fn main() {
   println(math.random() < 1.0)
   println(uuid.v4() != uuid.v4())
+  println(crypto.random_bytes(16) != crypto.random_bytes(16))
   println(time.today())
 }
 `);
   const today = new Date().toISOString().slice(0, 10);
-  assert.deepEqual([ran.output, ran.error], [`true\ntrue\n${today}\n`, '']);
+  assert.deepEqual([ran.output, ran.error], [`true\ntrue\ntrue\n${today}\n`, '']);
 });
 
 await test('what a page cannot do is an Err, not a trap', (mod) => {
