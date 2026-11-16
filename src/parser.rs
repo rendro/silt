@@ -3616,8 +3616,8 @@ impl<'src> Parser<'src> {
     /// The type arguments between the opening bracket at the cursor and
     /// its partner, the token `close`, as a message suggests them in
     /// parentheses (`List<List<Int>>` as `List(List(Int))`): the text as
-    /// written, but a tab between two tokens written as a space, as `silt
-    /// fmt` would space it. None when nothing stands between the two;
+    /// written, but the blanks between two tokens (spaces and tabs) written
+    /// as one space. None when nothing stands between the two;
     /// `...` for text a message cannot quote (`quotable`: a string or a
     /// comment over lines, a control character in one).
     fn type_arguments_written(&self, close: usize) -> Option<String> {
@@ -3626,8 +3626,10 @@ impl<'src> Parser<'src> {
         for tok in &self.tokens[self.pos + 1..=close] {
             let gap = self.source.get(end..tok.span.start_offset()).unwrap_or("");
             match gap.chars().all(|c| c == ' ' || c == '\t') {
-                // White space between two tokens: a tab in it is spacing.
-                true => text.push_str(&gap.replace('\t', " ")),
+                // White space between two tokens is spacing: one space, as
+                // the source would have it with single spaces.
+                true if !gap.is_empty() => text.push(' '),
+                true => {}
                 // A comment stands in it: kept as it is.
                 false => text.push_str(gap),
             }
