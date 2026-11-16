@@ -23,7 +23,8 @@
 //! literal that must keep the module's own name (code for another module,
 //! a builtin trait's docs) or is no text at all (a registry key, a leaf's
 //! name) says so in a comment ending in "own name)" or "not a text)" on
-//! one of the four lines above it.
+//! its own line or the line above it; a mark excuses nothing further down.
+//! Text behind a file's `#[cfg(test)] mod tests` is not read (the tests).
 
 use std::path::{Path, PathBuf};
 
@@ -126,11 +127,20 @@ fn is_name(literal: &str, modules: &[&str]) -> bool {
 }
 
 /// Whether the source before a literal (`before`, up to its opening
-/// quote) hands it straight to the naming function.
+/// quote) hands it straight to the naming function: a call of
+/// `written_builtin(` or `written(` (the name passed on as a parameter),
+/// the whole name (`unwritten(` is not it).
 fn given_to_the_naming_function(before: &str) -> bool {
     let before = before.trim_end();
     let before = before.strip_suffix('&').unwrap_or(before).trim_end();
-    before.ends_with("written_builtin(") || before.ends_with("written(")
+    ["written_builtin(", "written("].iter().any(|call| {
+        before.strip_suffix(call).is_some_and(|head| {
+            !head
+                .chars()
+                .last()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        })
+    })
 }
 
 /// The builtin module's `name.member` that `literal` writes into its
@@ -189,12 +199,14 @@ fn no_checker_text_writes_a_builtin_module_s_name_itself() {
                 }
                 None => continue,
             };
-            // (Its own line, then the four above it.)
-            let lines: Vec<&str> = text[..start].lines().collect();
+            // (Its own line, then the one above it; a literal's own line
+            // runs on to the line's end.)
+            let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
+            let lines: Vec<&str> = text[..line_end].lines().collect();
             let marked = lines
                 .iter()
                 .rev()
-                .take(5)
+                .take(2)
                 .any(|line| line.contains("own name)") || line.contains("not a text)"));
             if !marked {
                 let line = text[..start].lines().count();
@@ -236,6 +248,8 @@ fn the_reader_finds_a_written_name_and_passes_over_a_name_alone() {
     ));
     assert!(given_to_the_naming_function("written("));
     assert!(!given_to_the_naming_function("format!(\"use `{}`\", "));
+    assert!(!given_to_the_naming_function("unwritten("));
+    assert!(!given_to_the_naming_function("self.not_written("));
     let text = "let a = \"use `list.map`\"; // \"list.find\" in a comment\nlet c = '\"';";
     let found: Vec<String> = literals(text).into_iter().map(|(_, l)| l).collect();
     assert_eq!(found, ["use `list.map`"]);

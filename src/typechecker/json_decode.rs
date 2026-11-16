@@ -103,8 +103,8 @@ impl TypeChecker {
         {
             return None;
         }
-        // (The decoder's key in the registry: not a text)
         let refusal = self.decode_refusal(
+            // (The decoder's key in the registry: not a text)
             "json.parse",
             Decoding::JSON,
             None,
@@ -1151,8 +1151,8 @@ impl TypeChecker {
             // (Where no decoder is known, what the use calls is the one
             // that decodes; a use that names nothing, a supertrait an
             // impl's declaration owes: `json.decode`.)
-            // (The decoder's key in the registry: not a text)
             let named =
+                // (The decoder's key in the registry: not a text)
                 (decoder.or(passer).or(gap.origin.callee)).unwrap_or_else(|| intern("json.decode"));
             let written = self.decode_aliases.get(&gap.origin.span).copied();
             if let Some(callee) = gap.origin.callee {

@@ -2629,8 +2629,8 @@ impl TypeChecker {
             && !trait_name.is_builtin("Number")
         {
             let shown = self.show_trait(impl_trait);
-            // (Each name given to the naming function: not a text)
             let [encode_trait, decode_trait] =
+                // (Each name given to the naming function: not a text)
                 ["json.Encode", "json.Decode"].map(|name| self.written_builtin(name));
             let message = format!(
                 "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \

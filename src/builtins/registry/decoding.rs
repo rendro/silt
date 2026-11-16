@@ -72,12 +72,12 @@ impl Leaf {
             Leaf::String => "String",
             Leaf::Bool => "Bool",
             Leaf::Bytes => "Bytes",
-            // (The leaves' own names, given to the naming function where a
-            // message shows them: not a text)
-            Leaf::Date => "time.Date",
-            Leaf::Time => "time.Time",
-            Leaf::DateTime => "time.DateTime",
-            Leaf::JsonValue => "json.Value",
+            // (Each leaf's own name, given to the naming function where a
+            // message shows it.)
+            Leaf::Date => "time.Date",         // (not a text)
+            Leaf::Time => "time.Time",         // (not a text)
+            Leaf::DateTime => "time.DateTime", // (not a text)
+            Leaf::JsonValue => "json.Value",   // (not a text)
         }
     }
 
