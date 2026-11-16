@@ -261,10 +261,16 @@ pub(crate) fn module_load_error(
                 "did you mean `{hint}`? (`{hint}.silt` exists in the same directory)"
             ));
         }
-        d = d.with_help(format!(
-            "if '{module_name}' is a separate package, declare it under \
-             `[dependencies]` in silt.toml (e.g. `silt add {module_name} --path <dir>`)"
-        ));
+        d = d.with_help(match crate::source::pasteable(module_name) {
+            true => format!(
+                "if '{module_name}' is a separate package, declare it under \
+                 `[dependencies]` in silt.toml (e.g. `silt add {module_name} --path <dir>`)"
+            ),
+            false => format!(
+                "if '{module_name}' is a separate package, declare it under \
+                 `[dependencies]` in silt.toml (`silt add` with its name and `--path`)"
+            ),
+        });
     }
     d
 }

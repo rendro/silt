@@ -230,7 +230,7 @@ pub fn resolve_packages(
                     Span::point(root_manifest, 0),
                     format!(
                         "cannot write {}: {}",
-                        escape_for_display(&display_path(&lock_path).display().to_string()),
+                        crate::source::shown_path(display_path(&lock_path)),
                         escape_for_display(&e.to_string())
                     ),
                 )]);
@@ -326,7 +326,7 @@ impl Resolver<'_> {
         match &entry.source {
             Dependency::Path { path } => {
                 let dir = normalize_path(&base.join(path));
-                let shown = escape_for_display(&path.display().to_string());
+                let shown = crate::source::shown_path(path);
                 if let Some(checkout) = &inside
                     && !dir.starts_with(checkout)
                 {
@@ -345,7 +345,7 @@ impl Resolver<'_> {
                     );
                     // Where it resolves to, when that is not the path as
                     // written.
-                    let resolved = escape_for_display(&display_path(&dir).display().to_string());
+                    let resolved = crate::source::shown_path(display_path(&dir));
                     if resolved != shown {
                         d = d.with_note(format!(
                             "the path is relative to the directory of this silt.toml and \
@@ -975,7 +975,7 @@ fn symlink_diagnostic(at: Span, key: &str, path: &Path) -> Diagnostic {
         at,
         format!(
             "dependency `{key}` contains a symbolic link: `{}`",
-            escape_for_display(&path.display().to_string())
+            crate::source::shown_path(path)
         ),
     )
     .with_help("a dependency's files must be its own; replace the link with the file")
@@ -988,7 +988,7 @@ fn checksum_diagnostic(
     found: &str,
     checkout: &Path,
 ) -> Diagnostic {
-    let checkout = escape_for_display(&display_path(checkout).display().to_string());
+    let checkout = crate::source::shown_path(display_path(checkout));
     Diagnostic::error(
         Code::LockfileChecksum,
         at,

@@ -817,9 +817,35 @@ impl<'src> Parser<'src> {
             )
     }
 
+    /// Whether the token before the current one is a `return` without a
+    /// value: the current one starts a line, and the `return` took no
+    /// value for that reason.
+    fn after_bare_return(&self) -> bool {
+        self.nl_before() && self.pos > 0 && self.tokens[self.pos - 1].kind == Token::Return
+    }
+
+    /// Whether the current token, at the start of a line, would go on with
+    /// the expression of the line above: `|>`, `.`, `as`, `..` or a binary
+    /// operator other than `+` and `-` (which start a new statement).
+    fn continues_a_line(&self) -> bool {
+        matches!(
+            self.peek(),
+            Token::Pipe | Token::Dot | Token::As | Token::DotDot
+        ) || BinOp::from_token(self.peek()).is_some_and(|op| !matches!(op, BinOp::Add | BinOp::Sub))
+    }
+
     /// `d` with the help for a `+`, `-` or `?` that starts a line behind
     /// a value: none of them continues the line above.
     fn with_line_start_help(&self, d: Diagnostic) -> Diagnostic {
+        // (`return` then `|> f`, `.x` or `== 1` on the next line: an
+        // operator that would go on with the line above. A value there,
+        // `[1, return` then `x]`, keeps its ordinary message.)
+        if self.after_bare_return() && self.continues_a_line() {
+            return d.with_help(
+                "a `return` without a value ends the expression: nothing goes on with it from \
+                 the next line; put the value on the line of `return`",
+            );
+        }
         if !self.nl_before() || !self.prev_ends_value() {
             return d;
         }
@@ -3585,7 +3611,7 @@ impl<'src> Parser<'src> {
             _ => (Token::LBracket, Token::RBracket),
         };
         let mut depth = 0usize;
-        let mut inner = None;
+        let mut partner = None;
         for (i, tok) in self.tokens.iter().enumerate().skip(self.pos) {
             if i > self.pos && self.starts_line[i] {
                 break;
@@ -3595,29 +3621,60 @@ impl<'src> Parser<'src> {
             } else if tok.kind == close {
                 depth -= 1;
                 if depth == 0 {
-                    let from = self.tokens[self.pos].span.end_offset();
-                    inner = self
-                        .source
-                        .get(from..tok.span.start_offset())
-                        .map(str::trim);
+                    partner = Some(i);
                     break;
                 }
             }
         }
-        // (Arguments of arguments, `List<List<Int>>`, likewise. Text with a
-        // control character, a string or a comment over lines or one that
-        // holds an ESC or a tab, is not quoted, see `quotable`: the
-        // arguments are `...`.)
-        let args = inner
-            .filter(|a| !a.is_empty())
-            .map(|a| match crate::diagnostic::quotable(a) {
-                true => a.replace(['<', '['], "(").replace(['>', ']'], ")"),
-                false => "...".to_string(),
-            });
+        // Arguments written but not shown (their partner is on another
+        // line, or their text is not quotable): `...`. `Int` stands only for
+        // brackets with nothing between them (`List[]`).
+        let args = match partner {
+            Some(at) => self.type_arguments_written(at),
+            None => Some("...".to_string()),
+        };
         format!(
             "type arguments are written in parentheses: `{written}({})`",
             args.as_deref().unwrap_or("Int")
         )
+    }
+
+    /// The type arguments between the opening bracket at the cursor and
+    /// its partner, the token `close`, as a message suggests them in
+    /// parentheses (`List<List<Int>>` as `List(List(Int))`): the text as
+    /// written, but the blanks between two tokens (spaces and tabs) written
+    /// as one space. None when nothing stands between the two;
+    /// `...` for text a message cannot quote (`quotable`: a string or a
+    /// comment over lines, a control character in one).
+    fn type_arguments_written(&self, close: usize) -> Option<String> {
+        let mut text = String::new();
+        let mut end = self.tokens[self.pos].span.end_offset();
+        for tok in &self.tokens[self.pos + 1..=close] {
+            let gap = self.source.get(end..tok.span.start_offset()).unwrap_or("");
+            match gap.chars().all(|c| c == ' ' || c == '\t') {
+                // White space between two tokens is spacing: one space, as
+                // the source would have it with single spaces.
+                true if !gap.is_empty() => text.push(' '),
+                true => {}
+                // A comment stands in it: kept as it is.
+                false => text.push_str(gap),
+            }
+            if !std::ptr::eq(tok, &self.tokens[close]) {
+                text.push_str(
+                    self.source
+                        .get(tok.span.start_offset()..tok.span.end_offset())?,
+                );
+            }
+            end = tok.span.end_offset();
+        }
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        Some(match crate::diagnostic::quotable(text) {
+            true => text.replace(['<', '['], "(").replace(['>', ']'], ")"),
+            false => "...".to_string(),
+        })
     }
 
     /// Whether a `:` stands on the line from the current token, outside
@@ -4015,6 +4072,13 @@ impl<'src> Parser<'src> {
 
             // The infix operators, which may start a line.
             let had_newline = self.nl_before();
+            // A `return` without a value ends the whole expression it is
+            // the last operand of: no operator on the next line goes on
+            // with it, at this level or any around it (`1 + return` then
+            // `|> f`, `-return` then `== 6`), comment lines between or not.
+            if self.after_bare_return() {
+                break;
+            }
 
             // Binary operators. + and - are newline-sensitive: `-` is
             // ambiguous with unary negation starting the next statement
@@ -4413,8 +4477,11 @@ impl<'src> Parser<'src> {
             Token::Loop => self.parse_loop_expr(),
             Token::Return => {
                 self.advance();
-                // Return may or may not have a value
-                if self.nl_before() || self.at(&Token::RBrace) || self.at(&Token::Eof) {
+                // A `return` has a value when one follows on its line: not
+                // before a line break, a closer, a comma or the end
+                // (`[a, return]`, `f(return)`).
+                let closes = [Token::RBrace, Token::RParen, Token::RBracket, Token::Comma];
+                if self.nl_before() || self.at(&Token::Eof) || closes.iter().any(|t| self.at(t)) {
                     Ok(self.mk_expr(ExprKind::Return(None), span))
                 } else {
                     let val = self.parse_expr()?;
@@ -5587,11 +5654,13 @@ impl<'src> Parser<'src> {
                 }
             }
             _ => Err(self.foreign_syntax(Foreign::Pattern).unwrap_or_else(|| {
-                Diagnostic::error(
+                // (A match arm that ends in a bare `return`, then `|> f` on
+                // the next line: the line is read as the next arm.)
+                self.with_line_start_help(Diagnostic::error(
                     Code::ExpectedPattern,
                     self.found_span(),
                     format!("expected pattern, found {}", self.found()),
-                )
+                ))
             })),
         }
     }

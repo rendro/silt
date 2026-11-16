@@ -373,6 +373,35 @@ pub fn canonical_path(path: &Path) -> PathBuf {
 /// existing ancestor made canonical, with the rest of the path appended
 /// as given. Two spellings of one place (on Windows a short `RUNNER~1`
 /// name and its long form, a verbatim prefix or none) come out the same.
+/// A path or a file name as every line silt prints writes it (a status
+/// line, `error reading ...`, the place line ` --> ` of a diagnostic): by
+/// the display rule of untrusted text (`git::escape_for_display`), so a
+/// control character, an unusual space or an invisible or direction
+/// character is shown as an escape (`a\u{1b}cb.silt`). A name from the
+/// file system or a manifest cannot drive the terminal or forge a line.
+/// A JSON document keeps the real string.
+pub(crate) fn shown_path(path: impl AsRef<Path>) -> String {
+    crate::git::escape_for_display(&path.as_ref().to_string_lossy())
+}
+
+/// Whether `word`, a name or a path, can stand in a command line silt
+/// suggests (`mkdir NAME && cd NAME`, `silt test PATH`) and be pasted as
+/// it stands: only ASCII letters, digits, `_`, `-`, `.` and the path
+/// separator `/` (on Windows `\\` and `:` too), not empty, and not
+/// starting with `-` (it would read as a flag). A shell does nothing
+/// else with such a word. A suggestion with any other word is said in
+/// words, not as a command: one with a space, a `;` or a control
+/// character would do something else, and its escaped form would name
+/// another file.
+pub(crate) fn pasteable(word: &str) -> bool {
+    let allowed = |c: char| {
+        c.is_ascii_alphanumeric()
+            || matches!(c, '_' | '-' | '.' | '/')
+            || (cfg!(windows) && matches!(c, '\\' | ':'))
+    };
+    !word.is_empty() && !word.starts_with('-') && word.chars().all(allowed)
+}
+
 pub(crate) fn canonical_path_lenient(path: &Path) -> PathBuf {
     let absolute = if path.is_absolute() {
         path.to_path_buf()

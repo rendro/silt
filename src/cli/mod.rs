@@ -187,7 +187,10 @@ fn run_main(args: Vec<String>) {
             // A file is run by `silt run`, with what follows it.
             None if name.ends_with(".silt") => help::file_is_no_command(name, &args[1..]),
             None => {
-                eprintln!("error: silt: unknown command '{name}'");
+                eprintln!(
+                    "error: silt: unknown command '{}'",
+                    crate::git::escape_for_display(name)
+                );
                 if let Some(suggestion) = suggest_subcommand(name) {
                     eprintln!("  Did you mean '{suggestion}'?");
                 }

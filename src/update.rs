@@ -119,7 +119,10 @@ pub(crate) fn run_update(opts: UpdateOptions) -> Result<(), String> {
     replace_binary(&new_bin, &exe_path)?;
     let _ = fs::remove_dir_all(&tmpdir);
 
-    eprintln!("\n  silt updated to {latest} at {}", exe_path.display());
+    eprintln!(
+        "\n  silt updated to {latest} at {}",
+        crate::source::shown_path(&exe_path)
+    );
     Ok(())
 }
 
@@ -240,13 +243,14 @@ fn find_expected_hash<'a>(sums: &'a str, asset_name: &str) -> Option<&'a str> {
 
 /// Compute the SHA-256 of `path` as a lowercase hex string.
 fn sha256_hex(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let mut file = fs::File::open(path)
+        .map_err(|e| format!("open {}: {e}", crate::source::shown_path(path)))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     loop {
         let n = file
             .read(&mut buf)
-            .map_err(|e| format!("read {}: {e}", path.display()))?;
+            .map_err(|e| format!("read {}: {e}", crate::source::shown_path(path)))?;
         if n == 0 {
             break;
         }
@@ -491,10 +495,11 @@ fn replace_binary(new_bin: &Path, exe_path: &Path) -> Result<(), String> {
     // file. Subsequent invocations pick up the new binary.
     use std::os::unix::fs::PermissionsExt;
     let mut perms = fs::metadata(new_bin)
-        .map_err(|e| format!("stat {}: {e}", new_bin.display()))?
+        .map_err(|e| format!("stat {}: {e}", crate::source::shown_path(new_bin)))?
         .permissions();
     perms.set_mode(perms.mode() | 0o755);
-    fs::set_permissions(new_bin, perms).map_err(|e| format!("chmod {}: {e}", new_bin.display()))?;
+    fs::set_permissions(new_bin, perms)
+        .map_err(|e| format!("chmod {}: {e}", crate::source::shown_path(new_bin)))?;
 
     // Try atomic rename first (same filesystem), fall back to copy + rename.
     if fs::rename(new_bin, exe_path).is_ok() {
@@ -503,15 +508,21 @@ fn replace_binary(new_bin: &Path, exe_path: &Path) -> Result<(), String> {
     // Fallback: stage a sibling file next to exe_path then rename over.
     let parent = exe_path.parent().ok_or("exe has no parent directory")?;
     let staged = parent.join(format!(".silt.update.{}", std::process::id()));
-    fs::copy(new_bin, &staged).map_err(|e| format!("copy to {}: {e}", staged.display()))?;
+    fs::copy(new_bin, &staged)
+        .map_err(|e| format!("copy to {}: {e}", crate::source::shown_path(&staged)))?;
     let mut perms = fs::metadata(&staged)
-        .map_err(|e| format!("stat {}: {e}", staged.display()))?
+        .map_err(|e| format!("stat {}: {e}", crate::source::shown_path(&staged)))?
         .permissions();
     perms.set_mode(perms.mode() | 0o755);
-    fs::set_permissions(&staged, perms).map_err(|e| format!("chmod {}: {e}", staged.display()))?;
+    fs::set_permissions(&staged, perms)
+        .map_err(|e| format!("chmod {}: {e}", crate::source::shown_path(&staged)))?;
     fs::rename(&staged, exe_path).map_err(|e| {
         let _ = fs::remove_file(&staged);
-        format!("rename {} -> {}: {e}", staged.display(), exe_path.display())
+        format!(
+            "rename {} -> {}: {e}",
+            crate::source::shown_path(&staged),
+            crate::source::shown_path(exe_path)
+        )
     })?;
     Ok(())
 }
@@ -524,20 +535,25 @@ fn replace_binary(new_bin: &Path, exe_path: &Path) -> Result<(), String> {
     let parent = exe_path.parent().ok_or("exe has no parent directory")?;
     let old = parent.join("silt.old.exe");
     let _ = fs::remove_file(&old);
-    fs::rename(exe_path, &old)
-        .map_err(|e| format!("rename {} -> {}: {e}", exe_path.display(), old.display()))?;
+    fs::rename(exe_path, &old).map_err(|e| {
+        format!(
+            "rename {} -> {}: {e}",
+            crate::source::shown_path(exe_path),
+            crate::source::shown_path(&old)
+        )
+    })?;
     if let Err(e) = fs::rename(new_bin, exe_path) {
         // Roll back so the user still has a working binary.
         let _ = fs::rename(&old, exe_path);
         return Err(format!(
             "rename {} -> {}: {e}",
-            new_bin.display(),
-            exe_path.display()
+            crate::source::shown_path(new_bin),
+            crate::source::shown_path(exe_path)
         ));
     }
     eprintln!(
         "  Note: previous binary left at {} — remove on next invocation.",
-        old.display()
+        crate::source::shown_path(&old)
     );
     Ok(())
 }
@@ -549,7 +565,12 @@ fn mkdtemp() -> Result<PathBuf, String> {
         match fs::create_dir(&candidate) {
             Ok(()) => return Ok(candidate),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("mkdir {}: {e}", candidate.display())),
+            Err(e) => {
+                return Err(format!(
+                    "mkdir {}: {e}",
+                    crate::source::shown_path(&candidate)
+                ));
+            }
         }
     }
     Err("could not create temp directory".to_string())

@@ -68,7 +68,7 @@ pub(crate) fn verify(
         .map_err(|e| unparseable(&e.message, e.span, output))?;
     let after = decl_shapes(output, &output_lexed, &output_program);
     compare_programs(&before.decls, &after.decls)?;
-    compare_comments(&before, &after)?;
+    compare_comments(&before, &after, output)?;
     compare_tokens(&before.decls, &after.decls)
 }
 
@@ -407,7 +407,7 @@ fn compare_tokens(before: &[DeclShape], after: &[DeclShape]) -> Result<(), Refus
 /// the same order in the header, in each declaration, and behind the
 /// last one. Imports are sorted, so they are matched by what they
 /// import and what their comments say.
-fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
+fn compare_comments(before: &Shapes, after: &Shapes, output: &str) -> Result<(), Refusal> {
     // A comment that is nowhere in the result, or only in the result, is
     // named first: it is the plainest thing to say.
     let all = |shapes: &Shapes| -> Vec<Note> {
@@ -445,7 +445,11 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
                     Some(text) => format!(
                         "the result would hold the comment `{text}`, which the input does not hold"
                     ),
-                    None => "the result would hold a comment the input does not hold".to_string(),
+                    None => format!(
+                        "the result would hold a comment the input does not hold, at line {} of \
+                         the result",
+                        result_line(output, note.span)
+                    ),
                 },
                 span: None,
             });
@@ -460,7 +464,7 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
     if before.header.is_empty() && after.decls.first().is_some_and(|d| d.is_import) {
         (moved_up, after_header) = (after_header, &[]);
     }
-    same_comments("the top of the file", &before.header, after_header)?;
+    same_comments("the top of the file", &before.header, after_header, output)?;
     // The header stays directly above the first declaration, or apart
     // from it, as long as that declaration stays the first.
     if let (Some(first_before), Some(first_after)) = (before.decls.first(), after.decls.first())
@@ -476,7 +480,7 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
             span: before.header.first().map(|n| n.span),
         });
     }
-    same_comments("the end of the file", &before.tail, &after.tail)?;
+    same_comments("the end of the file", &before.tail, &after.tail, output)?;
     let rest = |shapes: &'_ Shapes| -> Vec<(String, Vec<Note>)> {
         shapes
             .decls
@@ -486,7 +490,7 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
             .collect()
     };
     for ((label, notes_before), (_, notes_after)) in rest(before).iter().zip(rest(after).iter()) {
-        same_comments(label, notes_before, notes_after)?;
+        same_comments(label, notes_before, notes_after, output)?;
     }
     // Imports: the same pairs of import and comments, in any order.
     let imports = |shapes: &Shapes| -> Vec<(String, String, Vec<Note>)> {
@@ -522,8 +526,26 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// The comments of one place, before and after.
-fn same_comments(place: &str, before: &[Note], after: &[Note]) -> Result<(), Refusal> {
+/// The line of the result, `output`, that `span` of it starts on: what a
+/// refusal names where it has no place in the input and cannot quote the
+/// text.
+fn result_line(output: &str, span: Span) -> usize {
+    let at = (span.start as usize).min(output.len());
+    output.as_bytes()[..at]
+        .iter()
+        .filter(|b| **b == b'\n')
+        .count()
+        + 1
+}
+
+/// The comments of one place, before and after (`output` is the result,
+/// whose line a refusal names).
+fn same_comments(
+    place: &str,
+    before: &[Note],
+    after: &[Note],
+    output: &str,
+) -> Result<(), Refusal> {
     let texts = |notes: &[Note]| -> Vec<String> { notes.iter().map(|n| n.text.clone()).collect() };
     if texts(before) == texts(after) {
         return Ok(());
@@ -545,7 +567,10 @@ fn same_comments(place: &str, before: &[Note], after: &[Note]) -> Result<(), Ref
         (None, Some(note)) => Refusal {
             message: match excerpt(&note.text) {
                 Some(text) => format!("the result would move the comment `{text}` to {place}"),
-                None => format!("the result would move a comment to {place}"),
+                None => format!(
+                    "the result would move a comment to {place}, at line {} of the result",
+                    result_line(output, note.span)
+                ),
             },
             span: None,
         },
@@ -1393,6 +1418,25 @@ mod tests {
         let message = refusal("fn main() {\n}\n", "fn main() {\n  \"a\t\" @\n}\n");
         assert!(message.ends_with("at line 2 of the result)"), "{message}");
         assert!(!message.contains(['\t', '\u{1b}', '\u{7}']), "{message}");
+    }
+
+    /// The two refusals that name a comment of the result only, with no
+    /// place in the input, say its line where they cannot quote it. FAIL
+    /// on the base: neither a quote nor a place.
+    #[test]
+    fn a_refusal_that_cannot_quote_a_comment_of_the_result_names_its_line() {
+        assert_eq!(
+            refusal("fn main() {\n  1\n}\n", "fn main() {\n  1 -- a\u{1b}c\n}\n"),
+            "the result would hold a comment the input does not hold, at line 2 of the result"
+        );
+        let source = "fn f() {\n  1\n}\n\nfn g() {\n  2 -- a\u{1b}c\n}\n";
+        let output = "fn f() {\n  1 -- a\u{1b}c\n}\n\nfn g() {\n  2\n}\n";
+        let message = refusal(source, output);
+        assert!(
+            message.starts_with("the result would move a comment "),
+            "{message}"
+        );
+        assert!(message.ends_with(", at line 2 of the result"), "{message}");
     }
 
     #[test]

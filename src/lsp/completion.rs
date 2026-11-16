@@ -4,8 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, Documentation, MarkupContent,
-    MarkupKind, Position, Uri,
+    CompletionItem, CompletionItemKind, CompletionResponse, Documentation, Position, Uri,
 };
 
 use crate::ast::*;
@@ -149,12 +148,10 @@ impl Server {
                 continue;
             }
             let detail = self.builtin_sigs.get(&label).cloned();
-            let documentation = self.builtin_docs.get(&label).map(|d| {
-                Documentation::MarkupContent(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: d.clone(),
-                })
-            });
+            let documentation = self
+                .builtin_docs
+                .get(&label)
+                .map(|d| Documentation::MarkupContent(super::conversions::markdown(d.clone())));
             items.push(CompletionItem {
                 label,
                 kind: Some(kind),
@@ -178,12 +175,10 @@ impl Server {
                     Some(signature) => Some(signature.text.clone()),
                     None => (def.ty.as_ref()).map(|t| format!("{}", self.written_here(doc, t))),
                 };
-                let documentation = def.doc.as_ref().map(|d| {
-                    Documentation::MarkupContent(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: d.clone(),
-                    })
-                });
+                let documentation = def
+                    .doc
+                    .as_ref()
+                    .map(|d| Documentation::MarkupContent(super::conversions::markdown(d.clone())));
                 items.push(CompletionItem {
                     label: name.to_string(),
                     kind: Some(kind),
@@ -258,12 +253,10 @@ impl Server {
             for func in module::builtin_module_functions(prefix) {
                 let qualified = format!("{prefix}.{func}");
                 let detail = self.builtin_sigs.get(&qualified).cloned();
-                let documentation = self.builtin_docs.get(&qualified).map(|d| {
-                    Documentation::MarkupContent(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: d.clone(),
-                    })
-                });
+                let documentation = self
+                    .builtin_docs
+                    .get(&qualified)
+                    .map(|d| Documentation::MarkupContent(super::conversions::markdown(d.clone())));
                 items.push(CompletionItem {
                     label: func.to_string(),
                     kind: Some(CompletionItemKind::FUNCTION),
@@ -275,12 +268,10 @@ impl Server {
             for constant in module::builtin_module_constants(prefix) {
                 let qualified = format!("{prefix}.{constant}");
                 let detail = self.builtin_sigs.get(&qualified).cloned();
-                let documentation = self.builtin_docs.get(&qualified).map(|d| {
-                    Documentation::MarkupContent(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: d.clone(),
-                    })
-                });
+                let documentation = self
+                    .builtin_docs
+                    .get(&qualified)
+                    .map(|d| Documentation::MarkupContent(super::conversions::markdown(d.clone())));
                 items.push(CompletionItem {
                     label: constant.to_string(),
                     kind: Some(CompletionItemKind::CONSTANT),
@@ -387,12 +378,9 @@ impl Server {
                 label: resolve(m.name),
                 kind: Some(CompletionItemKind::METHOD),
                 detail: Some(m.label),
-                documentation: m.doc.map(|d| {
-                    Documentation::MarkupContent(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: d,
-                    })
-                }),
+                documentation: m
+                    .doc
+                    .map(|d| Documentation::MarkupContent(super::conversions::markdown(d))),
                 ..CompletionItem::default()
             })
             .collect();
@@ -456,12 +444,9 @@ impl Server {
                 label: resolve(m.name),
                 kind: Some(CompletionItemKind::METHOD),
                 detail: Some(m.label),
-                documentation: m.doc.map(|d| {
-                    Documentation::MarkupContent(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: d,
-                    })
-                }),
+                documentation: m
+                    .doc
+                    .map(|d| Documentation::MarkupContent(super::conversions::markdown(d))),
                 ..CompletionItem::default()
             })
             .collect();
@@ -678,12 +663,9 @@ fn member_item(
             Some(s) => Some(signature(s)),
             None => d.ty.as_ref().map(|t| format!("{}", written(t))),
         }),
-        documentation: def.and_then(|d| d.doc.clone()).map(|d| {
-            Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: d,
-            })
-        }),
+        documentation: def
+            .and_then(|d| d.doc.clone())
+            .map(|d| Documentation::MarkupContent(super::conversions::markdown(d))),
         ..CompletionItem::default()
     }
 }

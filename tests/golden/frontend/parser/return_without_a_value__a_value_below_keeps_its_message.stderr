@@ -1,0 +1,9 @@
+error[parse]: expected ']' or ',' to continue list literal, found 2
+ --> return_without_a_value__a_value_below_keeps_its_message.silt:8:5
+   |
+ 8 |     2]
+   |     ^ expected ']' or ',' to continue list literal, found 2
+ ::: return_without_a_value__a_value_below_keeps_its_message.silt:7:12
+   |
+ 7 |   let xs = [1, return
+   |            - the list literal starts here

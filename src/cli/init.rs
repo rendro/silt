@@ -25,7 +25,10 @@ pub(crate) fn dispatch(args: &[String]) {
     // Reject unknown flags before proceeding.
     for arg in &args[2..] {
         if arg.starts_with('-') && arg != "--help" && arg != "-h" && arg != "--lib" {
-            eprintln!("error: silt init: unknown flag '{arg}'");
+            eprintln!(
+                "error: silt init: unknown flag '{}'",
+                crate::git::escape_for_display(arg)
+            );
             eprintln!("Run 'silt init --help' for usage.");
             process::exit(1);
         }
@@ -38,11 +41,19 @@ pub(crate) fn dispatch(args: &[String]) {
     for arg in &args[2..] {
         if !arg.starts_with('-') {
             eprintln!(
-                "error: silt init: unexpected argument '{arg}' (silt init takes no positional arguments; the package name is derived from the current directory)"
+                "error: silt init: unexpected argument '{}' (silt init takes no positional arguments; the package name is derived from the current directory)",
+                crate::git::escape_for_display(arg)
             );
-            eprintln!(
-                "                  to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
-            );
+            // (A command to paste only with a name it can hold as it
+            // stands: see `pasteable`.)
+            match crate::source::pasteable(arg) {
+                true => eprintln!(
+                    "                  to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
+                ),
+                false => eprintln!(
+                    "                  to create a package in a new directory, make the directory, go into it and run silt init there"
+                ),
+            }
             process::exit(1);
         }
     }
@@ -99,7 +110,7 @@ fn init_project(lib: bool) {
     if manifest_path.exists() {
         eprintln!(
             "error: silt init: silt.toml already exists at {}",
-            manifest_path.display()
+            crate::source::shown_path(&manifest_path)
         );
         process::exit(1);
     }
@@ -113,7 +124,7 @@ fn init_project(lib: bool) {
         if path.exists() {
             eprintln!(
                 "error: silt init: src/{name} already exists at {}",
-                path.display()
+                crate::source::shown_path(path)
             );
             process::exit(1);
         }
@@ -125,7 +136,7 @@ fn init_project(lib: bool) {
         None => {
             eprintln!(
                 "error: silt init: cannot derive a package name from the current directory `{}`",
-                cwd.display()
+                crate::source::shown_path(&cwd)
             );
             eprintln!(
                 "                  the directory needs a name that contains at least one lowercase letter,"
@@ -174,7 +185,7 @@ fn init_project(lib: bool) {
     if let Err(e) = fs::create_dir_all(entry_path.parent().unwrap()) {
         eprintln!(
             "error: silt init: failed to create directory {}: {e}",
-            entry_path.parent().unwrap().display()
+            crate::source::shown_path(entry_path.parent().unwrap())
         );
         process::exit(1);
     }
@@ -187,7 +198,7 @@ fn init_project(lib: bool) {
     ];
     for (i, (path, contents)) in written.iter().enumerate() {
         if let Err(e) = fs::write(path, contents) {
-            eprintln!("error writing {}: {e}", path.display());
+            eprintln!("error writing {}: {e}", crate::source::shown_path(path));
             for (earlier, _) in &written[..i] {
                 let _ = fs::remove_file(earlier);
             }
@@ -196,9 +207,9 @@ fn init_project(lib: bool) {
     }
 
     println!("created silt package `{package_name}`:");
-    println!("  {}", manifest_path.display());
-    println!("  {}", entry_path.display());
-    println!("  {}", test_path.display());
+    println!("  {}", crate::source::shown_path(&manifest_path));
+    println!("  {}", crate::source::shown_path(&entry_path));
+    println!("  {}", crate::source::shown_path(&test_path));
     println!();
     match lib {
         true => println!("  check: silt check"),

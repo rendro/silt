@@ -84,7 +84,11 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("error: silt test: unknown flag '{}'{}", args[i], suggestion);
+            eprintln!(
+                "error: silt test: unknown flag '{}'{}",
+                crate::git::escape_for_display(&args[i]),
+                suggestion
+            );
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
         } else if file.is_none() {
@@ -98,7 +102,10 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
             // `b_test.silt` and reported green while `a_test.silt` never
             // ran — a CI hazard (a skipped test reads as passing).
             // Mirror the rejection pattern in `silt check`/`silt run`.
-            eprintln!("error: silt test: unexpected extra argument '{}'", args[i]);
+            eprintln!(
+                "error: silt test: unexpected extra argument '{}'",
+                crate::git::escape_for_display(&args[i])
+            );
             eprintln!("silt test takes at most one path (a file or a directory to scan).");
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
@@ -119,6 +126,7 @@ fn report_diagnostics(
     (diagnostics, new): (&[Diagnostic], &[Diagnostic]),
     compiled: bool,
 ) -> bool {
+    let path = crate::source::shown_path(path);
     // (Rendering a diagnostic runs no code of a program.)
     crate::scheduler::report(|| {
         crate::diagnostic::eprint_all(&ProgramFiles::new(shown, sources), new)
@@ -180,7 +188,8 @@ fn check_package_first(dir: &Path) {
         .collect();
     for (path, e) in &checked.unreadable {
         eprintln!(
-            "error reading {path}: {}",
+            "error reading {}: {}",
+            crate::source::shown_path(path),
             crate::diagnostic::io_error_text(e)
         );
     }
@@ -255,6 +264,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     let mut shown_before: HashSet<String> = HashSet::new();
 
     for path in &paths {
+        // (Its result lines write the path by the display rule.)
+        let written = crate::source::shown_path(path);
         // A file found in the working directory is named `./a_test.silt`
         // on its result lines; its diagnostics name it as every other
         // file of the program is named there, `a_test.silt`.
@@ -271,7 +282,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 // `--filter` does not rule it out: the error is reported.
                 files_considered += 1;
                 say(&format!(
-                    "{path}: failed to read — {}\n",
+                    "{written}: failed to read — {}\n",
                     crate::diagnostic::io_error_text(&e)
                 ));
                 counts.file_errors.unreadable += 1;
@@ -360,7 +371,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // the summary counts ("the top-level code of 1 file
             // failed").
             say(&format!(
-                "{path}: the file's top-level code failed:\n{}\n",
+                "{written}: the file's top-level code failed:\n{}\n",
                 render_runtime_error(&e, shown, &owners.files[file_index].sources)
             ));
             counts.file_errors.setup += 1;
@@ -379,7 +390,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             let name = &test.name;
             total += 1;
             if test.kind == TestKind::Skip {
-                say(&format!("  SKIP {path}::{name}\n"));
+                say(&format!("  SKIP {written}::{name}\n"));
                 skipped += 1;
                 continue;
             }
@@ -408,19 +419,19 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             let test_failed = match outcome {
                 // The test ran to its end.
                 Ok(()) if task_failures.is_empty() => {
-                    said += &format!("  PASS {path}::{name}\n");
+                    said += &format!("  PASS {written}::{name}\n");
                     false
                 }
                 // The test ran to its end, but a task it spawned failed
                 // and was neither joined nor cancelled.
                 Ok(()) => {
-                    said += &format!("  FAIL {path}::{name}\n");
+                    said += &format!("  FAIL {written}::{name}\n");
                     true
                 }
                 // Raised, or returned as `Err` (typically at a `?`; the
                 // assertions after it never ran), at the test's name.
                 Err(e) => {
-                    said += &format!("  FAIL {path}::{name}\n");
+                    said += &format!("  FAIL {written}::{name}\n");
                     // The location is in the file the error's span
                     // names, mirroring `silt run`; the test file itself
                     // is named as typed.
@@ -665,7 +676,7 @@ impl TaskOwners {
         if reports.is_empty() {
             return;
         }
-        let path = self.files[owner.file].path.as_str();
+        let path = crate::source::shown_path(&self.files[owner.file].path);
         let mut said =
             format!("  FAIL {path} (a task spawned by the file's top-level code failed)\n");
         counts.file_errors.tasks += 1;
