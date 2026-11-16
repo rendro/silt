@@ -33,7 +33,7 @@ mod solve;
 mod structural;
 mod tables;
 pub(crate) mod typeexpr;
-pub(crate) use show::ModuleWritten;
+pub(crate) use show::{ModuleWritten, written_builtin_member};
 #[cfg(feature = "lsp")]
 pub(crate) use typeexpr::type_expr_text;
 mod unify;
@@ -2144,11 +2144,80 @@ pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_o
 #[derive(Debug, Clone)]
 #[cfg_attr(not(any(feature = "lsp", feature = "test-hooks")), allow(dead_code))]
 pub struct Signature {
-    /// `fn twice(xs: m(Int)) -> m(Int) where m: Functor`.
+    /// `fn twice(xs: m(Int)) -> m(Int) where m: Functor`, as the module
+    /// that declares the function writes it.
     pub text: String,
     /// The function's type, its variables by those names
     /// (`Fn(m(Int)) -> m(Int)`).
     pub ty: Type,
+    /// The parts `Signature::written` writes the text from as another
+    /// module writes its types and traits.
+    pub parts: Box<SignatureParts>,
+}
+
+/// The parts of a [`Signature`]: the function's name, its parameters'
+/// names (with whether each is a `type` parameter) and its bounds, each
+/// variable's traits with their arguments.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(any(feature = "lsp", feature = "test-hooks")), allow(dead_code))]
+pub struct SignatureParts {
+    pub name: Symbol,
+    pub params: Vec<(String, bool)>,
+    pub bounds: Vec<(String, Vec<(TraitKey, Vec<Type>)>)>,
+}
+
+#[cfg(feature = "lsp")]
+impl Signature {
+    /// The text as a module writes it: each type by `ty`, each trait by
+    /// `tr` (the editor's names: `Session::written_type_name`,
+    /// `Session::written_trait_name`).
+    pub(crate) fn written(
+        &self,
+        ty: &dyn Fn(&Type) -> String,
+        tr: &dyn Fn(TraitKey) -> String,
+    ) -> String {
+        let Type::Fun(param_types, ret) = &self.ty else {
+            return self.text.clone();
+        };
+        let params: Vec<String> = (self.parts.params.iter().zip(param_types))
+            .map(|((name, is_type), t)| match is_type {
+                true => format!("type {name}"),
+                false => format!("{name}: {}", ty(t)),
+            })
+            .collect();
+        let mut text = format!("fn {}({})", self.parts.name, params.join(", "));
+        if !matches!(**ret, Type::Unit) {
+            text.push_str(&format!(" -> {}", ty(ret)));
+        }
+        if let Some(bounds) = self.written_bounds(ty, tr) {
+            text.push_str(&format!(" where {bounds}"));
+        }
+        text
+    }
+
+    /// The bounds as a module writes them (`a: d.Area + Display`), or None
+    /// where there are none.
+    pub(crate) fn written_bounds(
+        &self,
+        ty: &dyn Fn(&Type) -> String,
+        tr: &dyn Fn(TraitKey) -> String,
+    ) -> Option<String> {
+        let bounds: Vec<String> = (self.parts.bounds.iter())
+            .map(|(subject, traits)| {
+                let traits: Vec<String> = (traits.iter())
+                    .map(|(t, args)| match args.is_empty() {
+                        true => tr(*t),
+                        false => {
+                            let args: Vec<String> = args.iter().map(ty).collect();
+                            format!("{}({})", tr(*t), args.join(", "))
+                        }
+                    })
+                    .collect();
+                format!("{subject}: {}", traits.join(" + "))
+            })
+            .collect();
+        (!bounds.is_empty()).then(|| bounds.join(", "))
+    }
 }
 
 /// What checking one module gives.
@@ -2174,6 +2243,9 @@ pub(crate) struct ModuleCheck {
     /// names one of its types (`ModuleWritten`): for the editor, which
     /// writes types as the messages do. Empty unless `for_editor`.
     pub(crate) modules_written: HashMap<crate::defs::ModuleId, ModuleWritten>,
+    /// The names the module binds the builtin modules it imports to
+    /// (`TypeChecker::builtin_bindings`), for the session's helps.
+    pub(crate) builtin_bindings: HashMap<crate::defs::ModuleId, Symbol>,
 }
 
 impl TypeChecker {
@@ -2557,6 +2629,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     }
     // (Only for an editor: the commands read none of it, and on a long
     // chain of imports it costs as much as the check.)
+    let builtin_bindings = checker.builtin_bindings();
     let modules_written = match for_editor {
         true => checker.modules_written(),
         false => HashMap::new(),
@@ -2585,6 +2658,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
         let_order: checker.let_order,
         entry_display,
         modules_written,
+        builtin_bindings,
     }
 }
 

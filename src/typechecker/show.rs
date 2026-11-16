@@ -54,16 +54,19 @@ impl TypeChecker {
             mapping.insert(v, Type::Rigid(id));
         }
         let named = |t: &Type| self.show_type(&substitute_vars(t, &mapping));
-        let written_params: Vec<String> = (f.params.iter().zip(params))
-            .map(|(param, ty)| {
+        let param_names: Vec<(String, bool)> = (f.params.iter())
+            .map(|param| {
                 let name = match &param.pattern.kind {
                     PatternKind::Ident(n) => resolve(*n),
                     _ => "_".to_string(),
                 };
-                match param.kind {
-                    ParamKind::Type => format!("type {name}"),
-                    ParamKind::Data => format!("{name}: {}", named(ty)),
-                }
+                (name, matches!(param.kind, ParamKind::Type))
+            })
+            .collect();
+        let written_params: Vec<String> = (param_names.iter().zip(params))
+            .map(|((name, is_type), ty)| match is_type {
+                true => format!("type {name}"),
+                false => format!("{name}: {}", named(ty)),
             })
             .collect();
         let mut text = format!("fn {}({})", f.name, written_params.join(", "));
@@ -73,6 +76,7 @@ impl TypeChecker {
         // Each variable's bounds, by the variable's name, as `where`
         // writes them.
         let mut bounds: Vec<(String, Vec<String>)> = Vec::new();
+        let mut parts: Vec<(String, Vec<(TraitKey, Vec<Type>)>)> = Vec::new();
         for pred in &scheme.preds {
             let Pred::Trait {
                 tr, args, subject, ..
@@ -88,10 +92,19 @@ impl TypeChecker {
                 .collect();
             let bound = self.show_bound(*tr, &args);
             let subject = resolve(subject.name);
+            let args: Vec<Type> = args.iter().map(|arg| self.apply(arg)).collect();
             match bounds.iter_mut().find(|(s, _)| *s == subject) {
                 Some((_, traits)) if traits.contains(&bound) => {}
-                Some((_, traits)) => traits.push(bound),
-                None => bounds.push((subject, vec![bound])),
+                Some((_, traits)) => {
+                    traits.push(bound);
+                    if let Some((_, written)) = parts.iter_mut().find(|(s, _)| *s == subject) {
+                        written.push((*tr, args));
+                    }
+                }
+                None => {
+                    bounds.push((subject.clone(), vec![bound]));
+                    parts.push((subject, vec![(*tr, args)]));
+                }
             }
         }
         if !bounds.is_empty() {
@@ -103,6 +116,11 @@ impl TypeChecker {
         Some(Signature {
             text,
             ty: substitute_vars(&ty, &mapping),
+            parts: Box::new(SignatureParts {
+                name: f.name,
+                params: param_names,
+                bounds: parts,
+            }),
         })
     }
 
@@ -230,6 +248,15 @@ impl TypeChecker {
         if module == self.module {
             return name.to_string();
         }
+        if let Some(builtin) = module.builtin_name() {
+            let by_item = self.imported_by_item(module, name).is_some();
+            return written_builtin_member(
+                builtin,
+                name,
+                by_item,
+                self.module_spelled.get(&module).copied(),
+            );
+        }
         if let Some(spelled) = self.spelling_in_reach(module, name) {
             return spelled;
         }
@@ -279,63 +306,6 @@ impl TypeChecker {
             (self.written_member(id, name) == written).then(|| format!("{module}.{name}"))
         });
         found.or_else(|| Some(written.to_string()))
-    }
-
-    /// `d`, a refusal of the builtin `qualified`, with the builtin and the
-    /// builtin types its "decodable field types" help line names written
-    /// as this file writes them (`t.parse_map`, `Date` after `import
-    /// time.{ Date }`).
-    pub(super) fn builtin_named_as_written(
-        &self,
-        mut d: Diagnostic,
-        qualified: &str,
-    ) -> Diagnostic {
-        let shown = self.written_builtin(qualified);
-        // A type or trait of a builtin module, `time.Date`, `json.Decode`:
-        // as the file writes it; None for any other text.
-        let builtin_type = |text: &str| -> Option<String> {
-            let (module, name) = text.split_once('.')?;
-            let id = crate::defs::ModuleId::builtin(module)?;
-            (name.starts_with(char::is_uppercase) && name.chars().all(char::is_alphanumeric))
-                .then(|| self.written_member(id, name))
-        };
-        // The items of a list of types: of a "field types are" help line,
-        // of a "type argument must be" message.
-        let listed = |line: &str| -> String {
-            let marker = [" field types are ", " must be "]
-                .into_iter()
-                .find(|marker| line.contains(marker));
-            let Some((head, list)) = marker.and_then(|marker| line.split_once(marker)) else {
-                return line.to_string();
-            };
-            let list: Vec<String> = (list.split(", "))
-                .map(|item| builtin_type(item).unwrap_or_else(|| item.to_string()))
-                .collect();
-            format!("{head}{}{}", marker.unwrap_or_default(), list.join(", "))
-        };
-        // Each name in backticks.
-        let quoted = |text: &str| -> String {
-            let mut parts = text.split('`');
-            let mut out = parts.next().unwrap_or_default().to_string();
-            for (i, part) in parts.enumerate() {
-                out.push('`');
-                match builtin_type(part) {
-                    Some(written) if i % 2 == 0 => out.push_str(&written),
-                    _ => out.push_str(part),
-                }
-            }
-            out
-        };
-        let word = |text: &str| {
-            quoted(&listed(
-                &text.replace(&format!("`{qualified}`"), &format!("`{shown}`")),
-            ))
-        };
-        d.message = word(&d.message);
-        for line in d.help.iter_mut().chain(d.notes.iter_mut()) {
-            *line = word(line);
-        }
-        d
     }
 
     /// [`TypeChecker::module_name_here`] of the builtin module `module`
@@ -482,14 +452,36 @@ impl TypeChecker {
         module: crate::defs::ModuleId,
         name: &str,
     ) -> Option<String> {
-        let by_name = (self.spelled.iter()).find(|(id, _)| {
-            self.def(**id)
-                .is_some_and(|def| def.module == module && resolve(def.name) == name)
-        });
-        if let Some((_, binding)) = by_name {
+        if let Some(binding) = self.imported_by_item(module, name) {
             return Some(binding.to_string());
         }
         (self.module_spelled.get(&module)).map(|binding| format!("{binding}.{name}"))
+    }
+
+    /// The name the file binds the name `name` of the module `module` to,
+    /// where it imports it by item (`import m.{ name }`).
+    pub(super) fn imported_by_item(
+        &self,
+        module: crate::defs::ModuleId,
+        name: &str,
+    ) -> Option<Symbol> {
+        (self.spelled.iter())
+            .find(|(id, _)| {
+                self.def(**id)
+                    .is_some_and(|def| def.module == module && resolve(def.name) == name)
+            })
+            .map(|(_, binding)| *binding)
+    }
+
+    /// The names the module binds the builtin modules it imports to
+    /// (`j` for `import json as j`; a module imported twice by its first
+    /// import's name): what the session's own helps write a builtin's name
+    /// with (`Session::written_builtin`).
+    pub(super) fn builtin_bindings(&self) -> HashMap<crate::defs::ModuleId, Symbol> {
+        (self.module_spelled.iter())
+            .filter(|(module, _)| module.builtin_name().is_some())
+            .map(|(module, binding)| (*module, *binding))
+            .collect()
     }
 
     /// The path an import of `module` would write here, for a help that
@@ -695,7 +687,7 @@ impl TypeChecker {
     /// `result.flat_map` / `option.flat_map`. A `String` where a
     /// `regex.Regex` is expected (a pattern given as text) is told to
     /// compile it.
-    pub(super) fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
+    pub(super) fn chain_hint(&self, got: &Type, expected: &Type) -> Option<std::string::String> {
         let is_wrapper = |t: &Type, name: &str| -> bool { t.is_builtin(name) };
         // (A type constructor, `Option(_)`, holds no value to chain.)
         if matches!(got, Type::Con(..)) {
@@ -703,29 +695,30 @@ impl TypeChecker {
         }
         // (A pattern written where a compiled one is taken.)
         if matches!(got, Type::String) && expected.is_builtin("Regex") {
-            return Some(
-                "a regex function takes a compiled pattern: make one with `regex.compile(pattern)`, once, and pass it on"
-                    .to_string(),
-            );
+            return Some(format!(
+                "a regex function takes a compiled pattern: make one with `{}(pattern)`, once, \
+                 and pass it on",
+                self.written_builtin("regex.compile")
+            ));
         }
         if is_wrapper(expected, "Result") || is_wrapper(expected, "Option") {
             return None;
         }
         if is_wrapper(got, "Result") {
-            return Some(
+            return Some(format!(
                 "to chain through a `Result`, use `?` to propagate the \
-                 error, or `|> result.flat_map { x -> ... }` to continue the \
-                 pipeline on the Ok value"
-                    .to_string(),
-            );
+                 error, or `|> {} {{ x -> ... }}` to continue the \
+                 pipeline on the Ok value",
+                self.written_builtin("result.flat_map")
+            ));
         }
         if is_wrapper(got, "Option") {
-            return Some(
+            return Some(format!(
                 "to chain through an `Option`, use `?` to propagate \
-                 `None`, or `|> option.flat_map { x -> ... }` to continue the \
-                 pipeline on the Some value"
-                    .to_string(),
-            );
+                 `None`, or `|> {} {{ x -> ... }}` to continue the \
+                 pipeline on the Some value",
+                self.written_builtin("option.flat_map")
+            ));
         }
         None
     }
@@ -849,6 +842,24 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
             ts.iter().for_each(|t| collect_app_heads(t, f))
         }
         _ => {}
+    }
+}
+
+/// The name `name` of the builtin module `module` as a file writes it: bare
+/// where the file imports it by item, with the file's name for the module
+/// where it binds one (`binding`: `j` for `import json as j`), else with
+/// the module's own name. The rule of [`TypeChecker::written_member`] for a
+/// builtin module, which the session's helps use too.
+pub(crate) fn written_builtin_member(
+    module: &str,
+    name: &str,
+    by_item: bool,
+    binding: Option<Symbol>,
+) -> String {
+    match (by_item, binding) {
+        (true, _) => name.to_string(),
+        (false, Some(binding)) => format!("{binding}.{name}"),
+        (false, None) => format!("{module}.{name}"),
     }
 }
 

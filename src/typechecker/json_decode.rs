@@ -126,16 +126,17 @@ impl TypeChecker {
         let only = match reason.is_empty() {
             true => Some(match self.only_decode_impl(head) {
                 Some(only) => format!("the only impl is for `{}`", self.show_type(&only)),
-                None => "it has no `json.Decode` impl".to_string(),
+                None => format!("it has no `{}` impl", self.written_builtin("json.Decode")),
             }),
             false => None,
         };
         let reason = only.as_deref().unwrap_or(reason);
         let shown = self.show_type(&ty);
         let message = format!(
-            "trait `{}` cannot be implemented for `{shown}`: it has `json.Decode` as a \
+            "trait `{}` cannot be implemented for `{shown}`: it has `{}` as a \
              supertrait, and `{shown}` cannot be decoded: {reason}",
-            self.show_trait(tr)
+            self.show_trait(tr),
+            self.written_builtin("json.Decode")
         );
         // (The decoder's help is for a call, not for an impl.)
         Some(Diagnostic::error(Code::InvalidTraitImpl, span, message))
@@ -553,6 +554,7 @@ impl TypeChecker {
         let refused = self.opaque_module_in(ty);
         let (links, encoder) = self.encoded_through(asked, refused)?;
         let (passer, links) = self.through_let(Some(passer), passer, links);
+        let encoder = intern(&self.written_builtin(&resolve(encoder)));
         Some(super::builtin_checks::passes_note(passer, &links, encoder))
     }
 
@@ -1213,6 +1215,7 @@ impl TypeChecker {
             self.refused_calls.push(gap.origin.span);
             if !self.lacking.insert((
                 gap.origin.span,
+                // (A key of `lacking`, never shown. own name)
                 format!("json.Decode {}", self.show_type(reported)),
             )) {
                 continue;
@@ -1226,15 +1229,17 @@ impl TypeChecker {
                     links.splice(0..0, before.iter().copied());
                 }
                 let (passer, links) = self.through_let(gap.origin.callee, passer, links);
-                diagnostic = (diagnostic)
-                    .with_note(super::builtin_checks::passes_note(passer, &links, decoder));
+                diagnostic = (diagnostic).with_note(super::builtin_checks::passes_note(
+                    passer,
+                    &links,
+                    intern(&self.written_builtin(&resolve(decoder))),
+                ));
             }
             // (One error at one place: the trait the call names refused
             // the type there first, `Dec` of `twice(Box { v: true }, s)`.)
             if (self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error()) {
                 continue;
             }
-            let diagnostic = self.builtin_named_as_written(diagnostic, &resolve(named));
             self.errors.push(diagnostic);
         }
     }
@@ -1269,7 +1274,8 @@ impl TypeChecker {
             // A type no type argument names (a function): what a
             // decoder's type argument may be.
             other => {
-                let accepted = Decoding::JSON.type_arguments(str::to_string);
+                let accepted =
+                    Decoding::JSON.type_arguments(str::to_string, |n| self.written_builtin(n));
                 Some(
                     Diagnostic::error(
                         Code::Undecodable,
@@ -1471,7 +1477,8 @@ impl TypeChecker {
                 continue;
             }
             let message = format!(
-                "cannot infer the type this use of '{callee}' needs to implement trait 'json.Decode'"
+                "cannot infer the type this use of '{callee}' needs to implement trait '{}'",
+                self.written_builtin("json.Decode")
             );
             self.errors.push(
                 Diagnostic::error(Code::AmbiguousType, span, message)

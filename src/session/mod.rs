@@ -293,6 +293,62 @@ impl Session {
         }
     }
 
+    /// How the module `here` writes the trait `t` in the editor (a bound of
+    /// a signature): as the checker's messages write it, bare where the
+    /// file imports it by item or declares it, by the file's name for its
+    /// module (`d.Area` under `import da as d`, `j.Encode`), described where
+    /// no import here can reach it; a prelude trait bare.
+    #[cfg(any(feature = "lsp", feature = "repl"))]
+    pub(crate) fn written_trait_name(&self, here: ModuleId, t: crate::types::TraitKey) -> String {
+        let Some(analysis) = self.analyses.get(&here) else {
+            return t.name.to_string();
+        };
+        if matches!(analysis.scope.types.get(&t.name), Some(names::Binding::Def(id)) if *id == t.id.0)
+        {
+            return t.name.to_string();
+        }
+        if let Some((name, module)) = crate::defs::builtin_trait_of_id(t.id.0) {
+            return match module {
+                Some(module) => self.written_builtin(here, &format!("{module}.{name}")),
+                None => name.to_string(),
+            };
+        }
+        let module = self.defs.get(t.id.0).module;
+        match analysis.modules_written.get(&module) {
+            Some(written) => written
+                .type_name(t.name)
+                .replace(crate::types::AFTER_ARGUMENTS, ""),
+            None => t.name.to_string(),
+        }
+    }
+
+    /// The builtin `qualified` (`option.to_result`) as the module `here`
+    /// writes it, for a help the session writes: the checker's rule
+    /// (`typechecker::written_builtin_member`), from the module's scope
+    /// (an item it imports) and the names it binds builtin modules to.
+    pub(crate) fn written_builtin(&self, here: ModuleId, qualified: &str) -> String {
+        let Some((module, name)) = qualified.split_once('.') else {
+            return qualified.to_string();
+        };
+        let (Some(id), Some(analysis)) = (ModuleId::builtin(module), self.analyses.get(&here))
+        else {
+            return qualified.to_string();
+        };
+        let by_item = |binding: Option<&names::Binding>| {
+            matches!(binding, Some(names::Binding::Def(def))
+                if self.defs.get(*def).module == id && resolve(self.defs.get(*def).name) == name)
+        };
+        let symbol = intern(name);
+        let item = by_item(analysis.scope.values.get(&symbol))
+            || by_item(analysis.scope.types.get(&symbol));
+        crate::typechecker::written_builtin_member(
+            module,
+            name,
+            item,
+            analysis.builtin_bindings.get(&id).copied(),
+        )
+    }
+
     /// `diagnostic` as `silt check` prints it, its places read from the
     /// session's files: the header, the place with its source line and a
     /// caret, the other places, the notes and the help.
@@ -790,6 +846,7 @@ impl Session {
             diagnostics,
             entry_display: check.entry_display,
             modules_written: check.modules_written,
+            builtin_bindings: check.builtin_bindings,
         }
     }
 
@@ -951,7 +1008,9 @@ impl Session {
                             .expect("an analysed module has a file"),
                         self.entry_paths.get(&id).map_or("", String::as_str),
                     )),
-                    Some(ty) => entry::check_main(&analysis.ast, ty),
+                    Some(ty) => {
+                        entry::check_main(&analysis.ast, ty, &|n| self.written_builtin(id, n))
+                    }
                 });
                 entry_errors.extend(analysis.entry_display.get(&main).cloned());
                 EntryPoint::Main {
@@ -962,7 +1021,9 @@ impl Session {
                 // A file checked or run for its tests that binds `main`
                 // must have a `main` that can start.
                 if let Some(ty) = analysis.top_level.get(&main) {
-                    entry_errors.extend(entry::check_main(&analysis.ast, ty));
+                    entry_errors.extend(entry::check_main(&analysis.ast, ty, &|n| {
+                        self.written_builtin(id, n)
+                    }));
                     entry_errors.extend(analysis.entry_display.get(&main).cloned());
                 }
                 // (A module checked on its own has tests only when it is
@@ -974,7 +1035,9 @@ impl Session {
                 let mut tests = Vec::new();
                 if let Some(filter) = filter {
                     let (selected, errors) =
-                        entry::select_tests(&analysis.ast, &analysis.top_level, filter);
+                        entry::select_tests(&analysis.ast, &analysis.top_level, filter, &|n| {
+                            self.written_builtin(id, n)
+                        });
                     tests = selected;
                     entry_errors.extend(errors);
                     // (A test whose error type has no Display: also one

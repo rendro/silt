@@ -610,7 +610,7 @@ impl TypeChecker {
         Fault {
             code: Code::TypeMismatch,
             message,
-            help: Self::chain_hint(got, expected),
+            help: self.chain_hint(got, expected),
             apart: Some((got.clone(), expected.clone())),
             note: None,
         }

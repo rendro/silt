@@ -144,14 +144,42 @@ impl Server {
         })
     }
 
+    /// The trait `t` as the open document `doc` writes it, as the
+    /// checker's messages write it (`Session::written_trait_name`).
+    pub(super) fn written_trait_here(&self, doc: &Document, t: crate::types::TraitKey) -> String {
+        let found = doc
+            .module
+            .as_ref()
+            .and_then(|module| Some((&self.projects.get(&module.project)?.session, module.id)));
+        match found {
+            Some((session, here)) => session.written_trait_name(here, t),
+            None => t.name.to_string(),
+        }
+    }
+
+    /// The text of the signature `s` as the open document `doc` writes it:
+    /// its types by [`Server::written_here`], its bounds' traits by
+    /// [`Server::written_trait_here`].
+    pub(super) fn written_signature(
+        &self,
+        doc: &Document,
+        s: &crate::typechecker::Signature,
+    ) -> String {
+        s.written(&|t| format!("{}", self.written_here(doc, t)), &|t| {
+            self.written_trait_here(doc, t)
+        })
+    }
+
     /// The definition `def` with its types as [`Server::written_here`]
-    /// writes them in `doc`.
+    /// writes them in `doc`, and its signature's text with them and its
+    /// bounds' traits as `doc` writes them.
     pub(super) fn written_def(&self, doc: &Document, def: &DefInfo) -> DefInfo {
         DefInfo {
             ty: def.ty.as_ref().map(|ty| self.written_here(doc, ty)),
             signature: (def.signature.as_ref()).map(|s| crate::typechecker::Signature {
-                text: s.text.clone(),
+                text: self.written_signature(doc, s),
                 ty: self.written_here(doc, &s.ty),
+                parts: s.parts.clone(),
             }),
             params: def.params.clone(),
             fields: def.fields.clone(),

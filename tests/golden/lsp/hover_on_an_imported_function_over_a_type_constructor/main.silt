@@ -1,9 +1,10 @@
 -- cmd: lsp
--- lsp: hover 10:16
--- lsp: hover 11:13
--- lsp: hover 12:12
+-- lsp: hover 11:16
+-- lsp: hover 12:13
+-- lsp: hover 13:12
 -- The signature of a function over type constructors of another module,
--- named through its module or imported as an item, as at its declaration.
+-- named through its module or imported as an item: its bound's trait as
+-- this file writes it, `fx.Mapping` (card NAM-1).
 import fx
 import fx.{ double_all }
 fn main() {

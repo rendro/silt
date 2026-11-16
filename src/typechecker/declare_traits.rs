@@ -1970,9 +1970,10 @@ impl TypeChecker {
                      for its first type argument"
                 );
                 let help = match builtin_type_name(written) {
-                    Some("Result") => {
-                        Some("to change the error of a Result, use `result.map_err`".to_string())
-                    }
+                    Some("Result") => Some(format!(
+                        "to change the error of a Result, use `{}`",
+                        self.written_builtin("result.map_err")
+                    )),
                     Some(_) => None,
                     None => Some(format!(
                         "to map another argument of '{head}', declare it first in '{head}'"
@@ -2223,13 +2224,14 @@ impl TypeChecker {
                 .map(|param| format!("`{param}`"))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let decode = self.written_builtin("json.Decode");
             let bounds = (undecoded.iter())
-                .map(|param| format!("{param}: json.Decode"))
+                .map(|param| format!("{param}: {decode}"))
                 .collect::<Vec<_>>()
                 .join(", ");
             let message = format!(
-                "trait `{trait_name}` for `{header}` needs `json.Decode` of each type parameter, \
-                 as `{trait_name}` has `json.Decode` as a supertrait: {missing} {} not bounded by it",
+                "trait `{trait_name}` for `{header}` needs `{decode}` of each type parameter, \
+                 as `{trait_name}` has `{decode}` as a supertrait: {missing} {} not bounded by it",
                 if undecoded.len() == 1 { "is" } else { "are" }
             );
             let help = match ti.where_clauses.is_empty() {
@@ -2627,24 +2629,32 @@ impl TypeChecker {
             && !trait_name.is_builtin("Number")
         {
             let shown = self.show_trait(impl_trait);
+            let [encode_trait, decode_trait] =
+                ["json.Encode", "json.Decode"].map(|name| self.written_builtin(name));
             let message = format!(
                 "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \
-                 'json.Encode', 'json.Decode' or 'Number' of its type's variables: \
+                 '{encode_trait}', '{decode_trait}' or 'Number' of its type's variables: \
                  the runtime runs it with nothing else"
             );
             // (Each help points at what the impl can do instead.)
             let help = [
                 (
                     "Display",
-                    "show the part with `{x}` and bound it by Display",
+                    "show the part with `{x}` and bound it by Display".to_string(),
                 ),
                 (
                     "Encode",
-                    "encode the part with `json.encode(x)` and bound it by json.Encode",
+                    format!(
+                        "encode the part with `{}(x)` and bound it by {encode_trait}",
+                        self.written_builtin("json.encode")
+                    ),
                 ),
                 (
                     "Decode",
-                    "decode the part with `json.decode` and bound it by json.Decode",
+                    format!(
+                        "decode the part with `{}` and bound it by {decode_trait}",
+                        self.written_builtin("json.decode")
+                    ),
                 ),
             ]
             .iter()

@@ -236,7 +236,7 @@ impl Server {
             _ => None,
         });
         let signature = (def_entry.or(declared))
-            .and_then(|def| def.signature.as_ref().map(|s| s.text.clone()))
+            .and_then(|def| (def.signature.as_ref()).map(|s| self.written_signature(doc, s)))
             .filter(|_| ty.as_ref().is_none_or(has_unresolved_vars));
         // If neither a type nor a doc is available, no hover.
         if ty.is_none() && doc_text.is_none() && signature.is_none() {

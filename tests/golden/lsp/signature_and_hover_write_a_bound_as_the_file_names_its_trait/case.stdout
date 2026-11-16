@@ -1,0 +1,10 @@
+> signature 12:27
+fn d.measured(x: a, c: d.Color) -> Sq where a: d.Area
+argument 1: x: a
+> signature 13:20
+fn measured(x: a, c: d.Color) -> Sq where a: d.Area
+argument 1: x: a
+> hover 14:13
+```silt
+fn measured(x: a, c: d.Color) -> Sq where a: d.Area
+```

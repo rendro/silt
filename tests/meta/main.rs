@@ -4,6 +4,7 @@
 
 mod builtin_docs_frontmatter_tests;
 mod cargo_fuzz_pin_tests;
+mod checker_texts_name_builtins_as_the_file_does_tests;
 mod docs_false_claims_tests;
 mod docs_frontmatter_parity_tests;
 mod docs_markdown_println_parity_tests;

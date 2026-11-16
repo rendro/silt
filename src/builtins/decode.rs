@@ -775,7 +775,7 @@ pub(crate) fn target<'a>(decoder: &Decoder, ty: Type<'a>) -> Result<Target<'a>, 
         .decoding()
         .ok_or_else(|| VmError::new(format!("{caller} decodes no type")))?;
     // (The texts of the errors are written only for an error.)
-    let accepted = || decoding.type_arguments(str::to_string);
+    let accepted = || decoding.type_arguments(str::to_string, str::to_string);
     // A row is decoded into a record of its columns: the error says what
     // the type is not.
     let not_a_row = |name: &str| {

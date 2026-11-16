@@ -245,7 +245,8 @@ fields, whatever trait of the program has a method of the same name.
 
 ### Names in messages and in the editor
 
-A message, a help line, hover, signature help, completion and the
+The messages of the check (what a file is refused or warned for before
+it runs), their help lines, hover, signature help, completion and the
 REPL's `:type` write a name of another module (a type, a trait, a
 function, a variant) as the file at hand writes it: bare where the file
 imports the name (`import da.{ Sq }`: `Sq`, also beside `import da`),
@@ -255,7 +256,9 @@ module's own name (`da.Sq` for a type the file reaches only through
 another module). Two different names are never written alike: where the
 module's own name is one the file gives to something else (`import da as
 other` beside a module `other`), its names are described, `T of module
-other`.
+other`. A runtime error is raised in the builtin, not in a file, and
+names a builtin by its own name: `list.chunks: n must be positive`, also
+under `import list as l`.
 
 ## Module names and shadowing
 
