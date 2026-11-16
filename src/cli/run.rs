@@ -59,11 +59,17 @@ pub(crate) fn dispatch(args: &[String]) {
             } else {
                 ("a program", " <file>.silt")
             };
-            eprintln!(
-                "error: silt run: {f} is not a .silt file; to give it to {to}, write it after \
-                 `--`: `silt run{program} -- {}`",
-                crate::cli::help::shell_word(&f)
-            );
+            let shown = crate::source::shown_path(&f);
+            match crate::source::pasteable(&f) {
+                true => eprintln!(
+                    "error: silt run: {shown} is not a .silt file; to give it to {to}, write it \
+                     after `--`: `silt run{program} -- {f}`"
+                ),
+                false => eprintln!(
+                    "error: silt run: {shown} is not a .silt file; to give it to {to}, write it \
+                     after `--`"
+                ),
+            }
             process::exit(1);
         }
         Some(PathArg::File(f)) => f,
@@ -124,10 +130,14 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Vec<String>) {
             //
             // To forward args to the running program, use
             // `--` as a separator (`silt run a.silt -- foo bar`).
-            eprintln!("error: silt run: unexpected extra argument '{arg}'");
-            eprintln!(
-                "If '{arg}' is meant for the program, separate it with '--' (e.g. 'silt run <file>.silt -- {arg}')."
-            );
+            let shown = crate::git::escape_for_display(arg);
+            eprintln!("error: silt run: unexpected extra argument '{shown}'");
+            match crate::source::pasteable(arg) {
+                true => eprintln!(
+                    "If '{shown}' is meant for the program, separate it with '--' (e.g. 'silt run <file>.silt -- {arg}')."
+                ),
+                false => eprintln!("If '{shown}' is meant for the program, separate it with '--'."),
+            }
             eprintln!("Run 'silt run --help' for usage.");
             process::exit(1);
         }

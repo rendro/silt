@@ -102,7 +102,10 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
             // `b_test.silt` and reported green while `a_test.silt` never
             // ran — a CI hazard (a skipped test reads as passing).
             // Mirror the rejection pattern in `silt check`/`silt run`.
-            eprintln!("error: silt test: unexpected extra argument '{}'", args[i]);
+            eprintln!(
+                "error: silt test: unexpected extra argument '{}'",
+                crate::git::escape_for_display(&args[i])
+            );
             eprintln!("silt test takes at most one path (a file or a directory to scan).");
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);

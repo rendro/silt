@@ -384,6 +384,24 @@ pub(crate) fn shown_path(path: impl AsRef<Path>) -> String {
     crate::git::escape_for_display(&path.as_ref().to_string_lossy())
 }
 
+/// Whether `word`, a name or a path, can stand in a command line silt
+/// suggests (`mkdir NAME && cd NAME`, `silt test PATH`) and be pasted as
+/// it stands: only ASCII letters, digits, `_`, `-`, `.` and the path
+/// separator `/` (on Windows `\\` and `:` too), not empty, and not
+/// starting with `-` (it would read as a flag). A shell does nothing
+/// else with such a word. A suggestion with any other word is said in
+/// words, not as a command: one with a space, a `;` or a control
+/// character would do something else, and its escaped form would name
+/// another file.
+pub(crate) fn pasteable(word: &str) -> bool {
+    let allowed = |c: char| {
+        c.is_ascii_alphanumeric()
+            || matches!(c, '_' | '-' | '.' | '/')
+            || (cfg!(windows) && matches!(c, '\\' | ':'))
+    };
+    !word.is_empty() && !word.starts_with('-') && word.chars().all(allowed)
+}
+
 pub(crate) fn canonical_path_lenient(path: &Path) -> PathBuf {
     let absolute = if path.is_absolute() {
         path.to_path_buf()

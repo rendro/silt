@@ -128,9 +128,9 @@ fn a_package_file_named_with_a_control_character_is_escaped() {
 }
 
 /// A typed word that is no path (an unknown command, an unknown flag, an
-/// argument a command does not take) is echoed by the display rule too,
-/// and so are the commands silt suggests with it. FAIL on the base: the
-/// words were echoed raw.
+/// argument a command does not take) is echoed by the display rule too;
+/// a command silt suggests is not offered with such a word. FAIL on the
+/// base: the words were echoed raw.
 #[test]
 fn a_typed_word_with_a_control_character_is_escaped() {
     let dir = fixture("words", &[("main.silt", "fn main() {\n  println(1)\n}\n")]);
@@ -141,11 +141,11 @@ fn a_typed_word_with_a_control_character_is_escaped() {
         (&["repl", "x\u{7}y"], "unexpected argument 'x\\u{7}y'"),
         (
             &["init", "x\u{202e}y"],
-            "mkdir x\\u{202e}y && cd x\\u{202e}y",
+            "make the directory, go into it and run silt init there",
         ),
         (
             &["a\u{1b}cb.silt", "x\ty"],
-            "Did you mean 'silt run \"a\\u{1b}cb.silt\" \"x\\ty\"'",
+            "To run the file, give it to 'silt run'.",
         ),
     ];
     for (args, expected) in runs {
@@ -159,5 +159,97 @@ fn a_typed_word_with_a_control_character_is_escaped() {
             "silt {args:?} printed a raw character:\n{text}"
         );
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A command silt suggests for the user to paste holds a name only when
+/// the name can be pasted as it stands (ASCII letters, digits, `_`, `-`,
+/// `.`, `/`, not starting with `-`); otherwise the suggestion is said in
+/// words. FAIL on the base: `mkdir my app && cd my app` was offered, and a
+/// name like `x; rm -rf y` went into the command line as it stood.
+#[test]
+fn a_suggested_command_holds_a_name_only_when_it_can_be_pasted() {
+    let dir = fixture(
+        "paste",
+        &[
+            ("main.silt", "fn main() {\n  println(1)\n}\n"),
+            ("notes.txt", "x"),
+            ("my notes.txt", "x"),
+        ],
+    );
+    let offered: [(&[&str], &str); 4] = [
+        (
+            &["init", "my_app"],
+            "run: mkdir my_app && cd my_app && silt init",
+        ),
+        (
+            &["hello.silt", "-w"],
+            "Did you mean 'silt run hello.silt -w'?",
+        ),
+        (
+            &["run", "main.silt", "extra"],
+            "(e.g. 'silt run <file>.silt -- extra')",
+        ),
+        (&["run", "notes.txt"], "`silt run <file>.silt -- notes.txt`"),
+    ];
+    for (args, expected) in offered {
+        let text = silt(&dir, args);
+        assert!(
+            text.contains(expected),
+            "silt {args:?}: expected {expected:?} in:\n{text}"
+        );
+    }
+    let in_words = "make the directory, go into it and run silt init there";
+    let said: [(&[&str], &str, &str); 5] = [
+        (&["init", "my app"], in_words, "mkdir"),
+        (&["init", "x; rm -rf y"], in_words, "mkdir"),
+        (
+            &["my file.silt"],
+            "To run the file, give it to 'silt run'.",
+            "Did you mean",
+        ),
+        (
+            &["run", "main.silt", "a b"],
+            "If 'a b' is meant for the program, separate it with '--'.",
+            "e.g.",
+        ),
+        (
+            &["run", "my notes.txt"],
+            "to give it to a program, write it after `--`",
+            "-- my notes",
+        ),
+    ];
+    for (args, expected, absent) in said {
+        let text = silt(&dir, args);
+        assert!(
+            text.contains(expected),
+            "silt {args:?}: expected {expected:?} in:\n{text}"
+        );
+        assert!(
+            !text.contains(absent),
+            "silt {args:?}: no command with the word:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The note of a test file run as a program names `silt test` with its
+/// path only when the path can be pasted as it stands.
+#[test]
+fn the_test_file_note_names_the_path_only_when_it_can_be_pasted() {
+    let dir = fixture(
+        "testnote",
+        &[
+            ("a_test.silt", "fn test_a() {\n}\n"),
+            ("my dir/a_test.silt", "fn test_a() {\n}\n"),
+        ],
+    );
+    let text = silt(&dir, &["run", "a_test.silt"]);
+    assert!(
+        text.contains("run it with 'silt test a_test.silt' instead"),
+        "{text}"
+    );
+    let text = silt(&dir, &["run", "my dir/a_test.silt"]);
+    assert!(text.contains("run it with 'silt test' instead"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }

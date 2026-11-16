@@ -44,10 +44,16 @@ pub(crate) fn dispatch(args: &[String]) {
                 "error: silt init: unexpected argument '{}' (silt init takes no positional arguments; the package name is derived from the current directory)",
                 crate::git::escape_for_display(arg)
             );
-            let shown = crate::git::escape_for_display(arg);
-            eprintln!(
-                "                  to create a package in a new directory, run: mkdir {shown} && cd {shown} && silt init"
-            );
+            // (A command to paste only with a name it can hold as it
+            // stands: see `pasteable`.)
+            match crate::source::pasteable(arg) {
+                true => eprintln!(
+                    "                  to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
+                ),
+                false => eprintln!(
+                    "                  to create a package in a new directory, make the directory, go into it and run silt init there"
+                ),
+            }
             process::exit(1);
         }
     }
