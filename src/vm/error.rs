@@ -175,12 +175,6 @@ impl VmError {
         self
     }
 
-    /// The error as a diagnostic: the first line of the message is its
-    /// message, and the rest of the message, as it is (a `panic` text or
-    /// a builtin's report can go on for several lines), its one note.
-    /// The labels are the call stack, innermost frame first. An error
-    /// with no span is about no place of the program, and has
-    /// `Span::BUILTIN`.
     /// The error as `silt run` prints it, its places read from the files
     /// of `session`: the header, the place with its source line, and the
     /// call stack when it has more than one frame; for a `main` that
@@ -225,6 +219,12 @@ impl VmError {
         crate::diagnostic::render_human(view, &d)
     }
 
+    /// The error as a diagnostic: the first line of the message is its
+    /// message, and the rest of the message, as it is (a `panic` text or
+    /// a builtin's report can go on for several lines), its one note.
+    /// The labels are the call stack, innermost frame first. An error
+    /// with no span is about no place of the program, and has
+    /// `Span::BUILTIN`.
     pub(crate) fn to_diagnostic(&self) -> Diagnostic {
         let (head, rest) = match self.message.split_once('\n') {
             Some((head, rest)) => (head, Some(rest)),

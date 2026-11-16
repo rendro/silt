@@ -741,6 +741,19 @@ match vm.run_program(&program) {
 }
 ```
 
+Silt code has no access to the host filesystem, network or environment
+beyond what the builtin modules it may import (see "Limits") and your
+host modules provide.
+
+**The environment.** `env.set` and `env.remove` change the environment
+of your whole process. A `Vm` refuses them once its program has started
+a task or an I/O operation (from then on a thread of its own may read
+the environment), but it cannot see your threads, nor another `Vm`'s.
+While a `Vm` runs a program, read the environment on your other threads
+only through `std::env` (which takes the lock that the change takes),
+never through the C library (`getenv`, or a C library that calls it),
+and do not run two programs that change it at once.
+
 ### Showing errors as silt does
 
 The session hands out five more types, which a function of yours can
@@ -764,7 +777,9 @@ take and a struct of yours can keep: `silt::session::{FileId, Span, SourceMap, D
 
 `session.render(&d)` is the diagnostic as `silt check` prints it: the
 header, the place with its line of source and a caret, then its other
-places, notes and help. `e.render(&session)` is a runtime error as
+places, notes and help. An analysis lists its diagnostics in the order
+it found them; `silt check` prints them by file and place, with an empty
+line between two. `e.render(&session)` is a runtime error as
 `silt run` prints it: the header, the place with its line of source,
 and the call stack; for a `main` that returned `Err`, the one line
 `error: <text>`. Both come from the code the `silt` command prints
@@ -797,12 +812,13 @@ fn one_line(session: &Session, d: &Diagnostic) -> String {
     text
 }
 
-/// What `silt check` prints for `file`, and whether it found an error.
-fn check(session: &mut Session, file: FileId) -> (String, bool) {
+/// Each diagnostic of `file` as `silt check` prints it, in the order the
+/// analysis found them, and whether one is an error.
+fn check(session: &mut Session, file: FileId) -> (Vec<String>, bool) {
     let diagnostics: Vec<Diagnostic> = session.analyze(file).diagnostics.clone();
-    let text: Vec<String> = diagnostics.iter().map(|d| session.render(d)).collect();
+    let texts = diagnostics.iter().map(|d| session.render(d)).collect();
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
-    (text.join("\n"), failed)
+    (texts, failed)
 }
 
 /// What `silt run` prints for the error that ended the program.
@@ -810,16 +826,3 @@ fn report(session: &Session, e: &VmError) -> String {
     e.render(session)
 }
 ```
-
-Silt code has no access to the host filesystem, network or environment
-beyond what the builtin modules it may import (see "Limits") and your
-host modules provide.
-
-**The environment.** `env.set` and `env.remove` change the environment
-of your whole process. A `Vm` refuses them once its program has started
-a task or an I/O operation (from then on a thread of its own may read
-the environment), but it cannot see your threads, nor another `Vm`'s.
-While a `Vm` runs a program, read the environment on your other threads
-only through `std::env` (which takes the lock that the change takes),
-never through the C library (`getenv`, or a C library that calls it),
-and do not run two programs that change it at once.

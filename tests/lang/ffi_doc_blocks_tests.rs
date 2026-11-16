@@ -281,12 +281,13 @@ mod showing_errors_as_silt_does {
         text
     }
 
-    /// What `silt check` prints for `file`, and whether it found an error.
-    fn check(session: &mut Session, file: FileId) -> (String, bool) {
+    /// Each diagnostic of `file` as `silt check` prints it, in the order the
+    /// analysis found them, and whether one is an error.
+    fn check(session: &mut Session, file: FileId) -> (Vec<String>, bool) {
         let diagnostics: Vec<Diagnostic> = session.analyze(file).diagnostics.clone();
-        let text: Vec<String> = diagnostics.iter().map(|d| session.render(d)).collect();
+        let texts = diagnostics.iter().map(|d| session.render(d)).collect();
         let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
-        (text.join("\n"), failed)
+        (texts, failed)
     }
 
     /// What `silt run` prints for the error that ended the program.
@@ -309,11 +310,11 @@ mod showing_errors_as_silt_does {
         let mut session = session();
         let bad = "fn main() {\n  let x: Int = \"no\"\n  println(x)\n}\n";
         let file = session.set_overlay(Path::new("main.silt"), bad.to_string());
-        let (text, failed) = check(&mut session, file);
+        let (texts, failed) = check(&mut session, file);
         assert!(failed);
         assert!(
-            text.starts_with("error[type]: type mismatch: expected Int, got String\n --> main.silt:2:16"),
-            "{text}"
+            texts[0].starts_with("error[type]: type mismatch: expected Int, got String\n --> main.silt:2:16"),
+            "{texts:?}"
         );
         let d = session.analyze(file).diagnostics[0].clone();
         assert_eq!(
