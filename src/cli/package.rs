@@ -145,7 +145,7 @@ pub(crate) fn resolve_package_entry_point_in(
         }
         eprintln!(
             "package has no entry point — expected `src/main.silt` at {}",
-            crate::git::escape_for_display(&entry.display().to_string())
+            crate::source::shown_path(entry)
         );
         eprintln!("  = note: found `src/lib.silt` — this is a library-only package");
         eprintln!(
@@ -156,7 +156,7 @@ pub(crate) fn resolve_package_entry_point_in(
     }
     eprintln!(
         "package has no entry point — expected `src/main.silt` at {}",
-        crate::git::escape_for_display(&entry.display().to_string())
+        crate::source::shown_path(entry)
     );
     Err(())
 }

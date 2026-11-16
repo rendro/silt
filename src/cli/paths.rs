@@ -84,7 +84,7 @@ pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
         .map(|package| {
             // `./pk` (`.\pk` on Windows) is shown as `pk`.
             let package = package.strip_prefix(".").unwrap_or(package);
-            crate::git::escape_for_display(&package.to_string_lossy())
+            crate::source::shown_path(package)
         })
         .collect();
     let verb = if command == "fmt" { "format" } else { command };
@@ -236,7 +236,7 @@ pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, File
             } else {
                 crate::diagnostic::io_error_text(&e)
             };
-            eprintln!("error reading {path}: {why}");
+            eprintln!("error reading {}: {why}", crate::source::shown_path(path));
             std::process::exit(1);
         }
     }

@@ -2,8 +2,7 @@
 //! read from the tokens in front of the cursor.
 
 use lsp_types::{
-    Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, SignatureHelp,
-    SignatureInformation,
+    Documentation, ParameterInformation, ParameterLabel, SignatureHelp, SignatureInformation,
 };
 
 use crate::intern::{intern, resolve};
@@ -218,12 +217,8 @@ impl Server {
                 .collect()
         };
 
-        let documentation = doc_text.map(|d| {
-            Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: d,
-            })
-        });
+        let documentation =
+            doc_text.map(|d| Documentation::MarkupContent(super::conversions::markdown(d)));
 
         SignatureHelp {
             signatures: vec![SignatureInformation {

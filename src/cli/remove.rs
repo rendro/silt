@@ -98,7 +98,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
     let manifest_text = fs::read_to_string(&manifest_path).map_err(|e| {
         format!(
             "failed to read {}: {}",
-            manifest_path.display(),
+            crate::source::shown_path(&manifest_path),
             crate::diagnostic::io_error_text(&e)
         )
     })?;
@@ -114,13 +114,21 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
     if removed.is_none() {
         return Err(format!("no dependency '{name}' in silt.toml").into());
     }
-    fs::write(&manifest_path, doc.to_string())
-        .map_err(|e| format!("failed to write {}: {e}", manifest_path.display()))?;
+    fs::write(&manifest_path, doc.to_string()).map_err(|e| {
+        format!(
+            "failed to write {}: {e}",
+            crate::source::shown_path(&manifest_path)
+        )
+    })?;
 
     let mut sources = SourceMap::new();
     if let Err(failed) = resolve_packages(&root, LockPolicy::Update, &mut sources) {
-        fs::write(&manifest_path, &manifest_text)
-            .map_err(|e| format!("failed to restore {}: {e}", manifest_path.display()))?;
+        fs::write(&manifest_path, &manifest_text).map_err(|e| {
+            format!(
+                "failed to restore {}: {e}",
+                crate::source::shown_path(&manifest_path)
+            )
+        })?;
         // What fails is reported in silt.toml as it is again: its lines
         // are those of the restored text. (The graph failed without the
         // dependency; with it, it fails too, or the first report is all

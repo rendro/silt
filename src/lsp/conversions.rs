@@ -67,6 +67,37 @@ pub(super) fn char_offset_at(file: &SourceFile, pos: &Position) -> Option<usize>
     }
 }
 
+/// `text` as a silt code block of Markdown. Its fence is a run of
+/// backticks longer than any in the text (at least three, the CommonMark
+/// way), so a line of the text that is only ``` (a declaration with a
+/// block comment over lines) cannot close it early.
+pub(super) fn code_block(text: &str) -> String {
+    let longest = (text.split(|c| c != '`')).map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    format!("{fence}silt\n{text}\n{fence}")
+}
+
+/// Markdown for the editor (a hover, the documentation of a completion
+/// or a signature): `value` with each control character, invisible or
+/// direction character shown as the line of source under a diagnostic
+/// shows it (`diagnostic::visible_line`: ESC as a picture), so a doc
+/// comment cannot hand the editor a raw ESC. Its line ends (`\n`, `\r`)
+/// stay line ends.
+pub(super) fn markdown(value: String) -> lsp_types::MarkupContent {
+    let mut shown = String::with_capacity(value.len());
+    let mut rest = value.as_str();
+    while let Some(at) = rest.find(['\n', '\r']) {
+        shown.push_str(&crate::diagnostic::visible_line(&rest[..at]));
+        shown.push_str(&rest[at..at + 1]);
+        rest = &rest[at + 1..];
+    }
+    shown.push_str(&crate::diagnostic::visible_line(rest));
+    lsp_types::MarkupContent {
+        kind: lsp_types::MarkupKind::Markdown,
+        value: shown,
+    }
+}
+
 /// Return the UTF-16 code-unit length of a string (what LSP positions count).
 pub(super) fn utf16_len(s: &str) -> usize {
     s.chars().map(|c| c.len_utf16()).sum()
@@ -77,7 +108,18 @@ pub(super) fn utf16_len(s: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::source::{FileId, SourceName};
+
+    #[test]
+    fn a_code_block_s_fence_is_longer_than_any_backtick_run_in_it() {
+        assert_eq!(code_block("x: Int"), "```silt\nx: Int\n```");
+        assert_eq!(
+            code_block("type T {\n  {-\n```\n  -}\n}"),
+            "````silt\ntype T {\n  {-\n```\n  -}\n}\n````"
+        );
+        assert!(code_block("a ````` b").starts_with("``````silt"));
+    }
 
     fn file(text: &str) -> SourceFile {
         SourceFile::new(SourceName::Builtin, text.into())

@@ -1,10 +1,12 @@
 -- cmd: check
 -- exit: 1
 -- Type arguments in brackets whose text holds a control character
--- (here ESC c, a terminal reset; BEL; DEL; a tab; a C1 control) or a
+-- (here ESC c, a terminal reset; BEL; DEL; a C1 control) or a
 -- character that shows nothing are not quoted: no message, label,
--- note or help carries one. The line of source under the arrow shows
--- each as a visible picture. The last one has none and is quoted.
+-- note or help carries one. A tab between two arguments is spacing and
+-- is written as a space. The line of source under the arrow shows each
+-- as a visible picture (the tab as it is). The last one has none and is
+-- quoted.
 fn a() -> Map<String, {- xc -} Int> { #{} }
 
 fn b() -> St[a {-  -} b] { 1 }

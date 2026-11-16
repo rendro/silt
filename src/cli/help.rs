@@ -114,31 +114,22 @@ pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-
 /// to write keeps every argument (`args`, after the program's name) in
 /// its place, `silt -w hello.silt` as `silt run -w hello.silt`.
 pub(crate) fn file_is_no_command(file: &str, args: &[String]) -> ! {
-    let written: Vec<String> = args.iter().map(|arg| shell_word(arg)).collect();
-    eprintln!("error: silt: unknown command '{file}'");
-    eprintln!("  Did you mean 'silt run {}'?", written.join(" "));
+    eprintln!(
+        "error: silt: unknown command '{}'",
+        crate::git::escape_for_display(file)
+    );
+    // (The command to paste only with words it can hold as they stand: a
+    // flag the user typed keeps its `-`; see `pasteable`.)
+    let pasteable = |arg: &String| {
+        crate::source::pasteable(arg)
+            || (arg.starts_with('-') && crate::source::pasteable(arg.trim_start_matches('-')))
+    };
+    match args.iter().all(pasteable) {
+        true => eprintln!("  Did you mean 'silt run {}'?", args.join(" ")),
+        false => eprintln!("  To run the file, give it to 'silt run'."),
+    }
     eprintln!("Run 'silt' with no arguments to see available commands.");
     std::process::exit(1);
-}
-
-/// `arg` as a shell reads it back: as it is when it holds only
-/// characters a shell takes literally, else in double quotes, with `"`,
-/// `\`, `$` and `` ` `` escaped.
-pub(crate) fn shell_word(arg: &str) -> String {
-    let plain =
-        !arg.is_empty() && (arg.chars()).all(|c| c.is_alphanumeric() || "-_./=:,+@%^".contains(c));
-    if plain {
-        return arg.to_string();
-    }
-    let mut out = String::from("\"");
-    for c in arg.chars() {
-        if matches!(c, '"' | '\\' | '$' | '`') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out.push('"');
-    out
 }
 
 /// Whether `--help` or `-h` is one of silt's own arguments in `args`:
@@ -223,16 +214,6 @@ mod tests {
     /// The command a file argument is told to write reads back as the
     /// arguments it was given: a word of plain characters as it is, any
     /// other in double quotes with what a shell reads in them escaped.
-    #[test]
-    fn a_shell_word_reads_back_as_the_argument() {
-        assert_eq!(shell_word("hello.silt"), "hello.silt");
-        assert_eq!(shell_word("-w"), "-w");
-        assert_eq!(shell_word("my file.silt"), "\"my file.silt\"");
-        assert_eq!(shell_word(""), "\"\"");
-        assert_eq!(shell_word("a$b`c\"d\\e"), "\"a\\$b\\`c\\\"d\\\\e\"");
-        assert_eq!(shell_word("it's"), "\"it's\"");
-    }
-
     /// The usage text has a row for each command of `cli::COMMANDS`, and
     /// names no other: a command added to the table without a row, or a
     /// row left for a command that is gone, fails here.

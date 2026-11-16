@@ -14,6 +14,7 @@ mod cli_help_gaps_tests;
 mod cli_help_rows_and_banners_tests;
 mod cli_init_tests;
 mod cli_one_path_rule_tests;
+mod cli_path_display_tests;
 mod cli_positional_gate_tests;
 mod cli_project_root_tests;
 mod cli_remove_tests;

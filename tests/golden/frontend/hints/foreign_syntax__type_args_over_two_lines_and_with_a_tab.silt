@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- Type arguments whose partner bracket is on another line are written
+-- `...`: they are there, and a message cannot show them (before, `Map(Int)`,
+-- which reads as advice). The blanks between two arguments are spacing:
+-- the suggestion writes each run of spaces and tabs as one space. `Int`
+-- stands only for empty brackets.
+fn a() -> Map[String,
+  Int] { #{} }
+
+fn b() -> Map[String,	Int] { #{} }
+
+fn c() -> St[ing
+  x] { 1 }
+
+fn d() -> List[] { [] }
+
+fn e() -> Map[ 	 String 	,		Int 	] { #{} }

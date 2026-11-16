@@ -57,9 +57,14 @@ pub(super) fn missing_main(file: FileId, path: &str) -> Diagnostic {
         "program has no main() function",
     );
     if is_test_file(std::path::Path::new(path)) {
-        d.with_note(format!(
-            "This looks like a test file — run it with 'silt test {path}' instead."
-        ))
+        // (The command to paste only with a path it can hold as it
+        // stands: see `source::pasteable`.)
+        d.with_note(match crate::source::pasteable(path) {
+            true => {
+                format!("This looks like a test file — run it with 'silt test {path}' instead.")
+            }
+            false => "This looks like a test file — run it with 'silt test' instead.".to_string(),
+        })
     } else {
         d.with_note("add one as the entry point")
     }

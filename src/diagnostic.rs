@@ -841,7 +841,7 @@ fn write_snippet(
     text: &str,
     mark_color: &str,
 ) {
-    let file = crate::git::escape_for_display(&located.file);
+    let file = crate::source::shown_path(&located.file);
     let Some(p) = &located.position else {
         let _ = write!(out, "\n {}{arrow}{} {file}", c.cyan, c.reset);
         return;

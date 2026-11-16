@@ -102,12 +102,12 @@ pub(super) fn start(root: &Path) -> Preload {
                     Ok(text) => Preloaded::File(path, text),
                     Err(err) => Preloaded::Log(format!(
                         "silt-lsp: preload: cannot read {}: {err}",
-                        path.display()
+                        crate::source::shown_path(&path)
                     )),
                 },
                 Found::Unreadable(dir, err) => Preloaded::Log(format!(
                     "silt-lsp: preload: cannot read dir {}: {err}",
-                    dir.display()
+                    crate::source::shown_path(&dir)
                 )),
             };
             send.send(item).is_ok()
@@ -166,7 +166,7 @@ fn load_file(server: &mut Server, path: &Path, contents: String) {
         None => {
             eprintln!(
                 "silt-lsp: preload: cannot build file:// URI for {}",
-                path.display()
+                crate::source::shown_path(path)
             );
             return;
         }

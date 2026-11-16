@@ -244,7 +244,10 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // Every other subcommand emits a `Run 'silt <sub> --help'
             // for usage.` nudge on a second stderr line; `Usage` adds
             // that line here.
-            return Err(AddError::Usage(format!("unknown flag '{arg}'")));
+            return Err(AddError::Usage(format!(
+                "unknown flag '{}'",
+                crate::git::escape_for_display(arg)
+            )));
         } else if name.is_none() {
             name = Some(arg.clone());
             i += 1;
@@ -386,13 +389,17 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             };
             let absolute_dep_path = normalize_path(&absolute_dep_path);
             if !absolute_dep_path.exists() {
-                return Err(format!("path does not exist: {}", absolute_dep_path.display()).into());
+                return Err(format!(
+                    "path does not exist: {}",
+                    crate::source::shown_path(&absolute_dep_path)
+                )
+                .into());
             }
             let dep_manifest = absolute_dep_path.join("silt.toml");
             if !dep_manifest.is_file() {
                 return Err(format!(
                     "path is not a silt package (no silt.toml found): {}",
-                    absolute_dep_path.display()
+                    crate::source::shown_path(&absolute_dep_path)
                 )
                 .into());
             }
@@ -411,7 +418,10 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
                 toml_edit::value(stored_path.clone()).into_value().unwrap(),
             );
             (
-                format!("Added dependency '{name}' (path = \"{stored_path}\")"),
+                format!(
+                    "Added dependency '{name}' (path = \"{}\")",
+                    crate::source::shown_path(&stored_path)
+                ),
                 inline,
             )
         }
@@ -502,7 +512,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     let manifest_text = fs::read_to_string(&manifest_path).map_err(|e| {
         format!(
             "failed to read {}: {}",
-            manifest_path.display(),
+            crate::source::shown_path(&manifest_path),
             crate::diagnostic::io_error_text(&e)
         )
     })?;
@@ -529,8 +539,12 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)),
     );
 
-    fs::write(&manifest_path, doc.to_string())
-        .map_err(|e| format!("failed to write {}: {e}", manifest_path.display()))?;
+    fs::write(&manifest_path, doc.to_string()).map_err(|e| {
+        format!(
+            "failed to write {}: {e}",
+            crate::source::shown_path(&manifest_path)
+        )
+    })?;
 
     // ── Lockfile regeneration ──────────────────────────────────────────
     //
@@ -540,8 +554,12 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // back: a dependency that does not resolve is never left in it.
     let mut sources = SourceMap::new();
     if let Err(mut diagnostics) = resolve_packages(&root, LockPolicy::Update, &mut sources) {
-        fs::write(&manifest_path, &manifest_text)
-            .map_err(|e| format!("failed to restore {}: {e}", manifest_path.display()))?;
+        fs::write(&manifest_path, &manifest_text).map_err(|e| {
+            format!(
+                "failed to restore {}: {e}",
+                crate::source::shown_path(&manifest_path)
+            )
+        })?;
         for d in &mut diagnostics {
             d.notes
                 .push("silt add left silt.toml as it was".to_string());
