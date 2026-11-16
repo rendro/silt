@@ -497,14 +497,16 @@ fn program_of_a_trait_chain(dir: &Path, n: usize) {
 }
 
 /// A chain of eight times the modules that call each other's trait
-/// methods takes at most eleven times as long to check, from 500 to
-/// 4,000: about seven and a half times. Each module's check looked at
-/// every trait and every impl of the session (for its own traits, and
-/// for the traits whose impls ask something of what they are given):
-/// eighteen times (debug build, rv-zc N18); now only at its own and at
-/// those it calls.
+/// methods takes at most sixteen times as long to check, from 500 to
+/// 4,000: about nine and a half times by instructions (debug build; 8 to
+/// 8.5 by CPU time here, 11.4 to 11.8 by wall time on a macOS runner of
+/// CI, where the cap was eleven). Each module's check looked at every
+/// trait and every impl of the session (for its own traits, and for the
+/// traits whose impls ask something of what they are given): 28 times
+/// by instructions (rv-zc N18); now only at its own and at those it
+/// calls.
 #[test]
-fn a_chain_of_trait_calls_of_eight_times_the_modules_takes_at_most_eleven_times_as_long() {
+fn a_chain_of_trait_calls_of_eight_times_the_modules_takes_at_most_sixteen_times_as_long() {
     let dir = std::env::temp_dir().join(format!(
         "silt_checker_scaling_trait_chain_{}",
         std::process::id()
@@ -514,12 +516,12 @@ fn a_chain_of_trait_calls_of_eight_times_the_modules_takes_at_most_eleven_times_
         program_of_a_trait_chain(&dir.join(n.to_string()), n);
     }
     let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
-    let measured = within(11.0, || best_times(&main_of(large), &main_of(small), 3));
+    let measured = within(16.0, || best_times(&main_of(large), &main_of(small), 3));
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(over) = measured {
         panic!(
             "`silt check` of a chain of {large} modules that call each other's trait methods \
-             took more than eleven times as long as that of one of {small} in each of three \
+             took more than sixteen times as long as that of one of {small} in each of three \
              measurements ({}): a module's check looks at every trait or impl of the session",
             shown(&over)
         );
