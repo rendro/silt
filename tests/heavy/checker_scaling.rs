@@ -655,3 +655,74 @@ fn a_chain_of_four_times_the_top_level_lets_takes_at_most_three_times_the_memory
          one needs for every let"
     );
 }
+
+/// A program of `n` top-level `let`s that each read the last of a chain
+/// of `n / 2` aliases (`let p1 = p0`, a plain value each), beside its
+/// `main.silt` (rv-lt2's hub).
+fn program_of_a_let_hub(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    let aliases = n / 2;
+    let mut main = String::from("let p0 = 1\n");
+    for i in 1..aliases {
+        main.push_str(&format!("let p{i} = p{}\n", i - 1));
+    }
+    for i in 0..n {
+        main.push_str(&format!("let a{i} = p{} + {i}\n", aliases - 1));
+    }
+    main.push_str(&format!("\nfn main() {{\n  println(a{})\n}}\n", n - 1));
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// Four times the `let`s that each reach a chain of plain `let`s (the
+/// hub above) take at most six times as long to check, from 800 to 3,200:
+/// about three times (debug build). Each `let` kept every plain `let` on
+/// its way: n squared, more than fifty times as long (main 96fda6f8: 0.7 s
+/// for 800, 9.6 s for 1,600). A plain `let` is now passed by one node
+/// that stands for what lies past it, searched once.
+#[test]
+fn a_hub_of_four_times_the_top_level_lets_takes_at_most_six_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_let_hub_{}",
+        std::process::id()
+    ));
+    let (small, large) = (800, 3_200);
+    for n in [small, large] {
+        program_of_a_let_hub(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(6.0, || best_times(&main_of(large), &main_of(small), 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of {large} top-level lets that each reach a chain of plain lets took \
+             more than six times as long as that of {small} in each of three measurements ({}): \
+             each let keeps every plain let on its way",
+            shown(&over)
+        );
+    }
+}
+
+/// The hub of 3,200 `let`s takes at most three times the memory of the
+/// hub of 800 (about 1.4 times). Each `let` keeping every plain `let` on
+/// its way took more memory than main's before it (rv-lt2: 79 MB against
+/// 67 MB at 1,600) and grows as n squared.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_hub_of_four_times_the_top_level_lets_takes_at_most_three_times_the_memory() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_let_hub_memory_{}",
+        std::process::id()
+    ));
+    let (small, large) = (800, 3_200);
+    for n in [small, large] {
+        program_of_a_let_hub(&dir.join(n.to_string()), n);
+    }
+    let peak = |n: usize| check_peak_kb(&dir.join(n.to_string()).join("main.silt"));
+    let (at_small, at_large) = (peak(small), peak(large));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        at_large <= 3 * at_small,
+        "`silt check` of a hub of {large} top-level lets had {at_large} kB resident, more than \
+         three times the {at_small} kB of one of {small}: each let keeps every plain let on its way"
+    );
+}

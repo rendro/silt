@@ -185,16 +185,27 @@ fn plain_value(
 
 /// The nodes of `nodes` that reach themselves over `needs` (each node's
 /// successors): those of a strongly connected part of more than one, and
-/// one that needs itself. Tarjan's search, without recursion.
+/// one that needs itself.
 fn on_a_ring(
     nodes: &[usize],
     needs: &HashMap<usize, Vec<usize>>,
 ) -> std::collections::HashSet<usize> {
+    let next_of = |n: usize| needs.get(&n).map_or(&[][..], Vec::as_slice);
+    (strong_parts(nodes, needs).into_iter())
+        .filter(|part| part.len() > 1 || next_of(part[0]).contains(&part[0]))
+        .flatten()
+        .collect()
+}
+
+/// The strongly connected parts of the graph `needs` (each node's
+/// successors) that the nodes `nodes` reach, each part after the parts
+/// it reaches. Tarjan's search, without recursion.
+fn strong_parts(nodes: &[usize], needs: &HashMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
     let mut index: HashMap<usize, usize> = HashMap::new();
     let mut low: HashMap<usize, usize> = HashMap::new();
     let mut stack: Vec<usize> = Vec::new();
     let mut on_stack: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    let mut found = std::collections::HashSet::new();
+    let mut parts = Vec::new();
     let next_of = |n: usize| needs.get(&n).map_or(&[][..], Vec::as_slice);
     for &root in nodes {
         if index.contains_key(&root) {
@@ -234,13 +245,11 @@ fn on_a_ring(
                         break;
                     }
                 }
-                if part.len() > 1 || next_of(node).contains(&node) {
-                    found.extend(part);
-                }
+                parts.push(part);
             }
         }
     }
-    found
+    parts
 }
 
 /// The `let`s of the node graph `edges` that `start` reaches, in the
@@ -284,13 +293,15 @@ impl Nearest {
     }
 
     /// The nodes that `start` reaches over `edges` (`start` too, if it
-    /// reaches itself) that `what` says are kept, each once; the search
-    /// goes on past a node unless `what` says it stops there.
+    /// reaches itself) that `what` says are kept, each once, and the
+    /// node it names in their place where it names one (what stands for
+    /// all that lies past it); the search goes on past a node unless
+    /// `what` says it stops there.
     fn nearest(
         &mut self,
         edges: &[Vec<usize>],
         start: usize,
-        what: impl Fn(usize) -> (bool, bool),
+        what: impl Fn(usize) -> (bool, Option<usize>, bool),
     ) -> Vec<usize> {
         self.stamp += 1;
         let stamp = self.stamp;
@@ -303,10 +314,11 @@ impl Nearest {
         }
         let mut found = Vec::new();
         while let Some(node) = queue.pop_front() {
-            let (keep, stop) = what(node);
+            let (keep, past, stop) = what(node);
             if keep {
                 found.push(node);
             }
+            found.extend(past);
             if stop {
                 continue;
             }
@@ -924,7 +936,8 @@ impl TypeChecker {
         let lets: Vec<usize> = (0..nodes.len())
             .filter(|&n| nodes[n].let_decl.is_some())
             .collect();
-        let is_let = |n: usize| nodes[n].let_decl.is_some();
+        // (A node past a plain `let`, below, is numbered after the nodes.)
+        let is_let = |n: usize| nodes.get(n).is_some_and(|node| node.let_decl.is_some());
         // What each `let` whose value is plain reads, and the way to each:
         // the `let` read.
         let mut reads_of: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -949,20 +962,36 @@ impl TypeChecker {
             }
         }
         let mut search = Nearest::new(nodes.len());
-        // Who reaches whom over `needs` is who reaches whom over the
-        // nearest `let`s that are not plain (a plain one is passed
-        // through: what it needs is no more than what it mentions).
-        let near: HashMap<usize, Vec<usize>> = (lets.iter())
-            .map(|&start| {
-                let near = match reads_of.get(&start) {
-                    Some(read) => read.clone(),
-                    None => search.nearest(&edges, start, |n| {
-                        (is_let(n), is_let(n) && !reads_of.contains_key(&n))
-                    }),
-                };
-                (start, near)
-            })
+        // Past each plain `let` stands a node of its own (`past`): what
+        // its value mentions reaches, which a `let` that is not plain and
+        // reaches the plain one needs, though the plain one needs only
+        // what it reads. A search stops at every `let` and takes that
+        // node for what lies past a plain one: each is searched once, not
+        // once for each `let` that reaches it (many `let`s reaching a
+        // chain of plain ones took time n squared).
+        let plain: Vec<usize> = lets
+            .iter()
+            .copied()
+            .filter(|n| reads_of.contains_key(n))
             .collect();
+        let past_of: HashMap<usize, usize> = (plain.iter().enumerate())
+            .map(|(k, &n)| (n, nodes.len() + k))
+            .collect();
+        let past = |n: usize| past_of.get(&n).copied();
+        // Who reaches whom over `needs` is who reaches whom over the
+        // nearest `let`s and the nodes past the plain ones.
+        let mut near: HashMap<usize, Vec<usize>> = HashMap::new();
+        for &start in &lets {
+            let found = match reads_of.get(&start) {
+                Some(read) => read.clone(),
+                None => search.nearest(&edges, start, |n| (is_let(n), past(n), is_let(n))),
+            };
+            near.insert(start, found);
+        }
+        for &n in &plain {
+            let found = search.nearest(&edges, n, |m| (is_let(m), past(m), is_let(m)));
+            near.insert(past_of[&n], found);
+        }
         let mut whole: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut needs_of = |at: usize| -> Vec<usize> {
             (whole.entry(at))
@@ -1052,50 +1081,95 @@ impl TypeChecker {
         }
         self.let_rings = in_ring.iter().map(|&n| nodes[n].span).collect();
         // What each `let` needs but the `let`s of a ring, by the nearest
-        // `let`s outside the rings that are not plain, and every other
-        // `let` outside the rings on the way to them: the order below is
-        // the one of all that each needs, as each placed `let` has what
-        // it needs placed before it.
-        let needs: HashMap<usize, Vec<usize>> = (lets.iter())
-            .map(|&start| {
-                let near = match reads_of.get(&start) {
-                    Some(read) => (read.iter())
-                        .copied()
-                        .filter(|n| !in_ring.contains(n))
-                        .collect(),
-                    None => search.nearest(&edges, start, |n| {
-                        let outside = is_let(n) && !in_ring.contains(&n);
-                        (outside, outside && !reads_of.contains_key(&n))
-                    }),
-                };
-                (start, near)
-            })
-            .collect();
+        // `let`s outside the rings that are not plain, the plain ones on
+        // the way and the nodes past them (`past`); the search goes
+        // through the `let`s of a ring. The order below is the one of all
+        // that each needs, as each placed `let` has what it needs placed
+        // before it, and a node past a plain `let` is passed as soon as
+        // what it stands for is placed.
+        let outside = |n: usize| is_let(n) && !in_ring.contains(&n);
+        let what = |n: usize| (outside(n), past(n), outside(n) || past(n).is_some());
+        let mut needs: HashMap<usize, Vec<usize>> = HashMap::new();
+        for &start in &lets {
+            let found = match reads_of.get(&start) {
+                Some(read) => (read.iter()).copied().filter(|&n| outside(n)).collect(),
+                None => search.nearest(&edges, start, what),
+            };
+            needs.insert(start, found);
+        }
+        for &n in &plain {
+            needs.insert(past_of[&n], search.nearest(&edges, n, what));
+        }
         // (The `let`s of a ring are reported; they keep their source
         // order among the others.)
         // Each `let` once the ones it needs are in: of those ready, the
-        // first written.
+        // first written. The nodes past plain `let`s may need each other
+        // round (two plain `let`s whose values mention functions that
+        // mention the other): each strongly connected part is one step,
+        // and no `let` outside a ring is in a part with another node.
         let place: HashMap<usize, usize> = lets.iter().enumerate().map(|(k, &n)| (n, k)).collect();
-        let mut waits: Vec<usize> = lets.iter().map(|n| needs[n].len()).collect();
-        let mut needed_by: Vec<Vec<usize>> = vec![Vec::new(); lets.len()];
-        for (k, n) in lets.iter().enumerate() {
-            for need in &needs[n] {
-                needed_by[place[need]].push(k);
+        let ids: Vec<usize> = lets
+            .iter()
+            .copied()
+            .chain(past_of.values().copied())
+            .collect();
+        let parts = strong_parts(&ids, &needs);
+        let mut part_of: HashMap<usize, usize> = HashMap::new();
+        for (p, part) in parts.iter().enumerate() {
+            for &n in part {
+                part_of.insert(n, p);
             }
         }
-        let mut ready: std::collections::BinaryHeap<std::cmp::Reverse<usize>> = waits
-            .iter()
-            .enumerate()
-            .filter(|(_, waits)| **waits == 0)
-            .map(|(k, _)| std::cmp::Reverse(k))
-            .collect();
+        let mut waits: Vec<usize> = vec![0; parts.len()];
+        let mut needed_by: Vec<Vec<usize>> = vec![Vec::new(); parts.len()];
+        for (p, part) in parts.iter().enumerate() {
+            let mut needed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            for n in part {
+                for need in &needs[n] {
+                    let q = part_of[need];
+                    if q != p && needed.insert(q) {
+                        needed_by[q].push(p);
+                    }
+                }
+            }
+            waits[p] = needed.len();
+        }
+        // The `let` of a part, if it is one: by its place in the source.
+        let let_of = |p: usize| match parts[p].as_slice() {
+            [n] if is_let(*n) => Some(place[n]),
+            _ => None,
+        };
+        let mut ready: std::collections::BinaryHeap<std::cmp::Reverse<(usize, usize)>> =
+            std::collections::BinaryHeap::new();
+        let mut passed: Vec<usize> = Vec::new();
+        let is_ready =
+            |p: usize,
+             ready: &mut std::collections::BinaryHeap<std::cmp::Reverse<(usize, usize)>>,
+             passed: &mut Vec<usize>| {
+                match let_of(p) {
+                    Some(k) => ready.push(std::cmp::Reverse((k, p))),
+                    None => passed.push(p),
+                }
+            };
+        for (p, _) in waits.iter().enumerate().filter(|(_, waits)| **waits == 0) {
+            is_ready(p, &mut ready, &mut passed);
+        }
         let mut order: Vec<Span> = Vec::with_capacity(lets.len());
-        while let Some(std::cmp::Reverse(k)) = ready.pop() {
-            order.push(nodes[lets[k]].span);
-            for &dependent in &needed_by[k] {
+        loop {
+            let p = match passed.pop() {
+                Some(p) => p,
+                None => match ready.pop() {
+                    Some(std::cmp::Reverse((k, p))) => {
+                        order.push(nodes[lets[k]].span);
+                        p
+                    }
+                    None => break,
+                },
+            };
+            for &dependent in &needed_by[p] {
                 waits[dependent] -= 1;
                 if waits[dependent] == 0 {
-                    ready.push(std::cmp::Reverse(dependent));
+                    is_ready(dependent, &mut ready, &mut passed);
                 }
             }
         }
