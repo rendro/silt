@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A file that imports a module plainly sees its names with the module's
+-- name in every message: `da.Sq`, `da.Area`, `da.load`, `da.Green`
+-- (audit R9, card NAM-1).
+import da
+
+fn main() {
+  let s: da.Sq = da.sq()
+  let n: Int = s
+  let m = da.load(1, 2)
+  let a = s.area()
+  let c = match da.color() {
+    da.Red -> 1
+  }
+  println((n, m, a, c))
+}

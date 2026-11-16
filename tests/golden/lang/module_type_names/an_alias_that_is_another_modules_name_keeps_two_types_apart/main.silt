@@ -2,8 +2,8 @@
 -- exit: 1
 -- `import da as other` beside a module named `other` that this file does
 -- not import: `other.T` is da's type here, and the module `other`'s own
--- `T` is described, so that two types are never written alike in one
--- message.
+-- `T` and its trait `Shown` are described, so that two types (or
+-- traits) are never written alike in one message.
 import da as other
 
 fn f(a: other.T) -> Int {
@@ -18,4 +18,5 @@ fn f(a: other.T) -> Int {
 
 fn main() {
   println(f(other.A))
+  println(other.show(1))
 }

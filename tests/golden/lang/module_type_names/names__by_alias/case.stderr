@@ -1,0 +1,24 @@
+error[type]: type mismatch: expected Int, got d.Sq
+ --> main.silt:10:16
+    |
+ 10 |   let n: Int = s
+    |                ^ type mismatch: expected Int, got d.Sq
+
+error[type]: `d.load` expects 1 argument, got 2
+ --> main.silt:11:11
+    |
+ 11 |   let m = d.load(1, 2)
+    |           ^^^^^^^^^^^^ `d.load` expects 1 argument, got 2
+
+error[type]: type 'd.Sq' has no field 'area'
+ --> main.silt:12:11
+    |
+ 12 |   let a = s.area()
+    |           ^^^^^^ type 'd.Sq' has no field 'area'
+  = help: `area` is a method of trait `d.Area`: call it as `d.Area.area(s)`
+
+error[type]: non-exhaustive match: missing variant d.Green
+ --> main.silt:13:17
+    |
+ 13 |   let c = match d.color() {
+    |                 ^^^^^^^^^ non-exhaustive match: missing variant d.Green

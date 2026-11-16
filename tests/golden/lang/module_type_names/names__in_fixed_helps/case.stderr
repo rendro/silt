@@ -1,0 +1,27 @@
+error[type]: type mismatch: expected Int, got Option(Int)
+ --> main.silt:27:16
+    |
+ 27 |   let a: Int = half(4)
+    |                ^^^^^^^ type mismatch: expected Int, got Option(Int)
+  = help: to chain through an `Option`, use `?` to propagate `None`, or `|> o.flat_map { x -> ... }` to continue the pipeline on the Some value
+
+error[type]: type mismatch: expected Int, got Result(Int, String)
+ --> main.silt:28:16
+    |
+ 28 |   let b: Int = parse("x")
+    |                ^^^^^^^^^^ type mismatch: expected Int, got Result(Int, String)
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> r.flat_map { x -> ... }` to continue the pipeline on the Ok value
+
+error[type]: type mismatch: expected Option(_), got Result(Int, String)
+ --> main.silt:33:11
+    |
+ 33 |   let c = half(4)?
+    |           ^^^^^^^^ type mismatch: expected Option(_), got Result(Int, String)
+  = help: turn the Option into a Result first: `|> o.to_result(error)?`
+
+error[type]: `?` returns this `String` from the function, which returns `Result(Int, Bad)`
+ --> main.silt:38:11
+    |
+ 38 |   let d = parse("x")?
+    |           ^^^^^^^^^^^ `?` returns this `String` from the function, which returns `Result(Int, Bad)`
+  = help: `?` converts nothing: turn the `String` into the function's `Bad` before the `?`, `|> r.map_err { e -> ... }`

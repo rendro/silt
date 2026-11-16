@@ -1623,10 +1623,23 @@ impl Resolver<'_> {
     /// types used as values, then the prelude.
     fn lookup_global_value(&self, name: Symbol) -> Option<Binding> {
         self.used.borrow_mut().insert(name);
+        // A trait of the module is a value only where no value has its
+        // name: as a variant of the module's own hides a trait of its name
+        // in expressions and patterns, so does a variant or function of
+        // the prelude (`trait Some` leaves `Some(1)` the variant).
+        let trait_named_like_a_prelude_value = |binding: &&Binding| {
+            matches!(binding, Binding::Def(id) if matches!(self.defs.get(*id).kind, DefKind::Trait(_)))
+                && self.builtins.prelude.values.contains_key(&name)
+        };
         self.previous
             .get(&name)
             .or_else(|| self.scope.values.get(&name))
-            .or_else(|| self.scope.types.get(&name))
+            .or_else(|| {
+                self.scope
+                    .types
+                    .get(&name)
+                    .filter(|b| !trait_named_like_a_prelude_value(b))
+            })
             .or_else(|| self.scope.implied.get(&name))
             .or_else(|| self.builtins.prelude.values.get(&name))
             .or_else(|| self.builtins.prelude.types.get(&name))

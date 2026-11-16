@@ -37,4 +37,7 @@ pub struct ModuleAnalysis {
     /// a session `for_editor` (empty otherwise).
     #[cfg_attr(not(any(feature = "lsp", feature = "repl")), allow(dead_code))]
     pub(crate) modules_written: HashMap<crate::defs::ModuleId, crate::typechecker::ModuleWritten>,
+    /// The names the module binds the builtin modules it imports to, for
+    /// the session's helps (`Session::written_builtin`).
+    pub(crate) builtin_bindings: HashMap<crate::defs::ModuleId, crate::intern::Symbol>,
 }

@@ -745,7 +745,13 @@ pub(crate) fn in_print_order(sources: &SourceMap, diagnostics: &mut [Diagnostic]
 /// Labels follow the snippet as snippets of their own, introduced by
 /// `:::`, except for a runtime error, whose labels are its call stack.
 pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
-    let c = active_colors();
+    render_human_in(view, d, active_colors())
+}
+
+/// [`render_human`] in the colours `c`: the command's by its rule
+/// (`active_colors`), none (`COLORS_OFF`) for an embedder, whose text does
+/// not depend on where the process's stderr goes.
+pub(crate) fn render_human_in(view: &dyn SourceView, d: &Diagnostic, c: &Colors) -> String {
     let (word, color) = match d.severity {
         Severity::Error => ("error", c.red),
         Severity::Warning => ("warning", c.yellow),

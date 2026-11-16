@@ -1,0 +1,17 @@
+error[type]: type mismatch: expected Int, got Sq
+ --> main.silt:12:16
+    |
+ 12 |   let n: Int = s
+    |                ^ type mismatch: expected Int, got Sq
+
+error[type]: `load` expects 1 argument, got 2
+ --> main.silt:13:11
+    |
+ 13 |   let m = load(1, 2)
+    |           ^^^^^^^^^^ `load` expects 1 argument, got 2
+
+error[type]: type mismatch: expected Int, got da.Color
+ --> main.silt:14:16
+    |
+ 14 |   let c: Int = da.color()
+    |                ^^^^^^^^^^ type mismatch: expected Int, got da.Color

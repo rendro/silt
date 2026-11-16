@@ -1,0 +1,23 @@
+pub type Sq { side: Int }
+
+pub type Color { Red, Green }
+
+pub trait Area {
+  fn area(self) -> Int
+}
+
+trait Area for Sq {
+  fn area(self) -> Int { self.side * self.side }
+}
+
+pub fn load(n: Int) -> Int {
+  n
+}
+
+pub fn sq() -> Sq {
+  Sq { side: 2 }
+}
+
+pub fn color() -> Color {
+  Red
+}

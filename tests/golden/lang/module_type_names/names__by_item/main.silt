@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A file that imports names of another module by item sees them bare in
+-- every message: the type `Sq`, the trait `Area`, the function `load`
+-- and the variant `Green`, as the file writes them (audit R9, card NAM-1).
+import da.{ Sq, Color, Area, load, sq, color, Red, Green }
+
+fn main() {
+  let s: Sq = sq()
+  let n: Int = s
+  let m = load(1, 2)
+  let a = s.area()
+  let k: Color = color()
+  let c = match k {
+    Red -> 1
+  }
+  println((n, m, a, c, Area.area(s), Green))
+}

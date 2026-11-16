@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- `import da as lib` in a package with its own module `lib`: the real
+-- lib's `T` is described, `T of module lib`, not written bare like the
+-- file's own `T` (audit R9, review R1).
+import da as lib
+
+type T { Own }
+
+fn main() {
+  let b = lib.theirs()
+  let a = lib.mine()
+  let s: String = (a, b, Own)
+  println(s)
+}

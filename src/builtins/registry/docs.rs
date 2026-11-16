@@ -845,7 +845,7 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                 Some((row, decoding)) if cells.len() >= 2 => {
                     listed_decoders.insert((m.name, row.name));
                     let mut cells = cells.clone();
-                    cells[1] = decoding.type_arguments(|t| format!("`{t}`"));
+                    cells[1] = decoding.type_arguments(|t| format!("`{t}`"), str::to_string);
                     out.push(format!("| {} |", cells.join(" | ")));
                     continue;
                 }

@@ -1,0 +1,17 @@
+-- cmd: lsp
+-- lsp: signature 12:27
+-- lsp: signature 13:20
+-- lsp: hover 14:13
+-- Signature help and hover write a bound's trait as the file names it,
+-- with its types: `where a: d.Area` under `import da as d`, the type
+-- `Sq` bare where the file imports it (audit R9, card NAM-1, review S2).
+import da as d
+import da.{ Sq, measured }
+
+fn main() {
+  let s: Sq = d.measured(d.Sq { side: 1 }, d.Green)
+  let t = measured(s, d.Red)
+  let f = d.measured
+  println((s, t))
+  let _ = f(s, d.Red)
+}

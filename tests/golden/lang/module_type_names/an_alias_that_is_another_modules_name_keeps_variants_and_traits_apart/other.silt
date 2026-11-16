@@ -1,0 +1,2 @@
+pub type T { A, B }
+pub trait Area { fn area(self) -> Int }

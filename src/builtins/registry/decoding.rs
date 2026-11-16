@@ -222,9 +222,15 @@ impl Family {
         }
     }
 
-    /// The field types it decodes, as shown in compile errors.
-    pub fn help(self) -> String {
-        let leaves: Vec<&str> = self.leaves().iter().map(|leaf| leaf.name()).collect();
+    /// The field types it decodes, as shown in compile errors, each name
+    /// of a builtin module as `written` writes it (the file's name for it,
+    /// `TypeChecker::written_builtin`).
+    pub fn help(self, written: impl Fn(&str) -> String) -> String {
+        let leaves: Vec<String> = self
+            .leaves()
+            .iter()
+            .map(|leaf| written(leaf.name()))
+            .collect();
         if self == Family::Csv {
             return format!(
                 "decodable field types are {}, Option(T) of these (an empty cell is None), \
@@ -240,9 +246,12 @@ impl Family {
         // they are written as: no leaves.)
         format!(
             "decodable field types are {}, List(T), Option(T), Map(String, T), tuples, \
-             time.Instant, time.Duration, {named} (a generic one with its type arguments), \
-             types with a `json.Decode` impl, and aliases of these",
-            leaves.join(", ")
+             {}, {}, {named} (a generic one with its type arguments), \
+             types with a `{}` impl, and aliases of these",
+            leaves.join(", "),
+            written("time.Instant"),
+            written("time.Duration"),
+            written("json.Decode"),
         )
     }
 
@@ -311,8 +320,15 @@ impl Decoding {
     /// json.Value, or a type with a `json.Decode` impl`. Every family
     /// decodes a type with a written impl by the impl; a decoder that
     /// takes any value takes the containers of the field types.
-    pub fn type_arguments(self, name: impl Fn(&str) -> String) -> String {
-        let json_value = self.json_value().then(|| name(Leaf::JsonValue.name()));
+    /// A name of a builtin module in it is as `written` writes it.
+    pub fn type_arguments(
+        self,
+        name: impl Fn(&str) -> String,
+        written: impl Fn(&str) -> String,
+    ) -> String {
+        let json_value = self
+            .json_value()
+            .then(|| name(&written(Leaf::JsonValue.name())));
         let record = "a record type".to_string();
         // (`json.Value` with the primitive types where they are taken.)
         let mut types: Vec<String> = match self.primitives {
@@ -330,7 +346,7 @@ impl Decoding {
             types.push("an enum type".to_string());
         }
         if self.family.honours_impls() {
-            types.push("a type with a `json.Decode` impl".to_string());
+            types.push(format!("a type with a `{}` impl", written("json.Decode")));
         }
         if self.primitives {
             types.push(format!(
@@ -661,7 +677,7 @@ mod tests {
                         },
                     );
                 }
-                let help = family.help();
+                let help = family.help(str::to_string);
                 let listed = helped(&help);
                 assert_eq!(
                     listed,

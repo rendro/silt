@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[type]: this `Fn(Int) -> Int` value is unused
--- stderr-contains: error[type]: function expects 2 arguments, got 1
+-- stderr-contains: error[type]: `int.max` expects 2 arguments, got 1
 -- stderr-contains: help: `|>` passes only the first argument; write the others in a call: `|> list.map(...)`
 -- stderr-not-contains: a closure on the next line
 -- A closure on the line after a call is not said to be meant for it

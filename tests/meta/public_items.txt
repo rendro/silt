@@ -1090,12 +1090,17 @@ src/source.rs: pub text
 src/typechecker/builtin_env.rs: pub fn __builtin_trait_registration_fingerprint
 src/typechecker/builtin_env.rs: pub fn __trait_init_fingerprint_check_program
 src/typechecker/builtin_env.rs: pub fn builtin_type_signatures
+src/typechecker/mod.rs: pub bounds
 src/typechecker/mod.rs: pub diagnostics
 src/typechecker/mod.rs: pub entry_display
 src/typechecker/mod.rs: pub errors
 src/typechecker/mod.rs: pub let_order
+src/typechecker/mod.rs: pub name
+src/typechecker/mod.rs: pub params
+src/typechecker/mod.rs: pub parts
 src/typechecker/mod.rs: pub signatures
 src/typechecker/mod.rs: pub struct Signature
+src/typechecker/mod.rs: pub struct SignatureParts
 src/typechecker/mod.rs: pub text
 src/typechecker/mod.rs: pub top_level
 src/typechecker/mod.rs: pub ty

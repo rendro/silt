@@ -1,1 +1,5 @@
 pub type T { X, Y }
+
+pub trait Shown {
+  fn shown(self) -> String
+}
