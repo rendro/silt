@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A `return` without a value is a whole expression: a line below it
+-- that starts with `|>` or `.` does not go on with it. Before, it did
+-- (`(return) |> f`), and fmt refused the file.
+fn f(x: Int) -> Int { x }
+
+fn g() -> Int {
+  let v = return
+    |> f
+  v
+}
+
+fn h() -> Int {
+  let v = return
+    .a
+  v
+}

@@ -1,0 +1,21 @@
+-- A `return` without a value before a comma or a closer on its line
+-- returns `()`; the rest of the list is not built.
+fn early(stop: Bool) -> () {
+  let xs = [1, match stop {
+    true -> return
+    false -> 2
+  }, 3]
+  println(xs)
+}
+
+fn inline() -> () {
+  let xs = [1, return, 3]
+  println(xs)
+}
+
+fn main() {
+  early(false)
+  early(true)
+  inline()
+  println("done")
+}

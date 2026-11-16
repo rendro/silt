@@ -1,0 +1,13 @@
+error[parse]: expected expression, found |>
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:10:5
+    |
+ 10 |     |> f
+    |     ^^ expected expression, found |>
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`
+
+error[parse]: expected expression, found .
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:16:5
+    |
+ 16 |     .a
+    |     ^ expected expression, found .
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`

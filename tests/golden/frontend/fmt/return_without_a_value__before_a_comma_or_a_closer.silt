@@ -1,0 +1,27 @@
+-- cmd: fmt
+-- A `return` without a value before a line break in a list, a tuple,
+-- the arguments of a call, a record or a map: the result writes it
+-- before a comma or a closer, where it has no value either, and is a
+-- fixed point. Before, the result did not parse and fmt refused the
+-- file (the nightly fuzz case: `return,` in a list).
+type P { a: Int, b: Int }
+
+fn f(a: Int, b: Int) -> Int { a }
+
+fn g(x: Int) -> Int {
+  let xs = [1, return
+  ]
+  let ys = [return
+    , 2]
+  let t = (x, return
+  )
+  let c = f(return
+    , 2)
+  let p = P { a: return
+    , b: 2 }
+  let m = #{ "a": return
+    , "b": 2 }
+  let s = [..xs, return
+  ]
+  1
+}
