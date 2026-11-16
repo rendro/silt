@@ -142,26 +142,54 @@ fn relative_to(path: &str, roots: &[String]) -> Option<String> {
     None
 }
 
-/// Convert a 0-based LSP position (UTF-16 code units) in `text` to the
-/// 1-based line and character column the CLI prints.
+/// Where the lines of `text` start as the language server protocol
+/// counts them: a line ends at `\n`, `\r\n` or a lone `\r`.
+fn protocol_line_starts(text: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let mut starts = vec![0];
+    for (i, b) in bytes.iter().enumerate() {
+        let lone_cr = *b == b'\r' && bytes.get(i + 1) != Some(&b'\n');
+        if *b == b'\n' || lone_cr {
+            starts.push(i + 1);
+        }
+    }
+    starts
+}
+
+/// The 1-based line and character column the CLI prints for byte
+/// `offset` of `text`: its lines end at `\n` only, as the lexer counts
+/// them (a lone `\r` is a character of its line).
+fn cli_line_col(text: &str, offset: usize) -> (u64, u64) {
+    let before = &text[..offset];
+    let line = before.matches('\n').count() as u64 + 1;
+    let start = before.rfind('\n').map_or(0, |at| at + 1);
+    (line, text[start..offset].chars().count() as u64 + 1)
+}
+
+/// Convert a 0-based LSP position (the protocol's lines, UTF-16 code
+/// units) in `text` to the 1-based line and character column the CLI
+/// prints: through the byte offset, so a file with a lone `\r` (another
+/// line for the protocol, none for the CLI) is compared at the same byte.
 fn cli_position(text: &str, line: u64, character: u64) -> (u64, u64) {
-    let Some(line_text) = text.split('\n').nth(line as usize) else {
+    let starts = protocol_line_starts(text);
+    let Some(&start) = starts.get(line as usize) else {
         return (line + 1, character + 1);
     };
+    // (Within the protocol's line, its line end included, as the server
+    // counts a column: the inverse of its `lsp_position`.)
+    let end = starts.get(line as usize + 1).copied().unwrap_or(text.len());
     let mut units = 0u64;
-    let mut chars = 0u64;
-    for c in line_text.chars() {
+    let mut offset = start;
+    for c in text[start..end].chars() {
         if units >= character {
             break;
         }
         units += c.len_utf16() as u64;
-        chars += 1;
+        offset += c.len_utf8();
     }
-    if units < character {
-        // Past the end of the line: count the rest as characters.
-        chars += character - units;
-    }
-    (line + 1, chars + 1)
+    let (line, col) = cli_line_col(text, offset);
+    // Past the end of the line: count the rest as characters.
+    (line, col + character.saturating_sub(units))
 }
 
 fn severity_name(value: &Value) -> String {
@@ -506,8 +534,9 @@ struct Asked<'a> {
     roots: &'a [String],
 }
 
-/// The 0-based LSP position (UTF-16 code units) of the 1-based line and
-/// character column `at` (`L:C`) in `text`.
+/// The 0-based LSP position (the protocol's lines, UTF-16 code units) of
+/// the 1-based line and character column `at` (`L:C`) as the CLI counts
+/// them in `text` (see `cli_position`, its inverse).
 fn lsp_position(text: &str, at: &str) -> Result<Value, String> {
     let bad = || format!("bad position {at:?}: write LINE:COLUMN");
     let (line, col) = at.split_once(':').ok_or_else(bad)?;
@@ -516,9 +545,29 @@ fn lsp_position(text: &str, at: &str) -> Result<Value, String> {
     if line == 0 || col == 0 {
         return Err(bad());
     }
-    let line_text = text.split('\n').nth(line - 1).unwrap_or("");
-    let character: usize = line_text.chars().take(col - 1).map(char::len_utf16).sum();
-    Ok(json!({"line": line - 1, "character": character}))
+    // The byte offset of the position, on the CLI's line.
+    let start = match line {
+        1 => 0,
+        _ => text
+            .match_indices('\n')
+            .nth(line - 2)
+            .map_or(text.len(), |(at, _)| at + 1),
+    };
+    let line_text = text[start..].split('\n').next().unwrap_or("");
+    let offset = start
+        + line_text
+            .chars()
+            .take(col - 1)
+            .map(char::len_utf8)
+            .sum::<usize>();
+    // The protocol's line that holds it, and the column in UTF-16 units.
+    let starts = protocol_line_starts(text);
+    let index = starts.partition_point(|&s| s <= offset).saturating_sub(1);
+    let character: usize = text[starts[index]..offset]
+        .chars()
+        .map(char::len_utf16)
+        .sum();
+    Ok(json!({"line": index, "character": character}))
 }
 
 impl Asked<'_> {
@@ -827,5 +876,44 @@ fn reader_loop<R: Read>(stdout: R, tx: Sender<Value>) {
         if tx.send(msg).is_err() {
             return;
         }
+    }
+}
+
+/// The verdict compares the language server's places with the CLI's at
+/// the same byte: a lone `\r` ends a line for the protocol and not for
+/// the CLI, so the two count other lines, and the conversion goes through
+/// the offset. FAIL before: `4:3` against the CLI's `2:27` for
+/// repros/frontend/deep_cr_only.silt (full-corpus verdict).
+#[test]
+fn positions_convert_between_the_cli_s_lines_and_the_protocol_s() {
+    let text = "-- a\nfn main() {\r  let x = 1\r  println(x)\r}\r";
+    // `println` is on the CLI's line 2, column 27, and on the protocol's
+    // line 3 (0-based), column 2.
+    assert_eq!(cli_position(text, 3, 2), (2, 27));
+    assert_eq!(
+        lsp_position(text, "2:27").unwrap(),
+        json!({"line": 3, "character": 2})
+    );
+    // With LF and CRLF only, the lines are the same ones; UTF-16 columns
+    // are counted in characters.
+    let text = "a\r\nfn \u{1F600}x\n  y";
+    assert_eq!(cli_position(text, 1, 5), (2, 5));
+    assert_eq!(
+        lsp_position(text, "2:5").unwrap(),
+        json!({"line": 1, "character": 5})
+    );
+    assert_eq!(cli_position(text, 2, 2), (3, 3));
+    // Every place converts back to itself.
+    let text = "x\ry\r\nz\n\r\rw";
+    for at in [
+        "1:1", "1:2", "1:3", "1:4", "1:5", "2:1", "2:2", "3:1", "3:2", "3:3", "3:4",
+    ] {
+        let p = lsp_position(text, at).unwrap();
+        let (line, col) = cli_position(
+            text,
+            p["line"].as_u64().unwrap(),
+            p["character"].as_u64().unwrap(),
+        );
+        assert_eq!(format!("{line}:{col}"), at, "{p}");
     }
 }
