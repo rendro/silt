@@ -3602,13 +3602,14 @@ impl TypeChecker {
             // List(a, b)` or `trait X for Int(a)` fell through to
             // `_ => Type::Generic(..)` below, silently producing a phantom
             // type that no value has. Derive fixed-arity builtin entries
-            // from the authoritative table. Variadic shapes (`Tuple`,
-            // `Fn`, `Handle`) carry `arity: None` and are
-            // intentionally skipped — they do not participate in this
-            // trait-impl arity check.
-            let builtin_arity: Option<usize> = builtin_type_name(written)
-                .and_then(crate::types::builtins::lookup)
-                .and_then(|b| b.arity.map(|a| a as usize));
+            // from the authoritative table, and that of an opaque type of
+            // the table (`task.Handle(a)`, `Bytes`) from the registry, as
+            // a type expression does. `Tuple` and `Fn` carry `arity: None`
+            // and do not take part in this trait-impl arity check.
+            let builtin_arity: Option<usize> = builtin_type_name(written).and_then(|name| {
+                let entry = crate::types::builtins::lookup(name)?;
+                (entry.arity.map(|a| a as usize)).or_else(|| crate::defs::opaque_type_arity(name))
+            });
             // User-declared type aliases are in the arity table too:
             // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
             // checked for its arity, and does not fall through to the
