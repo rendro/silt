@@ -84,7 +84,11 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("error: silt test: unknown flag '{}'{}", args[i], suggestion);
+            eprintln!(
+                "error: silt test: unknown flag '{}'{}",
+                crate::git::escape_for_display(&args[i]),
+                suggestion
+            );
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
         } else if file.is_none() {

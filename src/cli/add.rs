@@ -244,7 +244,10 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // Every other subcommand emits a `Run 'silt <sub> --help'
             // for usage.` nudge on a second stderr line; `Usage` adds
             // that line here.
-            return Err(AddError::Usage(format!("unknown flag '{arg}'")));
+            return Err(AddError::Usage(format!(
+                "unknown flag '{}'",
+                crate::git::escape_for_display(arg)
+            )));
         } else if name.is_none() {
             name = Some(arg.clone());
             i += 1;

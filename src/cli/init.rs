@@ -25,7 +25,10 @@ pub(crate) fn dispatch(args: &[String]) {
     // Reject unknown flags before proceeding.
     for arg in &args[2..] {
         if arg.starts_with('-') && arg != "--help" && arg != "-h" && arg != "--lib" {
-            eprintln!("error: silt init: unknown flag '{arg}'");
+            eprintln!(
+                "error: silt init: unknown flag '{}'",
+                crate::git::escape_for_display(arg)
+            );
             eprintln!("Run 'silt init --help' for usage.");
             process::exit(1);
         }
@@ -38,10 +41,12 @@ pub(crate) fn dispatch(args: &[String]) {
     for arg in &args[2..] {
         if !arg.starts_with('-') {
             eprintln!(
-                "error: silt init: unexpected argument '{arg}' (silt init takes no positional arguments; the package name is derived from the current directory)"
+                "error: silt init: unexpected argument '{}' (silt init takes no positional arguments; the package name is derived from the current directory)",
+                crate::git::escape_for_display(arg)
             );
+            let shown = crate::git::escape_for_display(arg);
             eprintln!(
-                "                  to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
+                "                  to create a package in a new directory, run: mkdir {shown} && cd {shown} && silt init"
             );
             process::exit(1);
         }

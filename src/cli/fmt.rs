@@ -66,7 +66,10 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("error: silt fmt: unknown flag '{arg}'{suggestion}");
+            eprintln!(
+                "error: silt fmt: unknown flag '{}'{suggestion}",
+                crate::git::escape_for_display(arg)
+            );
             eprintln!("Run 'silt fmt --help' for usage.");
             process::exit(1);
         } else {

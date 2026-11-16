@@ -114,8 +114,15 @@ pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-
 /// to write keeps every argument (`args`, after the program's name) in
 /// its place, `silt -w hello.silt` as `silt run -w hello.silt`.
 pub(crate) fn file_is_no_command(file: &str, args: &[String]) -> ! {
-    let written: Vec<String> = args.iter().map(|arg| shell_word(arg)).collect();
-    eprintln!("error: silt: unknown command '{file}'");
+    // (Each word by the display rule too: a control character in it is
+    // an escape, not a character sent to the terminal.)
+    let written: Vec<String> = (args.iter())
+        .map(|arg| crate::git::escape_for_display(&shell_word(arg)))
+        .collect();
+    eprintln!(
+        "error: silt: unknown command '{}'",
+        crate::git::escape_for_display(file)
+    );
     eprintln!("  Did you mean 'silt run {}'?", written.join(" "));
     eprintln!("Run 'silt' with no arguments to see available commands.");
     std::process::exit(1);

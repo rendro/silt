@@ -77,7 +77,10 @@ pub(crate) fn arguments(args: &[String]) -> Option<String> {
             eprintln!("Run 'silt disasm --help' for usage.");
             process::exit(1);
         } else if arg.starts_with('-') && arg != "--help" && arg != "-h" {
-            eprintln!("error: silt disasm: unknown flag '{arg}'");
+            eprintln!(
+                "error: silt disasm: unknown flag '{}'",
+                crate::git::escape_for_display(arg)
+            );
             eprintln!("Run 'silt disasm --help' for usage.");
             process::exit(1);
         } else if !arg.starts_with('-') {

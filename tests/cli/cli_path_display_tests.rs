@@ -126,3 +126,38 @@ fn a_package_file_named_with_a_control_character_is_escaped() {
     assert!(!text.contains('\u{202e}'), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A typed word that is no path (an unknown command, an unknown flag, an
+/// argument a command does not take) is echoed by the display rule too,
+/// and so are the commands silt suggests with it. FAIL on the base: the
+/// words were echoed raw.
+#[test]
+fn a_typed_word_with_a_control_character_is_escaped() {
+    let dir = fixture("words", &[("main.silt", "fn main() {\n  println(1)\n}\n")]);
+    let runs: [(&[&str], &str); 6] = [
+        (&["zz\u{1b}c"], "unknown command 'zz\\u{1b}c'"),
+        (&["check", "--x\u{1b}cy"], "unknown flag '--x\\u{1b}cy'"),
+        (&["run", "-\t"], "unknown flag '-\\t'"),
+        (&["repl", "x\u{7}y"], "unexpected argument 'x\\u{7}y'"),
+        (
+            &["init", "x\u{202e}y"],
+            "mkdir x\\u{202e}y && cd x\\u{202e}y",
+        ),
+        (
+            &["a\u{1b}cb.silt", "x\ty"],
+            "Did you mean 'silt run \"a\\u{1b}cb.silt\" \"x\\ty\"'",
+        ),
+    ];
+    for (args, expected) in runs {
+        let text = silt(&dir, args);
+        assert!(
+            text.contains(expected),
+            "silt {args:?}: expected {expected:?} in:\n{text}"
+        );
+        assert!(
+            !text.contains(['\u{1b}', '\u{7}', '\t', '\u{202e}']),
+            "silt {args:?} printed a raw character:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

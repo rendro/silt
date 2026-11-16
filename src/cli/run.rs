@@ -106,7 +106,10 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Vec<String>) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("error: silt run: unknown flag '{arg}'{suggestion}");
+            eprintln!(
+                "error: silt run: unknown flag '{}'{suggestion}",
+                crate::git::escape_for_display(arg)
+            );
             eprintln!("Run 'silt run --help' for usage.");
             process::exit(1);
         } else if file.is_none() {

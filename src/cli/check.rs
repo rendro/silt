@@ -118,7 +118,8 @@ pub(crate) fn arguments(args: &[String]) -> (Vec<String>, OutputFormat, bool) {
             };
             eprintln!(
                 "error: silt check: unknown flag '{}'{}",
-                args[i], suggestion
+                crate::git::escape_for_display(&args[i]),
+                suggestion
             );
             eprintln!("Run 'silt check --help' for usage.");
             process::exit(1);

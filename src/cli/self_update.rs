@@ -29,7 +29,10 @@ pub(crate) fn dispatch(args: &[String]) {
                     "--h" | "-help" => " (did you mean --help?)",
                     _ => "",
                 };
-                eprintln!("error: silt self-update: unknown flag '{other}'{suggestion}");
+                eprintln!(
+                    "error: silt self-update: unknown flag '{}'{suggestion}",
+                    crate::git::escape_for_display(other)
+                );
                 eprintln!("Run 'silt self-update --help' for usage.");
                 process::exit(1);
             }
