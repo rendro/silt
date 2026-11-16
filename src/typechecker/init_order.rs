@@ -243,6 +243,84 @@ fn on_a_ring(
     found
 }
 
+/// The `let`s of the node graph `edges` that `start` reaches, in the
+/// order a breadth-first search over `edges` finds them: what a `let`
+/// whose value is not plain needs.
+fn reached_lets(edges: &[Vec<usize>], is_let: &dyn Fn(usize) -> bool, start: usize) -> Vec<usize> {
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for &target in &edges[start] {
+        if seen.insert(target) {
+            queue.push_back(target);
+        }
+    }
+    let mut reached: Vec<usize> = Vec::new();
+    while let Some(node) = queue.pop_front() {
+        if is_let(node) {
+            reached.push(node);
+        }
+        for &target in &edges[node] {
+            if seen.insert(target) {
+                queue.push_back(target);
+            }
+        }
+    }
+    reached
+}
+
+/// A search of the node graph for the nearest nodes of a kind, its marks
+/// kept from one search to the next (a search costs what it visits).
+struct Nearest {
+    mark: Vec<u32>,
+    stamp: u32,
+}
+
+impl Nearest {
+    fn new(nodes: usize) -> Nearest {
+        Nearest {
+            mark: vec![0; nodes],
+            stamp: 0,
+        }
+    }
+
+    /// The nodes that `start` reaches over `edges` (`start` too, if it
+    /// reaches itself) that `what` says are kept, each once; the search
+    /// goes on past a node unless `what` says it stops there.
+    fn nearest(
+        &mut self,
+        edges: &[Vec<usize>],
+        start: usize,
+        what: impl Fn(usize) -> (bool, bool),
+    ) -> Vec<usize> {
+        self.stamp += 1;
+        let stamp = self.stamp;
+        let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+        for &target in &edges[start] {
+            if self.mark[target] != stamp {
+                self.mark[target] = stamp;
+                queue.push_back(target);
+            }
+        }
+        let mut found = Vec::new();
+        while let Some(node) = queue.pop_front() {
+            let (keep, stop) = what(node);
+            if keep {
+                found.push(node);
+            }
+            if stop {
+                continue;
+            }
+            for &target in &edges[node] {
+                if self.mark[target] != stamp {
+                    self.mark[target] = stamp;
+                    queue.push_back(target);
+                }
+            }
+        }
+        found
+    }
+}
+
 /// The way from the node `start` to the node `goal` that the search of
 /// `init_order` for what `start` needs finds (breadth first over
 /// `edges`, in their order): the nodes after `start`, `goal` last. Empty
@@ -835,19 +913,23 @@ impl TypeChecker {
             }
         }
 
-        // The `let`s each `let` needs. The way to one (the functions
-        // between, then the `let`) is found again where a ring is
-        // reported (`way_to`): kept for every pair, the ways of a chain
-        // of n `let`s that each read the one before were n cubed in all
-        // (800 `let`s took a gigabyte).
+        // The `let`s each `let` needs (`needs_of`): a plain value the
+        // `let`s it reads, another every `let` its value reaches, through
+        // the functions it mentions and the `let`s on the way (what a
+        // `let` holds may be called through it). Those are found whole
+        // only where a ring is searched for; elsewhere a `let` is known by
+        // the nearest `let`s it reaches, which say the rest (`nearest`): a
+        // chain of n `let`s that each read the one before, each needing
+        // all before it, took time n squared (3,200 took 40 s).
         let lets: Vec<usize> = (0..nodes.len())
             .filter(|&n| nodes[n].let_decl.is_some())
             .collect();
-        let mut needs: HashMap<usize, Vec<usize>> = HashMap::new();
-        // The ways of the `let`s whose value is plain: the `let` read.
+        let is_let = |n: usize| nodes[n].let_decl.is_some();
+        // What each `let` whose value is plain reads, and the way to each:
+        // the `let` read.
+        let mut reads_of: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut ways: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         for &start in &lets {
-            // A plain value runs nothing: it needs the `let`s it reads.
             let mut reads = Vec::new();
             if let Some(value) = nodes[start].body
                 && plain_value(self, value, &mut reads)
@@ -863,35 +945,33 @@ impl TypeChecker {
                         read.push(target);
                     }
                 }
-                needs.insert(start, read);
-                continue;
+                reads_of.insert(start, read);
             }
-            // (Breadth first: the way found to a `let` is a shortest.)
-            let mut from: HashMap<usize, usize> = HashMap::new();
-            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
-            let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-            for &target in &edges[start] {
-                if seen.insert(target) {
-                    from.insert(target, start);
-                    queue.push_back(target);
-                }
-            }
-            let mut reached: Vec<usize> = Vec::new();
-            while let Some(node) = queue.pop_front() {
-                if nodes[node].let_decl.is_some() {
-                    reached.push(node);
-                    // (What the `let` holds may be called through it:
-                    // what its value mentions is reached too.)
-                }
-                for &target in &edges[node] {
-                    if seen.insert(target) {
-                        from.insert(target, node);
-                        queue.push_back(target);
-                    }
-                }
-            }
-            needs.insert(start, reached);
         }
+        let mut search = Nearest::new(nodes.len());
+        // Who reaches whom over `needs` is who reaches whom over the
+        // nearest `let`s that are not plain (a plain one is passed
+        // through: what it needs is no more than what it mentions).
+        let near: HashMap<usize, Vec<usize>> = (lets.iter())
+            .map(|&start| {
+                let near = match reads_of.get(&start) {
+                    Some(read) => read.clone(),
+                    None => search.nearest(&edges, start, |n| {
+                        (is_let(n), is_let(n) && !reads_of.contains_key(&n))
+                    }),
+                };
+                (start, near)
+            })
+            .collect();
+        let mut whole: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut needs_of = |at: usize| -> Vec<usize> {
+            (whole.entry(at))
+                .or_insert_with(|| match reads_of.get(&at) {
+                    Some(read) => read.clone(),
+                    None => reached_lets(&edges, &is_let, at),
+                })
+                .clone()
+        };
         // A `let` that reaches itself, through other `let`s or not, has
         // no place in the order: one error for each such ring, at the
         // first written of its `let`s, with the way round.
@@ -899,7 +979,7 @@ impl TypeChecker {
         // (Searched only from a `let` that reaches itself: one search
         // from each `let` of a chain of n, each needing all before it,
         // took time n cubed.)
-        let on_a_ring = on_a_ring(&lets, &needs);
+        let on_a_ring = on_a_ring(&lets, &near);
         for &start in &lets {
             if in_ring.contains(&start) || !on_a_ring.contains(&start) {
                 continue;
@@ -910,7 +990,7 @@ impl TypeChecker {
                 std::collections::VecDeque::from([start]);
             let mut back = false;
             'search: while let Some(at) = queue.pop_front() {
-                for &next in &needs[&at] {
+                for next in needs_of(at) {
                     if next == start {
                         from.insert(start, at);
                         back = true;
@@ -971,9 +1051,26 @@ impl TypeChecker {
             );
         }
         self.let_rings = in_ring.iter().map(|&n| nodes[n].span).collect();
-        for reached in needs.values_mut() {
-            reached.retain(|n| !in_ring.contains(n));
-        }
+        // What each `let` needs but the `let`s of a ring, by the nearest
+        // `let`s outside the rings that are not plain, and every other
+        // `let` outside the rings on the way to them: the order below is
+        // the one of all that each needs, as each placed `let` has what
+        // it needs placed before it.
+        let needs: HashMap<usize, Vec<usize>> = (lets.iter())
+            .map(|&start| {
+                let near = match reads_of.get(&start) {
+                    Some(read) => (read.iter())
+                        .copied()
+                        .filter(|n| !in_ring.contains(n))
+                        .collect(),
+                    None => search.nearest(&edges, start, |n| {
+                        let outside = is_let(n) && !in_ring.contains(&n);
+                        (outside, outside && !reads_of.contains_key(&n))
+                    }),
+                };
+                (start, near)
+            })
+            .collect();
         // (The `let`s of a ring are reported; they keep their source
         // order among the others.)
         // Each `let` once the ones it needs are in: of those ready, the
