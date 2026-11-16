@@ -1,29 +1,83 @@
 error[type]: `Int` takes no type arguments: write `Int`
- --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:7:19
-   |
- 7 | trait A(b): Carry(Int(b)) { fn a(self) -> b }
-   |                   ^^^^^^ `Int` takes no type arguments: write `Int`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:15:19
+    |
+ 15 | trait A(b): Carry(Int(b)) { fn a(self) -> b }
+    |                   ^^^^^^ `Int` takes no type arguments: write `Int`
 
 error[type]: `List` takes 1 type argument here: write `List(a)`
- --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:8:19
-   |
- 8 | trait B(b): Carry(List(b, b)) { fn b(self) -> b }
-   |                   ^^^^^^^^^^ `List` takes 1 type argument here: write `List(a)`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:16:19
+    |
+ 16 | trait B(b): Carry(List(b, b)) { fn b(self) -> b }
+    |                   ^^^^^^^^^^ `List` takes 1 type argument here: write `List(a)`
 
 error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
- --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:9:19
-   |
- 9 | trait C(b): Carry(Map(String)) { fn c(self) -> b }
-   |                   ^^^^^^^^^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:17:19
+    |
+ 17 | trait C(b): Carry(Map(String)) { fn c(self) -> b }
+    |                   ^^^^^^^^^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
 
 error[type]: `Tuple` names a type only in the header of an impl (`trait Show for Tuple`): a tuple type is written with its parts: `(Int, String)`
- --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:10:19
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:18:19
     |
- 10 | trait D(b): Carry(Tuple) { fn d(self) -> b }
+ 18 | trait D(b): Carry(Tuple) { fn d(self) -> b }
     |                   ^^^^^ here
 
 error[type]: `Fn` names a type only in the header of an impl (`trait Show for Fn`): a function type is written with its parts: `Fn(Int) -> String`
- --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:11:19
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:19:19
     |
- 11 | trait E(b): Carry(Fn) { fn e(self) -> b }
+ 19 | trait E(b): Carry(Fn) { fn e(self) -> b }
     |                   ^^ here
+
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:20:19
+    |
+ 20 | trait F(b): Carry(Box(b, b)) { fn f(self) -> b }
+    |                   ^^^^^^^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `Bag` takes no type arguments: write `Bag`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:21:19
+    |
+ 21 | trait G(b): Carry(Bag(b)) { fn g(self) -> b }
+    |                   ^^^^^^ `Bag` takes no type arguments: write `Bag`
+
+error[type]: `Wrap` takes 1 type argument here: write `Wrap(a)`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:22:19
+    |
+ 22 | trait H(b): Carry(Wrap(b, b)) { fn h(self) -> b }
+    |                   ^^^^^^^^^^ `Wrap` takes 1 type argument here: write `Wrap(a)`
+
+error[type]: `Pair` takes no type arguments: write `Pair`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:23:19
+    |
+ 23 | trait I(b): Carry(Pair(b)) { fn i(self) -> b }
+    |                   ^^^^^^^ `Pair` takes no type arguments: write `Pair`
+
+error[type]: 'c' is no argument of a supertrait: write a type or one of the parameters of 'J'
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:24:20
+    |
+ 24 | trait J(b): Carry((c, Int(b))) { fn j(self) -> b }
+    |                    ^ 'c' is no argument of a supertrait: write a type or one of the parameters of 'J'
+
+error[type]: `Int` takes no type arguments: write `Int`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:24:23
+    |
+ 24 | trait J(b): Carry((c, Int(b))) { fn j(self) -> b }
+    |                       ^^^^^^ `Int` takes no type arguments: write `Int`
+
+error[type]: 'Foo' is no argument of a supertrait: write a type or one of the parameters of 'K'
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:25:20
+    |
+ 25 | trait K(b): Carry((Foo, Int(b), Bar)) { fn k(self) -> b }
+    |                    ^^^ 'Foo' is no argument of a supertrait: write a type or one of the parameters of 'K'
+
+error[type]: `Int` takes no type arguments: write `Int`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:25:25
+    |
+ 25 | trait K(b): Carry((Foo, Int(b), Bar)) { fn k(self) -> b }
+    |                         ^^^^^^ `Int` takes no type arguments: write `Int`
+
+error[type]: 'Bar' is no argument of a supertrait: write a type or one of the parameters of 'K'
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:25:33
+    |
+ 25 | trait K(b): Carry((Foo, Int(b), Bar)) { fn k(self) -> b }
+    |                                 ^^^ 'Bar' is no argument of a supertrait: write a type or one of the parameters of 'K'

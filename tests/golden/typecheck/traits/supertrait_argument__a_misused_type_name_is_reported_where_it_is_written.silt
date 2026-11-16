@@ -1,12 +1,26 @@
 -- cmd: check
 -- exit: 1
 -- A supertrait argument is a type expression: one that misuses a type
--- name is reported where it is written, as it is in any type, and the
--- supertrait does not hold at a phantom type no value has.
+-- name is reported where it is written, as it is in any type (a builtin
+-- type, a program's own type or alias given another number of arguments,
+-- a name that only an impl header has), and the supertrait does not hold
+-- at a phantom type no value has. A part that is no type at all (`c`,
+-- `Foo`) is reported in the supertrait's own words, each one, and does not
+-- hide what else is wrong in the argument, as in an annotation.
+type Box(a) { v: a }
+type Bag { n: Int }
+type Pair = (Int, Int)
+type Wrap(a) = List(a)
 trait Carry(c) { fn carry(self) -> c }
 trait A(b): Carry(Int(b)) { fn a(self) -> b }
 trait B(b): Carry(List(b, b)) { fn b(self) -> b }
 trait C(b): Carry(Map(String)) { fn c(self) -> b }
 trait D(b): Carry(Tuple) { fn d(self) -> b }
 trait E(b): Carry(Fn) { fn e(self) -> b }
+trait F(b): Carry(Box(b, b)) { fn f(self) -> b }
+trait G(b): Carry(Bag(b)) { fn g(self) -> b }
+trait H(b): Carry(Wrap(b, b)) { fn h(self) -> b }
+trait I(b): Carry(Pair(b)) { fn i(self) -> b }
+trait J(b): Carry((c, Int(b))) { fn j(self) -> b }
+trait K(b): Carry((Foo, Int(b), Bar)) { fn k(self) -> b }
 fn main() { println("x") }

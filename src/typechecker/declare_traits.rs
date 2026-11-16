@@ -1235,7 +1235,9 @@ impl TypeChecker {
             // parameters: what else they wrote was read as no type at all,
             // which every impl's type then met.)
             for arg in &r.args {
-                if let Some((what, span)) = no_supertrait_argument(arg, &t.params) {
+                let mut parts = Vec::new();
+                no_supertrait_parts(arg, &t.params, &mut parts);
+                for NoTypePart { what, at: span, .. } in parts {
                     let message = match what.as_str() {
                         "'Never'" => super::typeexpr::NEVER_ELSEWHERE.to_string(),
                         _ => format!(
@@ -1570,8 +1572,16 @@ impl TypeChecker {
                     .map(|te| {
                         let reported = self.errors.len();
                         let ty = self.resolve_type_expr(te, &mut names);
-                        if no_supertrait_argument(te, &params).is_some() {
-                            self.errors.truncate(reported);
+                        // (What `check_supertrait_arity` reports in its own
+                        // words is not reported again here; what else is
+                        // wrong in the argument is, as in any type.)
+                        let mut hidden = Vec::new();
+                        no_supertrait_parts(te, &params, &mut hidden);
+                        if !hidden.is_empty() {
+                            let kept: Vec<Diagnostic> = (self.errors.drain(reported..))
+                                .filter(|d| !hidden.iter().any(|part| part.hides(d.span)))
+                                .collect();
+                            self.errors.extend(kept);
                         }
                         ty
                     })
@@ -4294,36 +4304,70 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
     )
 }
 
-/// The first part of the supertrait argument `te` that is no type there
-/// (`Self`, a name that is no type and none of the trait's `params`),
-/// as the error names it, with
-/// its span: what `resolve_supertrait_args` reads as no type at all.
-fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, Span)> {
+/// A part of a supertrait argument that is no type there (`Self`, a name
+/// that is neither a type nor one of the trait's parameters, a parameter
+/// given type arguments): what the error names it, where it is, and which
+/// of the resolver's reports are about it: one at the part's whole span,
+/// or for a name applied, the report of that name (at its own span or the
+/// whole application's) and none of those about its arguments.
+struct NoTypePart {
+    what: String,
+    at: Span,
+    whole: Span,
+    applied: bool,
+}
+
+impl NoTypePart {
+    fn hides(&self, at: Span) -> bool {
+        let within = |outer: Span| at.start >= outer.start && at.end <= outer.end;
+        match self.applied {
+            false => within(self.whole),
+            true => within(self.at) || at == self.whole,
+        }
+    }
+}
+
+/// Every part of the supertrait argument `te` that is no type there, in
+/// the order they are written: what `resolve_supertrait_args` reads as
+/// no type at all.
+fn no_supertrait_parts(te: &TypeExpr, params: &[Symbol], out: &mut Vec<NoTypePart>) {
     // (A name the resolver refused it reported.)
     let unread = |name: Symbol| {
         te.res != Some(crate::defs::Res::Error)
             && !params.contains(&name)
             && super::inference::written_type(te, name).is_none()
     };
+    let part = |what: String, at: Span, applied: bool| NoTypePart {
+        what,
+        at,
+        whole: te.span,
+        applied,
+    };
     match &te.kind {
-        TypeExprKind::SelfType => Some(("'Self'".to_string(), te.span)),
+        TypeExprKind::SelfType => out.push(part("'Self'".to_string(), te.span, false)),
         TypeExprKind::Named { name, .. } if unread(*name) => {
-            Some((format!("'{}'", resolve(*name)), te.span))
+            out.push(part(format!("'{}'", resolve(*name)), te.span, false))
         }
         TypeExprKind::Generic {
-            name, name_span, ..
-        } if unread(*name) => Some((format!("'{}'", resolve(*name)), *name_span)),
+            name,
+            name_span,
+            args,
+            ..
+        } if unread(*name) => {
+            out.push(part(format!("'{}'", resolve(*name)), *name_span, true));
+            args.iter()
+                .for_each(|arg| no_supertrait_parts(arg, params, out));
+        }
         // (A parameter is a type: it takes no type arguments.)
         TypeExprKind::Generic { name, .. } if params.contains(name) => {
-            Some((format!("'{}'", type_expr_text(te)), te.span))
+            out.push(part(format!("'{}'", type_expr_text(te)), te.span, false))
         }
         TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => args
             .iter()
-            .find_map(|arg| no_supertrait_argument(arg, params)),
-        TypeExprKind::Function(params_te, ret) => params_te
-            .iter()
+            .for_each(|arg| no_supertrait_parts(arg, params, out)),
+        TypeExprKind::Function(params_te, ret) => (params_te.iter())
             .chain(std::iter::once(ret.as_ref()))
-            .find_map(|arg| no_supertrait_argument(arg, params)),
-        _ => None,
+            .for_each(|arg| no_supertrait_parts(arg, params, out)),
+        TypeExprKind::Named { .. } => {}
     }
 }
