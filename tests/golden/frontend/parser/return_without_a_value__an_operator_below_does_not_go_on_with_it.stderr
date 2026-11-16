@@ -1,0 +1,41 @@
+error[parse]: expected expression, found |>
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:13:5
+    |
+ 13 |     |> f
+    |     ^^ expected expression, found |>
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`
+
+error[parse]: expected expression, found .
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:19:5
+    |
+ 19 |     .a
+    |     ^ expected expression, found .
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`
+
+error[parse]: expected expression, found |>
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:25:5
+    |
+ 25 |     |> f
+    |     ^^ expected expression, found |>
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`
+
+error[parse]: expected expression, found ==
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:31:5
+    |
+ 31 |     == 6
+    |     ^^ expected expression, found ==
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`
+
+error[parse]: expected expression, found |>
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:38:5
+    |
+ 38 |     |> f
+    |     ^^ expected expression, found |>
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`
+
+error[parse]: expected pattern, found |>
+ --> return_without_a_value__an_operator_below_does_not_go_on_with_it.silt:45:7
+    |
+ 45 |       |> f
+    |       ^^ expected pattern, found |>
+  = help: a `return` without a value ends the expression: nothing goes on with it from the next line; put the value on the line of `return`

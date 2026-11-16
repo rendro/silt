@@ -1,0 +1,7 @@
+fn id(a: Int) -> Int { a }
+
+fn main() {
+  let v = 1 + return
+    |> id
+  println(v)
+}

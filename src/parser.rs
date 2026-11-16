@@ -817,9 +817,35 @@ impl<'src> Parser<'src> {
             )
     }
 
+    /// Whether the token before the current one is a `return` without a
+    /// value: the current one starts a line, and the `return` took no
+    /// value for that reason.
+    fn after_bare_return(&self) -> bool {
+        self.nl_before() && self.pos > 0 && self.tokens[self.pos - 1].kind == Token::Return
+    }
+
+    /// Whether the current token, at the start of a line, would go on with
+    /// the expression of the line above: `|>`, `.`, `as`, `..` or a binary
+    /// operator other than `+` and `-` (which start a new statement).
+    fn continues_a_line(&self) -> bool {
+        matches!(
+            self.peek(),
+            Token::Pipe | Token::Dot | Token::As | Token::DotDot
+        ) || BinOp::from_token(self.peek()).is_some_and(|op| !matches!(op, BinOp::Add | BinOp::Sub))
+    }
+
     /// `d` with the help for a `+`, `-` or `?` that starts a line behind
     /// a value: none of them continues the line above.
     fn with_line_start_help(&self, d: Diagnostic) -> Diagnostic {
+        // (`return` then `|> f`, `.x` or `== 1` on the next line: an
+        // operator that would go on with the line above. A value there,
+        // `[1, return` then `x]`, keeps its ordinary message.)
+        if self.after_bare_return() && self.continues_a_line() {
+            return d.with_help(
+                "a `return` without a value ends the expression: nothing goes on with it from \
+                 the next line; put the value on the line of `return`",
+            );
+        }
         if !self.nl_before() || !self.prev_ends_value() {
             return d;
         }
@@ -4015,6 +4041,13 @@ impl<'src> Parser<'src> {
 
             // The infix operators, which may start a line.
             let had_newline = self.nl_before();
+            // A `return` without a value ends the whole expression it is
+            // the last operand of: no operator on the next line goes on
+            // with it, at this level or any around it (`1 + return` then
+            // `|> f`, `-return` then `== 6`), comment lines between or not.
+            if self.after_bare_return() {
+                break;
+            }
 
             // Binary operators. + and - are newline-sensitive: `-` is
             // ambiguous with unary negation starting the next statement
@@ -4413,8 +4446,11 @@ impl<'src> Parser<'src> {
             Token::Loop => self.parse_loop_expr(),
             Token::Return => {
                 self.advance();
-                // Return may or may not have a value
-                if self.nl_before() || self.at(&Token::RBrace) || self.at(&Token::Eof) {
+                // A `return` has a value when one follows on its line: not
+                // before a line break, a closer, a comma or the end
+                // (`[a, return]`, `f(return)`).
+                let closes = [Token::RBrace, Token::RParen, Token::RBracket, Token::Comma];
+                if self.nl_before() || self.at(&Token::Eof) || closes.iter().any(|t| self.at(t)) {
                     Ok(self.mk_expr(ExprKind::Return(None), span))
                 } else {
                     let val = self.parse_expr()?;
@@ -5587,11 +5623,13 @@ impl<'src> Parser<'src> {
                 }
             }
             _ => Err(self.foreign_syntax(Foreign::Pattern).unwrap_or_else(|| {
-                Diagnostic::error(
+                // (A match arm that ends in a bare `return`, then `|> f` on
+                // the next line: the line is read as the next arm.)
+                self.with_line_start_help(Diagnostic::error(
                     Code::ExpectedPattern,
                     self.found_span(),
                     format!("expected pattern, found {}", self.found()),
-                )
+                ))
             })),
         }
     }
