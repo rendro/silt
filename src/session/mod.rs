@@ -525,10 +525,9 @@ impl Session {
     /// trait `def`, named `name`, when it is one of an earlier cell that
     /// a later cell declared again: with its cell (`<repl:1>.T`), as the
     /// cell's diagnostics write it; or a type of another module (a builtin
-    /// module's, a module's of the program) as the editor writes it
-    /// (`written_type_name`: `regex.Regex`, `geo.Pt` where another type
-    /// the cell can name shares the name). `None` for any other, which
-    /// keeps its name.
+    /// module's, a module's of the program) as the editor and the
+    /// messages write it (`written_type_name`: `regex.Regex`, `geo.Pt`).
+    /// `None` for any other, which keeps its name.
     #[cfg(feature = "repl")]
     pub(crate) fn shadowed_cell_name(
         &self,
@@ -537,11 +536,10 @@ impl Session {
         name: Symbol,
     ) -> Option<String> {
         let owner = self.defs.get(def).module;
-        // A type of a builtin module or of a module of the program whose
-        // name another type the cell can name shares (`regex.Regex`,
-        // `geo.Pt` beside the cell's own `Pt`): as the editor writes it,
-        // with the module part of the messages (`written_type_name`).
-        // (A trait keeps its name.)
+        // A type of a builtin module or of a module of the program
+        // (`regex.Regex`, `geo.Pt`): as the editor writes it, with the
+        // module part of the messages (`written_type_name`). (A trait
+        // keeps its name.)
         if !self.cells.info.contains_key(&owner) {
             let def_ref = self.defs.get(def);
             if !def_ref.is_type() {

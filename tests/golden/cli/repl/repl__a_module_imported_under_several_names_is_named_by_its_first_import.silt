@@ -1,0 +1,6 @@
+-- cmd: repl
+-- A module imported under several names over the entries is named by its
+-- first import, as in a file: `j` here, in `:type` and in a message,
+-- though `aa` comes first by name and `json` is imported too.
+-- stderr-contains: expected Int, got Result(Int, j.JsonError)
+-- stdin: import json as j\nimport json\nimport json as zz\nimport json as aa\n:type json.parse("1", Int)\nlet bad: Int = json.parse("1", Int)\n:quit\n

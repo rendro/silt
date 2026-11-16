@@ -240,14 +240,27 @@ impl TypeChecker {
             return None;
         }
         let package = |m| self.tables.module_packages.get(&m);
-        if package(module) != package(self.module) && self.import_path(module).is_none() {
-            return Some(ModuleWritten::Described {
-                package: *self.tables.package_names.get(package(module)?)?,
+        let described = |package: Option<Symbol>| {
+            Some(ModuleWritten::Described {
+                package,
                 module: (self.tables.module_names.get(&module).copied())
                     .filter(|name| resolve(*name) != "lib"),
-            });
+            })
+        };
+        if package(module) != package(self.module) && self.import_path(module).is_none() {
+            return described(Some(*self.tables.package_names.get(package(module)?)?));
         }
-        self.module_name_here(module).map(ModuleWritten::Named)
+        let name = self.module_name_here(module)?;
+        // A module the file does not import, whose name the file gives
+        // another module (`import da as other` beside a module `other`):
+        // its types are described, so that two types are never written
+        // alike (`other.T` is da's here).
+        let renamed_away = !self.module_spelled.contains_key(&module)
+            && (self.module_spelled.iter()).any(|(m, binding)| *m != module && *binding == name);
+        match renamed_away {
+            true => described(None),
+            false => Some(ModuleWritten::Named(name)),
+        }
     }
 
     /// [`TypeChecker::module_written`] for every module this one reaches
@@ -723,9 +736,11 @@ pub(crate) enum ModuleWritten {
     /// key for the dependency's library (`da`, imported here or not).
     Named(Symbol),
     /// Out of every import's reach (a dependency's dependency, a
-    /// dependency's module other than its library): described.
+    /// dependency's module other than its library), or a module of the
+    /// package whose name the file gives another module: described.
     Described {
-        package: Symbol,
+        /// The module's package; None for the file's own.
+        package: Option<Symbol>,
         /// The module's name; None for a package's library.
         module: Option<Symbol>,
     },
@@ -733,21 +748,22 @@ pub(crate) enum ModuleWritten {
 
 impl ModuleWritten {
     /// The type `name` of such a module: `da.AppError`; `InErr of
-    /// package inner`, `UErr of module util of package da` (the
-    /// arguments of a generic one stand before the description, at
-    /// [`crate::types::AFTER_ARGUMENTS`]).
+    /// package inner`, `UErr of module util of package da`, `T of module
+    /// other` (the arguments of a generic one stand before the
+    /// description, at [`crate::types::AFTER_ARGUMENTS`]).
     pub(crate) fn type_name(&self, name: Symbol) -> String {
         let after = crate::types::AFTER_ARGUMENTS;
         match self {
             ModuleWritten::Named(module) => format!("{module}.{name}"),
-            ModuleWritten::Described {
-                package,
-                module: Some(module),
-            } => format!("{name}{after} of module {module} of package {package}"),
-            ModuleWritten::Described {
-                package,
-                module: None,
-            } => format!("{name}{after} of package {package}"),
+            ModuleWritten::Described { package, module } => {
+                let module = module.map(|m| format!(" of module {m}"));
+                let package = package.map(|p| format!(" of package {p}"));
+                format!(
+                    "{name}{after}{}{}",
+                    module.unwrap_or_default(),
+                    package.unwrap_or_default()
+                )
+            }
         }
     }
 }
