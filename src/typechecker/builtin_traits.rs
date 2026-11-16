@@ -84,8 +84,8 @@ pub(crate) fn builtin_trait_decls() -> Vec<TraitDecl> {
             )],
             is_pub: true,
             span: dummy_span,
-            // (A builtin trait's doc, shown on hover: no file's names. own name)
             doc: Some(
+                // (A builtin trait's doc, shown on hover: no file's names. own name)
                 "How a value is shown: `println`, `print`, interpolation and\n\
                  `string.from` show it so. A type has it by its structure, or by an\n\
                  impl written in the module that declares the type."

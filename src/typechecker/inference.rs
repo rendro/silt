@@ -55,12 +55,57 @@ enum CallForm {
     BarePipe,
 }
 
+/// How a call is written and where the obligations of its callee's use
+/// begin, as `check_call` hands them to its parts.
+#[derive(Clone, Copy)]
+struct CallAt {
+    callee_name: Option<Symbol>,
+    span: Span,
+    form: CallForm,
+    through_trait: bool,
+    receiver_taken_by_callee: bool,
+    owed_before: usize,
+    given_before: usize,
+}
+
+/// What the parts of `check_call` read of a call whose callee is a
+/// function: the callee and its parameters, how the call is written, and
+/// where the obligations of the callee's use begin.
+#[derive(Clone, Copy)]
+struct CallSite<'a> {
+    callee: &'a Expr,
+    callee_name: Option<Symbol>,
+    callee_ty: &'a Type,
+    params: &'a [Type],
+    span: Span,
+    form: CallForm,
+    through_trait: bool,
+    owed_before: usize,
+    given_before: usize,
+    implicit_self: usize,
+    written_params: usize,
+    receiver_taken_by_callee: bool,
+}
+
+/// What the arguments of a call of a function have shown so far, as
+/// `check_argument` keeps it: whether one was of the wrong type, whether a
+/// type was given where a record's fields are read, each argument's place
+/// with its alias and type, and the names given as arguments.
+struct ArgumentsSoFar {
+    mismatched: bool,
+    type_for_record: bool,
+    given_at: Vec<Option<(Span, Option<Symbol>, Type)>>,
+    named_args: Vec<(Expr, Type)>,
+}
+
 /// The call to write for a method without `self` where only a type
 /// variable is at hand: on a `type` parameter of that variable.
 /// How a program does what the method `method` of the builtin trait
 /// `tr` would, where that method is not called (`display`, `equal`):
 /// the help of an error at a call of it. `None` for any other method.
 pub(super) fn uncallable_builtin(tr: TraitKey, method: Symbol, x: &str) -> Option<String> {
+    // (Its callers ask only whether there is a help; a help shown is
+    // `uncallable_builtin_written`'s, with the file's name: not a text)
     uncallable_builtin_written(tr, method, x, "string.from")
 }
 
@@ -222,17 +267,7 @@ impl TypeChecker {
             return;
         };
         for (i, super_name) in info.supertraits.iter().enumerate() {
-            let super_args: Vec<Type> = match info.supertrait_args.get(i) {
-                Some(exprs) if !exprs.is_empty() => {
-                    // (A generic type written bare among them is reported
-                    // where the trait is declared.)
-                    exprs
-                        .iter()
-                        .map(|te| resolve_supertrait_arg(te, info, &args))
-                        .collect()
-                }
-                _ => Vec::new(),
-            };
+            let super_args: Vec<Type> = info.supertrait_args_at(i, &args);
             self.bound_closure(in_scope, *super_name, super_args);
         }
     }
@@ -1276,12 +1311,22 @@ impl TypeChecker {
                     .is_some_and(|i| i.methods.iter().any(|(n, _)| *n == field))
             });
             let help = match sup {
-                Some(s) => uncallable_builtin_written(s, field, "x", &self.written_builtin("string.from")).or_else(|| {
+                Some(s) => uncallable_builtin_written(
+                    s,
+                    field,
+                    "x",
+                    &self.written_builtin("string.from"),
+                )
+                .or_else(|| {
                     let shown = self.spell_trait(s);
-                    let rest = if self.method_arity(s, field) > 1 { ", .." } else { "" };
-                    Some(format!(
-                        "`{field}` is a method of supertrait `{shown}`: call it as `{shown}.{field}(x{rest})`"
-                    ))
+                    Some(match self.trait_call(s, field, "x") {
+                        Ok(call) => {
+                            format!(
+                                "`{field}` is a method of supertrait `{shown}`: call it as {call}"
+                            )
+                        }
+                        Err(help) => help,
+                    })
                 }),
                 None => {
                     let names: Vec<String> =
@@ -2244,24 +2289,11 @@ impl TypeChecker {
             if self.self_param(tr, field).is_some() {
                 // (Every trait in sight that gives it, by how this module
                 // writes it.)
-                let taking: Vec<String> = (traits.iter())
-                    .filter(|t| uncallable_builtin(**t, field, written).is_none())
-                    .filter(|t| self.self_param(**t, field).is_some())
-                    .map(|t| self.spell_trait(*t))
+                let taking: Vec<TraitKey> = (traits.iter().copied())
+                    .filter(|t| uncallable_builtin(*t, field, written).is_none())
+                    .filter(|t| self.self_param(*t, field).is_some())
                     .collect();
-                let rest = if params > 1 { ", .." } else { "" };
-                let calls: Vec<String> = (taking.iter())
-                    .map(|shown| format!("`{shown}.{field}({written}{rest})`"))
-                    .collect();
-                let of: Vec<String> = taking
-                    .iter()
-                    .map(|shown| format!("trait `{shown}`"))
-                    .collect();
-                return Some(format!(
-                    "`{field}` is a method of {}: call it as {}",
-                    of.join(" and of "),
-                    calls.join(" or ")
-                ));
+                return self.trait_calls_help(&taking, field, written);
             }
             let shown = self.spell_trait(tr);
             // (A type variable with the bound is called on as a type.)
@@ -2371,29 +2403,124 @@ impl TypeChecker {
                 uncallable_builtin_written(*first, field, "x", &self.written_builtin("string.from"))
                     .unwrap_or_default()
             }
-            _ => {
-                let of: Vec<String> = (callable.iter())
-                    .map(|t| format!("trait `{}`", self.spell_trait(*t)))
-                    .collect();
-                let calls: Vec<String> = (callable.iter())
-                    .map(|t| {
-                        let more = self.method_arity(*t, field) > 1;
-                        let rest = if more { ", .." } else { "" };
-                        format!("`{}.{field}(x{rest})`", self.spell_trait(*t))
-                    })
-                    .collect();
-                format!(
-                    "`{field}` is a method of {}: call it as {}",
-                    of.join(" and of "),
-                    calls.join(" or ")
-                )
-            }
+            _ => self
+                .trait_calls_help(&callable, field, "x")
+                .unwrap_or_default(),
         };
         self.error_help(
             Code::UnknownMethod,
             (format!("type '{on}' has no method '{field}'"), Some(help)),
             span,
         );
+    }
+
+    /// Whether `written`, a trait as this module writes it, is a value in
+    /// an expression: a variant (or another value) of the module or of the
+    /// prelude has its bare name and hides the trait there (`trait Some`
+    /// beside the prelude's `Some`), so `written.method(x)` is refused.
+    fn trait_hidden_in_expressions(&self, written: &str) -> bool {
+        if written.contains('.') {
+            return false;
+        }
+        let name = intern(written);
+        let own_value = (self.spelled.iter()).any(|(id, binding)| {
+            *binding == name
+                && self
+                    .def(*id)
+                    .is_some_and(|def| !matches!(def.kind, crate::defs::DefKind::Trait(_)))
+        });
+        own_value
+            || super::names::builtins()
+                .1
+                .prelude
+                .values
+                .contains_key(&name)
+    }
+
+    /// The help that offers the calls of the method `field` of `traits`
+    /// on `x` this module can write (`call it as `Area.go(x)``), or, where
+    /// it can write none, why and what to do (`trait_call`). None for no
+    /// trait.
+    fn trait_calls_help(&self, traits: &[TraitKey], field: Symbol, x: &str) -> Option<String> {
+        let mut of = Vec::new();
+        let mut calls = Vec::new();
+        let mut refused = None;
+        for t in traits {
+            match self.trait_call(*t, field, x) {
+                Ok(call) => {
+                    of.push(format!("trait `{}`", self.spell_trait(*t)));
+                    calls.push(call);
+                }
+                Err(help) => {
+                    refused.get_or_insert(help);
+                }
+            }
+        }
+        match calls.is_empty() {
+            true => refused,
+            false => Some(format!(
+                "`{field}` is a method of {}: call it as {}",
+                of.join(" and of "),
+                calls.join(" or ")
+            )),
+        }
+    }
+
+    /// The call of the method `field` of the trait `t` on `x` as this
+    /// module writes it (`Area.go(x)`), or, where it can write none, the
+    /// help that says why and what to do. Where a variant (or another
+    /// value) hides the trait in expressions (`trait_hidden_in_expressions`):
+    /// a trait of another module is called through its module, by the
+    /// file's name for it (`m.Some.go(x)`), or after an import of it; a
+    /// trait of this module is renamed (the trait beside the prelude's
+    /// variant, which cannot be renamed; the variant where it is the
+    /// module's own, as the help of `Trait.field` says).
+    fn trait_call(&self, t: TraitKey, field: Symbol, x: &str) -> Result<String, String> {
+        let shown = self.spell_trait(t);
+        let rest = if self.method_arity(t, field) > 1 {
+            ", .."
+        } else {
+            ""
+        };
+        if !self.trait_hidden_in_expressions(&shown) {
+            return Ok(format!("`{shown}.{field}({x}{rest})`"));
+        }
+        let hidden = format!(
+            "`{field}` is a method of trait `{shown}`, which the variant `{shown}` hides in \
+             expressions"
+        );
+        let Some(def) = self.def(t.id.0) else {
+            return Err(hidden);
+        };
+        if def.module != self.module {
+            let call = |module: &str| format!("`{module}.{}.{field}({x}{rest})`", def.name);
+            return match self.module_spelled.get(&def.module) {
+                Some(binding) => Ok(call(&resolve(*binding))),
+                None => {
+                    let module = (self.import_path(def.module))
+                        .or_else(|| self.tables.module_names.get(&def.module).copied())
+                        .map_or_else(|| "its module".to_string(), resolve);
+                    Err(format!(
+                        "{hidden}: import `{module}` to call it as {}",
+                        call(&module)
+                    ))
+                }
+            };
+        }
+        let name = intern(&shown);
+        let own_variant = (self.spelled.iter()).any(|(id, binding)| {
+            *binding == name
+                && self.def(*id).is_some_and(|d| {
+                    d.module == self.module && !matches!(d.kind, crate::defs::DefKind::Trait(_))
+                })
+        });
+        let rename = match own_variant {
+            true => "the variant",
+            false => "the trait",
+        };
+        Err(format!(
+            "{hidden}: rename {rename} to call `{shown}.{field}`"
+        ))
     }
 
     /// The number of parameters of the method `field` of the trait `tr`.
@@ -3639,406 +3766,20 @@ impl TypeChecker {
         }
 
         let result_ty = match &callee_ty {
-            Type::Fun(params, ret) => {
-                // A method call supplies `self` implicitly
-                // (`dispatch_method_entry` has unified it with the
-                // receiver), so the arguments line up with `params[1..]`.
-                let implicit_self = usize::from(receiver_taken_by_callee);
-                // (A method has its `self`: `takes_no_self` refused the
-                // access otherwise.)
-                let written_params = match through_trait {
-                    true => params.len(),
-                    false => params.len().saturating_sub(implicit_self),
+            Type::Fun(..) => {
+                let at = CallAt {
+                    callee_name,
+                    span,
+                    form,
+                    through_trait,
+                    receiver_taken_by_callee,
+                    owed_before,
+                    given_before,
                 };
-                // What the callee's use owes for a type variable of a
-                // parameter is owed for that argument: a bound that
-                // fails is reported at it.
-                for k in owed_before..self.wanted.len() {
-                    // (A trait method's call: its method's type, once.)
-                    let via_ty = match &self.wanted[k].goal {
-                        Goal::Pred(Pred::Via { method_ty, .. }) => Some(self.apply(method_ty)),
-                        _ => None,
-                    };
-                    // The call of a trait method itself (its type is the
-                    // callee's): each parameter's argument, for what the
-                    // impl's method gives a builtin. (A call inside this
-                    // one placed its own.)
-                    if let (Some(via_ty), CallForm::Call) = (&via_ty, form)
-                        && self.wanted[k].arguments.is_empty()
-                        && *via_ty == callee_ty
-                    {
-                        let origin = self.wanted[k].origin;
-                        let arguments = (0..params.len())
-                            .map(|param| {
-                                let arg = args.get(param.checked_sub(implicit_self)?)?;
-                                let origin = Origin {
-                                    span: arg.span,
-                                    ..origin
-                                };
-                                Some((origin, self.alias_named(arg)))
-                            })
-                            .collect();
-                        self.wanted[k].arguments = arguments;
-                    }
-                    // (A trait method's call is at the type it is given,
-                    // not at its receiver: where it was given, if that is
-                    // known.)
-                    if let Goal::Pred(Pred::Via { at: Some(at), .. }) = &self.wanted[k].goal {
-                        self.wanted[k].origin.span = *at;
-                        continue;
-                    }
-                    let type_given = via_ty.as_ref().and_then(type_of_var);
-                    let Type::Var(v) = (match (&self.wanted[k].goal, &type_given) {
-                        (_, Some(given)) => given,
-                        (Goal::Pred(pred), None) => pred.subject(),
-                        _ => continue,
-                    }) else {
-                        continue;
-                    };
-                    let at = params
-                        .iter()
-                        .skip(implicit_self)
-                        .position(|param| free_vars_in(param).contains(v))
-                        .and_then(|i| args.get(i));
-                    // (In both forms: `x |> f` is `x |> f()`, and what the
-                    // piped value fails is shown at it.)
-                    if let Some(arg) = at {
-                        if self.decode_places.contains(&self.wanted[k].origin.span) {
-                            self.decode_places.insert(arg.span);
-                        }
-                        self.wanted[k].origin.span = arg.span;
-                        // A type argument the call names by an alias:
-                        // what a decoder's refusal calls it.
-                        let alias = self.alias_named(arg);
-                        match &mut self.wanted[k].goal {
-                            Goal::Pred(Pred::Builtin {
-                                check: BuiltinCheck::Decodes { written, .. },
-                                ..
-                            }) => *written = alias,
-                            Goal::Pred(Pred::Trait { tr, .. }) if Self::is_decode(*tr) => {
-                                if let Some(alias) = alias {
-                                    self.decode_aliases.insert(arg.span, alias);
-                                }
-                            }
-                            _ => {}
-                        }
-                        // A trait method's call: what the method of the
-                        // receiver's impl gives a decoder is decided with
-                        // the module's bodies, each type at the type
-                        // argument of the call that gives it, by the alias
-                        // that names it (as through a function: of two
-                        // that give one type, the first).
-                        if let Goal::Pred(Pred::Via { .. }) = &self.wanted[k].goal {
-                            let origin = self.wanted[k].origin;
-                            self.wanted[k].places = (params.iter().skip(implicit_self))
-                                .zip(args.iter())
-                                .filter_map(|(param, arg)| {
-                                    let given = match self.apply(param) {
-                                        Type::Generic(name, given)
-                                            if name.is_builtin(crate::defs::TYPE_OF) =>
-                                        {
-                                            given.first().cloned()?
-                                        }
-                                        _ => return None,
-                                    };
-                                    let origin = Origin {
-                                        span: arg.span,
-                                        ..origin
-                                    };
-                                    Some((given, origin, self.alias_named(arg)))
-                                })
-                                .collect();
-                        }
-                    }
+                match self.call_of_function(callee, &mut args, &callee_ty, at, env) {
+                    ControlFlow::Continue(ty) => ty,
+                    ControlFlow::Break(ty) => return ty,
                 }
-                // The same for a type given to an annotation variable of
-                // the callee's signature.
-                for k in given_before..self.given_waiting.len() {
-                    let Type::Var(v) = self.given_waiting[k].subject else {
-                        continue;
-                    };
-                    let at = params
-                        .iter()
-                        .skip(implicit_self)
-                        .position(|param| free_vars_in(param).contains(&v))
-                        .and_then(|i| args.get(i));
-                    if let Some(arg) = at {
-                        let alias = self.alias_named(arg);
-                        let use_ = &mut self.given_waiting[k];
-                        if self.decode_places.contains(&use_.origin.span) {
-                            self.decode_places.insert(arg.span);
-                        }
-                        use_.origin.span = arg.span;
-                        use_.written = alias;
-                    }
-                }
-                let mut mismatched = false;
-                // (A type given where the callee reads a record's fields,
-                // `f(Rec)`: what the call returns is of no type a later
-                // message could judge.)
-                let mut type_for_record = false;
-                // Each argument's place, the alias it names a type by,
-                // and its type.
-                let mut given: Vec<(Span, Option<Symbol>, Type)> = Vec::new();
-                // The calls of trait methods held in a closure (returned
-                // by a function, kept in a record) whose type argument is
-                // still unknown: this call may be the one that gives it.
-                let open_vias = self.open_vias();
-                // (The uses the callee owes are at this call's arguments.)
-                let callee_owes = given_before..self.given_waiting.len();
-                // (The arguments as a help writes them.)
-                let shown_args: Vec<String> = args
-                    .iter()
-                    .map(|arg| super::names::shown_arg(arg))
-                    .collect();
-                // A closure is checked after the call's other arguments,
-                // which may decide the types of its parameters
-                // (`apply({ r -> r.zero() }, rec)` reads `r` as `rec`'s
-                // type, as `apply2(rec, { r -> r.zero() })` does).
-                let (closures, others): (Vec<usize>, Vec<usize>) =
-                    (0..args.len()).partition(|k| matches!(args[*k].kind, ExprKind::Lambda { .. }));
-                // (Each argument's place, the alias and the type, in the
-                // order the call writes them.)
-                // (The names given as arguments so far, with their types:
-                // a closure a `let` names, for `misread_argument`.)
-                let mut named_args: Vec<(Expr, Type)> = Vec::new();
-                let mut given_at: Vec<Option<(Span, Option<Symbol>, Type)>> =
-                    vec![None; args.len()];
-                for i in others.into_iter().chain(closures) {
-                    let arg = &mut args[i];
-                    let param = params.get(i + implicit_self);
-                    if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
-                        && let Type::Fun(expected, _) = self.apply(param)
-                    {
-                        self.expected_closure = Some(expected);
-                    }
-                    // A `type a` argument that names both a type and its
-                    // variant (`type Box(a) { Box(a), Empty }`) is the
-                    // type.
-                    if let Some(param) = param
-                        && matches!(self.apply(param),
-                            Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF))
-                    {
-                        self.type_named_like_its_variant(arg);
-                    }
-                    // A type argument written as a type of types
-                    // (`List(Int)`, `(Int, String)`) is that type.
-                    let spelled = match param {
-                        Some(param)
-                            if matches!(self.apply(param),
-                                Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF)) =>
-                        {
-                            // (json's and toml's decoders say what they
-                            // cannot decode themselves; postgres's rows
-                            // would reach the compiler.)
-                            let builtin = (self.res_def(callee.res)).is_some_and(|def| {
-                                matches!(def.module.builtin_name(), Some("json" | "toml"))
-                            });
-                            let takes = self.type_param_of(callee, i);
-                            match self.spelled_type(arg, env) {
-                                Some(ty) if !builtin && self.valueless_type(arg, &ty, takes) => {
-                                    arg.ty = Some(Type::Error);
-                                    Some(Type::Error)
-                                }
-                                spelled => spelled,
-                            }
-                        }
-                        _ => None,
-                    };
-                    let full = spelled.is_some();
-                    let alone = spelled.is_none() && self.names_generic_type(arg);
-                    if alone {
-                        self.open_type_arguments.insert(arg.span);
-                    }
-                    let before_arg = self.errors.len();
-                    let arg_ty = match spelled {
-                        Some(ty) => Type::type_of(ty),
-                        None => self.infer_expr(arg, env),
-                    };
-                    if alone {
-                        self.note_bare_written(arg, arg.span);
-                    } else if full {
-                        self.note_bare_part(arg, arg.span);
-                    }
-                    self.expected_closure = None;
-                    let reported = self.errors.len();
-                    let arg_ty = match param {
-                        Some(param) => self.constructor_argument(
-                            param,
-                            (arg_ty, full),
-                            callee,
-                            (&shown_args, i),
-                            arg.span,
-                        ),
-                        None => arg_ty,
-                    };
-                    mismatched |= self.errors.len() > reported;
-                    given_at[i] = Some((arg.span, self.alias_named(arg), arg_ty.clone()));
-                    if let ExprKind::Ident(name) = arg.kind {
-                        self.arg_names.insert(arg.span, name);
-                    }
-                    if let Some(param) = param {
-                        let at = match form {
-                            CallForm::Call => arg.span,
-                            CallForm::BarePipe => span,
-                        };
-                        // A parameter the callee calls as a statement.
-                        let statement = match receiver_taken_by_callee {
-                            true => None,
-                            false => self.statement_unit(callee, i),
-                        };
-                        let passed_on = statement.map(|_| self.frames_sharing(&arg_ty));
-                        let reported = self.errors.len();
-                        self.unify(&arg_ty, param, at);
-                        // A type argument already reported (`_` of
-                        // `wrap(1, Result(_, String))`): what it would
-                        // decide is asked about no more.
-                        if self.apply(&arg_ty) == Type::Error
-                            && let Type::Generic(name, args) = self.apply(param)
-                            && name.is_builtin(crate::defs::TYPE_OF)
-                        {
-                            for v in args.iter().flat_map(free_vars_in) {
-                                self.unify(&Type::Var(v), &Type::Error, at);
-                            }
-                        }
-                        mismatched |= self.errors.len() > reported;
-                        type_for_record |= (self.errors[reported..].iter()).any(|e| {
-                            e.message
-                                .starts_with("type mismatch: expected a value with a field")
-                        });
-                        if self.errors.len() > reported {
-                            self.misread_argument(
-                                (callee, i, &named_args),
-                                (arg, &arg_ty),
-                                param,
-                                reported,
-                                at,
-                            );
-                            self.value_for_type_argument(
-                                (callee, i),
-                                (arg, &arg_ty),
-                                param,
-                                (before_arg, reported),
-                            );
-                        } else {
-                            self.pass_on_reading(callee, i, &arg_ty);
-                        }
-                        if let (Some(statement), Some(passed_on)) = (statement, passed_on) {
-                            self.name_statement_unit(statement, reported, passed_on);
-                        }
-                    }
-                    if matches!(arg.kind, ExprKind::Ident(_)) {
-                        named_args.push(((**arg).clone(), arg_ty.clone()));
-                    }
-                }
-                given.extend(given_at.into_iter().flatten());
-                // An argument of the wrong type is the one thing wrong
-                // with the call: what the callee owes for it is not
-                // asked as well.
-                if mismatched {
-                    for wanted in &mut self.wanted[owed_before..] {
-                        wanted.solved = true;
-                    }
-                    self.given_waiting.truncate(given_before);
-                    self.unplaced.retain(|&k| k < given_before);
-                } else if let CallForm::Call = form {
-                    let passer = self.user_callee(callee);
-                    self.point_at_type_arguments(&given, passer, callee_owes);
-                    self.point_vias_at_type_arguments(&given, &open_vias);
-                }
-                // A type this call gives its callee is placed here: no later
-                // call is its place.
-                for k in given_before..self.given_waiting.len() {
-                    if !matches!(self.apply(&self.given_waiting[k].subject), Type::Var(_)) {
-                        self.given_waiting[k].placed = true;
-                    }
-                }
-                // A call supplies exactly as many arguments as the callee
-                // has parameters, the piped value and the receiver of a
-                // method call among them.
-                if params.len() != args.len() + implicit_self {
-                    let (message, help) = match form {
-                        CallForm::Call => {
-                            // A method's receiver is not one of the
-                            // arguments the call writes.
-                            // (A call through a trait writes its
-                            // receiver: it counts.)
-                            let (what, written, got) = match (&callee.kind, callee_name) {
-                                (ExprKind::FieldAccess(obj, method, _), _) if through_trait => {
-                                    let shown = match self.trait_named(obj) {
-                                        Some(tr) => format!("`{}.{method}`", self.show_trait(tr)),
-                                        None => format!("method `{method}`"),
-                                    };
-                                    (shown, written_params, args.len() + 1)
-                                }
-                                (ExprKind::FieldAccess(obj, method, _), _)
-                                    if let Some(tr) = self.trait_named(obj) =>
-                                {
-                                    let shown = format!("`{}.{method}`", self.show_trait(tr));
-                                    (shown, written_params, args.len())
-                                }
-                                // A definition of another module: as the
-                                // file writes it (`t.parse_map`).
-                                _ if let Some(crate::defs::Res::Def(id)) = callee.res
-                                    && let Some(written) = self.written_def(id) =>
-                                {
-                                    (format!("`{written}`"), written_params, args.len())
-                                }
-                                (_, Some(name)) => {
-                                    (format!("`{name}`"), written_params, args.len())
-                                }
-                                _ => ("function".to_string(), written_params, args.len()),
-                            };
-                            let message = format!(
-                                "{what} expects {} {}, got {}",
-                                written,
-                                plural(written, "argument", "arguments"),
-                                got
-                            );
-                            (message, None)
-                        }
-                        // B6: `a |> f` supplies one argument; piping into
-                        // a function that needs more without an explicit
-                        // call forgets the remaining ones. The others are
-                        // written in a call, which a name can take.
-                        CallForm::BarePipe => {
-                            let message = format!(
-                                "cannot pipe into function taking {} {}",
-                                written_params,
-                                plural(written_params, "argument", "arguments")
-                            );
-                            let name = match &callee.kind {
-                                ExprKind::Ident(name) => Some(name.to_string()),
-                                ExprKind::FieldAccess(module, name, _) => match &module.kind {
-                                    ExprKind::Ident(module) => Some(format!("{module}.{name}")),
-                                    _ => None,
-                                },
-                                _ => None,
-                            };
-                            let help = match name {
-                                _ if written_params == 0 => None,
-                                Some(name) => Some(format!(
-                                    "`|>` passes only the first argument; write the others \
-                                     in a call: `|> {name}(...)`"
-                                )),
-                                None => Some("`|>` passes only the first argument".to_string()),
-                            };
-                            (message, help)
-                        }
-                    };
-                    self.error_help(Code::ArityMismatch, (message, help), span);
-                    // A parameter no argument is given is of no type a
-                    // later message could ask about (`Greet.greet()`).
-                    for param in params.iter().skip(args.len() + implicit_self) {
-                        if let Type::Var(_) = self.apply(param) {
-                            self.unify(param, &Type::Error, span);
-                        }
-                    }
-                }
-                if type_for_record {
-                    return Type::Error;
-                }
-                (**ret).clone()
             }
             // The callee is of a type still unknown: a function of these
             // arguments.
@@ -4051,105 +3792,18 @@ impl TypeChecker {
                 ret
             }
             other => {
-                let arg_types: Vec<Type> =
-                    args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
-                match (other, form) {
-                    // What an argument of a callee already reported
-                    // leaves unknown is asked about no more
-                    // (`list.map(xs, Greet.greet)` before `import list`).
-                    (Type::Error, _) => {
-                        for ty in &arg_types {
-                            for v in free_vars_in(&self.apply(ty)) {
-                                self.unify(&Type::Var(v), &Type::Error, span);
-                            }
-                        }
-                        Type::Error
-                    }
-                    (Type::Never, _) => Type::Never,
-                    // A type given an argument already reported (`List(t)`,
-                    // `t` undefined) was meant as a type of types.
-                    (Type::Generic(name, _), _)
-                        if name.is_builtin(crate::defs::TYPE_OF)
-                            && (arg_types.iter()).any(|ty| self.apply(ty) == Type::Error) =>
-                    {
-                        Type::Error
-                    }
-                    // A type given a value (`List(())`): the argument is
-                    // the error, not the call.
-                    (Type::Generic(name, _), CallForm::Call)
-                        if name.is_builtin(crate::defs::TYPE_OF)
-                            && let Some((arg, ty)) = (args.iter().zip(&arg_types))
-                                .map(|(arg, ty)| (arg, self.apply(ty)))
-                                .find(|(_, ty)| match ty {
-                                    Type::Generic(name, _) => {
-                                        !name.is_builtin(crate::defs::TYPE_OF)
-                                    }
-                                    Type::Var(_) | Type::Error | Type::Never => false,
-                                    _ => true,
-                                }) =>
-                    {
-                        let name = match Self::callee_label(callee) {
-                            Some(name) => resolve(name).to_string(),
-                            None => self.show_type(other),
-                        };
-                        // (The value by its text when that is short.)
-                        let text = match &arg.kind {
-                            ExprKind::Unit => Some("()".to_string()),
-                            ExprKind::Int(n) => Some(n.to_string()),
-                            ExprKind::Float(x) => Some(x.to_string()),
-                            ExprKind::Bool(b) => Some(b.to_string()),
-                            ExprKind::StringLit(s)
-                                if s.len() <= 20 && !s.contains(['"', '\\', '\n', '`']) =>
-                            {
-                                Some(format!("\"{s}\""))
-                            }
-                            _ => None,
-                        };
-                        let message = match text {
-                            Some(text) => {
-                                format!("`{name}` takes a type here, and `{text}` is a value")
-                            }
-                            None => format!(
-                                "`{name}` takes a type here, and a value of type `{}` is given",
-                                self.show_type(&ty)
-                            ),
-                        };
-                        self.error(Code::TypeMismatch, message, arg.span);
-                        Type::Error
-                    }
-                    (_, CallForm::Call) => {
-                        // A parameter that holds a type, given type
-                        // arguments (`m(Int)`): the whole type is passed.
-                        if let Some(message) = self.held_type_applied(callee, other) {
-                            self.error(Code::TypeMismatch, message, span);
-                            return Type::Error;
-                        }
-                        let mut d = Diagnostic::error(
-                            Code::TypeMismatch,
-                            span,
-                            format!("`{}` is not callable", self.show_type(other)),
-                        );
-                        // The `self` of an impl for every function.
-                        if let Type::Rigid(r) = other
-                            && let Some((what, parts)) = self.shape_vars.get(&r.var)
-                        {
-                            d = d.with_note(format!(
-                                "in an impl for `{}`, `self` is some {what}: {parts} are not \
-                                 known",
-                                r.name
-                            ));
-                        }
-                        self.errors.push(d);
-                        self.fresh_var()
-                    }
-                    (_, CallForm::BarePipe) => {
-                        self.error(
-                            Code::TypeMismatch,
-                            "pipe operator requires a function on the right-hand side".to_string(),
-                            callee.span,
-                        );
-                        self.fresh_var()
-                    }
+                let at = CallAt {
+                    callee_name,
+                    span,
+                    form,
+                    through_trait,
+                    receiver_taken_by_callee,
+                    owed_before,
+                    given_before,
+                };
+                match self.call_of_value(callee, &mut args, other, at, env) {
+                    ControlFlow::Continue(ty) => ty,
+                    ControlFlow::Break(ty) => return ty,
                 }
             }
         };
@@ -4158,6 +3812,610 @@ impl TypeChecker {
         // the subject.
         self.solve_wanted(owed_before);
         result_ty
+    }
+
+    /// `check_call` for a callee that is a function: each argument against its
+    /// parameter, what the callee's use owes placed at the arguments, the
+    /// number of arguments. `Break` is a type `check_call` returns at once.
+    fn call_of_function(
+        &mut self,
+        callee: &mut Expr,
+        args: &mut [&mut Expr],
+        callee_ty: &Type,
+        at: CallAt,
+        env: &mut TypeEnv,
+    ) -> ControlFlow<Type, Type> {
+        let Type::Fun(params, ret) = callee_ty else {
+            unreachable!("call_of_function of a callee that is no function");
+        };
+        let CallAt {
+            callee_name,
+            span,
+            form,
+            through_trait,
+            receiver_taken_by_callee,
+            owed_before,
+            given_before,
+        } = at;
+        // A method call supplies `self` implicitly
+        // (`dispatch_method_entry` has unified it with the
+        // receiver), so the arguments line up with `params[1..]`.
+        let implicit_self = usize::from(receiver_taken_by_callee);
+        // (A method has its `self`: `takes_no_self` refused the
+        // access otherwise.)
+        let written_params = match through_trait {
+            true => params.len(),
+            false => params.len().saturating_sub(implicit_self),
+        };
+        let call = CallSite {
+            callee,
+            callee_name,
+            callee_ty,
+            params,
+            span,
+            form,
+            through_trait,
+            owed_before,
+            given_before,
+            implicit_self,
+            written_params,
+            receiver_taken_by_callee,
+        };
+        self.place_owed_at_arguments(call, args);
+        // Each argument's place, the alias it names a type by,
+        // and its type.
+        let mut given: Vec<(Span, Option<Symbol>, Type)> = Vec::new();
+        // The calls of trait methods held in a closure (returned
+        // by a function, kept in a record) whose type argument is
+        // still unknown: this call may be the one that gives it.
+        let open_vias = self.open_vias();
+        // (The uses the callee owes are at this call's arguments.)
+        let callee_owes = given_before..self.given_waiting.len();
+        // (The arguments as a help writes them.)
+        let shown_args: Vec<String> = args
+            .iter()
+            .map(|arg| super::names::shown_arg(arg))
+            .collect();
+        // A closure is checked after the call's other arguments,
+        // which may decide the types of its parameters
+        // (`apply({ r -> r.zero() }, rec)` reads `r` as `rec`'s
+        // type, as `apply2(rec, { r -> r.zero() })` does).
+        let (closures, others): (Vec<usize>, Vec<usize>) =
+            (0..args.len()).partition(|k| matches!(args[*k].kind, ExprKind::Lambda { .. }));
+        // (Whether an argument was of the wrong type, or a type where a
+        // record's fields are read, `f(Rec)`: what the call returns is
+        // then of no type a later message could judge. Each argument's
+        // place, the alias and the type, in the order the call writes
+        // them. The names given as arguments so far, with their types: a
+        // closure a `let` names, for `misread_argument`.)
+        let mut so_far = ArgumentsSoFar {
+            mismatched: false,
+            type_for_record: false,
+            given_at: vec![None; args.len()],
+            named_args: Vec::new(),
+        };
+        for i in others.into_iter().chain(closures) {
+            self.check_argument(call, args, i, &shown_args, &mut so_far, env);
+        }
+        let ArgumentsSoFar {
+            mismatched,
+            type_for_record,
+            given_at,
+            ..
+        } = so_far;
+        given.extend(given_at.into_iter().flatten());
+        // An argument of the wrong type is the one thing wrong
+        // with the call: what the callee owes for it is not
+        // asked as well.
+        if mismatched {
+            for wanted in &mut self.wanted[owed_before..] {
+                wanted.solved = true;
+            }
+            self.given_waiting.truncate(given_before);
+            self.unplaced.retain(|&k| k < given_before);
+        } else if let CallForm::Call = form {
+            let passer = self.user_callee(callee);
+            self.point_at_type_arguments(&given, passer, callee_owes);
+            self.point_vias_at_type_arguments(&given, &open_vias);
+        }
+        // A type this call gives its callee is placed here: no later
+        // call is its place.
+        for k in given_before..self.given_waiting.len() {
+            if !matches!(self.apply(&self.given_waiting[k].subject), Type::Var(_)) {
+                self.given_waiting[k].placed = true;
+            }
+        }
+        self.check_argument_count(call, args);
+        if type_for_record {
+            return ControlFlow::Break(Type::Error);
+        }
+        ControlFlow::Continue((**ret).clone())
+    }
+
+    /// `call_of_function` for its argument `i`: checked against its parameter,
+    /// what is wrong with it reported, what it gives the call kept in `so_far`.
+    fn check_argument(
+        &mut self,
+        call: CallSite<'_>,
+        args: &mut [&mut Expr],
+        i: usize,
+        shown_args: &[String],
+        so_far: &mut ArgumentsSoFar,
+        env: &mut TypeEnv,
+    ) {
+        let CallSite {
+            callee,
+            params,
+            span,
+            form,
+            implicit_self,
+            receiver_taken_by_callee,
+            ..
+        } = call;
+        let ArgumentsSoFar {
+            mismatched,
+            type_for_record,
+            given_at,
+            named_args,
+        } = so_far;
+        let arg = &mut args[i];
+        let param = params.get(i + implicit_self);
+        if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
+            && let Type::Fun(expected, _) = self.apply(param)
+        {
+            self.expected_closure = Some(expected);
+        }
+        // A `type a` argument that names both a type and its
+        // variant (`type Box(a) { Box(a), Empty }`) is the
+        // type.
+        if let Some(param) = param
+            && matches!(self.apply(param),
+                Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF))
+        {
+            self.type_named_like_its_variant(arg);
+        }
+        // A type argument written as a type of types
+        // (`List(Int)`, `(Int, String)`) is that type.
+        let spelled = match param {
+            Some(param)
+                if matches!(self.apply(param),
+                    Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF)) =>
+            {
+                // (json's and toml's decoders say what they
+                // cannot decode themselves; postgres's rows
+                // would reach the compiler.)
+                let builtin = (self.res_def(callee.res))
+                    .is_some_and(|def| matches!(def.module.builtin_name(), Some("json" | "toml")));
+                let takes = self.type_param_of(callee, i);
+                match self.spelled_type(arg, env) {
+                    Some(ty) if !builtin && self.valueless_type(arg, &ty, takes) => {
+                        arg.ty = Some(Type::Error);
+                        Some(Type::Error)
+                    }
+                    spelled => spelled,
+                }
+            }
+            _ => None,
+        };
+        let full = spelled.is_some();
+        let alone = spelled.is_none() && self.names_generic_type(arg);
+        if alone {
+            self.open_type_arguments.insert(arg.span);
+        }
+        let before_arg = self.errors.len();
+        let arg_ty = match spelled {
+            Some(ty) => Type::type_of(ty),
+            None => self.infer_expr(arg, env),
+        };
+        if alone {
+            self.note_bare_written(arg, arg.span);
+        } else if full {
+            self.note_bare_part(arg, arg.span);
+        }
+        self.expected_closure = None;
+        let reported = self.errors.len();
+        let arg_ty = match param {
+            Some(param) => {
+                self.constructor_argument(param, (arg_ty, full), callee, (shown_args, i), arg.span)
+            }
+            None => arg_ty,
+        };
+        *mismatched |= self.errors.len() > reported;
+        given_at[i] = Some((arg.span, self.alias_named(arg), arg_ty.clone()));
+        if let ExprKind::Ident(name) = arg.kind {
+            self.arg_names.insert(arg.span, name);
+        }
+        if let Some(param) = param {
+            let at = match form {
+                CallForm::Call => arg.span,
+                CallForm::BarePipe => span,
+            };
+            // A parameter the callee calls as a statement.
+            let statement = match receiver_taken_by_callee {
+                true => None,
+                false => self.statement_unit(callee, i),
+            };
+            let passed_on = statement.map(|_| self.frames_sharing(&arg_ty));
+            let reported = self.errors.len();
+            self.unify(&arg_ty, param, at);
+            // A type argument already reported (`_` of
+            // `wrap(1, Result(_, String))`): what it would
+            // decide is asked about no more.
+            if self.apply(&arg_ty) == Type::Error
+                && let Type::Generic(name, args) = self.apply(param)
+                && name.is_builtin(crate::defs::TYPE_OF)
+            {
+                for v in args.iter().flat_map(free_vars_in) {
+                    self.unify(&Type::Var(v), &Type::Error, at);
+                }
+            }
+            *mismatched |= self.errors.len() > reported;
+            *type_for_record |= (self.errors[reported..].iter()).any(|e| {
+                e.message
+                    .starts_with("type mismatch: expected a value with a field")
+            });
+            if self.errors.len() > reported {
+                self.misread_argument((callee, i, named_args), (arg, &arg_ty), param, reported, at);
+                self.value_for_type_argument(
+                    (callee, i),
+                    (arg, &arg_ty),
+                    param,
+                    (before_arg, reported),
+                );
+            } else {
+                self.pass_on_reading(callee, i, &arg_ty);
+            }
+            if let (Some(statement), Some(passed_on)) = (statement, passed_on) {
+                self.name_statement_unit(statement, reported, passed_on);
+            }
+        }
+        if matches!(arg.kind, ExprKind::Ident(_)) {
+            named_args.push(((**arg).clone(), arg_ty.clone()));
+        }
+    }
+
+    /// `check_call` for a callee that is no function and no variable: what is
+    /// wrong with calling it. `Break` is a type `check_call` returns at once.
+    fn call_of_value(
+        &mut self,
+        callee: &mut Expr,
+        args: &mut [&mut Expr],
+        other: &Type,
+        at: CallAt,
+        env: &mut TypeEnv,
+    ) -> ControlFlow<Type, Type> {
+        let CallAt { span, form, .. } = at;
+        ControlFlow::Continue({
+            let arg_types: Vec<Type> = args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
+            match (other, form) {
+                // What an argument of a callee already reported
+                // leaves unknown is asked about no more
+                // (`list.map(xs, Greet.greet)` before `import list`).
+                (Type::Error, _) => {
+                    for ty in &arg_types {
+                        for v in free_vars_in(&self.apply(ty)) {
+                            self.unify(&Type::Var(v), &Type::Error, span);
+                        }
+                    }
+                    Type::Error
+                }
+                (Type::Never, _) => Type::Never,
+                // A type given an argument already reported (`List(t)`,
+                // `t` undefined) was meant as a type of types.
+                (Type::Generic(name, _), _)
+                    if name.is_builtin(crate::defs::TYPE_OF)
+                        && (arg_types.iter()).any(|ty| self.apply(ty) == Type::Error) =>
+                {
+                    Type::Error
+                }
+                // A type given a value (`List(())`): the argument is
+                // the error, not the call.
+                (Type::Generic(name, _), CallForm::Call)
+                    if name.is_builtin(crate::defs::TYPE_OF)
+                        && let Some((arg, ty)) = (args.iter().zip(&arg_types))
+                            .map(|(arg, ty)| (arg, self.apply(ty)))
+                            .find(|(_, ty)| match ty {
+                                Type::Generic(name, _) => !name.is_builtin(crate::defs::TYPE_OF),
+                                Type::Var(_) | Type::Error | Type::Never => false,
+                                _ => true,
+                            }) =>
+                {
+                    let name = match Self::callee_label(callee) {
+                        Some(name) => resolve(name).to_string(),
+                        None => self.show_type(other),
+                    };
+                    // (The value by its text when that is short.)
+                    let text = match &arg.kind {
+                        ExprKind::Unit => Some("()".to_string()),
+                        ExprKind::Int(n) => Some(n.to_string()),
+                        ExprKind::Float(x) => Some(x.to_string()),
+                        ExprKind::Bool(b) => Some(b.to_string()),
+                        ExprKind::StringLit(s)
+                            if s.len() <= 20 && !s.contains(['"', '\\', '\n', '`']) =>
+                        {
+                            Some(format!("\"{s}\""))
+                        }
+                        _ => None,
+                    };
+                    let message = match text {
+                        Some(text) => {
+                            format!("`{name}` takes a type here, and `{text}` is a value")
+                        }
+                        None => format!(
+                            "`{name}` takes a type here, and a value of type `{}` is given",
+                            self.show_type(&ty)
+                        ),
+                    };
+                    self.error(Code::TypeMismatch, message, arg.span);
+                    Type::Error
+                }
+                (_, CallForm::Call) => {
+                    // A parameter that holds a type, given type
+                    // arguments (`m(Int)`): the whole type is passed.
+                    if let Some(message) = self.held_type_applied(callee, other) {
+                        self.error(Code::TypeMismatch, message, span);
+                        return ControlFlow::Break(Type::Error);
+                    }
+                    let mut d = Diagnostic::error(
+                        Code::TypeMismatch,
+                        span,
+                        format!("`{}` is not callable", self.show_type(other)),
+                    );
+                    // The `self` of an impl for every function.
+                    if let Type::Rigid(r) = other
+                        && let Some((what, parts)) = self.shape_vars.get(&r.var)
+                    {
+                        d = d.with_note(format!(
+                            "in an impl for `{}`, `self` is some {what}: {parts} are not \
+                         known",
+                            r.name
+                        ));
+                    }
+                    self.errors.push(d);
+                    self.fresh_var()
+                }
+                (_, CallForm::BarePipe) => {
+                    self.error(
+                        Code::TypeMismatch,
+                        "pipe operator requires a function on the right-hand side".to_string(),
+                        callee.span,
+                    );
+                    self.fresh_var()
+                }
+            }
+        })
+    }
+
+    /// `check_call` for a call of a function: what the callee's use owes, and the types
+    /// given to its signature's variables, are placed at the arguments they are owed for.
+    fn place_owed_at_arguments(&mut self, call: CallSite<'_>, args: &[&mut Expr]) {
+        let CallSite {
+            owed_before,
+            given_before,
+            callee_ty,
+            params,
+            form,
+            implicit_self,
+            ..
+        } = call;
+        // What the callee's use owes for a type variable of a
+        // parameter is owed for that argument: a bound that
+        // fails is reported at it.
+        for k in owed_before..self.wanted.len() {
+            // (A trait method's call: its method's type, once.)
+            let via_ty = match &self.wanted[k].goal {
+                Goal::Pred(Pred::Via { method_ty, .. }) => Some(self.apply(method_ty)),
+                _ => None,
+            };
+            // The call of a trait method itself (its type is the
+            // callee's): each parameter's argument, for what the
+            // impl's method gives a builtin. (A call inside this
+            // one placed its own.)
+            if let (Some(via_ty), CallForm::Call) = (&via_ty, form)
+                && self.wanted[k].arguments.is_empty()
+                && via_ty == callee_ty
+            {
+                let origin = self.wanted[k].origin;
+                let arguments = (0..params.len())
+                    .map(|param| {
+                        let arg = args.get(param.checked_sub(implicit_self)?)?;
+                        let origin = Origin {
+                            span: arg.span,
+                            ..origin
+                        };
+                        Some((origin, self.alias_named(arg)))
+                    })
+                    .collect();
+                self.wanted[k].arguments = arguments;
+            }
+            // (A trait method's call is at the type it is given,
+            // not at its receiver: where it was given, if that is
+            // known.)
+            if let Goal::Pred(Pred::Via { at: Some(at), .. }) = &self.wanted[k].goal {
+                self.wanted[k].origin.span = *at;
+                continue;
+            }
+            let type_given = via_ty.as_ref().and_then(type_of_var);
+            let Type::Var(v) = (match (&self.wanted[k].goal, &type_given) {
+                (_, Some(given)) => given,
+                (Goal::Pred(pred), None) => pred.subject(),
+                _ => continue,
+            }) else {
+                continue;
+            };
+            let at = params
+                .iter()
+                .skip(implicit_self)
+                .position(|param| free_vars_in(param).contains(v))
+                .and_then(|i| args.get(i));
+            // (In both forms: `x |> f` is `x |> f()`, and what the
+            // piped value fails is shown at it.)
+            if let Some(arg) = at {
+                if self.decode_places.contains(&self.wanted[k].origin.span) {
+                    self.decode_places.insert(arg.span);
+                }
+                self.wanted[k].origin.span = arg.span;
+                // A type argument the call names by an alias:
+                // what a decoder's refusal calls it.
+                let alias = self.alias_named(arg);
+                match &mut self.wanted[k].goal {
+                    Goal::Pred(Pred::Builtin {
+                        check: BuiltinCheck::Decodes { written, .. },
+                        ..
+                    }) => *written = alias,
+                    Goal::Pred(Pred::Trait { tr, .. }) if Self::is_decode(*tr) => {
+                        if let Some(alias) = alias {
+                            self.decode_aliases.insert(arg.span, alias);
+                        }
+                    }
+                    _ => {}
+                }
+                // A trait method's call: what the method of the
+                // receiver's impl gives a decoder is decided with
+                // the module's bodies, each type at the type
+                // argument of the call that gives it, by the alias
+                // that names it (as through a function: of two
+                // that give one type, the first).
+                if let Goal::Pred(Pred::Via { .. }) = &self.wanted[k].goal {
+                    let origin = self.wanted[k].origin;
+                    self.wanted[k].places = (params.iter().skip(implicit_self))
+                        .zip(args.iter())
+                        .filter_map(|(param, arg)| {
+                            let given = match self.apply(param) {
+                                Type::Generic(name, given)
+                                    if name.is_builtin(crate::defs::TYPE_OF) =>
+                                {
+                                    given.first().cloned()?
+                                }
+                                _ => return None,
+                            };
+                            let origin = Origin {
+                                span: arg.span,
+                                ..origin
+                            };
+                            Some((given, origin, self.alias_named(arg)))
+                        })
+                        .collect();
+                }
+            }
+        }
+        // The same for a type given to an annotation variable of
+        // the callee's signature.
+        for k in given_before..self.given_waiting.len() {
+            let Type::Var(v) = self.given_waiting[k].subject else {
+                continue;
+            };
+            let at = params
+                .iter()
+                .skip(implicit_self)
+                .position(|param| free_vars_in(param).contains(&v))
+                .and_then(|i| args.get(i));
+            if let Some(arg) = at {
+                let alias = self.alias_named(arg);
+                let use_ = &mut self.given_waiting[k];
+                if self.decode_places.contains(&use_.origin.span) {
+                    self.decode_places.insert(arg.span);
+                }
+                use_.origin.span = arg.span;
+                use_.written = alias;
+            }
+        }
+    }
+
+    /// `check_call` for a call of a function: a call that supplies another number of
+    /// arguments than the callee has parameters is reported.
+    fn check_argument_count(&mut self, call: CallSite<'_>, args: &[&mut Expr]) {
+        let CallSite {
+            callee,
+            callee_name,
+            params,
+            span,
+            form,
+            through_trait,
+            implicit_self,
+            written_params,
+            ..
+        } = call;
+        // A call supplies exactly as many arguments as the callee
+        // has parameters, the piped value and the receiver of a
+        // method call among them.
+        if params.len() != args.len() + implicit_self {
+            let (message, help) = match form {
+                CallForm::Call => {
+                    // A method's receiver is not one of the
+                    // arguments the call writes.
+                    // (A call through a trait writes its
+                    // receiver: it counts.)
+                    let (what, written, got) = match (&callee.kind, callee_name) {
+                        (ExprKind::FieldAccess(obj, method, _), _) if through_trait => {
+                            let shown = match self.trait_named(obj) {
+                                Some(tr) => format!("`{}.{method}`", self.show_trait(tr)),
+                                None => format!("method `{method}`"),
+                            };
+                            (shown, written_params, args.len() + 1)
+                        }
+                        (ExprKind::FieldAccess(obj, method, _), _)
+                            if let Some(tr) = self.trait_named(obj) =>
+                        {
+                            let shown = format!("`{}.{method}`", self.show_trait(tr));
+                            (shown, written_params, args.len())
+                        }
+                        // A definition of another module: as the
+                        // file writes it (`t.parse_map`).
+                        _ if let Some(crate::defs::Res::Def(id)) = callee.res
+                            && let Some(written) = self.written_def(id) =>
+                        {
+                            (format!("`{written}`"), written_params, args.len())
+                        }
+                        (_, Some(name)) => (format!("`{name}`"), written_params, args.len()),
+                        _ => ("function".to_string(), written_params, args.len()),
+                    };
+                    let message = format!(
+                        "{what} expects {} {}, got {}",
+                        written,
+                        plural(written, "argument", "arguments"),
+                        got
+                    );
+                    (message, None)
+                }
+                // B6: `a |> f` supplies one argument; piping into
+                // a function that needs more without an explicit
+                // call forgets the remaining ones. The others are
+                // written in a call, which a name can take.
+                CallForm::BarePipe => {
+                    let message = format!(
+                        "cannot pipe into function taking {} {}",
+                        written_params,
+                        plural(written_params, "argument", "arguments")
+                    );
+                    let name = match &callee.kind {
+                        ExprKind::Ident(name) => Some(name.to_string()),
+                        ExprKind::FieldAccess(module, name, _) => match &module.kind {
+                            ExprKind::Ident(module) => Some(format!("{module}.{name}")),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let help = match name {
+                        _ if written_params == 0 => None,
+                        Some(name) => Some(format!(
+                            "`|>` passes only the first argument; write the others \
+                             in a call: `|> {name}(...)`"
+                        )),
+                        None => Some("`|>` passes only the first argument".to_string()),
+                    };
+                    (message, help)
+                }
+            };
+            self.error_help(Code::ArityMismatch, (message, help), span);
+            // A parameter no argument is given is of no type a
+            // later message could ask about (`Greet.greet()`).
+            for param in params.iter().skip(args.len() + implicit_self) {
+                if let Type::Var(_) = self.apply(param) {
+                    self.unify(param, &Type::Error, span);
+                }
+            }
+        }
     }
 
     // ── Expression type inference ───────────────────────────────────
@@ -4663,71 +4921,6 @@ impl TypeChecker {
         }
     }
 
-    /// Walk a supertrait-arg `TypeExpr` and report every generic type
-    /// written there without its arguments (`trait Sub: Super(Box)`),
-    /// as a type anywhere else is (`bare_generic`): these arguments are
-    /// read by `resolve_supertrait_arg`, not `resolve_type_expr`.
-    ///
-    /// Names that map to a trait param (`info.params`), or that name no
-    /// type, are left to the existing handling — the latter are
-    /// diagnosed elsewhere as "unknown type" at the type-expr resolve
-    /// site.
-    ///
-    /// Skips emission when the same message+span is already in
-    /// `self.errors`.
-    pub(super) fn check_supertrait_arg_parametric_arity(
-        &mut self,
-        te: &TypeExpr,
-        trait_info: &TraitInfo,
-    ) {
-        match &te.kind {
-            TypeExprKind::Named {
-                module, name: sym, ..
-            } => {
-                // Trait params are substituted, not type references.
-                if trait_info.params.iter().any(|p| p == sym) {
-                    return;
-                }
-                // Unknown name — leave to other diagnostics.
-                let Some(ty) = self.named_type(te.res, *sym) else {
-                    return;
-                };
-                let shown = Qualifier::written(*module, *sym);
-                let Some(msg) = self.bare_generic_message(&shown, ty) else {
-                    return;
-                };
-                let already = self
-                    .errors
-                    .iter()
-                    .any(|e| e.message == msg && e.span == te.span);
-                if !already {
-                    self.error(Code::ArityMismatch, msg, te.span);
-                }
-            }
-            TypeExprKind::Generic { args, .. } => {
-                for a in args {
-                    self.check_supertrait_arg_parametric_arity(a, trait_info);
-                }
-            }
-            TypeExprKind::Tuple(elems) => {
-                for e in elems {
-                    self.check_supertrait_arg_parametric_arity(e, trait_info);
-                }
-            }
-            TypeExprKind::Function(params, ret) => {
-                for p in params {
-                    self.check_supertrait_arg_parametric_arity(p, trait_info);
-                }
-                self.check_supertrait_arg_parametric_arity(ret, trait_info);
-            }
-            TypeExprKind::SelfType => {
-                // These either aren't meaningful as supertrait args
-                // (handled elsewhere) or carry no bare-name parametric
-                // reference at the top level. Nothing to validate here.
-            }
-        }
-    }
-
     /// Check `l op r`: the operands have one type, and it has the
     /// operator's trait `tr`. `false` if an error is reported for the
     /// operands' types.
@@ -4817,75 +5010,6 @@ pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
         }),
         Some(_) => None,
         None => crate::defs::builtin_type_id(&resolve(name)).map(|id| TypeRef { id, name }),
-    }
-}
-
-/// Resolve a supertrait reference's TypeExpr argument against the
-/// enclosing trait's params. `Named("a")` where `"a"` is in
-/// `trait_info.params` maps to the corresponding entry in `base_args`
-/// (the enclosing trait's supplied args at the call site). Nested forms
-/// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
-/// fall through to their `Type::…` counterparts.
-///
-/// The shapes are the ones `resolve_type_expr` builds for the same
-/// surface syntax on the impl side, as both build a named type with
-/// [`Type::named`] / [`Type::container_or_generic`]:
-/// `trait_arg_compatible_canon` compares them structurally and
-/// `canonicalize()` does not collapse `Generic("List", …)` onto
-/// `Type::List` (etc.).
-pub(super) fn resolve_supertrait_arg(
-    te: &TypeExpr,
-    trait_info: &TraitInfo,
-    base_args: &[Type],
-) -> Type {
-    match &te.kind {
-        TypeExprKind::Named { name: sym, .. } => {
-            if let Some(idx) = trait_info.params.iter().position(|p| p == sym)
-                && let Some(ty) = base_args.get(idx)
-            {
-                return ty.clone();
-            }
-            // Bare type name that isn't a trait param — interpret as a
-            // concrete type reference (Int, String, or user type), in
-            // the shape `resolve_type_expr` builds (`Type::named`).
-            let Some(ty) = written_type(te, *sym) else {
-                return Type::Error;
-            };
-            Type::named(ty, Vec::new())
-        }
-        TypeExprKind::Generic {
-            name: sym, args, ..
-        } => {
-            let resolved: Vec<Type> = args
-                .iter()
-                .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
-                .collect();
-            // A builtin container head in the shape `resolve_type_expr`
-            // builds (`Type::container_or_generic`). Wrong-arity forms
-            // stay `Type::Generic` (they can't match any canonical impl
-            // shape, and resolve_type_expr diagnoses the arity at the
-            // declaration site).
-            let Some(ty) = written_type(te, *sym) else {
-                return Type::Error;
-            };
-            Type::container_or_generic(ty, resolved)
-        }
-        // `()` is the unit type, as `resolve_type_expr` reads it.
-        TypeExprKind::Tuple(elems) if elems.is_empty() => Type::Unit,
-        TypeExprKind::Tuple(elems) => Type::Tuple(
-            elems
-                .iter()
-                .map(|e| resolve_supertrait_arg(e, trait_info, base_args))
-                .collect(),
-        ),
-        TypeExprKind::Function(params, ret) => Type::Fun(
-            params
-                .iter()
-                .map(|p| resolve_supertrait_arg(p, trait_info, base_args))
-                .collect(),
-            Box::new(resolve_supertrait_arg(ret, trait_info, base_args)),
-        ),
-        TypeExprKind::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
     }
 }
 

@@ -1,0 +1,11 @@
+error[type]: `task.Handle` takes 1 type argument here: write `task.Handle(a)`
+ --> impl_header__an_opaque_type_given_another_number_of_arguments_is_refused.silt:8:18
+   |
+ 8 | trait T for task.Handle(a, b) { fn t(self) -> String { "h" } }
+   |                  ^^^^^^^^^^^^ `task.Handle` takes 1 type argument here: write `task.Handle(a)`
+
+error[type]: `task.Handle` takes 1 type argument here: write `task.Handle(a)`
+ --> impl_header__an_opaque_type_given_another_number_of_arguments_is_refused.silt:9:11
+   |
+ 9 | fn bad(h: task.Handle(Int, Int)) -> Int { 1 }
+   |           ^^^^^^^^^^^^^^^^^^^^^ `task.Handle` takes 1 type argument here: write `task.Handle(a)`

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- An impl header of a builtin opaque type is a type expression too: it
+-- takes the type's number of arguments, `task.Handle` one, and is refused
+-- with the words an annotation has for another number.
+import task
+trait T { fn t(self) -> String }
+trait T for task.Handle(a, b) { fn t(self) -> String { "h" } }
+fn bad(h: task.Handle(Int, Int)) -> Int { 1 }
+fn main() { println("x") }

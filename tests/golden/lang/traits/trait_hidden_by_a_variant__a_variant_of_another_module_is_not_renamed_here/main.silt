@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Another module's variant and trait of one name, imported by item: the
+-- help says to import the module and call the trait through it, not to
+-- rename a variant this file does not declare (audit R9, review O7-1).
+import m.{ Foo }
+fn use(x: a) -> Int where a: Foo { x.hop() }
+fn main() { println((use(1), Foo(2))) }
