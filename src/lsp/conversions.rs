@@ -67,6 +67,27 @@ pub(super) fn char_offset_at(file: &SourceFile, pos: &Position) -> Option<usize>
     }
 }
 
+/// Markdown for the editor (a hover, the documentation of a completion
+/// or a signature): `value` with each control character, invisible or
+/// direction character shown as the line of source under a diagnostic
+/// shows it (`diagnostic::visible_line`: ESC as a picture), so a doc
+/// comment cannot hand the editor a raw ESC. Its line ends (`\n`, `\r`)
+/// stay line ends.
+pub(super) fn markdown(value: String) -> lsp_types::MarkupContent {
+    let mut shown = String::with_capacity(value.len());
+    let mut rest = value.as_str();
+    while let Some(at) = rest.find(['\n', '\r']) {
+        shown.push_str(&crate::diagnostic::visible_line(&rest[..at]));
+        shown.push_str(&rest[at..at + 1]);
+        rest = &rest[at + 1..];
+    }
+    shown.push_str(&crate::diagnostic::visible_line(rest));
+    lsp_types::MarkupContent {
+        kind: lsp_types::MarkupKind::Markdown,
+        value: shown,
+    }
+}
+
 /// Return the UTF-16 code-unit length of a string (what LSP positions count).
 pub(super) fn utf16_len(s: &str) -> usize {
     s.chars().map(|c| c.len_utf16()).sum()

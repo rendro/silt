@@ -1,6 +1,6 @@
 //! `textDocument/hover` handler.
 
-use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
+use lsp_types::{Hover, HoverContents};
 
 use super::Server;
 use crate::intern::resolve;
@@ -44,13 +44,10 @@ impl Server {
             });
         if let Some((field_name, field_ty)) = find_field_type_at_offset(program, &records, cursor) {
             return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!(
-                        "```silt\n{field_name}: {}\n```",
-                        self.written_here(doc, &field_ty)
-                    ),
-                }),
+                contents: HoverContents::Markup(super::conversions::markdown(format!(
+                    "```silt\n{field_name}: {}\n```",
+                    self.written_here(doc, &field_ty)
+                ))),
                 range: None,
             });
         }
@@ -75,10 +72,7 @@ impl Server {
             let ty = super::ast_walk::written_with_letters(&self.written_here(doc, ty));
             let value = format!("```silt\n{ty}\n```");
             return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value,
-                }),
+                contents: HoverContents::Markup(super::conversions::markdown(value)),
                 range: None,
             });
         }
@@ -274,10 +268,7 @@ impl Server {
         }
 
         Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value,
-            }),
+            contents: HoverContents::Markup(super::conversions::markdown(value)),
             range: None,
         })
     }
@@ -323,10 +314,7 @@ fn on_keyword(tokens: &[crate::lexer::Tok], cursor: usize) -> bool {
 /// A hover of the markdown `value`.
 fn markdown(value: String) -> Hover {
     Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value,
-        }),
+        contents: HoverContents::Markup(super::conversions::markdown(value)),
         range: None,
     }
 }
