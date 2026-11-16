@@ -1548,25 +1548,32 @@ impl TypeChecker {
 
     /// The arguments of each supertrait in `supertraits`, read as types
     /// are (`resolve_type_expr`), with the trait's parameters
-    /// `trait_param_vars`. What is wrong in them is reported where the
-    /// trait is declared, in the words for a supertrait's argument
-    /// (`check_supertrait_arity`, `check_supertrait_arg_parametric_arity`),
-    /// not here; a name that is neither a type nor a parameter is no type.
+    /// `trait_param_vars`, and what is wrong in them reported as it is in
+    /// any type (`Carry(Int(b))`, `Carry(Tuple)`). An argument that is no
+    /// type at all (`Self`, a name that is neither a type nor a
+    /// parameter) is reported in the words for a supertrait's argument
+    /// (`check_supertrait_arity`), not here, and is no type.
     fn resolve_supertrait_args(
         &mut self,
         supertraits: &[(TraitKey, Vec<TypeExpr>)],
         trait_param_vars: &[(Symbol, Type)],
     ) -> Vec<Vec<Type>> {
-        let reported = self.errors.len();
+        let params: Vec<Symbol> = trait_param_vars.iter().map(|(p, _)| *p).collect();
         let mut names: HashMap<Symbol, Type> = trait_param_vars.iter().cloned().collect();
         let resolved: Vec<Vec<Type>> = (supertraits.iter())
             .map(|(_, args)| {
                 (args.iter())
-                    .map(|te| self.resolve_type_expr(te, &mut names))
+                    .map(|te| {
+                        let reported = self.errors.len();
+                        let ty = self.resolve_type_expr(te, &mut names);
+                        if no_supertrait_argument(te, &params).is_some() {
+                            self.errors.truncate(reported);
+                        }
+                        ty
+                    })
                     .collect()
             })
             .collect();
-        self.errors.truncate(reported);
         let no_type: HashMap<TyVar, Type> = (names.iter())
             .filter(|(name, _)| !trait_param_vars.iter().any(|(p, _)| p == *name))
             .filter_map(|(_, ty)| match ty {

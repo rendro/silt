@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A supertrait argument is a type expression: one that misuses a type
+-- name is reported where it is written, as it is in any type, and the
+-- supertrait does not hold at a phantom type no value has.
+trait Carry(c) { fn carry(self) -> c }
+trait A(b): Carry(Int(b)) { fn a(self) -> b }
+trait B(b): Carry(List(b, b)) { fn b(self) -> b }
+trait C(b): Carry(Map(String)) { fn c(self) -> b }
+trait D(b): Carry(Tuple) { fn d(self) -> b }
+trait E(b): Carry(Fn) { fn e(self) -> b }
+fn main() { println("x") }

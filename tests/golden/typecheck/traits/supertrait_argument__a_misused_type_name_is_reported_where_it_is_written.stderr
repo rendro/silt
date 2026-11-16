@@ -1,0 +1,29 @@
+error[type]: `Int` takes no type arguments: write `Int`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:7:19
+   |
+ 7 | trait A(b): Carry(Int(b)) { fn a(self) -> b }
+   |                   ^^^^^^ `Int` takes no type arguments: write `Int`
+
+error[type]: `List` takes 1 type argument here: write `List(a)`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:8:19
+   |
+ 8 | trait B(b): Carry(List(b, b)) { fn b(self) -> b }
+   |                   ^^^^^^^^^^ `List` takes 1 type argument here: write `List(a)`
+
+error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:9:19
+   |
+ 9 | trait C(b): Carry(Map(String)) { fn c(self) -> b }
+   |                   ^^^^^^^^^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
+
+error[type]: `Tuple` names a type only in the header of an impl (`trait Show for Tuple`): a tuple type is written with its parts: `(Int, String)`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:10:19
+    |
+ 10 | trait D(b): Carry(Tuple) { fn d(self) -> b }
+    |                   ^^^^^ here
+
+error[type]: `Fn` names a type only in the header of an impl (`trait Show for Fn`): a function type is written with its parts: `Fn(Int) -> String`
+ --> supertrait_argument__a_misused_type_name_is_reported_where_it_is_written.silt:11:19
+    |
+ 11 | trait E(b): Carry(Fn) { fn e(self) -> b }
+    |                   ^^ here
