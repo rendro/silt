@@ -202,9 +202,9 @@ proptest! {
         // Source parses — formatted version must also parse.
         if let Ok(formatted) = silt::testing::format::format(silt::testing::source::FileId::default(), &source) {
             let tokens2 = Lexer::new(silt::testing::source::FileId::default(), &formatted).tokenize().checked()
-                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {}", e.message).into()))?;
+                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {}", e.message()).into()))?;
             Parser::new(tokens2, &formatted).parse_program()
-                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {}", e.message).into()))?;
+                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {}", e.message()).into()))?;
         }
     }
 }
@@ -375,7 +375,7 @@ fn silt_literal(number: f64) -> String {
     let lexed = Lexer::new(silt::testing::source::FileId::default(), digits)
         .tokenize()
         .checked()
-        .unwrap_or_else(|e| panic!("{text} is no silt literal: {}", e.message));
+        .unwrap_or_else(|e| panic!("{text} is no silt literal: {}", e.message()));
     let tokens: Vec<silt::testing::lexer::Token> = (lexed.tokens.into_iter())
         .map(|token| token.kind)
         .filter(|token| !matches!(token, silt::testing::lexer::Token::Eof))

@@ -2,7 +2,7 @@
 135:14 warning 'y' is never used\nhelp: remove it, or name it `_y`
 > hover 74:14
 ```silt
-Fn(String, Int) -> JsonError
+Fn(String, Int) -> json.JsonError
 ```
 
 ---
@@ -25,7 +25,7 @@ Int
 ```
 > hover 75:14
 ```silt
-Fn(String) -> JsonError
+Fn(String) -> json.JsonError
 ```
 
 ---
@@ -44,17 +44,17 @@ String
 ```
 > hover 76:9
 ```silt
-JsonError
+json.JsonError
 ```
 > hover 83:5
 ```silt
-Fn(Option(Shape)) -> Box
+Fn(Option(shapes.Shape)) -> Box
 ```
 > type-definition 83:5
 main.silt:70:6-70:9
 > hover 83:19
 ```silt
-Fn(Float) -> Shape
+Fn(Float) -> shapes.Shape
 ```
 > type-definition 83:19
 shapes.silt:1:10-1:15
@@ -64,7 +64,7 @@ Float
 ```
 > hover 84:12
 ```silt
-Fn(Float) -> Shape
+Fn(Float) -> shapes.Shape
 ```
 > hover 84:19
 ```silt
@@ -72,7 +72,7 @@ Float
 ```
 > hover 84:46
 ```silt
-Fn(Float) -> Shape
+Fn(Float) -> shapes.Shape
 ```
 > hover 84:53
 ```silt
@@ -80,11 +80,11 @@ Float
 ```
 > hover 85:19
 ```silt
-Shape
+shapes.Shape
 ```
 > hover 86:5
 ```silt
-Fn(Option(Shape)) -> Box
+Fn(Option(shapes.Shape)) -> Box
 ```
 > hover 92:10
 ```silt
@@ -126,11 +126,11 @@ Float
 ```
 > hover 108:10
 ```silt
-Fn(Option(Shape)) -> Box
+Fn(Option(shapes.Shape)) -> Box
 ```
 > hover 108:12
 ```silt
-Option(Shape)
+Option(shapes.Shape)
 ```
 > hover 117:5
 ```silt

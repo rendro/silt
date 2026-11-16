@@ -46,9 +46,15 @@ fn test_runtime_error_multiline_message_is_one_note_and_help_is_structured() {
     let d = VmError::new(msg.to_string())
         .with_help("escape the parenthesis")
         .to_diagnostic();
-    assert_eq!(d.message, "regex error");
-    assert_eq!(d.notes, vec!["unclosed group\nhelp: not help".to_string()]);
-    assert_eq!(d.help, vec!["escape the parenthesis".to_string()]);
+    assert_eq!(d.message(), "regex error");
+    assert_eq!(
+        d.notes(),
+        vec!["unclosed group\nhelp: not help".to_string()]
+    );
+    assert_eq!(
+        d.help_as_written(),
+        vec!["escape the parenthesis".to_string()]
+    );
     let rendered = render_human(&SourceMap::new(), &d);
     assert_eq!(
         rendered,

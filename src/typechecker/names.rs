@@ -596,7 +596,12 @@ fn declare(
                     kind: DefKind::TypeAlias,
                 });
                 set_kind(defs, id, DefKind::Trait(TraitId(id)));
-                own.push((t.name, id, true));
+                // A trait named like a type of the prelude is refused
+                // where it is declared (`register_trait_decl_user`) and
+                // takes no name: `Int` in the module stays the type.
+                if !crate::builtins::registry::is_prelude_type(&resolve(t.name)) {
+                    own.push((t.name, id, true));
+                }
             }
             Decl::TraitImpl(_) | Decl::Import(..) => {}
         }
@@ -924,9 +929,8 @@ fn report_private_in_public(
 /// a builtin type that no builtin module declares, or `Option` and
 /// `Result`. The bare name is the type.
 fn prelude_type_help(name: &str) -> Option<String> {
-    let in_prelude = matches!(name, "Option" | "Result")
-        || (crate::types::builtins::is_prelude_name(name) && name != "()");
-    in_prelude.then(|| format!("`{name}` is in the prelude: write `{name}` without a module"))
+    crate::builtins::registry::is_prelude_type(name)
+        .then(|| format!("`{name}` is in the prelude: write `{name}` without a module"))
 }
 
 /// `import m.{ item }` where `m` does not offer `item`.

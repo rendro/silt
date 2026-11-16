@@ -216,10 +216,19 @@ impl Cells {
             .filter(|(name, _)| !own_names.contains(name))
             .collect();
         visible.sort_by_cached_key(|(name, _)| resolve(**name));
+        // The modules the committed cells import, in the order of the
+        // entries that import them: a module imported under two names is
+        // named by its first import, as in a file (the checker reads the
+        // imports in order).
+        let cell_of: HashMap<FileId, usize> = (self.info.values())
+            .map(|info| (info.file, info.n))
+            .collect();
+        let mut modules: Vec<((usize, u32), Decl)> = Vec::new();
         for (name, binder) in visible {
             match (binder.kind, &binder.import) {
                 (Kind::Module, Some((target, span))) => {
-                    carried.push(Decl::Import(target.clone(), *span));
+                    let at = (cell_of.get(&span.file).copied().unwrap_or(0), span.start);
+                    modules.push((at, Decl::Import(target.clone(), *span)));
                 }
                 (Kind::Item, Some((ImportTarget::Items(module, _), span))) => {
                     items
@@ -231,6 +240,8 @@ impl Cells {
                 _ => seen.push((*name, binder.span)),
             }
         }
+        modules.sort_by_key(|(at, _)| *at);
+        carried.extend(modules.into_iter().map(|(_, decl)| decl));
         carried.extend(
             items.into_values().map(|(module, span, names)| {
                 Decl::Import(ImportTarget::Items(module, names), span)

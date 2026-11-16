@@ -89,7 +89,7 @@ fn lsp_pull_does_not_inherit_other_files_aliases() {
         silt::testing::analyze_str("type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n").1;
     let hard_first: Vec<_> = errs_first
         .into_iter()
-        .filter(|e| e.severity == Severity::Error)
+        .filter(|e| e.severity() == Severity::Error)
         .collect();
     assert!(
         hard_first.is_empty(),
@@ -102,10 +102,10 @@ fn lsp_pull_does_not_inherit_other_files_aliases() {
     // the alias the first pull registered is invisible.
     let errs_second = silt::testing::analyze_str("fn use_other(x: FooLsp_Mass) { x }\n").1;
     let saw_unknown = errs_second.iter().any(|e| {
-        e.severity == Severity::Error
-            && (e.message.contains("undefined type")
-                || e.message.contains("unknown type")
-                || e.message.contains("FooLsp_Mass"))
+        e.severity() == Severity::Error
+            && (e.message().contains("undefined type")
+                || e.message().contains("unknown type")
+                || e.message().contains("FooLsp_Mass"))
     });
     assert!(
         saw_unknown,

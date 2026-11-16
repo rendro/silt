@@ -54,7 +54,7 @@ fn quick_start() {
     // 3. Check it. Every static error is in the analysis.
     let analysis = session.analyze(file);
     for d in &analysis.diagnostics {
-        eprintln!("{}", d.message);
+        eprintln!("{}", d.message());
     }
     assert!(!analysis.has_errors());
 
@@ -249,6 +249,91 @@ fn error_surfacing() {
     match vm.run_program(&program) {
         Ok(()) => println!("the program ran to its end"),
         Err(e) => eprintln!("silt error: {}", e.message),
+    }
+}
+
+/// "Showing errors as silt does": the block, and a run of it.
+mod showing_errors_as_silt_does {
+    use std::path::Path;
+
+    use silt::VmError;
+    use silt::session::{Diagnostic, FileId, Session, Severity, SourceMap, Span};
+
+    /// Where `span` starts: its line and column, from 1.
+    fn place(sources: &SourceMap, span: Span) -> (u32, u32) {
+        sources.line_col((span.file, span.start))
+    }
+
+    /// The diagnostic in one line of your own: `2:16 error: type mismatch: ...`.
+    fn one_line(session: &Session, d: &Diagnostic) -> String {
+        let (line, col) = place(session.sources(), d.span());
+        let word = match d.severity() {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        let mut text = format!("{line}:{col} {word}: {}", d.message());
+        for note in d.notes() {
+            text += &format!(" (note: {note})");
+        }
+        for help in d.help(session.sources()) {
+            text += &format!(" (help: {help})");
+        }
+        text
+    }
+
+    /// Each diagnostic of `file` as `silt check` prints it, in the order the
+    /// analysis found them, and whether one is an error.
+    fn check(session: &mut Session, file: FileId) -> (Vec<String>, bool) {
+        let diagnostics: Vec<Diagnostic> = session.analyze(file).diagnostics.clone();
+        let texts = diagnostics.iter().map(|d| session.render(d)).collect();
+        let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
+        (texts, failed)
+    }
+
+    /// What `silt run` prints for the error that ended the program.
+    fn report(session: &Session, e: &VmError) -> String {
+        e.render(session)
+    }
+
+    fn session() -> Session {
+        use silt::session::{Builtins, Config, LockPolicy, ProjectSetup};
+        Session::new(Config {
+            project: ProjectSetup::None,
+            lock: LockPolicy::ReadOnly,
+            host: vec![],
+            builtins: Builtins::All,
+        })
+    }
+
+    #[test]
+    fn the_block_shows_a_static_and_a_runtime_error() {
+        let mut session = session();
+        let bad = "fn main() {\n  let x: Int = \"no\"\n  println(x)\n}\n";
+        let file = session.set_overlay(Path::new("main.silt"), bad.to_string());
+        let (texts, failed) = check(&mut session, file);
+        assert!(failed);
+        assert!(
+            texts[0].starts_with("error[type]: type mismatch: expected Int, got String\n --> main.silt:2:16"),
+            "{texts:?}"
+        );
+        let d = session.analyze(file).diagnostics[0].clone();
+        assert_eq!(
+            one_line(&session, &d),
+            "2:16 error: type mismatch: expected Int, got String"
+        );
+
+        let div = "fn main() {\n  let z = 0\n  println(1 / z)\n}\n";
+        let file = session.set_overlay(Path::new("main.silt"), div.to_string());
+        let program = session.compile(file, silt::session::Entry::Main).expect("compiles");
+        let out = silt::Buffer::new();
+        let e = silt::Vm::new(silt::HostIo::buffer(&out))
+            .run_program(&program)
+            .expect_err("divides by zero");
+        let text = report(&session, &e);
+        assert!(
+            text.starts_with("error[runtime]: division by zero\n --> main.silt:3:11"),
+            "{text}"
+        );
     }
 }
 

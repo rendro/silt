@@ -1,0 +1,21 @@
+-- A type of one value is an enum of one variant: its value is its name,
+-- it is equal to itself and works as a marker with an impl (the
+-- spelling the refusal of a record without fields points to).
+trait Unit {
+  fn name(self) -> String
+}
+
+type Celsius { Celsius }
+type Tag(a) { Tag }
+
+trait Unit for Celsius {
+  fn name(self) -> String { "C" }
+}
+
+fn main() {
+  println(Celsius)
+  println(Celsius == Celsius)
+  println(Unit.name(Celsius))
+  let t: Tag(Int) = Tag
+  println(t)
+}

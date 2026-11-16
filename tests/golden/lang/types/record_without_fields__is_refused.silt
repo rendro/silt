@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A record needs a field: a type of one value is an enum of one
+-- variant, which the error writes with the type's own name and its
+-- parameters (audit R9, card ENM-1). The other declarations are still
+-- read: the one-variant spelling is accepted.
+type Void {}
+type Tag(a) { }
+pub type Marker(a, b) {
+}
+type Celsius { Celsius }
+type Kept(a) { Kept }
+
+fn main() {
+  println(Celsius)
+}

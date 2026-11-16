@@ -59,7 +59,7 @@ fn set_overlay_rechecks_the_module_and_its_importers_only() {
         analysis
             .diagnostics
             .iter()
-            .any(|d| d.is_error() && d.message.contains("String")),
+            .any(|d| d.is_error() && d.message().contains("String")),
         "the importer's diagnostics follow the edit: {:?}",
         analysis.diagnostics
     );
@@ -125,7 +125,7 @@ fn check_str_reports_type_errors_and_needs_no_main() {
     assert!(
         diagnostics
             .iter()
-            .any(|d| d.is_error() && d.message.contains("type mismatch")),
+            .any(|d| d.is_error() && d.message().contains("type mismatch")),
         "{diagnostics:?}"
     );
 }
@@ -148,7 +148,7 @@ fn set_overlay_replaces_the_edited_modules_aliases() {
         analysis
             .diagnostics
             .iter()
-            .any(|d| d.is_error() && d.message.contains("String")),
+            .any(|d| d.is_error() && d.message().contains("String")),
         "{:?}",
         analysis.diagnostics
     );

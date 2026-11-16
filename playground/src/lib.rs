@@ -163,10 +163,10 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
             exited = Some(code);
             None
         }
-        Err(e) if e.out_of_steps => Some(
-            silt::playground::error_diagnostic(&e)
-                .with_note(format!("the playground ends a program after {steps} steps")),
-        ),
+        Err(e) if e.out_of_steps => Some(silt::playground::with_note(
+            silt::playground::error_diagnostic(&e),
+            format!("the playground ends a program after {steps} steps"),
+        )),
         // `main` returned `Err(e)`: the program's message to its user,
         // the one line `error: <e>`, as `silt run` writes it, and the
         // note of a `Display` impl of it that failed.
@@ -309,21 +309,22 @@ pub fn check(source: &str) -> Vec<Problem> {
             let mut offsets = Utf16::new(source);
             // What is wrong outside the text (there is no such place
             // for one file without a package) is shown at its start.
-            let (from, to) = match d.span.file == file {
-                true => (offsets.at(d.span.start), offsets.at(d.span.end)),
+            let span = d.span();
+            let (from, to) = match span.file == file {
+                true => (offsets.at(span.start), offsets.at(span.end)),
                 false => (0, 0),
             };
-            let mut message = d.message.clone();
-            for note in &d.notes {
+            let mut message = d.message().to_string();
+            for note in d.notes() {
                 message.push_str(&format!("\nnote: {note}"));
             }
-            for help in &d.help {
+            for help in d.help(session.sources()) {
                 message.push_str(&format!("\nhelp: {help}"));
             }
             Problem {
                 from,
                 to,
-                severity: match d.severity {
+                severity: match d.severity() {
                     Severity::Error => "error",
                     Severity::Warning => "warning",
                 },

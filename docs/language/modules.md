@@ -298,7 +298,10 @@ imports are the package's modules, as `silt check src` and a check of the
 file itself do, so a script kept there (run by its path) is checked too.
 Test files (`*_test.silt`) are found
 anywhere under the package, in `src/`, its sub-directories or a `tests/`
-directory beside it, and import the package's modules by name.
+directory beside it, and import the package's modules by name. Any other
+`.silt` file under `tests/` is no module either (an import looks only in
+`src/`), and `silt check` of the package checks it the same way, as a
+program of its own.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url> --tag <tag>` (or
@@ -357,7 +360,9 @@ The **prelude** needs no import: the primitive and container types (`Int`,
 `type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
 `panic`. The primitive and container types, `Never` and `TypeOf` cannot be declared
 again: `type List { ... }` is an error, "type 'List' shadows builtin type
-'List'", and so is `type Never { ... }`. A type of a built-in module reserves no name: a module may declare
+'List'", and so is `type Never { ... }`. No trait may take the name of a type
+of the prelude, `Option` and `Result` included: `trait Int { ... }` is an error,
+"trait 'Int' shadows builtin type 'Int'". A type of a built-in module reserves no name: a module may declare
 its own `type Regex` or `type Weekday`, a type apart from `regex.Regex` and
 `time.Weekday`, and use both; with `import regex.{ Regex }` as well, the name is
 bound twice. The other names of the prelude can be declared again: a module's

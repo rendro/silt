@@ -45,8 +45,8 @@ fn load_err(contents: &str) -> Diagnostic {
 
 /// The message and the notes of a diagnostic, one per line.
 fn text(d: &Diagnostic) -> String {
-    std::iter::once(d.message.as_str())
-        .chain(d.notes.iter().map(String::as_str))
+    std::iter::once(d.message())
+        .chain(d.notes().iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -498,7 +498,7 @@ fn test_malformed_toml() {
     // Lock the message shape so a future regression that swaps in a
     // generic "parse failed" string (or an empty one) is caught.
     let err = load_err("[[broken");
-    assert_eq!(err.code, Code::ManifestInvalid);
+    assert_eq!(err.code(), Code::ManifestInvalid);
     let message = text(&err);
     {
         {
@@ -525,9 +525,9 @@ fn test_malformed_toml() {
             // The toml 0.8 parser populates a byte-span for the failure
             // site; the diagnostic points there, not at the start.
             assert!(
-                err.span.start > 0,
+                err.span().start > 0,
                 "expected the diagnostic at the parser's byte span, got {:?}",
-                err.span
+                err.span()
             );
         }
     }
@@ -540,7 +540,7 @@ fn test_io_error_when_missing() {
     let dir = tempdir();
     let path = dir.join("silt.toml"); // never written
     let err = load(&path).expect_err("expected IO error");
-    assert_eq!(err.code, Code::PackageIo, "{err:?}");
+    assert_eq!(err.code(), Code::PackageIo, "{err:?}");
 }
 
 #[test]

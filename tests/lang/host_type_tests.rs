@@ -163,7 +163,7 @@ fn a_host_type_is_checked_in_the_program() {
     ] {
         let errors = errors(source, geo());
         assert_eq!(errors.len(), 1, "{source}: {errors:?}");
-        assert_eq!(errors[0].code, expected, "{source}: {errors:?}");
+        assert_eq!(errors[0].code(), expected, "{source}: {errors:?}");
     }
 }
 
@@ -432,13 +432,17 @@ fn a_malformed_host_type_is_reported() {
             }),
             "module 'time' has no type 'Nope'",
         ),
+        (
+            HostModule::new("h").declare_type("type P {}"),
+            "a record needs a field: for a type of one value write `type P { P }`",
+        ),
     ];
     for (host, expected) in cases {
         let shown = format!("{host:?}");
         let errors = errors("fn main() { let _ = 1 }", host);
         assert!(!errors.is_empty(), "{shown}: no error");
         assert!(
-            errors.iter().any(|e| e.message.contains(expected)),
+            errors.iter().any(|e| e.message().contains(expected)),
             "{shown}: {errors:?}"
         );
     }
@@ -691,9 +695,9 @@ fn a_prelude_name_is_no_host_type_and_the_check_reads_the_prelude_type() {
         .fn0("fn f() -> Option(Int)", || Some(5_i64));
     let found = errors("import h\nfn main() { let o = h.f()\n println(o) }", host);
     assert!(
-        found
-            .iter()
-            .any(|e| e.message.contains("has the name of a type of the prelude")),
+        found.iter().any(|e| e
+            .message()
+            .contains("has the name of a type of the prelude")),
         "{found:?}"
     );
     let host = HostModule::new("h").fn0("fn f() -> Option(Int)", || Some(5_i64));

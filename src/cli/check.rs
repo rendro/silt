@@ -199,10 +199,11 @@ pub(crate) struct PackageFiles {
     /// `src/main.silt`, or `src/lib.silt` in a library; the file named,
     /// or `-` for stdin.
     pub(crate) entry: String,
-    /// Every other `.silt` file of `src/` but for the test files,
-    /// imported or not: the modules (the files directly in `src/`), then
-    /// the files in its sub-directories, which are no modules and are
-    /// each checked as a program of their own, as `silt check src` does.
+    /// Every other `.silt` file of `src/` and `tests/` but for the test
+    /// files, imported or not: the modules (the files directly in
+    /// `src/`), then the files in the sub-directories of `src/` and
+    /// under `tests/`, which are no modules and are each checked as a
+    /// program of their own, as `silt check src tests` does.
     pub(crate) modules: Vec<String>,
     /// The test files of the package.
     pub(crate) tests: Vec<String>,
@@ -272,13 +273,15 @@ impl Loaded {
     }
 }
 
-/// The files of `src/` of the package at `root` that the package check
-/// checks besides its entry file `entry` and its test files `tests`
-/// (checked as tests): every `.silt` file directly in `src/` (a module)
-/// and every `.silt` file in a sub-directory of `src/` (not those of a
-/// package kept inside), sorted by path as `silt check src` sorts them.
-/// Such a file is no module, and no import reaches it: it is checked as
-/// a program of its own, its imports the package's modules.
+/// The files of `src/` and `tests/` of the package at `root` that the
+/// package check checks besides its entry file `entry` and its test
+/// files `tests` (checked as tests): every `.silt` file directly in
+/// `src/` (a module), every `.silt` file in a sub-directory of `src/`
+/// and every one under `tests/` (not those of a package kept inside),
+/// sorted by path as `silt check src tests` sorts them. Such a file is
+/// no module, and no import reaches it (an import looks only in `src/`):
+/// it is checked as a program of its own, its imports the package's
+/// modules.
 fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
     let src = root.join("src");
     let Ok(dir) = std::fs::read_dir(&src) else {
@@ -295,6 +298,10 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
         path.parent().is_some_and(|dir| dir != src)
     });
     files.extend(below);
+    let tests_dir = root.join("tests");
+    if tests_dir.is_dir() {
+        files.extend(find_silt_files(&tests_dir));
+    }
     files.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
     without_entry_and_tests(files, entry, tests, crate::source::canonical_path)
 }

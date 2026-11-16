@@ -716,6 +716,17 @@ pub type Result(a, e) { Ok(a), Err(e) }
 pub type Option(a) { Some(a), None }
 ";
 
+/// Whether `name` is the name of a type of the prelude, which every
+/// module sees by its bare name: a builtin type that no builtin module
+/// declares (`Int`, `List`, `Never`; [`is_prelude_name`]) or an enum of
+/// [`PRELUDE_TYPES`] (`Option`, `Result`). The unit type `()` is no name.
+///
+/// [`is_prelude_name`]: crate::types::builtins::is_prelude_name
+pub(crate) fn is_prelude_type(name: &str) -> bool {
+    (crate::types::builtins::is_prelude_name(name) && name != "()")
+        || registry().prelude_types.iter().any(|ty| ty.name == name)
+}
+
 /// Every builtin module, and what is derived from all of them at once.
 pub struct Registry {
     pub modules: Vec<Module>,

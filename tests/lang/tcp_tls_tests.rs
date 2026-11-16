@@ -178,7 +178,7 @@ fn main() {
     let (_, errors) = silt::testing::analyze_str(src);
     let hard: Vec<_> = errors
         .into_iter()
-        .filter(|e| e.severity == silt::testing::diagnostic::Severity::Error)
+        .filter(|e| e.severity() == silt::testing::diagnostic::Severity::Error)
         .collect();
     assert!(hard.is_empty(), "got: {hard:?}");
 }

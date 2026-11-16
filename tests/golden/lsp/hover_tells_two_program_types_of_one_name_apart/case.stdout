@@ -4,20 +4,20 @@ Regex
 ```
 > hover 18:7
 ```silt
-shapes.Regex
+s.Regex
 ```
 > hover 14:4
 ```silt
-Fn(Regex, shapes.Regex) -> String
+Fn(Regex, s.Regex) -> String
 ```
 > hover 19:11
 ```silt
-Fn(Regex, shapes.Regex) -> String
+Fn(Regex, s.Regex) -> String
 ```
 > hover 20:13
 ```silt
-Fn(shapes.Regex) -> (shapes.Regex, Int)
+Fn(s.Regex) -> (s.Regex, Int)
 ```
 > signature 19:22
-fn both(mine: Regex, theirs: shapes.Regex) -> String
-argument 2: theirs: shapes.Regex
+fn both(mine: Regex, theirs: s.Regex) -> String
+argument 2: theirs: s.Regex

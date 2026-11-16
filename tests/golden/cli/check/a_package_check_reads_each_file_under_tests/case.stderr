@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected Int, got String
+ --> tests/helpers.silt:2:3
+   |
+ 2 |   "no"
+   |   ^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected String, got Int
+ --> tests/scripts/uses_shapes.silt:4:3
+   |
+ 4 |   shapes.two()
+   |   ^^^^^^^^^^^^ type mismatch: expected String, got Int

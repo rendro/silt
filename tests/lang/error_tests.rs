@@ -14,7 +14,7 @@ fn parse_errors(input: &str) -> Vec<String> {
         .checked()
         .expect("lexer error");
     match Parser::new(tokens, input).parse_program() {
-        Err(e) => vec![e.message.clone()],
+        Err(e) => vec![e.message().to_string()],
         Ok(_) => vec![], // no error; caller should check
     }
 }
@@ -28,7 +28,7 @@ fn test_import_nonexistent_builtin_item() {
     let errors: Vec<String> = silt::testing::analyze_str(source)
         .1
         .into_iter()
-        .map(|d| d.message)
+        .map(|d| d.message().to_string())
         .collect();
     assert!(
         errors

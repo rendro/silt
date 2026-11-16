@@ -29,7 +29,7 @@ pub const VERSION: &str = crate::VERSION;
 /// `diagnostic` as the `silt` command prints it, its places read from
 /// `session`'s files.
 pub fn render_diagnostic(session: &Session, diagnostic: &Diagnostic) -> String {
-    crate::diagnostic::render_human(session.sources(), diagnostic)
+    session.render(diagnostic)
 }
 
 /// Sort `diagnostics`, of `session`'s files, into the order the `silt`
@@ -44,14 +44,17 @@ pub fn in_print_order(session: &Session, diagnostics: &mut [Diagnostic]) {
 /// of the `Err` that failed.
 pub fn returned(session: &Session, error: &VmError) -> Option<String> {
     let text = error.returned.as_deref()?;
-    let note = (error.display_failure.as_deref())
-        .map(|failure| format!("\nnote: {}", failure.note(session.sources())));
-    Some(format!("error: {text}{}", note.unwrap_or_default()))
+    Some(error.returned_text(text, session.sources()))
 }
 
 /// `error` as the diagnostic `silt run` prints.
 pub fn error_diagnostic(error: &VmError) -> Diagnostic {
     error.to_diagnostic()
+}
+
+/// `diagnostic` with the note `note` under its message.
+pub fn with_note(diagnostic: Diagnostic, note: impl Into<String>) -> Diagnostic {
+    diagnostic.with_note(note)
 }
 
 // ── Complete ──────────────────────────────────────────────────────────

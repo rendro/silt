@@ -5,7 +5,6 @@
 -- closure or a record literal without fields; and around `_` as a
 -- condition, which without them is the last arm.
 type P { x: Int }
-type E {}
 
 fn main() {
   let a = 1

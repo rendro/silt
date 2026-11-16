@@ -599,9 +599,9 @@ fn two_keys_for_one_source_are_refused() {
     let errors = resolve_packages(&app, LockPolicy::ReadOnly, &mut SourceMap::new())
         .expect_err("two keys for one package are refused");
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::DependencyTwice);
+    assert_eq!(errors[0].code(), Code::DependencyTwice);
     assert_eq!(
-        errors[0].message,
+        errors[0].message(),
         "`b` and `a` name the same package: keep one"
     );
     let _ = fs::remove_dir_all(&ws);
@@ -843,17 +843,21 @@ fn three_packages_of_one_name_are_all_reported() {
 
     assert_eq!(errors.len(), 1, "{errors:?}");
     let d = &errors[0];
-    assert_eq!(d.message, "three different packages are named `x`", "{d:?}");
+    assert_eq!(
+        d.message(),
+        "three different packages are named `x`",
+        "{d:?}"
+    );
     for dir in ["x1", "x2", "x3"] {
         assert!(
-            d.notes
+            d.notes()
                 .iter()
                 .any(|n| n.replace('\\', "/").ends_with(&format!("{dir}/silt.toml"))),
             "a note for {dir}: {d:?}"
         );
     }
     // The primary span is the third key; the other two are labels.
-    assert_eq!(d.labels.len(), 2, "{d:?}");
+    assert_eq!(d.labels().len(), 2, "{d:?}");
     let _ = fs::remove_dir_all(&ws);
 }
 

@@ -1,9 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- A decoder's refusal names the field's type as the program writes a
--- type of the json module, with the module's own name, whatever name
--- the module is imported under: `json.JsonError`, never `JsonError` or
--- `j.JsonError`.
+-- type of the json module: with the name the file gives the module,
+-- `j.JsonError` under `import json as j`, never `JsonError` or
+-- `json.JsonError`.
 import json as j
 import toml as t
 

@@ -145,9 +145,9 @@ a human-readable default.
 
 `offset` is the byte of `s` as written, the whitespace in front counted,
 that cannot continue the number (`"1_000"` is `InvalidDigit(1)`,
-`"  12x"` is `InvalidDigit(4)`), or the end of the number where it stops
-short: a lone sign (`"-"` is `InvalidDigit(1)`). A text of nothing but
-whitespace is `Empty`. `float.parse` counts the same way.
+`"  12x"` is `InvalidDigit(4)`). A text with no digits, nothing but
+whitespace or a sign alone (`""`, `"-"`, `" +"`), is `Empty`, shown as
+"no digits". `float.parse` counts the same way.
 
 ```silt
 import int
@@ -161,7 +161,7 @@ fn main() {
   -- Pattern-match on specific failure modes:
   match int.parse("") {
     Ok(_) -> ()
-    Err(int.Empty) -> println("cannot parse empty input")
+    Err(int.Empty) -> println("no digits")
     Err(int.InvalidDigit(i)) -> println("bad digit at byte {i}")
     Err(int.Overflow) -> println("too large")
     Err(int.Underflow) -> println("too small")
@@ -500,8 +500,10 @@ the variants `int.parse` has (`Empty`, `InvalidDigit(offset)`, `Overflow`,
 literal outside the `Float` range as `Overflow` (`"1e400"`, "number out of
 range: above float.max_value") or `Underflow` (`"-1e400"`, "number out of
 range: below float.min_value"). `InvalidDigit(offset)` is counted as for
-`int.parse`: `"1.5.5"` is `InvalidDigit(3)`, `"1e"` (an exponent with no
-digits) `InvalidDigit(2)`, and a lone sign `InvalidDigit(1)`.
+`int.parse`: `"1.5.5"` is `InvalidDigit(3)`, and `"1e"` (an exponent with
+no digits) is `InvalidDigit(2)`, the end of the number where it stops
+short. A text with no digits, a sign or a point alone among whitespace
+(`"-"`, `"."`, `"-."`), is `Empty`, as for `int.parse`.
 
 ```silt
 import float

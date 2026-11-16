@@ -24,9 +24,13 @@
 //! `silt::session::EntryPoint`, `silt::session::TestFn`, `silt::session::TestKind`,
 //! `silt::session::HostCall`, `silt::session::HostModule`,
 //! `silt::session::LockPolicy`, `silt::session::Program`,
-//! `silt::session::ProjectSetup` and `silt::session::Session`, with
-//! what they hand out (a `Value`'s variants, an analysis, a
-//! diagnostic). (tests/meta/public_api_tests.rs keeps this list and the
+//! `silt::session::ProjectSetup`, `silt::session::Session`,
+//! `silt::session::FileId`, `silt::session::Span`,
+//! `silt::session::SourceMap`, `silt::session::Diagnostic` and
+//! `silt::session::Severity`, with what they hand out (a `Value`'s
+//! variants, an analysis). A diagnostic is promised by its methods
+//! (its message, severity, place, notes and help), not by its code or
+//! its quick fixes. (tests/meta/public_api_tests.rs keeps this list and the
 //! guide one.)
 //!
 //! Every module but `session` is the crate's own. Three more roots are

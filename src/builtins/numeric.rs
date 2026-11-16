@@ -8,8 +8,8 @@ use crate::vm::VmError;
 /// Where the number in `s` goes wrong, for `InvalidDigit(offset)`: the
 /// byte offset, in `s` as written (before the whitespace around it is
 /// trimmed), of the first byte that cannot continue the number, or the
-/// length of the trimmed number where it stops short (`"1e"` is 2, a
-/// lone sign 1). `decimal` reads the grammar of `float.parse` (a
+/// length of the trimmed number where it stops short (`"1e"` is 2).
+/// `decimal` reads the grammar of `float.parse` (a
 /// fraction and an exponent), else the one of `int.parse` (a sign and
 /// digits); the digits are those of `radix`.
 fn invalid_digit_offset(s: &str, decimal: bool, radix: u32) -> i64 {
@@ -37,11 +37,25 @@ fn invalid_digit_offset(s: &str, decimal: bool, radix: u32) -> i64 {
     (lead + at) as i64
 }
 
+/// Whether `s` holds no digit and nothing else that could start a
+/// number: whitespace, at most a sign, and (for `float.parse`, when
+/// `decimal`) at most a decimal point. Such a text is `Empty`, as `""`
+/// is: `"-"`, `" +"` and `"-."` have no digits, so no byte of them is
+/// an invalid one.
+fn has_no_digits(s: &str, decimal: bool) -> bool {
+    let t = s.trim();
+    let t = t.strip_prefix(['+', '-']).unwrap_or(t);
+    t.is_empty() || (decimal && t == ".")
+}
+
 /// Classify a `ParseIntError` into the matching `IntError` variant.
 /// `s` is the original input, used to recover an offset for
 /// `InvalidDigit` since `IntErrorKind::InvalidDigit` doesn't expose one.
 fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str, radix: u32) -> Value {
     use std::num::IntErrorKind;
+    if has_no_digits(s, false) {
+        return Value::variant(bv::INT_EMPTY, []);
+    }
     match err.kind() {
         IntErrorKind::Empty => Value::variant(bv::INT_EMPTY, []),
         IntErrorKind::PosOverflow => Value::variant(bv::INT_OVERFLOW, []),
@@ -57,12 +71,12 @@ fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str, radix: u32) 
 }
 
 /// Classify a `ParseFloatError` into the matching `FloatError` variant:
-/// a text of nothing but whitespace is `Empty`, any other one
-/// `InvalidDigit(offset)` (a lone sign too, as for `int.parse`).
+/// a text with no digits (whitespace, a sign, a point) is `Empty`, any
+/// other one `InvalidDigit(offset)`.
 /// (An out-of-range literal parses, to an infinity: `float.parse` tells
 /// it apart itself.)
 fn classify_float_parse_error(s: &str) -> Value {
-    if s.trim().is_empty() {
+    if has_no_digits(s, true) {
         return Value::variant(bv::FLOAT_EMPTY, []);
     }
     let offset = invalid_digit_offset(s, true, 10);
@@ -73,7 +87,7 @@ fn classify_float_parse_error(s: &str) -> Value {
 /// enums have the same variants.
 fn parse_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Empty", []) => "cannot parse empty string".to_string(),
+        ("Empty", []) => "no digits".to_string(),
         ("InvalidDigit", [Value::Int(offset)]) => {
             format!("invalid digit at byte {offset}")
         }

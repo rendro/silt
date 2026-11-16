@@ -1006,6 +1006,32 @@ impl<'src> Parser<'src> {
         ));
     }
 
+    /// The error of a record type declared with no fields, `type Void {}`
+    /// (`open` is its `{`): a type of one value is an enum of one
+    /// variant, `type Void { Void }`, which the error writes with the
+    /// type's own name and parameters.
+    fn record_without_fields(&mut self, open: Span, name: Symbol, params: &[Symbol]) {
+        if self.cut_short {
+            return;
+        }
+        let name = intern::resolve(name);
+        let params = match params {
+            [] => String::new(),
+            params => {
+                let params: Vec<_> = params.iter().map(|p| intern::resolve(*p)).collect();
+                format!("({})", params.join(", "))
+            }
+        };
+        self.keep_or_count(Diagnostic::error(
+            Code::InvalidDeclaration,
+            self.close(open),
+            format!(
+                "a record needs a field: for a type of one value write \
+                 `type {name}{params} {{ {name} }}`"
+            ),
+        ));
+    }
+
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
         match self.peek().clone() {
             Token::Ident(name) => {
@@ -2135,7 +2161,11 @@ impl<'src> Parser<'src> {
         // Determine if this is an enum or record by peeking at the first field.
         // Record fields look like `name: Type`, enum variants look like `Name` or `Name(Type)`.
         let body = if self.is_record_body() {
-            self.parse_record_body(open)?
+            let body = self.parse_record_body(open)?;
+            if matches!(&body, TypeBody::Record(fields) if fields.is_empty()) {
+                self.record_without_fields(open, name, &params);
+            }
+            body
         } else {
             self.parse_enum_body(open)?
         };
@@ -2156,7 +2186,8 @@ impl<'src> Parser<'src> {
     fn is_record_body(&self) -> bool {
         // Look ahead: if we see `ident :` it's a record. If we see `Ident(` or `Ident,` or `Ident }` it's enum.
         // Record field names start lowercase, enum variant names start uppercase.
-        // An empty body, `type Empty {}`, is a record with no fields.
+        // An empty body, `type Void {}`, is taken for a record, which
+        // `record_without_fields` refuses.
         if self.tokens[self.pos].kind == Token::RBrace {
             return true;
         }

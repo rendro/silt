@@ -148,6 +148,10 @@ fn main() {
 }
 ```
 
+A record has at least one field: `type Void {}` is an error. A type of
+one value is an enum of one variant, `type Void { Void }`, whose value
+is `Void`.
+
 A field written alone takes the value of the name in scope: `User { name,
 age, active: true }` is `User { name: name, age: age, active: true }`,
 as the record pattern `User { name, age, .. }` binds `name` and `age`.

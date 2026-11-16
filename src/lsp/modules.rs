@@ -120,15 +120,13 @@ impl Server {
         Some(self.projects.get(&module.project)?.session.tables())
     }
 
-    /// `ty` as the open document `doc` writes it: a type of another module
-    /// whose name another type the document can name shares (its own `type
-    /// Regex` beside `regex.Regex`, `type Weekday` beside `time.Weekday`,
-    /// `a.Regex` beside `b.Regex`) with its module, as the checker's
-    /// messages and the REPL's `:type` tell two such types apart; a type
+    /// `ty` as the open document `doc` writes it, as the checker's
+    /// messages and the REPL's `:type` write it: a type of another module
+    /// with its module, by the name the document gives the module
+    /// (`errs.AppError` under `import da as errs`, `regex.Regex`); a type
     /// no import here can reach described, as they describe it (`InErr of
-    /// package inner`); any other type, and the document's own, by its
-    /// name. The module part is the checker's own (`ModuleWritten`, which
-    /// the module's analysis keeps).
+    /// package inner`); a prelude type and the document's own by its name
+    /// (`Session::written_type_name`).
     pub(super) fn written_here(&self, doc: &Document, ty: &Type) -> Type {
         let found = doc
             .module

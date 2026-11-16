@@ -1,0 +1,4 @@
+import other
+pub type T { A, B }
+pub fn mine() -> T { A }
+pub fn theirs() -> other.T { other.X }

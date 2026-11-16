@@ -1,0 +1,41 @@
+error[type]: trait 'Int' shadows builtin type 'Int'
+ --> trait_named_like_a_prelude_type__is_refused.silt:10:7
+    |
+ 10 | trait Int {
+    |       ^^^ trait 'Int' shadows builtin type 'Int'
+  = help: choose a different name
+
+error[type]: trait 'List' shadows builtin type 'List'
+ --> trait_named_like_a_prelude_type__is_refused.silt:14:7
+    |
+ 14 | trait List {
+    |       ^^^^ trait 'List' shadows builtin type 'List'
+  = help: choose a different name
+
+error[type]: trait 'Never' shadows builtin type 'Never'
+ --> trait_named_like_a_prelude_type__is_refused.silt:18:7
+    |
+ 18 | trait Never {
+    |       ^^^^^ trait 'Never' shadows builtin type 'Never'
+  = help: choose a different name
+
+error[type]: trait 'Option' shadows builtin type 'Option'
+ --> trait_named_like_a_prelude_type__is_refused.silt:22:7
+    |
+ 22 | trait Option {
+    |       ^^^^^^ trait 'Option' shadows builtin type 'Option'
+  = help: choose a different name
+
+error[type]: trait 'Result' shadows builtin type 'Result'
+ --> trait_named_like_a_prelude_type__is_refused.silt:26:7
+    |
+ 26 | trait Result {
+    |       ^^^^^^ trait 'Result' shadows builtin type 'Result'
+  = help: choose a different name
+
+error[type]: trait 'Bytes' shadows builtin type 'Bytes'
+ --> trait_named_like_a_prelude_type__is_refused.silt:30:7
+    |
+ 30 | trait Bytes {
+    |       ^^^^^ trait 'Bytes' shadows builtin type 'Bytes'
+  = help: choose a different name

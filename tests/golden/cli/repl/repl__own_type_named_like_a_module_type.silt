@@ -1,7 +1,7 @@
 -- cmd: repl
--- A cell may declare `type Regex` beside `regex.Regex`: `:type` then
--- writes the regex module's with its module, and the bare name means the
--- cell's own. `:doc` finds a type of a builtin module by its module, as
+-- A cell may declare `type Regex` beside `regex.Regex`: `:type` writes
+-- the regex module's types with their module, as the messages do, and
+-- the bare name means the cell's own. `:doc` finds a type of a builtin module by its module, as
 -- `time.Weekday`, not by its bare name.
 -- stderr-contains: no builtin named 'Regex'
 -- stderr-contains: no builtin named 'TcpStream'

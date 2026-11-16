@@ -1,0 +1,17 @@
+error[type]: type mismatch: expected Int, got T of module other
+ --> main.silt:11:16
+    |
+ 11 |   let n: Int = b
+    |                ^ type mismatch: expected Int, got T of module other
+
+error[type]: type mismatch: expected Int, got other.T
+ --> main.silt:12:16
+    |
+ 12 |   let m: Int = a
+    |                ^ type mismatch: expected Int, got other.T
+
+error[type]: type mismatch: expected other.T, got T of module other
+ --> main.silt:14:10
+    |
+ 14 |     a == b -> 1
+    |          ^ type mismatch: expected other.T, got T of module other

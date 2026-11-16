@@ -30,17 +30,21 @@ use crate::ast;
 use crate::bytecode::Globals;
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
 use crate::defs::{DefTable, ModuleId};
-use crate::diagnostic::{Code, Diagnostic};
+use crate::diagnostic::Code;
 use crate::intern::{Symbol, intern, resolve};
 use crate::program::ENTRY_POINT;
-use crate::source::{FileId, SourceMap, SourceName};
+use crate::source::SourceName;
 use crate::typechecker::names::{self, Imported, ModuleKind};
 use crate::typechecker::{self, ModuleContext, Tables};
 #[cfg(feature = "repl")]
 use crate::types::Type;
 use crate::value::HostFn;
 
+// What a session hands out: a file's id, a place, the files read, and
+// what an analysis finds.
+pub use crate::diagnostic::{Diagnostic, Severity};
 pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
+pub use crate::source::{FileId, SourceMap, Span};
 pub use crate::value::HostCall;
 pub(crate) use analysis::ModuleAnalysis;
 // For `silt test` (crate::cli, which a WebAssembly build has not).
@@ -256,61 +260,37 @@ impl Session {
 
     /// How the module `here` writes the type `r` of another module in the
     /// editor (hover, signature help, completion, inlay hints) and in the
-    /// REPL's `:type`: with its module where another type the module can
-    /// name shares its name (`regex.Regex` beside the module's own
-    /// `Regex`, `a.Regex` beside `b.Regex`), described where no import
-    /// here can reach it (`InErr of package inner`), the module part as
-    /// the checker's messages write it (`ModuleWritten`). None for a type
-    /// written by its bare name, and where the module's check kept no
-    /// names (a session not `set_for_editor`).
+    /// REPL's `:type`, as the checker's messages write it: with its module,
+    /// by the name the file gives the module (`errs.AppError` under
+    /// `import da as errs`, `da.AppError` under `import da`, `j.JsonError`
+    /// under `import json as j`), described where no import here can reach
+    /// it (`InErr of package inner`); the module part is the checker's own
+    /// (`ModuleWritten`). None for a type written by its bare name (a
+    /// prelude type, one of the module's own), and where the module's
+    /// check kept no names (a session not `set_for_editor`).
     #[cfg(any(feature = "lsp", feature = "repl"))]
     pub(crate) fn written_type_name(
         &self,
         here: ModuleId,
         r: crate::types::TypeRef,
     ) -> Option<String> {
-        use crate::typechecker::ModuleWritten;
         let analysis = self.analyses.get(&here)?;
-        let program = (crate::defs::builtin_types()
-            .get(r.id.0.0 as usize)
-            .is_none())
-        .then(|| analysis.modules_written.get(&self.defs.get(r.id.0).module))
-        .flatten();
-        // (A type no import here can reach is described, as in the
-        // messages: no name written here is its name.)
-        let described = matches!(program, Some(ModuleWritten::Described { .. }));
-        if !described && !self.shares_its_name(&analysis.scope, r) {
-            return None;
-        }
+        let written = |module: ModuleId| analysis.modules_written.get(&module);
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, Some(module))) => Some(format!("{module}.{}", r.name)),
             Some((_, None)) => None,
-            None => program.map(|written| written.type_name(r.name)),
+            Some((_, Some(module))) => Some(match ModuleId::builtin(module).and_then(written) {
+                Some(written) => written.type_name(r.name),
+                None => format!("{module}.{}", r.name),
+            }),
+            None => written(self.defs.get(r.id.0).module).map(|w| w.type_name(r.name)),
         }
     }
 
-    /// Whether another type than `r` has `r`'s name among the types the
-    /// module of `scope` can name: one its bare name stands for, or one of
-    /// a module it imports (`a.Regex` beside `b.Regex`).
-    #[cfg(any(feature = "lsp", feature = "repl"))]
-    fn shares_its_name(&self, scope: &names::ModuleScope, r: crate::types::TypeRef) -> bool {
-        use names::Binding;
-        let other =
-            |binding: Option<&Binding>| matches!(binding, Some(Binding::Def(id)) if *id != r.id.0);
-        if other(scope.types.get(&r.name)) {
-            return true;
-        }
-        let builtins = names::builtins().1;
-        scope.values.values().any(|binding| {
-            let Binding::Module(module) = binding else {
-                return false;
-            };
-            let exports = match module.is_builtin() {
-                true => builtins.modules.get(module),
-                false => self.module_analysis(*module).map(|a| &a.scope.exports),
-            };
-            exports.is_some_and(|exports| other(exports.types.get(&r.name)))
-        })
+    /// `diagnostic` as `silt check` prints it, its places read from the
+    /// session's files: the header, the place with its source line and a
+    /// caret, the other places, the notes and the help.
+    pub fn render(&self, diagnostic: &Diagnostic) -> String {
+        crate::diagnostic::render_human(&self.sources, diagnostic)
     }
 
     /// The text of every file the session has read.
@@ -545,10 +525,9 @@ impl Session {
     /// trait `def`, named `name`, when it is one of an earlier cell that
     /// a later cell declared again: with its cell (`<repl:1>.T`), as the
     /// cell's diagnostics write it; or a type of another module (a builtin
-    /// module's, a module's of the program) as the editor writes it
-    /// (`written_type_name`: `regex.Regex`, `geo.Pt` where another type
-    /// the cell can name shares the name). `None` for any other, which
-    /// keeps its name.
+    /// module's, a module's of the program) as the editor and the
+    /// messages write it (`written_type_name`: `regex.Regex`, `geo.Pt`).
+    /// `None` for any other, which keeps its name.
     #[cfg(feature = "repl")]
     pub(crate) fn shadowed_cell_name(
         &self,
@@ -557,11 +536,10 @@ impl Session {
         name: Symbol,
     ) -> Option<String> {
         let owner = self.defs.get(def).module;
-        // A type of a builtin module or of a module of the program whose
-        // name another type the cell can name shares (`regex.Regex`,
-        // `geo.Pt` beside the cell's own `Pt`): as the editor writes it,
-        // with the module part of the messages (`written_type_name`).
-        // (A trait keeps its name.)
+        // A type of a builtin module or of a module of the program
+        // (`regex.Regex`, `geo.Pt`): as the editor writes it, with the
+        // module part of the messages (`written_type_name`). (A trait
+        // keeps its name.)
         if !self.cells.info.contains_key(&owner) {
             let def_ref = self.defs.get(def);
             if !def_ref.is_type() {

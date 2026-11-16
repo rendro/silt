@@ -454,6 +454,12 @@ where `T` is again one of these types. An enum without such an impl, a
 `Set`, a generic record without its type arguments, a function or a type
 parameter has no decoder.
 
+A value is as long as the server sends it: a `text` or `bytea` cell
+becomes a `String` or `Bytes` of its whole length, with no limit like the
+one on what `tcp` and `http` read from the network. The rows of a query
+are read whole; `postgres.stream` and a cursor bound how many rows are
+held at once.
+
 Each field of the record is read from the column of its exact name;
 Postgres folds a name it is not given in quotes to lower case, so a
 column created as `"Id"` is read through `AS`: `SELECT "Id" AS id`. A

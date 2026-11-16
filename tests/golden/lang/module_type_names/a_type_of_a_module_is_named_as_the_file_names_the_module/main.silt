@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- A message writes a type of another module with the name the file
+-- gives that module, which is what the file can write: `errs.AppError`
+-- under `import da as errs`, `j.JsonError` under `import json as j`
+-- (audit R9, card ALS-1). The helps for a variant say the same.
+-- stderr-contains: operator '+' requires Int or Float, got 'errs.AppError'
+-- stderr-contains: the ?-ed expression is Result(Int, errs.AppError), but the enclosing function returns Int
+-- stderr-contains: got 'Result(Int, j.JsonError)'
+-- stderr-contains: did you mean `errs.Io`?
+-- stderr-not-contains: da.AppError
+-- stderr-not-contains: json.JsonError
+import da as errs
+import json as j
+
+fn g(e: errs.AppError) -> Int {
+  1 + e
+}
+
+fn h() -> Int {
+  errs.load()?
+}
+
+fn k(s: String) -> Int {
+  let r = j.parse(s, Int)
+  r + 1
+}
+
+fn v() -> errs.AppError {
+  Io
+}
+
+fn main() {
+  println(g(errs.Io))
+}

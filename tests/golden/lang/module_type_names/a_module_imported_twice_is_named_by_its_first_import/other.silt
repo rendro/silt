@@ -1,0 +1,6 @@
+import da as errs
+import da
+
+pub fn f(e: da.AppError) -> Int {
+  1 + e
+}

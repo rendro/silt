@@ -133,3 +133,25 @@ fn postgres_doc_says_it_is_opt_in_and_how_to_enable_it() {
          (e.g. `--features postgres`)"
     );
 }
+
+/// The postgres page says that a value has no length limit and that the
+/// rows of a query are read whole (decided for audit R9, card PG-1: a
+/// database is not network input in the sense of the 10,000,000-byte
+/// limit of `tcp` and `http`).
+#[test]
+fn postgres_doc_says_a_value_has_no_length_limit() {
+    let body = silt::testing::builtins::registry::registry()
+        .module("postgres")
+        .expect("the postgres module")
+        .page;
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "A value is as long as the server sends it",
+        "The rows of a query are read whole",
+    ] {
+        assert!(
+            flat.contains(needle),
+            "docs/stdlib/postgres.md must say `{needle}`"
+        );
+    }
+}

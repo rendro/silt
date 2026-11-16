@@ -746,7 +746,7 @@ fn a_session_sets_no_slot_twice() {
         let evaluation = repl.eval(entry);
         let errors: Vec<String> = (evaluation.diagnostics.iter())
             .filter(|d| d.is_error())
-            .map(|d| d.message.clone())
+            .map(|d| d.message().to_string())
             .collect();
         match (evaluation.committed, evaluation.value) {
             (true, Some(value)) => Ok(repl.show(&value).0),

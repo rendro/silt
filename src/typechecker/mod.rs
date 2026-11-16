@@ -753,6 +753,9 @@ pub(crate) struct TypeChecker {
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
     pub(super) rejected_types: std::collections::HashSet<TypeRef>,
+    /// The module's trait declarations refused for a prelude type's name
+    /// (`trait Int`): an impl of one is already reported.
+    pub(super) refused_traits: std::collections::HashSet<Symbol>,
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
@@ -1003,6 +1006,7 @@ impl TypeChecker {
             import_paths: HashMap::new(),
             dependency_keys: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
+            refused_traits: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
             blanket_traits: std::collections::HashSet::new(),
@@ -2433,6 +2437,25 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
                 checker.module_spelled.entry(*id).or_insert(*name);
             }
             _ => {}
+        }
+    }
+    // A module imported twice (`import da`, then `import da as errs`) is
+    // named by its first import, in messages and in the editor alike:
+    // the bindings above come in no order.
+    let mut named_first = std::collections::HashSet::new();
+    for decl in &program.decls {
+        let Decl::Import(target, _) = decl else {
+            continue;
+        };
+        let bound = match target {
+            crate::ast::ImportTarget::Module(name)
+            | crate::ast::ImportTarget::Alias(_, name, _) => *name,
+            crate::ast::ImportTarget::Items(..) => continue,
+        };
+        if let Some(names::Binding::Module(id)) = scope.values.get(&bound)
+            && named_first.insert(*id)
+        {
+            checker.module_spelled.insert(*id, bound);
         }
     }
     // A builtin module is imported when the module binds a name of it,

@@ -109,7 +109,7 @@ fn type_decl_keyword_span_not_pushed_when_cursor_lives_in_later_fn() {
     let mut client = LspClient::spawn();
     let file = "file:///tmp/silt_r83_type_bug.silt";
     //                  0123456789012  (offset on first line)
-    let src = "type Foo {}\nfn main() {\n  1 + 2\n}\n";
+    let src = "type Foo { Foo }\nfn main() {\n  1 + 2\n}\n";
     client.did_open_and_wait(file, src);
 
     // `+` is at line 2 (0-indexed), col 4 (also 0-indexed): line is
