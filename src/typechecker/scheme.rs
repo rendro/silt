@@ -887,8 +887,9 @@ impl TypeChecker {
                 // (A builtin that writes what a decoder reads back,
                 // `csv.stringify`, decodes nothing: it writes rows. The
                 // refusal names it by its own name; the use as written.)
-                let writer = (in_full_callee(&error.message).as_deref())
-                    .is_some_and(super::builtin_checks::writes);
+                let writer = (in_full_callee(&error.message))
+                    .and_then(|shown| self.builtin_of_written(&shown))
+                    .is_some_and(|builtin| super::builtin_checks::writes(&builtin));
                 let what = match callee {
                     Some(callee) => format!("this use of '{callee}'"),
                     None => "this".to_string(),
@@ -900,14 +901,17 @@ impl TypeChecker {
                     kept.push(error);
                     continue;
                 }
-                error.message =
-                    format!("cannot infer the type {what} needs to implement trait 'json.Decode'");
+                error.message = format!(
+                    "cannot infer the type {what} needs to implement trait '{}'",
+                    self.written_builtin("json.Decode")
+                );
                 error.help = vec!["annotate the value it is given".to_string()];
                 if closure.is_some() && !decided {
                     let example = head.map_or_else(|| "Box(t)".to_string(), |h| format!("{h}(t)"));
                     error.help.push(format!(
                         "the impl is picked from a type, not from a value: take the type as a \
-                         parameter, as in `{{ t -> json.parse(s, {example}) }}`"
+                         parameter, as in `{{ t -> {}(s, {example}) }}`",
+                        self.written_builtin("json.parse")
                     ));
                 } else if let Some(example) =
                     unwritten.and_then(|site| self.with_type_parameter(site))
@@ -954,9 +958,10 @@ impl TypeChecker {
         // (With the bound the decode needs, so it checks as written.)
         typed.then(|| {
             format!(
-                "fn {}({}) where {letter}: json.Decode",
+                "fn {}({}) where {letter}: {}",
                 site.name,
-                params.join(", ")
+                params.join(", "),
+                self.written_builtin("json.Decode")
             )
         })
     }
@@ -1071,7 +1076,8 @@ impl TypeChecker {
                     };
                     diagnostic.with_help(format!(
                         "the impl is picked from a type, not from a value: take the type as a \
-                         parameter, as in `{{ t -> json.parse(s, {example}) }}`"
+                         parameter, as in `{{ t -> {}(s, {example}) }}`",
+                        self.written_builtin("json.parse")
                     ))
                 }
                 _ => diagnostic,

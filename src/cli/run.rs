@@ -190,8 +190,12 @@ pub(crate) fn vm_run_file(path: &str) {
     // `error: <e>`, with no place of silt's (see `Vm::run_program`).
     // A `Display` impl of the `Err` that failed is told in a note under
     // the line.
-    let main_text =
-        (run_result.as_ref().err()).map(|e| e.render_in(&ProgramFiles::new(path, &sources)));
+    let main_text = (run_result.as_ref().err()).map(|e| {
+        e.render_in(
+            &ProgramFiles::new(path, &sources),
+            crate::diagnostic::active_colors(),
+        )
+    });
     let failed = tasks_failed || main_text.is_some();
     if failed {
         crate::scheduler::claim_program_failure();
@@ -280,5 +284,8 @@ fn task_failure_texts(path: &str, sources: &SourceMap) -> (Vec<String>, bool) {
 /// meaningful frame. `silt test` renders the failures of tasks with it as
 /// well.
 pub(crate) fn render_runtime_error(e: &VmError, path: &str, sources: &SourceMap) -> String {
-    e.diagnostic_text(&ProgramFiles::new(path, sources))
+    e.diagnostic_text(
+        &ProgramFiles::new(path, sources),
+        crate::diagnostic::active_colors(),
+    )
 }

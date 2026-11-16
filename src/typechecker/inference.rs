@@ -61,10 +61,21 @@ enum CallForm {
 /// `tr` would, where that method is not called (`display`, `equal`):
 /// the help of an error at a call of it. `None` for any other method.
 pub(super) fn uncallable_builtin(tr: TraitKey, method: Symbol, x: &str) -> Option<String> {
+    uncallable_builtin_written(tr, method, x, "string.from")
+}
+
+/// [`uncallable_builtin`] with `string.from` as the file writes it
+/// (`TypeChecker::written_builtin`), for a help shown.
+pub(super) fn uncallable_builtin_written(
+    tr: TraitKey,
+    method: Symbol,
+    x: &str,
+    string_from: &str,
+) -> Option<String> {
     let builtin = crate::defs::builtin_trait_id(&resolve(tr.name)) == Some(tr.id);
     match (builtin, resolve(tr.name).as_str(), resolve(method).as_str()) {
         (true, "Display", "display") => Some(format!(
-            "show a value with interpolation, `\"{{{x}}}\"`, or with `string.from({x})`"
+            "show a value with interpolation, `\"{{{x}}}\"`, or with `{string_from}({x})`"
         )),
         (true, "Equal", "equal") => Some(format!("compare with `==`: `{x} == y`")),
         _ => None,
@@ -264,9 +275,9 @@ impl TypeChecker {
         // (A refusal of `T.decode` names it so, a type of another module
         // with its module: `mail.Box.decode` beside a `Box` of the
         // module's own.)
-        let callee = match self.other_module(head) {
-            Some(module) => intern(&format!("{module}.{}.{method}", head.name)),
-            None => intern(&format!("{head}.{method}")),
+        let callee = match self.is_other_module(head) {
+            true => intern(&format!("{}.{method}", self.written_type(head))),
+            false => intern(&format!("{head}.{method}")),
         };
         // (The decoder a note names, through a function that hands its
         // type on: `bm` passes it to `Box.decode`.)
@@ -1265,7 +1276,7 @@ impl TypeChecker {
                     .is_some_and(|i| i.methods.iter().any(|(n, _)| *n == field))
             });
             let help = match sup {
-                Some(s) => uncallable_builtin(s, field, "x").or_else(|| {
+                Some(s) => uncallable_builtin_written(s, field, "x", &self.written_builtin("string.from")).or_else(|| {
                     let shown = self.spell_trait(s);
                     let rest = if self.method_arity(s, field) > 1 { ", .." } else { "" };
                     Some(format!(
@@ -1282,7 +1293,9 @@ impl TypeChecker {
             self.error_help(Code::UnknownMethod, (message, help), span);
             return Type::Error;
         };
-        if let Some(how) = uncallable_builtin(tr, field, "x") {
+        if let Some(how) =
+            uncallable_builtin_written(tr, field, "x", &self.written_builtin("string.from"))
+        {
             self.error_help(
                 Code::InvalidMethodCall,
                 (
@@ -1596,9 +1609,14 @@ impl TypeChecker {
         }
         let enum_name =
             (self.spell_def(ty.0)).or_else(|| self.def(ty.0).map(|d| resolve(d.name)))?;
+        // (A variant of the prelude cannot be renamed: the trait can.)
+        let rename = match self.def(ty.0).is_some_and(|d| d.module.is_builtin()) {
+            true => "the trait",
+            false => "the variant",
+        };
         Some(format!(
             "`{written}` here is the variant `{enum_name}.{written}`, which hides the trait \
-             `{written}` in expressions: rename the variant to call `{written}.{field}`"
+             `{written}` in expressions: rename {rename} to call `{written}.{field}`"
         ))
     }
 
@@ -2217,7 +2235,9 @@ impl TypeChecker {
             .collect();
         traits.sort_by_key(|t| self.show_trait(*t));
         if let Some(tr) = traits.first().copied() {
-            if let Some(how) = uncallable_builtin(tr, field, written) {
+            if let Some(how) =
+                uncallable_builtin_written(tr, field, written, &self.written_builtin("string.from"))
+            {
                 return Some(how);
             }
             let params = self.method_arity(tr, field);
@@ -2347,7 +2367,10 @@ impl TypeChecker {
             .filter(|t| uncallable_builtin(*t, field, "x").is_none())
             .collect();
         let help = match (callable.as_slice(), traits.first()) {
-            ([], Some(first)) => uncallable_builtin(*first, field, "x").unwrap_or_default(),
+            ([], Some(first)) => {
+                uncallable_builtin_written(*first, field, "x", &self.written_builtin("string.from"))
+                    .unwrap_or_default()
+            }
             _ => {
                 let of: Vec<String> = (callable.iter())
                     .map(|t| format!("trait `{}`", self.spell_trait(*t)))
@@ -2888,7 +2911,8 @@ impl TypeChecker {
                 };
                 diagnostic = diagnostic.with_help(format!(
                     "a `?` in a closure ends the closure, not the function; over a list, \
-                     `list.traverse(xs) {{ x -> ... }}?` stops at the first `{fails}`"
+                     `{}(xs) {{ x -> ... }}?` stops at the first `{fails}`",
+                    self.written_builtin("list.traverse")
                 ));
             }
             self.errors.push(diagnostic);
@@ -2986,10 +3010,12 @@ impl TypeChecker {
                     ),
                 )
                 .with_note(note)
-                .with_help(
-                    "to stop early, use `list.find`, `list.any` or `list.fold_until`, or a \
-                     `loop`",
-                ),
+                .with_help(format!(
+                    "to stop early, use `{}`, `{}` or `{}`, or a `loop`",
+                    self.written_builtin("list.find"),
+                    self.written_builtin("list.any"),
+                    self.written_builtin("list.fold_until")
+                )),
             );
         }
     }
@@ -3951,6 +3977,13 @@ impl TypeChecker {
                                     let shown = format!("`{}.{method}`", self.show_trait(tr));
                                     (shown, written_params, args.len())
                                 }
+                                // A definition of another module: as the
+                                // file writes it (`t.parse_map`).
+                                _ if let Some(crate::defs::Res::Def(id)) = callee.res
+                                    && let Some(written) = self.written_def(id) =>
+                                {
+                                    (format!("`{written}`"), written_params, args.len())
+                                }
                                 (_, Some(name)) => {
                                     (format!("`{name}`"), written_params, args.len())
                                 }
@@ -4730,7 +4763,7 @@ impl TypeChecker {
                     offender_span,
                     operator_message(tr, op, offender, &self.show_type(offender)),
                 );
-                d.help.extend(Self::chain_hint(offender, other));
+                d.help.extend(self.chain_hint(offender, other));
                 self.errors.push(d);
             } else {
                 self.report_mismatch(mismatch, rhs_span);

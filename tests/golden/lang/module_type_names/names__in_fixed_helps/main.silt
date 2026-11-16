@@ -1,0 +1,44 @@
+-- cmd: check
+-- exit: 1
+-- The fixed helps that offer code with a builtin's function name it as
+-- the file writes it: `o.flat_map` and `o.to_result` under `import option
+-- as o`, `r.flat_map` and `r.map_err` under `import result as r`
+-- (audit R9, card NAM-1, review S1).
+import option as o
+import result as r
+
+type Bad { Bad }
+
+fn half(n: Int) -> Option(Int) {
+  match n {
+    0 -> None
+    _ -> Some(n / 2)
+  }
+}
+
+fn parse(s: String) -> Result(Int, String) {
+  match s {
+    "" -> Err("empty")
+    _ -> Ok(1)
+  }
+}
+
+fn one() -> Int {
+  let a: Int = half(4)
+  let b: Int = parse("x")
+  a + b
+}
+
+fn two() -> Result(Int, String) {
+  let c = half(4)?
+  Ok(c)
+}
+
+fn three() -> Result(Int, Bad) {
+  let d = parse("x")?
+  Ok(d)
+}
+
+fn main() {
+  println((one(), two(), three(), o.is_some(half(1)), r.is_ok(parse(""))))
+}

@@ -67,21 +67,16 @@ pub(super) fn nests_option(ty: &Type) -> bool {
         }
 }
 
-/// The refusal of `builtin`, which decodes as `decoding` says, of the
-/// type `shown` at `span`, which is or holds an `Option` of an
-/// `Option`.
-fn option_in_option_refusal(
-    builtin: &str,
-    shown: &str,
-    span: Span,
-    decoding: Decoding,
-) -> Diagnostic {
+/// The refusal of `builtin` (as the file writes it) of the type `shown`
+/// at `span`, which is or holds an `Option` of an `Option`, with the
+/// decoder's `help`.
+fn option_in_option_refusal(builtin: &str, shown: &str, span: Span, help: String) -> Diagnostic {
     Diagnostic::error(
         Code::Undecodable,
         span,
         format!("`{builtin}` cannot decode `{shown}`: {OPTION_IN_OPTION} has no decoder"),
     )
-    .with_help(decoding.family.help())
+    .with_help(help)
 }
 
 /// Whether `ty` is a map whose key type is known and no `String`.
@@ -234,11 +229,18 @@ impl TypeChecker {
                 written,
             } => self.decode_refusal(&resolve(builtin), decoding, written, &ty, owner, span),
             BuiltinCheck::Connection { builtin } => {
-                connection_refusal(&resolve(builtin), &ty, span)
+                let names = [
+                    self.written_builtin(&resolve(builtin)),
+                    self.written_builtin("postgres.PgPool"),
+                    self.written_builtin("postgres.PgTx"),
+                ];
+                connection_refusal(&names, &ty, span)
             }
             // (A statement's parameters are sent encoded as json.)
-            BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span)
-                .or_else(|| self.opaque_encode_refusal(&ty, span, owner)),
+            BuiltinCheck::Params { builtin } => {
+                { params_refusal(&self.written_builtin(&resolve(builtin)), &ty, span) }
+                    .or_else(|| self.opaque_encode_refusal(&ty, span, owner))
+            }
             BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner),
         };
         let Some(mut diagnostic) = refusal else {
@@ -271,7 +273,8 @@ impl TypeChecker {
         }
         if let Some(passer) = passer {
             let (passer, links) = self.through_let(origin.callee, passer, through.to_vec());
-            diagnostic = diagnostic.with_note(passes_note(passer, &links, check.builtin()));
+            let builtin = intern(&self.written_builtin(&resolve(check.builtin())));
+            diagnostic = diagnostic.with_note(passes_note(passer, &links, builtin));
         }
         // (The bound that passes it on refused the same encoding there:
         // this one, which names the encoder, takes its place.)
@@ -341,6 +344,7 @@ impl TypeChecker {
         owner: &[crate::defs::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
+        let shown_builtin = self.written_builtin(builtin_name);
         // (A generic alias written alone that reaches the decoder through
         // a value, `id(L)`: named as written.)
         let written = written.or_else(|| {
@@ -382,13 +386,14 @@ impl TypeChecker {
                 // (`type K(a) = Int`), written alone: a generic type
                 // alone, as `L` of `type L(a) = List(a)` is.
                 None => {
-                    let accepted = decoding.type_arguments(str::to_string);
+                    let accepted =
+                        decoding.type_arguments(str::to_string, |n| self.written_builtin(n));
                     let help = match decoding.primitives {
-                        true => decoding.family.help(),
+                        true => decoding.family.help(|n| self.written_builtin(n)),
                         false => decoding.family.type_argument_help().to_string(),
                     };
                     let message = format!(
-                        "`{builtin_name}` cannot decode `{name}`: its type argument must be {accepted}"
+                        "`{shown_builtin}` cannot decode `{name}`: its type argument must be {accepted}"
                     );
                     return Some(
                         Diagnostic::error(Code::Undecodable, span, message).with_help(help),
@@ -409,10 +414,10 @@ impl TypeChecker {
         // them apart.)
         if decoding.primitives && option_in_option(ty) {
             return Some(option_in_option_refusal(
-                builtin_name,
+                &shown_builtin,
                 &self.show_type(ty),
                 span,
-                decoding,
+                decoding.family.help(|n| self.written_builtin(n)),
             ));
         }
         if decoding.primitives
@@ -428,13 +433,13 @@ impl TypeChecker {
             }
             // A tuple of types (`json.parse(text, (Int, String))`).
             Type::Tuple(_) => {
-                let accepted = decoding.type_arguments(str::to_string);
+                let accepted = decoding.type_arguments(str::to_string, |n| self.written_builtin(n));
                 return Some(
                     Diagnostic::error(
                         Code::Undecodable,
                         span,
                         format!(
-                            "`{builtin_name}` cannot decode `{}`: its type argument must be {accepted}",
+                            "`{shown_builtin}` cannot decode `{}`: its type argument must be {accepted}",
                             self.show_type(ty)
                         ),
                     )
@@ -444,7 +449,7 @@ impl TypeChecker {
             _ => head_ref(ty)?,
         };
         let family = decoding.family;
-        let decodable_types_help = family.help();
+        let decodable_types_help = family.help(|n| self.written_builtin(n));
         // What to decode into instead of a type that is no record. A row
         // is decoded into a record of its columns.
         let record_help = family.record_help();
@@ -489,8 +494,9 @@ impl TypeChecker {
                 return refusal(
                     Code::Undecodable,
                     format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: its `json.Decode` impl \
-                         reads JSON, and a row of `{builtin_name}` is text"
+                        "`{shown_builtin}` cannot decode `{type_name}`: its `{}` impl \
+                         reads JSON, and a row of `{shown_builtin}` is text",
+                        self.written_builtin("json.Decode")
                     ),
                     record_help,
                 );
@@ -507,13 +513,15 @@ impl TypeChecker {
                 return lacks.then(|| {
                     let message = match self.only_decode_impl(head) {
                         Some(only) => format!(
-                            "type `{}` does not implement trait `json.Decode`: the only impl is for `{}`",
+                            "type `{}` does not implement trait `{}`: the only impl is for `{}`",
                             self.show_type(ty),
+                            self.written_builtin("json.Decode"),
                             self.show_type(&only)
                         ),
                         None => format!(
-                            "type '{}' does not implement trait 'json.Decode'",
-                            self.show_type(ty)
+                            "type '{}' does not implement trait '{}'",
+                            self.show_type(ty),
+                            self.written_builtin("json.Decode")
                         ),
                     };
                     Diagnostic::error(Code::MissingTraitImpl, span, message)
@@ -545,7 +553,7 @@ impl TypeChecker {
                     false => "record",
                 };
                 let message = format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: it is a generic {kind} \
+                    "`{shown_builtin}` cannot decode `{type_name}`: it is a generic {kind} \
                      type, and a decoder builds a value of one type"
                 );
                 return refusal(Code::Undecodable, message, generic_help);
@@ -559,14 +567,15 @@ impl TypeChecker {
                     // (A family that gives no impl a value: a record.)
                     false if !family.honours_impls() => record_help.to_string(),
                     false => format!(
-                        "declare a record type, or write a `json.Decode` impl for `{}`",
+                        "declare a record type, or write a `{}` impl for `{}`",
+                        self.written_builtin("json.Decode"),
                         self.written_type(head)
                     ),
                 };
                 return refusal(
                     Code::Undecodable,
                     format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
+                        "`{shown_builtin}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
                     ),
                     &help,
                 );
@@ -581,7 +590,7 @@ impl TypeChecker {
                 return refusal(
                     Code::Undecodable,
                     format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: a toml document is a \
+                        "`{shown_builtin}` cannot decode `{type_name}`: a toml document is a \
                          table, and no variant of `{}` has fields",
                         self.show_type(&Type::Generic(head, Vec::new()))
                     ),
@@ -620,7 +629,7 @@ impl TypeChecker {
             return refusal(
                 Code::Undecodable,
                 format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: {place} `{}`{owner} has {has} `{}`, {part}",
+                    "`{shown_builtin}` cannot decode `{type_name}`: {place} `{}`{owner} has {has} `{}`, {part}",
                     found.field, found.field_type
                 ),
                 &help,
@@ -632,7 +641,10 @@ impl TypeChecker {
             }
             return refusal(
                 Code::Undecodable,
-                format!("`{builtin_name}` cannot decode `json.Value`, {JSON_VALUE_ELSEWHERE}"),
+                format!(
+                    "`{shown_builtin}` cannot decode `{}`, {JSON_VALUE_ELSEWHERE}",
+                    self.written_builtin("json.Value")
+                ),
                 record_help,
             );
         }
@@ -643,7 +655,7 @@ impl TypeChecker {
             };
             return refusal(
                 Code::Undecodable,
-                format!("`{builtin_name}` cannot decode `{type_name}`: {why}"),
+                format!("`{shown_builtin}` cannot decode `{type_name}`: {why}"),
                 record_help,
             );
         }
@@ -655,7 +667,7 @@ impl TypeChecker {
         let is_primitive = crate::module::BUILTIN_PRIMITIVE_NAMES.contains(&builtin);
         let is_container = crate::module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&builtin);
         if is_container || (is_primitive && !decoding.primitives) {
-            let accepted = decoding.type_arguments(str::to_string);
+            let accepted = decoding.type_arguments(str::to_string, |n| self.written_builtin(n));
             // A container type the call gives its arguments by its
             // arguments (`List(Int)`).
             let type_name = match written.is_none()
@@ -670,7 +682,7 @@ impl TypeChecker {
             // field types.
             let module = (builtin_name.strip_suffix(".parse")).filter(|_| !family.rows());
             let help = match (module, ty) {
-                _ if decoding.primitives => family.help(),
+                _ if decoding.primitives => family.help(|n| self.written_builtin(n)),
                 (Some(module), Type::List(_)) => format!("use `{module}.parse_list` for a list"),
                 (Some(module), Type::Map(..)) => format!("use `{module}.parse_map` for a map"),
                 _ => family.type_argument_help().to_string(),
@@ -681,7 +693,7 @@ impl TypeChecker {
             };
             return refusal(
                 Code::Undecodable,
-                format!("`{builtin_name}` cannot decode `{type_name}`: {why}"),
+                format!("`{shown_builtin}` cannot decode `{type_name}`: {why}"),
                 &help,
             );
         }
@@ -689,8 +701,15 @@ impl TypeChecker {
         // is no type argument of a decoder; a decoder decodes some of
         // them as the type of a record's field.
         if !is_primitive {
-            let accepted = decoding.type_arguments(str::to_string);
-            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name)
+            let accepted = decoding.type_arguments(str::to_string, |n| self.written_builtin(n));
+            // (By the type's own name, `time.DateTime`: the name shown is
+            // the file's, `DateTime` after `import time.{ DateTime }`.)
+            let own = match crate::defs::builtin_types().get(head.id.0.0 as usize) {
+                Some((name, Some(module))) => format!("{module}.{name}"),
+                Some((name, None)) => name.to_string(),
+                None => type_name.clone(),
+            };
+            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == own)
                 || [crate::typeinfo::ty::INSTANT, crate::typeinfo::ty::DURATION].contains(&head.id);
             let help = match decoded {
                 true => {
@@ -709,7 +728,7 @@ impl TypeChecker {
             return refusal(
                 Code::Undecodable,
                 format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"
+                    "`{shown_builtin}` cannot decode `{type_name}`: its type argument must be {accepted}"
                 ),
                 &help,
             );
@@ -729,6 +748,7 @@ impl TypeChecker {
         ty: &Type,
         span: Span,
     ) -> Option<Diagnostic> {
+        let shown_builtin = self.written_builtin(builtin_name);
         let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
         let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
             .map(|var| {
@@ -748,7 +768,7 @@ impl TypeChecker {
         }
         let (said, help) = super::inference::known_only_by_type(&unheld, &unheld);
         let message = format!(
-            "`{builtin_name}` needs the type `{}` in full here: {said}",
+            "`{shown_builtin}` needs the type `{}` in full here: {said}",
             self.show_type(&substitute_vars(ty, &names))
         );
         let diagnostic = Diagnostic::error(Code::InvalidMethodCall, span, message);
@@ -771,15 +791,16 @@ impl TypeChecker {
         owner: &[crate::defs::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
+        let shown_builtin = self.written_builtin(builtin);
         use crate::builtins::registry::decoding::Leaf;
         use crate::typeinfo::ty as bt;
         let family = decoding.family.nested();
         if option_in_option(part) {
             return Some(option_in_option_refusal(
-                builtin,
+                &shown_builtin,
                 &self.show_type(whole),
                 span,
-                decoding,
+                decoding.family.help(|n| self.written_builtin(n)),
             ));
         }
         let leaf = match part {
@@ -843,15 +864,19 @@ impl TypeChecker {
             }
             _ => {
                 let help = match leaf {
-                    Some(Leaf::Bytes) => format!("{}{}", family.help(), family.bytes_help()),
-                    _ => family.help(),
+                    Some(Leaf::Bytes) => format!(
+                        "{}{}",
+                        family.help(|n| self.written_builtin(n)),
+                        family.bytes_help()
+                    ),
+                    _ => family.help(|n| self.written_builtin(n)),
                 };
                 Some(
                     Diagnostic::error(
                         Code::Undecodable,
                         span,
                         format!(
-                            "`{builtin}` cannot decode `{}`: `{}` has no decoder{}",
+                            "`{shown_builtin}` cannot decode `{}`: `{}` has no decoder{}",
                             self.show_type(whole),
                             self.show_type(part),
                             match (map_with_other_keys(part), part) {
@@ -933,14 +958,14 @@ impl TypeChecker {
                     map_key = map_with_other_keys(&part);
                     Some(self.show_type(&part))
                 }
-                Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
+                Ok(field_type) => (family
+                    .lacks(&field_type)
+                    .map(|leaf| self.written_builtin(leaf)))
+                .or_else(|| {
                     let (enum_type, _) = (nested.iter()).find(|(t, args)| {
                         self.tables.is_enum(*t) && !self.has_decode_impl_at(*t, args)
                     })?;
-                    (!family.decodes_enums()).then(|| match self.other_module(*enum_type) {
-                        Some(module) => format!("{module}.{}", enum_type.name),
-                        None => resolve(enum_type.name),
-                    })
+                    (!family.decodes_enums()).then(|| self.written_type(*enum_type))
                 }),
             };
             if let Some(part) = lacking {
@@ -1028,7 +1053,8 @@ fn type_variables(ty: &Type) -> Vec<Type> {
 /// The error of the postgres function `builtin_name` given the
 /// connection of the type `ty` at `span`, if it is no `PgPool` and no
 /// `PgTx`.
-fn connection_refusal(builtin_name: &str, ty: &Type, span: Span) -> Option<Diagnostic> {
+fn connection_refusal(names: &[String; 3], ty: &Type, span: Span) -> Option<Diagnostic> {
+    let [builtin, pool, tx] = names;
     match ty {
         Type::Generic(t, _)
             if t.id == crate::typeinfo::ty::PG_POOL || t.id == crate::typeinfo::ty::PG_TX =>
@@ -1038,9 +1064,7 @@ fn connection_refusal(builtin_name: &str, ty: &Type, span: Span) -> Option<Diagn
         _ => Some(Diagnostic::error(
             Code::TypeMismatch,
             span,
-            format!(
-                "the connection of `{builtin_name}` must be a postgres.PgPool or a postgres.PgTx"
-            ),
+            format!("the connection of `{builtin}` must be a {pool} or a {tx}"),
         )),
     }
 }

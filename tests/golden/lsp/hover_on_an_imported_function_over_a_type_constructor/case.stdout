@@ -1,12 +1,12 @@
-> hover 10:16
+> hover 11:16
 ```silt
-fn double_all(xs: m(Int)) -> m(Int) where m: Mapping
+fn double_all(xs: m(Int)) -> m(Int) where m: fx.Mapping
 ```
-> hover 11:13
+> hover 12:13
 ```silt
-fn double_all(xs: m(Int)) -> m(Int) where m: Mapping
+fn double_all(xs: m(Int)) -> m(Int) where m: fx.Mapping
 ```
-> hover 12:12
+> hover 13:12
 ```silt
 Fn(Option(Int)) -> Option(Int)
 ```
