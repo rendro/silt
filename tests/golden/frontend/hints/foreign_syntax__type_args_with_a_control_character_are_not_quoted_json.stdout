@@ -1,0 +1,1 @@
+[{"code":"E0109","col":14,"end_col":15,"end_line":4,"file":"foreign_syntax__type_args_with_a_control_character_are_not_quoted_json.silt","help":[],"kind":"parse","labels":[],"line":4,"message":"type arguments are written in parentheses: `Map(...)`","notes":[],"severity":"error"}]

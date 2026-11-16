@@ -1,0 +1,41 @@
+error[parse]: type arguments are written in parentheses: `Map(...)`
+ --> foreign_syntax__type_args_with_a_control_character_are_not_quoted.silt:8:14
+   |
+ 8 | fn a() -> Map<String, {- x␛c -} Int> { #{} }
+   |              ^ type arguments are written in parentheses: `Map(...)`
+
+error[parse]: type arguments are written in parentheses: `St(...)`
+ --> foreign_syntax__type_args_with_a_control_character_are_not_quoted.silt:10:13
+    |
+ 10 | fn b() -> St[a {- ␇ -} b] { 1 }
+    |             ^ type arguments are written in parentheses: `St(...)`
+
+error[parse]: type arguments are written in parentheses: `St(...)`
+ --> foreign_syntax__type_args_with_a_control_character_are_not_quoted.silt:12:13
+    |
+ 12 | fn c() -> St[a {- ␡ -} b] { 1 }
+    |             ^ type arguments are written in parentheses: `St(...)`
+
+error[parse]: type arguments are written in parentheses: `St(...)`
+ --> foreign_syntax__type_args_with_a_control_character_are_not_quoted.silt:14:13
+    |
+ 14 | fn d() -> St[a	b] { 1 }
+    |             ^ type arguments are written in parentheses: `St(...)`
+
+error[parse]: type arguments are written in parentheses: `St(...)`
+ --> foreign_syntax__type_args_with_a_control_character_are_not_quoted.silt:16:13
+    |
+ 16 | fn e() -> St[a {- x�y -} b] { 1 }
+    |             ^ type arguments are written in parentheses: `St(...)`
+
+error[parse]: type arguments are written in parentheses: `St(...)`
+ --> foreign_syntax__type_args_with_a_control_character_are_not_quoted.silt:18:13
+    |
+ 18 | fn f() -> St[a {- x�y -} b] { 1 }
+    |             ^ type arguments are written in parentheses: `St(...)`
+
+error[parse]: type arguments are written in parentheses: `Map(String, Int)`
+ --> foreign_syntax__type_args_with_a_control_character_are_not_quoted.silt:20:14
+    |
+ 20 | fn g() -> Map<String, Int> { #{} }
+    |              ^ type arguments are written in parentheses: `Map(String, Int)`
