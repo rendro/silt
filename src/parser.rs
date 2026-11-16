@@ -3585,7 +3585,7 @@ impl<'src> Parser<'src> {
             _ => (Token::LBracket, Token::RBracket),
         };
         let mut depth = 0usize;
-        let mut inner = None;
+        let mut partner = None;
         for (i, tok) in self.tokens.iter().enumerate().skip(self.pos) {
             if i > self.pos && self.starts_line[i] {
                 break;
@@ -3595,29 +3595,58 @@ impl<'src> Parser<'src> {
             } else if tok.kind == close {
                 depth -= 1;
                 if depth == 0 {
-                    let from = self.tokens[self.pos].span.end_offset();
-                    inner = self
-                        .source
-                        .get(from..tok.span.start_offset())
-                        .map(str::trim);
+                    partner = Some(i);
                     break;
                 }
             }
         }
-        // (Arguments of arguments, `List<List<Int>>`, likewise. Text with a
-        // control character, a string or a comment over lines or one that
-        // holds an ESC or a tab, is not quoted, see `quotable`: the
-        // arguments are `...`.)
-        let args = inner
-            .filter(|a| !a.is_empty())
-            .map(|a| match crate::diagnostic::quotable(a) {
-                true => a.replace(['<', '['], "(").replace(['>', ']'], ")"),
-                false => "...".to_string(),
-            });
+        // Arguments written but not shown (their partner is on another
+        // line, or their text is not quotable): `...`. `Int` stands only for
+        // brackets with nothing between them (`List[]`).
+        let args = match partner {
+            Some(at) => self.type_arguments_written(at),
+            None => Some("...".to_string()),
+        };
         format!(
             "type arguments are written in parentheses: `{written}({})`",
             args.as_deref().unwrap_or("Int")
         )
+    }
+
+    /// The type arguments between the opening bracket at the cursor and
+    /// its partner, the token `close`, as a message suggests them in
+    /// parentheses (`List<List<Int>>` as `List(List(Int))`): the text as
+    /// written, but a tab between two tokens written as a space, as `silt
+    /// fmt` would space it. None when nothing stands between the two;
+    /// `...` for text a message cannot quote (`quotable`: a string or a
+    /// comment over lines, a control character in one).
+    fn type_arguments_written(&self, close: usize) -> Option<String> {
+        let mut text = String::new();
+        let mut end = self.tokens[self.pos].span.end_offset();
+        for tok in &self.tokens[self.pos + 1..=close] {
+            let gap = self.source.get(end..tok.span.start_offset()).unwrap_or("");
+            match gap.chars().all(|c| c == ' ' || c == '\t') {
+                // White space between two tokens: a tab in it is spacing.
+                true => text.push_str(&gap.replace('\t', " ")),
+                // A comment stands in it: kept as it is.
+                false => text.push_str(gap),
+            }
+            if !std::ptr::eq(tok, &self.tokens[close]) {
+                text.push_str(
+                    self.source
+                        .get(tok.span.start_offset()..tok.span.end_offset())?,
+                );
+            }
+            end = tok.span.end_offset();
+        }
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        Some(match crate::diagnostic::quotable(text) {
+            true => text.replace(['<', '['], "(").replace(['>', ']'], ")"),
+            false => "...".to_string(),
+        })
     }
 
     /// Whether a `:` stands on the line from the current token, outside

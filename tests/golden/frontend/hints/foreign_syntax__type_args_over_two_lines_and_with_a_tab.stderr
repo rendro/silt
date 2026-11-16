@@ -1,0 +1,23 @@
+error[parse]: type arguments are written in parentheses: `Map(...)`
+ --> foreign_syntax__type_args_over_two_lines_and_with_a_tab.silt:7:14
+   |
+ 7 | fn a() -> Map[String,
+   |              ^ type arguments are written in parentheses: `Map(...)`
+
+error[parse]: type arguments are written in parentheses: `Map(String, Int)`
+ --> foreign_syntax__type_args_over_two_lines_and_with_a_tab.silt:10:14
+    |
+ 10 | fn b() -> Map[String,	Int] { #{} }
+    |              ^ type arguments are written in parentheses: `Map(String, Int)`
+
+error[parse]: type arguments are written in parentheses: `St(...)`
+ --> foreign_syntax__type_args_over_two_lines_and_with_a_tab.silt:12:13
+    |
+ 12 | fn c() -> St[ing
+    |             ^ type arguments are written in parentheses: `St(...)`
+
+error[parse]: type arguments are written in parentheses: `List(Int)`
+ --> foreign_syntax__type_args_over_two_lines_and_with_a_tab.silt:15:15
+    |
+ 15 | fn d() -> List[] { [] }
+    |               ^ type arguments are written in parentheses: `List(Int)`
