@@ -1,0 +1,6 @@
+err
+error[runtime]: division by zero
+ --> failure_report__after_neither_partial.silt:10:11
+    |
+ 10 |   let n = 1 / (list.length([1]) - 1)
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^ division by zero

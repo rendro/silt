@@ -81,16 +81,33 @@ struct ProcessStdout;
 /// The program ends by a failure ([`HostIo::drain_failing`]).
 static FAILING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Whether what was written to the process's stdout last ended with a
-/// line end (or nothing was written): see [`stdout_ends_a_line`].
+/// Whether what the program wrote last, to the process's stdout or to
+/// its stderr, ended with a line end (or nothing was written): see
+/// [`output_ends_a_line`].
 static AT_LINE_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-/// Whether the text written to the process's stdout so far ends with a
-/// line end, or none was written: where it does not, a report of the
+/// Whether the last text the program wrote, to stdout or to stderr,
+/// ends with a line end, or none was written. Where stdout and stderr
+/// are one place, that is how the place ends: `print("out ")` and then
+/// `io.eprintln("err")` leave a whole line (stdout's text is written out
+/// before stderr's). Where it does not end a line, a report of the
 /// command's that goes to the same place starts on a line of its own
 /// ([`crate::scheduler::report_on_stderr`]).
-pub(crate) fn stdout_ends_a_line() -> bool {
+pub(crate) fn output_ends_a_line() -> bool {
     AT_LINE_START.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Whether what the program wrote last to the process's stderr ended
+/// with a line end (or nothing was written): see [`stderr_ends_a_line`].
+static STDERR_AT_LINE_START: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Whether the last text the program wrote to stderr ends with a line
+/// end, or none was written: where stdout goes elsewhere, a report of the
+/// command's on stderr starts on a line of its own where it does not
+/// ([`crate::scheduler::report_on_stderr`]).
+pub(crate) fn stderr_ends_a_line() -> bool {
+    STDERR_AT_LINE_START.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Whether the process's stdout and stderr are one place: one file, one
@@ -164,6 +181,11 @@ impl Output for ProcessStderr {
         // this text where the two outputs go to one place (`2>&1`).
         // (Its failure is the next print's to stdout.)
         let _ = ProcessStdout::flush();
+        if !text.is_empty() {
+            let ends = text.ends_with('\n');
+            AT_LINE_START.store(ends, std::sync::atomic::Ordering::SeqCst);
+            STDERR_AT_LINE_START.store(ends, std::sync::atomic::Ordering::SeqCst);
+        }
         write_stderr(text)
     }
 }

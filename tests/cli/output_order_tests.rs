@@ -32,10 +32,10 @@ fn a_stdout_line_with_no_end_yet_comes_before_a_later_stderr_text() {
     assert_eq!(written, "out err out2 err2\nend\n");
 }
 
-/// `silt run` of a program that prints `printed` and then fails, with
-/// stdout and stderr into one file (`one`) or into two: what the file
-/// holds, or the two files.
-fn run_failing(tag: &str, printed: &str, one: bool) -> (Option<i32>, String, String) {
+/// `silt run` of a program that runs `writes` (lines of code) and then
+/// fails, with stdout and stderr into one file (`one`) or into two: what
+/// the file holds, or the two files.
+fn run_failing(tag: &str, writes: &str, one: bool) -> (Option<i32>, String, String) {
     let dir = std::env::temp_dir().join(format!(
         "silt_output_order_fail_{tag}_{}",
         std::process::id()
@@ -45,7 +45,7 @@ fn run_failing(tag: &str, printed: &str, one: bool) -> (Option<i32>, String, Str
     std::fs::write(
         &program,
         format!(
-            "import list\nfn main() {{\n  print({printed:?})\n  let n = 1 / (list.length([1]) - 1)\n  println(n)\n}}\n"
+            "import io\nimport list\nfn main() {{\n  io.eprint(\"\")\n  {writes}\n  let n = 1 / (list.length([1]) - 1)\n  println(n)\n}}\n"
         ),
     )
     .expect("the program is written");
@@ -81,7 +81,7 @@ fn run_failing(tag: &str, printed: &str, one: bool) -> (Option<i32>, String, Str
 #[test]
 fn a_stdout_line_with_no_end_yet_comes_before_the_report_of_a_failure() {
     let report = "error[runtime]: division by zero\n";
-    let (code, both, _) = run_failing("partial", "partial ", true);
+    let (code, both, _) = run_failing("partial", "print(\"partial \")", true);
     assert_eq!(code, Some(1), "{both}");
     let expected = match cfg!(unix) {
         true => format!("partial \n{report}"),
@@ -89,12 +89,55 @@ fn a_stdout_line_with_no_end_yet_comes_before_the_report_of_a_failure() {
     };
     assert!(both.starts_with(&expected), "{both}");
 
-    let (code, both, _) = run_failing("line", "whole\n", true);
+    let (code, both, _) = run_failing("line", "print(\"whole\\n\")", true);
     assert_eq!(code, Some(1), "{both}");
     assert!(both.starts_with(&format!("whole\n{report}")), "{both}");
 
-    let (code, out, err) = run_failing("apart", "partial ", false);
+    let (code, out, err) = run_failing("apart", "print(\"partial \")", false);
     assert_eq!(code, Some(1), "{err}");
     assert_eq!(out, "partial ");
     assert!(err.starts_with(report), "{err}");
+}
+
+/// The line the report starts on is the last line of both outputs where
+/// they are one place: a line end is added only where the last text the
+/// program wrote, to stdout or to stderr, left a partial line. FAIL on
+/// e6b2f85e: only stdout's last text was looked at, so `print("out ")`
+/// and then `io.eprintln("err")` got an empty line before the report.
+#[test]
+fn the_report_follows_the_last_text_of_either_output() {
+    let report = "error[runtime]: division by zero\n";
+    // (On Windows only two consoles are known to be one place: a file
+    // gets no line end added there.)
+    let added = if cfg!(unix) { "\n" } else { "" };
+    let cases = [
+        (
+            "out_err",
+            "print(\"out \")\n  io.eprintln(\"err\")",
+            "out err\n".to_string(),
+        ),
+        (
+            "err_out",
+            "io.eprint(\"err \")\n  println(\"out\")",
+            "err out\n".to_string(),
+        ),
+        (
+            "both",
+            "print(\"out \")\n  io.eprint(\"err \")",
+            format!("out err {added}"),
+        ),
+        (
+            "neither",
+            "println(\"out\")\n  io.eprintln(\"err\")",
+            "out\nerr\n".to_string(),
+        ),
+    ];
+    for (tag, writes, before) in cases {
+        let (code, both, _) = run_failing(tag, writes, true);
+        assert_eq!(code, Some(1), "{tag}: {both}");
+        assert!(
+            both.starts_with(&format!("{before}{report}")),
+            "{tag}: {both:?}"
+        );
+    }
 }
