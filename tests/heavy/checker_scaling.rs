@@ -726,3 +726,50 @@ fn a_hub_of_four_times_the_top_level_lets_takes_at_most_three_times_the_memory()
          three times the {at_small} kB of one of {small}: each let keeps every plain let on its way"
     );
 }
+
+/// A program of `n` top-level `let`s that each call the first of a chain
+/// of `n` functions, the last of which reads a `let` (rv-lt3's fnhub),
+/// beside its `main.silt`.
+fn program_of_a_function_hub(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    let mut main = String::from("let base = 1\n");
+    for i in 0..n {
+        main.push_str(&format!("fn g{i}() -> Int {{ g{}() }}\n", i + 1));
+    }
+    main.push_str(&format!("fn g{n}() -> Int {{ base }}\n"));
+    for i in 0..n {
+        main.push_str(&format!("let a{i} = g0() + {i}\n"));
+    }
+    main.push_str(&format!("\nfn main() {{\n  println(a{})\n}}\n", n - 1));
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// Eight times the `let`s that each call into a chain of as many
+/// functions take at most sixteen times as long to check, from 800 to
+/// 6,400: about nine times (debug build). Each `let`'s search walked
+/// every function it reaches: n times F, 43 times as long on main
+/// 96fda6f8 (0.23 s, 10.0 s), and slower still on 3a2cf9b5, which looked
+/// each function up in a map on that walk. Each node of the program is
+/// now looked at once.
+#[test]
+fn a_function_hub_of_eight_times_the_top_level_lets_takes_at_most_sixteen_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_function_hub_{}",
+        std::process::id()
+    ));
+    let (small, large) = (800, 6_400);
+    for n in [small, large] {
+        program_of_a_function_hub(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(16.0, || best_times(&main_of(large), &main_of(small), 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of {large} top-level lets that call into a chain of as many functions \
+             took more than sixteen times as long as that of {small} in each of three \
+             measurements ({}): each let walks every function it reaches",
+            shown(&over)
+        );
+    }
+}
