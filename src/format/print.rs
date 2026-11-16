@@ -1927,7 +1927,7 @@ impl Printer<'_> {
             // A comment that waits for the end of the line stands in
             // front of the ones in the string. Its line ends are line
             // feeds, as the file's are.
-            Doc::concat(vec![Doc::Settle, Doc::text(text.replace("\r\n", "\n"))])
+            Doc::concat(vec![Doc::Settle, Doc::text(super::line_ends_as_lf(text))])
         } else {
             Doc::concat(docs)
         };

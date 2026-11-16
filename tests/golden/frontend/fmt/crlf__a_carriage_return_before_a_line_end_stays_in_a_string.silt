@@ -1,0 +1,18 @@
+-- cmd: fmt
+-- A carriage return in front of a line end's own one is part of the
+-- string's value (`a`, a carriage return, a line feed, `b`): it stays,
+-- and so does that line end, in every kind of string. Before, the
+-- formatter refused the file.
+fn main() {
+  let x = 1
+  println("a
+b")
+  println("a{x}
+b{x}
+c")
+  let s = """
+    a
+    b
+    """
+  println(s)
+}

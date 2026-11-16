@@ -242,7 +242,7 @@ fn decl_shapes(source: &str, lexed: &Lexed, program: &Program) -> Shapes {
                 // A string's line ends are written as line feeds: a
                 // carriage return before one is no part of it.
                 let text =
-                    source[tok.span.start as usize..tok.span.end as usize].replace("\r\n", "\n");
+                    super::line_ends_as_lf(&source[tok.span.start as usize..tok.span.end as usize]);
                 decls[decl].literals.push(Note {
                     text,
                     span: tok.span,

@@ -1,0 +1,13 @@
+-- cmd: fmt
+-- A carriage return in front of a line end's own one is the comment's
+-- text: it stays, and so does that line end (written as a line feed
+-- alone, the next pass would drop the carriage return). The fuzz case:
+-- the formatter lost one on every pass.
+fn main() {
+  {- a
+  b -}
+  println(1)
+}
+
+{- c
+d -}
