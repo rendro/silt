@@ -575,29 +575,30 @@ fn program_of_a_let_chain(dir: &Path, n: usize) {
 }
 
 /// A chain of four times the top-level `let`s, each reading the one
-/// before, takes at most twelve times as long to check, from 200 to
-/// 800: about seven times. The order of the `let`s kept the way to
-/// every `let` each one needs (n cubed in all) and searched for a ring
-/// from every `let` over all it needs (n cubed too): 800 took more than
-/// thirty times as long as 200 in a debug build, and a gigabyte
-/// (rv-a1b). The way is found again where a ring is reported, and a ring
-/// is searched for only from a `let` that reaches itself.
+/// before, takes at most six times as long to check, from 800 to 3,200:
+/// about two and a half times (debug build). The order of the `let`s
+/// kept, for each `let`, every `let` it needs, which in such a chain is
+/// every `let` before it: fifteen times as long (main e6b2f85e: 2.7 s and
+/// 40 s), and before that the ways to all of them and a search for a ring
+/// from every `let` (n cubed, rv-a1b). Each `let` is now known by the
+/// nearest `let`s it reaches; all it needs is found only where a ring is
+/// searched for.
 #[test]
-fn a_chain_of_four_times_the_top_level_lets_takes_at_most_twelve_times_as_long() {
+fn a_chain_of_four_times_the_top_level_lets_takes_at_most_six_times_as_long() {
     let dir = std::env::temp_dir().join(format!(
         "silt_checker_scaling_let_chain_{}",
         std::process::id()
     ));
-    let (small, large) = (200, 800);
+    let (small, large) = (800, 3_200);
     for n in [small, large] {
         program_of_a_let_chain(&dir.join(n.to_string()), n);
     }
     let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
-    let measured = within(12.0, || best_times(&main_of(large), &main_of(small), 3));
+    let measured = within(6.0, || best_times(&main_of(large), &main_of(small), 3));
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(over) = measured {
         panic!(
-            "`silt check` of a chain of {large} top-level lets took more than twelve times as \
+            "`silt check` of a chain of {large} top-level lets took more than six times as \
              long as that of one of {small} in each of three measurements ({}): the order of \
              the lets keeps or searches all each one needs for every let",
             shown(&over)
