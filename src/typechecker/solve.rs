@@ -1333,7 +1333,7 @@ impl TypeChecker {
             for (i, super_name) in info.supertraits.iter().enumerate() {
                 let super_args: Vec<Type> = match info.supertrait_args.get(i) {
                     Some(exprs) if !exprs.is_empty() => (exprs.iter())
-                        .map(|te| super::inference::resolve_supertrait_arg(te, info, &args))
+                        .map(|te| self.supertrait_arg(te, info, &args))
                         .collect(),
                     _ => Vec::new(),
                 };

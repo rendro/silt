@@ -217,7 +217,7 @@ impl TypeChecker {
                     // where the trait is declared.)
                     exprs
                         .iter()
-                        .map(|te| resolve_supertrait_arg(te, info, &args))
+                        .map(|te| self.supertrait_arg(te, info, &args))
                         .collect()
                 }
                 _ => Vec::new(),
@@ -4784,6 +4784,22 @@ pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
         }),
         Some(_) => None,
         None => crate::defs::builtin_type_id(&resolve(name)).map(|id| TypeRef { id, name }),
+    }
+}
+
+impl TypeChecker {
+    /// The supertrait argument `te` of the trait `trait_info` where its
+    /// own arguments are `base_args` (`resolve_supertrait_arg`), with each
+    /// alias written in it read as the type it stands for, as every type
+    /// expression's is.
+    pub(super) fn supertrait_arg(
+        &self,
+        te: &TypeExpr,
+        trait_info: &TraitInfo,
+        base_args: &[Type],
+    ) -> Type {
+        let written = resolve_supertrait_arg(te, trait_info, base_args);
+        crate::types::canonical::canonicalize(&self.tables.resolver, &written)
     }
 }
 

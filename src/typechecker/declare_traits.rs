@@ -800,13 +800,7 @@ impl TypeChecker {
                     let sup_args: Vec<Type> = (trait_info.supertrait_args.get(i))
                         .into_iter()
                         .flatten()
-                        .map(|te| {
-                            crate::typechecker::inference::resolve_supertrait_arg(
-                                te,
-                                &trait_info,
-                                &enclosing_args,
-                            )
-                        })
+                        .map(|te| self.supertrait_arg(te, &trait_info, &enclosing_args))
                         .collect();
                     let (ty, tr, sup) = {
                         let named = self.impl_args_named(*impl_key);
@@ -830,13 +824,7 @@ impl TypeChecker {
                 let expected_super_args: Vec<Type> = (trait_info.supertrait_args.get(i))
                     .into_iter()
                     .flatten()
-                    .map(|te| {
-                        crate::typechecker::inference::resolve_supertrait_arg(
-                            te,
-                            &trait_info,
-                            &enclosing_args,
-                        )
-                    })
+                    .map(|te| self.supertrait_arg(te, &trait_info, &enclosing_args))
                     .collect();
                 // The supertrait holds at the impl's own type, its type
                 // variables having what the impl's header gives them
