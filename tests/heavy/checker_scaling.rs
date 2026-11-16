@@ -745,19 +745,20 @@ fn program_of_a_function_hub(dir: &Path, n: usize) {
 }
 
 /// Eight times the `let`s that each call into a chain of as many
-/// functions take at most sixteen times as long to check, from 800 to
-/// 6,400: about nine times (debug build). Each `let`'s search walked
-/// every function it reaches: n times F, 43 times as long on main
-/// 96fda6f8 (0.23 s, 10.0 s), and slower still on 3a2cf9b5, which looked
-/// each function up in a map on that walk. Each node of the program is
-/// now looked at once.
+/// functions take at most sixteen times as long to check, from 1,600 to
+/// 12,800: about six and a half times (debug build, wall time as
+/// measured here). Each `let`'s search walked every function it reaches:
+/// n times F, 27 to 29 times as long on main 96fda6f8, and slower still
+/// on 3a2cf9b5, which looked each function up in a map on that walk
+/// (rv-lt3, on a quiet machine). Each node of the program is now looked
+/// at once.
 #[test]
 fn a_function_hub_of_eight_times_the_top_level_lets_takes_at_most_sixteen_times_as_long() {
     let dir = std::env::temp_dir().join(format!(
         "silt_checker_scaling_function_hub_{}",
         std::process::id()
     ));
-    let (small, large) = (800, 6_400);
+    let (small, large) = (1_600, 12_800);
     for n in [small, large] {
         program_of_a_function_hub(&dir.join(n.to_string()), n);
     }
