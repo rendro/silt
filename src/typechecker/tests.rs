@@ -2535,3 +2535,27 @@ fn test_a_trait_named_like_a_prelude_type_is_refused() {
     // A type of a builtin module reserves no name.
     assert_no_errors("trait Regex {\n  fn go(self) -> Int\n}\nfn main() {}\n");
 }
+
+/// A trait named like any variant of the prelude's enums, taken from the
+/// table of prelude types, is refused at its declaration with one error;
+/// the variant keeps its name in the module (audit R9, card TRV-1).
+#[test]
+fn test_a_trait_named_like_a_prelude_variant_is_refused() {
+    let variants: Vec<&str> = (crate::builtins::registry::registry().prelude_types.iter())
+        .flat_map(|ty| ty.variants().iter().map(|(name, _)| *name))
+        .collect();
+    for required in ["Some", "None", "Ok", "Err"] {
+        assert!(variants.contains(&required), "{required} in {variants:?}");
+    }
+    for name in variants {
+        let source = format!("trait {name} {{\n  fn go(self) -> Int\n}}\nfn main() {{}}\n");
+        let errors = check_errors(&source);
+        let errors: Vec<_> = errors.iter().filter(|e| e.is_error()).collect();
+        assert_eq!(errors.len(), 1, "{name}: {errors:?}");
+        assert_eq!(
+            errors[0].message,
+            format!("trait '{name}' shadows builtin variant '{name}'")
+        );
+        assert_eq!(errors[0].help, ["choose a different name"]);
+    }
+}

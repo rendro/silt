@@ -1,5 +1,2 @@
-pub trait Some { fn go(self) -> Int }
-trait Some for Int { fn go(self) -> Int { self + 1 } }
-pub type T { Foo(Int), Bar }
 pub trait Foo { fn hop(self) -> Int }
-trait Foo for Int { fn hop(self) -> Int { self } }
+trait Foo for Int { fn hop(self) -> Int { self + 1 } }

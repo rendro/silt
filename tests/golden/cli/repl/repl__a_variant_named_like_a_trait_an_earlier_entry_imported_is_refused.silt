@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stdin: import json.{ Encode }\ntype T { Encode(Int), Bar }\nBar\ntype T { Enc(Int), Bar }\nEnc(1)\n:quit\n
+-- A REPL session is one module (card IMP-1): an entry that declares a
+-- variant named like a trait an earlier entry imported by item is the one
+-- refused, at the variant, with the trait's real module named (no import
+-- of a REPL entry). The entry is dropped; a type with another name is
+-- accepted (audit R9).

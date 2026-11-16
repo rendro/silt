@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- A trait named like a variant of the prelude is refused at its
+-- declaration, pub or not, generic or not: in an expression the name is
+-- the variant, so no method of the trait could be called. The refused
+-- trait takes no name: the variants keep theirs, and a bound or an impl
+-- of the trait is not reported again (audit R9, card TRV-1).
+pub trait Some {
+  fn go(self) -> Int
+}
+
+trait None {
+  fn go(self) -> Int
+}
+
+trait Ok(a) {
+  fn wrap(self) -> a
+}
+
+pub trait Err {
+  fn fail(self) -> String
+}
+
+trait Some for Int {
+  fn go(self) -> Int { self }
+}
+
+fn bounded(x: a) -> Option(a) where a: None {
+  Some(x)
+}
+
+fn main() {
+  let r: Result(Int, String) = Ok(1)
+  println((bounded(1), r, Err("e"), None))
+}

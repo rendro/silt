@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A trait imported by item whose name is a variant of the importing
+-- module is refused at the import: in an expression `Foo` is the variant,
+-- so no method of the trait could be called here. The module's trait is
+-- reached through the module (audit R9, cards TRV-1/TRV-2, IMP-1).
+import mt.{ Foo }
+
+type T { Foo(Int), Bar }
+
+fn bounded(x: a) -> a where a: Foo {
+  x
+}
+
+fn main() {
+  println((Foo(1), Bar, bounded(2)))
+}

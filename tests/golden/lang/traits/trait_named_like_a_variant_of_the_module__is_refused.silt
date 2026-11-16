@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- A trait named like a variant of the same module is refused at the
+-- trait, whichever comes first, pub or not, generic or not: in an
+-- expression the name is the variant, so no method of the trait could be
+-- called, in the module or through it. The variants keep working, and a
+-- bound or an impl of the refused trait is not reported again (audit R9,
+-- card TRV-2).
+trait Before {
+  fn go(self) -> Int
+}
+
+pub type Shape { Before(Int), After(Int), Gen(Int) }
+
+pub trait After {
+  fn go(self) -> Int
+}
+
+trait Gen(a) {
+  fn make(self) -> a
+}
+
+trait Before for Int {
+  fn go(self) -> Int { self }
+}
+
+fn bounded(x: a) -> a where a: After {
+  x
+}
+
+fn main() {
+  println((Before(1), After(2), Gen(3), bounded(4)))
+}

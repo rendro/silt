@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- A builtin module's trait imported by item (`json.Encode`) beside the
+-- file's variant of its name is refused at the import as a program
+-- module's trait is (card IMP-1). A call through the name is the
+-- variant's error, and its help offers the trait's call with `x`, not the
+-- variant, as the value (audit R9).
+import json
+import json.{ Encode }
+
+type T { Encode(Int), Bar }
+
+fn go(x: a) -> json.Value {
+  Encode.encode(x)
+}
+
+fn main() {
+  println((go(1), Encode(2), Bar))
+}

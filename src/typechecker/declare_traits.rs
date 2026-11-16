@@ -1057,15 +1057,48 @@ impl TypeChecker {
         // Option`) would take the name from the type in the module: every
         // `Int` written there, the trait's own methods included, would be
         // an unknown type. It is refused at its declaration, as a type of
-        // such a name is (`register_type_decl`).
-        if crate::builtins::registry::is_prelude_type(&trait_name_str) {
-            self.errors.push(
-                Diagnostic::error(
-                    Code::InvalidTraitDeclaration,
-                    t.name_span,
-                    format!("trait '{trait_name_str}' shadows builtin type '{trait_name_str}'"),
+        // such a name is (`register_type_decl`). (The names the resolver
+        // binds no trait to are the same: `names::refused_trait`.)
+        // A trait named like a variant of the prelude (`trait Some`) or of
+        // the module (`trait Foo` beside `type T { Foo(Int) }`): in an
+        // expression the name is the variant, so no method of the trait
+        // could be called (`Foo.hop(x)` names the variant, in the module
+        // and through it, `m.Foo`). Refused at the trait, whichever of
+        // the two comes first; the variant keeps working.
+        let own_variant = (self.defs.as_ref()).and_then(|defs| {
+            (defs.named(self.module, t.name).iter()).find_map(|id| match defs.get(*id).kind {
+                crate::defs::DefKind::Variant { ty, .. } => Some(defs.get(ty.0).name),
+                _ => None,
+            })
+        });
+        let refusal = if crate::builtins::registry::is_prelude_type(&trait_name_str) {
+            Some((
+                format!("trait '{trait_name_str}' shadows builtin type '{trait_name_str}'"),
+                "choose a different name".to_string(),
+            ))
+        } else if crate::builtins::registry::is_prelude_variant(&trait_name_str) {
+            Some((
+                format!("trait '{trait_name_str}' shadows builtin variant '{trait_name_str}'"),
+                "choose a different name".to_string(),
+            ))
+        } else {
+            own_variant.map(|enum_name| {
+                (
+                    format!(
+                        "trait '{trait_name_str}' takes the name of variant \
+                         '{enum_name}.{trait_name_str}' of this module"
+                    ),
+                    format!(
+                        "choose a different name: in an expression `{trait_name_str}` is the \
+                         variant, so no method of the trait could be called"
+                    ),
                 )
-                .with_help("choose a different name"),
+            })
+        };
+        if let Some((message, help)) = refusal {
+            self.errors.push(
+                Diagnostic::error(Code::InvalidTraitDeclaration, t.name_span, message)
+                    .with_help(help),
             );
             self.refused_traits.insert(t.name);
             return;

@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stdin: type T { Foo(Int), Bar }\nFoo(1)\ntrait Foo { fn hop(self) -> Int }\ntrait Foo for Int { fn hop(self) -> Int { self + 1 } }\nFoo(2)\ntrait Hop { fn hop(self) -> Int }\ntrait Hop for Int { fn hop(self) -> Int { self + 1 } }\nHop.hop(2)\n:quit\n
+-- The other order: a trait entry after an entry whose type has a variant
+-- of its name is refused with the card's wording; the refused entry
+-- declares nothing, so an impl in a later entry finds no trait 'Foo'. The
+-- variant keeps working, a trait of another name is accepted (audit R9,
+-- cards TRV-1/TRV-2, review rv-o8 S2).

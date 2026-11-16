@@ -1,0 +1,20 @@
+error[type]: trait 'Before' takes the name of variant 'Shape.Before' of this module
+ --> trait_named_like_a_variant_of_the_module__is_refused.silt:9:7
+   |
+ 9 | trait Before {
+   |       ^^^^^^ trait 'Before' takes the name of variant 'Shape.Before' of this module
+  = help: choose a different name: in an expression `Before` is the variant, so no method of the trait could be called
+
+error[type]: trait 'After' takes the name of variant 'Shape.After' of this module
+ --> trait_named_like_a_variant_of_the_module__is_refused.silt:15:11
+    |
+ 15 | pub trait After {
+    |           ^^^^^ trait 'After' takes the name of variant 'Shape.After' of this module
+  = help: choose a different name: in an expression `After` is the variant, so no method of the trait could be called
+
+error[type]: trait 'Gen' takes the name of variant 'Shape.Gen' of this module
+ --> trait_named_like_a_variant_of_the_module__is_refused.silt:19:7
+    |
+ 19 | trait Gen(a) {
+    |       ^^^ trait 'Gen' takes the name of variant 'Shape.Gen' of this module
+  = help: choose a different name: in an expression `Gen` is the variant, so no method of the trait could be called
