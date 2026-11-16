@@ -19,6 +19,11 @@ name: Fuzz (nightly deep)
 # deterministic, and what it reports is a finding that has no line in
 # tests/oracle/skip.txt, or a line whose finding is gone.
 #
+# The `verdict` job runs the golden verdict shards over the whole repro
+# corpus (SILT_GOLDEN_FULL_CORPUS), where the per-push suite runs a
+# sample of 200: the doors (check, run, test, the language server) must
+# agree on each program as its `-- verdict:` says.
+#
 # The `miri` and `sanitizer` jobs check silt's unsafe code with tools
 # that see what a test alone does not: Miri runs the tests of the shared
 # slice of values and of the values built on it, and finds undefined
@@ -173,6 +178,40 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+  # The verdict shards over the whole repro corpus (tests/golden/repros):
+  # every program through check, run, test and the language server,
+  # whose static diagnostics must agree as each program's `-- verdict:`
+  # says. The per-push golden job runs a sample of 200 of them.
+  verdict:
+    name: Golden verdicts (full repro corpus)
+    runs-on: ubuntu-latest
+    # About 11 minutes for the eight shards on four cores, the build
+    # aside.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: test-heavy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: nextest
+
+      # Every feature, as the verdicts are only checked in such a build.
+      - name: cargo nextest (verdict shards, every repro)
+        env:
+          SILT_GOLDEN_FULL_CORPUS: "1"
+        run: cargo nextest run --locked --no-fail-fast --all-features --test golden -E 'test(/verdict_shard/)'
+
   # No cache in the two jobs below: the repository's cache is over its
   # limit, and their builds (Miri's, and the standard library's with a
   # sanitizer) share nothing with the other jobs'.
@@ -221,7 +260,7 @@ jobs:
   # are its own business: neither reports.
   report:
     name: Report failed jobs
-    needs: [fuzz, oracle, miri, sanitizer]
+    needs: [fuzz, oracle, verdict, miri, sanitizer]
     if: ${{ !cancelled() && github.event_name == 'schedule' && github.repository == 'rendro/silt' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
