@@ -3604,12 +3604,16 @@ impl<'src> Parser<'src> {
                 }
             }
         }
-        // (Arguments of arguments, `List<List<Int>>`, likewise. A string or
-        // a comment over lines between the two puts the partner on another
-        // line: a message is one line.)
+        // (Arguments of arguments, `List<List<Int>>`, likewise. Text with a
+        // control character, a string or a comment over lines or one that
+        // holds an ESC or a tab, is not quoted, see `quotable`: the
+        // arguments are `...`.)
         let args = inner
-            .filter(|a| !a.is_empty() && !a.contains(['\n', '\r']))
-            .map(|a| a.replace(['<', '['], "(").replace(['>', ']'], ")"));
+            .filter(|a| !a.is_empty())
+            .map(|a| match crate::diagnostic::quotable(a) {
+                true => a.replace(['<', '['], "(").replace(['>', ']'], ")"),
+                false => "...".to_string(),
+            });
         format!(
             "type arguments are written in parentheses: `{written}({})`",
             args.as_deref().unwrap_or("Int")

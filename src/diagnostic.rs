@@ -1022,17 +1022,25 @@ pub(crate) fn visible_line(line: &str) -> String {
         .collect()
 }
 
+/// Whether source text can be quoted in a message, a label, a note or a
+/// help line as it stands: it has no character that the one escaping of
+/// the messages (`lexer::escape_into`, which writes a string token) writes
+/// as an escape. A control character (a line end, a tab, ESC, BEL, DEL,
+/// C1) would break the message's one line or act on the terminal; a
+/// character that shows nothing or turns the text around would hide what
+/// the text is. Text that is not quotable is not quoted: the message says
+/// what it is without it.
+pub(crate) fn quotable(text: &str) -> bool {
+    !(text.chars().enumerate()).any(|(i, c)| crate::lexer::written_as_escape(c, i == 0))
+}
+
 /// The string `value` as a message or a help line quotes it, as a program
 /// writes it (`"abc"`): only a short one (20 bytes at most) whose text
-/// is its value. None for one with `"`, `\` or `{` (escaped in a
-/// program), a backtick (which would close the message's quote), or a
-/// control character: a line feed, a carriage return or a tab is an
-/// escape in a program, and as itself it breaks the message's one line
-/// or garbles it.
+/// is its value: `quotable`, and no `"`, `\` or `{` (escaped in a
+/// program) or backtick (which would close the message's quote).
 pub(crate) fn short_string_literal(value: &str) -> Option<String> {
-    let written_as_is =
-        |c: char| !matches!(c, '"' | '\\' | '{' | '`') && !c.is_control() && !hidden_in_text(c);
-    (value.len() <= 20 && value.chars().all(written_as_is)).then(|| format!("\"{value}\""))
+    let plain = !value.contains(['"', '\\', '{', '`']);
+    (value.len() <= 20 && plain && quotable(value)).then(|| format!("\"{value}\""))
 }
 
 /// Whether `ch` acts on a terminal or shows as nothing outside ASCII: a

@@ -1,0 +1,4 @@
+fn main() {
+  let x: Map<String, {- a[31mRED[0m b  -} Int> = #{}
+  println(x)
+}

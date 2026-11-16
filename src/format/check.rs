@@ -75,27 +75,35 @@ pub(crate) fn verify(
 fn unparseable(message: &str, span: Span, output: &str) -> Refusal {
     let file = SourceFile::new(SourceName::Builtin, output.into());
     let line_number = file.line_col(span.start).0;
-    let line = file.line_text(line_number).unwrap_or("").trim();
-    Refusal {
-        message: format!(
-            "the result would not parse ({message}, at line {line_number} of the result: `{}`)",
-            crate::diagnostic::visible_line(&excerpt(line))
+    let message = match excerpt(file.line_text(line_number).unwrap_or("").trim()) {
+        Some(line) => format!(
+            "the result would not parse ({message}, at line {line_number} of the result: `{line}`)"
         ),
+        None => {
+            format!("the result would not parse ({message}, at line {line_number} of the result)")
+        }
+    };
+    Refusal {
+        message,
         span: None,
     }
 }
 
-/// At most the first 60 characters of `text`, of its first line (a
-/// message is one line).
-fn excerpt(text: &str) -> String {
+/// `text` as a message quotes it: at most the first 60 characters of its
+/// first line (a message is one line; a lone `\r` ends a line too). None
+/// where that has a character a message never carries (a tab, an ESC;
+/// see `diagnostic::quotable`): the message then names the text without
+/// quoting it.
+fn excerpt(text: &str) -> Option<String> {
     const LIMIT: usize = 60;
-    let line = text.lines().next().unwrap_or("").trim_end_matches('\r');
-    if line.chars().count() <= LIMIT && line.len() == text.len() {
+    let line = text.split(['\n', '\r']).next().unwrap_or("");
+    let shown = if line.chars().count() <= LIMIT && line.len() == text.len() {
         line.to_string()
     } else {
         let head: String = line.chars().take(LIMIT).collect();
         format!("{head}...")
-    }
+    };
+    crate::diagnostic::quotable(&shown).then_some(shown)
 }
 
 // ── Declarations ────────────────────────────────────────────────────
@@ -366,10 +374,12 @@ fn compare_tokens(before: &[DeclShape], after: &[DeclShape]) -> Result<(), Refus
                 .map(|(x, _)| x)
                 .or(b.literals.last());
             return Err(Refusal {
-                message: match changed {
-                    Some(note) => format!(
-                        "the result would spell `{}` in {} another way",
-                        excerpt(&note.text),
+                message: match changed.map(|note| excerpt(&note.text)) {
+                    Some(Some(text)) => {
+                        format!("the result would spell `{text}` in {} another way", b.label)
+                    }
+                    Some(None) => format!(
+                        "the result would spell a literal in {} another way",
                         b.label
                     ),
                     None => format!("the result would hold another literal in {}", b.label),
@@ -420,10 +430,10 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
     for note in &all_before {
         if surplus.get(note.text.as_str()).copied().unwrap_or(0) > 0 {
             return Err(Refusal {
-                message: format!(
-                    "the result would lose the comment `{}`",
-                    excerpt(&note.text)
-                ),
+                message: match excerpt(&note.text) {
+                    Some(text) => format!("the result would lose the comment `{text}`"),
+                    None => "the result would lose a comment".to_string(),
+                },
                 span: Some(note.span),
             });
         }
@@ -431,10 +441,12 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
     for note in &all_after {
         if surplus.get(note.text.as_str()).copied().unwrap_or(0) < 0 {
             return Err(Refusal {
-                message: format!(
-                    "the result would hold the comment `{}`, which the input does not hold",
-                    excerpt(&note.text)
-                ),
+                message: match excerpt(&note.text) {
+                    Some(text) => format!(
+                        "the result would hold the comment `{text}`, which the input does not hold"
+                    ),
+                    None => "the result would hold a comment the input does not hold".to_string(),
+                },
                 span: None,
             });
         }
@@ -524,17 +536,17 @@ fn same_comments(place: &str, before: &[Note], after: &[Note]) -> Result<(), Ref
         .unwrap_or(before.len().min(after.len()));
     Err(match (before.get(at), after.get(at)) {
         (Some(note), _) => Refusal {
-            message: format!(
-                "the result would move the comment `{}` of {place}",
-                excerpt(&note.text)
-            ),
+            message: match excerpt(&note.text) {
+                Some(text) => format!("the result would move the comment `{text}` of {place}"),
+                None => format!("the result would move a comment of {place}"),
+            },
             span: Some(note.span),
         },
         (None, Some(note)) => Refusal {
-            message: format!(
-                "the result would move the comment `{}` to {place}",
-                excerpt(&note.text)
-            ),
+            message: match excerpt(&note.text) {
+                Some(text) => format!("the result would move the comment `{text}` to {place}"),
+                None => format!("the result would move a comment to {place}"),
+            },
             span: None,
         },
         (None, None) => Refusal {
@@ -1362,6 +1374,27 @@ mod tests {
         judge(source, output).expect_err("the result must be refused")
     }
 
+    /// A refusal names a comment, a literal or a line of the result
+    /// without quoting it where the text holds an ESC, a BEL or a tab.
+    /// FAIL on the base: the message carried the ESC, a terminal reset.
+    #[test]
+    fn a_refusal_quotes_no_control_character() {
+        let source = "fn main() {\n  1 -- a\u{1b}c\n}\n";
+        assert_eq!(
+            refusal(source, "fn main() {\n  1\n}\n"),
+            "the result would lose a comment"
+        );
+        let message = refusal("let a = \"x\u{7}\"\n", "let a = \"x\\u{7}\"\n");
+        assert!(
+            message.starts_with("the result would spell a literal in "),
+            "{message}"
+        );
+        assert!(message.ends_with(" another way"), "{message}");
+        let message = refusal("fn main() {\n}\n", "fn main() {\n  \"a\t\" @\n}\n");
+        assert!(message.ends_with("at line 2 of the result)"), "{message}");
+        assert!(!message.contains(['\t', '\u{1b}', '\u{7}']), "{message}");
+    }
+
     #[test]
     fn a_result_that_only_differs_in_layout_passes() {
         let source = "fn main() { -- entry\n  f((1), [2, 3,],)\n}\n";
@@ -1459,8 +1492,23 @@ mod tests {
     fn a_refusal_names_a_literal_by_its_first_line() {
         // A message is one line: a triple-quoted string is named by the
         // start of its first line.
-        assert_eq!(excerpt("\"\"\"\r\n  a\r\n  \"\"\""), "\"\"\"...");
-        assert_eq!(excerpt("0x10"), "0x10");
+        assert_eq!(
+            excerpt("\"\"\"\r\n  a\r\n  \"\"\"").as_deref(),
+            Some("\"\"\"...")
+        );
+        assert_eq!(excerpt("0x10").as_deref(), Some("0x10"));
+        // A lone CR ends the line too; a text with a tab, an ESC or a
+        // character that shows nothing is not quoted at all.
+        assert_eq!(excerpt("-- a\rb").as_deref(), Some("-- a..."));
+        for text in [
+            "-- a\tb",
+            "-- a\u{1b}c",
+            "\"a\u{7}\"",
+            "-- a\u{200b}b",
+            "-- a\u{7f}",
+        ] {
+            assert_eq!(excerpt(text), None, "{text:?}");
+        }
     }
 
     #[test]

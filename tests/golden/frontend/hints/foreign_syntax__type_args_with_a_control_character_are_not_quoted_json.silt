@@ -1,0 +1,4 @@
+-- cmd: check --format json
+-- exit: 1
+-- The same in the JSON form: the message is the one of the human form.
+fn a() -> Map<String, {- xc -} Int> { #{} }

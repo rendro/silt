@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- Type arguments in brackets whose text holds a control character
+-- (here ESC c, a terminal reset; BEL; DEL; a tab; a C1 control) or a
+-- character that shows nothing are not quoted: no message, label,
+-- note or help carries one. The line of source under the arrow shows
+-- each as a visible picture. The last one has none and is quoted.
+fn a() -> Map<String, {- xc -} Int> { #{} }
+
+fn b() -> St[a {-  -} b] { 1 }
+
+fn c() -> St[a {-  -} b] { 1 }
+
+fn d() -> St[a	b] { 1 }
+
+fn e() -> St[a {- xy -} b] { 1 }
+
+fn f() -> St[a {- x​y -} b] { 1 }
+
+fn g() -> Map<String, Int> { #{} }

@@ -1863,6 +1863,15 @@ fn escaped_in_quotes(c: char, first: bool) -> bool {
         || code & 0xFFFE == 0xFFFE
 }
 
+/// Whether `escape_into` writes the character `c` (the first of its
+/// text when `first`) as an escape for what it is, `\n` or `\u{..}`:
+/// a control character (C0 with the tab, DEL, C1), or one a reader
+/// cannot see or tell from another (`escaped_in_quotes`). Text with
+/// such a character is never copied into a message as it stands.
+pub(crate) fn written_as_escape(c: char, first: bool) -> bool {
+    c.is_ascii_control() || (!c.is_ascii() && escaped_in_quotes(c, first))
+}
+
 /// Write the text `s` as a string literal writes it between its quotes
 /// to `out`: what the lexer reads back as `s`. A backslash, a quote and
 /// a `{` (which opens an interpolation) are escaped, `\n`, `\r`, `\t`
@@ -1890,9 +1899,7 @@ pub(crate) fn escape_into(out: &mut impl fmt::Write, s: &str) -> fmt::Result {
             '\r' => Ok("\\r"),
             '\t' => Ok("\\t"),
             '\0' => Ok("\\0"),
-            c if c.is_ascii_control() || (!c.is_ascii() && escaped_in_quotes(c, at == 0)) => {
-                Err(c as u32)
-            }
+            c if written_as_escape(c, at == 0) => Err(c as u32),
             _ => {
                 at += len;
                 continue;
