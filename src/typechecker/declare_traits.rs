@@ -1217,6 +1217,7 @@ impl TypeChecker {
     /// arguments than the supertrait has parameters
     /// (`trait Bad: Holds(Int, String)` for `trait Holds(a)`).
     pub(super) fn check_supertrait_arity(&mut self, t: &TraitDecl) {
+        let own: std::collections::HashSet<Symbol> = t.params.iter().copied().collect();
         for r in &t.supertraits {
             let Some(params) = self
                 .named_trait(r.res, r.name)
@@ -1236,7 +1237,7 @@ impl TypeChecker {
             // which every impl's type then met.)
             for arg in &r.args {
                 let mut parts = Vec::new();
-                no_supertrait_parts(arg, &t.params, &mut parts);
+                no_supertrait_parts(arg, &own, &mut parts);
                 for NoTypePart { what, at: span, .. } in parts {
                     let message = match what.as_str() {
                         "'Never'" => super::typeexpr::NEVER_ELSEWHERE.to_string(),
@@ -1552,8 +1553,8 @@ impl TypeChecker {
         if supertraits.iter().all(|(_, args)| args.is_empty()) {
             return vec![Vec::new(); supertraits.len()];
         }
-        let params: Vec<Symbol> = trait_param_vars.iter().map(|(p, _)| *p).collect();
-        let param_set: std::collections::HashSet<Symbol> = params.iter().copied().collect();
+        let params: std::collections::HashSet<Symbol> =
+            trait_param_vars.iter().map(|(p, _)| *p).collect();
         let mut names: HashMap<Symbol, Type> = trait_param_vars.iter().cloned().collect();
         let resolved: Vec<Vec<Type>> = (supertraits.iter())
             .map(|(_, args)| {
@@ -1578,7 +1579,7 @@ impl TypeChecker {
             })
             .collect();
         let no_type: HashMap<TyVar, Type> = (names.iter())
-            .filter(|(name, _)| !param_set.contains(*name))
+            .filter(|(name, _)| !params.contains(*name))
             .filter_map(|(_, ty)| match ty {
                 Type::Var(v) => Some((*v, Type::Error)),
                 _ => None,
@@ -4319,7 +4320,11 @@ impl NoTypePart {
 /// Every part of the supertrait argument `te` that is no type there, in
 /// the order they are written: what `resolve_supertrait_args` reads as
 /// no type at all.
-fn no_supertrait_parts(te: &TypeExpr, params: &[Symbol], out: &mut Vec<NoTypePart>) {
+fn no_supertrait_parts(
+    te: &TypeExpr,
+    params: &std::collections::HashSet<Symbol>,
+    out: &mut Vec<NoTypePart>,
+) {
     // (A name the resolver refused it reported.)
     let unread = |name: Symbol| {
         te.res != Some(crate::defs::Res::Error)

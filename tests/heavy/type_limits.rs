@@ -269,7 +269,10 @@ fn the_type_variables_of_a_declaration_are_told_apart_in_linear_time() {
 /// debug build to check, comparing each method's variables with all of
 /// them, and an impl head of 65,537 refused by the limit 39.3 s,
 /// numbering each variable by a search of those before it; each takes
-/// about a second now.
+/// about a second now. A supertrait argument that names every parameter
+/// of such a trait was read by a search of the parameter list for each
+/// name (32,000 parameters: 5.5e9 instructions in a release build, 0.4e9
+/// now).
 #[test]
 #[cfg(target_os = "linux")]
 fn a_trait_and_an_impl_of_65537_type_variables_are_checked_in_linear_time() {
@@ -279,6 +282,16 @@ fn a_trait_and_an_impl_of_65537_type_variables_are_checked_in_linear_time() {
             "trait_parameters",
             format!(
                 "trait Many({}) {{ fn m(self) -> Int }}\nfn main() {{}}\n",
+                vars.join(", ")
+            ),
+            0,
+            "",
+        ),
+        (
+            "supertrait_parameters",
+            format!(
+                "trait Carry(c) {{ fn carry(self) -> c }}\n\
+                 trait Many({}): Carry({ty}) {{ fn m(self) -> Int }}\nfn main() {{}}\n",
                 vars.join(", ")
             ),
             0,
