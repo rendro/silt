@@ -1513,10 +1513,6 @@ impl TypeChecker {
             .collect();
 
         let supertrait_names: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
-        let supertrait_exprs: Vec<TypeExpr> = supertraits
-            .iter()
-            .flat_map(|(_, args)| args.clone())
-            .collect();
         let supertrait_args = self.resolve_supertrait_args(&supertraits, &trait_param_vars);
 
         self.tables.traits.insert(
@@ -1539,13 +1535,6 @@ impl TypeChecker {
                 via_needs: HashMap::new(),
             },
         );
-        // A generic type among a supertrait's arguments is written with
-        // its own (`trait Sub: Super(Box(Int))`).
-        if let Some(info) = self.tables.traits.get(&key).cloned() {
-            for te in &supertrait_exprs {
-                self.check_supertrait_arg_parametric_arity(te, &info);
-            }
-        }
     }
 
     /// The arguments of each supertrait in `supertraits`, read as types
