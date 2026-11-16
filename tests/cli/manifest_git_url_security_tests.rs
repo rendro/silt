@@ -33,7 +33,8 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// The git cache of the workspace `ws`, whose cache directory the
 /// tests point `XDG_CACHE_HOME` (Unix) and `LOCALAPPDATA` (Windows) at:
 /// `silt/git` under it on Unix, `silt\cache\git` on Windows (see
-/// `git::cache_dir`).
+/// `git::cache_dir`). (Its one user runs on Unix only.)
+#[cfg(unix)]
 fn git_cache(ws: &Path) -> PathBuf {
     let cache = ws.join("cache").join("silt");
     if cfg!(windows) {

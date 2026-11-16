@@ -77,6 +77,46 @@ jobs:
       - name: cargo fmt (fuzz)
         run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
 
+  lint-other-systems:
+    # Code behind `cfg(windows)` and behind `cfg(unix)` but not Linux (the
+    # macOS paths) is compiled by no lint above: those jobs run on Linux.
+    # Clippy on each system itself, as the job above lints Linux, so a
+    # lint there cannot pass unseen. A job of its own, not a step of a
+    # test shard: a lint build takes minutes, and the Windows shards run
+    # near their caps.
+    name: Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - name: Configure git for LF on Windows
+        if: runner.os == 'Windows'
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install Rust toolchain (lint)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.LINT_TOOLCHAIN }}
+          components: clippy
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: lint-${{ matrix.os }}
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-features --all-targets -- -D warnings
+
+      - name: cargo clippy (no default features, all targets)
+        run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+
   rust-version:
     # The oldest Rust that builds silt is the package's `rust-version` in
     # Cargo.toml. Check the library and the binary on it, with no

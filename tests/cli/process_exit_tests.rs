@@ -3,7 +3,10 @@
 //! and an exit ends the run, what a slow reader is given, and a stderr
 //! whose reader has gone.
 
-use std::io::{Read, Write};
+use std::io::Read;
+// (For the tests on Unix only.)
+#[cfg(unix)]
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
