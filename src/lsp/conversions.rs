@@ -50,12 +50,10 @@ pub(super) fn position_to_offset(file: &SourceFile, pos: &Position) -> usize {
 /// there is no such character: past the last line, past the end of its
 /// line, at the end of a line that ends in no name.
 pub(super) fn char_offset_at(file: &SourceFile, pos: &Position) -> Option<usize> {
-    let line = file.line_text(pos.line + 1)?;
-    let line = line.strip_suffix('\r').unwrap_or(line);
+    let (line_start, line) = file.lsp_line(pos.line)?;
     if pos.character as usize > utf16_len(line) {
         return None;
     }
-    let line_start = file.line_start(pos.line + 1) as usize;
     let line_end = line_start + line.len();
     let offset = position_to_offset(file, pos);
     let name_char = |c: char| c.is_alphanumeric() || c == '_';

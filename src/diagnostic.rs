@@ -1187,11 +1187,10 @@ pub(crate) fn to_lsp(
     let shown = |span: Span| -> Range {
         let mut shown = range(span);
         if let Some(file) = sources.get(span.file) {
-            let lines = file.text_lines() as u32;
+            let lines = file.lsp_text_lines() as u32;
             for p in [&mut shown.start, &mut shown.end] {
                 if lines > 0 && p.line >= lines {
-                    let last = file.line_text(lines).unwrap_or("");
-                    let last = last.strip_suffix('\r').unwrap_or(last);
+                    let last = file.lsp_line(lines - 1).map_or("", |(_, text)| text);
                     *p = lsp_types::Position::new(
                         lines - 1,
                         last.chars().map(char::len_utf16).sum::<usize>() as u32,
@@ -1204,8 +1203,7 @@ pub(crate) fn to_lsp(
             // says the error is; at the end of a line there is no
             // character, and it stays as it is.
             if shown.start == shown.end {
-                let line = file.line_text(shown.start.line + 1).unwrap_or("");
-                let line = line.strip_suffix('\r').unwrap_or(line);
+                let line = file.lsp_line(shown.start.line).map_or("", |(_, text)| text);
                 let mut units = 0;
                 for c in line.chars() {
                     if units >= shown.start.character {

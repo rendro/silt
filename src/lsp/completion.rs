@@ -13,6 +13,7 @@ use crate::defs::DefKind;
 use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::{KEYWORD_LITERALS, KEYWORDS};
 use crate::module;
+use crate::source::SourceFile;
 use crate::typechecker::names::Binding;
 use crate::types::Type;
 
@@ -37,7 +38,7 @@ impl Server {
         let prefix = self
             .documents
             .get(uri)
-            .and_then(|doc| extract_dot_prefix(&doc.source.text, &pos));
+            .and_then(|doc| extract_dot_prefix(&doc.source, &pos));
         if let Some(prefix) = prefix {
             let doc = self.documents.get(uri)?;
             let cursor = position_to_offset(&doc.source, &pos);
@@ -78,7 +79,7 @@ impl Server {
 
         // After `import `: the modules there are to import.
         if let Some(doc) = doc
-            && at_import_name(&doc.source.text, &pos)
+            && at_import_name(&doc.source, &pos)
         {
             return Some(CompletionResponse::Array(import_completions(uri)));
         }
@@ -710,8 +711,8 @@ struct Checked {
 /// greedily swallowing the previous expression.
 /// Whether the position `pos` of `source` is at the module name of an
 /// import being written: the line up to it is `import` and a name begun.
-fn at_import_name(source: &str, pos: &Position) -> bool {
-    let Some(line) = source.lines().nth(pos.line as usize) else {
+fn at_import_name(source: &SourceFile, pos: &Position) -> bool {
+    let Some((_, line)) = source.lsp_line(pos.line) else {
         return false;
     };
     let mut units = 0usize;
@@ -767,8 +768,8 @@ fn import_completions(uri: &Uri) -> Vec<CompletionItem> {
     items
 }
 
-fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
-    let line = source.lines().nth(pos.line as usize)?;
+fn extract_dot_prefix(source: &SourceFile, pos: &Position) -> Option<String> {
+    let (_, line) = source.lsp_line(pos.line)?;
     let col = pos.character as usize;
     if col == 0 {
         return None;

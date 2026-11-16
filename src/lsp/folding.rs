@@ -94,8 +94,8 @@ fn walk_expr_folds(expr: &Expr, source: &SourceFile, out: &mut Vec<FoldingRange>
 /// A fold over the lines of `span`, when it runs over more than one.
 fn push_span_fold(span: &Span, source: &SourceFile, out: &mut Vec<FoldingRange>) {
     // LSP lines are 0-based.
-    let start_line = source.line_col(span.start).0 - 1;
-    let end_line = source.line_col(span.end).0 - 1;
+    let start_line = source.lsp_position(span.start).line;
+    let end_line = source.lsp_position(span.end).line;
     if end_line > start_line {
         out.push(FoldingRange {
             start_line,

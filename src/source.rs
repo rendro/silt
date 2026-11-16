@@ -101,6 +101,11 @@ pub struct SourceFile {
     /// Byte offset of the first character of each line. Lines end at
     /// `\n`, as in the lexer; a `\r` before it belongs to the line.
     line_starts: Vec<u32>,
+    /// The same as the language server protocol counts lines, where it
+    /// differs: a lone `\r` ends a line too. None for a text without
+    /// one, whose lines are `line_starts` (see `lsp_lines`).
+    #[cfg(feature = "lsp")]
+    lsp_line_starts: Option<Vec<u32>>,
 }
 
 impl SourceFile {
@@ -112,10 +117,14 @@ impl SourceFile {
                 .filter(|&(_, b)| b == b'\n')
                 .map(|(i, _)| i as u32 + 1),
         );
+        #[cfg(feature = "lsp")]
+        let lsp_line_starts = lsp_line_starts(&text);
         SourceFile {
             path,
             text,
             line_starts,
+            #[cfg(feature = "lsp")]
+            lsp_line_starts,
         }
     }
 
@@ -173,39 +182,66 @@ impl SourceFile {
         Some(&self.text[start..end])
     }
 
-    /// Byte offset of the start of 1-based line `line`, or the end of the
-    /// text for a line past the last one.
-    #[cfg(any(feature = "lsp", test, feature = "test-hooks"))]
-    pub fn line_start(&self, line: u32) -> u32 {
-        let index = (line as usize).saturating_sub(1);
-        self.line_starts
-            .get(index)
-            .copied()
-            .unwrap_or(self.text.len() as u32)
+    /// The start of each line as the language server protocol counts
+    /// lines: a line ends at `\n`, `\r\n` or a lone `\r`. Every position
+    /// the server hands out or reads goes by these lines.
+    #[cfg(feature = "lsp")]
+    fn lsp_lines(&self) -> &[u32] {
+        self.lsp_line_starts.as_deref().unwrap_or(&self.line_starts)
     }
 
-    /// The LSP position of byte `at`: a 0-based line and a 0-based column
-    /// counted in UTF-16 code units, as the protocol counts them.
+    /// The protocol's line `line` (0-based, see `lsp_lines`): the byte
+    /// offset of its start and its text without its line end. None for a
+    /// line the text does not have.
+    #[cfg(feature = "lsp")]
+    pub(crate) fn lsp_line(&self, line: u32) -> Option<(usize, &str)> {
+        let lines = self.lsp_lines();
+        let start = *lines.get(line as usize)? as usize;
+        let end = lines
+            .get(line as usize + 1)
+            .map_or(self.text.len(), |&n| n as usize);
+        let text = &self.text[start..end];
+        let text = (text
+            .strip_suffix('\n')
+            .map(|t| t.strip_suffix('\r').unwrap_or(t)))
+        .or_else(|| text.strip_suffix('\r'))
+        .unwrap_or(text);
+        Some((start, text))
+    }
+
+    /// The number of the protocol's lines that have text or stand in
+    /// front of a line end (as `text_lines`, by `lsp_lines`).
+    #[cfg(feature = "lsp")]
+    pub(crate) fn lsp_text_lines(&self) -> usize {
+        let ends_a_line = self.text.ends_with(['\n', '\r']);
+        self.lsp_lines().len() - usize::from(self.text.is_empty() || ends_a_line)
+    }
+
+    /// The LSP position of byte `at`: a 0-based line (see `lsp_lines`) and
+    /// a 0-based column counted in UTF-16 code units, as the protocol
+    /// counts them. The end of the text is the end of the document.
     #[cfg(feature = "lsp")]
     pub fn lsp_position(&self, at: u32) -> lsp_types::Position {
         let at = self.clamp(at);
-        let line = self.line_index(at);
-        let start = self.line_starts[line] as usize;
+        let lines = self.lsp_lines();
+        let line = lines
+            .partition_point(|&start| start as usize <= at)
+            .saturating_sub(1);
+        let start = lines[line] as usize;
         let character: usize = self.text[start..at].chars().map(char::len_utf16).sum();
         lsp_types::Position::new(line as u32, character as u32)
     }
 
-    /// The byte offset of an LSP position. A line past the last one means
-    /// the end of the text; a column past the end of its line (a `\r`
-    /// before the line break is not part of the line) means the end of
-    /// the line; a column inside a character means that character.
+    /// The byte offset of an LSP position (lines as `lsp_lines` counts
+    /// them). A line past the last one means the end of the text; a
+    /// column past the end of its line (its line end is not part of it)
+    /// means the end of the line; a column inside a character means that
+    /// character.
     #[cfg(feature = "lsp")]
     pub fn offset_of_lsp_position(&self, pos: lsp_types::Position) -> u32 {
-        let Some(line) = self.line_text(pos.line + 1) else {
+        let Some((start, line)) = self.lsp_line(pos.line) else {
             return self.text.len() as u32;
         };
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        let start = self.line_starts[pos.line as usize] as usize;
         let mut units = 0u32;
         for (i, ch) in line.char_indices() {
             if units >= pos.character {
@@ -233,6 +269,25 @@ pub struct Snippet {
     pub end_col: u32,
     /// The text of the start's line, without its line break.
     pub line_text: String,
+}
+
+/// Where the lines of `text` start as the language server protocol
+/// counts them (a line ends at `\n`, `\r\n` or a lone `\r`), if that is
+/// not where they start for the lexer: only a text with a lone `\r`.
+#[cfg(feature = "lsp")]
+fn lsp_line_starts(text: &str) -> Option<Vec<u32>> {
+    let bytes = text.as_bytes();
+    let lone_cr = |i: usize| bytes[i] == b'\r' && bytes.get(i + 1) != Some(&b'\n');
+    if !(0..bytes.len()).any(lone_cr) {
+        return None;
+    }
+    let mut starts = vec![0];
+    starts.extend(
+        (0..bytes.len())
+            .filter(|&i| bytes[i] == b'\n' || lone_cr(i))
+            .map(|i| i as u32 + 1),
+    );
+    Some(starts)
 }
 
 /// Every file of a compilation, by [`FileId`].
@@ -407,6 +462,45 @@ mod tests {
         assert_eq!(f.offset_of_lsp_position(lsp_types::Position::new(0, 99)), 6);
         assert_eq!(f.offset_of_lsp_position(lsp_types::Position::new(1, 0)), 7);
         assert_eq!(f.offset_of_lsp_position(lsp_types::Position::new(9, 0)), 8);
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn lsp_lines_end_at_a_line_feed_a_crlf_and_a_lone_carriage_return() {
+        use lsp_types::Position;
+        // Lines: "a", "b", "c", "", "d" (a lone CR, a CRLF, a LF, a lone
+        // CR, then the end).
+        let f = file("a\rb\r\nc\n\rd");
+        let lines: Vec<_> = (0..6).map(|n| f.lsp_line(n)).collect();
+        assert_eq!(
+            lines,
+            [
+                Some((0, "a")),
+                Some((2, "b")),
+                Some((5, "c")),
+                Some((7, "")),
+                Some((8, "d")),
+                None
+            ]
+        );
+        assert_eq!(f.lsp_text_lines(), 5);
+        assert_eq!(f.lsp_position(2), Position::new(1, 0));
+        assert_eq!(f.lsp_position(4), Position::new(1, 2));
+        assert_eq!(f.lsp_position(9), Position::new(4, 1));
+        assert_eq!(f.offset_of_lsp_position(Position::new(1, 9)), 3);
+        assert_eq!(f.offset_of_lsp_position(Position::new(4, 0)), 8);
+        assert_eq!(f.offset_of_lsp_position(Position::new(5, 0)), 9);
+        // The way back gives every offset again, but the line feed of a
+        // CRLF, which is inside a line end: it gives the end of the line.
+        for at in (0..=9u32).filter(|&at| at != 4) {
+            let back = f.offset_of_lsp_position(f.lsp_position(at));
+            assert_eq!(back, at, "{at}");
+        }
+        // A text without a lone CR keeps the lexer's lines.
+        let g = file("x\r\ny\n");
+        assert_eq!(g.lsp_line(1), Some((3, "y")));
+        assert_eq!(g.lsp_text_lines(), 2);
+        assert_eq!(g.lsp_position(5), Position::new(2, 0));
     }
 
     #[test]
