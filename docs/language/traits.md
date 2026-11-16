@@ -37,6 +37,16 @@ fn main() {
 }
 ```
 
+A trait's methods are called through the trait's name, `Greet.greet(x)`,
+so a trait may not take the name of a variant its module sees: in an
+expression that name is the variant, and no method of the trait could be
+called. `trait Some` (a variant of the prelude) is an error, "trait 'Some'
+shadows builtin variant 'Some'", and so is `trait Circle` in the module
+above, whether it comes before or after `type Shape`: "trait 'Circle' takes
+the name of variant 'Shape.Circle' of this module". A trait imported by
+item (`import m.{ Circle }`) into a module with a variant of its name is
+refused at the import; `import m` and `m.Circle` reach it.
+
 A method that takes a value of the implementing type (`self`, or a
 parameter of type `Self`) is called through its trait, as a module's
 function is: `Greet.greet(c)`, `c |> Greet.greet`,

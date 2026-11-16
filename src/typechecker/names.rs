@@ -81,6 +81,10 @@ pub struct ModuleScope {
     implied: HashMap<Symbol, Binding>,
     /// What an importer of the module sees.
     pub exports: Exports,
+    /// The traits the module declares or imports that take no name, being
+    /// named like a type or a variant it sees (`refused_trait`): a use of
+    /// one where a trait stands is reported at the trait, not again.
+    pub(crate) refused_traits: HashSet<Symbol>,
 }
 
 impl ModuleScope {
@@ -505,6 +509,9 @@ fn declare(
         }
     };
     let mut own: Vec<(Symbol, DefId, bool)> = Vec::new();
+    // (The module's variants, whichever declarations come first: a trait
+    // of one of their names is refused and takes no name, `refused_trait`.)
+    let own_variants = own_variant_names(program);
     for decl in &program.decls {
         match decl {
             Decl::Fn(f) => {
@@ -596,11 +603,16 @@ fn declare(
                     kind: DefKind::TypeAlias,
                 });
                 set_kind(defs, id, DefKind::Trait(TraitId(id)));
-                // A trait named like a type of the prelude is refused
-                // where it is declared (`register_trait_decl_user`) and
-                // takes no name: `Int` in the module stays the type.
-                if !crate::builtins::registry::is_prelude_type(&resolve(t.name)) {
-                    own.push((t.name, id, true));
+                // A trait named like a type or a variant of the prelude,
+                // or like a variant of the module, is refused where it is
+                // declared (`register_trait_decl_user`) and takes no name:
+                // `Int` in the module stays the type, `Some` and `Foo` the
+                // variants.
+                match refused_trait(t.name, |name| own_variants.contains(&name)) {
+                    true => {
+                        scope.refused_traits.insert(t.name);
+                    }
+                    false => own.push((t.name, id, true)),
                 }
             }
             Decl::TraitImpl(_) | Decl::Import(..) => {}
@@ -625,6 +637,31 @@ fn declare(
             scope.exports.private.entry(name).or_insert(id);
         }
     }
+}
+
+/// The names of the variants `program` declares.
+fn own_variant_names(program: &Program) -> HashSet<Symbol> {
+    (program.decls.iter())
+        .filter_map(|decl| match decl {
+            Decl::Type(td) => match &td.body {
+                TypeBody::Enum(variants) => Some(variants.iter().map(|v| v.name)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// Whether a trait named `name` is refused at its declaration
+/// (`TypeChecker::register_trait_decl_user` says why): a name of a type or
+/// a variant of the prelude (`trait Int`, `trait Some`), or of a variant of
+/// the module itself (`is_own_variant`). Such a trait takes no name.
+pub(crate) fn refused_trait(name: Symbol, is_own_variant: impl Fn(Symbol) -> bool) -> bool {
+    let text = resolve(name);
+    crate::builtins::registry::is_prelude_type(&text)
+        || crate::builtins::registry::is_prelude_variant(&text)
+        || is_own_variant(name)
 }
 
 /// Change the kind of the definition `id`, entered a moment ago: a type
@@ -677,6 +714,7 @@ fn bind_imports(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut item_bindings: HashMap<Symbol, (Binding, Span)> = HashMap::new();
+    let own_variants = own_variant_names(program);
     for decl in crate::ast::imports_in_order(&program.decls) {
         let Decl::Import(target, _) = decl else {
             continue;
@@ -771,6 +809,43 @@ fn bind_imports(
                         if kind == ModuleKind::Cell && is_cell {
                             bind_imported(&mut scope.exports.values, *item, binding, defs);
                         }
+                    }
+                    // A trait imported by item that a variant of the module
+                    // names: in an expression the name is the variant, so
+                    // none of its methods could be called here. Refused at
+                    // the import, as a trait declared so is; it takes no
+                    // name.
+                    if let Some(Binding::Def(id)) = &ty
+                        && matches!(defs.get(*id).kind, DefKind::Trait(_))
+                        && own_variants.contains(item)
+                    {
+                        let variant = (program.decls.iter()).find_map(|decl| match decl {
+                            Decl::Type(td) => match &td.body {
+                                TypeBody::Enum(vs) if vs.iter().any(|v| v.name == *item) => {
+                                    Some(td.name)
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        });
+                        let enum_name = variant.map_or_else(String::new, |t| format!("{t}."));
+                        diagnostics.push(
+                            Diagnostic::error(
+                                Code::InvalidTraitDeclaration,
+                                *item_span,
+                                format!(
+                                    "the trait '{item}' imported here takes the name of variant \
+                                     '{enum_name}{item}' of this module"
+                                ),
+                            )
+                            .with_help(format!(
+                                "import the module and write the trait with it, `import {m}` and \
+                                 `{m}.{item}`: in an expression `{item}` is the variant, so no \
+                                 method of the trait could be called"
+                            )),
+                        );
+                        scope.refused_traits.insert(*item);
+                        continue;
                     }
                     if let Some(binding) = ty {
                         // An enum imported from an earlier REPL cell
@@ -1624,23 +1699,10 @@ impl Resolver<'_> {
     /// types used as values, then the prelude.
     fn lookup_global_value(&self, name: Symbol) -> Option<Binding> {
         self.used.borrow_mut().insert(name);
-        // A trait of the module is a value only where no value has its
-        // name: as a variant of the module's own hides a trait of its name
-        // in expressions and patterns, so does a variant or function of
-        // the prelude (`trait Some` leaves `Some(1)` the variant).
-        let trait_named_like_a_prelude_value = |binding: &&Binding| {
-            matches!(binding, Binding::Def(id) if matches!(self.defs.get(*id).kind, DefKind::Trait(_)))
-                && self.builtins.prelude.values.contains_key(&name)
-        };
         self.previous
             .get(&name)
             .or_else(|| self.scope.values.get(&name))
-            .or_else(|| {
-                self.scope
-                    .types
-                    .get(&name)
-                    .filter(|b| !trait_named_like_a_prelude_value(b))
-            })
+            .or_else(|| self.scope.types.get(&name))
             .or_else(|| self.scope.implied.get(&name))
             .or_else(|| self.builtins.prelude.values.get(&name))
             .or_else(|| self.builtins.prelude.types.get(&name))
@@ -2079,6 +2141,10 @@ impl Resolver<'_> {
             }
             if let Some(binding) = self.lookup_type(name) {
                 return Some(self.binding_res(&binding));
+            }
+            // (A trait refused at its declaration or import: reported there.)
+            if is_trait && self.scope.refused_traits.contains(&name) {
+                return Some(Res::Error);
             }
             // `_a` is a type variable, unless a type is named so.
             if name_str.starts_with('_') {

@@ -1,0 +1,27 @@
+error[type]: trait 'Some' shadows builtin variant 'Some'
+ --> trait_named_like_a_prelude_variant__is_refused.silt:8:11
+   |
+ 8 | pub trait Some {
+   |           ^^^^ trait 'Some' shadows builtin variant 'Some'
+  = help: choose a different name
+
+error[type]: trait 'None' shadows builtin variant 'None'
+ --> trait_named_like_a_prelude_variant__is_refused.silt:12:7
+    |
+ 12 | trait None {
+    |       ^^^^ trait 'None' shadows builtin variant 'None'
+  = help: choose a different name
+
+error[type]: trait 'Ok' shadows builtin variant 'Ok'
+ --> trait_named_like_a_prelude_variant__is_refused.silt:16:7
+    |
+ 16 | trait Ok(a) {
+    |       ^^ trait 'Ok' shadows builtin variant 'Ok'
+  = help: choose a different name
+
+error[type]: trait 'Err' shadows builtin variant 'Err'
+ --> trait_named_like_a_prelude_variant__is_refused.silt:20:11
+    |
+ 20 | pub trait Err {
+    |           ^^^ trait 'Err' shadows builtin variant 'Err'
+  = help: choose a different name

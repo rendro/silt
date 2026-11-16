@@ -1,0 +1,6 @@
+error[type]: the trait 'Foo' imported here takes the name of variant 'T.Foo' of this module
+ --> main.silt:7:13
+   |
+ 7 | import mt.{ Foo }
+   |             ^^^ the trait 'Foo' imported here takes the name of variant 'T.Foo' of this module
+  = help: import the module and write the trait with it, `import mt` and `mt.Foo`: in an expression `Foo` is the variant, so no method of the trait could be called

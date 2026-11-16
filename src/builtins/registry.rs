@@ -727,6 +727,13 @@ pub(crate) fn is_prelude_type(name: &str) -> bool {
         || registry().prelude_types.iter().any(|ty| ty.name == name)
 }
 
+/// Whether `name` is a variant of an enum of [`PRELUDE_TYPES`] (`Some`,
+/// `None`, `Ok`, `Err`), which every module sees by its bare name.
+pub(crate) fn is_prelude_variant(name: &str) -> bool {
+    (registry().prelude_types.iter())
+        .any(|ty| ty.variants().iter().any(|(variant, _)| *variant == name))
+}
+
 /// Every builtin module, and what is derived from all of them at once.
 pub struct Registry {
     pub modules: Vec<Module>,

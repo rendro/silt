@@ -1,6 +1,0 @@
-error[type]: type 'a' has no field 'go'
- --> main.silt:6:39
-   |
- 6 | fn use(x: a) -> Int where a: m.Some { x.go() }
-   |                                       ^^^^ type 'a' has no field 'go'
-  = help: `go` is a method of trait `m.Some`: call it as `m.Some.go(x)`

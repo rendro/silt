@@ -1,9 +1,0 @@
--- cmd: check
--- exit: 1
--- A trait of another module imported by item, which the prelude's variant
--- `Some` hides in expressions: the help says to import the module and
--- call it through it, not to rename what this file does not declare
--- (audit R9, review O7-1).
-import m.{ Some }
-fn use(x: a) -> Int where a: Some { x.go() }
-fn main() { println(use(1)) }

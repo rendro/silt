@@ -1629,7 +1629,10 @@ impl TypeChecker {
     /// The help for `V.field`, where the name `V` is a variant and a
     /// trait in sight of the same name has a method `field`: the
     /// variant hides the trait in an expression (a declaration of the
-    /// module comes before the prelude's).
+    /// module comes before the prelude's). The trait is a builtin one
+    /// (`Number`, `Functor`): a trait a program declares or imports by
+    /// item is refused where a variant of its module has its name
+    /// (`register_trait_decl_user`, `names::bind_imports`).
     fn variant_hides_trait(&self, recv: &Expr, field: Symbol) -> Option<String> {
         let ExprKind::Ident(name) = recv.kind else {
             return None;
@@ -1654,14 +1657,10 @@ impl TypeChecker {
         }
         let enum_name =
             (self.spell_def(ty.0)).or_else(|| self.def(ty.0).map(|d| resolve(d.name)))?;
-        // (A variant of the prelude cannot be renamed: the trait can.)
-        let rename = match self.def(ty.0).is_some_and(|d| d.module.is_builtin()) {
-            true => "the trait",
-            false => "the variant",
-        };
         Some(format!(
             "`{written}` here is the variant `{enum_name}.{written}`, which hides the trait \
-             `{written}` in expressions: rename {rename} to call `{written}.{field}`"
+             `{written}` in expressions: {}",
+            self.unhide_trait(id, &written, field)
         ))
     }
 
@@ -2414,27 +2413,37 @@ impl TypeChecker {
         );
     }
 
-    /// Whether `written`, a trait as this module writes it, is a value in
-    /// an expression: a variant (or another value) of the module or of the
-    /// prelude has its bare name and hides the trait there (`trait Some`
-    /// beside the prelude's `Some`), so `written.method(x)` is refused.
-    fn trait_hidden_in_expressions(&self, written: &str) -> bool {
+    /// The variant the module binds `written` (a builtin trait's name as
+    /// this module writes it) to in an expression, which hides the trait
+    /// there (`type Kind { Number }` beside the prelude's `Number`):
+    /// `written.method(x)` names the variant. None where nothing hides it.
+    fn variant_hiding_trait(&self, written: &str) -> Option<crate::defs::DefId> {
         if written.contains('.') {
-            return false;
+            return None;
         }
         let name = intern(written);
-        let own_value = (self.spelled.iter()).any(|(id, binding)| {
-            *binding == name
-                && self
-                    .def(*id)
-                    .is_some_and(|def| !matches!(def.kind, crate::defs::DefKind::Trait(_)))
-        });
-        own_value
-            || super::names::builtins()
-                .1
-                .prelude
-                .values
-                .contains_key(&name)
+        (self.spelled.iter())
+            .find(|(id, binding)| {
+                **binding == name
+                    && self
+                        .def(**id)
+                        .is_some_and(|d| matches!(d.kind, crate::defs::DefKind::Variant { .. }))
+            })
+            .map(|(id, _)| *id)
+    }
+
+    /// What to do where the variant `variant` hides the builtin trait
+    /// `written` in expressions, to call its method `field`: rename the
+    /// variant where it is the module's own; write it through its module
+    /// where the module imports it by item.
+    fn unhide_trait(&self, variant: crate::defs::DefId, written: &str, field: Symbol) -> String {
+        match self.def(variant) {
+            Some(d) if d.module != self.module => format!(
+                "import the variant's module and write the variant through it, so that \
+                 `{written}.{field}` is the trait's"
+            ),
+            _ => format!("rename the variant to call `{written}.{field}`"),
+        }
     }
 
     /// The help that offers the calls of the method `field` of `traits`
@@ -2468,13 +2477,8 @@ impl TypeChecker {
 
     /// The call of the method `field` of the trait `t` on `x` as this
     /// module writes it (`Area.go(x)`), or, where it can write none, the
-    /// help that says why and what to do. Where a variant (or another
-    /// value) hides the trait in expressions (`trait_hidden_in_expressions`):
-    /// a trait of another module is called through its module, by the
-    /// file's name for it (`m.Some.go(x)`), or after an import of it; a
-    /// trait of this module is renamed (the trait beside the prelude's
-    /// variant, which cannot be renamed; the variant where it is the
-    /// module's own, as the help of `Trait.field` says).
+    /// help that says why and what to do: a variant of the module hides a
+    /// builtin trait of its name in expressions (`variant_hiding_trait`).
     fn trait_call(&self, t: TraitKey, field: Symbol, x: &str) -> Result<String, String> {
         let shown = self.spell_trait(t);
         let rest = if self.method_arity(t, field) > 1 {
@@ -2482,45 +2486,14 @@ impl TypeChecker {
         } else {
             ""
         };
-        if !self.trait_hidden_in_expressions(&shown) {
-            return Ok(format!("`{shown}.{field}({x}{rest})`"));
+        match self.variant_hiding_trait(&shown) {
+            None => Ok(format!("`{shown}.{field}({x}{rest})`")),
+            Some(variant) => Err(format!(
+                "`{field}` is a method of trait `{shown}`, which the variant `{shown}` hides in \
+                 expressions: {}",
+                self.unhide_trait(variant, &shown, field)
+            )),
         }
-        let hidden = format!(
-            "`{field}` is a method of trait `{shown}`, which the variant `{shown}` hides in \
-             expressions"
-        );
-        let Some(def) = self.def(t.id.0) else {
-            return Err(hidden);
-        };
-        if def.module != self.module {
-            let call = |module: &str| format!("`{module}.{}.{field}({x}{rest})`", def.name);
-            return match self.module_spelled.get(&def.module) {
-                Some(binding) => Ok(call(&resolve(*binding))),
-                None => {
-                    let module = (self.import_path(def.module))
-                        .or_else(|| self.tables.module_names.get(&def.module).copied())
-                        .map_or_else(|| "its module".to_string(), resolve);
-                    Err(format!(
-                        "{hidden}: import `{module}` to call it as {}",
-                        call(&module)
-                    ))
-                }
-            };
-        }
-        let name = intern(&shown);
-        let own_variant = (self.spelled.iter()).any(|(id, binding)| {
-            *binding == name
-                && self.def(*id).is_some_and(|d| {
-                    d.module == self.module && !matches!(d.kind, crate::defs::DefKind::Trait(_))
-                })
-        });
-        let rename = match own_variant {
-            true => "the variant",
-            false => "the trait",
-        };
-        Err(format!(
-            "{hidden}: rename {rename} to call `{shown}.{field}`"
-        ))
     }
 
     /// The number of parameters of the method `field` of the trait `tr`.
