@@ -1,0 +1,12 @@
+-- exit: 1
+-- The report of a failure after `print("out ")` and `io.eprint("err ")`, stdout and stderr two pipes:
+-- on a line of its own on stderr; stdout is left as the program wrote it.
+import io
+import list
+
+fn main() {
+  print("out ")
+  io.eprint("err ")
+  let n = 1 / (list.length([1]) - 1)
+  println(n)
+}

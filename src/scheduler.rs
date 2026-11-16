@@ -1557,8 +1557,11 @@ pub(crate) fn with_report_lock<R>(write: impl FnOnce() -> R) -> R {
 /// [`LAST_WORDS`], so that a stdout nobody reads cannot hold the report
 /// up (tests/cli/stuck_stdout_tests.rs): the line then comes at the
 /// exit, after the report, as before. Where that line is out and stdout
-/// and stderr are one place, the report starts on a line of its own;
-/// nothing is added where stdout ended its last line, or goes elsewhere.
+/// and stderr are one place, the report starts on a line of its own
+/// where the last text the program wrote, to either, left a partial line
+/// (`print("out ")` and then `io.eprintln("err")` leave a whole one);
+/// where stdout goes elsewhere, where the last text it wrote to stderr
+/// did. Nothing is added to a whole line, nor to stdout.
 pub(crate) fn report_on_stderr(text: &str) {
     let mut own_line = false;
     if !text.is_empty() {
@@ -1568,14 +1571,15 @@ pub(crate) fn report_on_stderr(text: &str) {
             let _ = std::io::stdout().lock().flush();
             let _ = done.send(());
         };
-        if thread::Builder::new()
+        let flushed = thread::Builder::new()
             .name("silt-report-flush".into())
             .spawn(flushes)
             .is_ok()
-            && flushed.recv_timeout(LAST_WORDS).is_ok()
-        {
-            own_line = !crate::vm::stdout_ends_a_line() && crate::vm::stdout_and_stderr_are_one();
-        }
+            && flushed.recv_timeout(LAST_WORDS).is_ok();
+        own_line = match crate::vm::stdout_and_stderr_are_one() {
+            true => flushed && !crate::vm::output_ends_a_line(),
+            false => !crate::vm::stderr_ends_a_line(),
+        };
     }
     report(|| {
         let _ = match own_line {
