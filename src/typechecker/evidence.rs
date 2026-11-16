@@ -1168,7 +1168,8 @@ impl TypeChecker {
                     format!(
                         "an impl of '{shown}' runs with the value alone, so it cannot make a \
                          number of its type's variable (`from_int`, or a call that uses it, such \
-                         as `list.sum`)"
+                         as `{}`)",
+                        self.written_builtin("list.sum")
                     ),
                     Some(
                         "compute the number before, in a function bounded by Number, and keep \

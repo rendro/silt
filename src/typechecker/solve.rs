@@ -1031,11 +1031,12 @@ impl TypeChecker {
                 // An Option's `?` in a function that returns a Result:
                 // the None has no error to return.
                 if head == "Option" && n.is_builtin("Result") {
+                    let help = format!(
+                        "turn the Option into a Result first: `|> {}(error)?`",
+                        self.written_builtin("option.to_result")
+                    );
                     for d in &mut self.errors[before..] {
-                        d.help.push(
-                            "turn the Option into a Result first: `|> option.to_result(error)?`"
-                                .to_string(),
-                        );
+                        d.help.push(help.clone());
                     }
                 }
             }
@@ -1087,9 +1088,10 @@ impl TypeChecker {
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
+        let map_err = self.written_builtin("result.map_err");
         let help = match holder.as_slice() {
             [variant] => {
-                format!("`?` converts nothing: add `|> result.map_err({variant})` before the `?`")
+                format!("`?` converts nothing: add `|> {map_err}({variant})` before the `?`")
             }
             // (A function generic in its error takes no other one.)
             _ if matches!(wanted, Type::Var(_) | Type::Rigid(_)) => format!(
@@ -1098,7 +1100,7 @@ impl TypeChecker {
             ),
             _ => format!(
                 "`?` converts nothing: turn the `{}` into the function's `{}` before the `?`, \
-                 `|> result.map_err {{ e -> ... }}`",
+                 `|> {map_err} {{ e -> ... }}`",
                 self.show_type(&error),
                 self.show_type(&wanted)
             ),

@@ -88,10 +88,12 @@ impl TypeChecker {
                         // is given, which takes one.
                         let channel_op = |ty: &Type| matches!(ty, Type::Generic(name, _) if name.is_builtin("ChannelOp"));
                         let help = (channel_op(&first) && channel_op(&elem)).then(|| {
-                            "channel.select takes channels of one message type: give the \
-                             signal channel the same type and close it to signal (a closed \
-                             channel is received as None), or wrap the messages in one enum"
-                                .to_string()
+                            format!(
+                                "{} takes channels of one message type: give the signal \
+                                 channel the same type and close it to signal (a closed \
+                                 channel is received as None), or wrap the messages in one enum",
+                                self.written_builtin("channel.select")
+                            )
                         });
                         self.error_help(
                             Code::TypeMismatch,

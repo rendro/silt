@@ -54,16 +54,19 @@ impl TypeChecker {
             mapping.insert(v, Type::Rigid(id));
         }
         let named = |t: &Type| self.show_type(&substitute_vars(t, &mapping));
-        let written_params: Vec<String> = (f.params.iter().zip(params))
-            .map(|(param, ty)| {
+        let param_names: Vec<(String, bool)> = (f.params.iter())
+            .map(|param| {
                 let name = match &param.pattern.kind {
                     PatternKind::Ident(n) => resolve(*n),
                     _ => "_".to_string(),
                 };
-                match param.kind {
-                    ParamKind::Type => format!("type {name}"),
-                    ParamKind::Data => format!("{name}: {}", named(ty)),
-                }
+                (name, matches!(param.kind, ParamKind::Type))
+            })
+            .collect();
+        let written_params: Vec<String> = (param_names.iter().zip(params))
+            .map(|((name, is_type), ty)| match is_type {
+                true => format!("type {name}"),
+                false => format!("{name}: {}", named(ty)),
             })
             .collect();
         let mut text = format!("fn {}({})", f.name, written_params.join(", "));
@@ -73,6 +76,7 @@ impl TypeChecker {
         // Each variable's bounds, by the variable's name, as `where`
         // writes them.
         let mut bounds: Vec<(String, Vec<String>)> = Vec::new();
+        let mut parts: Vec<(String, Vec<(TraitKey, Vec<Type>)>)> = Vec::new();
         for pred in &scheme.preds {
             let Pred::Trait {
                 tr, args, subject, ..
@@ -88,10 +92,19 @@ impl TypeChecker {
                 .collect();
             let bound = self.show_bound(*tr, &args);
             let subject = resolve(subject.name);
+            let args: Vec<Type> = args.iter().map(|arg| self.apply(arg)).collect();
             match bounds.iter_mut().find(|(s, _)| *s == subject) {
                 Some((_, traits)) if traits.contains(&bound) => {}
-                Some((_, traits)) => traits.push(bound),
-                None => bounds.push((subject, vec![bound])),
+                Some((_, traits)) => {
+                    traits.push(bound);
+                    if let Some((_, written)) = parts.iter_mut().find(|(s, _)| *s == subject) {
+                        written.push((*tr, args));
+                    }
+                }
+                None => {
+                    bounds.push((subject.clone(), vec![bound]));
+                    parts.push((subject, vec![(*tr, args)]));
+                }
             }
         }
         if !bounds.is_empty() {
@@ -103,6 +116,11 @@ impl TypeChecker {
         Some(Signature {
             text,
             ty: substitute_vars(&ty, &mapping),
+            parts: Box::new(SignatureParts {
+                name: f.name,
+                params: param_names,
+                bounds: parts,
+            }),
         })
     }
 
@@ -141,7 +159,7 @@ impl TypeChecker {
         Type::show_all(types, |r, clash| {
             (clash
                 || (session && self.type_name_clashes(r))
-                || self.other_module(r).is_some()
+                || self.is_other_module(r)
                 || self.described_type(r).is_some()
                 || self.shadowed_cell_type(r))
             .then(|| self.qualified_type(r))
@@ -180,19 +198,21 @@ impl TypeChecker {
                 .is_some_and(|def| self.cells.contains(&def.module))
     }
 
-    /// The module of `r` if it is another module than the one being
-    /// checked, as a program names it: a builtin module (`json`,
-    /// `time`) or a module of the program's. `None` for a prelude type,
-    /// for one of the module's own, and in a REPL cell for one of an
-    /// earlier cell, which the cell writes by its name.
-    pub(super) fn other_module(&self, r: TypeRef) -> Option<Symbol> {
+    /// Whether `r` is a type of another module than the one being
+    /// checked that a message writes with its module (by
+    /// `written_member`, the one naming rule): a builtin module's
+    /// (`json`, `time`) or a program module's. Not a prelude type, not
+    /// one of the module's own, not, in a REPL cell, one of an earlier
+    /// cell, which the cell writes by its name. (Only a test: the name
+    /// written is `written_member`'s.)
+    pub(super) fn is_other_module(&self, r: TypeRef) -> bool {
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, module)) => module.map(|module| self.builtin_module_name_here(module)),
+            Some((_, module)) => module.is_some(),
             None => self
                 .def(r.id.0)
                 .filter(|def| def.module != self.module)
                 .and_then(|def| self.module_name_here(def.module))
-                .filter(|module| !resolve(*module).starts_with('<')),
+                .is_some_and(|module| !resolve(module).starts_with('<')),
         }
     }
 
@@ -214,6 +234,78 @@ impl TypeChecker {
             return self.import_path(module);
         }
         self.tables.module_names.get(&module).copied()
+    }
+
+    /// The name `name` of the module `module` (a type, a trait, a
+    /// function, a variant) as this file writes it, in every message,
+    /// help and answer of the editor: bare where the file imports the
+    /// name (`import da.{ Sq }`: `Sq`), with the file's name for the
+    /// module where it has one (`errs.Sq`, `t.parse_map`), else with the
+    /// module's own name (`da.Sq`), or described where that name is one
+    /// the file gives something else (`Sq of module other`). A name of
+    /// this module, or of the prelude, is bare. The one rule (NAM-1).
+    pub(super) fn written_member(&self, module: crate::defs::ModuleId, name: &str) -> String {
+        if module == self.module {
+            return name.to_string();
+        }
+        if let Some(builtin) = module.builtin_name() {
+            let by_item = self.imported_by_item(module, name).is_some();
+            return written_builtin_member(
+                builtin,
+                name,
+                by_item,
+                self.module_spelled.get(&module).copied(),
+            );
+        }
+        if let Some(spelled) = self.spelling_in_reach(module, name) {
+            return spelled;
+        }
+        match self.module_written(module) {
+            // (An earlier REPL cell's "module" has no name a program
+            // writes: its names are in scope by name.)
+            Some(ModuleWritten::Named(m)) if resolve(m).starts_with('<') => name.to_string(),
+            Some(ModuleWritten::Named(m)) => format!("{m}.{name}"),
+            Some(written @ ModuleWritten::Described { .. }) => written
+                .type_name(intern(name))
+                .replace(crate::types::AFTER_ARGUMENTS, ""),
+            None => name.to_string(),
+        }
+    }
+
+    /// The definition `id` as this file writes it ([`Self::written_member`]):
+    /// a function of another module (`t.parse_map`, `parse_map`), or of
+    /// this module by its name.
+    pub(super) fn written_def(&self, id: crate::defs::DefId) -> Option<String> {
+        let def = self.def(id)?;
+        Some(self.written_member(def.module, &resolve(def.name)))
+    }
+
+    /// The builtin function `qualified` (`toml.parse_map`, as the registry
+    /// names it) as this file writes it ([`Self::written_member`]).
+    pub(super) fn written_builtin(&self, qualified: &str) -> String {
+        match qualified.split_once('.') {
+            Some((module, name)) => match crate::defs::ModuleId::builtin(module) {
+                Some(id) => self.written_member(id, name),
+                None => qualified.to_string(),
+            },
+            None => qualified.to_string(),
+        }
+    }
+
+    /// The builtin function that `written` names as this file writes it
+    /// ([`Self::written_builtin`] the other way): `csv.stringify` for
+    /// `c.stringify` under `import csv as c`, for `stringify` after `import
+    /// csv.{ stringify }`, and for `csv.stringify`.
+    pub(super) fn builtin_of_written(&self, written: &str) -> Option<String> {
+        let found = (crate::module::builtin_modules().iter()).find_map(|module| {
+            let id = crate::defs::ModuleId::builtin(module)?;
+            let name = match written.rsplit_once('.') {
+                Some((_, name)) => name,
+                None => written,
+            };
+            (self.written_member(id, name) == written).then(|| format!("{module}.{name}"))
+        });
+        found.or_else(|| Some(written.to_string()))
     }
 
     /// [`TypeChecker::module_name_here`] of the builtin module `module`
@@ -243,8 +335,11 @@ impl TypeChecker {
         let described = |package: Option<Symbol>| {
             Some(ModuleWritten::Described {
                 package,
+                // (A package's library is named by its package: `InErr of
+                // package inner`; the file's own package's `lib` by its
+                // module, `T of module lib`.)
                 module: (self.tables.module_names.get(&module).copied())
-                    .filter(|name| resolve(*name) != "lib"),
+                    .filter(|name| package.is_none() || resolve(*name) != "lib"),
             })
         };
         if package(module) != package(self.module) && self.import_path(module).is_none() {
@@ -255,8 +350,7 @@ impl TypeChecker {
         // another module (`import da as other` beside a module `other`):
         // its types are described, so that two types are never written
         // alike (`other.T` is da's here).
-        let renamed_away = !self.module_spelled.contains_key(&module)
-            && (self.module_spelled.iter()).any(|(m, binding)| *m != module && *binding == name);
+        let renamed_away = !self.module_spelled.contains_key(&module) && self.bound_here(name);
         match renamed_away {
             true => described(None),
             false => Some(ModuleWritten::Named(name)),
@@ -302,14 +396,15 @@ impl TypeChecker {
     /// reach, as they spell it (`spelling_in_reach`); the module's own
     /// name where none does.
     pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
-        match self.other_module(enum_ty) {
+        match self.is_other_module(enum_ty) {
             // (Of a module no import here reaches, by its own name: the
             // module's name is none the program can write.)
-            Some(_) if self.variant_out_of_reach(enum_ty, name) => name.to_string(),
-            Some(module) => (self.module_of_type(enum_ty))
-                .and_then(|id| self.spelling_in_reach(id, &resolve(name)))
-                .unwrap_or_else(|| format!("{module}.{name}")),
-            None => name.to_string(),
+            true if self.variant_out_of_reach(enum_ty, name) => name.to_string(),
+            true => match self.module_of_type(enum_ty) {
+                Some(id) => self.written_member(id, &resolve(name)),
+                None => name.to_string(),
+            },
+            false => name.to_string(),
         }
     }
 
@@ -331,9 +426,9 @@ impl TypeChecker {
     /// None where its imports put it in no reach (`import errs.{
     /// AppError }` names no `Io`): for a help that offers code to write.
     pub(super) fn variant_in_reach(&self, enum_ty: TypeRef, name: Symbol) -> Option<String> {
-        match self.other_module(enum_ty) {
-            Some(_) => self.spelling_in_reach(self.module_of_type(enum_ty)?, &resolve(name)),
-            None => Some(name.to_string()),
+        match self.is_other_module(enum_ty) {
+            true => self.spelling_in_reach(self.module_of_type(enum_ty)?, &resolve(name)),
+            false => Some(name.to_string()),
         }
     }
 
@@ -357,14 +452,36 @@ impl TypeChecker {
         module: crate::defs::ModuleId,
         name: &str,
     ) -> Option<String> {
-        let by_name = (self.spelled.iter()).find(|(id, _)| {
-            self.def(**id)
-                .is_some_and(|def| def.module == module && resolve(def.name) == name)
-        });
-        if let Some((_, binding)) = by_name {
+        if let Some(binding) = self.imported_by_item(module, name) {
             return Some(binding.to_string());
         }
         (self.module_spelled.get(&module)).map(|binding| format!("{binding}.{name}"))
+    }
+
+    /// The name the file binds the name `name` of the module `module` to,
+    /// where it imports it by item (`import m.{ name }`).
+    pub(super) fn imported_by_item(
+        &self,
+        module: crate::defs::ModuleId,
+        name: &str,
+    ) -> Option<Symbol> {
+        (self.spelled.iter())
+            .find(|(id, _)| {
+                self.def(**id)
+                    .is_some_and(|def| def.module == module && resolve(def.name) == name)
+            })
+            .map(|(_, binding)| *binding)
+    }
+
+    /// The names the module binds the builtin modules it imports to
+    /// (`j` for `import json as j`; a module imported twice by its first
+    /// import's name): what the session's own helps write a builtin's name
+    /// with (`Session::written_builtin`).
+    pub(super) fn builtin_bindings(&self) -> HashMap<crate::defs::ModuleId, Symbol> {
+        (self.module_spelled.iter())
+            .filter(|(module, _)| module.builtin_name().is_some())
+            .map(|(module, binding)| (*module, *binding))
+            .collect()
     }
 
     /// The path an import of `module` would write here, for a help that
@@ -425,29 +542,32 @@ impl TypeChecker {
     /// that the cell names by its name (`<repl:1>.H` is the `H` an
     /// earlier cell declared again).
     fn qualified_type(&self, r: TypeRef) -> String {
-        if let Some(described) = self.described_type(r) {
-            return described;
-        }
-        let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, Some(module))) => Some(self.builtin_module_name_here(module)),
-            Some((_, None)) => Some(intern("prelude")),
-            None => self
-                .def(r.id.0)
-                .filter(|def| def.module != self.module)
-                .filter(|def| {
-                    !(self.is_cell
-                        && self.cells.contains(&def.module)
-                        && self.named_types.contains(&r.id.0))
-                })
-                // (A described type is written whole, above.)
-                .and_then(|def| match self.module_written(def.module)? {
-                    ModuleWritten::Named(module) => Some(module),
-                    ModuleWritten::Described { .. } => None,
-                }),
-        };
-        match module {
-            Some(module) => format!("{module}.{}", r.name),
-            None => r.name.to_string(),
+        match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, Some(module))) => match crate::defs::ModuleId::builtin(module) {
+                Some(id) => self.written_member(id, &resolve(r.name)),
+                None => format!("{module}.{}", r.name),
+            },
+            Some((_, None)) => format!("prelude.{}", r.name),
+            None => match self.def(r.id.0) {
+                Some(def)
+                    if def.module != self.module
+                        && !(self.is_cell
+                            && self.cells.contains(&def.module)
+                            && self.named_types.contains(&r.id.0)) =>
+                {
+                    match self.spelling_in_reach(def.module, &resolve(r.name)) {
+                        Some(spelled) => spelled,
+                        None => match self.module_written(def.module) {
+                            Some(ModuleWritten::Named(module)) => format!("{module}.{}", r.name),
+                            Some(written @ ModuleWritten::Described { .. }) => {
+                                written.type_name(r.name)
+                            }
+                            None => r.name.to_string(),
+                        },
+                    }
+                }
+                _ => r.name.to_string(),
+            },
         }
     }
 
@@ -530,19 +650,17 @@ impl TypeChecker {
     /// The trait with the module that declares it, where that is not
     /// the module being checked: `a.Show`, `prelude.Display`.
     pub(super) fn show_trait_in_module(&self, t: TraitKey) -> String {
-        let module = if let Some((_, module)) = crate::defs::builtin_trait_of_id(t.id.0) {
-            Some(match module {
-                Some(module) => self.builtin_module_name_here(module),
-                None => intern("prelude"),
-            })
-        } else {
-            self.def(t.id.0)
-                .filter(|def| def.module != self.module)
-                .and_then(|def| self.module_name_here(def.module))
-        };
-        match module {
-            Some(module) => format!("{module}.{}", t.name),
-            None => t.name.to_string(),
+        if let Some((_, module)) = crate::defs::builtin_trait_of_id(t.id.0) {
+            return match module.and_then(crate::defs::ModuleId::builtin) {
+                Some(id) => self.written_member(id, &resolve(t.name)),
+                None => format!("prelude.{}", t.name),
+            };
+        }
+        match self.def(t.id.0) {
+            Some(def) if def.module != self.module => {
+                self.written_member(def.module, &resolve(t.name))
+            }
+            _ => t.name.to_string(),
         }
     }
 
@@ -569,7 +687,7 @@ impl TypeChecker {
     /// `result.flat_map` / `option.flat_map`. A `String` where a
     /// `regex.Regex` is expected (a pattern given as text) is told to
     /// compile it.
-    pub(super) fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
+    pub(super) fn chain_hint(&self, got: &Type, expected: &Type) -> Option<std::string::String> {
         let is_wrapper = |t: &Type, name: &str| -> bool { t.is_builtin(name) };
         // (A type constructor, `Option(_)`, holds no value to chain.)
         if matches!(got, Type::Con(..)) {
@@ -577,29 +695,30 @@ impl TypeChecker {
         }
         // (A pattern written where a compiled one is taken.)
         if matches!(got, Type::String) && expected.is_builtin("Regex") {
-            return Some(
-                "a regex function takes a compiled pattern: make one with `regex.compile(pattern)`, once, and pass it on"
-                    .to_string(),
-            );
+            return Some(format!(
+                "a regex function takes a compiled pattern: make one with `{}(pattern)`, once, \
+                 and pass it on",
+                self.written_builtin("regex.compile")
+            ));
         }
         if is_wrapper(expected, "Result") || is_wrapper(expected, "Option") {
             return None;
         }
         if is_wrapper(got, "Result") {
-            return Some(
+            return Some(format!(
                 "to chain through a `Result`, use `?` to propagate the \
-                 error, or `|> result.flat_map { x -> ... }` to continue the \
-                 pipeline on the Ok value"
-                    .to_string(),
-            );
+                 error, or `|> {} {{ x -> ... }}` to continue the \
+                 pipeline on the Ok value",
+                self.written_builtin("result.flat_map")
+            ));
         }
         if is_wrapper(got, "Option") {
-            return Some(
+            return Some(format!(
                 "to chain through an `Option`, use `?` to propagate \
-                 `None`, or `|> option.flat_map { x -> ... }` to continue the \
-                 pipeline on the Some value"
-                    .to_string(),
-            );
+                 `None`, or `|> {} {{ x -> ... }}` to continue the \
+                 pipeline on the Some value",
+                self.written_builtin("option.flat_map")
+            ));
         }
         None
     }
@@ -723,6 +842,24 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
             ts.iter().for_each(|t| collect_app_heads(t, f))
         }
         _ => {}
+    }
+}
+
+/// The name `name` of the builtin module `module` as a file writes it: bare
+/// where the file imports it by item, with the file's name for the module
+/// where it binds one (`binding`: `j` for `import json as j`), else with
+/// the module's own name. The rule of [`TypeChecker::written_member`] for a
+/// builtin module, which the session's helps use too.
+pub(crate) fn written_builtin_member(
+    module: &str,
+    name: &str,
+    by_item: bool,
+    binding: Option<Symbol>,
+) -> String {
+    match (by_item, binding) {
+        (true, _) => name.to_string(),
+        (false, Some(binding)) => format!("{binding}.{name}"),
+        (false, None) => format!("{module}.{name}"),
     }
 }
 

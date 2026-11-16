@@ -69,13 +69,26 @@ pub(super) fn missing_main(file: FileId, path: &str) -> Diagnostic {
 /// arguments and returns nothing: its type must be `() -> ()` or
 /// `() -> Result((), e)`. A type the checker could not infer is let
 /// through: the error that made it so is reported already.
-pub(super) fn check_main(program: &Program, ty: &Type) -> Option<Diagnostic> {
+/// `written` writes a builtin's name as the file does
+/// (`Session::written_builtin`).
+pub(super) fn check_main(
+    program: &Program,
+    ty: &Type,
+    written: &dyn Fn(&str) -> String,
+) -> Option<Diagnostic> {
     let main = intern(ENTRY_POINT);
     let binder = binder_span(program, main);
     match ty {
         Type::Fun(params, ret) if params.is_empty() => (!returns_nothing(ret)).then(|| {
             let span = fn_decl(program, main).map_or(binder, returned_span);
-            value_returned(Code::MainSignature, span, "the entry point 'main'", EntryFn::Main, ret)
+            value_returned(
+                Code::MainSignature,
+                span,
+                "the entry point 'main'",
+                EntryFn::Main,
+                ret,
+                written,
+            )
         }),
         Type::Fun(params, _) => {
             let count = params.len();
@@ -95,7 +108,8 @@ pub(super) fn check_main(program: &Program, ty: &Type) -> Option<Diagnostic> {
                     format!("the entry point 'main' must take no parameters, but it {verb} {these}"),
                 )
                 .with_help(format!(
-                    "remove {them}; the command-line arguments are available from io.args()"
+                    "remove {them}; the command-line arguments are available from {}()",
+                    written("io.args")
                 )),
             )
         }
@@ -119,6 +133,7 @@ pub(super) fn select_tests(
     program: &Program,
     top_level: &HashMap<Symbol, Type>,
     filter: Option<&str>,
+    written: &dyn Fn(&str) -> String,
 ) -> (Vec<TestFn>, Vec<Diagnostic>) {
     let mut tests = Vec::new();
     let mut errors = Vec::new();
@@ -133,6 +148,7 @@ pub(super) fn select_tests(
                 &format!("the test function '{name}'"),
                 EntryFn::Test,
                 ret,
+                written,
             ));
             continue;
         }
@@ -188,7 +204,14 @@ enum EntryFn {
 /// The error of an entry point that returns `ret`, a value: a `main`,
 /// or a test function, named by `who`, with the way out for what it
 /// returns.
-fn value_returned(code: Code, span: Span, who: &str, entry: EntryFn, ret: &Type) -> Diagnostic {
+fn value_returned(
+    code: Code,
+    span: Span,
+    who: &str,
+    entry: EntryFn,
+    ret: &Type,
+    written: &dyn Fn(&str) -> String,
+) -> Diagnostic {
     // A type of the program's that is named like the builtin `Result`.
     let shown = ret.to_string();
     let builtin_result = matches!(ret, Type::Generic(name, _) if name.is_builtin("Result"));
@@ -203,32 +226,38 @@ fn value_returned(code: Code, span: Span, who: &str, entry: EntryFn, ret: &Type)
         )
         .with_help("give the type another name");
     }
+    let to_result = written("option.to_result");
     let help = match (ret, entry) {
-        (Type::Generic(name, _), EntryFn::Main) if name.is_builtin("Option") => {
+        (Type::Generic(name, _), EntryFn::Main) if name.is_builtin("Option") => format!(
             "to end the program with a failure when there is none, make main return a \
-             Result and write `option.to_result(x, \"why\")?`"
-        }
-        (Type::Generic(name, _), EntryFn::Test) if name.is_builtin("Option") => {
+             Result and write `{to_result}(x, \"why\")?`"
+        ),
+        (Type::Generic(name, _), EntryFn::Test) if name.is_builtin("Option") => format!(
             "to fail the test when there is none, make the test return a Result and write \
-             `option.to_result(x, \"why\")?`"
-        }
+             `{to_result}(x, \"why\")?`"
+        ),
         (Type::Generic(name, _), EntryFn::Main) if name.is_builtin("Result") => {
             "end main with `Ok(())` once the value is handed on; the Ok of main carries nothing"
+                .to_string()
         }
         (Type::Generic(name, _), EntryFn::Test) if name.is_builtin("Result") => {
             "end the test with `Ok(())` once the value is checked; the Ok of a test carries \
              nothing"
+                .to_string()
         }
         (_, EntryFn::Main) => {
             "hand the value on (println, a file, a host function), or drop it with `let _ = ...`"
+                .to_string()
         }
-        (Type::Bool, EntryFn::Test) => {
-            "check the value with an assertion (`test.assert(x)`), or drop it with `let _ = ...`"
-        }
-        (_, EntryFn::Test) => {
-            "check the value with an assertion (`test.assert_eq(x, expected)`), or drop it \
-             with `let _ = ...`"
-        }
+        (Type::Bool, EntryFn::Test) => format!(
+            "check the value with an assertion (`{}(x)`), or drop it with `let _ = ...`",
+            written("test.assert")
+        ),
+        (_, EntryFn::Test) => format!(
+            "check the value with an assertion (`{}(x, expected)`), or drop it \
+             with `let _ = ...`",
+            written("test.assert_eq")
+        ),
     };
     let error = Diagnostic::error(
         code,

@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- The names of builtin modules follow the same rule, in a decoder's
+-- refusal and its help too: `t.parse_map` under `import toml as t`,
+-- `j.Value` and `j.Decode` under `import json as j`, `Date` imported by
+-- item, `time.Time` through the module's own name (audit R9, card NAM-1).
+import json as j
+import toml as t
+import time.{ Date }
+
+type P { p: Fn(Int) -> Int }
+
+fn main() {
+  let a = t.parse_map("", P)
+  let b = t.parse_map("")
+  let d: Option(Date) = None
+  let e: Int = d
+  println((a, b, d, e, j.Null))
+}

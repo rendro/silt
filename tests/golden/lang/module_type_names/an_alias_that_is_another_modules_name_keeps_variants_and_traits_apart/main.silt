@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- `import da as other` beside a module `other` this file does not import:
+-- the real other's variants and traits are described too (`A of module
+-- other`, `Area of module other`), never written like da's `other.A` and
+-- `other.Area` (audit R9, review R1).
+import da as other
+
+fn f() -> Int {
+  let b = other.theirs()
+  let a = other.mine()
+  let x = match b {
+    other.A -> 1
+  }
+  let y = match a {
+    other.A -> 1
+  }
+  let z = match b { }
+  let s: String = (a, b)
+  x + y + z + other.need(1) + other.need_da(1)
+}
+
+fn main() {
+  println(f())
+}

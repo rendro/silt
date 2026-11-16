@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- The names of a module the file does not import (reached through
+-- another module's functions) keep the module's own name: the type
+-- `da.Sq`, the trait `da.Area`, the variants `da.Red`, `da.Green`
+-- (audit R9, card NAM-1).
+import mid
+
+fn main() {
+  let s = mid.sq()
+  let n: Int = s
+  let a = mid.measured(1)
+  let c = match mid.color() {
+    x when x == mid.color() -> 1
+  }
+  println((n, a, c))
+}

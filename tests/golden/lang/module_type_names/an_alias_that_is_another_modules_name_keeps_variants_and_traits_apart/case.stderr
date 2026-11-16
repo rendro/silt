@@ -1,0 +1,42 @@
+error[type]: type mismatch: expected T of module other, got other.T
+ --> main.silt:13:5
+    |
+ 13 |     other.A -> 1
+    |     ^^^^^^^ type mismatch: expected T of module other, got other.T
+
+error[type]: non-exhaustive match: missing variant other.B
+ --> main.silt:15:17
+    |
+ 15 |   let y = match a {
+    |                 ^ non-exhaustive match: missing variant other.B
+
+error[type]: non-exhaustive match: missing variants A of module other, B of module other
+ --> main.silt:18:17
+    |
+ 18 |   let z = match b { }
+    |                 ^ non-exhaustive match: missing variants A of module other, B of module other
+
+error[type]: type mismatch: expected String, got (other.T, T of module other)
+ --> main.silt:19:19
+    |
+ 19 |   let s: String = (a, b)
+    |                   ^^^^^^ type mismatch: expected String, got (other.T, T of module other)
+
+warning[type]: 's' is never used
+ --> main.silt:19:7
+    |
+ 19 |   let s: String = (a, b)
+    |       ^ 's' is never used
+  = help: remove it, or name it `_s`
+
+error[type]: type 'Int' does not implement trait 'Area of module other'
+ --> main.silt:20:26
+    |
+ 20 |   x + y + z + other.need(1) + other.need_da(1)
+    |                          ^ type 'Int' does not implement trait 'Area of module other'
+
+error[type]: type 'Int' does not implement trait 'other.Area'
+ --> main.silt:20:45
+    |
+ 20 |   x + y + z + other.need(1) + other.need_da(1)
+    |                                             ^ type 'Int' does not implement trait 'other.Area'

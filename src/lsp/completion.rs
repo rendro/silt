@@ -203,9 +203,13 @@ impl Server {
                             continue;
                         };
                         if let Some((_, kind)) = view.members.iter().find(|(m, _)| m == item) {
-                            items.push(member_item(&view, *item, *kind, &|t| {
-                                self.written_here(doc, t)
-                            }));
+                            items.push(member_item(
+                                &view,
+                                *item,
+                                *kind,
+                                &|t| self.written_here(doc, t),
+                                &|s| self.written_signature(doc, s),
+                            ));
                         }
                     }
                 }
@@ -553,7 +557,13 @@ impl Server {
             .members
             .iter()
             .map(|(member, kind)| {
-                member_item(&view, *member, *kind, &|t| self.written_here(doc, t))
+                member_item(
+                    &view,
+                    *member,
+                    *kind,
+                    &|t| self.written_here(doc, t),
+                    &|s| self.written_signature(doc, s),
+                )
             })
             .collect();
         items.sort_by(|a, b| a.label.cmp(&b.label));
@@ -652,6 +662,7 @@ fn member_item(
     member: Symbol,
     kind: MemberKind,
     written: &dyn Fn(&Type) -> Type,
+    signature: &dyn Fn(&crate::typechecker::Signature) -> String,
 ) -> CompletionItem {
     let def = view.definitions.get(&member);
     CompletionItem {
@@ -663,7 +674,7 @@ fn member_item(
             MemberKind::Variant => CompletionItemKind::CONSTRUCTOR,
         }),
         detail: def.and_then(|d| match &d.signature {
-            Some(signature) => Some(signature.text.clone()),
+            Some(s) => Some(signature(s)),
             None => d.ty.as_ref().map(|t| format!("{}", written(t))),
         }),
         documentation: def.and_then(|d| d.doc.clone()).map(|d| {

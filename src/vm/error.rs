@@ -181,15 +181,20 @@ impl VmError {
     /// returned `Err`, the one line `error: <text>` (and the note of its
     /// `Display` impl where that failed).
     pub fn render(&self, session: &crate::session::Session) -> String {
-        self.render_in(session.sources())
+        self.render_in(session.sources(), &crate::diagnostic::COLORS_OFF)
     }
 
-    /// [`VmError::render`], the files named by `view`: what `silt run`
-    /// prints for the error that ended `main`.
-    pub(crate) fn render_in(&self, view: &dyn crate::diagnostic::SourceView) -> String {
+    /// [`VmError::render`], the files named by `view`, in the colours `c`:
+    /// what `silt run` prints for the error that ended `main` (in its
+    /// colours, `active_colors`).
+    pub(crate) fn render_in(
+        &self,
+        view: &dyn crate::diagnostic::SourceView,
+        c: &crate::diagnostic::Colors,
+    ) -> String {
         match &self.returned {
             Some(text) => self.returned_text(text, view),
-            None => self.diagnostic_text(view),
+            None => self.diagnostic_text(view, c),
         }
     }
 
@@ -210,13 +215,18 @@ impl VmError {
     /// The error as a diagnostic of `silt run` is printed, the files named
     /// by `view`: the header, the place with its source line, then the
     /// call stack when it has more than one meaningful frame; a `Display`
-    /// impl that failed (of a test that returned `Err`) as a note.
-    pub(crate) fn diagnostic_text(&self, view: &dyn crate::diagnostic::SourceView) -> String {
+    /// impl that failed (of a test that returned `Err`) as a note; in the
+    /// colours `c`.
+    pub(crate) fn diagnostic_text(
+        &self,
+        view: &dyn crate::diagnostic::SourceView,
+        c: &crate::diagnostic::Colors,
+    ) -> String {
         let mut d = self.to_diagnostic();
         if let Some(failure) = &self.display_failure {
             d.notes.push(failure.note(view));
         }
-        crate::diagnostic::render_human(view, &d)
+        crate::diagnostic::render_human_in(view, &d, c)
     }
 
     /// The error as a diagnostic: the first line of the message is its

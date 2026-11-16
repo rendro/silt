@@ -15,3 +15,9 @@ error[type]: type mismatch: expected other.T, got T of module other
     |
  14 |     a == b -> 1
     |          ^ type mismatch: expected other.T, got T of module other
+
+error[type]: type 'Int' does not implement trait 'Shown of module other'
+ --> main.silt:21:22
+    |
+ 21 |   println(other.show(1))
+    |                      ^ type 'Int' does not implement trait 'Shown of module other'

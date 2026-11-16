@@ -1,0 +1,25 @@
+error[type]: `t.parse_map` cannot decode `P`: field `p` has type `Fn(Int) -> Int`, which has no decoder
+ --> main.silt:14:27
+    |
+ 14 |   let a = t.parse_map("", P)
+    |                           ^ `t.parse_map` cannot decode `P`: field `p` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, Date, time.Time, time.DateTime, j.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `j.Decode` impl, and aliases of these
+
+error[type]: `t.parse_map` expects 2 arguments, got 1
+ --> main.silt:15:11
+    |
+ 15 |   let b = t.parse_map("")
+    |           ^^^^^^^^^^^^^^^ `t.parse_map` expects 2 arguments, got 1
+
+error[type]: type mismatch: expected Int, got Option(Date)
+ --> main.silt:17:16
+    |
+ 17 |   let e: Int = d
+    |                ^ type mismatch: expected Int, got Option(Date)
+  = help: to chain through an `Option`, use `?` to propagate `None`, or `|> option.flat_map { x -> ... }` to continue the pipeline on the Some value
+
+error[type]: type '(Result(Map(String, P), t.TomlError), Result(Map(String, _), t.TomlError), Option(Date), Int, j.Value)' does not implement trait 'Display': part #1 > variant 'Ok' payload #1 > value > field 'p' is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+ --> main.silt:18:11
+    |
+ 18 |   println((a, b, d, e, j.Null))
+    |           ^^^^^^^^^^^^^^^^^^^^ here

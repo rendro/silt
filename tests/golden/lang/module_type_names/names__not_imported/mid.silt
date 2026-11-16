@@ -1,0 +1,13 @@
+import da
+
+pub fn sq() -> da.Sq {
+  da.sq()
+}
+
+pub fn color() -> da.Color {
+  da.color()
+}
+
+pub fn measured(x: a) -> Int where a: da.Area {
+  da.Area.area(x)
+}
