@@ -132,7 +132,7 @@ pub(crate) fn stdout_and_stderr_are_one() -> bool {
     {
         use std::io::IsTerminal;
         use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Foundation::{CompareObjectHandles, HANDLE};
+        use windows_sys::Win32::Foundation::{CompareObjectHandles, HANDLE, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::Storage::FileSystem::{
             BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
         };
@@ -141,7 +141,11 @@ pub(crate) fn stdout_and_stderr_are_one() -> bool {
         }
         let out = io::stdout().as_raw_handle() as HANDLE;
         let err = io::stderr().as_raw_handle() as HANDLE;
-        if out.is_null() || err.is_null() {
+        // A standard handle that is not there is null, or
+        // INVALID_HANDLE_VALUE, which is also the value of the process's
+        // own pseudo handle: two of them would compare as one object.
+        let missing = |handle: HANDLE| handle.is_null() || handle == INVALID_HANDLE_VALUE;
+        if missing(out) || missing(err) {
             return false;
         }
         // SAFETY: both are the process's standard handles, open for its
@@ -156,7 +160,10 @@ pub(crate) fn stdout_and_stderr_are_one() -> bool {
             // value of it; the call writes it and only reads the handle.
             let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
             let read = unsafe { GetFileInformationByHandle(handle, &mut info) } != 0;
-            read.then_some((
+            // (A file system that gives no index gives 0: unknown, never
+            // the same file as another.)
+            let known = info.nFileIndexHigh != 0 || info.nFileIndexLow != 0;
+            (read && known).then_some((
                 info.dwVolumeSerialNumber,
                 info.nFileIndexHigh,
                 info.nFileIndexLow,
