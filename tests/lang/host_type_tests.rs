@@ -432,6 +432,10 @@ fn a_malformed_host_type_is_reported() {
             }),
             "module 'time' has no type 'Nope'",
         ),
+        (
+            HostModule::new("h").declare_type("type P {}"),
+            "a record needs a field: for a type of one value write `type P { P }`",
+        ),
     ];
     for (host, expected) in cases {
         let shown = format!("{host:?}");
