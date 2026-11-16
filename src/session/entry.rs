@@ -58,7 +58,8 @@ pub(super) fn missing_main(file: FileId, path: &str) -> Diagnostic {
     );
     if is_test_file(std::path::Path::new(path)) {
         d.with_note(format!(
-            "This looks like a test file — run it with 'silt test {path}' instead."
+            "This looks like a test file — run it with 'silt test {}' instead.",
+            crate::source::shown_path(path)
         ))
     } else {
         d.with_note("add one as the entry point")

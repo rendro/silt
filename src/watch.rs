@@ -294,7 +294,10 @@ impl Runner for ChildRunner {
                 );
                 self.child = Some(child);
             }
-            Err(e) => eprintln!("error: failed to run {}: {e}", self.exe.display()),
+            Err(e) => eprintln!(
+                "error: failed to run {}: {e}",
+                crate::source::shown_path(&self.exe)
+            ),
         }
     }
 

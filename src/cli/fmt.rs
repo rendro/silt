@@ -137,7 +137,7 @@ pub(crate) fn dispatch(args: &[String]) {
         if !has_anchor && !explicit_dot {
             eprintln!(
                 "error: silt fmt: refusing to recursively format {} — no silt.toml found in this directory or any parent",
-                cwd.display()
+                crate::source::shown_path(&cwd)
             );
             eprintln!("                 pass an explicit `.` or file paths to format anyway.");
             process::exit(1);
@@ -150,7 +150,7 @@ pub(crate) fn dispatch(args: &[String]) {
         };
         eprintln!(
             "silt fmt: {unasked}recursively {doing} all .silt files under {}",
-            cwd.display()
+            crate::source::shown_path(&cwd)
         );
         walked = true;
     }
@@ -196,7 +196,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 Ok(true) => {
                     changed += 1;
                     if walked {
-                        eprintln!("{file}: formatted");
+                        eprintln!("{}: formatted", crate::source::shown_path(file));
                     }
                 }
                 Err(e) => {
@@ -265,7 +265,8 @@ fn format_stdin(check_mode: bool, tamper: Option<&Tamper>) -> ! {
         Ok(source) => source,
         Err(e) => {
             eprintln!(
-                "error reading {name}: {}",
+                "error reading {}: {}",
+                crate::source::shown_path(name),
                 crate::diagnostic::io_error_text(&e)
             );
             process::exit(2);
@@ -280,7 +281,7 @@ fn format_stdin(check_mode: bool, tamper: Option<&Tamper>) -> ! {
     };
     if check_mode {
         if formatted != source {
-            eprintln!("{name}: not formatted");
+            eprintln!("{}: not formatted", crate::source::shown_path(name));
             process::exit(1);
         }
     } else {
@@ -301,7 +302,8 @@ fn format_stdin(check_mode: bool, tamper: Option<&Tamper>) -> ! {
 fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<bool, String> {
     let source = fs::read_to_string(path).map_err(|e| {
         format!(
-            "error reading {path}: {}",
+            "error reading {}: {}",
+            crate::source::shown_path(path),
             crate::diagnostic::io_error_text(&e)
         )
     })?;
@@ -377,7 +379,8 @@ fn check_format(path: &str, tamper: Option<&Tamper>) -> CheckOutcome {
         Ok(s) => s,
         Err(e) => {
             eprintln!(
-                "error reading {path}: {}",
+                "error reading {}: {}",
+                crate::source::shown_path(path),
                 crate::diagnostic::io_error_text(&e)
             );
             return CheckOutcome::InfraError;
@@ -388,7 +391,7 @@ fn check_format(path: &str, tamper: Option<&Tamper>) -> CheckOutcome {
             if source == formatted {
                 CheckOutcome::Formatted
             } else {
-                eprintln!("{path}: not formatted");
+                eprintln!("{}: not formatted", crate::source::shown_path(path));
                 CheckOutcome::Unformatted
             }
         }

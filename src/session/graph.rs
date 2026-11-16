@@ -798,9 +798,7 @@ impl ModuleGraph {
                             let mut d = module::module_load_error(
                                 &resolve(name),
                                 &module.path,
-                                &crate::git::escape_for_display(&module_path_for_display(
-                                    &module.path,
-                                )),
+                                &crate::source::shown_path(module_path_for_display(&module.path)),
                                 &std::io::Error::new(*kind, text.clone()),
                                 span,
                             );
@@ -1114,7 +1112,7 @@ fn resolve_import(
                 format!(
                     "package '{module_name}' has no library entry point — \
                      expected `src/lib.silt` in the dep at {}",
-                    crate::git::escape_for_display(&src.display().to_string())
+                    crate::source::shown_path(&src)
                 ),
             ));
         }
@@ -1260,7 +1258,7 @@ fn decl_span(decl: &Decl) -> Span {
 /// file at `path`, or a dependency of that key whose library it is,
 /// would also answer.
 fn host_collision(name: Symbol, path: &Path, dependency: bool, span: Span) -> Diagnostic {
-    let shown = crate::git::escape_for_display(&module_path_for_display(path));
+    let shown = crate::source::shown_path(module_path_for_display(path));
     let (what, help) = if dependency {
         (
             format!("the dependency `{name}` ({shown})"),

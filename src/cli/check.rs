@@ -538,7 +538,8 @@ enum Shown {
 fn report_unreadable(unreadable: &[(String, std::io::Error)]) {
     for (path, e) in unreadable {
         eprintln!(
-            "error reading {path}: {}",
+            "error reading {}: {}",
+            crate::source::shown_path(path),
             crate::diagnostic::io_error_text(e)
         );
     }
