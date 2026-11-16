@@ -1,0 +1,6 @@
+error[type]: type 'a' has no field 'go'
+ --> main.silt:8:37
+   |
+ 8 | fn use(x: a) -> Int where a: Some { x.go() }
+   |                                     ^^^^ type 'a' has no field 'go'
+  = help: `go` is a method of trait `Some`, which the variant `Some` hides in expressions: import `m` to call it as `m.Some.go(x)`
