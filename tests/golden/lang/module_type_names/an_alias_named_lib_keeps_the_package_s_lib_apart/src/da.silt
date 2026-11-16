@@ -1,0 +1,4 @@
+import lib
+pub type T { A }
+pub fn mine() -> T { A }
+pub fn theirs() -> lib.T { lib.L }

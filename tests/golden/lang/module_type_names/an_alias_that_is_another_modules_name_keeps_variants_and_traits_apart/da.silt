@@ -1,0 +1,7 @@
+import other
+pub type T { A, B }
+pub trait Area { fn area(self) -> Int }
+pub fn mine() -> T { A }
+pub fn theirs() -> other.T { other.A }
+pub fn need(x: a) -> Int where a: other.Area { 1 }
+pub fn need_da(x: a) -> Int where a: Area { 1 }

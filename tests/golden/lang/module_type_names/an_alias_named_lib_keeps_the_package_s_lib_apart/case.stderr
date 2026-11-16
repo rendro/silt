@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected String, got (lib.T, T of module lib, T)
+ --> src/main.silt:13:19
+    |
+ 13 |   let s: String = (a, b, Own)
+    |                   ^^^^^^^^^^^ type mismatch: expected String, got (lib.T, T of module lib, T)

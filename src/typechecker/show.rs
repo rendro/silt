@@ -141,7 +141,7 @@ impl TypeChecker {
         Type::show_all(types, |r, clash| {
             (clash
                 || (session && self.type_name_clashes(r))
-                || self.other_module(r).is_some()
+                || self.is_other_module(r)
                 || self.described_type(r).is_some()
                 || self.shadowed_cell_type(r))
             .then(|| self.qualified_type(r))
@@ -180,19 +180,21 @@ impl TypeChecker {
                 .is_some_and(|def| self.cells.contains(&def.module))
     }
 
-    /// The module of `r` if it is another module than the one being
-    /// checked, as a program names it: a builtin module (`json`,
-    /// `time`) or a module of the program's. `None` for a prelude type,
-    /// for one of the module's own, and in a REPL cell for one of an
-    /// earlier cell, which the cell writes by its name.
-    pub(super) fn other_module(&self, r: TypeRef) -> Option<Symbol> {
+    /// Whether `r` is a type of another module than the one being
+    /// checked that a message writes with its module (by
+    /// `written_member`, the one naming rule): a builtin module's
+    /// (`json`, `time`) or a program module's. Not a prelude type, not
+    /// one of the module's own, not, in a REPL cell, one of an earlier
+    /// cell, which the cell writes by its name. (Only a test: the name
+    /// written is `written_member`'s.)
+    pub(super) fn is_other_module(&self, r: TypeRef) -> bool {
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, module)) => module.map(|module| self.builtin_module_name_here(module)),
+            Some((_, module)) => module.is_some(),
             None => self
                 .def(r.id.0)
                 .filter(|def| def.module != self.module)
                 .and_then(|def| self.module_name_here(def.module))
-                .filter(|module| !resolve(*module).starts_with('<')),
+                .is_some_and(|module| !resolve(module).starts_with('<')),
         }
     }
 
@@ -363,8 +365,11 @@ impl TypeChecker {
         let described = |package: Option<Symbol>| {
             Some(ModuleWritten::Described {
                 package,
+                // (A package's library is named by its package: `InErr of
+                // package inner`; the file's own package's `lib` by its
+                // module, `T of module lib`.)
                 module: (self.tables.module_names.get(&module).copied())
-                    .filter(|name| resolve(*name) != "lib"),
+                    .filter(|name| package.is_none() || resolve(*name) != "lib"),
             })
         };
         if package(module) != package(self.module) && self.import_path(module).is_none() {
@@ -421,15 +426,15 @@ impl TypeChecker {
     /// reach, as they spell it (`spelling_in_reach`); the module's own
     /// name where none does.
     pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
-        match self.other_module(enum_ty) {
+        match self.is_other_module(enum_ty) {
             // (Of a module no import here reaches, by its own name: the
             // module's name is none the program can write.)
-            Some(_) if self.variant_out_of_reach(enum_ty, name) => name.to_string(),
-            Some(_) => match self.module_of_type(enum_ty) {
+            true if self.variant_out_of_reach(enum_ty, name) => name.to_string(),
+            true => match self.module_of_type(enum_ty) {
                 Some(id) => self.written_member(id, &resolve(name)),
                 None => name.to_string(),
             },
-            None => name.to_string(),
+            false => name.to_string(),
         }
     }
 
@@ -451,9 +456,9 @@ impl TypeChecker {
     /// None where its imports put it in no reach (`import errs.{
     /// AppError }` names no `Io`): for a help that offers code to write.
     pub(super) fn variant_in_reach(&self, enum_ty: TypeRef, name: Symbol) -> Option<String> {
-        match self.other_module(enum_ty) {
-            Some(_) => self.spelling_in_reach(self.module_of_type(enum_ty)?, &resolve(name)),
-            None => Some(name.to_string()),
+        match self.is_other_module(enum_ty) {
+            true => self.spelling_in_reach(self.module_of_type(enum_ty)?, &resolve(name)),
+            false => Some(name.to_string()),
         }
     }
 

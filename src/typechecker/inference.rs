@@ -264,9 +264,9 @@ impl TypeChecker {
         // (A refusal of `T.decode` names it so, a type of another module
         // with its module: `mail.Box.decode` beside a `Box` of the
         // module's own.)
-        let callee = match self.other_module(head) {
-            Some(_) => intern(&format!("{}.{method}", self.written_type(head))),
-            None => intern(&format!("{head}.{method}")),
+        let callee = match self.is_other_module(head) {
+            true => intern(&format!("{}.{method}", self.written_type(head))),
+            false => intern(&format!("{head}.{method}")),
         };
         // (The decoder a note names, through a function that hands its
         // type on: `bm` passes it to `Box.decode`.)

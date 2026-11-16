@@ -1767,9 +1767,9 @@ impl TypeChecker {
     /// keeps its name), a type of another module with its module
     /// (`time.Date`, `shapes.Square`).
     fn impl_target_name(&self, ti: &TraitImpl, target_type: TypeRef) -> String {
-        let head = match self.other_module(target_type) {
-            Some(_) if ti.target_type == target_type.name => self.written_type(target_type),
-            _ => ti.target_type.to_string(),
+        let head = match self.is_other_module(target_type) && ti.target_type == target_type.name {
+            true => self.written_type(target_type),
+            false => ti.target_type.to_string(),
         };
         // A type constructor, with its arguments (`Result(_, e)`).
         match ti.target_type_args.iter().any(is_hole) {
