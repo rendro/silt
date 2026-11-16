@@ -2466,7 +2466,7 @@ impl TypeChecker {
                 None => {
                     let module = (self.import_path(def.module))
                         .or_else(|| self.tables.module_names.get(&def.module).copied())
-                        .map_or_else(|| "its module".to_string(), |m| resolve(m));
+                        .map_or_else(|| "its module".to_string(), resolve);
                     Err(format!(
                         "{hidden}: import `{module}` to call it as {}",
                         call(&module)
