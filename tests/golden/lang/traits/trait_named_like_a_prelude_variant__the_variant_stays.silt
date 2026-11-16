@@ -1,0 +1,46 @@
+-- A trait named like a variant of the prelude (Some, None, Ok, Err)
+-- leaves the variant the variant in expressions and patterns, as a
+-- variant of the program's own does (audit R9, review N3: this was a
+-- compiler bug, "the name 'Some' has no binding in the compiled code").
+trait Some {
+  fn go(self) -> Int
+}
+
+trait None {
+  fn go(self) -> Int
+}
+
+trait Ok {
+  fn go(self) -> Int
+}
+
+trait Err {
+  fn go(self) -> Int
+}
+
+trait Some for Int {
+  fn go(self) -> Int { self + 1 }
+}
+
+fn pick(o: Option(Int)) -> Int {
+  match o {
+    Some(n) -> n
+    None -> 0
+  }
+}
+
+fn fold(r: Result(Int, String)) -> Int {
+  match r {
+    Ok(n) -> n
+    Err(_) -> -1
+  }
+}
+
+fn main() {
+  let a = Some(1)
+  let b: Option(Int) = None
+  let c: Result(Int, String) = Ok(2)
+  let d: Result(Int, String) = Err("no")
+  println((a, b, c, d))
+  println((pick(a), pick(b), fold(c), fold(d)))
+}

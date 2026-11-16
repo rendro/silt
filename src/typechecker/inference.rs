@@ -1596,9 +1596,14 @@ impl TypeChecker {
         }
         let enum_name =
             (self.spell_def(ty.0)).or_else(|| self.def(ty.0).map(|d| resolve(d.name)))?;
+        // (A variant of the prelude cannot be renamed: the trait can.)
+        let rename = match self.def(ty.0).is_some_and(|d| d.module.is_builtin()) {
+            true => "the trait",
+            false => "the variant",
+        };
         Some(format!(
             "`{written}` here is the variant `{enum_name}.{written}`, which hides the trait \
-             `{written}` in expressions: rename the variant to call `{written}.{field}`"
+             `{written}` in expressions: rename {rename} to call `{written}.{field}`"
         ))
     }
 
