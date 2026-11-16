@@ -40,7 +40,7 @@ Returned by `int.parse`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Empty` | — | input was empty |
+| `Empty` | — | no digits: nothing but whitespace, or a sign alone |
 | `InvalidDigit(Int)` | byte offset | non-digit character at offset |
 | `Overflow` | — | value exceeds type max |
 | `Underflow` | — | value below type min |
@@ -62,7 +62,7 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Empty` | — | input was empty |
+| `Empty` | — | no digits: nothing but whitespace, or a sign or a point alone |
 | `InvalidDigit(Int)` | byte offset | character that is no part of a number at offset |
 | `Overflow` | — | literal above the `Float` range |
 | `Underflow` | — | literal below the `Float` range |
