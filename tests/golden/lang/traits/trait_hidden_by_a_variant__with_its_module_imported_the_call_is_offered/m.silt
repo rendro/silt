@@ -1,2 +1,0 @@
-pub trait Foo { fn hop(self) -> Int }
-trait Foo for Int { fn hop(self) -> Int { self + 1 } }

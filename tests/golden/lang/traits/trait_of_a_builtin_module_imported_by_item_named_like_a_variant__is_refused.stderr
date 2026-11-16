@@ -1,0 +1,13 @@
+error[type]: the trait 'Encode' imported here takes the name of variant 'T.Encode' of this module
+ --> trait_of_a_builtin_module_imported_by_item_named_like_a_variant__is_refused.silt:9:15
+   |
+ 9 | import json.{ Encode }
+   |               ^^^^^^ the trait 'Encode' imported here takes the name of variant 'T.Encode' of this module
+  = help: import the module and write the trait with it, `import json` and `json.Encode`: in an expression `Encode` is the variant, so no method of the trait could be called
+
+error[type]: type 'Fn(Int) -> T' has no field 'encode'
+ --> trait_of_a_builtin_module_imported_by_item_named_like_a_variant__is_refused.silt:14:3
+    |
+ 14 |   Encode.encode(x)
+    |   ^^^^^^^^^^^^^ type 'Fn(Int) -> T' has no field 'encode'
+  = help: `encode` is a method of trait `json.Encode`: call it as `json.Encode.encode(x)`

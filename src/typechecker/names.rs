@@ -823,6 +823,58 @@ fn bind_imports(
                             diagnostics,
                         );
                     }
+                    // A trait imported by item that a variant of the module
+                    // names: in an expression the name is the variant, so
+                    // none of its methods could be called here. Refused at
+                    // the import, as a trait declared so is; it takes no
+                    // name. (A REPL session is one module: the variant may
+                    // be an earlier entry's, and the import an earlier
+                    // entry's, carried here; then the variant, which comes
+                    // second, is the one refused.)
+                    if !is_cell
+                        && let Some(Binding::Def(id)) = &ty
+                        && matches!(defs.get(*id).kind, DefKind::Trait(_))
+                        && let Some((enum_name, own_span)) =
+                            variant_of_name(program, scope, defs, *item)
+                    {
+                        let diagnostic = match own_span {
+                            // The import is an earlier entry's.
+                            Some(variant_span)
+                                if kind == ModuleKind::Cell
+                                    && item_span.file != variant_span.file =>
+                            {
+                                Diagnostic::error(
+                                    Code::InvalidTraitDeclaration,
+                                    variant_span,
+                                    format!(
+                                        "variant '{enum_name}.{item}' takes the name of trait \
+                                         '{item}', which an earlier entry imported from `{m}`"
+                                    ),
+                                )
+                                .with_help(format!(
+                                    "choose another name for the variant: in an expression \
+                                     `{item}` would be the variant, so no method of the trait \
+                                     could be called"
+                                ))
+                            }
+                            _ => Diagnostic::error(
+                                Code::InvalidTraitDeclaration,
+                                *item_span,
+                                format!(
+                                    "the trait '{item}' imported here takes the name of variant \
+                                     '{enum_name}.{item}' of this module"
+                                ),
+                            )
+                            .with_help(format!(
+                                "import the module and write the trait with it, `import {m}` and \
+                                 `{m}.{item}`: in an expression `{item}` is the variant, so no \
+                                 method of the trait could be called"
+                            )),
+                        };
+                        diagnostics.push(diagnostic);
+                        scope.refused_traits.insert(*item);
+                        continue;
+                    }
                     if let Some(binding) = ty {
                         // An enum imported from an earlier REPL cell
                         // brings its variants: the cell saw them.
@@ -844,6 +896,39 @@ fn bind_imports(
             }
         }
     }
+}
+
+/// The enum of a variant named `name` the module sees, and where the
+/// module declares it: one of its own (with its span), or, in a REPL
+/// entry, one of an earlier entry's enum (no span: the entry sees it
+/// through the enum, `scope.implied`). None for no such variant.
+fn variant_of_name(
+    program: &Program,
+    scope: &ModuleScope,
+    defs: &DefTable,
+    name: Symbol,
+) -> Option<(Symbol, Option<Span>)> {
+    let own = (program.decls.iter()).find_map(|decl| match decl {
+        Decl::Type(td) => match &td.body {
+            TypeBody::Enum(vs) => vs
+                .iter()
+                .find(|v| v.name == name)
+                .map(|v| (td.name, Some(v.name_span))),
+            _ => None,
+        },
+        _ => None,
+    });
+    own.or_else(|| {
+        let id = match scope.implied.get(&name)? {
+            Binding::Def(id) => *id,
+            Binding::Ambiguous(ids) => *ids.first()?,
+            _ => return None,
+        };
+        match defs.get(id).kind {
+            DefKind::Variant { ty, .. } => Some((defs.get(ty.0).name, None)),
+            _ => None,
+        }
+    })
 }
 
 /// For a REPL entry `program`, the item `item` it takes from the earlier

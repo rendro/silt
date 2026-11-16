@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: type T { Encode(Int), Bar }\nimport json.{ Encode }\nEncode(1)\nimport json\njson.stringify(json.Encode.encode(3))\n:quit\n
+-- The other order (card IMP-1): an entry that imports by item a trait
+-- named like a variant of an earlier entry is refused at the import with
+-- the file's text; the variant keeps working, and the trait is reached
+-- through its module (audit R9).

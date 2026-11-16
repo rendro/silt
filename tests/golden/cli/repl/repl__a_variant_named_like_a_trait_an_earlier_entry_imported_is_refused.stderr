@@ -1,0 +1,11 @@
+error[type]: variant 'T.Encode' takes the name of trait 'Encode', which an earlier entry imported from `json`
+ --> <repl:2>:1:10
+   |
+ 1 | type T { Encode(Int), Bar }
+   |          ^^^^^^ variant 'T.Encode' takes the name of trait 'Encode', which an earlier entry imported from `json`
+  = help: choose another name for the variant: in an expression `Encode` would be the variant, so no method of the trait could be called
+error[type]: undefined variable 'Bar'
+ --> <repl:3>:1:1
+   |
+ 1 | Bar
+   | ^^^ undefined variable 'Bar'

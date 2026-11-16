@@ -1595,8 +1595,25 @@ impl TypeChecker {
             Type::List(_) => "xs",
             _ => "x",
         };
-        let written = match recv.map(|recv| &recv.kind) {
-            Some(ExprKind::Ident(name)) => resolve(*name),
+        // (A variant named like a trait with the method, `Encode.encode(x)`
+        // where a refused import left `Encode` the variant: the trait was
+        // meant, not the variant as the argument.)
+        let names_a_trait = |name: Symbol| {
+            (self.tables.traits.iter()).any(|(t, info)| {
+                info.methods.iter().any(|(n, _)| *n == field)
+                    && self.def(t.id.0).is_some_and(|d| d.name == name)
+            })
+        };
+        let written = match recv.map(|recv| (&recv.kind, recv.res)) {
+            Some((ExprKind::Ident(name), Some(crate::defs::Res::Def(id))))
+                if self
+                    .def(id)
+                    .is_some_and(|d| matches!(d.kind, crate::defs::DefKind::Variant { .. }))
+                    && names_a_trait(*name) =>
+            {
+                placeholder.to_string()
+            }
+            Some((ExprKind::Ident(name), _)) => resolve(*name),
             _ => placeholder.to_string(),
         };
         // A value named as a type variable of the signature whose bound has
@@ -1629,10 +1646,11 @@ impl TypeChecker {
     /// The help for `V.field`, where the name `V` is a variant and a
     /// trait in sight of the same name has a method `field`: the
     /// variant hides the trait in an expression (a declaration of the
-    /// module comes before the prelude's): a builtin trait (`Number`,
-    /// `Functor`), or a trait of another module the module imports by item
-    /// (a trait it declares beside a variant of its name is refused,
-    /// `register_trait_decl_user`).
+    /// module comes before the prelude's). The trait is the prelude's
+    /// (`Number`, `Functor`): a trait a program declares, or a trait of
+    /// any other module imported by item, is refused where a variant of
+    /// its module (or REPL session) has its name (`register_trait_decl_user`,
+    /// `names::bind_imports`).
     fn variant_hides_trait(&self, recv: &Expr, field: Symbol) -> Option<String> {
         let ExprKind::Ident(name) = recv.kind else {
             return None;
@@ -1646,21 +1664,21 @@ impl TypeChecker {
         let written = resolve(name);
         // (A method no program calls, `Equal.equal`, `Display.display`,
         // is no reason to rename: `method_help` says what to write.)
-        let hidden = (self.tables.traits.iter())
+        let hides = (self.tables.traits.iter())
             .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
             .map(|(t, _)| *t)
             .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
             .filter(|t| uncallable_builtin(*t, field, &written).is_none())
-            .find(|t| self.spell_trait(*t) == written)?;
+            .any(|t| self.spell_trait(t) == written);
+        if !hides {
+            return None;
+        }
         let enum_name =
             (self.spell_def(ty.0)).or_else(|| self.def(ty.0).map(|d| resolve(d.name)))?;
-        let how = match self.unhidden_call(hidden, id, field, "x") {
-            Ok(call) => format!("call it as {call}"),
-            Err(what) => what,
-        };
         Some(format!(
             "`{written}` here is the variant `{enum_name}.{written}`, which hides the trait \
-             `{written}` in expressions: {how}"
+             `{written}` in expressions: {}",
+            self.unhide_trait(id, &written, field)
         ))
     }
 
@@ -2413,11 +2431,10 @@ impl TypeChecker {
         );
     }
 
-    /// The variant the module binds `written` (a trait's name as this
-    /// module writes it) to in an expression, which hides the trait there
-    /// (`type Kind { Number }` beside the prelude's `Number`, a variant of
-    /// the module beside a trait it imports by item): `written.method(x)`
-    /// names the variant. None where nothing hides it.
+    /// The variant the module binds `written` (a builtin trait's name as
+    /// this module writes it) to in an expression, which hides the trait
+    /// there (`type Kind { Number }` beside the prelude's `Number`):
+    /// `written.method(x)` names the variant. None where nothing hides it.
     fn variant_hiding_trait(&self, written: &str) -> Option<crate::defs::DefId> {
         if written.contains('.') {
             return None;
@@ -2433,56 +2450,19 @@ impl TypeChecker {
             .map(|(id, _)| *id)
     }
 
-    /// Where the variant `variant` hides the trait `t` in expressions, so
-    /// that `Trait.field(..)` names the variant: the call this module can
-    /// write all the same, or what to do. A trait of another module (one
-    /// it imports by item, beside its own variant; a builtin module's too,
-    /// `json.Encode`) is called through its module, by the file's name for
-    /// it (`m.Foo.hop(x)`), or after an import of the module. A trait of
-    /// the prelude (`Number`, `Functor`): rename
-    /// the variant where it is the module's own; write it through its
-    /// module where the module imports it by item. (A trait of the module,
-    /// or of the REPL session, beside a variant of its name is refused.)
-    fn unhidden_call(
-        &self,
-        t: TraitKey,
-        variant: crate::defs::DefId,
-        field: Symbol,
-        x: &str,
-    ) -> Result<String, String> {
-        let written = self.spell_trait(t);
-        let rest = if self.method_arity(t, field) > 1 {
-            ", .."
-        } else {
-            ""
-        };
-        if let Some(def) = self.def(t.id.0)
-            && def.module != self.module
-            && def.module != crate::defs::ModuleId::PRELUDE
-            && !self.cells.contains(&def.module)
-        {
-            let call = |module: &str| format!("`{module}.{}.{field}({x}{rest})`", def.name);
-            return match self.module_spelled.get(&def.module) {
-                Some(binding) => Ok(call(&resolve(*binding))),
-                None => {
-                    let module = (self.import_path(def.module))
-                        .or_else(|| self.tables.module_names.get(&def.module).copied())
-                        .map(resolve)
-                        .or_else(|| def.module.builtin_name().map(str::to_string))
-                        .unwrap_or_else(|| "its module".to_string());
-                    Err(format!("import `{module}` to call it as {}", call(&module)))
-                }
-            };
-        }
-        // (A REPL session is one module: an earlier entry's variant is
-        // the session's own.)
-        Err(match self.def(variant) {
+    /// What to do where the variant `variant` hides the builtin trait
+    /// `written` in expressions, to call its method `field`: rename the
+    /// variant where it is the module's own; write it through its module
+    /// where the module imports it by item. (A REPL session is one module:
+    /// an earlier entry's variant is the session's own.)
+    fn unhide_trait(&self, variant: crate::defs::DefId, written: &str, field: Symbol) -> String {
+        match self.def(variant) {
             Some(d) if d.module != self.module && !self.cells.contains(&d.module) => format!(
                 "import the variant's module and write the variant through it, so that \
                  `{written}.{field}` is the trait's"
             ),
             _ => format!("rename the variant to call `{written}.{field}`"),
-        })
+        }
     }
 
     /// The help that offers the calls of the method `field` of `traits`
@@ -2515,9 +2495,9 @@ impl TypeChecker {
     }
 
     /// The call of the method `field` of the trait `t` on `x` as this
-    /// module writes it (`Area.go(x)`; through its module where a variant
-    /// hides it, `unhidden_call`), or, where it can write none, the help
-    /// that says why and what to do.
+    /// module writes it (`Area.go(x)`), or, where it can write none, the
+    /// help that says why and what to do: a variant of the module hides a
+    /// builtin trait of its name in expressions (`variant_hiding_trait`).
     fn trait_call(&self, t: TraitKey, field: Symbol, x: &str) -> Result<String, String> {
         let shown = self.spell_trait(t);
         let rest = if self.method_arity(t, field) > 1 {
@@ -2525,15 +2505,14 @@ impl TypeChecker {
         } else {
             ""
         };
-        let Some(variant) = self.variant_hiding_trait(&shown) else {
-            return Ok(format!("`{shown}.{field}({x}{rest})`"));
-        };
-        self.unhidden_call(t, variant, field, x).map_err(|what| {
-            format!(
+        match self.variant_hiding_trait(&shown) {
+            None => Ok(format!("`{shown}.{field}({x}{rest})`")),
+            Some(variant) => Err(format!(
                 "`{field}` is a method of trait `{shown}`, which the variant `{shown}` hides in \
-                 expressions: {what}"
-            )
-        })
+                 expressions: {}",
+                self.unhide_trait(variant, &shown, field)
+            )),
+        }
     }
 
     /// The number of parameters of the method `field` of the trait `tr`.

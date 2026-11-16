@@ -1,6 +1,0 @@
-error[type]: type 'a' has no field 'hop'
- --> main.silt:9:36
-   |
- 9 | fn use(x: a) -> Int where a: Foo { x.hop() }
-   |                                    ^^^^^ type 'a' has no field 'hop'
-  = help: `hop` is a method of trait `Foo`, which the variant `Foo` hides in expressions: import `m` to call it as `m.Foo.hop(x)`

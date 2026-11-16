@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A dependency's trait imported by item beside the file's variant of its
+-- name is refused at the import; the help names the dependency by its
+-- key, `import d` and `d.Foo` (audit R9, card IMP-1).
+import d.{ Foo }
+
+type T { Foo(Int), Bar }
+
+fn main() {
+  println((Foo(1), Bar))
+}
