@@ -1280,6 +1280,9 @@ impl TypeChecker {
             let help = match sup {
                 Some(s) => uncallable_builtin_written(s, field, "x", &self.written_builtin("string.from")).or_else(|| {
                     let shown = self.spell_trait(s);
+                    if self.trait_hidden_in_expressions(&shown) {
+                        return Some(self.hidden_trait_help(&shown, field));
+                    }
                     let rest = if self.method_arity(s, field) > 1 { ", .." } else { "" };
                     Some(format!(
                         "`{field}` is a method of supertrait `{shown}`: call it as `{shown}.{field}(x{rest})`"
@@ -2251,6 +2254,15 @@ impl TypeChecker {
                     .filter(|t| self.self_param(**t, field).is_some())
                     .map(|t| self.spell_trait(*t))
                     .collect();
+                // (A call through a trait a variant hides is refused: none
+                // is offered.)
+                let (hidden, taking): (Vec<String>, Vec<String>) =
+                    (taking.into_iter()).partition(|shown| self.trait_hidden_in_expressions(shown));
+                if taking.is_empty()
+                    && let Some(shown) = hidden.first()
+                {
+                    return Some(self.hidden_trait_help(shown, field));
+                }
                 let rest = if params > 1 { ", .." } else { "" };
                 let calls: Vec<String> = (taking.iter())
                     .map(|shown| format!("`{shown}.{field}({written}{rest})`"))
@@ -2373,7 +2385,16 @@ impl TypeChecker {
                 uncallable_builtin_written(*first, field, "x", &self.written_builtin("string.from"))
                     .unwrap_or_default()
             }
+            _ if !callable.is_empty()
+                && (callable.iter())
+                    .all(|t| self.trait_hidden_in_expressions(&self.spell_trait(*t))) =>
+            {
+                self.hidden_trait_help(&self.spell_trait(callable[0]), field)
+            }
             _ => {
+                let callable: Vec<TraitKey> = (callable.iter().copied())
+                    .filter(|t| !self.trait_hidden_in_expressions(&self.spell_trait(*t)))
+                    .collect();
                 let of: Vec<String> = (callable.iter())
                     .map(|t| format!("trait `{}`", self.spell_trait(*t)))
                     .collect();
@@ -2396,6 +2417,53 @@ impl TypeChecker {
             (format!("type '{on}' has no method '{field}'"), Some(help)),
             span,
         );
+    }
+
+    /// Whether `written`, a trait as this module writes it, is a value in
+    /// an expression: a variant (or another value) of the module or of the
+    /// prelude has its bare name and hides the trait there (`trait Some`
+    /// beside the prelude's `Some`), so `written.method(x)` is refused.
+    fn trait_hidden_in_expressions(&self, written: &str) -> bool {
+        if written.contains('.') {
+            return false;
+        }
+        let name = intern(written);
+        let own_value = (self.spelled.iter()).any(|(id, binding)| {
+            *binding == name
+                && self
+                    .def(*id)
+                    .is_some_and(|def| !matches!(def.kind, crate::defs::DefKind::Trait(_)))
+        });
+        own_value
+            || super::names::builtins()
+                .1
+                .prelude
+                .values
+                .contains_key(&name)
+    }
+
+    /// The help for the method `field` of the trait written `shown` where
+    /// the trait is hidden in expressions (`trait_hidden_in_expressions`):
+    /// no call of it can be written in this module. What to rename: the
+    /// trait where the prelude's variant hides it (the prelude's cannot be
+    /// renamed), the variant where it is the module's own, as the help of
+    /// `shown.field` says.
+    fn hidden_trait_help(&self, shown: &str, field: Symbol) -> String {
+        let name = intern(shown);
+        let own_value = (self.spelled.iter()).any(|(id, binding)| {
+            *binding == name
+                && self
+                    .def(*id)
+                    .is_some_and(|def| !matches!(def.kind, crate::defs::DefKind::Trait(_)))
+        });
+        let rename = match own_value {
+            true => "the variant",
+            false => "the trait",
+        };
+        format!(
+            "`{field}` is a method of trait `{shown}`, which the variant `{shown}` hides in \
+             expressions: rename {rename} to call `{shown}.{field}`"
+        )
     }
 
     /// The number of parameters of the method `field` of the trait `tr`.

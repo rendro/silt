@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- A method of a trait a variant hides in expressions cannot be called as
+-- `Trait.method(x)` in that module, so the help of `x.go()` offers no such
+-- call: it says what to rename, the trait beside a prelude variant, the
+-- variant beside the module's own (audit R9, review P2).
+-- stderr-contains: help: `go` is a method of trait `Some`, which the variant `Some` hides in expressions: rename the trait to call `Some.go`
+-- stderr-contains: help: `size` is a method of trait `Foo`, which the variant `Foo` hides in expressions: rename the variant to call `Foo.size`
+-- stderr-not-contains: call it as
+type T { Foo(Int), Bar }
+
+trait Some {
+  fn go(self) -> Int
+}
+
+trait Foo {
+  fn size(self) -> Int
+}
+
+trait Some for Int {
+  fn go(self) -> Int { self }
+}
+
+trait Foo for Int {
+  fn size(self) -> Int { self }
+}
+
+fn twice(x: a) -> Int where a: Some {
+  x.go() + 1
+}
+
+fn main() {
+  println((twice(3), 4.size(), Foo(1), Bar))
+}
