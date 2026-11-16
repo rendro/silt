@@ -241,6 +241,16 @@ impl TypeChecker {
                 .or_else(|| self.opaque_encode_refusal(&ty, span, owner)),
             BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner),
         };
+        let builtin = match check {
+            BuiltinCheck::Decodes { builtin, .. }
+            | BuiltinCheck::Connection { builtin }
+            | BuiltinCheck::Params { builtin } => Some(builtin),
+            BuiltinCheck::Encodes { .. } => None,
+        };
+        let refusal = match builtin {
+            Some(builtin) => refusal.map(|d| self.builtin_named_as_written(d, &resolve(builtin))),
+            None => refusal,
+        };
         let Some(mut diagnostic) = refusal else {
             // A decoded list, option, map or tuple, or a generic type at
             // its arguments: what a type variable in it stands for is
@@ -690,7 +700,14 @@ impl TypeChecker {
         // them as the type of a record's field.
         if !is_primitive {
             let accepted = decoding.type_arguments(str::to_string);
-            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name)
+            // (By the type's own name, `time.DateTime`: the name shown is
+            // the file's, `DateTime` after `import time.{ DateTime }`.)
+            let own = match crate::defs::builtin_types().get(head.id.0.0 as usize) {
+                Some((name, Some(module))) => format!("{module}.{name}"),
+                Some((name, None)) => name.to_string(),
+                None => type_name.clone(),
+            };
+            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == own)
                 || [crate::typeinfo::ty::INSTANT, crate::typeinfo::ty::DURATION].contains(&head.id);
             let help = match decoded {
                 true => {
@@ -937,10 +954,7 @@ impl TypeChecker {
                     let (enum_type, _) = (nested.iter()).find(|(t, args)| {
                         self.tables.is_enum(*t) && !self.has_decode_impl_at(*t, args)
                     })?;
-                    (!family.decodes_enums()).then(|| match self.other_module(*enum_type) {
-                        Some(module) => format!("{module}.{}", enum_type.name),
-                        None => resolve(enum_type.name),
-                    })
+                    (!family.decodes_enums()).then(|| self.written_type(*enum_type))
                 }),
             };
             if let Some(part) = lacking {

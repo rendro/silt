@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A name the file can write both bare (imported by item) and through its
+-- module is written bare, the shorter: `Sq`, `load`; the names it imports
+-- only through the module keep the module: `da.Color` (audit R9, card
+-- NAM-1).
+import da
+import da.{ Sq, load }
+
+fn main() {
+  let s: Sq = da.sq()
+  let n: Int = s
+  let m = load(1, 2)
+  let c: Int = da.color()
+  println((n, m, c))
+}

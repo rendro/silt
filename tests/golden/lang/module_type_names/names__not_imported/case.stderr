@@ -1,0 +1,18 @@
+error[type]: type mismatch: expected Int, got da.Sq
+ --> main.silt:11:16
+    |
+ 11 |   let n: Int = s
+    |                ^ type mismatch: expected Int, got da.Sq
+
+error[type]: type 'Int' does not implement trait 'da.Area'
+ --> main.silt:12:24
+    |
+ 12 |   let a = mid.measured(1)
+    |                        ^ type 'Int' does not implement trait 'da.Area'
+
+error[type]: non-exhaustive match: missing variants da.Red, da.Green
+ --> main.silt:13:17
+    |
+ 13 |   let c = match mid.color() {
+    |                 ^^^^^^^^^^^ non-exhaustive match: missing variants da.Red, da.Green
+  = help: every arm has a guard, and guards are not counted for coverage; end with an arm without one (`_ -> ...`)

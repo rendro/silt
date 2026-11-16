@@ -265,7 +265,7 @@ impl TypeChecker {
         // with its module: `mail.Box.decode` beside a `Box` of the
         // module's own.)
         let callee = match self.other_module(head) {
-            Some(module) => intern(&format!("{module}.{}.{method}", head.name)),
+            Some(_) => intern(&format!("{}.{method}", self.written_type(head))),
             None => intern(&format!("{head}.{method}")),
         };
         // (The decoder a note names, through a function that hands its
@@ -3950,6 +3950,13 @@ impl TypeChecker {
                                 {
                                     let shown = format!("`{}.{method}`", self.show_trait(tr));
                                     (shown, written_params, args.len())
+                                }
+                                // A definition of another module: as the
+                                // file writes it (`t.parse_map`).
+                                _ if let Some(crate::defs::Res::Def(id)) = callee.res
+                                    && let Some(written) = self.written_def(id) =>
+                                {
+                                    (format!("`{written}`"), written_params, args.len())
                                 }
                                 (_, Some(name)) => {
                                     (format!("`{name}`"), written_params, args.len())

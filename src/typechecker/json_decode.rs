@@ -1234,6 +1234,7 @@ impl TypeChecker {
             if (self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error()) {
                 continue;
             }
+            let diagnostic = self.builtin_named_as_written(diagnostic, &resolve(named));
             self.errors.push(diagnostic);
         }
     }

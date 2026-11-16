@@ -1,0 +1,18 @@
+-- cmd: lsp
+-- lsp: hover 14:7
+-- lsp: hover 15:7
+-- lsp: hover 16:7
+-- lsp: hover 14:15
+-- Hover writes a name of another module as the messages do: bare where
+-- the file imports it by item (`Sq`, `Date`), with the module otherwise
+-- (`da.Color`) (audit R9, card NAM-1).
+import da
+import da.{ Sq, sq }
+import time.{ Date }
+
+fn main() {
+  let s: Sq = sq()
+  let c = da.color()
+  let d: Option(Date) = None
+  println((s, c, d))
+}

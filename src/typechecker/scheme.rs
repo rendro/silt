@@ -887,8 +887,9 @@ impl TypeChecker {
                 // (A builtin that writes what a decoder reads back,
                 // `csv.stringify`, decodes nothing: it writes rows. The
                 // refusal names it by its own name; the use as written.)
-                let writer = (in_full_callee(&error.message).as_deref())
-                    .is_some_and(super::builtin_checks::writes);
+                let writer = (in_full_callee(&error.message))
+                    .and_then(|shown| self.builtin_of_written(&shown))
+                    .is_some_and(|builtin| super::builtin_checks::writes(&builtin));
                 let what = match callee {
                     Some(callee) => format!("this use of '{callee}'"),
                     None => "this".to_string(),

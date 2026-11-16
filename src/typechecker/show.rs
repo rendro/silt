@@ -216,6 +216,126 @@ impl TypeChecker {
         self.tables.module_names.get(&module).copied()
     }
 
+    /// The name `name` of the module `module` (a type, a trait, a
+    /// function, a variant) as this file writes it, in every message,
+    /// help and answer of the editor: bare where the file imports the
+    /// name (`import da.{ Sq }`: `Sq`), with the file's name for the
+    /// module where it has one (`errs.Sq`, `t.parse_map`), else with the
+    /// module's own name (`da.Sq`), or described where that name is one
+    /// the file gives something else (`Sq of module other`). A name of
+    /// this module, or of the prelude, is bare. The one rule (NAM-1).
+    pub(super) fn written_member(&self, module: crate::defs::ModuleId, name: &str) -> String {
+        if module == self.module {
+            return name.to_string();
+        }
+        if let Some(spelled) = self.spelling_in_reach(module, name) {
+            return spelled;
+        }
+        match self.module_written(module) {
+            // (An earlier REPL cell's "module" has no name a program
+            // writes: its names are in scope by name.)
+            Some(ModuleWritten::Named(m)) if resolve(m).starts_with('<') => name.to_string(),
+            Some(ModuleWritten::Named(m)) => format!("{m}.{name}"),
+            Some(written @ ModuleWritten::Described { .. }) => written
+                .type_name(intern(name))
+                .replace(crate::types::AFTER_ARGUMENTS, ""),
+            None => name.to_string(),
+        }
+    }
+
+    /// The definition `id` as this file writes it ([`Self::written_member`]):
+    /// a function of another module (`t.parse_map`, `parse_map`), or of
+    /// this module by its name.
+    pub(super) fn written_def(&self, id: crate::defs::DefId) -> Option<String> {
+        let def = self.def(id)?;
+        Some(self.written_member(def.module, &resolve(def.name)))
+    }
+
+    /// The builtin function `qualified` (`toml.parse_map`, as the registry
+    /// names it) as this file writes it ([`Self::written_member`]).
+    pub(super) fn written_builtin(&self, qualified: &str) -> String {
+        match qualified.split_once('.') {
+            Some((module, name)) => match crate::defs::ModuleId::builtin(module) {
+                Some(id) => self.written_member(id, name),
+                None => qualified.to_string(),
+            },
+            None => qualified.to_string(),
+        }
+    }
+
+    /// The builtin function that `written` names as this file writes it
+    /// ([`Self::written_builtin`] the other way): `csv.stringify` for
+    /// `c.stringify` under `import csv as c`, for `stringify` after `import
+    /// csv.{ stringify }`, and for `csv.stringify`.
+    pub(super) fn builtin_of_written(&self, written: &str) -> Option<String> {
+        let found = (crate::module::builtin_modules().iter()).find_map(|module| {
+            let id = crate::defs::ModuleId::builtin(module)?;
+            let name = match written.rsplit_once('.') {
+                Some((_, name)) => name,
+                None => written,
+            };
+            (self.written_member(id, name) == written).then(|| format!("{module}.{name}"))
+        });
+        found.or_else(|| Some(written.to_string()))
+    }
+
+    /// `d`, a refusal of the builtin `qualified`, with the builtin and the
+    /// builtin types its "decodable field types" help line names written
+    /// as this file writes them (`t.parse_map`, `Date` after `import
+    /// time.{ Date }`).
+    pub(super) fn builtin_named_as_written(
+        &self,
+        mut d: Diagnostic,
+        qualified: &str,
+    ) -> Diagnostic {
+        let shown = self.written_builtin(qualified);
+        // A type or trait of a builtin module, `time.Date`, `json.Decode`:
+        // as the file writes it; None for any other text.
+        let builtin_type = |text: &str| -> Option<String> {
+            let (module, name) = text.split_once('.')?;
+            let id = crate::defs::ModuleId::builtin(module)?;
+            (name.starts_with(char::is_uppercase) && name.chars().all(char::is_alphanumeric))
+                .then(|| self.written_member(id, name))
+        };
+        // The items of a list of types: of a "field types are" help line,
+        // of a "type argument must be" message.
+        let listed = |line: &str| -> String {
+            let marker = [" field types are ", " must be "]
+                .into_iter()
+                .find(|marker| line.contains(marker));
+            let Some((head, list)) = marker.and_then(|marker| line.split_once(marker)) else {
+                return line.to_string();
+            };
+            let list: Vec<String> = (list.split(", "))
+                .map(|item| builtin_type(item).unwrap_or_else(|| item.to_string()))
+                .collect();
+            format!("{head}{}{}", marker.unwrap_or_default(), list.join(", "))
+        };
+        // Each name in backticks.
+        let quoted = |text: &str| -> String {
+            let mut parts = text.split('`');
+            let mut out = parts.next().unwrap_or_default().to_string();
+            for (i, part) in parts.enumerate() {
+                out.push('`');
+                match builtin_type(part) {
+                    Some(written) if i % 2 == 0 => out.push_str(&written),
+                    _ => out.push_str(part),
+                }
+            }
+            out
+        };
+        let word = |text: &str| {
+            quoted(&listed(
+                &text.replace(&format!("`{qualified}`"), &format!("`{shown}`")),
+            ))
+        };
+        d.message = word(&d.message);
+        for line in d.help.iter_mut().chain(d.notes.iter_mut()) {
+            *line = word(line);
+        }
+        d
+    }
+
     /// [`TypeChecker::module_name_here`] of the builtin module `module`
     /// (`json`): the name the file gives it where it imports it (`j` for
     /// `import json as j`), else its own.
@@ -255,8 +375,7 @@ impl TypeChecker {
         // another module (`import da as other` beside a module `other`):
         // its types are described, so that two types are never written
         // alike (`other.T` is da's here).
-        let renamed_away = !self.module_spelled.contains_key(&module)
-            && (self.module_spelled.iter()).any(|(m, binding)| *m != module && *binding == name);
+        let renamed_away = !self.module_spelled.contains_key(&module) && self.bound_here(name);
         match renamed_away {
             true => described(None),
             false => Some(ModuleWritten::Named(name)),
@@ -306,9 +425,10 @@ impl TypeChecker {
             // (Of a module no import here reaches, by its own name: the
             // module's name is none the program can write.)
             Some(_) if self.variant_out_of_reach(enum_ty, name) => name.to_string(),
-            Some(module) => (self.module_of_type(enum_ty))
-                .and_then(|id| self.spelling_in_reach(id, &resolve(name)))
-                .unwrap_or_else(|| format!("{module}.{name}")),
+            Some(_) => match self.module_of_type(enum_ty) {
+                Some(id) => self.written_member(id, &resolve(name)),
+                None => name.to_string(),
+            },
             None => name.to_string(),
         }
     }
@@ -425,29 +545,32 @@ impl TypeChecker {
     /// that the cell names by its name (`<repl:1>.H` is the `H` an
     /// earlier cell declared again).
     fn qualified_type(&self, r: TypeRef) -> String {
-        if let Some(described) = self.described_type(r) {
-            return described;
-        }
-        let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-            Some((_, Some(module))) => Some(self.builtin_module_name_here(module)),
-            Some((_, None)) => Some(intern("prelude")),
-            None => self
-                .def(r.id.0)
-                .filter(|def| def.module != self.module)
-                .filter(|def| {
-                    !(self.is_cell
-                        && self.cells.contains(&def.module)
-                        && self.named_types.contains(&r.id.0))
-                })
-                // (A described type is written whole, above.)
-                .and_then(|def| match self.module_written(def.module)? {
-                    ModuleWritten::Named(module) => Some(module),
-                    ModuleWritten::Described { .. } => None,
-                }),
-        };
-        match module {
-            Some(module) => format!("{module}.{}", r.name),
-            None => r.name.to_string(),
+        match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, Some(module))) => match crate::defs::ModuleId::builtin(module) {
+                Some(id) => self.written_member(id, &resolve(r.name)),
+                None => format!("{module}.{}", r.name),
+            },
+            Some((_, None)) => format!("prelude.{}", r.name),
+            None => match self.def(r.id.0) {
+                Some(def)
+                    if def.module != self.module
+                        && !(self.is_cell
+                            && self.cells.contains(&def.module)
+                            && self.named_types.contains(&r.id.0)) =>
+                {
+                    match self.spelling_in_reach(def.module, &resolve(r.name)) {
+                        Some(spelled) => spelled,
+                        None => match self.module_written(def.module) {
+                            Some(ModuleWritten::Named(module)) => format!("{module}.{}", r.name),
+                            Some(written @ ModuleWritten::Described { .. }) => {
+                                written.type_name(r.name)
+                            }
+                            None => r.name.to_string(),
+                        },
+                    }
+                }
+                _ => r.name.to_string(),
+            },
         }
     }
 
@@ -530,19 +653,17 @@ impl TypeChecker {
     /// The trait with the module that declares it, where that is not
     /// the module being checked: `a.Show`, `prelude.Display`.
     pub(super) fn show_trait_in_module(&self, t: TraitKey) -> String {
-        let module = if let Some((_, module)) = crate::defs::builtin_trait_of_id(t.id.0) {
-            Some(match module {
-                Some(module) => self.builtin_module_name_here(module),
-                None => intern("prelude"),
-            })
-        } else {
-            self.def(t.id.0)
-                .filter(|def| def.module != self.module)
-                .and_then(|def| self.module_name_here(def.module))
-        };
-        match module {
-            Some(module) => format!("{module}.{}", t.name),
-            None => t.name.to_string(),
+        if let Some((_, module)) = crate::defs::builtin_trait_of_id(t.id.0) {
+            return match module.and_then(crate::defs::ModuleId::builtin) {
+                Some(id) => self.written_member(id, &resolve(t.name)),
+                None => format!("prelude.{}", t.name),
+            };
+        }
+        match self.def(t.id.0) {
+            Some(def) if def.module != self.module => {
+                self.written_member(def.module, &resolve(t.name))
+            }
+            _ => t.name.to_string(),
         }
     }
 

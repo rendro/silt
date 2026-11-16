@@ -243,6 +243,20 @@ it, and interpolation still shows `5` structurally. The structural traits of a t
 `Display` without a written impl) go by the builtin traits of its
 fields, whatever trait of the program has a method of the same name.
 
+### Names in messages and in the editor
+
+A message, a help line, hover, signature help, completion and the
+REPL's `:type` write a name of another module (a type, a trait, a
+function, a variant) as the file at hand writes it: bare where the file
+imports the name (`import da.{ Sq }`: `Sq`, also beside `import da`),
+with the file's name for the module where it has one (`import da as d`:
+`d.Sq`, `d.load`; `import json as j`: `j.Value`), and else with the
+module's own name (`da.Sq` for a type the file reaches only through
+another module). Two different names are never written alike: where the
+module's own name is one the file gives to something else (`import da as
+other` beside a module `other`), its names are described, `T of module
+other`.
+
 ## Module names and shadowing
 
 Module names follow the ordinary lexical-scoping rules: a value binding

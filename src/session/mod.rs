@@ -266,7 +266,8 @@ impl Session {
     /// under `import json as j`), described where no import here can reach
     /// it (`InErr of package inner`); the module part is the checker's own
     /// (`ModuleWritten`). None for a type written by its bare name (a
-    /// prelude type, one of the module's own), and where the module's
+    /// prelude type, one of the module's own, one the file imports by
+    /// item: `Sq` after `import da.{ Sq }`), and where the module's
     /// check kept no names (a session not `set_for_editor`).
     #[cfg(any(feature = "lsp", feature = "repl"))]
     pub(crate) fn written_type_name(
@@ -275,6 +276,12 @@ impl Session {
         r: crate::types::TypeRef,
     ) -> Option<String> {
         let analysis = self.analyses.get(&here)?;
+        // A type the file imports by its name is written bare, as the
+        // messages write it (`import da.{ Sq }`: `Sq`).
+        if matches!(analysis.scope.types.get(&r.name), Some(names::Binding::Def(id)) if *id == r.id.0)
+        {
+            return None;
+        }
         let written = |module: ModuleId| analysis.modules_written.get(&module);
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
             Some((_, None)) => None,
