@@ -797,17 +797,7 @@ impl TypeChecker {
                 if !self.head_has_trait(*supertrait, *type_name) {
                     // (The supertrait with its arguments, `Conv(Int)`, as
                     // the trait declares it for this impl.)
-                    let sup_args: Vec<Type> = (trait_info.supertrait_args.get(i))
-                        .into_iter()
-                        .flatten()
-                        .map(|te| {
-                            crate::typechecker::inference::resolve_supertrait_arg(
-                                te,
-                                &trait_info,
-                                &enclosing_args,
-                            )
-                        })
-                        .collect();
+                    let sup_args: Vec<Type> = trait_info.supertrait_args_at(i, &enclosing_args);
                     let (ty, tr, sup) = {
                         let named = self.impl_args_named(*impl_key);
                         (
@@ -827,17 +817,8 @@ impl TypeChecker {
                 // Resolve the supertrait's expected args against the
                 // enclosing trait's impl args (none for the bare
                 // `: Super` form).
-                let expected_super_args: Vec<Type> = (trait_info.supertrait_args.get(i))
-                    .into_iter()
-                    .flatten()
-                    .map(|te| {
-                        crate::typechecker::inference::resolve_supertrait_arg(
-                            te,
-                            &trait_info,
-                            &enclosing_args,
-                        )
-                    })
-                    .collect();
+                let expected_super_args: Vec<Type> =
+                    trait_info.supertrait_args_at(i, &enclosing_args);
                 // The supertrait holds at the impl's own type, its type
                 // variables having what the impl's header gives them
                 // (`trait Same for Box(a) where a: Equal`), not at the
@@ -1236,6 +1217,7 @@ impl TypeChecker {
     /// arguments than the supertrait has parameters
     /// (`trait Bad: Holds(Int, String)` for `trait Holds(a)`).
     pub(super) fn check_supertrait_arity(&mut self, t: &TraitDecl) {
+        let own: std::collections::HashSet<Symbol> = t.params.iter().copied().collect();
         for r in &t.supertraits {
             let Some(params) = self
                 .named_trait(r.res, r.name)
@@ -1254,7 +1236,9 @@ impl TypeChecker {
             // parameters: what else they wrote was read as no type at all,
             // which every impl's type then met.)
             for arg in &r.args {
-                if let Some((what, span)) = no_supertrait_argument(arg, &t.params) {
+                let mut parts = Vec::new();
+                no_supertrait_parts(arg, &own, &mut parts);
+                for NoTypePart { what, at: span, .. } in parts {
                     let message = match what.as_str() {
                         "'Never'" => super::typeexpr::NEVER_ELSEWHERE.to_string(),
                         _ => format!(
@@ -1530,8 +1514,7 @@ impl TypeChecker {
             .collect();
 
         let supertrait_names: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
-        let supertrait_args: Vec<Vec<TypeExpr>> =
-            supertraits.into_iter().map(|(_, args)| args).collect();
+        let supertrait_args = self.resolve_supertrait_args(&supertraits, &trait_param_vars);
 
         self.tables.traits.insert(
             key,
@@ -1553,13 +1536,62 @@ impl TypeChecker {
                 via_needs: HashMap::new(),
             },
         );
-        // A generic type among a supertrait's arguments is written with
-        // its own (`trait Sub: Super(Box(Int))`).
-        if let Some(info) = self.tables.traits.get(&key).cloned() {
-            for te in info.supertrait_args.iter().flatten() {
-                self.check_supertrait_arg_parametric_arity(te, &info);
-            }
+    }
+
+    /// The arguments of each supertrait in `supertraits`, read as types
+    /// are (`resolve_type_expr`), with the trait's parameters
+    /// `trait_param_vars`, and what is wrong in them reported as it is in
+    /// any type (`Carry(Int(b))`, `Carry(Tuple)`). An argument that is no
+    /// type at all (`Self`, a name that is neither a type nor a
+    /// parameter) is reported in the words for a supertrait's argument
+    /// (`check_supertrait_arity`), not here, and is no type.
+    fn resolve_supertrait_args(
+        &mut self,
+        supertraits: &[(TraitKey, Vec<TypeExpr>)],
+        trait_param_vars: &[(Symbol, Type)],
+    ) -> Vec<Vec<Type>> {
+        if supertraits.iter().all(|(_, args)| args.is_empty()) {
+            return vec![Vec::new(); supertraits.len()];
         }
+        let params: std::collections::HashSet<Symbol> =
+            trait_param_vars.iter().map(|(p, _)| *p).collect();
+        let mut names: HashMap<Symbol, Type> = trait_param_vars.iter().cloned().collect();
+        let resolved: Vec<Vec<Type>> = (supertraits.iter())
+            .map(|(_, args)| {
+                (args.iter())
+                    .map(|te| {
+                        let reported = self.errors.len();
+                        let ty = self.resolve_type_expr(te, &mut names);
+                        // (What `check_supertrait_arity` reports in its own
+                        // words is not reported again here; what else is
+                        // wrong in the argument is, as in any type.)
+                        let mut hidden = Vec::new();
+                        no_supertrait_parts(te, &params, &mut hidden);
+                        if !hidden.is_empty() {
+                            let kept: Vec<Diagnostic> = (self.errors.drain(reported..))
+                                .filter(|d| !hidden.iter().any(|part| part.hides(d.span)))
+                                .collect();
+                            self.errors.extend(kept);
+                        }
+                        ty
+                    })
+                    .collect()
+            })
+            .collect();
+        let no_type: HashMap<TyVar, Type> = (names.iter())
+            .filter(|(name, _)| !params.contains(*name))
+            .filter_map(|(_, ty)| match ty {
+                Type::Var(v) => Some((*v, Type::Error)),
+                _ => None,
+            })
+            .collect();
+        (resolved.into_iter())
+            .map(|args| {
+                (args.iter())
+                    .map(|ty| crate::types::substitute_vars(ty, &no_type))
+                    .collect()
+            })
+            .collect()
     }
 
     /// The signature a default method's body is checked against, once,
@@ -3578,13 +3610,14 @@ impl TypeChecker {
             // List(a, b)` or `trait X for Int(a)` fell through to
             // `_ => Type::Generic(..)` below, silently producing a phantom
             // type that no value has. Derive fixed-arity builtin entries
-            // from the authoritative table. Variadic shapes (`Tuple`,
-            // `Fn`, `Handle`) carry `arity: None` and are
-            // intentionally skipped — they do not participate in this
-            // trait-impl arity check.
-            let builtin_arity: Option<usize> = builtin_type_name(written)
-                .and_then(crate::types::builtins::lookup)
-                .and_then(|b| b.arity.map(|a| a as usize));
+            // from the authoritative table, and that of an opaque type of
+            // the table (`task.Handle(a)`, `Bytes`) from the registry, as
+            // a type expression does. `Tuple` and `Fn` carry `arity: None`
+            // and do not take part in this trait-impl arity check.
+            let builtin_arity: Option<usize> = builtin_type_name(written).and_then(|name| {
+                let entry = crate::types::builtins::lookup(name)?;
+                (entry.arity.map(|a| a as usize)).or_else(|| crate::defs::opaque_type_arity(name))
+            });
             // User-declared type aliases are in the arity table too:
             // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
             // checked for its arity, and does not fall through to the
@@ -3609,47 +3642,58 @@ impl TypeChecker {
             }
             // Resolve through a dedicated Generic form so the head symbol
             // is preserved alongside the impl-level tyvar args.
-            let resolved_args: Vec<Type> = ti
-                .target_type_args
-                .iter()
-                .map(|arg_te| self.resolve_type_expr(arg_te, impl_param_map))
-                .collect();
-            // A parametric alias as trait-impl target:
-            // expand the alias by substituting `resolved_args` through
-            // the alias's stored target. Mirrors the non-parametric
-            // alias path at line ~5617 (which calls
-            // `self.tables.resolver.lookup_alias(written)` and walks
-            // `info.target` with each `param_var_ids[i]` mapped to a
-            // fresh tyvar). Here we map `param_var_ids[i]` → the
-            // user-supplied type-arg at the same index.
-            //
-            // So `trait Show for Pair(a)` (with `type Pair(a) = (a, a)`)
-            // has the self type `(a, a)`, not a phantom
-            // `Type::Generic("Pair", [tv])`, which a concrete `(1, 2)`
-            // receiver typed as `(Int, Int)` (as `resolve_type_expr`
-            // canonicalises the annotation `Pair(Int)`) would not unify
-            // with.
-            if let Some(info) = self.tables.resolver.lookup_alias(written) {
-                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-                for (i, &var_id) in info.param_var_ids.iter().enumerate() {
-                    if let Some(arg_ty) = resolved_args.get(i) {
-                        mapping.insert(var_id, arg_ty.clone());
-                    }
-                }
-                let substituted = crate::types::substitute_vars(&info.target, &mapping);
-                crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
+            // A header that is a type expression of the type's own arity
+            // (`for Box(a)`, `for List(a)`, `for Pair(a)`) is the type it
+            // names, read as every type expression is. (`Tuple(a, b)` and
+            // a primitive given arguments are no type expression; a header
+            // of another arity was refused above and is read as before.)
+            let a_type = expected_arity == Some(ti.target_type_args.len())
+                && builtin_arity != Some(0)
+                && !matches!(builtin_type_name(written), Some("Tuple" | "Fn"));
+            if a_type {
+                let header = TypeExpr {
+                    kind: TypeExprKind::Generic {
+                        module: ti.target_module,
+                        name: ti.target_type,
+                        name_span: ti.target_type_span,
+                        args: ti.target_type_args.clone(),
+                    },
+                    span: ti.target_type_span,
+                    res: ti.target_res,
+                };
+                self.resolve_type_expr(&header, impl_param_map)
             } else {
-                match builtin_type_name(written).unwrap_or_default() {
-                    // A tuple of the impl's arity: `(a, b)` of
-                    // `Tuple(a, b)`, which a pair's type is.
-                    "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
-                    // A primitive takes no arguments (the error above
-                    // says so): the impl is for the type itself, not a
-                    // phantom `Int(_)` that no value has.
-                    _ if builtin_arity == Some(0) => Type::named(target_type, Vec::new()),
-                    // A builtin container of its arity is its own
-                    // variant (`List(a)`), any other type `Generic`.
-                    _ => Type::container_or_generic(written, resolved_args),
+                let resolved_args: Vec<Type> = ti
+                    .target_type_args
+                    .iter()
+                    .map(|arg_te| self.resolve_type_expr(arg_te, impl_param_map))
+                    .collect();
+                // A parametric alias given another number of arguments
+                // than it takes (refused above): the alias's target with
+                // the arguments there are for its parameters, as the
+                // bare-alias path above reads it with fresh variables.
+                if let Some(info) = self.tables.resolver.lookup_alias(written) {
+                    let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                    for (i, &var_id) in info.param_var_ids.iter().enumerate() {
+                        if let Some(arg_ty) = resolved_args.get(i) {
+                            mapping.insert(var_id, arg_ty.clone());
+                        }
+                    }
+                    let substituted = crate::types::substitute_vars(&info.target, &mapping);
+                    crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
+                } else {
+                    match builtin_type_name(written).unwrap_or_default() {
+                        // A tuple of the impl's arity: `(a, b)` of
+                        // `Tuple(a, b)`, which a pair's type is.
+                        "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
+                        // A primitive takes no arguments (the error above
+                        // says so): the impl is for the type itself, not a
+                        // phantom `Int(_)` that no value has.
+                        _ if builtin_arity == Some(0) => Type::named(target_type, Vec::new()),
+                        // A builtin container of its arity is its own
+                        // variant (`List(a)`), any other type `Generic`.
+                        _ => Type::container_or_generic(written, resolved_args),
+                    }
                 }
             }
         };
@@ -4258,36 +4302,74 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
     )
 }
 
-/// The first part of the supertrait argument `te` that is no type there
-/// (`Self`, a name that is no type and none of the trait's `params`),
-/// as the error names it, with
-/// its span: what `resolve_supertrait_arg` would read as no type at all.
-fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, Span)> {
+/// A part of a supertrait argument that is no type there (`Self`, a name
+/// that is neither a type nor one of the trait's parameters, a parameter
+/// given type arguments): what the error names it, where it is, and which
+/// of the resolver's reports are about it: one at the part's whole span,
+/// or for a name applied, the report of that name (at its own span or the
+/// whole application's) and none of those about its arguments.
+struct NoTypePart {
+    what: String,
+    at: Span,
+    whole: Span,
+    applied: bool,
+}
+
+impl NoTypePart {
+    fn hides(&self, at: Span) -> bool {
+        let within = |outer: Span| at.start >= outer.start && at.end <= outer.end;
+        match self.applied {
+            false => within(self.whole),
+            true => within(self.at) || at == self.whole,
+        }
+    }
+}
+
+/// Every part of the supertrait argument `te` that is no type there, in
+/// the order they are written: what `resolve_supertrait_args` reads as
+/// no type at all.
+fn no_supertrait_parts(
+    te: &TypeExpr,
+    params: &std::collections::HashSet<Symbol>,
+    out: &mut Vec<NoTypePart>,
+) {
     // (A name the resolver refused it reported.)
     let unread = |name: Symbol| {
         te.res != Some(crate::defs::Res::Error)
             && !params.contains(&name)
             && super::inference::written_type(te, name).is_none()
     };
+    let part = |what: String, at: Span, applied: bool| NoTypePart {
+        what,
+        at,
+        whole: te.span,
+        applied,
+    };
     match &te.kind {
-        TypeExprKind::SelfType => Some(("'Self'".to_string(), te.span)),
+        TypeExprKind::SelfType => out.push(part("'Self'".to_string(), te.span, false)),
         TypeExprKind::Named { name, .. } if unread(*name) => {
-            Some((format!("'{}'", resolve(*name)), te.span))
+            out.push(part(format!("'{}'", resolve(*name)), te.span, false))
         }
         TypeExprKind::Generic {
-            name, name_span, ..
-        } if unread(*name) => Some((format!("'{}'", resolve(*name)), *name_span)),
+            name,
+            name_span,
+            args,
+            ..
+        } if unread(*name) => {
+            out.push(part(format!("'{}'", resolve(*name)), *name_span, true));
+            args.iter()
+                .for_each(|arg| no_supertrait_parts(arg, params, out));
+        }
         // (A parameter is a type: it takes no type arguments.)
         TypeExprKind::Generic { name, .. } if params.contains(name) => {
-            Some((format!("'{}'", type_expr_text(te)), te.span))
+            out.push(part(format!("'{}'", type_expr_text(te)), te.span, false))
         }
         TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => args
             .iter()
-            .find_map(|arg| no_supertrait_argument(arg, params)),
-        TypeExprKind::Function(params_te, ret) => params_te
-            .iter()
+            .for_each(|arg| no_supertrait_parts(arg, params, out)),
+        TypeExprKind::Function(params_te, ret) => (params_te.iter())
             .chain(std::iter::once(ret.as_ref()))
-            .find_map(|arg| no_supertrait_argument(arg, params)),
-        _ => None,
+            .for_each(|arg| no_supertrait_parts(arg, params, out)),
+        TypeExprKind::Named { .. } => {}
     }
 }

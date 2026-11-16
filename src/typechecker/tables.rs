@@ -52,12 +52,14 @@ pub(super) struct TraitInfo {
     /// transitively, so a `where` bound gives its supertraits' bounds
     /// too.
     pub(super) supertraits: Vec<TraitKey>,
-    /// Parallel to `supertraits`: the TypeExpr args supplied to each
-    /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
-    /// `Super` is `[TypeExpr::Named("a")]`. Empty when the supertrait
-    /// is referenced without args. `declare_bound` gives a variable
-    /// bounded by this trait the supertrait's bound at these arguments.
-    pub(super) supertrait_args: Vec<Vec<TypeExpr>>,
+    /// Parallel to `supertraits`: the arguments written for each
+    /// supertrait, resolved by `resolve_type_expr` where the trait is
+    /// declared, with the trait's parameters `param_var_ids` (a name that
+    /// is neither a type nor a parameter is no type: `Type::Error`). For
+    /// `trait Sub(a): Super(List(a))` the entry for `Super` is
+    /// `[List(a)]`. Empty when the supertrait is referenced without args.
+    /// `supertrait_args_at` gives them at a use's arguments.
+    pub(super) supertrait_args: Vec<Vec<Type>>,
     /// The methods, each with its type: a complete signature, in which
     /// `Self` is `self_var` and the trait's parameters are
     /// `param_var_ids`. An impl's method has this type, with the impl's
@@ -106,6 +108,23 @@ pub(super) struct TraitInfo {
     /// of their annotation variables (`Pred::Via`), as the trait's module
     /// decided them.
     pub(super) via_needs: HashMap<(TyVar, Symbol), Vec<super::builtin_needs::ViaNeed>>,
+}
+
+impl TraitInfo {
+    /// The arguments of the supertrait `i` where the trait's own are
+    /// `args`: each parameter of the trait replaced by its argument (one
+    /// that `args` has none for is no type).
+    pub(super) fn supertrait_args_at(&self, i: usize, args: &[Type]) -> Vec<Type> {
+        let Some(written) = self.supertrait_args.get(i) else {
+            return Vec::new();
+        };
+        let mapping: HashMap<TyVar, Type> = (self.param_var_ids.iter().enumerate())
+            .map(|(k, var)| (*var, args.get(k).cloned().unwrap_or(Type::Error)))
+            .collect();
+        (written.iter())
+            .map(|ty| crate::types::substitute_vars(ty, &mapping))
+            .collect()
+    }
 }
 
 /// A method a type has: an impl's (a row of [`ImplMethods`]), or a
