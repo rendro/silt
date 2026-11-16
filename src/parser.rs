@@ -1769,8 +1769,9 @@ impl<'src> Parser<'src> {
                                     format!("({})", params.join(", "))
                                 }
                             };
-                            let target =
-                                &self.source[target.span.start as usize..target.span.end as usize];
+                            // (As the type is written without its comments,
+                            // on one line: a message is one line.)
+                            let target = crate::typechecker::typeexpr::type_expr_text(target);
                             return Err(Diagnostic::error(
                                 Code::InvalidDeclaration,
                                 opaque,
@@ -3603,9 +3604,11 @@ impl<'src> Parser<'src> {
                 }
             }
         }
-        // (Arguments of arguments, `List<List<Int>>`, likewise.)
+        // (Arguments of arguments, `List<List<Int>>`, likewise. A string or
+        // a comment over lines between the two puts the partner on another
+        // line: a message is one line.)
         let args = inner
-            .filter(|a| !a.is_empty())
+            .filter(|a| !a.is_empty() && !a.contains(['\n', '\r']))
             .map(|a| a.replace(['<', '['], "(").replace(['>', ']'], ")"));
         format!(
             "type arguments are written in parentheses: `{written}({})`",

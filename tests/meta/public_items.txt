@@ -1065,7 +1065,6 @@ src/source.rs: pub fn is_in_source
 src/source.rs: pub fn line_col
 src/source.rs: pub fn line_col
 src/source.rs: pub fn line_count
-src/source.rs: pub fn line_start
 src/source.rs: pub fn line_text
 src/source.rs: pub fn lsp_position
 src/source.rs: pub fn lsp_position

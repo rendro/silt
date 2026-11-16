@@ -1,0 +1,35 @@
+error[parse]: type arguments are written in parentheses: `St(Int)`
+ --> foreign_syntax__type_args_over_lines_are_not_quoted.silt:6:13
+   |
+ 6 | fn f() -> St[a "x
+   |             ^ type arguments are written in parentheses: `St(Int)`
+
+error[parse]: type arguments are written in parentheses: `List(Int)`
+ --> foreign_syntax__type_args_over_lines_are_not_quoted.silt:9:15
+   |
+ 9 | fn g() -> List<a {- c
+   |               ^ type arguments are written in parentheses: `List(Int)`
+
+error[parse]: type arguments are written in parentheses: `St(Int)`
+ --> foreign_syntax__type_args_over_lines_are_not_quoted.silt:12:13
+    |
+ 12 | fn h() -> St[a "x
+    |             ^ type arguments are written in parentheses: `St(Int)`
+
+error[parse]: type arguments are written in parentheses: `St(Int)`
+ --> foreign_syntax__type_args_over_lines_are_not_quoted.silt:15:13
+    |
+ 15 | fn i() -> St[a {- c␍d -} b] { 1 }
+    |             ^ type arguments are written in parentheses: `St(Int)`
+
+error[parse]: type arguments are written in parentheses: `List(Int)`
+ --> foreign_syntax__type_args_over_lines_are_not_quoted.silt:17:15
+    |
+ 17 | fn j() -> List<a """
+    |               ^ type arguments are written in parentheses: `List(Int)`
+
+error[parse]: type arguments are written in parentheses: `St(Int)`
+ --> foreign_syntax__type_args_over_lines_are_not_quoted.silt:21:13
+    |
+ 21 | fn k() -> St[Int] { 1 }
+    |             ^ type arguments are written in parentheses: `St(Int)`

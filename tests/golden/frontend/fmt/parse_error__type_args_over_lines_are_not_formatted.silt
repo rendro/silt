@@ -1,0 +1,7 @@
+-- cmd: fmt
+-- exit: 2
+-- stderr-contains: error[parse]: type arguments are written in parentheses: `St(Int)`
+-- The parse error of type arguments in brackets over lines is reported
+-- and the file is left as it is. Before, an internal error.
+fn f() -> St[a "x
+y"] { 1 }

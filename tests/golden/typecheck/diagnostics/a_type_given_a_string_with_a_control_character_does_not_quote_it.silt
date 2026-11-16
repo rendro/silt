@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A short string given where a type is wanted is quoted as a program
+-- writes it; one with a carriage return or a tab (raw or escaped) is
+-- not: the message says its type. Before, the raw character stood in
+-- the message.
+fn main() {
+  let a = List("xy")
+  let b = List("x\ty")
+  let c = List("ab")
+  println((a, b, c))
+}

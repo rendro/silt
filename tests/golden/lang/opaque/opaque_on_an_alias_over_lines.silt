@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- The declaration the message offers writes the alias's type as a
+-- program does, on one line and without its comments. Before, the
+-- type's text was copied, and a comment over lines was an internal
+-- error.
+pub opaque type Meters = List(Int {- what
+  it holds -})

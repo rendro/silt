@@ -1,0 +1,17 @@
+error[type]: `List` takes a type here, and a value of type `String` is given
+ --> a_type_given_a_string_with_a_control_character_does_not_quote_it.silt:8:16
+   |
+ 8 |   let a = List("x␍y")
+   |                ^^^^^ `List` takes a type here, and a value of type `String` is given
+
+error[type]: `List` takes a type here, and a value of type `String` is given
+ --> a_type_given_a_string_with_a_control_character_does_not_quote_it.silt:9:16
+   |
+ 9 |   let b = List("x\ty")
+   |                ^^^^^^ `List` takes a type here, and a value of type `String` is given
+
+error[type]: `List` takes a type here, and `"ab"` is a value
+ --> a_type_given_a_string_with_a_control_character_does_not_quote_it.silt:10:16
+    |
+ 10 |   let c = List("ab")
+    |                ^^^^ `List` takes a type here, and `"ab"` is a value

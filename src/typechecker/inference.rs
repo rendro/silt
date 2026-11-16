@@ -4130,11 +4130,7 @@ impl TypeChecker {
                         ExprKind::Int(n) => Some(n.to_string()),
                         ExprKind::Float(x) => Some(x.to_string()),
                         ExprKind::Bool(b) => Some(b.to_string()),
-                        ExprKind::StringLit(s)
-                            if s.len() <= 20 && !s.contains(['"', '\\', '\n', '`']) =>
-                        {
-                            Some(format!("\"{s}\""))
-                        }
+                        ExprKind::StringLit(s) => crate::diagnostic::short_string_literal(s),
                         _ => None,
                     };
                     let message = match text {

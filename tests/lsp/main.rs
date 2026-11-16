@@ -33,6 +33,7 @@ mod lsp_inlay_trait_default_tests;
 mod lsp_lambda_loop_binder_rename_tests;
 mod lsp_pattern_binders_and_type_name_completion_tests;
 mod lsp_preload_pull_tests;
+mod lsp_protocol_lines_tests;
 mod lsp_rename_binding_site_tests;
 mod lsp_rename_enum_variant_tests;
 mod lsp_rename_gated_constructor_rejection_tests;

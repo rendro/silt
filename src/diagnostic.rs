@@ -1022,6 +1022,19 @@ pub(crate) fn visible_line(line: &str) -> String {
         .collect()
 }
 
+/// The string `value` as a message or a help line quotes it, as a program
+/// writes it (`"abc"`): only a short one (20 bytes at most) whose text
+/// is its value. None for one with `"`, `\` or `{` (escaped in a
+/// program), a backtick (which would close the message's quote), or a
+/// control character: a line feed, a carriage return or a tab is an
+/// escape in a program, and as itself it breaks the message's one line
+/// or garbles it.
+pub(crate) fn short_string_literal(value: &str) -> Option<String> {
+    let written_as_is =
+        |c: char| !matches!(c, '"' | '\\' | '{' | '`') && !c.is_control() && !hidden_in_text(c);
+    (value.len() <= 20 && value.chars().all(written_as_is)).then(|| format!("\"{value}\""))
+}
+
 /// Whether `ch` acts on a terminal or shows as nothing outside ASCII: a
 /// C1 control, a bidirectional control, a character that shows as
 /// nothing or breaks the line (see `visible_line`).
@@ -1174,11 +1187,10 @@ pub(crate) fn to_lsp(
     let shown = |span: Span| -> Range {
         let mut shown = range(span);
         if let Some(file) = sources.get(span.file) {
-            let lines = file.text_lines() as u32;
+            let lines = file.lsp_text_lines() as u32;
             for p in [&mut shown.start, &mut shown.end] {
                 if lines > 0 && p.line >= lines {
-                    let last = file.line_text(lines).unwrap_or("");
-                    let last = last.strip_suffix('\r').unwrap_or(last);
+                    let last = file.lsp_line(lines - 1).map_or("", |(_, text)| text);
                     *p = lsp_types::Position::new(
                         lines - 1,
                         last.chars().map(char::len_utf16).sum::<usize>() as u32,
@@ -1191,8 +1203,7 @@ pub(crate) fn to_lsp(
             // says the error is; at the end of a line there is no
             // character, and it stays as it is.
             if shown.start == shown.end {
-                let line = file.line_text(shown.start.line + 1).unwrap_or("");
-                let line = line.strip_suffix('\r').unwrap_or(line);
+                let line = file.lsp_line(shown.start.line).map_or("", |(_, text)| text);
                 let mut units = 0;
                 for c in line.chars() {
                     if units >= shown.start.character {

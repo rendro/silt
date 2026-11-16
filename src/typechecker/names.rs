@@ -1107,7 +1107,6 @@ pub(super) fn shown_path(e: &Expr) -> Option<String> {
 /// field of one or a short literal; `{ ... }` for a closure, `...` for
 /// anything else.
 pub(super) fn shown_arg(e: &Expr) -> String {
-    let short = |s: &str| s.len() <= 20 && !s.contains(['"', '\\', '{', '\n']);
     match &e.kind {
         ExprKind::Int(n) => n.to_string(),
         ExprKind::Float(f) => {
@@ -1123,7 +1122,9 @@ pub(super) fn shown_arg(e: &Expr) -> String {
             format!("-{}", shown_arg(n))
         }
         ExprKind::Bool(b) => b.to_string(),
-        ExprKind::StringLit(s) if short(s) => format!("\"{s}\""),
+        ExprKind::StringLit(s) => {
+            crate::diagnostic::short_string_literal(s).unwrap_or_else(|| "...".to_string())
+        }
         ExprKind::Unit => "()".to_string(),
         ExprKind::Lambda { .. } => "{ ... }".to_string(),
         _ => shown_path(e).unwrap_or_else(|| "...".to_string()),
