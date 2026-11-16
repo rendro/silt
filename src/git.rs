@@ -625,23 +625,23 @@ pub fn cache_dir() -> Result<PathBuf, GitError> {
 
 #[cfg(target_os = "windows")]
 fn compute_cache_root() -> Result<PathBuf, GitError> {
-    if let Ok(localapp) = std::env::var("LOCALAPPDATA") {
-        if !localapp.is_empty() {
-            let mut p = PathBuf::from(localapp);
-            p.push("silt");
-            p.push("cache");
-            p.push("git");
-            return Ok(p);
-        }
+    if let Ok(localapp) = std::env::var("LOCALAPPDATA")
+        && !localapp.is_empty()
+    {
+        let mut p = PathBuf::from(localapp);
+        p.push("silt");
+        p.push("cache");
+        p.push("git");
+        return Ok(p);
     }
-    if let Ok(profile) = std::env::var("USERPROFILE") {
-        if !profile.is_empty() {
-            let mut p = PathBuf::from(profile);
-            p.push(".silt");
-            p.push("cache");
-            p.push("git");
-            return Ok(p);
-        }
+    if let Ok(profile) = std::env::var("USERPROFILE")
+        && !profile.is_empty()
+    {
+        let mut p = PathBuf::from(profile);
+        p.push(".silt");
+        p.push("cache");
+        p.push("git");
+        return Ok(p);
     }
     Err(GitError::Io {
         context: "resolve Windows cache directory".into(),

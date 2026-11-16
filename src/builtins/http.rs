@@ -3770,10 +3770,13 @@ mod connect_each_tests {
         );
     }
 
-    /// Resolves every host name to the given addresses, in order.
+    /// Resolves every host name to the given addresses, in order. (For
+    /// the test below, which runs on Linux only.)
     #[derive(Debug)]
+    #[cfg(target_os = "linux")]
     struct Resolves(Vec<SocketAddr>);
 
+    #[cfg(target_os = "linux")]
     impl ureq::unversioned::resolver::Resolver for Resolves {
         fn resolve(
             &self,

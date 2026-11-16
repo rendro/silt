@@ -266,7 +266,8 @@ import host
 }
 
 /// The paths `call` (`fs.walk(...)` or `fs.glob(...)`) gives, sorted,
-/// one per line.
+/// one per line. (For the tests on Unix only.)
+#[cfg(unix)]
 fn sorted_paths(call: &str) -> String {
     let input = format!(
         r#"
