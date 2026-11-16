@@ -44,10 +44,12 @@ impl Server {
             });
         if let Some((field_name, field_ty)) = find_field_type_at_offset(program, &records, cursor) {
             return Some(Hover {
-                contents: HoverContents::Markup(super::conversions::markdown(format!(
-                    "```silt\n{field_name}: {}\n```",
-                    self.written_here(doc, &field_ty)
-                ))),
+                contents: HoverContents::Markup(super::conversions::markdown(
+                    super::conversions::code_block(&format!(
+                        "{field_name}: {}",
+                        self.written_here(doc, &field_ty)
+                    )),
+                )),
                 range: None,
             });
         }
@@ -70,7 +72,7 @@ impl Server {
             // decides: written with letters, `Fn(a) -> a`, as a generic
             // function's hover is.)
             let ty = super::ast_walk::written_with_letters(&self.written_here(doc, ty));
-            let value = format!("```silt\n{ty}\n```");
+            let value = super::conversions::code_block(&ty.to_string());
             return Some(Hover {
                 contents: HoverContents::Markup(super::conversions::markdown(value)),
                 range: None,
@@ -102,7 +104,7 @@ impl Server {
         if let Some(ty) = named_type
             && let Some(text) = self.type_declaration_text(doc, ty)
         {
-            let mut value = format!("```silt\n{text}\n```");
+            let mut value = super::conversions::code_block(&text);
             if let Named::Definition(info) = self.named_at(uri, cursor)
                 && let Some(doc) = info.doc
             {
@@ -127,7 +129,7 @@ impl Server {
             && let Some(m) =
                 (self.trait_call_methods(doc, tr).into_iter()).find(|m| m.name == method)
         {
-            let mut value = format!("```silt\n{}\n```", m.label);
+            let mut value = super::conversions::code_block(&m.label);
             if let Some(text) = m.doc.filter(|text| !text.is_empty()) {
                 value.push_str(&format!("\n\n---\n\n{text}"));
             }
@@ -249,7 +251,7 @@ impl Server {
         // dropping the broken top block is strictly an improvement.
         let mut value = String::new();
         if let Some(signature) = signature {
-            value.push_str(&format!("```silt\n{signature}\n```"));
+            value.push_str(&super::conversions::code_block(&signature));
         } else if let Some(t) = ty {
             // (So does a name the checker has no type for, a function
             // of a feature that is not built: its docs say what it is.)
@@ -257,7 +259,7 @@ impl Server {
             let render_top_signature = !(untyped && doc_text.is_some());
             if render_top_signature {
                 let t = self.written_here(doc, &t);
-                value.push_str(&format!("```silt\n{t}\n```"));
+                value.push_str(&super::conversions::code_block(&t.to_string()));
             }
         }
         if let Some(d) = doc_text {

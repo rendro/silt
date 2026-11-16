@@ -47,7 +47,7 @@ impl Server {
             let source = session.sources().get(file)?;
             (signature(decl, Some(&source.text)), decl.doc.clone())
         };
-        let mut value = format!("```silt\n{signature}\n```");
+        let mut value = super::conversions::code_block(&signature);
         if let Some(text) = doc_text.filter(|text| !text.is_empty()) {
             value.push_str(&format!("\n\n---\n\n{text}"));
         }
@@ -232,7 +232,8 @@ impl Server {
         let def = self.projects.get(&module.project)?.session.defs().get(id.0);
         let name = resolve(def.name);
         let Some(module) = def.module.builtin_name() else {
-            return prelude_type_declaration(&name).map(|text| format!("```silt\n{text}\n```"));
+            return prelude_type_declaration(&name)
+                .map(|text| super::conversions::code_block(&text));
         };
         let registry = crate::builtins::registry::registry();
         let of = registry.modules.iter().find(|m| m.name == module)?;
@@ -255,7 +256,7 @@ impl Server {
                 }
             }
         };
-        let mut value = format!("```silt\n{declaration}\n```");
+        let mut value = super::conversions::code_block(&declaration);
         if let Some(text) = crate::builtins::registry::docs::type_docs()
             .get(&format!("{module}.{name}"))
             .map(|section| below_signature(section))

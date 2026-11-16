@@ -42,3 +42,25 @@ fn hover_and_completion_show_a_doc_comment_s_escape_character_as_a_picture() {
         "{helper}"
     );
 }
+
+/// A declaration with a line that is only ``` (in a block comment over
+/// lines) stays inside its hover's code block: the fence is longer than
+/// any run of backticks in it. FAIL on the base: the block was fenced with
+/// three backticks and that line closed it.
+#[test]
+fn a_hover_s_code_fence_is_longer_than_a_backtick_line_in_the_declaration() {
+    let mut client = LspClient::spawn();
+    let uri = format!(
+        "file:///tmp/silt_markdown_fence_{}.silt",
+        std::process::id()
+    );
+    let text = "type Pt {\n  x: Int,\n  {-\n```\n  -}\n  y: Int,\n}\n\nfn main() {\n  let p = Pt { x: 1, y: 2 }\n  println(p.x)\n}\n";
+    client.did_open_and_wait(&uri, text);
+    let hover = client.hover(&uri, 9, 11);
+    let shown = hover
+        .pointer("/result/contents/value")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(shown.starts_with("````silt\n"), "hover: {hover}");
+    assert!(shown.contains("\n```\n"), "hover: {hover}");
+}
