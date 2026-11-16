@@ -1331,12 +1331,7 @@ impl TypeChecker {
                 continue;
             };
             for (i, super_name) in info.supertraits.iter().enumerate() {
-                let super_args: Vec<Type> = match info.supertrait_args.get(i) {
-                    Some(exprs) if !exprs.is_empty() => (exprs.iter())
-                        .map(|te| self.supertrait_arg(te, info, &args))
-                        .collect(),
-                    _ => Vec::new(),
-                };
+                let super_args: Vec<Type> = info.supertrait_args_at(i, &args);
                 let reached = (*super_name, super_args);
                 if !found.contains(&reached) {
                     found.push(reached.clone());

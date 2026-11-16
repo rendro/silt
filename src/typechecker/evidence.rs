@@ -454,12 +454,7 @@ impl TypeChecker {
                     continue;
                 };
                 for (i, sup) in info.supertraits.iter().enumerate() {
-                    let sup_args: Vec<Type> = match info.supertrait_args.get(i) {
-                        Some(exprs) if !exprs.is_empty() => (exprs.iter())
-                            .map(|te| self.supertrait_arg(te, info, &args))
-                            .collect(),
-                        _ => Vec::new(),
-                    };
+                    let sup_args: Vec<Type> = info.supertrait_args_at(i, &args);
                     let mut path = path.clone();
                     path.push((*sup, u16::try_from(i).unwrap_or(u16::MAX)));
                     if *sup == to && self.bound_args_agree(&sup_args, to_args) {
@@ -499,12 +494,7 @@ impl TypeChecker {
             .unwrap_or_default();
         let supers = (info.supertraits.iter().enumerate())
             .map(|(i, sup)| {
-                let args: Vec<Type> = match info.supertrait_args.get(i) {
-                    Some(exprs) if !exprs.is_empty() => (exprs.iter())
-                        .map(|te| self.supertrait_arg(te, info, &impl_args))
-                        .collect(),
-                    _ => Vec::new(),
-                };
+                let args: Vec<Type> = info.supertrait_args_at(i, &impl_args);
                 (sup.id, self.evidence_of(*sup, &args, self_ty, &header, 0))
             })
             .collect();

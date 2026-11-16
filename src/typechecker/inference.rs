@@ -211,17 +211,7 @@ impl TypeChecker {
             return;
         };
         for (i, super_name) in info.supertraits.iter().enumerate() {
-            let super_args: Vec<Type> = match info.supertrait_args.get(i) {
-                Some(exprs) if !exprs.is_empty() => {
-                    // (A generic type written bare among them is reported
-                    // where the trait is declared.)
-                    exprs
-                        .iter()
-                        .map(|te| self.supertrait_arg(te, info, &args))
-                        .collect()
-                }
-                _ => Vec::new(),
-            };
+            let super_args: Vec<Type> = info.supertrait_args_at(i, &args);
             self.bound_closure(in_scope, *super_name, super_args);
         }
     }
@@ -4633,7 +4623,8 @@ impl TypeChecker {
     /// Walk a supertrait-arg `TypeExpr` and report every generic type
     /// written there without its arguments (`trait Sub: Super(Box)`),
     /// as a type anywhere else is (`bare_generic`): these arguments are
-    /// read by `resolve_supertrait_arg`, not `resolve_type_expr`.
+    /// read where the trait is declared with the reports of `resolve_type_expr`
+    /// left out (`resolve_supertrait_args`).
     ///
     /// Names that map to a trait param (`info.params`), or that name no
     /// type, are left to the existing handling — the latter are
@@ -4784,91 +4775,6 @@ pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
         }),
         Some(_) => None,
         None => crate::defs::builtin_type_id(&resolve(name)).map(|id| TypeRef { id, name }),
-    }
-}
-
-impl TypeChecker {
-    /// The supertrait argument `te` of the trait `trait_info` where its
-    /// own arguments are `base_args` (`resolve_supertrait_arg`), with each
-    /// alias written in it read as the type it stands for, as every type
-    /// expression's is.
-    pub(super) fn supertrait_arg(
-        &self,
-        te: &TypeExpr,
-        trait_info: &TraitInfo,
-        base_args: &[Type],
-    ) -> Type {
-        let written = resolve_supertrait_arg(te, trait_info, base_args);
-        crate::types::canonical::canonicalize(&self.tables.resolver, &written)
-    }
-}
-
-/// Resolve a supertrait reference's TypeExpr argument against the
-/// enclosing trait's params. `Named("a")` where `"a"` is in
-/// `trait_info.params` maps to the corresponding entry in `base_args`
-/// (the enclosing trait's supplied args at the call site). Nested forms
-/// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
-/// fall through to their `Type::…` counterparts.
-///
-/// The shapes are the ones `resolve_type_expr` builds for the same
-/// surface syntax on the impl side, as both build a named type with
-/// [`Type::named`] / [`Type::container_or_generic`]:
-/// `trait_arg_compatible_canon` compares them structurally and
-/// `canonicalize()` does not collapse `Generic("List", …)` onto
-/// `Type::List` (etc.).
-pub(super) fn resolve_supertrait_arg(
-    te: &TypeExpr,
-    trait_info: &TraitInfo,
-    base_args: &[Type],
-) -> Type {
-    match &te.kind {
-        TypeExprKind::Named { name: sym, .. } => {
-            if let Some(idx) = trait_info.params.iter().position(|p| p == sym)
-                && let Some(ty) = base_args.get(idx)
-            {
-                return ty.clone();
-            }
-            // Bare type name that isn't a trait param — interpret as a
-            // concrete type reference (Int, String, or user type), in
-            // the shape `resolve_type_expr` builds (`Type::named`).
-            let Some(ty) = written_type(te, *sym) else {
-                return Type::Error;
-            };
-            Type::named(ty, Vec::new())
-        }
-        TypeExprKind::Generic {
-            name: sym, args, ..
-        } => {
-            let resolved: Vec<Type> = args
-                .iter()
-                .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
-                .collect();
-            // A builtin container head in the shape `resolve_type_expr`
-            // builds (`Type::container_or_generic`). Wrong-arity forms
-            // stay `Type::Generic` (they can't match any canonical impl
-            // shape, and resolve_type_expr diagnoses the arity at the
-            // declaration site).
-            let Some(ty) = written_type(te, *sym) else {
-                return Type::Error;
-            };
-            Type::container_or_generic(ty, resolved)
-        }
-        // `()` is the unit type, as `resolve_type_expr` reads it.
-        TypeExprKind::Tuple(elems) if elems.is_empty() => Type::Unit,
-        TypeExprKind::Tuple(elems) => Type::Tuple(
-            elems
-                .iter()
-                .map(|e| resolve_supertrait_arg(e, trait_info, base_args))
-                .collect(),
-        ),
-        TypeExprKind::Function(params, ret) => Type::Fun(
-            params
-                .iter()
-                .map(|p| resolve_supertrait_arg(p, trait_info, base_args))
-                .collect(),
-            Box::new(resolve_supertrait_arg(ret, trait_info, base_args)),
-        ),
-        TypeExprKind::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
     }
 }
 
