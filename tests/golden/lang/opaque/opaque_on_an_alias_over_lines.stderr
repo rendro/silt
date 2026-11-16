@@ -1,0 +1,5 @@
+error[parse]: a type alias cannot be opaque: declare a type, `pub opaque type Meters { Meters(List(Int)) }`
+ --> opaque_on_an_alias_over_lines.silt:7:5
+   |
+ 7 | pub opaque type Meters = List(Int {- what
+   |     ^^^^^^ a type alias cannot be opaque: declare a type, `pub opaque type Meters { Meters(List(Int)) }`

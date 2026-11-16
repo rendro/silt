@@ -1022,6 +1022,19 @@ pub(crate) fn visible_line(line: &str) -> String {
         .collect()
 }
 
+/// The string `value` as a message or a help line quotes it, as a program
+/// writes it (`"abc"`): only a short one (20 bytes at most) whose text
+/// is its value. None for one with `"`, `\` or `{` (escaped in a
+/// program), a backtick (which would close the message's quote), or a
+/// control character: a line feed, a carriage return or a tab is an
+/// escape in a program, and as itself it breaks the message's one line
+/// or garbles it.
+pub(crate) fn short_string_literal(value: &str) -> Option<String> {
+    let written_as_is =
+        |c: char| !matches!(c, '"' | '\\' | '{' | '`') && !c.is_control() && !hidden_in_text(c);
+    (value.len() <= 20 && value.chars().all(written_as_is)).then(|| format!("\"{value}\""))
+}
+
 /// Whether `ch` acts on a terminal or shows as nothing outside ASCII: a
 /// C1 control, a bidirectional control, a character that shows as
 /// nothing or breaks the line (see `visible_line`).

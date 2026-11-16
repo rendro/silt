@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- Type arguments in brackets whose text goes over lines (a string or a
+-- comment over lines) are not quoted: a message is one line. The
+-- arguments on one line still are. Before, an internal error.
+fn f() -> St[a "x
+y"] { 1 }
+
+fn g() -> List<a {- c
+d -} b> { [] }
+
+fn h() -> St[a "x
+y"] { 1 }
+
+fn i() -> St[a {- cd -} b] { 1 }
+
+fn j() -> List<a """
+  x
+  """> { [] }
+
+fn k() -> St[Int] { 1 }
