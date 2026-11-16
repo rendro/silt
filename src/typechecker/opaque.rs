@@ -310,9 +310,9 @@ impl TypeChecker {
                     self.written_builtin("json.Encode")
                 ),
             )
-            // (Code for the module `module`, not this file: the trait by its
-            // own name. own name)
             .with_help(format!(
+                // (Code for the module `module`, not this file: the trait by
+                // its own name. own name)
                 "encode it inside module '{module}', or write `trait json.Encode for {}` there",
                 found.name
             )),
@@ -374,9 +374,9 @@ impl TypeChecker {
                     self.written_builtin("json.Decode")
                 ),
             )
-            // (Code for the module `module`, not this file: the trait by its
-            // own name. own name)
             .with_help(format!(
+                // (Code for the module `module`, not this file: the trait by
+                // its own name. own name)
                 "decode it inside module '{module}', or write `trait json.Decode for {}` there",
                 ty.name
             )),

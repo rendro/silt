@@ -61,6 +61,8 @@ enum CallForm {
 /// `tr` would, where that method is not called (`display`, `equal`):
 /// the help of an error at a call of it. `None` for any other method.
 pub(super) fn uncallable_builtin(tr: TraitKey, method: Symbol, x: &str) -> Option<String> {
+    // (Its callers ask only whether there is a help; a help shown is
+    // `uncallable_builtin_written`'s, with the file's name: not a text)
     uncallable_builtin_written(tr, method, x, "string.from")
 }
 
@@ -1266,12 +1268,22 @@ impl TypeChecker {
                     .is_some_and(|i| i.methods.iter().any(|(n, _)| *n == field))
             });
             let help = match sup {
-                Some(s) => uncallable_builtin_written(s, field, "x", &self.written_builtin("string.from")).or_else(|| {
+                Some(s) => uncallable_builtin_written(
+                    s,
+                    field,
+                    "x",
+                    &self.written_builtin("string.from"),
+                )
+                .or_else(|| {
                     let shown = self.spell_trait(s);
-                    let rest = if self.method_arity(s, field) > 1 { ", .." } else { "" };
-                    Some(format!(
-                        "`{field}` is a method of supertrait `{shown}`: call it as `{shown}.{field}(x{rest})`"
-                    ))
+                    Some(match self.trait_call(s, field, "x") {
+                        Ok(call) => {
+                            format!(
+                                "`{field}` is a method of supertrait `{shown}`: call it as {call}"
+                            )
+                        }
+                        Err(help) => help,
+                    })
                 }),
                 None => {
                     let names: Vec<String> =
@@ -2234,24 +2246,11 @@ impl TypeChecker {
             if self.self_param(tr, field).is_some() {
                 // (Every trait in sight that gives it, by how this module
                 // writes it.)
-                let taking: Vec<String> = (traits.iter())
-                    .filter(|t| uncallable_builtin(**t, field, written).is_none())
-                    .filter(|t| self.self_param(**t, field).is_some())
-                    .map(|t| self.spell_trait(*t))
+                let taking: Vec<TraitKey> = (traits.iter().copied())
+                    .filter(|t| uncallable_builtin(*t, field, written).is_none())
+                    .filter(|t| self.self_param(*t, field).is_some())
                     .collect();
-                let rest = if params > 1 { ", .." } else { "" };
-                let calls: Vec<String> = (taking.iter())
-                    .map(|shown| format!("`{shown}.{field}({written}{rest})`"))
-                    .collect();
-                let of: Vec<String> = taking
-                    .iter()
-                    .map(|shown| format!("trait `{shown}`"))
-                    .collect();
-                return Some(format!(
-                    "`{field}` is a method of {}: call it as {}",
-                    of.join(" and of "),
-                    calls.join(" or ")
-                ));
+                return self.trait_calls_help(&taking, field, written);
             }
             let shown = self.spell_trait(tr);
             // (A type variable with the bound is called on as a type.)
@@ -2361,29 +2360,124 @@ impl TypeChecker {
                 uncallable_builtin_written(*first, field, "x", &self.written_builtin("string.from"))
                     .unwrap_or_default()
             }
-            _ => {
-                let of: Vec<String> = (callable.iter())
-                    .map(|t| format!("trait `{}`", self.spell_trait(*t)))
-                    .collect();
-                let calls: Vec<String> = (callable.iter())
-                    .map(|t| {
-                        let more = self.method_arity(*t, field) > 1;
-                        let rest = if more { ", .." } else { "" };
-                        format!("`{}.{field}(x{rest})`", self.spell_trait(*t))
-                    })
-                    .collect();
-                format!(
-                    "`{field}` is a method of {}: call it as {}",
-                    of.join(" and of "),
-                    calls.join(" or ")
-                )
-            }
+            _ => self
+                .trait_calls_help(&callable, field, "x")
+                .unwrap_or_default(),
         };
         self.error_help(
             Code::UnknownMethod,
             (format!("type '{on}' has no method '{field}'"), Some(help)),
             span,
         );
+    }
+
+    /// Whether `written`, a trait as this module writes it, is a value in
+    /// an expression: a variant (or another value) of the module or of the
+    /// prelude has its bare name and hides the trait there (`trait Some`
+    /// beside the prelude's `Some`), so `written.method(x)` is refused.
+    fn trait_hidden_in_expressions(&self, written: &str) -> bool {
+        if written.contains('.') {
+            return false;
+        }
+        let name = intern(written);
+        let own_value = (self.spelled.iter()).any(|(id, binding)| {
+            *binding == name
+                && self
+                    .def(*id)
+                    .is_some_and(|def| !matches!(def.kind, crate::defs::DefKind::Trait(_)))
+        });
+        own_value
+            || super::names::builtins()
+                .1
+                .prelude
+                .values
+                .contains_key(&name)
+    }
+
+    /// The help that offers the calls of the method `field` of `traits`
+    /// on `x` this module can write (`call it as `Area.go(x)``), or, where
+    /// it can write none, why and what to do (`trait_call`). None for no
+    /// trait.
+    fn trait_calls_help(&self, traits: &[TraitKey], field: Symbol, x: &str) -> Option<String> {
+        let mut of = Vec::new();
+        let mut calls = Vec::new();
+        let mut refused = None;
+        for t in traits {
+            match self.trait_call(*t, field, x) {
+                Ok(call) => {
+                    of.push(format!("trait `{}`", self.spell_trait(*t)));
+                    calls.push(call);
+                }
+                Err(help) => {
+                    refused.get_or_insert(help);
+                }
+            }
+        }
+        match calls.is_empty() {
+            true => refused,
+            false => Some(format!(
+                "`{field}` is a method of {}: call it as {}",
+                of.join(" and of "),
+                calls.join(" or ")
+            )),
+        }
+    }
+
+    /// The call of the method `field` of the trait `t` on `x` as this
+    /// module writes it (`Area.go(x)`), or, where it can write none, the
+    /// help that says why and what to do. Where a variant (or another
+    /// value) hides the trait in expressions (`trait_hidden_in_expressions`):
+    /// a trait of another module is called through its module, by the
+    /// file's name for it (`m.Some.go(x)`), or after an import of it; a
+    /// trait of this module is renamed (the trait beside the prelude's
+    /// variant, which cannot be renamed; the variant where it is the
+    /// module's own, as the help of `Trait.field` says).
+    fn trait_call(&self, t: TraitKey, field: Symbol, x: &str) -> Result<String, String> {
+        let shown = self.spell_trait(t);
+        let rest = if self.method_arity(t, field) > 1 {
+            ", .."
+        } else {
+            ""
+        };
+        if !self.trait_hidden_in_expressions(&shown) {
+            return Ok(format!("`{shown}.{field}({x}{rest})`"));
+        }
+        let hidden = format!(
+            "`{field}` is a method of trait `{shown}`, which the variant `{shown}` hides in \
+             expressions"
+        );
+        let Some(def) = self.def(t.id.0) else {
+            return Err(hidden);
+        };
+        if def.module != self.module {
+            let call = |module: &str| format!("`{module}.{}.{field}({x}{rest})`", def.name);
+            return match self.module_spelled.get(&def.module) {
+                Some(binding) => Ok(call(&resolve(*binding))),
+                None => {
+                    let module = (self.import_path(def.module))
+                        .or_else(|| self.tables.module_names.get(&def.module).copied())
+                        .map_or_else(|| "its module".to_string(), resolve);
+                    Err(format!(
+                        "{hidden}: import `{module}` to call it as {}",
+                        call(&module)
+                    ))
+                }
+            };
+        }
+        let name = intern(&shown);
+        let own_variant = (self.spelled.iter()).any(|(id, binding)| {
+            *binding == name
+                && self.def(*id).is_some_and(|d| {
+                    d.module == self.module && !matches!(d.kind, crate::defs::DefKind::Trait(_))
+                })
+        });
+        let rename = match own_variant {
+            true => "the variant",
+            false => "the trait",
+        };
+        Err(format!(
+            "{hidden}: rename {rename} to call `{shown}.{field}`"
+        ))
     }
 
     /// The number of parameters of the method `field` of the trait `tr`.
