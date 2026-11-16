@@ -538,7 +538,7 @@ fn replace_binary(new_bin: &Path, exe_path: &Path) -> Result<(), String> {
     fs::rename(exe_path, &old).map_err(|e| {
         format!(
             "rename {} -> {}: {e}",
-            crate::source::shown_path(&exe_path),
+            crate::source::shown_path(exe_path),
             crate::source::shown_path(&old)
         )
     })?;
@@ -547,8 +547,8 @@ fn replace_binary(new_bin: &Path, exe_path: &Path) -> Result<(), String> {
         let _ = fs::rename(&old, exe_path);
         return Err(format!(
             "rename {} -> {}: {e}",
-            crate::source::shown_path(&new_bin),
-            crate::source::shown_path(&exe_path)
+            crate::source::shown_path(new_bin),
+            crate::source::shown_path(exe_path)
         ));
     }
     eprintln!(
