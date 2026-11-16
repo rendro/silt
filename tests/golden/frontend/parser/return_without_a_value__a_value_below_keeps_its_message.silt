@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A value (not an operator) on the line below a bare `return` in a list
+-- gets the ordinary message: a comma is the likelier slip, and the help
+-- about `return` is not given.
+fn main() {
+  let xs = [1, return
+    2]
+  println(xs)
+}

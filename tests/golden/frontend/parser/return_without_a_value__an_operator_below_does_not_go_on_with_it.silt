@@ -1,8 +1,11 @@
 -- cmd: check
 -- exit: 1
--- A `return` without a value is a whole expression: a line below it
--- that starts with `|>` or `.` does not go on with it. Before, it did
--- (`(return) |> f`), and fmt refused the file.
+-- A `return` without a value ends the whole expression it stands in,
+-- also as an operand (`1 + return`, `-return`, `x == return`, a match
+-- arm): a line below that starts with `|>`, `.` or an operator does not
+-- go on with it, comment lines between or not. Before, it did
+-- (`(return) |> f`, `1 + return |> f`), and fmt refused the file; with
+-- a comment line between, `x == return` then `|> f` changed its meaning.
 fn f(x: Int) -> Int { x }
 
 fn g() -> Int {
@@ -15,4 +18,31 @@ fn h() -> Int {
   let v = return
     .a
   v
+}
+
+fn i() -> Int {
+  let v = 1 + return
+    |> f
+  v
+}
+
+fn j() -> Bool {
+  let v = -return
+    == 6
+  v
+}
+
+fn k(x: Int) -> Bool {
+  let v = x == return
+    -- c
+    |> f
+  v
+}
+
+fn l(x: Int) -> Int {
+  match x {
+    1 -> 1 + return
+      |> f
+    _ -> 2
+  }
 }

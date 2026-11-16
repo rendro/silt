@@ -486,9 +486,11 @@ fn get_or_die(opt) {
 
 A `return` has a value when one follows it on its line. Before a line
 break, a closing bracket or a comma it has none and returns `()`
-(`[a, return]`, `f(return)`). A `return` without a value is a whole
-expression: a line below it that starts with `|>`, `.` or an operator does
-not go on with it, and is an error.
+(`[a, return]`, `f(return)`). A `return` without a value ends the whole
+expression it stands in, wherever it stands (`return`, `1 + return`,
+`-return`): a line below it that starts with `|>`, `.` or an operator does
+not go on with that expression, and is an error, comment lines between or
+not.
 
 The last line of a function is its value, so a `return` there says
 nothing more: `silt fmt` writes `x` for a last line `return x`.
