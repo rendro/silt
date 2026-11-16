@@ -676,8 +676,8 @@ fn program_of_a_let_hub(dir: &Path, n: usize) {
 /// Four times the `let`s that each reach a chain of plain `let`s (the
 /// hub above) take at most six times as long to check, from 800 to 3,200:
 /// about three times (debug build). Each `let` kept every plain `let` on
-/// its way: n squared, more than fifty times as long (main 96fda6f8: 0.7 s
-/// for 800, 9.6 s for 1,600). A plain `let` is now passed by one node
+/// its way: n squared, about thirteen times as long (main 96fda6f8: 0.7 s
+/// for 800, 8.8 s and 196 MB for 3,200). A plain `let` is now passed by one node
 /// that stands for what lies past it, searched once.
 #[test]
 fn a_hub_of_four_times_the_top_level_lets_takes_at_most_six_times_as_long() {
