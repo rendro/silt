@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 1
+-- A trait of a builtin module imported by item (`json.Encode`) beside the
+-- file's own variant of its name: as for a program module's trait, the
+-- help offers the call through the module, `json.Encode.encode(x)`, which
+-- compiles (audit R9, review rv-o8 S3).
+-- stderr-contains: help: `Encode` here is the variant `T.Encode`, which hides the trait `Encode` in expressions: call it as `json.Encode.encode(x)`
+-- stderr-contains: help: `encode` is a method of trait `Encode`: call it as `json.Encode.encode(x)`
+-- stderr-not-contains: rename
+import json
+import json.{ Encode }
+
+type T { Encode(Int), Bar }
+
+fn go(x: a) -> json.Value where a: Encode {
+  Encode.encode(x)
+}
+
+fn go2(x: a) -> json.Value where a: Encode {
+  x.encode()
+}
+
+fn go3(x: a) -> String where a: Encode {
+  json.stringify(json.Encode.encode(x))
+}
+
+fn main() {
+  println((go(1), go2(2), go3(3), Encode(4), Bar))
+}

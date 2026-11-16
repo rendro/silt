@@ -1,0 +1,8 @@
+-- cmd: repl
+-- stdin: trait Foo { fn hop(self) -> Int }\ntrait Foo for Int { fn hop(self) -> Int { self + 1 } }\nFoo.hop(1)\ntype T { Foo(Int), Bar }\ntype T { Baz(Int), Bar }\nBaz(1)\nFoo.hop(2)\n:quit\n
+-- A REPL session is one module: a trait and a variant of one name are
+-- refused there as in a file, and the entry that comes second is the one
+-- refused. A type entry after a trait entry is refused at the variant,
+-- with a text about the earlier entry (no import is involved); the trait
+-- keeps working, and the type with another name is accepted (audit R9,
+-- cards TRV-1/TRV-2, review rv-o8 S1).

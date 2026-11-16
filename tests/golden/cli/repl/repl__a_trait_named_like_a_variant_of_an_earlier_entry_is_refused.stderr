@@ -1,0 +1,11 @@
+error[type]: trait 'Foo' takes the name of variant 'T.Foo' of this module
+ --> <repl:3>:1:7
+   |
+ 1 | trait Foo { fn hop(self) -> Int }
+   |       ^^^ trait 'Foo' takes the name of variant 'T.Foo' of this module
+  = help: choose a different name: in an expression `Foo` is the variant, so no method of the trait could be called
+error[type]: trait 'Foo' is not declared
+ --> <repl:4>:1:1
+   |
+ 1 | trait Foo for Int { fn hop(self) -> Int { self + 1 } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Foo' is not declared

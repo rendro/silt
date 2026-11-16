@@ -1,0 +1,6 @@
+error[type]: type 'a' has no field 'hop'
+ --> main.silt:6:38
+   |
+ 6 | fn use(x: a) -> Int where a: m.Foo { x.hop() }
+   |                                      ^^^^^ type 'a' has no field 'hop'
+  = help: `hop` is a method of trait `m.Foo`: call it as `m.Foo.hop(x)`

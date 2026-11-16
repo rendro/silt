@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Under `import m` the help for a method of `m.Foo` offers the call
+-- through the module, which compiles (audit R9, review O7-1).
+import m
+fn use(x: a) -> Int where a: m.Foo { x.hop() }
+fn use2(x: a) -> Int where a: m.Foo { m.Foo.hop(x) }
+fn main() { println((use(1), use2(1))) }

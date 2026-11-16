@@ -1,0 +1,6 @@
+error[type]: variant 'T.Foo' takes the name of trait 'Foo' of an earlier entry
+ --> <repl:4>:1:10
+   |
+ 1 | type T { Foo(Int), Bar }
+   |          ^^^ variant 'T.Foo' takes the name of trait 'Foo' of an earlier entry
+  = help: choose another name for the variant or the trait: in an expression `Foo` would be the variant, so no method of the trait could be called

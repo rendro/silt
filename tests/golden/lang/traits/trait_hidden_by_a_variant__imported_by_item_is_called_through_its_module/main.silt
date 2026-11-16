@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A trait of another module imported by item, which the file's own
+-- variant `Foo` hides in expressions: the help says to import the module
+-- and call the trait through it, not to rename anything (audit R9,
+-- review O7-1; kept by rv-o8 S3, which awaits the owner as Q6).
+import m.{ Foo }
+type T { Foo(Int), Bar }
+fn use(x: a) -> Int where a: Foo { x.hop() }
+fn main() { println((use(1), Foo(2), Bar)) }

@@ -714,7 +714,6 @@ fn bind_imports(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut item_bindings: HashMap<Symbol, (Binding, Span)> = HashMap::new();
-    let own_variants = own_variant_names(program);
     for decl in crate::ast::imports_in_order(&program.decls) {
         let Decl::Import(target, _) = decl else {
             continue;
@@ -810,42 +809,19 @@ fn bind_imports(
                             bind_imported(&mut scope.exports.values, *item, binding, defs);
                         }
                     }
-                    // A trait imported by item that a variant of the module
-                    // names: in an expression the name is the variant, so
-                    // none of its methods could be called here. Refused at
-                    // the import, as a trait declared so is; it takes no
-                    // name.
-                    if let Some(Binding::Def(id)) = &ty
-                        && matches!(defs.get(*id).kind, DefKind::Trait(_))
-                        && own_variants.contains(item)
-                    {
-                        let variant = (program.decls.iter()).find_map(|decl| match decl {
-                            Decl::Type(td) => match &td.body {
-                                TypeBody::Enum(vs) if vs.iter().any(|v| v.name == *item) => {
-                                    Some(td.name)
-                                }
-                                _ => None,
-                            },
-                            _ => None,
-                        });
-                        let enum_name = variant.map_or_else(String::new, |t| format!("{t}."));
-                        diagnostics.push(
-                            Diagnostic::error(
-                                Code::InvalidTraitDeclaration,
-                                *item_span,
-                                format!(
-                                    "the trait '{item}' imported here takes the name of variant \
-                                     '{enum_name}{item}' of this module"
-                                ),
-                            )
-                            .with_help(format!(
-                                "import the module and write the trait with it, `import {m}` and \
-                                 `{m}.{item}`: in an expression `{item}` is the variant, so no \
-                                 method of the trait could be called"
-                            )),
+                    // A REPL session is one module: a trait of an earlier
+                    // entry and a variant of the entry at hand of one name
+                    // are refused, as in a file (`refused_trait`); the entry
+                    // that comes second is the one refused.
+                    if is_cell {
+                        refuse_across_entries(
+                            program,
+                            *item,
+                            ty.as_ref(),
+                            defs,
+                            scope,
+                            diagnostics,
                         );
-                        scope.refused_traits.insert(*item);
-                        continue;
                     }
                     if let Some(binding) = ty {
                         // An enum imported from an earlier REPL cell
@@ -867,6 +843,94 @@ fn bind_imports(
                 }
             }
         }
+    }
+}
+
+/// For a REPL entry `program`, the item `item` it takes from the earlier
+/// entries (`ty`, its binding as a type or trait): a trait of an earlier
+/// entry beside a variant the entry declares is refused at the variant;
+/// an enum of an earlier entry with a variant the entry declares a trait
+/// of is refused at the trait, with the wording of a file. (A REPL session
+/// is one module, `refused_trait`.)
+fn refuse_across_entries(
+    program: &Program,
+    item: Symbol,
+    ty: Option<&Binding>,
+    defs: &DefTable,
+    scope: &mut ModuleScope,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some(Binding::Def(id)) = ty else {
+        return;
+    };
+    let variants_declared = (program.decls.iter()).filter_map(|decl| match decl {
+        Decl::Type(td) => match &td.body {
+            TypeBody::Enum(vs) => Some(vs.iter().map(move |v| (td.name, v))),
+            _ => None,
+        },
+        _ => None,
+    });
+    let traits_declared = (program.decls.iter()).filter_map(|decl| match decl {
+        Decl::Trait(t) => Some(t),
+        _ => None,
+    });
+    match defs.get(*id).kind {
+        // An earlier entry's trait; a variant of its name here.
+        DefKind::Trait(_) => {
+            for (enum_name, variant) in variants_declared.flatten() {
+                if variant.name == item {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::InvalidTraitDeclaration,
+                            variant.name_span,
+                            format!(
+                                "variant '{enum_name}.{item}' takes the name of trait '{item}' \
+                                 of an earlier entry"
+                            ),
+                        )
+                        .with_help(format!(
+                            "choose another name for the variant or the trait: in an expression \
+                             `{item}` would be the variant, so no method of the trait could be \
+                             called"
+                        )),
+                    );
+                }
+            }
+        }
+        // An earlier entry's enum; a trait here named like one of its
+        // variants.
+        DefKind::Type(_) => {
+            for variant in defs.variants(*id).to_vec() {
+                let name = defs.get(variant).name;
+                // (Once: the entry may see two enums with a variant of
+                // the name, or declare one itself, `declare`.)
+                if scope.refused_traits.contains(&name) {
+                    continue;
+                }
+                for t in traits_declared.clone().filter(|t| t.name == name) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::InvalidTraitDeclaration,
+                            t.name_span,
+                            format!(
+                                "trait '{name}' takes the name of variant '{item}.{name}' of this \
+                                 module"
+                            ),
+                        )
+                        .with_help(format!(
+                            "choose a different name: in an expression `{name}` is the variant, \
+                             so no method of the trait could be called"
+                        )),
+                    );
+                    scope.refused_traits.insert(name);
+                    if matches!(scope.types.get(&name), Some(Binding::Def(own)) if matches!(defs.get(*own).kind, DefKind::Trait(_)))
+                    {
+                        scope.types.remove(&name);
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 

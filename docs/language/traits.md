@@ -43,9 +43,12 @@ expression that name is the variant, and no method of the trait could be
 called. `trait Some` (a variant of the prelude) is an error, "trait 'Some'
 shadows builtin variant 'Some'", and so is `trait Circle` in the module
 above, whether it comes before or after `type Shape`: "trait 'Circle' takes
-the name of variant 'Shape.Circle' of this module". A trait imported by
-item (`import m.{ Circle }`) into a module with a variant of its name is
-refused at the import; `import m` and `m.Circle` reach it.
+the name of variant 'Shape.Circle' of this module". In the REPL the
+entries of a session count as one module: the entry that comes second, a
+trait entry after a type with the variant or a type entry after the
+trait, is the one refused. A trait of another module imported by item
+(`import m.{ Circle }`) beside a variant of its name is a bound by that
+name, and its methods are called through the module, `m.Circle.area(c)`.
 
 A method that takes a value of the implementing type (`self`, or a
 parameter of type `Self`) is called through its trait, as a module's

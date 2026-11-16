@@ -1,0 +1,13 @@
+error[type]: type 'a' has no field 'hop'
+ --> main.silt:10:36
+    |
+ 10 | fn use(x: a) -> Int where a: Foo { x.hop() }
+    |                                    ^^^^^ type 'a' has no field 'hop'
+  = help: `hop` is a method of trait `Foo`: call it as `m.Foo.hop(x)`
+
+error[type]: type 'Fn(Int) -> T' has no field 'hop'
+ --> main.silt:11:37
+    |
+ 11 | fn use2(x: a) -> Int where a: Foo { Foo.hop(x) }
+    |                                     ^^^^^^^ type 'Fn(Int) -> T' has no field 'hop'
+  = help: `Foo` here is the variant `T.Foo`, which hides the trait `Foo` in expressions: call it as `m.Foo.hop(x)`

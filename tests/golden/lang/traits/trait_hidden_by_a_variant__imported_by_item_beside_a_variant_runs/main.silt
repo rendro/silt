@@ -1,0 +1,16 @@
+-- A trait of another module imported by item beside a variant of the
+-- file of its name is accepted: the trait is a bound by its bare name and
+-- its method is called through the module, the variant is the variant
+-- (rv-o8 S3: as on main, until the owner answers Q6).
+import m
+import m.{ Foo }
+type T { Foo(Int), Bar }
+fn use(x: a) -> Int where a: Foo { m.Foo.hop(x) }
+fn main() {
+  let t = Foo(1)
+  let n = match t {
+    Foo(k) -> k
+    Bar -> 0
+  }
+  println((t, n, use(2)))
+}
