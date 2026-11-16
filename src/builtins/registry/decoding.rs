@@ -72,6 +72,8 @@ impl Leaf {
             Leaf::String => "String",
             Leaf::Bool => "Bool",
             Leaf::Bytes => "Bytes",
+            // (The leaves' own names, given to the naming function where a
+            // message shows them: not a text)
             Leaf::Date => "time.Date",
             Leaf::Time => "time.Time",
             Leaf::DateTime => "time.DateTime",

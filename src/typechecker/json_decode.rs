@@ -103,6 +103,7 @@ impl TypeChecker {
         {
             return None;
         }
+        // (The decoder's key in the registry: not a text)
         let refusal = self.decode_refusal(
             "json.parse",
             Decoding::JSON,
@@ -223,6 +224,7 @@ impl TypeChecker {
             return;
         }
         let check = crate::types::BuiltinCheck::Decodes {
+            // (The decoder's key in the registry: not a text)
             builtin: origin.callee.unwrap_or_else(|| intern("json.parse")),
             decoding: Decoding::JSON,
             written: None,
@@ -240,6 +242,7 @@ impl TypeChecker {
     /// variable's need is owed: a `Pred::Given` of the tuple of the
     /// variables (`held_needs`).
     pub(super) fn owe_held_decode(&mut self, whole: &Type, origin: Origin) {
+        // (The decoder's key in the registry: not a text)
         let builtin = origin.callee.unwrap_or_else(|| intern("json.parse"));
         let check = crate::types::BuiltinCheck::Decodes {
             builtin,
@@ -1148,6 +1151,7 @@ impl TypeChecker {
             // (Where no decoder is known, what the use calls is the one
             // that decodes; a use that names nothing, a supertrait an
             // impl's declaration owes: `json.decode`.)
+            // (The decoder's key in the registry: not a text)
             let named =
                 (decoder.or(passer).or(gap.origin.callee)).unwrap_or_else(|| intern("json.decode"));
             let written = self.decode_aliases.get(&gap.origin.span).copied();

@@ -61,6 +61,8 @@ enum CallForm {
 /// `tr` would, where that method is not called (`display`, `equal`):
 /// the help of an error at a call of it. `None` for any other method.
 pub(super) fn uncallable_builtin(tr: TraitKey, method: Symbol, x: &str) -> Option<String> {
+    // (Its callers ask only whether there is a help; a help shown is
+    // `uncallable_builtin_written`'s, with the file's name: not a text)
     uncallable_builtin_written(tr, method, x, "string.from")
 }
 
