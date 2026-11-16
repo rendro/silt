@@ -111,9 +111,10 @@ pub(crate) fn stderr_ends_a_line() -> bool {
 }
 
 /// Whether the process's stdout and stderr are one place: one file, one
-/// pipe or one terminal (`2>&1`, or both left on the terminal). On
-/// Windows only two consoles are known to be one; a file or a pipe there
-/// counts as another place.
+/// pipe or one terminal (`2>&1`, or both left on the terminal). On Unix
+/// by the device and inode of each. On Windows two handles of one kernel
+/// object (what `2>&1` and a child given one handle twice have), two
+/// handles of one file (its volume and file index), or two consoles.
 pub(crate) fn stdout_and_stderr_are_one() -> bool {
     #[cfg(unix)]
     {
@@ -127,7 +128,44 @@ pub(crate) fn stdout_and_stderr_are_one() -> bool {
         let out = id(io::stdout().as_fd());
         out.is_some() && out == id(io::stderr().as_fd())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::io::IsTerminal;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::{CompareObjectHandles, HANDLE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        if io::stdout().is_terminal() && io::stderr().is_terminal() {
+            return true;
+        }
+        let out = io::stdout().as_raw_handle() as HANDLE;
+        let err = io::stderr().as_raw_handle() as HANDLE;
+        if out.is_null() || err.is_null() {
+            return false;
+        }
+        // SAFETY: both are the process's standard handles, open for its
+        // life; the call only reads them.
+        if unsafe { CompareObjectHandles(out, err) } != 0 {
+            return true;
+        }
+        // (A pipe has no file index: two pipes are told apart by the
+        // object alone, above.)
+        let id = |handle: HANDLE| {
+            // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid
+            // value of it; the call writes it and only reads the handle.
+            let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+            let read = unsafe { GetFileInformationByHandle(handle, &mut info) } != 0;
+            read.then_some((
+                info.dwVolumeSerialNumber,
+                info.nFileIndexHigh,
+                info.nFileIndexLow,
+            ))
+        };
+        let out = id(out);
+        out.is_some() && out == id(err)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         use std::io::IsTerminal;
         io::stdout().is_terminal() && io::stderr().is_terminal()

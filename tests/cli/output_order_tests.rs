@@ -76,18 +76,13 @@ fn run_failing(tag: &str, writes: &str, one: bool) -> (Option<i32>, String, Stri
 /// line gets no blank line, and where stdout and stderr are two files
 /// nothing is added to either. FAIL on the base: the report was written
 /// first and "partial " at the exit; on 478805d4 the report followed the
-/// partial text on its line. (On Windows only two consoles are known to
-/// be one place: one file there gets no line end added.)
+/// partial text on its line.
 #[test]
 fn a_stdout_line_with_no_end_yet_comes_before_the_report_of_a_failure() {
     let report = "error[runtime]: division by zero\n";
     let (code, both, _) = run_failing("partial", "print(\"partial \")", true);
     assert_eq!(code, Some(1), "{both}");
-    let expected = match cfg!(unix) {
-        true => format!("partial \n{report}"),
-        false => format!("partial {report}"),
-    };
-    assert!(both.starts_with(&expected), "{both}");
+    assert!(both.starts_with(&format!("partial \n{report}")), "{both}");
 
     let (code, both, _) = run_failing("line", "print(\"whole\\n\")", true);
     assert_eq!(code, Some(1), "{both}");
@@ -107,9 +102,6 @@ fn a_stdout_line_with_no_end_yet_comes_before_the_report_of_a_failure() {
 #[test]
 fn the_report_follows_the_last_text_of_either_output() {
     let report = "error[runtime]: division by zero\n";
-    // (On Windows only two consoles are known to be one place: a file
-    // gets no line end added there.)
-    let added = if cfg!(unix) { "\n" } else { "" };
     let cases = [
         (
             "out_err",
@@ -124,7 +116,7 @@ fn the_report_follows_the_last_text_of_either_output() {
         (
             "both",
             "print(\"out \")\n  io.eprint(\"err \")",
-            format!("out err {added}"),
+            "out err \n".to_string(),
         ),
         (
             "neither",
