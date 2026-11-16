@@ -1558,7 +1558,11 @@ impl TypeChecker {
         supertraits: &[(TraitKey, Vec<TypeExpr>)],
         trait_param_vars: &[(Symbol, Type)],
     ) -> Vec<Vec<Type>> {
+        if supertraits.iter().all(|(_, args)| args.is_empty()) {
+            return vec![Vec::new(); supertraits.len()];
+        }
         let params: Vec<Symbol> = trait_param_vars.iter().map(|(p, _)| *p).collect();
+        let param_set: std::collections::HashSet<Symbol> = params.iter().copied().collect();
         let mut names: HashMap<Symbol, Type> = trait_param_vars.iter().cloned().collect();
         let resolved: Vec<Vec<Type>> = (supertraits.iter())
             .map(|(_, args)| {
@@ -1575,7 +1579,7 @@ impl TypeChecker {
             })
             .collect();
         let no_type: HashMap<TyVar, Type> = (names.iter())
-            .filter(|(name, _)| !trait_param_vars.iter().any(|(p, _)| p == *name))
+            .filter(|(name, _)| !param_set.contains(*name))
             .filter_map(|(_, ty)| match ty {
                 Type::Var(v) => Some((*v, Type::Error)),
                 _ => None,
