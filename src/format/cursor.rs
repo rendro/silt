@@ -250,10 +250,7 @@ impl<'a> Cursor<'a> {
     /// The comment as it is written: without the white space behind
     /// it, and with line feeds for the line ends inside it.
     fn comment_text(&self, index: u32) -> String {
-        self.comments[index as usize]
-            .text(self.source)
-            .trim_end()
-            .replace("\r\n", "\n")
+        super::line_ends_as_lf(self.comments[index as usize].text(self.source).trim_end())
     }
 
     /// The comments in front of the next token that are not written
@@ -486,9 +483,9 @@ impl<'a> Cursor<'a> {
             // line feeds, as the file's are: a carriage return before
             // one is no part of its value.
             Token::StringMiddle(_) | Token::StringEnd(_) => {
-                Doc::text(format!("}}{}", text.replace("\r\n", "\n")))
+                Doc::text(format!("}}{}", super::line_ends_as_lf(text)))
             }
-            Token::StringLit(_) | Token::StringStart(_) => Doc::text(text.replace("\r\n", "\n")),
+            Token::StringLit(_) | Token::StringStart(_) => Doc::text(super::line_ends_as_lf(text)),
             _ => match SPELLINGS.iter().find(|spelling| **spelling == text) {
                 Some(spelling) => Doc::text(*spelling),
                 None => Doc::text(text.to_string()),

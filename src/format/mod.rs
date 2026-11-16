@@ -66,6 +66,29 @@ use crate::source::{FileId, Span};
 /// The width the printer fills.
 pub(crate) const WIDTH: usize = 100;
 
+/// `text`, of a comment or a string, with its line ends written as line
+/// feeds. A line end is a line feed and the one carriage return in
+/// front of it, as the lexer reads it; a carriage return in front of
+/// that one is the line's own (part of a string's value). Such a line
+/// end is written as it stands: as a line feed alone, the next read
+/// would take the line's carriage return for the line end's, and drop
+/// it (`"a\r\r\n"` would lose a carriage return on every pass).
+pub(crate) fn line_ends_as_lf(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("\r\n") {
+        let (line, after) = rest.split_at(at);
+        out.push_str(line);
+        match line.ends_with('\r') {
+            true => out.push_str("\r\n"),
+            false => out.push('\n'),
+        }
+        rest = &after[2..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// What would have gone wrong, phrased to follow "formatting refused: ",
 /// and the place in the input it belongs to, when there is one.
 #[derive(Debug)]
@@ -369,6 +392,23 @@ mod tests {
         );
         let text = "fn main() {\n  let _ = \"a\rb\"\n}\n";
         assert_eq!(fmt(text), text);
+    }
+
+    #[test]
+    fn a_line_end_after_a_carriage_return_of_the_line_stays_as_written() {
+        // The line end's own carriage return goes; one in front of it is
+        // the line's, and a line feed alone after it would make it the
+        // line end's on the next pass. A fixed point either way.
+        for (text, written) in [
+            ("a\r\nb", "a\nb"),
+            ("a\r\r\nb", "a\r\r\nb"),
+            ("a\r\r\r\n", "a\r\r\r\n"),
+            ("\r\n\r\n", "\n\n"),
+            ("a\rb\r", "a\rb\r"),
+        ] {
+            assert_eq!(super::line_ends_as_lf(text), written, "{text:?}");
+            assert_eq!(super::line_ends_as_lf(written), written, "{written:?}");
+        }
     }
 
     #[test]
