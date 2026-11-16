@@ -931,7 +931,8 @@ impl ModuleGraph {
     }
 
     /// The modules `id` imports, and theirs, and so on: the modules
-    /// that are initialised before it.
+    /// that are initialised before it. (For the language server.)
+    #[cfg(feature = "lsp")]
     pub fn reach(&self, id: ModuleId) -> HashSet<ModuleId> {
         let mut seen = HashSet::new();
         let mut stack = self.module(id).imported_modules();
