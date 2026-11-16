@@ -45,7 +45,9 @@ fn make_error() -> String {
     });
     let file = session.set_overlay(Path::new("round83.silt"), "fn main() { x }\n".to_string());
     let d = session.analyze(file).diagnostics[0].clone();
-    session.render(&d)
+    // (The command's renderer, whose colour is the rule tested here: an
+    // embedder's `Session::render` never colours.)
+    silt::testing::diagnostic::render_human(session.sources(), &d)
 }
 
 /// Does the rendered output contain at least one ANSI CSI escape?

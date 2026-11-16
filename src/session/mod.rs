@@ -297,7 +297,11 @@ impl Session {
     /// session's files: the header, the place with its source line and a
     /// caret, the other places, the notes and the help.
     pub fn render(&self, diagnostic: &Diagnostic) -> String {
-        crate::diagnostic::render_human(&self.sources, diagnostic)
+        crate::diagnostic::render_human_in(
+            &self.sources,
+            diagnostic,
+            &crate::diagnostic::COLORS_OFF,
+        )
     }
 
     /// The text of every file the session has read.

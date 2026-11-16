@@ -783,8 +783,8 @@ line between two. `e.render(&session)` is a runtime error as
 `silt run` prints it: the header, the place with its line of source,
 and the call stack; for a `main` that returned `Err`, the one line
 `error: <text>`. Both come from the code the `silt` command prints
-with, and use colour as it does: only where stderr is a terminal, and
-never with `NO_COLOR` set.
+with, and give plain text: no colour codes, whatever the process's
+stderr is and whatever `NO_COLOR` or `FORCE_COLOR` say.
 
 ```rust
 use silt::VmError;
