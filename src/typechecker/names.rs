@@ -2423,10 +2423,25 @@ impl Resolver<'_> {
                 } else {
                     let candidates: Vec<String> =
                         exports.types.keys().map(|t| resolve(*t)).collect();
+                    // (What the name is in the module where it is a variant,
+                    // as the checker says it of a bare name:
+                    // `TypeChecker::what_the_name_is`.)
+                    let is = match exports.values.get(&name) {
+                        Some(Binding::Def(id)) => match self.defs.get(*id).kind {
+                            DefKind::Variant { ty, .. } => format!(
+                                ": `{}.{name}` is a variant of `{}.{}`",
+                                module.name,
+                                module.name,
+                                self.defs.get(ty.0).name
+                            ),
+                            _ => String::new(),
+                        },
+                        _ => String::new(),
+                    };
                     let mut d = Diagnostic::error(
                         Code::NotExported,
                         span,
-                        format!("module '{}' has no {what} '{name}'", module.name),
+                        format!("module '{}' has no {what} '{name}'{is}", module.name),
                     );
                     let name_str = resolve(name);
                     if let Some(help) = (!is_trait).then(|| prelude_type_help(&name_str)).flatten()

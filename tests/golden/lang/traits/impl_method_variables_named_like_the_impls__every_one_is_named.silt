@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- Two of the method's own variables named like the impl header's: the
+-- message names both, and offers a free name for each (it named only the
+-- first; the second showed once the first was fixed) (audit R9 later
+-- list, review rv-o10 N2).
+trait Tr {
+  fn gen(self, x: a, y: b) -> (a, b)
+}
+
+type Pair(a, b) { l: a, r: b }
+
+trait Tr for Pair(a, b) {
+  fn gen(self, x: a, y: b) -> (a, b) { (x, y) }
+}
+
+fn main() {
+  println(1)
+}

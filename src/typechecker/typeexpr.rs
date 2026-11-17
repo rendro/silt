@@ -242,6 +242,41 @@ impl TypeChecker {
     /// The trait the impl `ti` implements.
     pub(super) fn impl_trait(&self, ti: &TraitImpl) -> Option<TraitKey> {
         self.named_trait(ti.trait_res, ti.trait_name)
+            .or_else(|| self.refused_own_trait(ti))
+    }
+
+    /// The trait refused at its declaration (`trait Int`) that the impl
+    /// `ti` names: the module's own, one it imports by item (whose name
+    /// it takes into its own refused names), or one of a module it names
+    /// (`trait mi.Int for Box`). It takes no name, but its impls are
+    /// checked as any trait's (`register_trait_decl_user`).
+    pub(super) fn refused_own_trait(&self, ti: &TraitImpl) -> Option<TraitKey> {
+        let name = ti.trait_name;
+        let of_module = |module: crate::defs::ModuleId| {
+            (self.tables.refused_trait_keys.iter())
+                .filter(|k| k.name == name)
+                .find(|k| self.def(k.id.0).is_some_and(|d| d.module == module))
+                .copied()
+        };
+        match ti.trait_module {
+            None if self.refused_traits.contains(&name) => {
+                (self.own_traits.get(&name).copied()).or_else(|| {
+                    // (Imported by item: the one refused trait of that name
+                    // of another module.)
+                    let mut others = (self.tables.refused_trait_keys.iter())
+                        .filter(|k| k.name == name)
+                        .filter(|k| self.def(k.id.0).is_some_and(|d| d.module != self.module));
+                    match (others.next(), others.next()) {
+                        (Some(k), None) => Some(*k),
+                        _ => None,
+                    }
+                })
+            }
+            None => None,
+            Some(q) => (self.module_spelled.iter())
+                .find(|(_, spelled)| **spelled == q.name)
+                .and_then(|(module, _)| of_module(*module)),
+        }
     }
 
     /// The type variable a `type a` parameter introduces (or names, when
@@ -674,7 +709,7 @@ impl TypeChecker {
                         if self.case_mismatched_type_name(&name_str, false).is_some() {
                             self.error(
                                 Code::UnknownType,
-                                self.unknown_type_message(&name_str, false, te.res),
+                                self.unknown_type_message((*module, &name_str), false, te.res),
                                 te.span,
                             );
                             return Type::Error;
@@ -691,7 +726,7 @@ impl TypeChecker {
                     // annotation.
                     self.error(
                         Code::UnknownType,
-                        self.unknown_type_message(&name_str, false, te.res),
+                        self.unknown_type_message((*module, &name_str), false, te.res),
                         te.span,
                     );
                     return Type::Error;
@@ -708,7 +743,7 @@ impl TypeChecker {
                     None => {
                         self.error(
                             Code::UnknownType,
-                            self.unknown_type_message(&name_str, false, te.res),
+                            self.unknown_type_message((*module, &name_str), false, te.res),
                             te.span,
                         );
                         Type::Error
@@ -813,7 +848,7 @@ impl TypeChecker {
                 else {
                     self.error(
                         Code::UnknownType,
-                        self.unknown_type_message(&name_str, true, te.res),
+                        self.unknown_type_message((*module, &name_str), true, te.res),
                         te.span,
                     );
                     return Type::Error;
