@@ -1,8 +1,8 @@
-error[type]: unknown trait 'Foo' in where clause for 'a'
+error[type]: unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `mv.V`
  --> main.silt:11:34
     |
  11 | fn by_item(x: a) -> Int where a: Foo { 1 }
-    |                                  ^^^ unknown trait 'Foo' in where clause for 'a'
+    |                                  ^^^ unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `mv.V`
 
 error[type]: unknown trait 'Zed' in where clause for 'a'
  --> main.silt:13:36

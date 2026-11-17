@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A bound that names no trait in an impl method's where clause: reported
+-- once, at the name (it was reported twice at one caret, "on 'Int.m'" and
+-- "for 'b'": audit R9, review rv-o9 N3, N2).
+trait Tm { fn m(self, x: b) -> Int }
+trait Tm for Int {
+  fn m(self, x: b) -> Int where b: Nope3 { 1 }
+}
+
+fn main() { println(1) }

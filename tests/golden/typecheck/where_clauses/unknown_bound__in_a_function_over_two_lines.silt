@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A function's `where` on a line of its own, with a known trait before the
+-- unknown one: reported at the unknown name (audit R9, review rv-o9 N2).
+fn f(x: a) -> Int
+  where a: Display + Nope3 { 1 }
+
+fn main() { println(1) }

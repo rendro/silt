@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A bound that names no trait in an impl's header: reported at the name
+-- (audit R9, review rv-o9 N4).
+type Box(a) { v: a }
+trait Tm { fn m(self) -> Int }
+trait Tm for Box(a) where a: Nope3 {
+  fn m(self) -> Int { 1 }
+}
+
+fn main() { println(1) }

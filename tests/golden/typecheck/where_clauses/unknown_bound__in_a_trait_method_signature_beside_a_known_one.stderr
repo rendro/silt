@@ -1,0 +1,5 @@
+error[type]: unknown trait 'Nope3' in where clause for 'b'
+ --> unknown_bound__in_a_trait_method_signature_beside_a_known_one.silt:6:46
+   |
+ 6 |   fn m(self, x: b) -> Int where b: Display + Nope3
+   |                                              ^^^^^ unknown trait 'Nope3' in where clause for 'b'

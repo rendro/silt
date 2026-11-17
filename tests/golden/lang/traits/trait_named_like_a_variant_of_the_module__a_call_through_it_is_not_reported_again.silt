@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A trait refused for the name of a variant of the module: a call of its
+-- method through the name (`Foo.hop(3)`, `Foo` the variant) is not
+-- reported again; a method the trait does not have is the variant's
+-- error (audit R9, review rv-o8 N7).
+type T { Foo(Int), Bar }
+
+trait Foo {
+  fn hop(self) -> Int
+}
+
+fn main() {
+  println((Foo.hop(3), Foo.nope(3), Bar))
+}

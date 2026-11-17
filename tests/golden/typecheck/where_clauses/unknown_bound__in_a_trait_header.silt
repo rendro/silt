@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A bound that names no trait on a trait's own parameter, `trait Tm(a) where
+-- a: Nope3`, is reported at the name (it was accepted: audit R9, review
+-- rv-o9 N4).
+trait Tm(a) where a: Nope3 {
+  fn m(self) -> Int
+}
+
+fn main() { println(1) }

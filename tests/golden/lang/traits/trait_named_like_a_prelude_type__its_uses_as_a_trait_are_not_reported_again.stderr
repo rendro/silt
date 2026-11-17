@@ -1,0 +1,12 @@
+error[type]: trait 'Int' shadows builtin type 'Int'
+ --> trait_named_like_a_prelude_type__its_uses_as_a_trait_are_not_reported_again.silt:8:7
+   |
+ 8 | trait Int {
+   |       ^^^ trait 'Int' shadows builtin type 'Int'
+  = help: choose a different name
+
+error[type]: type 'Int' has no method 'nope'
+ --> trait_named_like_a_prelude_type__its_uses_as_a_trait_are_not_reported_again.silt:25:26
+    |
+ 25 |   println((Int.go(true), Int.nope(1), f(1)))
+    |                          ^^^^^^^^ type 'Int' has no method 'nope'

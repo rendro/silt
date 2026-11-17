@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A bound that names no trait in the signature of a method a trait declares
+-- without a body is reported, at the name (it was accepted: audit R9,
+-- review rv-o9 N4).
+trait Tm {
+  fn m(self, x: b) -> Int where b: Nope3
+}
+
+fn main() { println(1) }

@@ -1,0 +1,5 @@
+error[type]: unknown trait 'Nope3' in where clause on trait impl 'Tm for Box'
+ --> unknown_bound__in_an_impl_header.silt:7:30
+   |
+ 7 | trait Tm for Box(a) where a: Nope3 {
+   |                              ^^^^^ unknown trait 'Nope3' in where clause on trait impl 'Tm for Box'

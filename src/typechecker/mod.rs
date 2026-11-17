@@ -753,15 +753,21 @@ pub(crate) struct TypeChecker {
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
     pub(super) rejected_types: std::collections::HashSet<TypeRef>,
-    /// The module's trait declarations refused for a prelude type's name
-    /// (`trait Int`): an impl of one is already reported.
+    /// The traits refused at their declaration (`trait Int`, `trait Some`,
+    /// a trait named like a variant of the module) that the module
+    /// declares or imports (the resolver's `refused_traits`): an impl of
+    /// one, or a call of one of its methods through its name
+    /// (`Tables::refused_trait_methods`), is already reported.
     pub(super) refused_traits: std::collections::HashSet<Symbol>,
-    /// The methods of the impls whose trait or type the resolver resolved
-    /// to nothing: a call of one is not reported again as unknown.
-    pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
     /// The trait and type of each impl whose header was refused: a use
     /// of the trait for the type owes no second error.
     pub(super) refused_impl_heads: std::collections::HashSet<(TraitKey, TypeRef)>,
+    /// The places of the bounds reported as naming no trait
+    /// (`unknown_bound`): each is reported once.
+    pub(super) reported_bounds: std::collections::HashSet<Span>,
+    /// The variants the module names bare, by name, each with its enum
+    /// (`names::bare_variants`).
+    pub(super) bare_variants: HashMap<Symbol, crate::defs::TypeId>,
     /// The traits of the module's rejected impls for every type
     /// (`trait T for a`): a type that lacks one is not reported again.
     pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
@@ -1007,8 +1013,9 @@ impl TypeChecker {
             dependency_keys: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             refused_traits: std::collections::HashSet::new(),
-            unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
+            reported_bounds: std::collections::HashSet::new(),
+            bare_variants: HashMap::new(),
             blanket_traits: std::collections::HashSet::new(),
             duplicated_impls: std::collections::HashSet::new(),
             impl_written: HashMap::new(),
@@ -1761,6 +1768,18 @@ impl TypeChecker {
                     {
                         self.frame_owner = Some(unused::FrameOwner::TopLevel(f.name));
                         self.check_body(f, sig, env);
+                    } else if self.signatures_only {
+                        // (A host function has no body to check its
+                        // bounds with: a bound that names no trait is
+                        // reported here.)
+                        for wc in &f.where_clauses {
+                            let known = self
+                                .named_trait(wc.trait_res, wc.trait_name)
+                                .is_some_and(|t| self.tables.traits.contains_key(&t));
+                            if !known && wc.trait_res != Some(crate::defs::Res::Error) {
+                                self.unknown_bound(wc);
+                            }
+                        }
                     }
                 }
                 (
@@ -2485,10 +2504,12 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.is_cell = kind == names::ModuleKind::Cell;
     checker.reach = reach;
     checker.cells = cells;
+    checker.bare_variants = names::bare_variants(scope, &defs);
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;
     checker.dependency_keys = dependencies.into_iter().map(|(key, m)| (m, key)).collect();
+    checker.refused_traits = scope.refused_traits.clone();
     for binding in scope.types.values() {
         if let names::Binding::Def(id) = binding {
             checker.seen_traits.insert(*id);

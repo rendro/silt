@@ -1,0 +1,17 @@
+error[type]: the type variable 'a' of method 'gen' is the impl's 'a' here, not the method's own
+ --> impl_method_variable_named_like_the_impls__the_message_tells_them_apart.silt:16:3
+    |
+ 16 |   fn gen(self, x: a) -> a { x }
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type variable 'a' of method 'gen' is the impl's 'a' here, not the method's own
+ ::: impl_method_variable_named_like_the_impls__the_message_tells_them_apart.silt:15:1
+    |
+ 15 | trait Tr for Box(a) {
+    | ------------------- the impl's `a`
+  = help: trait 'Tr' declares `gen` with a type variable `a` of its own, which stands for any type: write it with another name in this impl, such as `b`
+
+error[type]: type mismatch: expected a, got Int
+ --> impl_method_variable_named_like_the_impls__the_message_tells_them_apart.silt:24:3
+    |
+ 24 |   fn put(self, x: Int) -> Int { x }
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected a, got Int
+  = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is

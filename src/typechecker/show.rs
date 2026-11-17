@@ -767,17 +767,59 @@ impl TypeChecker {
             .min()
     }
 
-    /// The "unknown type" error for `name`, with a hint when it is a
-    /// known type in the wrong case (see `case_mismatched_type_name`).
-    pub(super) fn unknown_type_message(&self, name: &str, applied: bool) -> String {
+    /// The "unknown type" error for `name` (resolved to `res`), with a
+    /// hint when it is a known type in the wrong case (see
+    /// `case_mismatched_type_name`), else what the name is where the
+    /// module sees it as something else (`what_the_name_is`).
+    pub(super) fn unknown_type_message(
+        &self,
+        name: &str,
+        applied: bool,
+        res: Option<crate::defs::Res>,
+    ) -> String {
         match (self.case_mismatched_type_name(name, applied)).and_then(|t| self.type_offered(&t)) {
             Some(type_name) => format!(
                 "unknown type '{name}' — did you mean {type_name}? (type names are \
                  case-sensitive and start with a capital letter; a lowercase name in a \
                  type is a type variable)"
             ),
-            None => format!("unknown type '{name}'"),
+            None => match self.what_the_name_is(res, intern(name), false) {
+                Some(is) => format!("unknown type '{name}': {is}"),
+                None => format!("unknown type '{name}'"),
+            },
         }
+    }
+
+    /// What the name `name`, resolved to `res`, is where a type is
+    /// wanted (`want_trait` false) or a trait (true) and it is the other
+    /// thing, or a variant the module names bare: "`Show` is a trait",
+    /// "`Own` is a type", "`Mine` is a variant of `Own`" (the enum as the
+    /// module writes it). None where it is none of them.
+    pub(super) fn what_the_name_is(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+        want_trait: bool,
+    ) -> Option<String> {
+        use crate::defs::DefKind;
+        if let Some(crate::defs::Res::Def(id)) = res
+            && let Some(def) = self.def(id)
+        {
+            return match def.kind {
+                DefKind::Trait(_) if !want_trait => Some(format!("`{name}` is a trait")),
+                DefKind::Type(_) | DefKind::TypeAlias if want_trait => {
+                    Some(format!("`{name}` is a type"))
+                }
+                _ => None,
+            };
+        }
+        let id = *self.bare_variants.get(&name)?;
+        let ty = TypeRef {
+            id,
+            name: self.def(id.0)?.name,
+        };
+        let enum_name = self.show_type(&Type::Generic(ty, Vec::new()));
+        Some(format!("`{name}` is a variant of `{enum_name}`"))
     }
 
     /// The type named `name` as this module can write it, for a "did

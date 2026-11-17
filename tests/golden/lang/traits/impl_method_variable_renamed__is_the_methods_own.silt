@@ -1,0 +1,17 @@
+-- The fix the message above offers: the method's own variable written
+-- with another name than the impl header's is the method's, for any type
+-- (audit R9, review rv-a1e).
+trait Tr {
+  fn gen(self, x: a) -> a
+}
+
+type Box(a) { v: a }
+
+trait Tr for Box(a) {
+  fn gen(self, x: b) -> b { x }
+}
+
+fn main() {
+  println(Tr.gen(Box { v: 1 }, "s"))
+  println(Tr.gen(Box { v: 1 }, 2))
+}

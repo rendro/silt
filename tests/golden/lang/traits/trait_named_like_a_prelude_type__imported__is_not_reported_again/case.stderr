@@ -1,0 +1,6 @@
+error[type]: trait 'Int' shadows builtin type 'Int'
+ --> m.silt:1:11
+   |
+ 1 | pub trait Int {
+   |           ^^^ trait 'Int' shadows builtin type 'Int'
+  = help: choose a different name

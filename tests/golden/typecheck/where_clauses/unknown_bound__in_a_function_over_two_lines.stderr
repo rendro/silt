@@ -1,0 +1,5 @@
+error[type]: unknown trait 'Nope3' in where clause for 'a'
+ --> unknown_bound__in_a_function_over_two_lines.silt:6:22
+   |
+ 6 |   where a: Display + Nope3 { 1 }
+   |                      ^^^^^ unknown trait 'Nope3' in where clause for 'a'

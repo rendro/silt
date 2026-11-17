@@ -1,5 +1,5 @@
-error[type]: unknown trait 'NotFound' in where clause for 'a'
+error[type]: unknown trait 'NotFound' in where clause for 'a': `NotFound` is a variant of `io.IoError`
  --> <repl:3>:1:28
    |
  1 | fn u(x: a) -> Int where a: NotFound { 1 }
-   |                            ^^^^^^^^ unknown trait 'NotFound' in where clause for 'a'
+   |                            ^^^^^^^^ unknown trait 'NotFound' in where clause for 'a': `NotFound` is a variant of `io.IoError`

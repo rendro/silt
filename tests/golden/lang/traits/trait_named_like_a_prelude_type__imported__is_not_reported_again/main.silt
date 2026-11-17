@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- The module's refused trait is reported in the module only: an import
+-- of it by item binds nothing (`Int` stays the prelude's type), and a
+-- bound, `m.Int` and a call through either name are not reported again
+-- (audit R9, review rv-o5 N2).
+import m
+import m.{ Int }
+
+fn f(x: a) -> Int where a: m.Int {
+  1
+}
+
+fn g(x: a) -> Int where a: Int {
+  1
+}
+
+fn main() {
+  let n: Int = 3
+  println((m.Int.go(true), Int.go(true), f(1), g(2), n))
+}

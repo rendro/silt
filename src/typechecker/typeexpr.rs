@@ -674,7 +674,7 @@ impl TypeChecker {
                         if self.case_mismatched_type_name(&name_str, false).is_some() {
                             self.error(
                                 Code::UnknownType,
-                                self.unknown_type_message(&name_str, false),
+                                self.unknown_type_message(&name_str, false, te.res),
                                 te.span,
                             );
                             return Type::Error;
@@ -691,7 +691,7 @@ impl TypeChecker {
                     // annotation.
                     self.error(
                         Code::UnknownType,
-                        self.unknown_type_message(&name_str, false),
+                        self.unknown_type_message(&name_str, false, te.res),
                         te.span,
                     );
                     return Type::Error;
@@ -708,7 +708,7 @@ impl TypeChecker {
                     None => {
                         self.error(
                             Code::UnknownType,
-                            self.unknown_type_message(&name_str, false),
+                            self.unknown_type_message(&name_str, false, te.res),
                             te.span,
                         );
                         Type::Error
@@ -813,7 +813,7 @@ impl TypeChecker {
                 else {
                     self.error(
                         Code::UnknownType,
-                        self.unknown_type_message(&name_str, true),
+                        self.unknown_type_message(&name_str, true, te.res),
                         te.span,
                     );
                     return Type::Error;

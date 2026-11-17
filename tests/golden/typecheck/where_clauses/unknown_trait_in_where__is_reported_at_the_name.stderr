@@ -1,11 +1,29 @@
-error[type]: unknown trait 'Foo' in where clause for 'a'
- --> unknown_trait_in_where__is_reported_at_the_name.silt:12:28
+error[type]: unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `T`
+ --> unknown_trait_in_where__is_reported_at_the_name.silt:15:28
     |
- 12 | fn u(x: a) -> Int where a: Foo { 1 }
-    |                            ^^^ unknown trait 'Foo' in where clause for 'a'
+ 15 | fn u(x: a) -> Int where a: Foo { 1 }
+    |                            ^^^ unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `T`
 
-error[type]: unknown trait 'Bar' in where clause on trait impl 'Loud for List'
- --> unknown_trait_in_where__is_reported_at_the_name.silt:14:33
+error[type]: unknown trait 'Bar' in where clause on trait impl 'Loud for List': `Bar` is a variant of `T`
+ --> unknown_trait_in_where__is_reported_at_the_name.silt:17:33
     |
- 14 | trait Loud for List(a) where a: Bar {
-    |                                 ^^^ unknown trait 'Bar' in where clause on trait impl 'Loud for List'
+ 17 | trait Loud for List(a) where a: Bar {
+    |                                 ^^^ unknown trait 'Bar' in where clause on trait impl 'Loud for List': `Bar` is a variant of `T`
+
+error[type]: unknown trait 'Foo' in where clause for 'b': `Foo` is a variant of `T`
+ --> unknown_trait_in_where__is_reported_at_the_name.silt:19:43
+    |
+ 19 |   fn twice(self, x: b) -> String where b: Foo { "y" }
+    |                                           ^^^ unknown trait 'Foo' in where clause for 'b': `Foo` is a variant of `T`
+
+error[type]: unknown trait 'Bar' in where clause for 'b': `Bar` is a variant of `T`
+ --> unknown_trait_in_where__is_reported_at_the_name.silt:23:40
+    |
+ 23 |   fn quiet(self, x: b) -> Int where b: Bar
+    |                                        ^^^ unknown trait 'Bar' in where clause for 'b': `Bar` is a variant of `T`
+
+error[type]: unknown trait 'Foo' in where clause for 'b': `Foo` is a variant of `T`
+ --> unknown_trait_in_where__is_reported_at_the_name.silt:28:12
+    |
+ 28 |         b: Foo
+    |            ^^^ unknown trait 'Foo' in where clause for 'b': `Foo` is a variant of `T`

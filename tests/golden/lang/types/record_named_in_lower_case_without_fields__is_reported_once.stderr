@@ -1,0 +1,5 @@
+error[parse]: type name 'void' must start with an uppercase letter, e.g. `type Void`: a lowercase name where a type is expected is a type variable, so this type could never be referred to
+ --> record_named_in_lower_case_without_fields__is_reported_once.silt:7:6
+   |
+ 7 | type void {}
+   |      ^^^^ here

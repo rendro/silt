@@ -1112,6 +1112,7 @@ impl TypeChecker {
                     .with_help(help),
             );
             self.refused_traits.insert(t.name);
+            (self.tables.refused_trait_methods).extend(t.methods.iter().map(|m| (t.name, m.name)));
             return;
         }
         self.register_trait_decl_inner(t);
@@ -1310,11 +1311,18 @@ impl TypeChecker {
             match self.named_trait(r.res, r.name) {
                 Some(sup) => supertraits.push((sup, r.args.clone())),
                 None if r.res == Some(crate::defs::Res::Error) => {}
-                None => self.error(
-                    Code::UnknownTrait,
-                    format!("trait '{}' lists unknown supertrait '{}'", t.name, r.name),
-                    t.span,
-                ),
+                None => {
+                    let is = (self.what_the_name_is(r.res, r.name, true))
+                        .map_or_else(String::new, |is| format!(": {is}"));
+                    self.error(
+                        Code::UnknownTrait,
+                        format!(
+                            "trait '{}' lists unknown supertrait '{}'{is}",
+                            t.name, r.name
+                        ),
+                        r.span,
+                    )
+                }
             }
         }
         // A method name written twice in a trait declaration is an
@@ -1463,7 +1471,8 @@ impl TypeChecker {
             known_vars.extend(own.iter().map(|(v, _)| *v));
             var_names.extend(own);
             // The method's own bounds. (An unknown trait in one is
-            // reported where a body is checked against the method.)
+            // reported here for a method without a body; a default
+            // method's is reported where its body is checked.)
             let mut bounds: Vec<Pred> = Vec::new();
             for wc in &m.where_clauses {
                 // (A trait method's bound on a variable its signature
@@ -1478,15 +1487,22 @@ impl TypeChecker {
                 // (A trait of the module declared further down is known
                 // here as one declared above: the order of declarations
                 // does not matter.)
-                let (Some(Type::Var(tv)), Some(bound)) = (
-                    param_map.get(&wc.type_param).cloned(),
-                    self.named_trait(wc.trait_res, wc.trait_name)
-                        .filter(|bound| {
-                            self.tables.traits.contains_key(bound)
-                                || *bound == key
-                                || self.own_traits.values().any(|own| own == bound)
-                        }),
-                ) else {
+                let bound = self
+                    .named_trait(wc.trait_res, wc.trait_name)
+                    .filter(|bound| {
+                        self.tables.traits.contains_key(bound)
+                            || *bound == key
+                            || self.own_traits.values().any(|own| own == bound)
+                    });
+                if bound.is_none()
+                    && m.is_signature_only
+                    && wc.trait_res != Some(crate::defs::Res::Error)
+                {
+                    self.unknown_bound(wc);
+                }
+                let (Some(Type::Var(tv)), Some(bound)) =
+                    (param_map.get(&wc.type_param).cloned(), bound)
+                else {
                     continue;
                 };
                 if !self.bound_fits_kind(
@@ -1549,7 +1565,12 @@ impl TypeChecker {
             .param_where_clauses
             .iter()
             .filter_map(|wc| {
-                let bound = self.named_trait(wc.trait_res, wc.trait_name)?;
+                let Some(bound) = self.named_trait(wc.trait_res, wc.trait_name) else {
+                    if wc.trait_res != Some(crate::defs::Res::Error) {
+                        self.unknown_bound(wc);
+                    }
+                    return None;
+                };
                 let args: Vec<Type> = (wc.trait_args.iter())
                     .map(|te| self.resolve_type_expr(te, &mut param_names))
                     .collect();
@@ -2394,8 +2415,6 @@ impl TypeChecker {
             || ti.target_res == Some(crate::defs::Res::Error)
             || (ti.trait_module.is_none() && self.refused_traits.contains(&ti.trait_name))
         {
-            self.unresolved_impl_methods
-                .extend(ti.methods.iter().map(|m| m.name));
             return None;
         }
         // Reject trait impls whose target type was never
@@ -2414,8 +2433,6 @@ impl TypeChecker {
                 format!("trait impl target '{name_str}' is not a declared type"),
                 ti.span,
             );
-            self.unresolved_impl_methods
-                .extend(ti.methods.iter().map(|m| m.name));
             if name_str.starts_with(char::is_lowercase)
                 && let Some(tr) = self.impl_trait(ti)
             {
@@ -2456,8 +2473,6 @@ impl TypeChecker {
             return None;
         };
         if !self.impl_header_fits(ti, trait_key, written) {
-            self.unresolved_impl_methods
-                .extend(ti.methods.iter().map(|m| m.name));
             self.refused_impl_heads.insert((trait_key, target_type));
             return None;
         }
@@ -2739,10 +2754,12 @@ impl TypeChecker {
             .named_trait(wc.trait_res, wc.trait_name)
             .filter(|t| self.tables.traits.contains_key(t))
         else {
+            let is = (self.what_the_name_is(wc.trait_res, wc.trait_name, true))
+                .map_or_else(String::new, |is| format!(": {is}"));
             self.error(
                 Code::UnknownTrait,
                 format!(
-                    "unknown trait '{}' in where clause on trait impl '{} for {}'",
+                    "unknown trait '{}' in where clause on trait impl '{} for {}'{is}",
                     resolve(wc.trait_name),
                     self.impl_trait_name(ti),
                     resolve(ti.target_type)
@@ -3048,7 +3065,26 @@ impl TypeChecker {
                         expected.clone()
                     }
                     Err(mismatch) => {
-                        self.report_mismatch(mismatch, method.span);
+                        // A variable of the trait's method named like one
+                        // of the impl's header (`a` of `for Box(a)`): in
+                        // the impl the name is the header's, so the two
+                        // `a`s of the mismatch would read alike.
+                        let own = &method_rigid[rigid.len()..];
+                        let mut writes = Vec::new();
+                        let written_types = (method.params.iter().filter_map(|p| p.ty.as_ref()))
+                            .chain(method.return_type.as_ref());
+                        for te in written_types {
+                            super::names::type_vars_of(te, &mut writes);
+                        }
+                        let clash = own
+                            .iter()
+                            .find(|r| impl_names.contains_key(&r.name) && writes.contains(&r.name));
+                        match clash {
+                            Some(clash) => {
+                                self.method_variable_is_the_impls(ti, method, clash.name, own)
+                            }
+                            None => self.report_mismatch(mismatch, method.span),
+                        }
                         written
                     }
                 }
@@ -3209,6 +3245,67 @@ impl TypeChecker {
         (param_types, ret_type)
     }
 
+    /// The error of the impl method `method` whose signature uses `name`,
+    /// a type variable of the impl's header, where the trait declares the
+    /// method with a variable `name` of its own (`own`, the method's
+    /// variables): the impl's method is not for any type there. Said with
+    /// the two told apart, and a name the method's variable can take.
+    fn method_variable_is_the_impls(
+        &mut self,
+        ti: &TraitImpl,
+        method: &FnDecl,
+        name: Symbol,
+        own: &[RigidId],
+    ) {
+        let taken = |c: &str| {
+            let c = intern(c);
+            own.iter().any(|r| r.name == c) || ti.target_param_names.contains(&c)
+        };
+        let fresh = ('b'..='z')
+            .map(|c| c.to_string())
+            .find(|c| !taken(c))
+            .unwrap_or_else(|| format!("{name}2"));
+        self.errors.push(
+            Diagnostic::error(
+                Code::TypeMismatch,
+                method.span,
+                format!(
+                    "the type variable '{name}' of method '{}' is the impl's '{name}' here, not \
+                     the method's own",
+                    method.name
+                ),
+            )
+            .with_label(ti.header_span, format!("the impl's `{name}`"))
+            .with_help(format!(
+                "trait '{}' declares `{}` with a type variable `{name}` of its own, which \
+                 stands for any type: write it with another name in this impl, such as \
+                 `{fresh}`",
+                self.impl_trait_name(ti),
+                method.name
+            )),
+        );
+    }
+
+    /// The error of the bound `wc` that names no trait, in a `where`
+    /// clause of a function, a trait's header, a trait's or an impl's
+    /// method or a host function: at the trait's name, once (an impl's
+    /// method is declared, and then its body checked, against the bound).
+    pub(super) fn unknown_bound(&mut self, wc: &WhereClause) {
+        if !self.reported_bounds.insert(wc.trait_name_span) {
+            return;
+        }
+        let is = (self.what_the_name_is(wc.trait_res, wc.trait_name, true))
+            .map_or_else(String::new, |is| format!(": {is}"));
+        self.error(
+            Code::UnknownTrait,
+            format!(
+                "unknown trait '{}' in where clause for '{}'{is}",
+                wc.trait_name, wc.type_param
+            ),
+            wc.trait_name_span,
+        );
+    }
+
     /// One `where` clause of the impl method `method` in `declare_impl_method`:
     /// the bound it puts on the method's type variables, or the error it is.
     fn method_where_clause(
@@ -3236,16 +3333,7 @@ impl TypeChecker {
             .named_trait(wc.trait_res, wc.trait_name)
             .filter(|t| self.tables.traits.contains_key(t))
         else {
-            self.error(
-                Code::UnknownTrait,
-                format!(
-                    "unknown trait '{}' in where clause on '{}.{}'",
-                    resolve(wc.trait_name),
-                    resolve(ti.target_type),
-                    resolve(method.name)
-                ),
-                wc.trait_name_span,
-            );
+            self.unknown_bound(wc);
             return;
         };
         let trait_name = &trait_key;

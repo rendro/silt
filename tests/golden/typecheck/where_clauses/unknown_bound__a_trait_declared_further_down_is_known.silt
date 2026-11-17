@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+-- Bounds on a trait header and a trait method naming traits declared
+-- further down are known: the order of declarations does not matter
+-- (audit R9, review rv-o9 N4).
+trait Tm(a) where a: Later {
+  fn m(self, x: b) -> a where b: Later2
+}
+
+trait Later { fn l(self) -> Int }
+
+trait Later2 { fn l2(self) -> Int }
+
+fn main() { println(1) }
