@@ -27,6 +27,7 @@ use crate::ast::{FnDecl, ParamKind, PatternKind, TypeBody, TypeDecl, TypeExpr, T
 use crate::defs::TypeId;
 use crate::intern::{Symbol, resolve};
 use crate::typechecker::names::type_vars_of;
+use crate::types::Container;
 use crate::value::{
     FromValue, HostCall, HostImpl, HostShape, HostSource, HostStep, HostTemplates, HostVar,
     IntoValue, Value,
@@ -553,15 +554,15 @@ impl Shapes<'_, '_> {
             Type::Never => HostShape::Never,
             Type::Var(var) => param(var),
             Type::Rigid(rigid) => param(&rigid.var),
-            Type::List(item) => HostShape::List(boxed(item)),
-            Type::Set(item) => HostShape::Set(boxed(item)),
-            Type::Channel(item) => HostShape::Channel(boxed(item)),
-            Type::Map(k, v) => {
+            Type::Container(Container::List(item)) => HostShape::List(boxed(item)),
+            Type::Container(Container::Set(item)) => HostShape::Set(boxed(item)),
+            Type::Container(Container::Channel(item)) => HostShape::Channel(boxed(item)),
+            Type::Container(Container::Map(k, v)) => {
                 let k = boxed(k);
                 HostShape::Map(k, boxed(v))
             }
-            Type::Tuple(items) if items.is_empty() => HostShape::Unit,
-            Type::Tuple(items) => HostShape::Tuple(
+            Type::Container(Container::Tuple(items)) if items.is_empty() => HostShape::Unit,
+            Type::Container(Container::Tuple(items)) => HostShape::Tuple(
                 items
                     .iter()
                     .map(|item| self.of_type(item, params))

@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- The clause that says what a name is, and the error's own quote of the
+-- name, write it as the file did, through its module: `zz.V`, not `V`,
+-- which the file cannot write (audit R9 later list, review rv-o10 N3).
+import mz as zz
+
+fn type_as_bound(x: b) -> Int where b: zz.V { 1 }
+
+fn trait_as_type(x: zz.Later2) -> Int { 1 }
+
+trait Sub: zz.V {
+  fn s(self) -> Int
+}
+
+fn main() {
+  println((zz.Zed, zz.helper()))
+}

@@ -47,6 +47,7 @@ mod repl_completion_scope_tests;
 mod repl_completion_short_commands_tests;
 mod repl_error_render_and_keywords_tests;
 mod repl_keyword_parity_with_lexer_tests;
+mod repl_sigint_tests;
 mod run_banner_consistency_tests;
 mod runtime_panic_tests;
 mod runtime_settings_tests;

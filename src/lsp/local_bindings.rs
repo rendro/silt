@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::types::Type;
+use crate::types::{Container, Type};
 
 use crate::defs::Res;
 use crate::typechecker::Tables;
@@ -314,7 +314,9 @@ fn collect_pattern_bindings(
             // Propagate element types when the value's type is a tuple of
             // the same arity, so `let (a, b) = (1, 2)` gives `a: Int, b: Int`.
             let elem_tys: Option<Vec<Type>> = match expr_ty {
-                Some(Type::Tuple(tys)) if tys.len() == pats.len() => Some(tys.clone()),
+                Some(Type::Container(Container::Tuple(tys))) if tys.len() == pats.len() => {
+                    Some(tys.clone())
+                }
                 _ => None,
             };
             for (i, p) in pats.iter().enumerate() {
@@ -439,7 +441,7 @@ fn collect_pattern_bindings(
             // `v`); keys are string literals, never binders. A value
             // has the map's value type.
             let value_ty = match expr_ty {
-                Some(Type::Map(_, value)) => Some(&**value),
+                Some(Type::Container(Container::Map(_, value))) => Some(&**value),
                 _ => None,
             };
             for (_, p) in entries {
@@ -450,7 +452,9 @@ fn collect_pattern_bindings(
             // A list destructure binds each head element to the list's
             // element type and the tail to the full list type.
             let (elem_ty, list_ty): (Option<Type>, Option<Type>) = match expr_ty {
-                Some(t @ Type::List(inner)) => (Some((**inner).clone()), Some(t.clone())),
+                Some(t @ Type::Container(Container::List(inner))) => {
+                    (Some((**inner).clone()), Some(t.clone()))
+                }
                 _ => (None, None),
             };
             for p in pats {

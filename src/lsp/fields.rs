@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::types::Type;
+use crate::types::{Container, Type};
 
 /// The fields of each record type a module sees, by the name it is
 /// written with (`ModuleAnalysis::record_fields`).
@@ -59,7 +59,7 @@ pub(super) fn find_field_in_expr(
 /// Look up a field's type within a record type.
 pub(super) fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
     match ty {
-        Type::Tuple(elems) => resolve(field_name)
+        Type::Container(Container::Tuple(elems)) => resolve(field_name)
             .parse::<usize>()
             .ok()
             .and_then(|i| elems.get(i).cloned()),
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_get_field_type_tuple() {
-        let ty = Type::Tuple(vec![Type::Int, Type::String, Type::Bool]);
+        let ty = Type::Container(Container::Tuple(vec![Type::Int, Type::String, Type::Bool]));
         assert_eq!(
             get_field_type(&ty, crate::intern::intern("0")),
             Some(Type::Int)
