@@ -3582,11 +3582,10 @@ impl TypeChecker {
             }
         }
         for (name, var, impls) in for_header {
-            let (message, help) = match self.trait_writes_self_where(
-                method,
-                name,
-                declared.as_ref(),
-            ) {
+            let (message, help) = match self
+                .trait_writes_self_where(method, name, declared.as_ref())
+                .is_some()
+            {
                 true => {
                     let target = impl_target_written(ti);
                     (
@@ -3617,22 +3616,35 @@ impl TypeChecker {
                 .collect();
             substitute_vars(&ty, &vars)
         };
+        let trait_type = declared.as_ref();
         for (name, var) in own {
             let declared = self.apply(&Type::Var(var));
             if matches!(declared, Type::Var(_) | Type::Rigid(_) | Type::Error) {
                 continue;
             }
             let declared = self.show_type(&as_written(&declared));
+            // (Where the trait writes `Self` for the whole variable, the
+            // help offers both forms, as for a header's variable there.)
+            let (said, written) = match self.trait_writes_self_where(method, name, trait_type) {
+                Some(true) => (
+                    format!("`Self`, `{declared}`"),
+                    format!("`{declared}`, or `Self`"),
+                ),
+                _ => (
+                    format!("`{declared}`"),
+                    format!("`{declared}`, as the trait does"),
+                ),
+            };
             self.error_help(
                 Code::TypeMismatch,
                 (
                     format!(
                         "method '{}' writes the type variable `{name}` where trait '{}' declares \
-                         `{declared}`",
+                         {said}",
                         method.name, ti.trait_name
                     ),
                     Some(format!(
-                        "a type variable stands for any type: write `{declared}`, as the trait does"
+                        "a type variable stands for any type: write {written}"
                     )),
                 ),
                 at(self, &var),
@@ -3640,18 +3652,20 @@ impl TypeChecker {
         }
     }
 
-    /// Whether the trait declares `Self` where the impl method `method`
-    /// first writes its variable `name`: the first parameter or result
-    /// whose written type has `name` is one the trait's type (`declared`,
-    /// with its `Self` variable) writes as `Self`.
+    /// Where the impl method `method` first writes its variable `name` (the
+    /// first parameter or result whose written type has it), whether the
+    /// trait's type there (`declared`, with its `Self` variable) is `Self`:
+    /// `Some(true)` for `Self` itself, `Some(false)` for a type made of
+    /// `Self` and nothing else of the trait's (`List(Self)`), `None`
+    /// otherwise.
     fn trait_writes_self_where(
         &self,
         method: &FnDecl,
         name: Symbol,
         declared: Option<&(TyVar, Type)>,
-    ) -> bool {
+    ) -> Option<bool> {
         let Some((self_var, Type::Fun(params, ret))) = declared else {
-            return false;
+            return None;
         };
         let has = |te: &TypeExpr| {
             let mut vars = Vec::new();
@@ -3668,7 +3682,12 @@ impl TypeChecker {
                     .filter(|te| has(te))
                     .map(|_| Some(&**ret))
             });
-        matches!(at, Some(Some(Type::Var(v))) if v == self_var)
+        let at = at.flatten()?;
+        if matches!(at, Type::Var(v) if v == self_var) {
+            return Some(true);
+        }
+        let vars = free_vars_in(at);
+        (vars.contains(self_var) && vars.len() == 1).then_some(false)
     }
 
     /// Report the impl method `method`, written with a number of
