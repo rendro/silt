@@ -1,0 +1,7 @@
+-- exit: 1
+-- `main`'s `Err` is the program's message to its user: the line
+-- `error: <e>` writes it exactly as the program made it, control
+-- characters included (only a panic and the task reports escape them).
+fn main() -> Result((), String) {
+  Err("x\ry\u{1b}[1mbold\u{1b}[0m")
+}
