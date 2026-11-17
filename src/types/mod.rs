@@ -202,23 +202,36 @@ pub enum Container {
     Tuple(Vec<Type>),
 }
 
-/// The parts of a container, in order ([`Container::parts`]).
-pub(crate) type Parts<'a> = std::iter::Chain<
-    std::iter::Chain<std::option::IntoIter<&'a Type>, std::option::IntoIter<&'a Type>>,
-    std::slice::Iter<'a, Type>,
->;
+/// The parts of a container, in order ([`Container::parts`]): one or two
+/// boxed parts, or a tuple's elements.
+pub(crate) enum Parts<'a> {
+    Boxed(Option<&'a Type>, Option<&'a Type>),
+    Elements(std::slice::Iter<'a, Type>),
+}
+
+impl<'a> Iterator for Parts<'a> {
+    type Item = &'a Type;
+
+    fn next(&mut self) -> Option<&'a Type> {
+        match self {
+            Parts::Boxed(first, second) => first.take().or_else(|| second.take()),
+            Parts::Elements(elements) => elements.next(),
+        }
+    }
+}
 
 impl Container {
     /// The types the container is made of, in order: the element of a
     /// list, a set or a channel; the key, then the value, of a map; the
     /// elements of a tuple.
     pub(crate) fn parts(&self) -> Parts<'_> {
-        let (first, second, rest): (Option<&Type>, Option<&Type>, &[Type]) = match self {
-            Container::List(t) | Container::Set(t) | Container::Channel(t) => (Some(t), None, &[]),
-            Container::Map(k, v) => (Some(k), Some(v), &[]),
-            Container::Tuple(ts) => (None, None, ts),
-        };
-        first.into_iter().chain(second).chain(rest.iter())
+        match self {
+            Container::List(t) | Container::Set(t) | Container::Channel(t) => {
+                Parts::Boxed(Some(t), None)
+            }
+            Container::Map(k, v) => Parts::Boxed(Some(k), Some(v)),
+            Container::Tuple(ts) => Parts::Elements(ts.iter()),
+        }
     }
 
     /// The head of the container's type constructor (the table
