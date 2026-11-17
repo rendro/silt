@@ -3083,14 +3083,15 @@ impl TypeChecker {
                         for te in written_types {
                             super::names::type_vars_of(te, &mut writes);
                         }
-                        let clash = own
-                            .iter()
-                            .find(|r| impl_names.contains_key(&r.name) && writes.contains(&r.name));
-                        match clash {
-                            Some(clash) => {
-                                self.method_variable_is_the_impls(ti, method, clash.name, own)
-                            }
-                            None => self.report_mismatch(mismatch, method.span),
+                        let mut clashes: Vec<Symbol> = (own.iter())
+                            .map(|r| r.name)
+                            .filter(|name| impl_names.contains_key(name) && writes.contains(name))
+                            .collect();
+                        clashes.sort_by_key(|name| writes.iter().position(|w| w == name));
+                        clashes.dedup();
+                        match clashes.is_empty() {
+                            false => self.method_variable_is_the_impls(ti, method, &clashes, own),
+                            true => self.report_mismatch(mismatch, method.span),
                         }
                         written
                     }
@@ -3252,44 +3253,74 @@ impl TypeChecker {
         (param_types, ret_type)
     }
 
-    /// The error of the impl method `method` whose signature uses `name`,
-    /// a type variable of the impl's header, where the trait declares the
-    /// method with a variable `name` of its own (`own`, the method's
-    /// variables): the impl's method is not for any type there. Said with
-    /// the two told apart, and a name the method's variable can take.
+    /// The error of the impl method `method` whose signature uses `names`,
+    /// type variables of the impl's header, where the trait declares the
+    /// method with variables of those names of its own (`own`, the
+    /// method's variables): the impl's method is not for any type there.
+    /// Said with the two of each name told apart, every one of them named,
+    /// and a name each of the method's variables can take.
     fn method_variable_is_the_impls(
         &mut self,
         ti: &TraitImpl,
         method: &FnDecl,
-        name: Symbol,
+        names: &[Symbol],
         own: &[RigidId],
     ) {
         let taken = |c: &str| {
             let c = intern(c);
             own.iter().any(|r| r.name == c) || ti.target_param_names.contains(&c)
         };
-        let fresh = ('b'..='z')
+        let mut fresh: Vec<String> = ('b'..='z')
             .map(|c| c.to_string())
-            .find(|c| !taken(c))
-            .unwrap_or_else(|| format!("{name}2"));
-        self.errors.push(
-            Diagnostic::error(
-                Code::TypeMismatch,
-                method.span,
+            .filter(|c| !taken(c))
+            .take(names.len())
+            .collect();
+        for name in names.iter().skip(fresh.len()) {
+            fresh.push(format!("{name}2"));
+        }
+        // "`a`", "`a` and `b`", "`a`, `b` and `c`".
+        let listed = |items: Vec<String>| match items.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            _ => items.concat(),
+        };
+        let quoted = |q: &str| listed(names.iter().map(|n| format!("{q}{n}{q}")).collect());
+        let trait_name = self.impl_trait_name(ti);
+        let offered = listed(fresh.iter().map(|n| format!("`{n}`")).collect());
+        let (message, help) = match names {
+            [name] => (
                 format!(
                     "the type variable '{name}' of method '{}' is the impl's '{name}' here, not \
                      the method's own",
                     method.name
                 ),
-            )
-            .with_label(ti.header_span, format!("the impl's `{name}`"))
-            .with_help(format!(
-                "trait '{}' declares `{}` with a type variable `{name}` of its own, which \
-                 stands for any type: write it with another name in this impl, such as \
-                 `{fresh}`",
-                self.impl_trait_name(ti),
-                method.name
-            )),
+                format!(
+                    "trait '{trait_name}' declares `{}` with a type variable `{name}` of its \
+                     own, which stands for any type: write it with another name in this impl, \
+                     such as {offered}",
+                    method.name
+                ),
+            ),
+            _ => (
+                format!(
+                    "the type variables {} of method '{}' are the impl's {} here, not the \
+                     method's own",
+                    quoted("'"),
+                    method.name,
+                    quoted("'")
+                ),
+                format!(
+                    "trait '{trait_name}' declares `{}` with type variables {} of its own, \
+                     which stand for any types: write them with other names in this impl, \
+                     such as {offered}",
+                    method.name,
+                    quoted("`")
+                ),
+            ),
+        };
+        self.errors.push(
+            Diagnostic::error(Code::TypeMismatch, method.span, message)
+                .with_label(ti.header_span, format!("the impl's {}", quoted("`")))
+                .with_help(help),
         );
     }
 
