@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A module's variant named through the module where a trait or a type is
+-- wanted (`where b: zz.Foo`, `x: zz.Foo`): the error says what it is, as
+-- for a bare name; a name the module does not have gets no clause (audit
+-- R9 later list, review rv-o10 N4).
+import mz as zz
+
+fn variant_as_bound(x: b) -> Int where b: zz.Foo { 1 }
+
+fn variant_as_type(x: zz.Foo) -> Int { 1 }
+
+fn nothing(x: b) -> Int where b: zz.Nope { 1 }
+
+fn main() {
+  println((zz.Zed, zz.helper()))
+}

@@ -1,0 +1,10 @@
+error[type]: the type variable 'a' of method 'h' is the impl's 'a' here, not the method's own
+ --> impl_method_variable_named_like_the_impls__the_name_offered_is_free.silt:13:3
+    |
+ 13 |   fn h(self, x: a, y: d) -> a { x }
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type variable 'a' of method 'h' is the impl's 'a' here, not the method's own
+ ::: impl_method_variable_named_like_the_impls__the_name_offered_is_free.silt:12:1
+    |
+ 12 | trait H for Tri(a, b, c) {
+    | ------------------------ the impl's `a`
+  = help: trait 'H' declares `h` with a type variable `a` of its own, which stands for any type: write it with another name in this impl, such as `e`

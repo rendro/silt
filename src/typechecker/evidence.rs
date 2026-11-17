@@ -772,7 +772,9 @@ impl TypeChecker {
                             })
                             .filter(|ty| match ty {
                                 Type::Generic(_, args) => !args.is_empty(),
-                                Type::List(_) | Type::Map(..) | Type::Tuple(_) => true,
+                                Type::Container(Container::List(_))
+                                | Type::Container(Container::Map(..))
+                                | Type::Container(Container::Tuple(_)) => true,
                                 _ => false,
                             })
                             .filter(|ty| free_vars_in(ty).is_empty());

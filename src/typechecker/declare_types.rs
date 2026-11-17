@@ -568,13 +568,13 @@ impl TypeChecker {
                 }
                 None
             }
-            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
-                self.find_alias_cycle(inner, visiting)
-            }
-            Type::Map(k, v) => self
+            Type::Container(Container::List(inner))
+            | Type::Container(Container::Set(inner))
+            | Type::Container(Container::Channel(inner)) => self.find_alias_cycle(inner, visiting),
+            Type::Container(Container::Map(k, v)) => self
                 .find_alias_cycle(k, visiting)
                 .or_else(|| self.find_alias_cycle(v, visiting)),
-            Type::Tuple(elems) => {
+            Type::Container(Container::Tuple(elems)) => {
                 for e in elems {
                     if let Some(c) = self.find_alias_cycle(e, visiting) {
                         return Some(c);

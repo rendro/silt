@@ -1,0 +1,10 @@
+pub trait Int {
+  fn go(self) -> Int
+  fn d(self) -> Int { "bad" }
+}
+
+trait Int for Bool {
+  fn go(self) -> Int { "bad2" }
+}
+
+pub fn one() -> Int { 1 }

@@ -1,0 +1,36 @@
+error[type]: type mismatch: expected Int, got String
+ --> main.silt:13:24
+    |
+ 13 |   fn go(self) -> Int { "bad3" }
+    |                        ^^^^^^ type mismatch: expected Int, got String
+
+error[type]: type 'Bool' has no field 'go'
+ --> main.silt:17:22
+    |
+ 17 |   println((mi.one(), true.go(), true.d()))
+    |                      ^^^^^^^ type 'Bool' has no field 'go'
+
+error[type]: type 'Bool' has no field 'd'
+ --> main.silt:17:33
+    |
+ 17 |   println((mi.one(), true.go(), true.d()))
+    |                                 ^^^^^^ type 'Bool' has no field 'd'
+
+error[type]: trait 'Int' shadows builtin type 'Int'
+ --> mi.silt:1:11
+   |
+ 1 | pub trait Int {
+   |           ^^^ trait 'Int' shadows builtin type 'Int'
+  = help: choose a different name
+
+error[type]: type mismatch: expected Int, got String
+ --> mi.silt:3:23
+   |
+ 3 |   fn d(self) -> Int { "bad" }
+   |                       ^^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> mi.silt:7:24
+   |
+ 7 |   fn go(self) -> Int { "bad2" }
+   |                        ^^^^^^ type mismatch: expected Int, got String

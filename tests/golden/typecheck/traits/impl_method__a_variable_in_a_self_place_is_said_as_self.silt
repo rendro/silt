@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- Where the trait writes `Self` (for the whole type, or for the type of
+-- a compound made of `Self` alone, `List(Self)`), the error of an impl
+-- method's variable there says `Self` and the impl's type, and the help
+-- offers both: "write `Box(a)`, or `Self`" (review rv-o2 N1, N2). A
+-- variable inside such a compound where the impl's type is concrete keeps
+-- the plain form.
+type Box(a) { v: a }
+
+trait Tl {
+  fn all(self, xs: List(Self)) -> Int
+}
+
+trait Tl for Box(a) {
+  fn all(self, xs: List(Box(j))) -> Int { 1 }
+}
+
+trait Tr {
+  fn f(self, x: Self) -> Self
+}
+
+trait Tr for Int {
+  fn f(self, x: b) -> Int { self }
+}
+
+trait Tq {
+  fn q(self, x: List(Self)) -> Int
+}
+
+trait Tq for Int {
+  fn q(self, x: List(b)) -> Int { 1 }
+}
+
+fn main() {
+  println(1)
+}

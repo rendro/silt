@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A trait another module refused is declared there (its bodies are
+-- checked) but takes no name: no help in an importer offers it (it said
+-- "call it as `mi.Int.go(x)`", a call that is not checked), and an impl of
+-- it written here, through the module, is checked (audit R9 later list,
+-- review rv-o1 S1, N2).
+import mi
+
+type Box { b: Int }
+
+trait mi.Int for Box {
+  fn go(self) -> Int { "bad3" }
+}
+
+fn main() {
+  println((mi.one(), true.go(), true.d()))
+}
