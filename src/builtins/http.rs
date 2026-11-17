@@ -1694,6 +1694,7 @@ const TEXT: &str = "text/plain; charset=UTF-8";
 /// start a line of its own. (The other control characters of a panic's
 /// text are escapes already, `VmError::panic`; the report of a failed
 /// program keeps a panic's line ends.)
+#[cfg(feature = "http")]
 fn log_text(message: &str) -> String {
     message.replace('\r', "\\r").replace('\n', "\\n")
 }
