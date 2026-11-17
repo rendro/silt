@@ -443,6 +443,11 @@ pub(crate) struct Tables {
     pub(super) records: Table<HashMap<TypeRef, RecordInfo>, TypeRef>,
     /// Declared traits.
     pub(super) traits: Table<HashMap<TraitKey, TraitInfo>, TraitKey>,
+    /// The methods of the traits refused at their declaration, by the
+    /// trait's name (`(Int, go)` of a refused `trait Int { fn go .. }`):
+    /// a call through the name in a module that declares or imports the
+    /// refused trait is not reported again (`TypeChecker::refused_traits`).
+    pub(super) refused_trait_methods: std::collections::HashSet<(Symbol, Symbol)>,
     /// The methods of every impl, by type, name and trait.
     pub(super) impl_methods: ImplMethods,
     /// Tracks which (trait_name, type) pairs have been implemented.

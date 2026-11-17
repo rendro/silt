@@ -60,6 +60,10 @@ pub struct Exports {
     /// The module's own definitions that are not `pub`, so that an
     /// importer asking for one is told it is private.
     pub private: HashMap<Symbol, DefId>,
+    /// The module's traits refused at their declaration (`trait Int`,
+    /// `names::refused_trait`): an importer naming one as a trait is not
+    /// told again.
+    pub(crate) refused_traits: HashSet<Symbol>,
 }
 
 impl Exports {
@@ -611,6 +615,7 @@ fn declare(
                 match refused_trait(t.name, |name| own_variants.contains(&name)) {
                     true => {
                         scope.refused_traits.insert(t.name);
+                        scope.exports.refused_traits.insert(t.name);
                     }
                     false => own.push((t.name, id, true)),
                 }
@@ -789,6 +794,15 @@ fn bind_imports(
                     };
                     let value = exports.values.get(item).cloned();
                     let ty = exports.types.get(item).cloned();
+                    // A trait the module refused at its declaration: it
+                    // was reported there, and it binds nothing here
+                    // (`Int` stays the prelude's type, `Some` its
+                    // variant); a use of it as a trait is not
+                    // reported again.
+                    if value.is_none() && ty.is_none() && exports.refused_traits.contains(item) {
+                        scope.refused_traits.insert(*item);
+                        continue;
+                    }
                     if value.is_none() && ty.is_none() {
                         let builtin = match imported {
                             Imported::Builtin(id) => id.builtin_name(),
@@ -2288,12 +2302,14 @@ impl Resolver<'_> {
             if name_str.starts_with(char::is_lowercase) {
                 return Some(Res::Local);
             }
-            if let Some(binding) = self.lookup_type(name) {
-                return Some(self.binding_res(&binding));
-            }
-            // (A trait refused at its declaration or import: reported there.)
+            // (A trait refused at its declaration or import: reported
+            // there. Before the types: `trait Int` names the prelude's
+            // type `Int` nowhere.)
             if is_trait && self.scope.refused_traits.contains(&name) {
                 return Some(Res::Error);
+            }
+            if let Some(binding) = self.lookup_type(name) {
+                return Some(self.binding_res(&binding));
             }
             // `_a` is a type variable, unless a type is named so.
             if name_str.starts_with('_') {
@@ -2349,6 +2365,9 @@ impl Resolver<'_> {
         };
         match exports.types.get(&name).cloned() {
             Some(binding) => Some(self.binding_res(&binding)),
+            // (A trait the module refused at its declaration: reported
+            // there.)
+            None if is_trait && exports.refused_traits.contains(&name) => Some(Res::Error),
             None => {
                 let d = if exports.private.contains_key(&name) {
                     Diagnostic::error(
@@ -3687,6 +3706,9 @@ impl Resolver<'_> {
                 Res::Error
             }
             Some(binding) => self.binding_res(&binding),
+            // (A trait the module refused at its declaration: reported
+            // there; so is a call through it, `m.Int.go(x)`.)
+            None if exports.refused_traits.contains(&field) => Res::Error,
             None => {
                 let d = missing_item(bound_as, id.builtin_name(), field, span, exports);
                 self.error(d);

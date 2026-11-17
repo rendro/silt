@@ -1112,6 +1112,7 @@ impl TypeChecker {
                     .with_help(help),
             );
             self.refused_traits.insert(t.name);
+            (self.tables.refused_trait_methods).extend(t.methods.iter().map(|m| (t.name, m.name)));
             return;
         }
         self.register_trait_decl_inner(t);

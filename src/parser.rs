@@ -1037,7 +1037,9 @@ impl<'src> Parser<'src> {
     /// variant, `type Void { Void }`, which the error writes with the
     /// type's own name and parameters.
     fn record_without_fields(&mut self, open: Span, name: Symbol, params: &[Symbol]) {
-        if self.cut_short {
+        // (A lower-case name is refused by `check_type_decl_names`, and
+        // the advice would write it again: one error.)
+        if self.cut_short || intern::resolve(name).starts_with(char::is_lowercase) {
             return;
         }
         let name = intern::resolve(name);

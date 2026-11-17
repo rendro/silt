@@ -1582,6 +1582,13 @@ impl TypeChecker {
         fields: &[(Symbol, Type)],
         span: Span,
     ) {
+        // (`Foo.hop(x)` where a trait `Foo` was refused for the name of a
+        // variant `Foo`: the refusal was reported.)
+        if let Some(ExprKind::Ident(name)) = recv.map(|recv| &recv.kind)
+            && self.refused_trait_method(*name, field)
+        {
+            return;
+        }
         // (A tuple that holds a type is not named by a type: `(type Int,
         // type Int)` is no type a program writes, and `(Int, Int)` before
         // the dot is the tuple type, which may have the method.)
@@ -2636,10 +2643,23 @@ impl TypeChecker {
         );
     }
 
+    /// Whether `field` is a method of the trait `name`, refused at its
+    /// declaration, which this module declares or imports: a call through
+    /// the name was reported with the refusal.
+    fn refused_trait_method(&self, name: Symbol, field: Symbol) -> bool {
+        self.refused_traits.contains(&name)
+            && self.tables.refused_trait_methods.contains(&(name, field))
+    }
+
     /// Report `T.field` where the type `T` has no method `field`. A builtin
     /// module named like the type with a function of that name (`int.parse`
     /// for `Int.parse`) is suggested.
     fn no_type_method(&mut self, type_name: &str, field: Symbol, span: Span, ty: Option<TypeRef>) {
+        // (A method of a trait refused for the type's name, `trait Int`:
+        // the refusal was reported.)
+        if self.refused_trait_method(intern(type_name), field) {
+            return;
+        }
         let module = type_name.to_lowercase();
         let shown = match ty {
             Some(ty) => self.show_type(&Type::Generic(ty, Vec::new())),

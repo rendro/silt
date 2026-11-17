@@ -753,8 +753,11 @@ pub(crate) struct TypeChecker {
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
     pub(super) rejected_types: std::collections::HashSet<TypeRef>,
-    /// The module's trait declarations refused for a prelude type's name
-    /// (`trait Int`): an impl of one is already reported.
+    /// The traits refused at their declaration (`trait Int`, `trait Some`,
+    /// a trait named like a variant of the module) that the module
+    /// declares or imports (the resolver's `refused_traits`): an impl of
+    /// one, or a call of one of its methods through its name
+    /// (`Tables::refused_trait_methods`), is already reported.
     pub(super) refused_traits: std::collections::HashSet<Symbol>,
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
@@ -2489,6 +2492,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.module = module;
     checker.module_name = module_name;
     checker.dependency_keys = dependencies.into_iter().map(|(key, m)| (m, key)).collect();
+    checker.refused_traits = scope.refused_traits.clone();
     for binding in scope.types.values() {
         if let names::Binding::Def(id) = binding {
             checker.seen_traits.insert(*id);

@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- `type void {}` is refused once, for its name: the advice for a record
+-- without fields would write the refused name again (`type void { void }`)
+-- (audit R9, review rv-o5 N1).
+-- stderr-not-contains: a record needs a field
+type void {}
+
+fn main() {
+  println(1)
+}

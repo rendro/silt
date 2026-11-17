@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- A trait refused for a prelude type's name is reported once, at its
+-- declaration: a bound by its name, a supertrait, an impl and a call of
+-- its method through the name are not reported again. A method the
+-- trait does not have is still the type's error (audit R9, review rv-o5
+-- N2).
+trait Int {
+  fn go(self) -> Int
+}
+
+trait Sub: Int {
+  fn s(self) -> Int
+}
+
+trait Int for Bool {
+  fn go(self) -> Int { 1 }
+}
+
+fn f(x: a) -> Int where a: Int + Display {
+  1
+}
+
+fn main() {
+  println((Int.go(true), Int.nope(1), f(1)))
+}
