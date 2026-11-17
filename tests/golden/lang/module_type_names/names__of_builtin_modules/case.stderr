@@ -3,7 +3,7 @@ error[type]: `t.parse_map` cannot decode `P`: field `p` has type `Fn(Int) -> Int
     |
  14 |   let a = t.parse_map("", P)
     |                           ^ `t.parse_map` cannot decode `P`: field `p` has type `Fn(Int) -> Int`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, time.Time, time.DateTime, j.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `j.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Date, time.Time, time.DateTime, url.Url, j.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `j.Decode` impl, and aliases of these
 
 error[type]: `t.parse_map` expects 2 arguments, got 1
  --> main.silt:15:11
