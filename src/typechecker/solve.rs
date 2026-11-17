@@ -2653,6 +2653,11 @@ impl TypeChecker {
     /// (`json.Encode`) where it imports that module or names the trait.
     /// Another module's private trait it never sees.
     pub(super) fn sees_trait(&self, t: TraitKey) -> bool {
+        // (A trait of the module refused at its declaration takes no
+        // name: no help offers it.)
+        if self.refused_traits.contains(&t.name) && self.own_traits.get(&t.name) == Some(&t) {
+            return false;
+        }
         let Some(defs) = &self.defs else {
             return true;
         };

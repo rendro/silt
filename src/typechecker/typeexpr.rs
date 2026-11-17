@@ -242,6 +242,16 @@ impl TypeChecker {
     /// The trait the impl `ti` implements.
     pub(super) fn impl_trait(&self, ti: &TraitImpl) -> Option<TraitKey> {
         self.named_trait(ti.trait_res, ti.trait_name)
+            .or_else(|| self.refused_own_trait(ti))
+    }
+
+    /// The trait of the module, refused at its declaration (`trait Int`),
+    /// that the impl `ti` names: it takes no name, but its impls are
+    /// checked as any trait's (`register_trait_decl_user`).
+    pub(super) fn refused_own_trait(&self, ti: &TraitImpl) -> Option<TraitKey> {
+        (ti.trait_module.is_none() && self.refused_traits.contains(&ti.trait_name))
+            .then(|| self.own_traits.get(&ti.trait_name).copied())
+            .flatten()
     }
 
     /// The type variable a `type a` parameter introduces (or names, when

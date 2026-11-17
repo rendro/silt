@@ -1113,7 +1113,11 @@ impl TypeChecker {
             );
             self.refused_traits.insert(t.name);
             (self.tables.refused_trait_methods).extend(t.methods.iter().map(|m| (t.name, m.name)));
-            return;
+            // The trait takes no name, but it is declared all the same
+            // (under its key, which no name of the module reaches): its
+            // default methods and its impls are checked as any trait's,
+            // so an error in their bodies shows now, not once the trait
+            // is renamed.
         }
         self.register_trait_decl_inner(t);
     }
@@ -2411,9 +2415,12 @@ impl TypeChecker {
         // nothing: it reported why.
         // So is an impl of a trait of the module refused at its
         // declaration (`trait Int`).
-        if ti.trait_res == Some(crate::defs::Res::Error)
+        // An impl of a trait of the module refused at its declaration
+        // (`trait Int`) is checked as an impl of that trait, which the
+        // name no longer reaches (`register_trait_decl_user`).
+        let refused_own = self.refused_own_trait(ti);
+        if (ti.trait_res == Some(crate::defs::Res::Error) && refused_own.is_none())
             || ti.target_res == Some(crate::defs::Res::Error)
-            || (ti.trait_module.is_none() && self.refused_traits.contains(&ti.trait_name))
         {
             return None;
         }
