@@ -1,34 +1,55 @@
 error[type]: method 'pick' writes two type variables, `a` and `b`, for one type
- --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:11:45
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:12:45
     |
- 11 | trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }
+ 12 | trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }
     |                                             ^ method 'pick' writes two type variables, `a` and `b`, for one type
   = help: the two places take the same type here: write `a` in both
 
 error[type]: method 'wrap' writes the type variable `c` where trait 'Wrap' declares `List(b)`
- --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:15:45
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:16:45
     |
- 15 | trait Wrap for Int { fn wrap(self, x: b) -> c { [x] } }
+ 16 | trait Wrap for Int { fn wrap(self, x: b) -> c { [x] } }
     |                                             ^ method 'wrap' writes the type variable `c` where trait 'Wrap' declares `List(b)`
   = help: a type variable stands for any type: write `List(b)`, as the trait does
 
-error[type]: method 'p' writes two type variables, `d` and `e`, for one type
- --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:19:48
+error[type]: method 'p' writes its own type variable `d` where trait 'Pair' declares `c`, the impl's
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:20:42
     |
- 19 | trait Pair(c, c) for Int { fn p(self, x: d, y: e) -> d { x } }
-    |                                                ^ method 'p' writes two type variables, `d` and `e`, for one type
-  = help: the two places take the same type here: write `d` in both
+ 20 | trait Pair(c, c) for Int { fn p(self, x: d, y: e) -> d { x } }
+    |                                          ^ method 'p' writes its own type variable `d` where trait 'Pair' declares `c`, the impl's
+  = help: in this impl that type is the header's `c`: write `c`
 
-error[type]: method 'conv' writes two type variables, `c` and `d`, for one type
- --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:23:48
+error[type]: method 'p' writes its own type variable `e` where trait 'Pair' declares `c`, the impl's
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:20:48
     |
- 23 | trait Conv(b) for Int { fn conv(self, x: c, y: d) -> c { x } }
-    |                                                ^ method 'conv' writes two type variables, `c` and `d`, for one type
-  = help: the two places take the same type here: write `c` in both
+ 20 | trait Pair(c, c) for Int { fn p(self, x: d, y: e) -> d { x } }
+    |                                                ^ method 'p' writes its own type variable `e` where trait 'Pair' declares `c`, the impl's
+  = help: in this impl that type is the header's `c`: write `c`
 
-error[type]: method 'same' writes two type variables, `b` and `c`, for one type
- --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:29:54
+error[type]: method 'conv' writes its own type variable `c` where trait 'Conv' declares `b`, the impl's
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:24:42
     |
- 29 | trait Same for Box(a) { fn same(self: Box(b), o: Box(c)) -> Bool { true } }
-    |                                                      ^ method 'same' writes two type variables, `b` and `c`, for one type
-  = help: the two places take the same type here: write `b` in both
+ 24 | trait Conv(b) for Int { fn conv(self, x: c, y: d) -> c { x } }
+    |                                          ^ method 'conv' writes its own type variable `c` where trait 'Conv' declares `b`, the impl's
+  = help: in this impl that type is the header's `b`: write `b`
+
+error[type]: method 'conv' writes its own type variable `d` where trait 'Conv' declares `b`, the impl's
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:24:48
+    |
+ 24 | trait Conv(b) for Int { fn conv(self, x: c, y: d) -> c { x } }
+    |                                                ^ method 'conv' writes its own type variable `d` where trait 'Conv' declares `b`, the impl's
+  = help: in this impl that type is the header's `b`: write `b`
+
+error[type]: method 'same' writes its own type variable `b` where trait 'Same' declares `Self`, `Box(a)`
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:30:43
+    |
+ 30 | trait Same for Box(a) { fn same(self: Box(b), o: Box(c)) -> Bool { true } }
+    |                                           ^ method 'same' writes its own type variable `b` where trait 'Same' declares `Self`, `Box(a)`
+  = help: write `Box(a)`, or `Self`
+
+error[type]: method 'same' writes its own type variable `c` where trait 'Same' declares `Self`, `Box(a)`
+ --> impl_method__two_variables_where_the_trait_declares_one_are_refused.silt:30:54
+    |
+ 30 | trait Same for Box(a) { fn same(self: Box(b), o: Box(c)) -> Bool { true } }
+    |                                                      ^ method 'same' writes its own type variable `c` where trait 'Same' declares `Self`, `Box(a)`
+  = help: write `Box(a)`, or `Self`

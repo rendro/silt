@@ -1,0 +1,35 @@
+-- The forms the error above asks for: the header's variable written by
+-- its name, `Self` or the impl's type, a method's own variable where the
+-- trait has one (owner, card TV-1).
+type Box(a) { v: a }
+
+trait Conv(t) {
+  fn c(self, x: t, y: t) -> t
+}
+
+trait Conv(a) for Box(a) {
+  fn c(self, x: a, y: a) -> a { y }
+}
+
+trait Tr {
+  fn f(self, x: Self) -> Self
+  fn g(self, x: Self) -> Self
+}
+
+trait Tr for Box(a) {
+  fn f(self, x: Box(a)) -> Box(a) { x }
+  fn g(self, x: Self) -> Self { self }
+}
+
+trait Wrap {
+  fn wrap(self, x: t) -> List(t)
+}
+
+trait Wrap for Box(a) {
+  fn wrap(self, x: b) -> List(b) { [x] }
+}
+
+fn main() {
+  let b = Box { v: 1 }
+  println((Conv.c(b, 2, 3), Tr.f(b, Box { v: 4 }), Tr.g(b, b), Wrap.wrap(b, "s")))
+}
