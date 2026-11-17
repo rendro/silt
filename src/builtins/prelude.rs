@@ -223,7 +223,7 @@ builtins! {
     }
 
     fn panic(vm, message: &Value) -> Result<Step, VmError> {
-        vm.show(message, |_, text| Err(VmError::new(format!("panic: {text}"))))
+        vm.show(message, |_, text| Err(VmError::panic(&text)))
     }
 }
 
