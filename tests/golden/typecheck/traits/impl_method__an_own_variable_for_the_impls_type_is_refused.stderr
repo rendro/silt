@@ -1,0 +1,13 @@
+error[type]: method 'c' writes its own type variable `b` where trait 'Conv' declares `a`, the impl's
+ --> impl_method__an_own_variable_for_the_impls_type_is_refused.silt:15:23
+    |
+ 15 |   fn c(self, x: a, y: b) -> a { y }
+    |                       ^ method 'c' writes its own type variable `b` where trait 'Conv' declares `a`, the impl's
+  = help: in this impl that type is the header's `a`: write `a`
+
+error[type]: method 'f' writes its own type variable `b` where trait 'Tr' declares `Self`, `Box(a)`
+ --> impl_method__an_own_variable_for_the_impls_type_is_refused.silt:23:21
+    |
+ 23 |   fn f(self, x: Box(b)) -> Box(a) { self }
+    |                     ^ method 'f' writes its own type variable `b` where trait 'Tr' declares `Self`, `Box(a)`
+  = help: write `Box(a)`, or `Self`

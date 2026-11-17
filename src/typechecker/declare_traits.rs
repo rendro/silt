@@ -3071,7 +3071,15 @@ impl TypeChecker {
                 let unified = self.unify_types(&written, expected);
                 match unified {
                     Ok(()) => {
-                        self.refuse_variables_the_trait_types(ti, method, &param_map, impl_names);
+                        // (The trait's declared type, unseeded: where it
+                        // writes `Self`.)
+                        let declared_type = declared.map(|(info, ty)| (info.self_var, ty.clone()));
+                        self.refuse_variables_the_trait_types(
+                            ti,
+                            method,
+                            (&param_map, impl_names),
+                            declared_type,
+                        );
                         expected.clone()
                     }
                     Err(mismatch) => {
@@ -3496,16 +3504,23 @@ impl TypeChecker {
     /// and a variable of a signature stands for any type. And refuse two
     /// of its variables that stand for one type (`x: a, y: b` for the
     /// trait's `x: t, y: t`, or where the impl's header or `Self` makes
-    /// them one): they are one only because the trait says so. `names` are the variables of the method's signature,
-    /// `impl_names` the impl header's. A type the help writes names the
+    /// them one): they are one only because the trait says so. And refuse
+    /// one that stands for a variable of the impl's header (`y: b` where
+    /// the trait declares the impl's `a`, through a trait argument or
+    /// `Self`): in the impl that type is the header's, which the method
+    /// writes by its name. So each of the method's own variables is a
+    /// variable of the trait's method, a different one each (owner, card
+    /// TV-1). `names` are the variables of the method's signature,
+    /// `impl_names` the impl header's; `declared` the trait's type of the
+    /// method, with its `Self` variable. A type the help writes names the
     /// trait's variables as the method does (`List(b)` where the method
     /// calls the trait's `a` `b`).
     fn refuse_variables_the_trait_types(
         &mut self,
         ti: &TraitImpl,
         method: &FnDecl,
-        names: &HashMap<Symbol, Type>,
-        impl_names: &HashMap<Symbol, Type>,
+        (names, impl_names): (&HashMap<Symbol, Type>, &HashMap<Symbol, Type>),
+        declared: Option<(TyVar, Type)>,
     ) {
         let mut own: Vec<(Symbol, TyVar)> = (names.iter())
             .filter(|(name, _)| !impl_names.contains_key(*name))
@@ -3518,15 +3533,29 @@ impl TypeChecker {
         let at = |checker: &Self, var: &TyVar| {
             checker.var_written.get(var).copied().unwrap_or(method.span)
         };
+        // The impl header's variables, by what each is now.
+        let header: HashMap<TyVar, Symbol> = (impl_names.iter())
+            .filter_map(|(name, ty)| match self.apply(ty) {
+                Type::Var(v) => Some((v, *name)),
+                Type::Rigid(r) => Some((r.var, *name)),
+                _ => None,
+            })
+            .collect();
         // The method's name for each variable of the trait it writes one
         // for, the first written.
         let mut written: HashMap<TyVar, Symbol> = HashMap::new();
+        // The method's own variables that stand for one of the header's.
+        let mut for_header: Vec<(Symbol, TyVar, Symbol)> = Vec::new();
         for (name, var) in &own {
             let variable = match self.apply(&Type::Var(*var)) {
                 Type::Var(v) => v,
                 Type::Rigid(r) => r.var,
                 _ => continue,
             };
+            if let Some(impls) = header.get(&variable) {
+                for_header.push((*name, *var, *impls));
+                continue;
+            }
             match written.get(&variable) {
                 None => {
                     written.insert(variable, *name);
@@ -3549,6 +3578,34 @@ impl TypeChecker {
                     );
                 }
             }
+        }
+        for (name, var, impls) in for_header {
+            let (message, help) = match self.trait_writes_self_where(
+                method,
+                name,
+                declared.as_ref(),
+            ) {
+                true => {
+                    let target = impl_target_written(ti);
+                    (
+                        format!(
+                            "method '{}' writes its own type variable `{name}` where trait '{}' \
+                             declares `Self`, `{target}`",
+                            method.name, ti.trait_name
+                        ),
+                        format!("write `{target}`, or `Self`"),
+                    )
+                }
+                false => (
+                    format!(
+                        "method '{}' writes its own type variable `{name}` where trait '{}' \
+                         declares `{impls}`, the impl's",
+                        method.name, ti.trait_name
+                    ),
+                    format!("in this impl that type is the header's `{impls}`: write `{impls}`"),
+                ),
+            };
+            self.error_help(Code::TypeMismatch, (message, Some(help)), at(self, &var));
         }
         let as_written = |ty: &Type| {
             let rename = |var: TyVar| written.get(&var).map(|name| RigidId { var, name: *name });
@@ -3579,6 +3636,37 @@ impl TypeChecker {
                 at(self, &var),
             );
         }
+    }
+
+    /// Whether the trait declares `Self` where the impl method `method`
+    /// first writes its variable `name`: the first parameter or result
+    /// whose written type has `name` is one the trait's type (`declared`,
+    /// with its `Self` variable) writes as `Self`.
+    fn trait_writes_self_where(
+        &self,
+        method: &FnDecl,
+        name: Symbol,
+        declared: Option<&(TyVar, Type)>,
+    ) -> bool {
+        let Some((self_var, Type::Fun(params, ret))) = declared else {
+            return false;
+        };
+        let has = |te: &TypeExpr| {
+            let mut vars = Vec::new();
+            super::names::type_vars_of(te, &mut vars);
+            vars.contains(&name)
+        };
+        let at = (method.params.iter().enumerate())
+            .find(|(_, p)| p.ty.as_ref().is_some_and(has))
+            .map(|(i, _)| params.get(i))
+            .or_else(|| {
+                method
+                    .return_type
+                    .as_ref()
+                    .filter(|te| has(te))
+                    .map(|_| Some(&**ret))
+            });
+        matches!(at, Some(Some(Type::Var(v))) if v == self_var)
     }
 
     /// Report the impl method `method`, written with a number of
@@ -4669,5 +4757,18 @@ fn no_supertrait_parts(
             .chain(std::iter::once(ret.as_ref()))
             .for_each(|arg| no_supertrait_parts(arg, params, out)),
         TypeExprKind::Named { .. } => {}
+    }
+}
+
+/// The impl's type as its header writes it (`Box(a)`, `m.Shape`), for a
+/// message that says what `Self` is in the impl.
+fn impl_target_written(ti: &TraitImpl) -> String {
+    let head = Qualifier::written(ti.target_module, ti.target_type);
+    match ti.target_type_args.is_empty() {
+        true => head,
+        false => {
+            let args: Vec<String> = ti.target_type_args.iter().map(type_expr_text).collect();
+            format!("{head}({})", args.join(", "))
+        }
     }
 }
