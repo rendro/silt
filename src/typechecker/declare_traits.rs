@@ -1316,13 +1316,14 @@ impl TypeChecker {
                 Some(sup) => supertraits.push((sup, r.args.clone())),
                 None if r.res == Some(crate::defs::Res::Error) => {}
                 None => {
-                    let is = (self.what_the_name_is(r.res, r.name, true))
+                    let is = (self.what_the_name_is(r.res, (r.module, r.name), true))
                         .map_or_else(String::new, |is| format!(": {is}"));
                     self.error(
                         Code::UnknownTrait,
                         format!(
                             "trait '{}' lists unknown supertrait '{}'{is}",
-                            t.name, r.name
+                            t.name,
+                            Qualifier::written(r.module, r.name)
                         ),
                         r.span,
                     )
@@ -2761,13 +2762,13 @@ impl TypeChecker {
             .named_trait(wc.trait_res, wc.trait_name)
             .filter(|t| self.tables.traits.contains_key(t))
         else {
-            let is = (self.what_the_name_is(wc.trait_res, wc.trait_name, true))
+            let is = (self.what_the_name_is(wc.trait_res, (wc.trait_module, wc.trait_name), true))
                 .map_or_else(String::new, |is| format!(": {is}"));
             self.error(
                 Code::UnknownTrait,
                 format!(
                     "unknown trait '{}' in where clause on trait impl '{} for {}'{is}",
-                    resolve(wc.trait_name),
+                    Qualifier::written(wc.trait_module, wc.trait_name),
                     self.impl_trait_name(ti),
                     resolve(ti.target_type)
                 ),
@@ -3332,13 +3333,14 @@ impl TypeChecker {
         if !self.reported_bounds.insert(wc.trait_name_span) {
             return;
         }
-        let is = (self.what_the_name_is(wc.trait_res, wc.trait_name, true))
+        let is = (self.what_the_name_is(wc.trait_res, (wc.trait_module, wc.trait_name), true))
             .map_or_else(String::new, |is| format!(": {is}"));
         self.error(
             Code::UnknownTrait,
             format!(
                 "unknown trait '{}' in where clause for '{}'{is}",
-                wc.trait_name, wc.type_param
+                Qualifier::written(wc.trait_module, wc.trait_name),
+                wc.type_param
             ),
             wc.trait_name_span,
         );
