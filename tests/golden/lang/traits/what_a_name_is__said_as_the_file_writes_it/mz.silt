@@ -1,0 +1,7 @@
+pub type V { Foo(Int), Zed }
+
+pub trait Later2 {
+  fn l(self) -> Int
+}
+
+pub fn helper() -> Int { 1 }

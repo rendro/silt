@@ -1593,13 +1593,13 @@ impl TypeChecker {
         // type Int)` is no type a program writes, and `(Int, Int)` before
         // the dot is the tuple type, which may have the method.)
         let base = match ty {
-            Type::Tuple(_) if holds_held_type(&self.apply(ty)) => {
+            Type::Container(Container::Tuple(_)) if holds_held_type(&self.apply(ty)) => {
                 format!("a tuple that holds a type has no field '{field}'")
             }
             _ => format!("type '{}' has no field '{field}'", self.show_type(ty)),
         };
         let placeholder = match ty {
-            Type::List(_) => "xs",
+            Type::Container(Container::List(_)) => "xs",
             _ => "x",
         };
         // (A variant named like a trait with the method, `Encode.encode(x)`
@@ -2356,13 +2356,13 @@ impl TypeChecker {
             ));
         }
         let module = match ty {
-            Type::List(_) => "list",
+            Type::Container(Container::List(_)) => "list",
             Type::String => "string",
-            Type::Map(..) => "map",
-            Type::Set(_) => "set",
+            Type::Container(Container::Map(..)) => "map",
+            Type::Container(Container::Set(_)) => "set",
             Type::Int => "int",
             Type::Float => "float",
-            Type::Channel(_) => "channel",
+            Type::Container(Container::Channel(_)) => "channel",
             Type::Generic(name, _) if name.is_builtin("Option") => "option",
             Type::Generic(name, _) if name.is_builtin("Result") => "result",
             Type::Generic(name, _) if name.is_builtin("Bytes") => "bytes",
@@ -3305,9 +3305,13 @@ impl TypeChecker {
             match ty {
                 Type::Fun(..) => Some(ty),
                 _ if !whole => None,
-                Type::List(t) | Type::Set(t) | Type::Channel(t) => part(t, true),
-                Type::Map(k, v) => part(k, true).or_else(|| part(v, true)),
-                Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().find_map(|t| part(t, true)),
+                Type::Container(Container::List(t))
+                | Type::Container(Container::Set(t))
+                | Type::Container(Container::Channel(t)) => part(t, true),
+                Type::Container(Container::Map(k, v)) => part(k, true).or_else(|| part(v, true)),
+                Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) => {
+                    ts.iter().find_map(|t| part(t, true))
+                }
                 _ => None,
             }
         }
@@ -3543,11 +3547,20 @@ impl TypeChecker {
                 let open = |t: &Type| matches!(t, Type::Var(_));
                 match (head, args.as_slice()) {
                     (Type::Error, _) => Some(Type::Error),
-                    (Type::List(p), [t]) if open(&p) => Some(Type::List(Box::new(t.clone()))),
-                    (Type::Set(p), [t]) if open(&p) => Some(Type::Set(Box::new(t.clone()))),
-                    (Type::Channel(p), [t]) if open(&p) => Some(Type::Channel(Box::new(t.clone()))),
-                    (Type::Map(pk, pv), [k, v]) if open(&pk) && open(&pv) => {
-                        Some(Type::Map(Box::new(k.clone()), Box::new(v.clone())))
+                    (Type::Container(Container::List(p)), [t]) if open(&p) => {
+                        Some(Type::Container(Container::List(Box::new(t.clone()))))
+                    }
+                    (Type::Container(Container::Set(p)), [t]) if open(&p) => {
+                        Some(Type::Container(Container::Set(Box::new(t.clone()))))
+                    }
+                    (Type::Container(Container::Channel(p)), [t]) if open(&p) => {
+                        Some(Type::Container(Container::Channel(Box::new(t.clone()))))
+                    }
+                    (Type::Container(Container::Map(pk, pv)), [k, v]) if open(&pk) && open(&pv) => {
+                        Some(Type::Container(Container::Map(
+                            Box::new(k.clone()),
+                            Box::new(v.clone()),
+                        )))
                     }
                     (Type::Generic(r, params), _)
                         if !params.is_empty()
@@ -3575,7 +3588,7 @@ impl TypeChecker {
             ExprKind::Tuple(elems) => (elems.iter_mut())
                 .map(|e| self.spell(e, env))
                 .collect::<Option<_>>()
-                .map(Type::Tuple),
+                .map(|ts| Type::Container(Container::Tuple(ts))),
             _ => {
                 self.type_named_like_its_variant(e);
                 match self.infer_expr(e, env) {
@@ -4513,7 +4526,7 @@ impl TypeChecker {
 
             ExprKind::Tuple(elems) => {
                 let types: Vec<Type> = elems.iter_mut().map(|e| self.infer_expr(e, env)).collect();
-                Type::Tuple(types)
+                Type::Container(Container::Tuple(types))
             }
 
             ExprKind::Ident(..) => self.infer_ident(expr, env, span),
@@ -4559,7 +4572,7 @@ impl TypeChecker {
                 let et = self.infer_expr(end, env);
                 self.unify(&st, &Type::Int, start_span);
                 self.unify(&et, &Type::Int, end_span);
-                Type::List(Box::new(Type::Int))
+                Type::Container(Container::List(Box::new(Type::Int)))
             }
 
             ExprKind::QuestionMark(..) => self.infer_question_mark(expr, env, span),
@@ -5170,12 +5183,14 @@ pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
                 params.iter().for_each(|t| walk(t, out));
                 walk(ret, out);
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
-            Type::Map(k, v) => {
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => walk(t, out),
+            Type::Container(Container::Map(k, v)) => {
                 walk(k, out);
                 walk(v, out);
             }
-            Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
+            Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) | Type::Con(_, ts) => {
                 ts.iter().for_each(|t| walk(t, out))
             }
             _ => {}
@@ -5191,10 +5206,14 @@ pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
 fn holds_held_type(ty: &Type) -> bool {
     match ty {
         Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => true,
-        Type::Generic(_, ts) | Type::Tuple(ts) | Type::Con(_, ts) => ts.iter().any(holds_held_type),
+        Type::Generic(_, ts) | Type::Container(Container::Tuple(ts)) | Type::Con(_, ts) => {
+            ts.iter().any(holds_held_type)
+        }
         Type::Fun(params, ret) => params.iter().any(holds_held_type) || holds_held_type(ret),
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_held_type(t),
-        Type::Map(k, v) => holds_held_type(k) || holds_held_type(v),
+        Type::Container(Container::List(t))
+        | Type::Container(Container::Set(t))
+        | Type::Container(Container::Channel(t)) => holds_held_type(t),
+        Type::Container(Container::Map(k, v)) => holds_held_type(k) || holds_held_type(v),
         Type::App(head, arg) => holds_held_type(head) || holds_held_type(arg),
         _ => false,
     }
@@ -5208,7 +5227,9 @@ fn without_held(ty: &Type) -> Type {
             args.first().map_or_else(|| ty.clone(), without_held)
         }
         Type::Generic(name, args) => Type::Generic(*name, args.iter().map(without_held).collect()),
-        Type::Tuple(elems) => Type::Tuple(elems.iter().map(without_held).collect()),
+        Type::Container(Container::Tuple(elems)) => {
+            Type::Container(Container::Tuple(elems.iter().map(without_held).collect()))
+        }
         _ => ty.clone(),
     }
 }
