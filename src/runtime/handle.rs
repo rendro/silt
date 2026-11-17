@@ -607,8 +607,12 @@ enum TcpIo {
         /// ([`TcpStreamHandle::read_tls`]).
         reading: Mutex<()>,
         /// Ends a read's wait for the socket when the connection is shut
-        /// down. `None` when the system gave no descriptor for it: a read
-        /// then waits in the TLS library, under the lock of `both`.
+        /// down, on Windows, where a shutdown of the socket does not end
+        /// a wait for it (`TcpStreamHandle::wait_tls_socket`). `None`
+        /// elsewhere, where the shutdown ends it and no descriptor is
+        /// needed, and where the system gave no descriptor for it: a read
+        /// on Windows then waits in the TLS library, under the lock of
+        /// `both`.
         shut: Option<ReadWake>,
     },
 }
@@ -650,7 +654,13 @@ impl TcpStreamHandle {
                 socket: other,
                 shutter: shutter.clone(),
                 reading: Mutex::new(()),
-                shut: ReadWake::new().ok(),
+                // (A descriptor of its own for the life of the connection
+                // took one more of each TLS connection, two on macOS, where
+                // the limit is 256 by default.)
+                shut: match cfg!(windows) {
+                    true => ReadWake::new().ok(),
+                    false => None,
+                },
             },
             closed: AtomicBool::new(false),
             handed_over: AtomicBool::new(false),
@@ -752,8 +762,8 @@ impl TcpStreamHandle {
     /// wait behind it, and then takes the socket's bytes into the TLS
     /// library under the lock, one read at a time. Two readers take
     /// turns. A shutdown ends the wait (`NotConnected`). Without a socket
-    /// to wait on, or a wake for the shutdown, the read waits in the TLS
-    /// library, under the lock.
+    /// to wait on, or on Windows a wake for the shutdown, the read waits
+    /// in the TLS library, under the lock.
     fn read_tls(&self, buf: &mut [u8]) -> std::io::Result<usize> {
         use std::io::Read;
         let TcpIo::Tls {
@@ -765,10 +775,10 @@ impl TcpStreamHandle {
         else {
             return Err(std::io::ErrorKind::Unsupported.into());
         };
-        let (Some(raw), Some(shut)) = (self.wait_socket, shut) else {
+        let Some(raw) = self.wait_socket else {
             return both.lock().read(buf);
         };
-        if !both.lock().reads_in_parts() {
+        if (cfg!(windows) && shut.is_none()) || !both.lock().reads_in_parts() {
             return both.lock().read(buf);
         }
         let _turn = reading.lock();
@@ -776,10 +786,33 @@ impl TcpStreamHandle {
             if let Some(read) = both.lock().read_buffered(buf)? {
                 return Ok(read);
             }
-            if self.is_closed() || !shut.wait(raw) {
+            if self.is_closed() || !self.wait_tls_socket(raw, shut.as_ref()) {
                 return Err(std::io::ErrorKind::NotConnected.into());
             }
             both.lock().read_socket()?;
+        }
+    }
+
+    /// Wait until the socket `raw` of a TLS connection has something to
+    /// read, its end or an error: `false` when the connection was shut
+    /// down meanwhile. On Unix the wait is on the socket alone: the
+    /// shutdown ([`TcpStreamHandle::shut_down`], of another handle of
+    /// the same socket) ends it, as the socket's end. On Windows, where
+    /// it does not, beside the connection's wake `shut`, which the
+    /// shutdown raises.
+    fn wait_tls_socket(&self, raw: usize, shut: Option<&ReadWake>) -> bool {
+        #[cfg(windows)]
+        return shut.is_some_and(|shut| shut.wait(raw));
+        #[cfg(unix)]
+        {
+            let _ = shut;
+            wait_readable(raw);
+            !self.is_closed()
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (raw, shut);
+            !self.is_closed()
         }
     }
 
@@ -1425,6 +1458,25 @@ fn poll_two(conn: usize, wake: &Signal) -> std::io::Result<bool> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(fds[0].revents != 0)
+}
+
+/// Wait until the socket `conn` has something to read, its end, or an
+/// error (which the read then says).
+#[cfg(unix)]
+fn wait_readable(conn: usize) {
+    let mut fds = [libc::pollfd {
+        fd: conn as libc::c_int,
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    loop {
+        // SAFETY: `fds` is one valid `pollfd` of a socket that the
+        // caller keeps open for the call.
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
+        if n >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            return;
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -2480,6 +2532,55 @@ mod tests {
         let read = std::thread::spawn(move || reader.read(&mut [0u8; 4]).is_err());
         conn.shut_down();
         assert!(read.join().expect("joined"));
+    }
+
+    /// The descriptors of the process, counted by its descriptor
+    /// directory.
+    #[cfg(unix)]
+    fn open_descriptors() -> usize {
+        std::fs::read_dir("/dev/fd")
+            .expect("the descriptors")
+            .count()
+    }
+
+    /// A TLS connection takes one descriptor of its own beside its socket
+    /// (the handle of the socket that shuts it down without its lock), no
+    /// wake descriptor for its whole life: 64 connections take 64. FAILS
+    /// on 0.43.0: each held an eventfd too (a pipe, two, on macOS), 128 on
+    /// Linux.
+    #[test]
+    #[cfg(unix)]
+    fn a_tls_connection_holds_no_wake_descriptor() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let n = 64;
+        let mut kept = Vec::new();
+        let mut parts = Vec::new();
+        for _ in 0..n {
+            let peer = TcpStream::connect(addr).expect("connect");
+            let (sock, _) = listener.accept().expect("accept");
+            let shutter = Shutter::default();
+            assert!(shutter.set(&sock));
+            let held = sock.try_clone().expect("clone");
+            kept.push((peer, shutter.clone()));
+            parts.push((sock, held, shutter));
+        }
+        let before = open_descriptors();
+        let conns: Vec<_> = (parts.into_iter())
+            .map(|(sock, held, shutter)| {
+                TcpStreamHandle::whole(0, &held, &shutter, move || {
+                    Ok(Box::new(sock) as Box<dyn ReadWrite>)
+                })
+                .expect("a connection")
+            })
+            .collect();
+        let taken = open_descriptors() - before;
+        drop(conns);
+        drop(kept);
+        assert!(
+            taken <= n + n / 4,
+            "{n} TLS connections took {taken} descriptors of their own"
+        );
     }
 
     /// A connection that is one object (TLS) is shut down while a read
