@@ -1,0 +1,32 @@
+-- cmd: check
+-- exit: 1
+-- A trait refused at its declaration (named like a prelude type, or like a
+-- variant of the module) takes no name, but its default methods and its
+-- impls are checked as any trait's: an error in their bodies shows now,
+-- not once the trait is renamed. No help offers the refused trait
+-- (audit R9 later list, review rv-o10 N1).
+trait Int {
+  fn go(self) -> Int
+  fn dflt(self) -> String { 1 + "x" }
+}
+
+trait Int for Bool {
+  fn go(self) -> Int { "not an int" + 1 }
+}
+
+type T { Foo(Int), Bar }
+
+trait Foo {
+  fn hop(self) -> Int
+  fn twice(self) -> Int { "two" }
+}
+
+trait Foo for Int {
+  fn hop(self) -> Int { self == "x" }
+}
+
+fn real() -> Int { "real error" }
+
+fn main() {
+  println((Int.go(true), Foo.hop(1), real(), true.go(), Bar))
+}

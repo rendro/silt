@@ -1,0 +1,24 @@
+error[type]: type mismatch: expected Int, got String
+ --> main.silt:12:24
+    |
+ 12 |   fn go(self) -> Int { "bad4" }
+    |                        ^^^^^^ type mismatch: expected Int, got String
+
+error[type]: trait 'Int' shadows builtin type 'Int'
+ --> mi.silt:1:11
+   |
+ 1 | pub trait Int {
+   |           ^^^ trait 'Int' shadows builtin type 'Int'
+  = help: choose a different name
+
+error[type]: type mismatch: expected Int, got String
+ --> mi.silt:3:23
+   |
+ 3 |   fn d(self) -> Int { "bad" }
+   |                       ^^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> mi.silt:7:24
+   |
+ 7 |   fn go(self) -> Int { "bad2" }
+   |                        ^^^^^^ type mismatch: expected Int, got String

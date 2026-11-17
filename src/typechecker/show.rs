@@ -773,19 +773,24 @@ impl TypeChecker {
     /// module sees it as something else (`what_the_name_is`).
     pub(super) fn unknown_type_message(
         &self,
-        name: &str,
+        (module, name): (Option<Qualifier>, &str),
         applied: bool,
         res: Option<crate::defs::Res>,
     ) -> String {
-        match (self.case_mismatched_type_name(name, applied)).and_then(|t| self.type_offered(&t)) {
+        let hint = (module.is_none())
+            .then(|| self.case_mismatched_type_name(name, applied))
+            .flatten()
+            .and_then(|t| self.type_offered(&t));
+        let written = Qualifier::written(module, intern(name));
+        match hint {
             Some(type_name) => format!(
-                "unknown type '{name}' — did you mean {type_name}? (type names are \
+                "unknown type '{written}' — did you mean {type_name}? (type names are \
                  case-sensitive and start with a capital letter; a lowercase name in a \
                  type is a type variable)"
             ),
-            None => match self.what_the_name_is(res, intern(name), false) {
-                Some(is) => format!("unknown type '{name}': {is}"),
-                None => format!("unknown type '{name}'"),
+            None => match self.what_the_name_is(res, (module, intern(name)), false) {
+                Some(is) => format!("unknown type '{written}': {is}"),
+                None => format!("unknown type '{written}'"),
             },
         }
     }
@@ -798,20 +803,28 @@ impl TypeChecker {
     pub(super) fn what_the_name_is(
         &self,
         res: Option<crate::defs::Res>,
-        name: Symbol,
+        (module, name): (Option<Qualifier>, Symbol),
         want_trait: bool,
     ) -> Option<String> {
         use crate::defs::DefKind;
+        // (The name as the file wrote it: `zz.V`, not `V`.)
+        let written = Qualifier::written(module, name);
         if let Some(crate::defs::Res::Def(id)) = res
             && let Some(def) = self.def(id)
         {
             return match def.kind {
-                DefKind::Trait(_) if !want_trait => Some(format!("`{name}` is a trait")),
+                DefKind::Trait(_) if !want_trait => Some(format!("`{written}` is a trait")),
                 DefKind::Type(_) | DefKind::TypeAlias if want_trait => {
-                    Some(format!("`{name}` is a type"))
+                    Some(format!("`{written}` is a type"))
                 }
                 _ => None,
             };
+        }
+        // (A variant through a module, `zz.Foo`, is said by the resolver,
+        // where the module has no trait or type of the name: `type_or_trait`
+        // in names.rs.)
+        if module.is_some() {
+            return None;
         }
         let id = *self.bare_variants.get(&name)?;
         let ty = TypeRef {

@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- The name offered for the method's variable is one neither the trait's
+-- method, the impl's header nor the method's own signature writes: `e`,
+-- not `d`, which the method already uses (review rv-o1 S2).
+type Tri(a, b, c) { x: a, y: b, z: c }
+
+trait H {
+  fn h(self, x: a, y: b) -> a
+}
+
+trait H for Tri(a, b, c) {
+  fn h(self, x: a, y: d) -> a { x }
+}
+
+fn main() {
+  println(1)
+}
