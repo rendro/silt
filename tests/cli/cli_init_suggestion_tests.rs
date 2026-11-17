@@ -88,13 +88,68 @@ fn the_advice_for_init_with_an_argument_fits_the_argument() {
         ),
         (
             &["io"],
-            "a package is named after its directory, and in a directory 'io' it would be: package name `io` collides with builtin module `io`; make a directory with another name, go into it and run silt init there",
-            "a package is named after its directory, and in a directory 'io' it would be: package name `io` collides with builtin module `io`; make a directory with another name, go into it and run silt init there",
+            "silt init in a directory 'io' would stop: package name `io` collides with builtin module `io`; make a directory with another name, go into it and run silt init there",
+            "silt init in a directory 'io' would stop: package name `io` collides with builtin module `io`; make a directory with another name, go into it and run silt init there",
         ),
     ];
     for (args, unix, win) in cases {
         let expected = if windows { win } else { unix };
         assert_eq!(advice(&dir, args), expected, "silt init {args:?}");
     }
+    let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+}
+
+/// An existing directory gets `cd <w> && silt init` only where silt init
+/// would succeed there by its own checks; else the words say what stands
+/// in the way. FAIL before (b14335e6): `cd io && silt init`, which stops
+/// on the package name, and `cd hasfiles && silt init`, which stops on
+/// src/main.silt.
+#[test]
+fn an_existing_directory_gets_the_command_only_where_init_would_succeed() {
+    let dir = fixture(
+        "existing",
+        &["io", "hasfiles/src", "ok"],
+        &["hasfiles/src/main.silt"],
+    );
+    let cases: [(&[&str], &str); 4] = [
+        (
+            &["io"],
+            "'io' is a directory, and silt init there would stop: package name `io` collides with builtin module `io`",
+        ),
+        (
+            &["hasfiles"],
+            "'hasfiles' is a directory, and silt init there would stop: src/main.silt already exists",
+        ),
+        // With --lib it writes src/lib.silt, and src/main.silt is no
+        // obstacle.
+        (
+            &["--lib", "hasfiles"],
+            if cfg!(windows) {
+                "'hasfiles' is a directory; to create the package in it, go into it and run silt init --lib there"
+            } else {
+                "'hasfiles' is a directory; to create the package in it, run: cd hasfiles && silt init --lib"
+            },
+        ),
+        (
+            &["ok"],
+            if cfg!(windows) {
+                "'ok' is a directory; to create the package in it, go into it and run silt init there"
+            } else {
+                "'ok' is a directory; to create the package in it, run: cd ok && silt init"
+            },
+        ),
+    ];
+    for (args, expected) in cases {
+        assert_eq!(advice(&dir, args), expected, "silt init {args:?}");
+    }
+    // `.` by the same checks, in the directory itself.
+    assert_eq!(
+        advice(&dir.join("hasfiles"), &["."]),
+        "silt init here would stop: src/main.silt already exists"
+    );
+    assert_eq!(
+        advice(&dir.join("io"), &["."]),
+        "silt init here would stop: package name `io` collides with builtin module `io`"
+    );
     let _ = std::fs::remove_dir_all(dir.parent().unwrap());
 }
