@@ -325,7 +325,7 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
         }
     };
     Err(InvalidGitUrl {
-        url: escape_for_display(url),
+        url: display_url(url),
         reason: format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
     })
 }
@@ -543,6 +543,14 @@ pub(crate) fn needs_escape(c: char) -> bool {
     c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible_format_char(c)
 }
 
+/// A URL from a manifest or a lock file, as a message shows it: its
+/// user and password hidden (`https://***@host/repo.git`,
+/// [`crate::text::hide_url_userinfo`]), then by the display rule
+/// ([`escape_for_display`]). The files themselves keep the URL.
+pub(crate) fn display_url(url: &str) -> String {
+    escape_for_display(&crate::text::hide_url_userinfo(url))
+}
+
 /// Render an untrusted string for a message, by the display rule
 /// ([`needs_escape`]): a hostile value cannot forge extra lines, drive
 /// the terminal, or disguise what it is.
@@ -561,9 +569,11 @@ pub(crate) fn escape_for_display(s: &str) -> String {
 /// What the `Display` impl of an error type writes to, in place of the
 /// formatter. Everything written through it, the fixed words of the
 /// message as much as the values, is escaped by the display rule
-/// ([`needs_escape`]). The message itself decides where a line ends,
-/// with [`EscapingWriter::line_break`]; a line break inside a value is
-/// shown as `\n`.
+/// ([`needs_escape`]), and the user and password of a URL in it are
+/// hidden ([`crate::text::hide_url_userinfo`]): a git command line, a
+/// URL of a manifest, git's own output that repeats one. The message
+/// itself decides where a line ends, with [`EscapingWriter::line_break`];
+/// a line break inside a value is shown as `\n`.
 pub(crate) struct EscapingWriter<'a, 'b> {
     out: &'a mut fmt::Formatter<'b>,
 }
@@ -588,6 +598,16 @@ impl<'a, 'b> EscapingWriter<'a, 'b> {
 
 impl fmt::Write for EscapingWriter<'_, '_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        // (A value is written whole by one call: a URL in it is seen
+        // whole.)
+        let hidden;
+        let s = match s.contains('@') {
+            true => {
+                hidden = crate::text::hide_url_userinfo(s);
+                hidden.as_str()
+            }
+            false => s,
+        };
         for c in s.chars() {
             if needs_escape(c) {
                 for escaped in c.escape_default() {
@@ -1044,6 +1064,34 @@ fn format_command(bin: &str, args: &[&str]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A git error shows no user or password of a URL: in the command
+    /// line, in git's output, in a URL it names. FAIL on 0.43.0: they
+    /// were written as they came.
+    #[test]
+    fn a_git_error_hides_the_user_and_password_of_a_url() {
+        let url = "https://MU:MP@h/r.git";
+        for err in [
+            GitError::CommandFailed {
+                command: format!("git ls-remote -- {url} HEAD"),
+                stderr: format!("fatal: could not read from '{url}'\n"),
+                exit_code: Some(128),
+            },
+            GitError::RefNotFound {
+                url: url.to_string(),
+                ref_spec: GitRef::Branch("main".to_string()),
+            },
+            GitError::AmbiguousRev {
+                url: url.to_string(),
+                rev: "abc".to_string(),
+            },
+        ] {
+            let shown = err.to_string();
+            assert!(!shown.contains("MU") && !shown.contains("MP"), "{shown}");
+            assert!(shown.contains("https://***@h/r.git"), "{shown}");
+        }
+        assert_eq!(display_url(url), "https://***@h/r.git");
+    }
     use super::*;
 
     #[test]
