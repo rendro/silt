@@ -3093,7 +3093,11 @@ impl TypeChecker {
                         clashes.sort_by_key(|name| writes.iter().position(|w| w == name));
                         clashes.dedup();
                         match clashes.is_empty() {
-                            false => self.method_variable_is_the_impls(ti, method, &clashes, own),
+                            false => self.method_variable_is_the_impls(
+                                ti,
+                                method,
+                                &clashes,
+                                (own, &writes),
                             ),
                             true => self.report_mismatch(mismatch, method.span),
                         }
@@ -3268,11 +3272,15 @@ impl TypeChecker {
         ti: &TraitImpl,
         method: &FnDecl,
         names: &[Symbol],
-        own: &[RigidId],
+        (own, writes): (&[RigidId], &[Symbol]),
     ) {
+        // (A name the trait's method, the impl's header or the method's
+        // own signature already has is no name to offer.)
         let taken = |c: &str| {
             let c = intern(c);
-            own.iter().any(|r| r.name == c) || ti.target_param_names.contains(&c)
+            own.iter().any(|r| r.name == c)
+                || ti.target_param_names.contains(&c)
+                || writes.contains(&c)
         };
         let mut fresh: Vec<String> = ('b'..='z')
             .map(|c| c.to_string())
