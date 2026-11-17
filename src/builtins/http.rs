@@ -239,19 +239,14 @@ pub(crate) fn ureq_response_to_value(
 /// `ureq::Error`'s Display impl can include the request URL, and if
 /// the caller embedded credentials in the URL (`https://user:tok@h`),
 /// those credentials leak into the `Err` string that's handed back
-/// to the silt program (F12). Replace with `***` whatever stands after a
+/// to the silt program (F12). Replace the userinfo segment with
+/// `***@` for any authority that carries one: whatever stands after a
 /// `//`, of any scheme or of none (`ftp://u:p@h`, `htp://u:p@h`,
-/// `//u:p@h`), up to the LAST `@` of that URL (it ends at a space, a tab
-/// or a line feed): what the client sends as the user and password is
-/// all before the last `@` of the authority, and a password with a raw
-/// `/`, `?` or `#` in it ends the authority there, so its rest, and the
-/// `@` after it, are in what reads as the path or the query
-/// (`http://user:1234/ss@host/`). Such a password cannot be told from an
-/// `@` in a path by its shape, so the text before any `@` of a URL is
-/// hidden (`https://h/users/@me` is shown `https://***@me`): what is
-/// hidden may be more than a password, never less. `scheme://@host`
-/// stays as it is. One pass over the text. A text that is one URL, as
-/// the program wrote it, is scrubbed with [`redact_url`].
+/// `//u:p@h`), up to the LAST `@` before the end of the authority (a
+/// `/`, `?`, `#`, a space, a tab or a line feed), so a password with a
+/// raw `@` in it is scrubbed whole. `scheme://@host` stays as it is.
+/// One pass over the text. A text that is one URL, as the program wrote
+/// it, is scrubbed with [`redact_url`].
 #[cfg(feature = "http")]
 pub fn redact_http_url_userinfo(msg: &str) -> String {
     redact_counting(msg, &mut 0)
@@ -269,20 +264,19 @@ fn redact_counting(msg: &str, looked: &mut usize) -> String {
     while let Some(found) = msg[at..].find("//") {
         *looked += found + 2;
         let host_start = at + found + 2;
-        let url = &msg[host_start..];
-        let end = url.find([' ', '\t', '\n']).unwrap_or(url.len());
+        let authority = &msg[host_start..];
+        let end = authority
+            .find(['/', '?', '#', ' ', '\t', '\n'])
+            .unwrap_or(authority.len());
         *looked += 2 * end;
-        at = match url[..end].rfind('@') {
+        at = match authority[..end].rfind('@') {
             Some(last @ 1..) => {
                 out.push_str(&msg[copied..host_start]);
                 out.push_str("***");
                 copied = host_start + last;
                 copied
             }
-            // (`//@host`: nothing before its one `@`.)
-            Some(_) => host_start,
-            // No `@` in the rest of this URL: no `//` in it has one.
-            None => host_start + end,
+            _ => host_start,
         };
     }
     out.push_str(&msg[copied..]);
@@ -294,15 +288,16 @@ fn redact_counting(msg: &str, looked: &mut usize) -> String {
 /// it. Its authority begins after its scheme (`scheme_of`) and the
 /// slashes that follow (`http:/u:p@h` has one too), or after the
 /// slashes it begins with when no slash follows a scheme of it
-/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too).
-/// All that stands from there to the URL's last `@` is hidden: the
-/// userinfo the client sends is before the last `@` of the authority,
-/// and a password with a raw `/`, `?`, `#`, space or tab in it has the
-/// rest of it, and its `@`, later in the URL, in a form that no shape
-/// tells from an `@` of a path or a query (`http://user:1234/ss@host`
-/// and `http://h:8080/users/@me` are alike): so an `@` anywhere hides
-/// what stands before it, more than a password at times, never less. A
-/// URL with no `@` after its host's start is shown as it is.
+/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too), and
+/// ends at the first `/`, `?` or `#` (a space or a tab in it is part of
+/// the password the program wrote). What stands before its last `@` is the
+/// userinfo, and is hidden. An authority with no `@` that reads as the start
+/// of one cut by a raw `/`, `?` or `#` in the password (a `:` followed by
+/// what is no port, which is digits only, and an `@` later in the URL:
+/// `https://user:pa/ss@host/x`) has all that stands before the URL's last
+/// `@` hidden. Any other URL is shown as it is, an `@` in its path or query
+/// too (`https://host:99999/users/@me`). The rest of the URL is scrubbed as a
+/// message is.
 #[cfg(feature = "http")]
 pub fn redact_url(url: &str) -> String {
     let slashes_from = |at: usize| url.len() - url[at..].trim_start_matches('/').len();
@@ -313,9 +308,25 @@ pub fn redact_url(url: &str) -> String {
         _ => slashes_from(0),
     };
     let rest = &url[host_start..];
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    let hidden = |last: usize| {
+        format!(
+            "{}***{}",
+            &url[..host_start],
+            redact_http_url_userinfo(&rest[last..])
+        )
+    };
+    if let Some(last @ 1..) = authority.rfind('@') {
+        return hidden(last);
+    }
+    // A password cut by a raw `/`, `?` or `#`: what follows the last `:`
+    // of the authority is no port.
+    let cut = authority
+        .rsplit_once(':')
+        .is_some_and(|(_, after)| after.is_empty() || !after.bytes().all(|b| b.is_ascii_digit()));
     match rest.rfind('@') {
-        Some(last @ 1..) => format!("{}***{}", &url[..host_start], &rest[last..]),
-        _ => url.to_string(),
+        Some(last @ 1..) if cut => hidden(last),
+        _ => redact_http_url_userinfo(url),
     }
 }
 
