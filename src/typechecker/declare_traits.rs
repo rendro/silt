@@ -571,9 +571,11 @@ impl TypeChecker {
             return Some(ty.clone());
         }
         let parts: Vec<&Type> = match ty {
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => vec![&**t],
-            Type::Map(k, v) => vec![&**k, &**v],
-            Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().collect(),
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => vec![&**t],
+            Type::Container(Container::Map(k, v)) => vec![&**k, &**v],
+            Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) => ts.iter().collect(),
             _ => Vec::new(),
         };
         (parts.into_iter())
@@ -3983,7 +3985,9 @@ impl TypeChecker {
                     match builtin_type_name(written).unwrap_or_default() {
                         // A tuple of the impl's arity: `(a, b)` of
                         // `Tuple(a, b)`, which a pair's type is.
-                        "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
+                        "Tuple" if resolved_args.len() >= 2 => {
+                            Type::Container(Container::Tuple(resolved_args))
+                        }
                         // A primitive takes no arguments (the error above
                         // says so): the impl is for the type itself, not a
                         // phantom `Int(_)` that no value has.
