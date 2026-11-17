@@ -247,14 +247,23 @@ fn strong_parts(nodes: &[usize], next: &[Vec<usize>]) -> Vec<Vec<usize>> {
     parts
 }
 
-/// The `let`s of the node graph `edges` that `start` reaches, in the
-/// order a breadth-first search over `edges` finds them: what a `let`
-/// whose value is not plain needs.
-fn reached_lets(edges: &[Vec<usize>], is_let: &dyn Fn(usize) -> bool, start: usize) -> Vec<usize> {
+/// The `let`s of the node graph `edges` that `start` reaches without
+/// leaving the nodes `inside` says are in, in the order a breadth-first
+/// search over `edges` finds them: what a `let` whose value is not plain
+/// needs, of those nodes. (A node that `start` reaches and that is left
+/// out leads to none that is in, where those are the strongly connected
+/// part of `start`: so those that are in come in the order of the whole
+/// search.)
+fn reached_lets(
+    edges: &[Vec<usize>],
+    is_let: &dyn Fn(usize) -> bool,
+    inside: &dyn Fn(usize) -> bool,
+    start: usize,
+) -> Vec<usize> {
     let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
     for &target in &edges[start] {
-        if seen.insert(target) {
+        if inside(target) && seen.insert(target) {
             queue.push_back(target);
         }
     }
@@ -264,7 +273,7 @@ fn reached_lets(edges: &[Vec<usize>], is_let: &dyn Fn(usize) -> bool, start: usi
             reached.push(node);
         }
         for &target in &edges[node] {
-            if seen.insert(target) {
+            if inside(target) && seen.insert(target) {
                 queue.push_back(target);
             }
         }
@@ -275,11 +284,18 @@ fn reached_lets(edges: &[Vec<usize>], is_let: &dyn Fn(usize) -> bool, start: usi
 /// The way from the node `start` to the node `goal` that the search of
 /// `init_order` for what `start` needs finds (breadth first over
 /// `edges`, in their order): the nodes after `start`, `goal` last. Empty
-/// where `goal` is not reached.
-fn way_to(edges: &[Vec<usize>], start: usize, goal: usize) -> Vec<usize> {
+/// where `goal` is not reached. Only through the nodes `inside` says are
+/// in: the part of `start` and `goal`, where `goal` reaches `start` (a
+/// way between them leaves it nowhere).
+fn way_to(
+    edges: &[Vec<usize>],
+    inside: &dyn Fn(usize) -> bool,
+    start: usize,
+    goal: usize,
+) -> Vec<usize> {
     let mut from: HashMap<usize, usize> = HashMap::new();
     let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-    for &target in &edges[start] {
+    for &target in edges[start].iter().filter(|t| inside(**t)) {
         if let std::collections::hash_map::Entry::Vacant(unseen) = from.entry(target) {
             unseen.insert(start);
             queue.push_back(target);
@@ -296,7 +312,7 @@ fn way_to(edges: &[Vec<usize>], start: usize, goal: usize) -> Vec<usize> {
             way.reverse();
             return way;
         }
-        for &target in &edges[node] {
+        for &target in edges[node].iter().filter(|t| inside(**t)) {
             if let std::collections::hash_map::Entry::Vacant(unseen) = from.entry(target) {
                 unseen.insert(node);
                 queue.push_back(target);
@@ -937,12 +953,26 @@ impl TypeChecker {
             })
             .collect();
         near.extend(plain.iter().map(|&n| with_past(&edges[n])));
+        // The strongly connected parts of the node graph: a ring through
+        // a `let` (a way over `needs` back to it) is a way over the node
+        // graph back to it, so it never leaves the `let`'s part, and the
+        // search for one looks at that part alone. (It looked at all a
+        // `let` reaches: a chain of rings, each reading the one before,
+        // took time n squared.)
+        let all: Vec<usize> = (0..nodes.len()).collect();
+        let mut part_of: Vec<usize> = vec![0; nodes.len()];
+        for (p, part) in strong_parts(&all, &edges).iter().enumerate() {
+            for &n in part {
+                part_of[n] = p;
+            }
+        }
         let mut whole: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut needs_of = |at: usize| -> Vec<usize> {
+            let inside = |n: usize| part_of[n] == part_of[at];
             (whole.entry(at))
                 .or_insert_with(|| match reads_of.get(&at) {
-                    Some(read) => read.clone(),
-                    None => reached_lets(&edges, &is_let, at),
+                    Some(read) => read.iter().copied().filter(|&n| inside(n)).collect(),
+                    None => reached_lets(&edges, &is_let, &inside, at),
                 })
                 .clone()
         };
@@ -994,7 +1024,10 @@ impl TypeChecker {
             for pair in ring.windows(2) {
                 match ways.get(&(pair[0], pair[1])) {
                     Some(read) => way.extend(read),
-                    None => way.extend(way_to(&edges, pair[0], pair[1])),
+                    None => {
+                        let inside = |n: usize| part_of[n] == part_of[pair[0]];
+                        way.extend(way_to(&edges, &inside, pair[0], pair[1]))
+                    }
                 }
             }
             let mut names: Vec<String> = Vec::with_capacity(way.len());

@@ -776,3 +776,147 @@ fn a_function_hub_of_eight_times_the_top_level_lets_takes_at_most_sixteen_times_
         );
     }
 }
+
+/// How long `silt check` of the file takes; it must refuse the program
+/// for a ring of top-level `let`s.
+fn refused_check_time(file: &Path) -> Duration {
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("check")
+        .arg(file)
+        .output()
+        .expect("silt runs");
+    let elapsed = started.elapsed();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("needs its own value"), "{stderr}");
+    elapsed
+}
+
+/// [`best_times`] of programs that `silt check` refuses for a ring.
+fn best_refused_times(first: &Path, second: &Path, runs: usize) -> (Duration, Duration) {
+    let mut best_first = Duration::MAX;
+    let mut best_second = Duration::MAX;
+    for _ in 0..runs {
+        best_first = best_first.min(refused_check_time(first));
+        best_second = best_second.min(refused_check_time(second));
+    }
+    (best_first, best_second)
+}
+
+/// A program of `n` top-level `let`s in rings of four, each ring reading
+/// the one before (`let a4 = a5 + 1 + a0`), beside its `main.silt`.
+fn program_of_rings(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    let mut main = String::new();
+    for i in 0..n {
+        let next = if i % 4 != 3 { i + 1 } else { i - 3 };
+        let before = match i >= 4 {
+            true => format!(" + a{}", i - 4),
+            false => String::new(),
+        };
+        main.push_str(&format!("let a{i} = a{next} + 1{before}\n"));
+    }
+    main.push_str(&format!("\nfn main() {{\n  println(a{})\n}}\n", n - 1));
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// A program of one ring of `n` top-level `let`s, each reading the next
+/// and the last the first, beside its `main.silt`.
+fn program_of_one_ring(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    let mut main = String::new();
+    for i in 0..n {
+        main.push_str(&format!("let a{i} = a{} + 1\n", (i + 1) % n));
+    }
+    main.push_str(&format!("\nfn main() {{\n  println(a{})\n}}\n", n - 1));
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// Four times the `let`s in rings of four, each ring reading the one
+/// before, take at most seven times as long to check (and refuse), from
+/// 1,600 to 6,400: about four times (debug build). The search for each
+/// ring looked through all that its `let`s reach, every ring before it:
+/// twelve times as long on main b40b8a48 (0.64 s, 7.85 s). It looks
+/// through the ring's strongly connected part alone now.
+#[test]
+fn rings_of_four_times_the_lets_take_at_most_seven_times_as_long() {
+    let dir =
+        std::env::temp_dir().join(format!("silt_checker_scaling_rings_{}", std::process::id()));
+    let (small, large) = (1_600, 6_400);
+    for n in [small, large] {
+        program_of_rings(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(7.0, || {
+        best_refused_times(&main_of(large), &main_of(small), 3)
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of {large} top-level lets in rings of four took more than seven times \
+             as long as that of {small} in each of three measurements ({}): the search for a ring \
+             looks through all that its lets reach",
+            shown(&over)
+        );
+    }
+}
+
+/// One ring of four times the `let`s takes at most six times as long to
+/// check (and refuse), from 3,200 to 12,800: about three and a half times
+/// (debug build). The group of the ring's `let`s looked through all the
+/// group's `let`s for each of them (the types awaited), and whether a
+/// `let` was in a ring was a search of a list: nine and a half times as
+/// long on main b40b8a48 (0.52 s, 4.93 s).
+#[test]
+fn one_ring_of_four_times_the_lets_takes_at_most_six_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_one_ring_{}",
+        std::process::id()
+    ));
+    let (small, large) = (3_200, 12_800);
+    for n in [small, large] {
+        program_of_one_ring(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(6.0, || {
+        best_refused_times(&main_of(large), &main_of(small), 3)
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of one ring of {large} top-level lets took more than six times as long \
+             as that of {small} in each of three measurements ({}): a let of the ring looks \
+             through all the others",
+            shown(&over)
+        );
+    }
+}
+
+/// A chain of sixteen times the modules takes at most seventeen times as
+/// long to check, from 500 to 8,000: about twelve times by instructions
+/// (debug build). The report of the modules looked through every import
+/// of the program for each module (the imports of a file that could not
+/// be read): 25 times on main b40b8a48.
+#[test]
+fn a_chain_of_sixteen_times_the_modules_takes_at_most_seventeen_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_long_chain_{}",
+        std::process::id()
+    ));
+    let (small, large) = (500, 8_000);
+    for n in [small, large] {
+        program_of_a_chain(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured = within(17.0, || best_times(&main_of(large), &main_of(small), 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of a chain of {large} modules took more than seventeen times as long \
+             as that of one of {small} in each of three measurements ({}): a module's report \
+             looks through every import of the program",
+            shown(&over)
+        );
+    }
+}
