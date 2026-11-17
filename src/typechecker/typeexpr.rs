@@ -260,17 +260,10 @@ impl TypeChecker {
         };
         match ti.trait_module {
             None if self.refused_traits.contains(&name) => {
-                (self.own_traits.get(&name).copied()).or_else(|| {
-                    // (Imported by item: the one refused trait of that name
-                    // of another module.)
-                    let mut others = (self.tables.refused_trait_keys.iter())
-                        .filter(|k| k.name == name)
-                        .filter(|k| self.def(k.id.0).is_some_and(|d| d.module != self.module));
-                    match (others.next(), others.next()) {
-                        (Some(k), None) => Some(*k),
-                        _ => None,
-                    }
-                })
+                // (Imported by item: the trait of the module the import
+                // names.)
+                (self.own_traits.get(&name).copied())
+                    .or_else(|| of_module(*self.refused_imports.get(&name)?))
             }
             None => None,
             Some(q) => (self.module_spelled.iter())

@@ -759,6 +759,9 @@ pub(crate) struct TypeChecker {
     /// one, or a call of one of its methods through its name
     /// (`Tables::refused_trait_methods`), is already reported.
     pub(super) refused_traits: std::collections::HashSet<Symbol>,
+    /// Of those, the ones imported by item, with the module each was
+    /// imported from (`names::ModuleScope::refused_imports`).
+    pub(super) refused_imports: HashMap<Symbol, crate::defs::ModuleId>,
     /// The trait and type of each impl whose header was refused: a use
     /// of the trait for the type owes no second error.
     pub(super) refused_impl_heads: std::collections::HashSet<(TraitKey, TypeRef)>,
@@ -1013,6 +1016,7 @@ impl TypeChecker {
             dependency_keys: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             refused_traits: std::collections::HashSet::new(),
+            refused_imports: HashMap::new(),
             refused_impl_heads: std::collections::HashSet::new(),
             reported_bounds: std::collections::HashSet::new(),
             bare_variants: HashMap::new(),
@@ -2510,6 +2514,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.module_name = module_name;
     checker.dependency_keys = dependencies.into_iter().map(|(key, m)| (m, key)).collect();
     checker.refused_traits = scope.refused_traits.clone();
+    checker.refused_imports = scope.refused_imports.clone();
     for binding in scope.types.values() {
         if let names::Binding::Def(id) = binding {
             checker.seen_traits.insert(*id);
@@ -2535,22 +2540,9 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     // A module imported twice (`import da`, then `import da as errs`) is
     // named by its first import, in messages and in the editor alike:
     // the bindings above come in no order.
-    let mut named_first = std::collections::HashSet::new();
-    for decl in &program.decls {
-        let Decl::Import(target, _) = decl else {
-            continue;
-        };
-        let bound = match target {
-            crate::ast::ImportTarget::Module(name)
-            | crate::ast::ImportTarget::Alias(_, name, _) => *name,
-            crate::ast::ImportTarget::Items(..) => continue,
-        };
-        if let Some(names::Binding::Module(id)) = scope.values.get(&bound)
-            && named_first.insert(*id)
-        {
-            checker.module_spelled.insert(*id, bound);
-        }
-    }
+    checker
+        .module_spelled
+        .extend(names::first_import_names(program, scope));
     // A builtin module is imported when the module binds a name of it,
     // or the module itself.
     for binding in scope.types.values().chain(scope.values.values()) {
