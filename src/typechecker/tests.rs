@@ -2115,7 +2115,7 @@ fn test_unify_occurs_check() {
     // Unifying Var(0) with List(Var(0)) should produce an infinite type error
     let mut tc = TypeChecker::new();
     let var = tc.fresh_var(); // Type::Var(0)
-    let list_of_var = Type::List(Box::new(var.clone()));
+    let list_of_var = Type::Container(Container::List(Box::new(var.clone())));
     tc.unify(&var, &list_of_var, Span::BUILTIN);
     assert!(
         !tc.errors.is_empty(),
@@ -2183,8 +2183,8 @@ fn test_unify_list() {
     // Unifying List(Var(0)) with List(Int) should resolve Var(0) to Int
     let mut tc = TypeChecker::new();
     let var = tc.fresh_var(); // Type::Var(0)
-    let list_var = Type::List(Box::new(var.clone()));
-    let list_int = Type::List(Box::new(Type::Int));
+    let list_var = Type::Container(Container::List(Box::new(var.clone())));
+    let list_int = Type::Container(Container::List(Box::new(Type::Int)));
     tc.unify(&list_var, &list_int, Span::BUILTIN);
     assert!(tc.errors.is_empty(), "list unification should not error");
     let resolved = tc.apply(&var);

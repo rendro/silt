@@ -626,10 +626,16 @@ impl TypeChecker {
                 // walk through the whole type for each level of a deep
                 // pattern).
                 let elem_types: Vec<Type> = match self.head(expected) {
-                    Type::Tuple(elems) if elems.len() == pats.len() => elems.clone(),
+                    Type::Container(Container::Tuple(elems)) if elems.len() == pats.len() => {
+                        elems.clone()
+                    }
                     _ => {
                         let fresh: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
-                        self.unify_pattern(&Type::Tuple(fresh.clone()), expected, pattern_span);
+                        self.unify_pattern(
+                            &Type::Container(Container::Tuple(fresh.clone())),
+                            expected,
+                            pattern_span,
+                        );
                         fresh
                     }
                 };
@@ -645,10 +651,10 @@ impl TypeChecker {
             }
             PatternKind::List(pats, rest) => {
                 let elem_ty = match self.head(expected) {
-                    Type::List(elem) => (**elem).clone(),
+                    Type::Container(Container::List(elem)) => (**elem).clone(),
                     _ => {
                         let elem_ty = self.fresh_var();
-                        let list_ty = Type::List(Box::new(elem_ty.clone()));
+                        let list_ty = Type::Container(Container::List(Box::new(elem_ty.clone())));
                         self.unify_pattern(&list_ty, expected, pattern_span);
                         elem_ty
                     }
@@ -662,7 +668,7 @@ impl TypeChecker {
                 // `cons(a, rest)`.
                 let tail = match rest {
                     Some(rest_pat) => {
-                        let rest_ty = Type::List(Box::new(elem_ty));
+                        let rest_ty = Type::Container(Container::List(Box::new(elem_ty)));
                         self.type_pattern(rest_pat, &rest_ty, env, cx)
                     }
                     None => Pat::nil(),
@@ -822,7 +828,7 @@ impl TypeChecker {
                 // A map pattern's keys are string literals. A scrutinee
                 // with another key type gets an error that says so.
                 let val_ty = self.fresh_var();
-                if let Type::Map(existing_key, _) = self.apply(expected) {
+                if let Type::Container(Container::Map(existing_key, _)) = self.apply(expected) {
                     let existing_key = self.apply(&existing_key);
                     if !matches!(existing_key, Type::String | Type::Var(_) | Type::Error) {
                         self.error(Code::InvalidPatternUse,
@@ -833,7 +839,10 @@ impl TypeChecker {
                         );
                     }
                 }
-                let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
+                let map_ty = Type::Container(Container::Map(
+                    Box::new(Type::String),
+                    Box::new(val_ty.clone()),
+                ));
                 self.unify_pattern(&map_ty, expected, pattern_span);
                 let val_ty = self.apply(&val_ty);
                 for (_key, pat) in entries.iter_mut() {

@@ -7,7 +7,7 @@
 
 use crate::ast::*;
 use crate::intern::{Symbol, intern};
-use crate::types::{RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
+use crate::types::{Container, RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
 
 // ── Type display helpers ───────────────────────────────────────────
 
@@ -18,10 +18,14 @@ pub(super) fn has_unresolved_vars(ty: &Type) -> bool {
         Type::Fun(params, ret) => {
             params.iter().any(has_unresolved_vars) || has_unresolved_vars(ret)
         }
-        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => has_unresolved_vars(inner),
-        Type::Tuple(elems) => elems.iter().any(has_unresolved_vars),
+        Type::Container(Container::List(inner))
+        | Type::Container(Container::Set(inner))
+        | Type::Container(Container::Channel(inner)) => has_unresolved_vars(inner),
+        Type::Container(Container::Tuple(elems)) => elems.iter().any(has_unresolved_vars),
         Type::Generic(_, args) | Type::Con(_, args) => args.iter().any(has_unresolved_vars),
-        Type::Map(k, v) | Type::App(k, v) => has_unresolved_vars(k) || has_unresolved_vars(v),
+        Type::Container(Container::Map(k, v)) | Type::App(k, v) => {
+            has_unresolved_vars(k) || has_unresolved_vars(v)
+        }
         _ => false,
     }
 }
@@ -603,7 +607,9 @@ mod tests {
             vec![Type::Var(1)],
             Box::new(Type::Int)
         )));
-        assert!(has_unresolved_vars(&Type::List(Box::new(Type::Var(2)))));
+        assert!(has_unresolved_vars(&Type::Container(Container::List(
+            Box::new(Type::Var(2))
+        ))));
     }
 
     #[test]
@@ -628,14 +634,12 @@ mod tests {
 
     #[test]
     fn test_has_unresolved_vars_tuple() {
-        assert!(!has_unresolved_vars(&Type::Tuple(vec![
-            Type::Int,
-            Type::String
-        ])));
-        assert!(has_unresolved_vars(&Type::Tuple(vec![
-            Type::Int,
-            Type::Var(0)
-        ])));
+        assert!(!has_unresolved_vars(&Type::Container(Container::Tuple(
+            vec![Type::Int, Type::String]
+        ))));
+        assert!(has_unresolved_vars(&Type::Container(Container::Tuple(
+            vec![Type::Int, Type::Var(0)]
+        ))));
     }
 
     // ── find_type_at_offset ──────────────────────────────────────
@@ -689,7 +693,10 @@ mod tests {
         let program = crate::lsp::testing::checked_program(source);
 
         let ty = find_type_at_offset(&program, 12);
-        assert_eq!(ty, Some(Type::List(Box::new(Type::Int))));
+        assert_eq!(
+            ty,
+            Some(Type::Container(Container::List(Box::new(Type::Int))))
+        );
     }
 
     // ── find_ident_at_offset ─────────────────────────────────────

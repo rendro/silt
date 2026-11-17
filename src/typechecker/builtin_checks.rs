@@ -60,9 +60,13 @@ fn option_in_option(ty: &Type) -> bool {
 pub(super) fn nests_option(ty: &Type) -> bool {
     option_in_option(ty)
         || match ty {
-            Type::Generic(_, args) | Type::Tuple(args) => args.iter().any(nests_option),
-            Type::List(t) | Type::Set(t) => nests_option(t),
-            Type::Map(k, v) => nests_option(k) || nests_option(v),
+            Type::Generic(_, args) | Type::Container(Container::Tuple(args)) => {
+                args.iter().any(nests_option)
+            }
+            Type::Container(Container::List(t)) | Type::Container(Container::Set(t)) => {
+                nests_option(t)
+            }
+            Type::Container(Container::Map(k, v)) => nests_option(k) || nests_option(v),
             _ => false,
         }
 }
@@ -81,7 +85,7 @@ fn option_in_option_refusal(builtin: &str, shown: &str, span: Span, help: String
 
 /// Whether `ty` is a map whose key type is known and no `String`.
 fn map_with_other_keys(ty: &Type) -> bool {
-    matches!(ty, Type::Map(key, _) if !matches!(**key, Type::String | Type::Var(_)))
+    matches!(ty, Type::Container(Container::Map(key, _)) if !matches!(**key, Type::String | Type::Var(_)))
 }
 
 /// A record field, or a field of an enum's variant, that a decoder
@@ -432,7 +436,7 @@ impl TypeChecker {
                 TypeRef::builtin(ty.builtin_name()?)
             }
             // A tuple of types (`json.parse(text, (Int, String))`).
-            Type::Tuple(_) => {
+            Type::Container(Container::Tuple(_)) => {
                 let accepted = decoding.type_arguments(str::to_string, |n| self.written_builtin(n));
                 return Some(
                     Diagnostic::error(
@@ -683,8 +687,12 @@ impl TypeChecker {
             let module = (builtin_name.strip_suffix(".parse")).filter(|_| !family.rows());
             let help = match (module, ty) {
                 _ if decoding.primitives => family.help(|n| self.written_builtin(n)),
-                (Some(module), Type::List(_)) => format!("use `{module}.parse_list` for a list"),
-                (Some(module), Type::Map(..)) => format!("use `{module}.parse_map` for a map"),
+                (Some(module), Type::Container(Container::List(_))) => {
+                    format!("use `{module}.parse_list` for a list")
+                }
+                (Some(module), Type::Container(Container::Map(..))) => {
+                    format!("use `{module}.parse_map` for a map")
+                }
                 _ => family.type_argument_help().to_string(),
             };
             let why = match decoding.primitives && map_with_other_keys(ty) {
@@ -1036,9 +1044,13 @@ fn type_variables(ty: &Type) -> Vec<Type> {
     fn walk(ty: &Type, out: &mut Vec<Type>) {
         match ty {
             Type::Var(_) | Type::Rigid(_) if !out.contains(ty) => out.push(ty.clone()),
-            Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().for_each(|t| walk(t, out)),
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
-            Type::Map(k, v) => {
+            Type::Generic(_, ts) | Type::Container(Container::Tuple(ts)) => {
+                ts.iter().for_each(|t| walk(t, out))
+            }
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => walk(t, out),
+            Type::Container(Container::Map(k, v)) => {
                 walk(k, out);
                 walk(v, out);
             }
@@ -1074,7 +1086,7 @@ fn connection_refusal(names: &[String; 3], ty: &Type, span: Span) -> Option<Diag
 /// `()` (`(id)` is `id`: the help says to write `(id,)`).
 fn params_refusal(builtin_name: &str, ty: &Type, span: Span) -> Option<Diagnostic> {
     match ty {
-        Type::Tuple(_) | Type::Unit => None,
+        Type::Container(Container::Tuple(_)) | Type::Unit => None,
         other => Some(
             Diagnostic::error(
                 Code::TypeMismatch,
@@ -1101,12 +1113,14 @@ fn is_builtin_type(t: TypeRef) -> bool {
 /// other type.
 pub(super) fn decoded_parts(ty: &Type) -> Option<Vec<&Type>> {
     match ty {
-        Type::List(t) => Some(vec![&**t]),
-        Type::Map(k, v) if matches!(**k, Type::String) => Some(vec![&**v]),
+        Type::Container(Container::List(t)) => Some(vec![&**t]),
+        Type::Container(Container::Map(k, v)) if matches!(**k, Type::String) => Some(vec![&**v]),
         // (A map whose key a later use decides, `#{}`: its key is a part
         // that use must make `String`.)
-        Type::Map(k, v) if matches!(**k, Type::Var(_)) => Some(vec![&**k, &**v]),
-        Type::Tuple(ts) if !ts.is_empty() => Some(ts.iter().collect()),
+        Type::Container(Container::Map(k, v)) if matches!(**k, Type::Var(_)) => {
+            Some(vec![&**k, &**v])
+        }
+        Type::Container(Container::Tuple(ts)) if !ts.is_empty() => Some(ts.iter().collect()),
         Type::Generic(t, args) if t.id == crate::typeinfo::ty::OPTION && args.len() == 1 => {
             Some(vec![&args[0]])
         }
@@ -1144,7 +1158,7 @@ pub(super) fn head_ref(ty: &Type) -> Option<TypeRef> {
 /// The first part of `ty` below its top whose head is `head`.
 fn part_with_head(ty: &Type, head: TypeRef) -> Option<&Type> {
     let parts: Vec<&Type> = match ty {
-        Type::Tuple(ts) => ts.iter().collect(),
+        Type::Container(Container::Tuple(ts)) => ts.iter().collect(),
         _ => ty.head_and_args().map(|(_, args)| args).unwrap_or_default(),
     };
     (parts.iter().copied())
