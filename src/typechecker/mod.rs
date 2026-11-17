@@ -759,9 +759,6 @@ pub(crate) struct TypeChecker {
     /// one, or a call of one of its methods through its name
     /// (`Tables::refused_trait_methods`), is already reported.
     pub(super) refused_traits: std::collections::HashSet<Symbol>,
-    /// The methods of the impls whose trait or type the resolver resolved
-    /// to nothing: a call of one is not reported again as unknown.
-    pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
     /// The trait and type of each impl whose header was refused: a use
     /// of the trait for the type owes no second error.
     pub(super) refused_impl_heads: std::collections::HashSet<(TraitKey, TypeRef)>,
@@ -1010,7 +1007,6 @@ impl TypeChecker {
             dependency_keys: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             refused_traits: std::collections::HashSet::new(),
-            unresolved_impl_methods: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
             blanket_traits: std::collections::HashSet::new(),
             duplicated_impls: std::collections::HashSet::new(),

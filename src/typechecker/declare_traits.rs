@@ -2395,8 +2395,6 @@ impl TypeChecker {
             || ti.target_res == Some(crate::defs::Res::Error)
             || (ti.trait_module.is_none() && self.refused_traits.contains(&ti.trait_name))
         {
-            self.unresolved_impl_methods
-                .extend(ti.methods.iter().map(|m| m.name));
             return None;
         }
         // Reject trait impls whose target type was never
@@ -2415,8 +2413,6 @@ impl TypeChecker {
                 format!("trait impl target '{name_str}' is not a declared type"),
                 ti.span,
             );
-            self.unresolved_impl_methods
-                .extend(ti.methods.iter().map(|m| m.name));
             if name_str.starts_with(char::is_lowercase)
                 && let Some(tr) = self.impl_trait(ti)
             {
@@ -2457,8 +2453,6 @@ impl TypeChecker {
             return None;
         };
         if !self.impl_header_fits(ti, trait_key, written) {
-            self.unresolved_impl_methods
-                .extend(ti.methods.iter().map(|m| m.name));
             self.refused_impl_heads.insert((trait_key, target_type));
             return None;
         }
