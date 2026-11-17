@@ -1,11 +1,12 @@
 -- cmd: check
 -- exit: 1
 -- Two type variables of an impl method that stand for one type are
--- refused: one where the trait declares one, the impl's header makes them
--- one (`Pair(c, c)`, `Conv(b)`), or `Self` does (`Box(b)` and `Box(c)` for
--- `Self`). The text says no more than that they are one type. The help of
--- a type the trait declares names its variables as the method does
--- (`List(b)`, where the trait writes `List(a)`).
+-- refused: one where the trait declares one. Where the impl's header makes
+-- them one (`Pair(c, c)`, `Conv(b)`) or `Self` does (`Box(b)` and `Box(c)`
+-- for `Self`), each stands for the header's type, and each is refused as
+-- such, with the type to write (card TV-1). The help of a type the trait
+-- declares names its variables as the method does (`List(b)`, where the
+-- trait writes `List(a)`).
 trait Pick { fn pick(self, x: t, y: t) -> t }
 
 trait Pick for Int { fn pick(self, x: a, y: b) -> a { x } }

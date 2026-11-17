@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- Under `import mz as zz` and `import mz` the clause writes the variant as
+-- the file wrote it there (`mz.Zed`) and its enum by the module's name in
+-- the file, its first import (`zz.V`), as every other message does
+-- (review rv-o1 N3).
+import mz as zz
+import mz
+
+fn a(x: mz.Zed) -> Int { 1 }
+
+fn b(x: c) -> Int where c: zz.Foo { 1 }
+
+fn main() {
+  println((zz.Zed, mz.Zed))
+}
