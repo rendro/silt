@@ -207,6 +207,9 @@ pub enum FieldType {
     Date,
     Time,
     DateTime,
+    /// `url.Url`: a string read by `url.parse`. The json, toml and
+    /// postgres decoders have it.
+    Url,
     /// `Bytes`. Only the postgres decoder has it (from a `bytea`
     /// column); to the json and toml decoders it is a type without a
     /// decoder.
@@ -239,6 +242,7 @@ impl FieldType {
             FieldType::Date => "time.Date".into(),
             FieldType::Time => "time.Time".into(),
             FieldType::DateTime => "time.DateTime".into(),
+            FieldType::Url => "url.Url".into(),
             FieldType::JsonValue => "json.Value".into(),
             FieldType::List(t) => format!("List({})", shown(t)),
             FieldType::Option(t) => format!("Option({})", shown(t)),
@@ -378,6 +382,7 @@ fn type_value_parts(value: &Value) -> (&str, FieldType) {
                 (_, id) if id == ty::DATE_TIME => FieldType::DateTime,
                 (_, id) if id == ty::JSON_VALUE => FieldType::JsonValue,
                 _ if info.name == "Bytes" && info.is_builtin() => FieldType::Bytes,
+                _ if info.name == "Url" && info.is_builtin() => FieldType::Url,
                 // A type of the program without its arguments: the
                 // checker gives a decoder a generic one only at its
                 // arguments (`Applied`, above).
@@ -610,6 +615,7 @@ pub(crate) mod ty {
     pub(crate) const SELECTED: TypeId = TypeId(DefId(34));
     pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(35));
     pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(36));
+    pub(crate) const URL_ERROR: TypeId = TypeId(DefId(37));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -687,6 +693,8 @@ pub mod bv {
     pub(crate) const ENCODING_INVALID_UTF8: BuiltinVariant =
         BuiltinVariant::new(ty::ENCODING_ERROR, 1);
     pub(crate) const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
+    pub(crate) const URL_INVALID: BuiltinVariant = BuiltinVariant::new(ty::URL_ERROR, 0);
+    pub(crate) const URL_INVALID_PART: BuiltinVariant = BuiltinVariant::new(ty::URL_ERROR, 1);
     pub(crate) const CSV_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 0);
     pub(crate) const CSV_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 1);
     pub(crate) const CSV_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 2);
@@ -778,6 +786,7 @@ pub(crate) const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "Selected",
     "Value",
     "CsvError",
+    "UrlError",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -1016,6 +1025,8 @@ mod tests {
             (bv::ENCODING_INVALID_PERCENT, "InvalidPercent"),
             (bv::ENCODING_INVALID_UTF8, "InvalidUtf8"),
             (bv::UUID_INVALID, "Invalid"),
+            (bv::URL_INVALID, "Invalid"),
+            (bv::URL_INVALID_PART, "InvalidPart"),
             (bv::CSV_SYNTAX, "Syntax"),
             (bv::CSV_TYPE_MISMATCH, "TypeMismatch"),
             (bv::CSV_MISSING_FIELD, "MissingField"),

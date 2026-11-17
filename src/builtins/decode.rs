@@ -113,6 +113,17 @@ pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
 
 /// The message of a decoder's error for `s`, the string of a date that
 /// is none, `why`.
+/// The message of a decoder's error for a string that is no URL: what is
+/// wrong and where, without the text, which may hold a password.
+pub(crate) fn invalid_url_message(why: crate::url::UrlError) -> std::string::String {
+    match why {
+        crate::url::UrlError::Invalid(what, at) => {
+            format!("invalid url.Url: {what} (character {at})")
+        }
+        crate::url::UrlError::InvalidPart(what) => format!("invalid url.Url: {what}"),
+    }
+}
+
 fn invalid_date_message(s: &str, why: chrono::ParseError) -> std::string::String {
     format!("invalid date '{s}' (expected YYYY-MM-DD): {why}")
 }
@@ -222,6 +233,7 @@ pub(crate) fn descriptor(rt: &Runtime, field_type: &FieldType) -> Value {
         FieldType::DateTime => return info(ty::DATE_TIME),
         FieldType::JsonValue => return info(ty::JSON_VALUE),
         FieldType::Bytes => head("Bytes"),
+        FieldType::Url => head("Url"),
         FieldType::List(_) => head("List"),
         FieldType::Option(_) => head("Option"),
         FieldType::Map(_) => head("Map"),
@@ -230,7 +242,7 @@ pub(crate) fn descriptor(rt: &Runtime, field_type: &FieldType) -> Value {
         FieldType::Param(_) | FieldType::KeyedMap(..) | FieldType::Unsupported(_) => None,
     };
     match (id, field_type) {
-        (Some(id), FieldType::Bytes) => info(id),
+        (Some(id), FieldType::Bytes | FieldType::Url) => info(id),
         (Some(id), _) => Value::TypeDescriptor(Arc::new(TypeInfo {
             id,
             name: shown(rt, field_type),

@@ -1,0 +1,20 @@
+https://localhost:8080/api?old=1#f
+Err(a scheme starts with a letter)
+http://example.com:8080/api?old=1#f
+http://[::1]:8080/api?old=1#f
+Err(a host cannot hold ':')
+Err(a host that looks like a number must be an IPv4 address (four numbers 0-255))
+http://localhost/api?old=1#f
+http://localhost/api?old=1#f
+Err(port 65536 is not in 1..65535)
+http://localhost:8080/a%20b/c%2Fd/%25/%C3%A9?old=1#f
+true
+Err(a segment cannot be `.`)
+https://h/v1/users/ann/
+http://localhost:8080/api?a%20b=c%2Bd&flag=#f
+http://localhost:8080/api#f
+http://localhost:8080/api?old=1#part%202%23x
+http://localhost:8080/api?old=1
+https://a%3Ab%40c:%2F%3F%23@h/
+a:b@c /?#
+https://:%2F%3F%23@h/

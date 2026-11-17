@@ -1,0 +1,35 @@
+-- Each text that is no URL, with what is wrong and the character where.
+-- No error repeats the text it was given.
+import list
+import url
+
+fn main() {
+  let texts = [
+    "localhost:8080",
+    "mailto:ann@example.com",
+    "file:/x",
+    "http://0x7f.1/",
+    "http://2130706433/",
+    "http://127.0.0.1./",
+    "http://[::ffff:127.0.0.1]/",
+    "http://[fe80::1%25eth0]/",
+    "http://a@b@h/",
+    "https://b\u{fc}cher.de/",
+    "https://\u{4f8b}.jp/",
+    "http://h/%zz",
+    "http://h/caf%E9",
+    "http://h:99999/",
+    "http://h:/",
+    " http://h/",
+    "http://h/\tx",
+    "http://a..b/",
+    "http:///x",
+  ]
+  list.each(texts) { text ->
+    match url.parse(text) {
+      Ok(u) -> println("read: {u}")
+      Err(url.Invalid(what, at)) -> println("{what} (at {at})")
+      Err(e) -> println("other: {e}")
+    }
+  }
+}

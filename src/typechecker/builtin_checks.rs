@@ -817,6 +817,7 @@ impl TypeChecker {
                 id if id == bt::DATE_TIME => Some(Leaf::DateTime),
                 id if id == bt::JSON_VALUE => Some(Leaf::JsonValue),
                 id if id == TypeRef::builtin("Bytes").id => Some(Leaf::Bytes),
+                id if id == TypeRef::builtin("Url").id => Some(Leaf::Url),
                 _ => None,
             },
             _ => None,

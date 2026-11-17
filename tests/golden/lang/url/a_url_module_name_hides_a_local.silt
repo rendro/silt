@@ -1,0 +1,8 @@
+-- stderr-contains: hides the imported module 'url'
+-- A local named `url` hides the imported module, and silt says so.
+import url
+
+fn main() {
+  let url = "https://h/"
+  println(url)
+}

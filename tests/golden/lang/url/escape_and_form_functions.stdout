@@ -1,0 +1,7 @@
+a%20b%26c%2F%C3%A9%2B~
+Ok("a b+c+d")
+Err(`%` at the end is no escape, at 3)
+Err(the escape %E9 is no UTF-8 text, at 2)
+q=silt+lang&a%26b=c%3Dd%2Be&=*-._%7E%C3%A9
+Ok([("a", "1"), ("b", ""), ("", "c"), ("d", "e=f"), ("x", "a b+")])
+Err(`%zz` is no escape, at 5)

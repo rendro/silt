@@ -292,6 +292,9 @@ impl<'c> Writer<'c> {
             Value::Float(f) => Data::Float(f.get()),
             Value::Bool(b) => Data::Bool(*b),
             Value::String(s, _) => Data::String(s.clone()),
+            // A URL is its whole text, user and password included: what is
+            // stored must read back as the same URL.
+            Value::Url(u) => Data::String(u.as_str().into()),
             Value::Bytes(bytes) if self.format == Format::Postgres && place == Place::Value => {
                 Data::Bytes(bytes.clone())
             }
@@ -305,6 +308,8 @@ impl<'c> Writer<'c> {
                     .map(|(k, v)| {
                         let key = match k {
                             Value::String(s, _) => s.to_string(),
+                            // (The whole text, not the one shown.)
+                            Value::Url(u) => u.as_str().to_string(),
                             other => other.to_string(),
                         };
                         Ok((key, inner(v, Place::Member)?))
@@ -411,6 +416,10 @@ mod tests {
             ("Map", Value::map([(Value::Int(1), Value::Int(2))])),
             ("Set", Value::set([Value::Int(1)])),
             ("Bytes", Value::Bytes(Arc::new(vec![1]))),
+            (
+                "Url",
+                Value::Url(Arc::new(crate::url::parse("http://h/").expect("a URL"))),
+            ),
         ];
         for (name, value) in samples {
             let written = data("json.stringify", Format::Json, &value).is_ok();
@@ -424,7 +433,8 @@ mod tests {
         let opaque = (registry.modules.iter())
             .flat_map(|module| module.opaque.iter())
             .chain(crate::builtins::registry::PRELUDE_OPAQUE);
-        for (name, _) in opaque {
+        // (A URL is written as its text: the one opaque type with a form.)
+        for (name, _) in opaque.filter(|(name, _)| *name != "Url") {
             assert!(!encode.contains(name), "{name}");
         }
     }

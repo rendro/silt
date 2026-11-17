@@ -40,7 +40,7 @@ use std::ops::Range;
 /// A valid URL in its normal form: its text, and where its parts lie in
 /// it. Equal, hashed and ordered by its whole text.
 #[derive(Clone)]
-pub(crate) struct Url {
+pub struct Url {
     text: String,
     /// The scheme is `text[..scheme_end]`; `://` follows it.
     scheme_end: usize,

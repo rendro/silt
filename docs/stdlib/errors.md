@@ -194,6 +194,18 @@ Returned by `csv.split_line` and `csv.parse`.
 | `MissingField(String)` | name | the header has no column for a field that is no `Option` |
 | `Other(String)` | message | unclassified failure |
 
+### `UrlError` (requires `import url`)
+
+Returned by `url.parse`, `url.resolve`, `url.unescape` and
+`url.decode_form` for a text that is no URL or no escaped text, and by the
+`with_` functions that check their part. It never holds the text it was
+given, which may hold a password.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Invalid(String, Int)` | what is wrong, and the character where: counted from 0, as `string.slice` counts; the text's length when it ends too early | the text is no URL, or no escaped text |
+| `InvalidPart(String)` | what is wrong | a part a `with_` function was given that the URL cannot hold |
+
 ### `RegexError` (requires `import regex`)
 
 Returned by `regex.compile` for a pattern that does not compile.

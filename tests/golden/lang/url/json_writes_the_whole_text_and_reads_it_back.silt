@@ -1,0 +1,37 @@
+-- json writes a Url as its whole text, password included, and reads a
+-- field of type url.Url with url.parse; a map keyed by Url is written with
+-- the whole text as its key. A string that is no URL is an error that does
+-- not repeat the text.
+import json
+import url
+
+type Config {
+  site: url.Url,
+  mirror: Option(url.Url),
+}
+
+fn main() -> Result((), json.JsonError) {
+  let site = url.parse("https://ann:s3cret@Example.com/x") |> result_of
+  let config = Config { site: site, mirror: None }
+  let text = json.stringify(config)
+  println(text)
+  let back = json.parse(text, Config)?
+  println(back.site == site)
+  println(json.stringify(#{site: 1}))
+  match json.parse("""{"site": "https://h:99999/", "mirror": null}""", Config) {
+    Ok(c) -> println(c.site)
+    Err(e) -> println(e)
+  }
+  match json.parse("""{"site": 7, "mirror": null}""", Config) {
+    Ok(c) -> println(c.site)
+    Err(e) -> println(e)
+  }
+  Ok(())
+}
+
+fn result_of(r: Result(url.Url, url.UrlError)) -> url.Url {
+  match r {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
+}

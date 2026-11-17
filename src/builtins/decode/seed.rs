@@ -881,7 +881,8 @@ impl<'s> Seed<'s> {
             | FieldType::Bool
             | FieldType::Date
             | FieldType::Time
-            | FieldType::DateTime => Want::Scalar,
+            | FieldType::DateTime
+            | FieldType::Url => Want::Scalar,
             FieldType::Unsupported(declared) => Want::Fails(Error::Unsupported(declared.clone())),
             FieldType::JsonValue if rules.family.decodes(Leaf::JsonValue) => Want::JsonValue,
             FieldType::JsonValue => Want::Fails(Error::Unsupported("json.Value".into())),
@@ -940,7 +941,8 @@ impl<'s> Seed<'s> {
         | FieldType::Bool
         | FieldType::Date
         | FieldType::Time
-        | FieldType::DateTime = self.expected
+        | FieldType::DateTime
+        | FieldType::Url = self.expected
         {
             return Ok(self.primitive(scalar));
         }
@@ -1075,6 +1077,13 @@ impl<'s> Seed<'s> {
                     .map(make_datetime)
                     .map_err(|e| Error::other(e, at)),
                 _ => Err(mismatch("time.DateTime")),
+            },
+            // A URL is a string that `url.parse` reads.
+            FieldType::Url => match scalar {
+                Scalar::String(s) => crate::url::parse(s)
+                    .map(|u| Value::Url(std::sync::Arc::new(u)))
+                    .map_err(|e| Error::other(super::invalid_url_message(e), at)),
+                _ => Err(mismatch("url.Url")),
             },
             _ => unreachable!("only a primitive type, a date or a time is decoded so"),
         }
@@ -1638,6 +1647,7 @@ fn scalar_name(expected: &FieldType) -> &'static str {
         FieldType::Date => "time.Date",
         FieldType::Time => "time.Time",
         FieldType::DateTime => "time.DateTime",
+        FieldType::Url => "url.Url",
         _ => unreachable!("only a primitive type, a date or a time is decoded so"),
     }
 }

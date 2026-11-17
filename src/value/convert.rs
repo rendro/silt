@@ -430,7 +430,8 @@ pub(super) fn same_type(witness: &Value, value: &Value) -> bool {
             | (Value::Handle(_), Value::Handle(_))
             | (Value::TcpListener(_), Value::TcpListener(_))
             | (Value::TcpStream(_), Value::TcpStream(_))
-            | (Value::Regex(_), Value::Regex(_)) => {}
+            | (Value::Regex(_), Value::Regex(_))
+            | (Value::Url(_), Value::Url(_)) => {}
             (Value::Unit, Value::Tuple(parts)) | (Value::Tuple(parts), Value::Unit) => {
                 if !parts.is_empty() {
                     return false;

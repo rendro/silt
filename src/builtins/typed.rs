@@ -189,6 +189,18 @@ impl<'a> Arg<'a> for &'a Arc<crate::value::Compiled> {
     }
 }
 
+/// A `Url` argument.
+pub(crate) type Url<'a> = &'a Arc<crate::url::Url>;
+
+impl<'a> Arg<'a> for &'a Arc<crate::url::Url> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Url(u) => Some(u),
+            _ => None,
+        }
+    }
+}
+
 /// A `Map` argument.
 pub(crate) type Map<'a> = &'a crate::value::Map;
 

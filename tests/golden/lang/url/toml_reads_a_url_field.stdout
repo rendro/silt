@@ -1,0 +1,2 @@
+api https://api.example.com/v1/ ["v1", ""]
+invalid url.Url: a URL starts with a scheme, such as `https://` (character 0) at base

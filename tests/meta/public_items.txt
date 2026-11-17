@@ -1244,6 +1244,7 @@ src/types/mod.rs: pub var
 src/types/mod.rs: pub vars
 src/update.rs: pub dry_run
 src/update.rs: pub force
+src/url.rs: pub struct Url
 src/value/convert.rs: pub args
 src/value/convert.rs: pub arity
 src/value/convert.rs: pub call

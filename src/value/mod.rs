@@ -97,6 +97,8 @@ pub enum Value {
     /// A compiled regex pattern (`regex.compile`): equal to another of
     /// the same pattern text.
     Regex(Arc<crate::value::Compiled>),
+    /// A URL (`url.parse`): equal to another of the same text.
+    Url(Arc<crate::url::Url>),
     /// A dictionary (`bytecode::dict`): no program value is one; the
     /// code passes it, hidden, to what has bounds of a program's trait.
     Dict(bytecode::dict::Dict),
@@ -267,6 +269,7 @@ impl Value {
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",
             Value::Regex(_) => "Regex",
+            Value::Url(_) => "Url",
             Value::Dict(_) => "Dict",
             Value::Unit => "()",
         }
