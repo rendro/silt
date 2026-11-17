@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: trait NotFound { fn hop(self) -> Int }\nimport io.{ NotFound }\nfn u(x: a) -> Int where a: NotFound { 1 }\nNotFound\n:quit\n
+-- A later entry's import of a variant takes the name over from an earlier
+-- entry's trait; a bound by that name then is no trait, and the error, at
+-- the name, offers no import of the variant already imported (audit R9,
+-- review rv-o8 N6).

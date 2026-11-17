@@ -1,0 +1,23 @@
+error[type]: unknown trait 'Foo' in where clause for 'a'
+ --> main.silt:11:34
+    |
+ 11 | fn by_item(x: a) -> Int where a: Foo { 1 }
+    |                                  ^^^ unknown trait 'Foo' in where clause for 'a'
+
+error[type]: unknown trait 'Zed' in where clause for 'a'
+ --> main.silt:13:36
+    |
+ 13 | fn by_module(x: a) -> Int where a: Zed { 1 }
+    |                                    ^^^ unknown trait 'Zed' in where clause for 'a'
+
+error[type]: unknown trait 'V' in where clause for 'a'
+ --> main.silt:15:44
+    |
+ 15 | fn a_type_as_a_bound(x: a) -> Int where a: V { 1 }
+    |                                            ^ unknown trait 'V' in where clause for 'a'
+
+error[type]: unknown type 'Zed'
+ --> main.silt:17:17
+    |
+ 17 | fn as_a_type(x: Zed) -> Int { 1 }
+    |                 ^^^ unknown type 'Zed'

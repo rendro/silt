@@ -1,6 +1,6 @@
-error[type]: the trait 'Encode' imported here takes the name of variant 'T.Encode' of this module
+error[type]: the trait 'Encode' imported here takes the name of variant 'T.Encode' of an earlier entry
  --> <repl:2>:1:15
    |
  1 | import json.{ Encode }
-   |               ^^^^^^ the trait 'Encode' imported here takes the name of variant 'T.Encode' of this module
+   |               ^^^^^^ the trait 'Encode' imported here takes the name of variant 'T.Encode' of an earlier entry
   = help: import the module and write the trait with it, `import json` and `json.Encode`: in an expression `Encode` is the variant, so no method of the trait could be called
