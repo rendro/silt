@@ -1133,15 +1133,15 @@ fn shown(c: char) -> String {
     }
 }
 
-/// `url` as a message shows it: a user and password after its `//` (to
-/// the last `@` before the path) are `***`.
+/// `url` as a message shows it: what stands after its `//` up to its
+/// last `@` is `***`.
 fn without_userinfo(url: &str) -> String {
     let Some(at) = url.find("//") else {
         return url.to_string();
     };
     let start = at + 2;
     let authority = &url[start..];
-    let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    let end = authority.find([' ', '\t', '\n']).unwrap_or(authority.len());
     match authority[..end].rfind('@') {
         Some(last) if last > 0 => format!("{}***{}", &url[..start], &authority[last..]),
         _ => url.to_string(),

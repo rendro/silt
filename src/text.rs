@@ -7,10 +7,16 @@
 
 /// `msg` with the user and password of every URL in it replaced by
 /// `***`: whatever stands after a `//`, of any scheme or of none
-/// (`https://u:p@h`, `ftp://u:p@h`, `//u:p@h`), up to the LAST `@`
-/// before the end of the authority (a `/`, `?`, `#`, a space, a tab or a
-/// line feed), so a password with a raw `@` in it is hidden whole.
-/// `scheme://@host` stays as it is. One pass over the text.
+/// (`https://u:p@h`, `ftp://u:p@h`, `//u:p@h`), up to the LAST `@` of
+/// that URL (it ends at a space, a tab or a line feed). The user and
+/// password a client sends are before the last `@` of the authority; a
+/// password with a raw `/`, `?` or `#` in it ends the authority there,
+/// and the rest of it, with its `@`, is in what reads as the path or the
+/// query (`http://user:1234/ss@host/`), which no shape tells from an `@`
+/// of a path. So the text before any `@` of a URL is hidden, the host
+/// too at times (`https://h/users/@me` is shown `https://***@me`):
+/// more than a password, never less. `scheme://@host` stays as it is.
+/// One pass over the text.
 pub(crate) fn hide_url_userinfo(msg: &str) -> String {
     hide_url_userinfo_counting(msg, &mut 0)
 }
@@ -30,18 +36,17 @@ pub(crate) fn mask_url_userinfo(line: &str) -> String {
     let (mut copied, mut at) = (0, 0);
     while let Some(found) = line[at..].find("//") {
         let host_start = at + found + 2;
-        let authority = &line[host_start..];
-        let end = authority
-            .find(['/', '?', '#', ' ', '\t', '\n'])
-            .unwrap_or(authority.len());
-        at = match authority[..end].rfind('@') {
+        let url = &line[host_start..];
+        let end = url.find([' ', '\t', '\n']).unwrap_or(url.len());
+        at = match url[..end].rfind('@') {
             Some(last @ 1..) => {
                 out.push_str(&line[copied..host_start]);
-                out.extend(authority[..last].chars().map(|_| '*'));
+                out.extend(url[..last].chars().map(|_| '*'));
                 copied = host_start + last;
                 copied
             }
-            _ => host_start,
+            Some(_) => host_start,
+            None => host_start + end,
         };
     }
     out.push_str(&line[copied..]);
@@ -59,19 +64,20 @@ pub(crate) fn hide_url_userinfo_counting(msg: &str, looked: &mut usize) -> Strin
     while let Some(found) = msg[at..].find("//") {
         *looked += found + 2;
         let host_start = at + found + 2;
-        let authority = &msg[host_start..];
-        let end = authority
-            .find(['/', '?', '#', ' ', '\t', '\n'])
-            .unwrap_or(authority.len());
+        let url = &msg[host_start..];
+        let end = url.find([' ', '\t', '\n']).unwrap_or(url.len());
         *looked += 2 * end;
-        at = match authority[..end].rfind('@') {
+        at = match url[..end].rfind('@') {
             Some(last @ 1..) => {
                 out.push_str(&msg[copied..host_start]);
                 out.push_str("***");
                 copied = host_start + last;
                 copied
             }
-            _ => host_start,
+            // (`//@host`: nothing before its one `@`.)
+            Some(_) => host_start,
+            // No `@` in the rest of this URL: no `//` in it has one.
+            None => host_start + end,
         };
     }
     out.push_str(&msg[copied..]);
@@ -119,6 +125,11 @@ mod tests {
             ),
             ("a //MU@h b //c@d", "a //**@h b //*@d"),
             ("git = \"ssh://git@h/r\"", "git = \"ssh://***@h/r\""),
+            // A password with a raw `/`: to the URL's last `@`.
+            (
+                "git = \"https://MU:M/P@h/r\"",
+                "git = \"https://******@h/r\"",
+            ),
             ("no url here", "no url here"),
             ("http://@h/", "http://@h/"),
         ] {
@@ -127,6 +138,10 @@ mod tests {
         }
         assert_eq!(
             hide_url_userinfo("x https://MU:MP@h/r y"),
+            "x https://***@h/r y"
+        );
+        assert_eq!(
+            hide_url_userinfo("x https://MU:1/MP@h/r y"),
             "x https://***@h/r y"
         );
     }
