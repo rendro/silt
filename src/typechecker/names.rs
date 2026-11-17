@@ -876,7 +876,11 @@ fn bind_imports(
                                 *item_span,
                                 format!(
                                     "the trait '{item}' imported here takes the name of variant \
-                                     '{enum_name}.{item}' of this module"
+                                     '{enum_name}.{item}' of {}",
+                                    match own_span {
+                                        Some(_) => "this module",
+                                        None => "an earlier entry",
+                                    }
                                 ),
                             )
                             .with_help(format!(
@@ -1012,13 +1016,13 @@ fn refuse_across_entries(
                             Code::InvalidTraitDeclaration,
                             t.name_span,
                             format!(
-                                "trait '{name}' takes the name of variant '{item}.{name}' of this \
-                                 module"
+                                "trait '{name}' takes the name of variant '{item}.{name}' of an \
+                                 earlier entry"
                             ),
                         )
                         .with_help(format!(
-                            "choose a different name: in an expression `{name}` is the variant, \
-                             so no method of the trait could be called"
+                            "choose another name for the trait: in an expression `{name}` is the \
+                             variant, so no method of the trait could be called"
                         )),
                     );
                     scope.refused_traits.insert(name);
@@ -1910,6 +1914,24 @@ impl Resolver<'_> {
     /// imported module that offers it (by the name the module is bound
     /// as, if it is bound), and each builtin module that offers it.
     fn elsewhere(&self, name: Symbol) -> Vec<(Symbol, Option<Symbol>)> {
+        self.elsewhere_as(name, None)
+    }
+
+    /// `elsewhere`, for a name wanted as a trait (`Some(true)`) or as a
+    /// type (`Some(false)`): only the modules that offer one of that kind
+    /// by the name (a module's variant `Foo` is no trait `Foo` a bound
+    /// could import).
+    fn elsewhere_as(&self, name: Symbol, as_trait: Option<bool>) -> Vec<(Symbol, Option<Symbol>)> {
+        let offers = |exports: &Exports| match as_trait {
+            None => exports.member(name).is_some(),
+            Some(as_trait) => match exports.types.get(&name) {
+                Some(Binding::Def(id)) => {
+                    matches!(self.defs.get(*id).kind, DefKind::Trait(_)) == as_trait
+                }
+                Some(_) => true,
+                None => false,
+            },
+        };
         let mut found: Vec<(Symbol, Option<Symbol>)> = Vec::new();
         let mut seen: HashSet<Symbol> = HashSet::new();
         // Modules bound by a name in this module.
@@ -1925,7 +1947,7 @@ impl Resolver<'_> {
         bound.sort_by_key(|(n, _)| resolve(*n));
         for (bound_as, id) in bound {
             if let (Some(exports), Some(module)) = (self.module_exports(id), self.module_name(id))
-                && exports.member(name).is_some()
+                && offers(exports)
                 && seen.insert(module)
             {
                 found.push((module, Some(bound_as)));
@@ -1942,7 +1964,7 @@ impl Resolver<'_> {
         imported.sort_by_key(|(n, _)| resolve(*n));
         for (module, id) in imported {
             if let Some(exports) = self.module_exports(id)
-                && exports.member(name).is_some()
+                && offers(exports)
                 && seen.insert(module)
             {
                 found.push((module, None));
@@ -1957,7 +1979,7 @@ impl Resolver<'_> {
             let module_sym = intern(module);
             if let Some(id) = ModuleId::builtin(module)
                 && let Some(exports) = self.builtins.modules.get(&id)
-                && exports.member(name).is_some()
+                && offers(exports)
                 && seen.insert(module_sym)
             {
                 found.push((module_sym, None));
@@ -2315,7 +2337,7 @@ impl Resolver<'_> {
             if name_str.starts_with('_') {
                 return Some(Res::Local);
             }
-            let elsewhere = self.elsewhere(name);
+            let elsewhere = self.elsewhere_as(name, Some(is_trait));
             if elsewhere.is_empty() {
                 // A private type or trait of an imported module: the
                 // checker would find it by its name.

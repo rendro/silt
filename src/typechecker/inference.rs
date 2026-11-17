@@ -2846,7 +2846,7 @@ impl TypeChecker {
                         "unknown trait '{}' in where clause for '{}'",
                         wc.trait_name, type_param
                     ),
-                    f.span,
+                    wc.trait_name_span,
                 );
                 continue;
             };

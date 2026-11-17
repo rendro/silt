@@ -2742,7 +2742,7 @@ impl TypeChecker {
                     self.impl_trait_name(ti),
                     resolve(ti.target_type)
                 ),
-                ti.span,
+                wc.trait_name_span,
             );
             return;
         };
@@ -3299,7 +3299,7 @@ impl TypeChecker {
                     resolve(ti.target_type),
                     resolve(method.name)
                 ),
-                method.span,
+                wc.trait_name_span,
             );
             return;
         };

@@ -774,3 +774,71 @@ fn lockfile_rev_with_path_traversal_is_a_clean_error() {
         let _ = fs::remove_dir_all(&ws);
     }
 }
+
+// ── A user and password in a git URL ─────────────────────────────────
+
+/// A git dependency's URL with a user and a password in it is shown with
+/// `***` in their place by every message of `check` (the diagnostic, the
+/// git command line it quotes, git's output, the JSON form), and the line
+/// of silt.toml under the caret has as many `*`s as they had characters.
+/// silt.toml keeps the URL as written. `silt add` with such a URL says
+/// the same. FAIL on 0.43.0: the user and the password were printed
+/// whole, twice. (A loopback port nothing listens on: no network.)
+#[test]
+fn a_git_url_s_user_and_password_are_in_no_message() {
+    let ws = fresh_workspace("userinfo");
+    let app = ws.join("app");
+    let url = "https://MARKUSER:MARKPASS@127.0.0.1:9/remote.git";
+    write_package(
+        &app,
+        "app",
+        &[git_dep("remote", url)],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    for args in [&["check"][..], &["check", "--format", "json"], &["update"]] {
+        let out = silt(&ws, &app, args);
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_ne!(out.status.code(), Some(0), "{args:?}: {all}");
+        assert!(
+            !all.contains("MARKUSER") && !all.contains("MARKPASS"),
+            "{args:?}: the user or the password is shown: {all}"
+        );
+        assert!(
+            all.contains("***@127.0.0.1:9/remote.git"),
+            "{args:?}: {all}"
+        );
+    }
+    let out = silt(&ws, &app, &["check"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let masked = format!(
+        "https://{}@127.0.0.1:9",
+        "*".repeat("MARKUSER:MARKPASS".len())
+    );
+    assert!(
+        stderr.contains(&masked),
+        "the excerpt keeps its columns: {stderr}"
+    );
+    let manifest = fs::read_to_string(app.join("silt.toml")).unwrap();
+    assert!(
+        manifest.contains(url),
+        "silt.toml keeps the URL: {manifest}"
+    );
+
+    let out = silt(
+        &ws,
+        &app,
+        &["add", "other", "--git", url, "--branch", "main"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        !stderr.contains("MARKUSER") && !stderr.contains("MARKPASS"),
+        "silt add shows the user or the password: {stderr}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}

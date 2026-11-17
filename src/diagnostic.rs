@@ -533,7 +533,9 @@ impl SourceMap {
     /// its last character, so it has text to show. Lines are shown
     /// without a `\r` before their line break. The text of a manifest is
     /// shown by the display rule (`git::escape_for_display`): it can be a
-    /// dependency's.
+    /// dependency's; and the user and password of a URL in it are shown
+    /// as `*`s, as many as their characters (a git dependency's
+    /// `https://user:token@host`; the file keeps them).
     pub fn position(&self, span: Span) -> Option<Position> {
         let file = self.get(span.file)?;
         // (From the file's line table: a file of many lines is not read
@@ -557,7 +559,7 @@ impl SourceMap {
         let (end_line, end_col) = clamp(file.line_col(span.end.max(span.start)));
         let mut line_text = line_of(line).to_string();
         if matches!(file.path, SourceName::Manifest(_)) {
-            line_text = crate::git::escape_for_display(&line_text);
+            line_text = crate::git::escape_for_display(&crate::text::mask_url_userinfo(&line_text));
         }
         Some(Position {
             line,

@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- A bound or a type that names another module's variant (imported by
+-- item, or offered by an imported module) is no trait and no type: the
+-- error offers no import of it, a name already imported or a variant
+-- where a trait or a type is wanted (audit R9, review rv-o8 N6). A type
+-- of the module named as a bound is not offered as a trait either.
+import mv
+import mv.{ Foo }
+
+fn by_item(x: a) -> Int where a: Foo { 1 }
+
+fn by_module(x: a) -> Int where a: Zed { 1 }
+
+fn a_type_as_a_bound(x: a) -> Int where a: V { 1 }
+
+fn as_a_type(x: Zed) -> Int { 1 }
+
+fn main() {
+  println((by_item(1), by_module(2), a_type_as_a_bound(3), as_a_type(mv.Zed), Foo(4)))
+}
