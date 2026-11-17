@@ -31,7 +31,7 @@ use crate::source::Span;
 use crate::typechecker::decodable::shown;
 use crate::typeinfo::{FieldType, Shape, Tag, TypeInfo, TypeTable, VariantInfo};
 use crate::types::canonical::{Resolver, canonical_head};
-use crate::types::{Head, Type, TypeRef};
+use crate::types::{Container, Head, Type, TypeRef};
 use crate::value::{HostFn, Value};
 
 mod dicts;
@@ -2471,7 +2471,7 @@ impl<'a> Compiler<'a> {
     /// and the types it is applied to.
     fn type_parts<'t>(&self, ty: &'t Type) -> Option<(Arc<TypeInfo>, Vec<&'t Type>)> {
         let builtin = |name: &str| crate::typeinfo::builtin_type_named(name).cloned();
-        if let Type::Tuple(ts) = ty {
+        if let Type::Container(Container::Tuple(ts)) = ty {
             return (!ts.is_empty()).then(|| Some((builtin("Tuple")?, ts.iter().collect())))?;
         }
         match ty.head_and_args()? {

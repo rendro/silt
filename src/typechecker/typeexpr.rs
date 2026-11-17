@@ -839,7 +839,7 @@ impl TypeChecker {
                     .iter()
                     .map(|e| self.resolve_type_expr(e, param_vars))
                     .collect();
-                Type::Tuple(types)
+                Type::Container(Container::Tuple(types))
             }
             TypeExprKind::Function(params, ret) => {
                 let param_types: Vec<Type> = params
