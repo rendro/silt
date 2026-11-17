@@ -223,7 +223,10 @@ an `InvalidUrl`: RFC 7617 has none in it. A URL whose user and password
 are both empty (`http://@host/`) sends no `authorization`. No error
 shows them: the URL of an `InvalidUrl` has `***` in their place. A password
 is written percent-encoded, as the user is: a raw `/`, `?` or `#` in it
-ends the URL's host part, and the rest is read as a path.
+ends the URL's host part, and the rest is read as a path. Since such a
+password cannot be told from an `@` in a path or a query, an error hides
+all of a URL from its host to its last `@`: `https://host/users/@me` is
+shown as `https://***@me`.
 
 A byte of the URL's path or query that is no ASCII (the bytes of `é`)
 is sent percent-encoded (`/h%C3%A9llo` for `/héllo`), as a redirect's
