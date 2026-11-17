@@ -89,6 +89,18 @@ trait Scale for Bool {
 }
 ```
 
+A type variable the impl's method writes is one of the trait method's
+own variables, a different one for each: for `trait Pick { fn pick(self,
+x: t, y: t) -> t }` an impl writes `fn pick(self, x: a, y: a) -> a`, and
+two variables for the one `t` (`x: a, y: b`) are an error. Where the
+trait's type is a type of the impl, the method writes that type: `Self`
+or the impl's type (`Box(a)` in `trait Tr for Box(a)`), and the header's
+variable where a trait argument gives it (`trait Conv(a) for Box(a)` writes
+`a`, not a variable of its own, "method 'c' writes its own type variable
+`b` where trait 'Conv' declares `a`, the impl's"). A variable of a
+signature stands for any type, so one that stood for a type the trait
+fixes would not mean what it says.
+
 A method's own `where` clause is part of its signature too
 (`fn shw(self, x: a) -> String where a: Display`): it holds in the
 default body and in every impl's body, and every call owes it.
