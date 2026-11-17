@@ -3278,10 +3278,13 @@ impl TypeChecker {
     }
 
     /// The error of the bound `wc` that names no trait, in a `where`
-    /// clause of a trait's header, of a method the trait declares without
-    /// a body or of a host function, worded as a function's: at the
-    /// trait's name.
+    /// clause of a function, a trait's header, a trait's or an impl's
+    /// method or a host function: at the trait's name, once (an impl's
+    /// method is declared, and then its body checked, against the bound).
     pub(super) fn unknown_bound(&mut self, wc: &WhereClause) {
+        if !self.reported_bounds.insert(wc.trait_name_span) {
+            return;
+        }
         self.error(
             Code::UnknownTrait,
             format!(
@@ -3319,16 +3322,7 @@ impl TypeChecker {
             .named_trait(wc.trait_res, wc.trait_name)
             .filter(|t| self.tables.traits.contains_key(t))
         else {
-            self.error(
-                Code::UnknownTrait,
-                format!(
-                    "unknown trait '{}' in where clause on '{}.{}'",
-                    resolve(wc.trait_name),
-                    resolve(ti.target_type),
-                    resolve(method.name)
-                ),
-                wc.trait_name_span,
-            );
+            self.unknown_bound(wc);
             return;
         };
         let trait_name = &trait_key;

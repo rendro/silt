@@ -2834,20 +2834,12 @@ impl TypeChecker {
             if wc.trait_res == Some(crate::defs::Res::Error) {
                 continue;
             }
-            let type_param = &wc.type_param;
             let trait_args = &wc.trait_args;
             let Some(trait_name) = self
                 .named_trait(wc.trait_res, wc.trait_name)
                 .filter(|t| self.tables.traits.contains_key(t))
             else {
-                self.error(
-                    Code::UnknownTrait,
-                    format!(
-                        "unknown trait '{}' in where clause for '{}'",
-                        wc.trait_name, type_param
-                    ),
-                    wc.trait_name_span,
-                );
+                self.unknown_bound(wc);
                 continue;
             };
             // A where-clause bound
