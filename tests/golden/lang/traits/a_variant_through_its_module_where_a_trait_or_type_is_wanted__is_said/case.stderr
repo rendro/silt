@@ -1,0 +1,17 @@
+error[type]: module 'zz' has no trait 'Foo': `zz.Foo` is a variant of `zz.V`
+ --> main.silt:9:46
+   |
+ 9 | fn variant_as_bound(x: b) -> Int where b: zz.Foo { 1 }
+   |                                              ^^^ module 'zz' has no trait 'Foo': `zz.Foo` is a variant of `zz.V`
+
+error[type]: module 'zz' has no type 'Foo': `zz.Foo` is a variant of `zz.V`
+ --> main.silt:11:26
+    |
+ 11 | fn variant_as_type(x: zz.Foo) -> Int { 1 }
+    |                          ^^^ module 'zz' has no type 'Foo': `zz.Foo` is a variant of `zz.V`
+
+error[type]: module 'zz' has no trait 'Nope'
+ --> main.silt:13:37
+    |
+ 13 | fn nothing(x: b) -> Int where b: zz.Nope { 1 }
+    |                                     ^^^^ module 'zz' has no trait 'Nope'
