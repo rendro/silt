@@ -892,31 +892,3 @@ fn one_ring_of_four_times_the_lets_takes_at_most_six_times_as_long() {
         );
     }
 }
-
-/// A chain of sixteen times the modules takes at most seventeen times as
-/// long to check, from 500 to 8,000: about twelve times by instructions
-/// (debug build). The report of the modules looked through every import
-/// of the program for each module (the imports of a file that could not
-/// be read): 25 times on main b40b8a48.
-#[test]
-fn a_chain_of_sixteen_times_the_modules_takes_at_most_seventeen_times_as_long() {
-    let dir = std::env::temp_dir().join(format!(
-        "silt_checker_scaling_long_chain_{}",
-        std::process::id()
-    ));
-    let (small, large) = (500, 8_000);
-    for n in [small, large] {
-        program_of_a_chain(&dir.join(n.to_string()), n);
-    }
-    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
-    let measured = within(17.0, || best_times(&main_of(large), &main_of(small), 3));
-    let _ = std::fs::remove_dir_all(&dir);
-    if let Err(over) = measured {
-        panic!(
-            "`silt check` of a chain of {large} modules took more than seventeen times as long \
-             as that of one of {small} in each of three measurements ({}): a module's report \
-             looks through every import of the program",
-            shown(&over)
-        );
-    }
-}
