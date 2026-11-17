@@ -11,9 +11,10 @@ import http
 import task
 import tcp
 import test
+import url
 
-fn get(url) {
-  match http.get(url) {
+fn get(link) {
+  match http.get(url_of(link)) {
     Ok(r) -> r.status
     Err(e) -> panic("{e}")
   }
@@ -30,4 +31,11 @@ fn test_a_uses_a_server() {
 
 fn test_b_runs() {
   test.assert_eq(1, 1)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

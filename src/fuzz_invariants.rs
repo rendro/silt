@@ -1335,9 +1335,11 @@ const RESPONSE_URL: &str = "http://example.com/a/b/c?q=1";
 /// name, in lower case; without `content-encoding` and `content-length`
 /// when a gzip body was unpacked), its body the bytes sent (none to a
 /// `HEAD`, or for a status that has none); only an unpacked body can fail
-/// or be too large. A redirect is resolved to a URL without a fragment,
-/// on the same server for a location that is a path, with no `.` or `..`
-/// segment left in a path that was resolved.
+/// or be too large. A redirect is resolved to a URL without a fragment
+/// or a user and password of the base's, on the same server for a
+/// location that is a path, with no `.` or `..` segment left, and that
+/// reads back as itself; a location that does not resolve is an error
+/// that holds no user or password of a URL in it.
 #[cfg(feature = "http")]
 pub fn check_http_response(bytes: &[u8]) -> Result<(), String> {
     use crate::builtins::http::{redirect, ureq_response_to_value};
@@ -1425,7 +1427,8 @@ pub fn check_http_response(bytes: &[u8]) -> Result<(), String> {
         }
     }
     let response = response().ok_or("a response built once is refused the second time")?;
-    let Some((code, url)) = redirect(&response, RESPONSE_URL) else {
+    let base = crate::url::parse(RESPONSE_URL).map_err(|e| format!("the base: {e}"))?;
+    let Some((code, url)) = redirect(&response, &base) else {
         return Ok(());
     };
     if !matches!(code, 301 | 302 | 303 | 307 | 308) || code != status {
@@ -1433,9 +1436,22 @@ pub fn check_http_response(bytes: &[u8]) -> Result<(), String> {
             "the response of status {status} redirected as {code}"
         ));
     }
-    if url.contains('#') {
+    let url = match url {
+        Ok(url) => url,
+        // (What the text rule hides: nothing of a user and password is
+        // left before an `@` after a `//`.)
+        Err(text) if text == crate::text::hide_url_userinfo(&text) => return Ok(()),
+        Err(text) => return Err(format!("the location {text:?} is not hidden")),
+    };
+    if !url.fragment().is_empty() {
         return Err(format!("the redirect went to {url:?}, with a fragment"));
     }
+    if crate::url::parse(url.as_str()).as_ref() != Ok(&url) {
+        return Err(format!(
+            "the redirect went to {url:?}, which reads otherwise"
+        ));
+    }
+    let url = url.as_str().to_string();
     // (The first `location` header is the one followed.)
     let location = (sent.iter())
         .find(|(name, _)| name == "location")

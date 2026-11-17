@@ -9,9 +9,10 @@ import bytes
 import http
 import task
 import tcp
+import url
 
-fn get(url) {
-  match http.get(url) {
+fn get(link) {
+  match http.get(url_of(link)) {
     Ok(r) -> "status {r.status}"
     Err(e) -> "error {e}"
   }
@@ -19,7 +20,7 @@ fn get(url) {
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let url = "http://127.0.0.1:{tcp.local_port(listener)}"
+  let link = "http://127.0.0.1:{tcp.local_port(listener)}"
   let server = task.spawn { ->
     http.serve(listener) { req ->
       match req.path {
@@ -28,8 +29,15 @@ fn main() {
       }
     }
   }
-  println(get("{url}/"))
-  println(get("{url}/boom"))
+  println(get("{link}/"))
+  println(get("{link}/boom"))
   task.cancel(server)
   println("server cancelled")
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

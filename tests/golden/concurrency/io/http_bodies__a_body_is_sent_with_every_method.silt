@@ -12,6 +12,7 @@ import map
 import result
 import task
 import tcp
+import url
 
 fn text(body: Bytes) -> String {
   bytes.to_string(body) |> result.unwrap_or("not text")
@@ -28,17 +29,24 @@ fn answer(req: http.Request) -> http.Response {
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let link = "http://127.0.0.1:{tcp.local_port(listener)}/"
   let server = task.spawn { -> http.serve(listener, answer) }
   let methods = [http.GET, http.DELETE, http.HEAD, http.OPTIONS, http.POST, http.PUT, http.PATCH]
   list.each(methods) { method ->
     list.each(["abc", ""]) { body ->
       println("{method} [{body}]")
-      match http.request(method, url, bytes.from_string(body), #{}) {
+      match http.request(method, url_of(link), bytes.from_string(body), #{}) {
         Ok(resp) -> println("  the client:  {resp.status} [{text(resp.body)}]")
         Err(e) -> println("  the client: {e}")
       }
     }
   }
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

@@ -686,7 +686,7 @@ impl TypeChecker {
     /// correct but doesn't say how to fix it; the help points at `?` and
     /// `result.flat_map` / `option.flat_map`. A `String` where a
     /// `regex.Regex` is expected (a pattern given as text) is told to
-    /// compile it.
+    /// compile it, and one where a `url.Url` is expected to parse it.
     pub(super) fn chain_hint(&self, got: &Type, expected: &Type) -> Option<std::string::String> {
         let is_wrapper = |t: &Type, name: &str| -> bool { t.is_builtin(name) };
         // (A type constructor, `Option(_)`, holds no value to chain.)
@@ -699,6 +699,15 @@ impl TypeChecker {
                 "a regex function takes a compiled pattern: make one with `{}(pattern)`, once, \
                  and pass it on",
                 self.written_builtin("regex.compile")
+            ));
+        }
+        // (A URL written as text where a Url is taken.)
+        if matches!(got, Type::String) && expected.is_builtin("Url") {
+            return Some(format!(
+                "a URL is a `{}`: read one with `{}(text)`, or build one with the url \
+                 module, and pass it on",
+                self.written_builtin("url.Url"),
+                self.written_builtin("url.parse")
             ));
         }
         if is_wrapper(expected, "Result") || is_wrapper(expected, "Option") {

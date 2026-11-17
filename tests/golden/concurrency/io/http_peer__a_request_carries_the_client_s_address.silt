@@ -9,6 +9,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn answer(req: http.Request) -> http.Response {
   http.Response { status: 200, body: bytes.from_string(req.peer), headers: #{} }
@@ -20,7 +21,7 @@ fn ask(host: String, bind: String) -> String {
   when let Ok(listener) = tcp.listen(bind) else { return "cannot listen on {bind}" }
   let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, answer) }
-  let said = match http.get("http://{host}:{port}/") {
+  let said = match http.get(url_of("http://{host}:{port}/")) {
     Ok(r) -> bytes.to_string(r.body) |> result.unwrap_or("(no text)")
     Err(e) -> "{e}"
   }
@@ -41,4 +42,11 @@ fn ask(host: String, bind: String) -> String {
 fn main() {
   println(ask("127.0.0.1", "127.0.0.1:0"))
   println(ask("[::1]", "[::1]:0"))
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

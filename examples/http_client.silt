@@ -3,6 +3,7 @@ import http
 import json
 import list
 import string
+import url
 
 -- Fetch GitHub repos for a user and display the top 5 by stars.
 
@@ -14,11 +15,21 @@ type Repo {
 }
 
 fn fetch_repos(user) {
-  -- http.get returns HttpError, bytes.to_string BytesError and
-  -- json.parse JsonError. Fold them into a single `String` channel
-  -- via `"{e}"` so fetch_repos surfaces one uniform error type to its
-  -- caller.
-  let resp = match http.get("https://api.github.com/users/{user}/repos") {
+  -- url.parse and url.add_segments return UrlError, http.get
+  -- HttpError, bytes.to_string BytesError and json.parse JsonError.
+  -- Fold them into a single `String` channel via `"{e}"` so fetch_repos
+  -- surfaces one uniform error type to its caller.
+  let users = match url.parse("https://api.github.com/users") {
+    Ok(u) -> u
+    Err(e) -> return Err("{e}")
+  }
+  -- The user's name is one segment, escaped: a name with `/` or `?` in it
+  -- asks for no other resource.
+  let repos = match url.add_segments(users, [user, "repos"]) {
+    Ok(u) -> u
+    Err(e) -> return Err("{e}")
+  }
+  let resp = match http.get(repos) {
     Ok(r) -> r
     Err(e) -> return Err("{e}")
   }

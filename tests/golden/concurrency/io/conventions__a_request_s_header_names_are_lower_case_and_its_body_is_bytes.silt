@@ -13,6 +13,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn answer(req: http.Request) -> http.Response {
   let wrote = map.get(req.headers, "x-request-id") |> option.unwrap_or("(none)")
@@ -60,9 +61,16 @@ fn main() {
   let server = task.spawn { -> http.serve(listener, answer) }
   println(ask(port, bytes.from_string("héllo")))
   println(ask(port, bytes.from_list([0, 255, 254, 104]) |> result.unwrap_or(bytes.empty())))
-  match http.get("http://127.0.0.1:{port}/") {
+  match http.get(url_of("http://127.0.0.1:{port}/")) {
     Ok(r) -> println("{map.get(r.headers, "x-answered-by")} {map.contains(r.headers, "X-Answered-By")}")
     Err(e) -> println("{e}")
   }
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

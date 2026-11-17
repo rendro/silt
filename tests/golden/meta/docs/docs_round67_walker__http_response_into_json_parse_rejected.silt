@@ -6,6 +6,7 @@
 import http
 import json
 import result
+import url
 
 type Todo {
   id: Int,
@@ -14,8 +15,8 @@ type Todo {
 
 fn process(t: Todo) -> Todo { t }
 
-fn fetch_todo(url: String) -> Result(Todo, http.HttpError) {
-  let _x = http.get(url)?
+fn fetch_todo(link: String) -> Result(Todo, http.HttpError) {
+  let _x = http.get(url_of(link))?
     |> json.parse(Todo)
     |> result.map(process)
   Ok(Todo { id: 1, title: "" })
@@ -23,4 +24,11 @@ fn fetch_todo(url: String) -> Result(Todo, http.HttpError) {
 
 fn main() {
   ()
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

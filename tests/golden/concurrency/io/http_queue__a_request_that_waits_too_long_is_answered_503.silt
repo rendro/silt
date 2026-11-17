@@ -9,6 +9,7 @@ import list
 import task
 import tcp
 import time
+import url
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
@@ -22,7 +23,7 @@ fn main() {
       http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
     }
   }
-  let get = { -> match http.get("http://127.0.0.1:{port}/") {
+  let get = { -> match http.get(url_of("http://127.0.0.1:{port}/")) {
     Ok(r) -> r.status
     Err(_) -> 0
   } }
@@ -39,4 +40,11 @@ fn main() {
   println("{list.length(list.filter(statuses) { s -> s == 200 })} of 128 answered 200")
   tcp.close_listener(listener)
   task.join(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

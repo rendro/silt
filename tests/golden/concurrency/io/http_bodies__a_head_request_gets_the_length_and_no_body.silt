@@ -13,6 +13,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn line_end() -> String {
   let cr = string.from_char_code(13) |> option.unwrap_or("")
@@ -82,7 +83,7 @@ fn main() {
   let server = task.spawn { -> http.serve(listener, answer) }
 
   println("http.request")
-  match http.request(http.HEAD, "http://127.0.0.1:{port}/", bytes.empty(), #{}) {
+  match http.request(http.HEAD, url_of("http://127.0.0.1:{port}/"), bytes.empty(), #{}) {
     Ok(resp) -> println("  gets {resp.status}, content-length {map.get(resp.headers, "content-length")}, {bytes.length(resp.body)} bytes")
     Err(e) -> println("  {e}")
   }
@@ -94,4 +95,11 @@ fn main() {
   println("  on the wire: {length_line(answered)}, {bytes.length(body_of(answered) |> option.unwrap_or(bytes.empty()))} bytes after the head")
   tcp.close(conn)
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

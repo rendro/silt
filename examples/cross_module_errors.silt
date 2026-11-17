@@ -15,10 +15,13 @@ import http
 import io
 import json
 import result
+import url
 
--- Shape of the JSON document we'll parse.
+-- Shape of the JSON document we'll parse. The URL is read by url.parse
+-- as the document is: a config whose api_url is no URL is a
+-- ConfigParse error.
 type Config {
-  api_url: String,
+  api_url: url.Url,
   api_key: String,
   retries: Int,
 }

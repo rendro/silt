@@ -13,6 +13,7 @@ import option
 import string
 import task
 import tcp
+import url
 
 fn answer(codings: List(String)) -> Bytes {
   let lines = codings |> list.map { c -> "Content-Encoding: {c}\r\n" }
@@ -21,7 +22,7 @@ fn answer(codings: List(String)) -> Bytes {
 }
 
 fn get(port: Int) -> () {
-  match http.get("http://127.0.0.1:{port}/") {
+  match http.get(url_of("http://127.0.0.1:{port}/")) {
     Ok(response) -> {
       let coding = map.get(response.headers, "content-encoding") |> option.unwrap_or("none")
       let length = map.get(response.headers, "content-length") |> option.unwrap_or("none")
@@ -49,4 +50,11 @@ fn main() {
   }
   answers |> list.each { _ -> get(port) }
   task.join(peer)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

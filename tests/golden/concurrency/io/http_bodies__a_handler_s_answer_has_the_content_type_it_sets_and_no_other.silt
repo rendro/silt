@@ -13,6 +13,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn answer(req: http.Request) -> http.Response {
   match req.path {
@@ -36,7 +37,7 @@ fn main() {
   let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, answer) }
   ["/text", "/set", "/empty", "/bytes"] |> list.each { path ->
-    match http.get("http://127.0.0.1:{port}{path}") {
+    match http.get(url_of("http://127.0.0.1:{port}{path}")) {
       Ok(resp) -> println("{path}: {bytes.to_hex(resp.body)}, content-type {map.get(resp.headers, "content-type")}")
       Err(e) -> println("{path}: {e}")
     }
@@ -63,4 +64,11 @@ fn main() {
     |> list.filter { line -> string.starts_with(line, "HTTP/") || string.starts_with(line, "Content-Type") }
     |> list.each { line -> println("TRACE: {line}") }
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

@@ -346,10 +346,14 @@ fn high3_http_get_bogus_address_returns_err_in_bounded_time() {
     let src = format!(
         r#"
 import http
+import url
 fn main() {{
-  match http.get("http://127.0.0.1:{port}/") {{
-    Ok(_) -> println("unexpected-ok")
-    Err(_) -> println("expected-err")
+  match url.parse("http://127.0.0.1:{port}/") {{
+    Ok(u) -> match http.get(u) {{
+      Ok(_) -> println("unexpected-ok")
+      Err(_) -> println("expected-err")
+    }}
+    Err(e) -> println("not a URL: {{e}}")
   }}
 }}
 "#

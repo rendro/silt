@@ -220,9 +220,10 @@ import http
 import io
 import json
 import result
+import url
 
 type Config {
-  api_url: String,
+  api_url: url.Url,
   api_key: String,
 }
 

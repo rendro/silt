@@ -15,6 +15,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn upwards() -> Bytes {
   bytes.from_list(0..255) |> result.unwrap_or(bytes.empty())
@@ -81,7 +82,7 @@ fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, answer) }
-  match http.request(http.POST, "http://127.0.0.1:{port}/", upwards(), #{}) {
+  match http.request(http.POST, url_of("http://127.0.0.1:{port}/"), upwards(), #{}) {
     Ok(resp) -> show("  http.request gets", resp.body)
     Err(e) -> println("  http.request: {e}")
   }
@@ -106,10 +107,17 @@ fn main() {
     tcp.close(conn)
     sent
   }
-  let got = http.request(http.POST, "http://127.0.0.1:{tcp.local_port(by_hand)}/", upwards(), #{})
+  let got = http.request(http.POST, url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"), upwards(), #{})
   show("  the request on the wire", task.join(reader))
   match got {
     Ok(resp) -> show("  http.request gets", resp.body)
     Err(e) -> println("  http.request: {e}")
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
   }
 }

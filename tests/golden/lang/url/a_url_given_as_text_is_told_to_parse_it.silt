@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: http
+-- stderr-contains: type mismatch: expected url.Url, got String
+-- stderr-contains: help: a URL is a `url.Url`: read one with `url.parse(text)`, or build one with the url module, and pass it on
+-- A URL written as text where the http client takes a Url says how to
+-- make one.
+import http
+
+fn main() {
+  println(http.get("https://example.com/"))
+}

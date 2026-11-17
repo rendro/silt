@@ -10,6 +10,7 @@ import map
 import option
 import task
 import tcp
+import url
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
@@ -26,7 +27,7 @@ fn main() {
     let _ = tcp.write(c, answer)
     tcp.close(c)
   }
-  match http.get("http://127.0.0.1:{port}/") {
+  match http.get(url_of("http://127.0.0.1:{port}/")) {
     Ok(response) -> {
       println("x-name: {map.get(response.headers, "x-name") |> option.unwrap_or("none")}")
       println("x-plain: {map.get(response.headers, "x-plain") |> option.unwrap_or("none")}")
@@ -34,4 +35,11 @@ fn main() {
     Err(e) -> println("error: {e}")
   }
   task.join(peer)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

@@ -7,7 +7,9 @@ import bytes
 import http
 import list
 import map
+import option
 import result
+import string
 import task
 import tcp
 
@@ -26,15 +28,33 @@ fn answer(req: http.Request) -> http.Response {
   }
 }
 
+-- What the server answers to `GET path`, sent by hand: a client of
+-- silt's sends no query that does not decode. The status and the body.
+fn ask(port: Int, path: String) -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { return "cannot connect" }
+  let request = "GET {path} HTTP/1.1{cr}\nHost: h{cr}\nConnection: close{cr}\n{cr}\n"
+  let _ = tcp.write(conn, bytes.from_string(request))
+  let answer = text(read_all(conn, bytes.empty()))
+  tcp.close(conn)
+  let status = answer |> string.split(" ") |> list.get(1) |> option.unwrap_or("?")
+  let body = answer |> string.split("{cr}\n{cr}\n") |> list.get(1) |> option.unwrap_or("")
+  "{status} {body}"
+}
+
+fn read_all(conn: tcp.TcpStream, got: Bytes) -> Bytes {
+  match tcp.read(conn, 65536) {
+    Ok(more) when bytes.length(more) > 0 -> read_all(conn, bytes.concat(got, more))
+    _ -> got
+  }
+}
+
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, answer) }
-  let base = "http://127.0.0.1:{tcp.local_port(listener)}"
   list.each(["/?name=a%20b", "/?name=%ZZ", "/?name=%FF", "/?other=1", "/?name=c"]) { path ->
-    match http.get("{base}{path}") {
-      Ok(r) -> println("{r.status} {text(r.body)}")
-      Err(e) -> println("error: {e}")
-    }
+    println(ask(port, path))
   }
   task.cancel(server)
 }

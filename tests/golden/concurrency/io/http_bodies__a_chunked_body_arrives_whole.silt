@@ -13,6 +13,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn upwards() -> Bytes {
   bytes.from_list(0..255) |> result.unwrap_or(bytes.empty())
@@ -114,10 +115,17 @@ fn main() {
     let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), in_chunks(downwards())))
     tcp.close(conn)
   }
-  let got = http.get("http://127.0.0.1:{tcp.local_port(by_hand)}/")
+  let got = http.get(url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"))
   task.join(writer)
   match got {
     Ok(resp) -> show("  http.get gets", resp.body)
     Err(e) -> println("  http.get: {e}")
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
   }
 }
