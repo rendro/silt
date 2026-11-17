@@ -1,0 +1,59 @@
+error[type]: unknown trait 'Mine' in where clause for 'a': `Mine` is a variant of `Own`
+ --> main.silt:17:43
+    |
+ 17 | fn variant_as_bound(x: a) -> Int where a: Mine { 1 }
+    |                                           ^^^^ unknown trait 'Mine' in where clause for 'a': `Mine` is a variant of `Own`
+
+error[type]: unknown type 'Mine': `Mine` is a variant of `Own`
+ --> main.silt:19:23
+    |
+ 19 | fn variant_as_type(x: Mine) -> Int { 1 }
+    |                       ^^^^ unknown type 'Mine': `Mine` is a variant of `Own`
+
+error[type]: unknown trait 'Own' in where clause for 'a': `Own` is a type
+ --> main.silt:21:40
+    |
+ 21 | fn type_as_bound(x: a) -> Int where a: Own { 1 }
+    |                                        ^^^ unknown trait 'Own' in where clause for 'a': `Own` is a type
+
+error[type]: unknown type 'Show': `Show` is a trait
+ --> main.silt:23:21
+    |
+ 23 | fn trait_as_type(x: Show) -> Int { 1 }
+    |                     ^^^^ unknown type 'Show': `Show` is a trait
+
+error[type]: unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `mv.V`
+ --> main.silt:25:52
+    |
+ 25 | fn imported_variant_as_bound(x: a) -> Int where a: Foo { 1 }
+    |                                                    ^^^ unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `mv.V`
+
+error[type]: unknown trait 'Int' in where clause for 'a': `Int` is a type
+ --> main.silt:27:48
+    |
+ 27 | fn prelude_type_as_bound(x: a) -> Int where a: Int { 1 }
+    |                                                ^^^ unknown trait 'Int' in where clause for 'a': `Int` is a type
+
+error[type]: unknown trait 'Some' in where clause for 'a': `Some` is a variant of `Option`
+ --> main.silt:29:51
+    |
+ 29 | fn prelude_variant_as_bound(x: a) -> Int where a: Some { 1 }
+    |                                                   ^^^^ unknown trait 'Some' in where clause for 'a': `Some` is a variant of `Option`
+
+error[type]: unknown type 'Display': `Display` is a trait
+ --> main.silt:31:29
+    |
+ 31 | fn prelude_trait_as_type(x: Display) -> Int { 1 }
+    |                             ^^^^^^^ unknown type 'Display': `Display` is a trait
+
+error[type]: unknown trait 'Zed' in where clause for 'a'
+ --> main.silt:33:33
+    |
+ 33 | fn unseen(x: a) -> Int where a: Zed { 1 }
+    |                                 ^^^ unknown trait 'Zed' in where clause for 'a'
+
+error[type]: trait 'Sub' lists unknown supertrait 'Own': `Own` is a type
+ --> main.silt:35:12
+    |
+ 35 | trait Sub: Own {
+    |            ^^^ trait 'Sub' lists unknown supertrait 'Own': `Own` is a type

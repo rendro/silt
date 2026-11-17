@@ -765,6 +765,9 @@ pub(crate) struct TypeChecker {
     /// The places of the bounds reported as naming no trait
     /// (`unknown_bound`): each is reported once.
     pub(super) reported_bounds: std::collections::HashSet<Span>,
+    /// The variants the module names bare, by name, each with its enum
+    /// (`names::bare_variants`).
+    pub(super) bare_variants: HashMap<Symbol, crate::defs::TypeId>,
     /// The traits of the module's rejected impls for every type
     /// (`trait T for a`): a type that lacks one is not reported again.
     pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
@@ -1012,6 +1015,7 @@ impl TypeChecker {
             refused_traits: std::collections::HashSet::new(),
             refused_impl_heads: std::collections::HashSet::new(),
             reported_bounds: std::collections::HashSet::new(),
+            bare_variants: HashMap::new(),
             blanket_traits: std::collections::HashSet::new(),
             duplicated_impls: std::collections::HashSet::new(),
             impl_written: HashMap::new(),
@@ -2500,6 +2504,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.is_cell = kind == names::ModuleKind::Cell;
     checker.reach = reach;
     checker.cells = cells;
+    checker.bare_variants = names::bare_variants(scope, &defs);
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;

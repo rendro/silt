@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- Where a trait or a type is wanted and the name is something else the
+-- file sees, the error says what it is in one clause: a variant (of the
+-- file, imported by item, of the prelude, with its enum as the file
+-- writes it), a type, a trait. A name the file does not see bare gets no
+-- clause (audit R9, review rv-o9 N1).
+import mv
+import mv.{ Foo }
+
+type Own { Mine, Other }
+
+trait Show {
+  fn show(self) -> String
+}
+
+fn variant_as_bound(x: a) -> Int where a: Mine { 1 }
+
+fn variant_as_type(x: Mine) -> Int { 1 }
+
+fn type_as_bound(x: a) -> Int where a: Own { 1 }
+
+fn trait_as_type(x: Show) -> Int { 1 }
+
+fn imported_variant_as_bound(x: a) -> Int where a: Foo { 1 }
+
+fn prelude_type_as_bound(x: a) -> Int where a: Int { 1 }
+
+fn prelude_variant_as_bound(x: a) -> Int where a: Some { 1 }
+
+fn prelude_trait_as_type(x: Display) -> Int { 1 }
+
+fn unseen(x: a) -> Int where a: Zed { 1 }
+
+trait Sub: Own {
+  fn s(self) -> Int
+}
+
+fn main() {
+  println((Foo(1), mv.Zed, Mine, Other))
+}

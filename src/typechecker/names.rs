@@ -916,6 +916,29 @@ fn bind_imports(
     }
 }
 
+/// The variants the module names bare, each with its enum: its own, the
+/// ones it imports (an earlier REPL entry's among them) and the
+/// prelude's. A message about a name wanted as a type or a trait says so
+/// where the name is one of them (`TypeChecker::what_the_name_is`).
+pub(crate) fn bare_variants(
+    scope: &ModuleScope,
+    defs: &DefTable,
+) -> HashMap<Symbol, crate::defs::TypeId> {
+    let (_, builtins) = builtins();
+    let mut out = HashMap::new();
+    let bindings = (scope.values.iter())
+        .chain(scope.implied.iter())
+        .chain(builtins.prelude.values.iter());
+    for (name, binding) in bindings {
+        if let Binding::Def(id) = binding
+            && let DefKind::Variant { ty, .. } = defs.get(*id).kind
+        {
+            out.entry(*name).or_insert(ty);
+        }
+    }
+    out
+}
+
 /// The enum of a variant named `name` the module sees, and where the
 /// module declares it: one of its own (with its span), or, in a REPL
 /// entry, one of an earlier entry's enum (no span: the entry sees it

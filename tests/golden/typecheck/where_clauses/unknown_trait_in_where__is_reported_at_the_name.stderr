@@ -1,11 +1,11 @@
-error[type]: unknown trait 'Foo' in where clause for 'a'
+error[type]: unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `T`
  --> unknown_trait_in_where__is_reported_at_the_name.silt:12:28
     |
  12 | fn u(x: a) -> Int where a: Foo { 1 }
-    |                            ^^^ unknown trait 'Foo' in where clause for 'a'
+    |                            ^^^ unknown trait 'Foo' in where clause for 'a': `Foo` is a variant of `T`
 
-error[type]: unknown trait 'Bar' in where clause on trait impl 'Loud for List'
+error[type]: unknown trait 'Bar' in where clause on trait impl 'Loud for List': `Bar` is a variant of `T`
  --> unknown_trait_in_where__is_reported_at_the_name.silt:14:33
     |
  14 | trait Loud for List(a) where a: Bar {
-    |                                 ^^^ unknown trait 'Bar' in where clause on trait impl 'Loud for List'
+    |                                 ^^^ unknown trait 'Bar' in where clause on trait impl 'Loud for List': `Bar` is a variant of `T`
