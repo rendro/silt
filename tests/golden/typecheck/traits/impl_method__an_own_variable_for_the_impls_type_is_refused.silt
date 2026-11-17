@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- A method's own type variable that stands for a variable of the impl's
+-- header, through a trait argument (`Conv(a) for Box(a)`) or `Self`
+-- (`Box(b)` for `Self` in `for Box(a)`), is refused: in the impl that type
+-- is the header's, written by its name (owner, card TV-1). A parameter left
+-- without a type takes the trait's and stays accepted.
+type Box(a) { v: a }
+
+trait Conv(t) {
+  fn c(self, x: t, y: t) -> t
+}
+
+trait Conv(a) for Box(a) {
+  fn c(self, x: a, y: b) -> a { y }
+}
+
+trait Tr {
+  fn f(self, x: Self) -> Self
+}
+
+trait Tr for Box(a) {
+  fn f(self, x: Box(b)) -> Box(a) { self }
+}
+
+trait Pick {
+  fn pick(self, x: t, y: t) -> t
+}
+
+trait Pick for Int {
+  fn pick(self, x: a, y) -> a { y }
+}
+
+fn main() {
+  println((Conv.c(Box { v: 1 }, 2, 3), Pick.pick(1, 2, 3)))
+}
