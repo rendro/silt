@@ -256,31 +256,7 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// at (what a test asks: no more than a few times the text's length).
 #[cfg(feature = "http")]
 fn redact_counting(msg: &str, looked: &mut usize) -> String {
-    let mut out = String::with_capacity(msg.len());
-    // What of `msg` is in `out`, and where the search for an authority
-    // goes on: never back, so each byte is looked at a bounded number
-    // of times.
-    let (mut copied, mut at) = (0, 0);
-    while let Some(found) = msg[at..].find("//") {
-        *looked += found + 2;
-        let host_start = at + found + 2;
-        let authority = &msg[host_start..];
-        let end = authority
-            .find(['/', '?', '#', ' ', '\t', '\n'])
-            .unwrap_or(authority.len());
-        *looked += 2 * end;
-        at = match authority[..end].rfind('@') {
-            Some(last @ 1..) => {
-                out.push_str(&msg[copied..host_start]);
-                out.push_str("***");
-                copied = host_start + last;
-                copied
-            }
-            _ => host_start,
-        };
-    }
-    out.push_str(&msg[copied..]);
-    out
+    crate::text::hide_url_userinfo_counting(msg, looked)
 }
 
 /// Scrub the userinfo of `url`, a text that is one URL as the program

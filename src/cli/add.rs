@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use crate::git::{EscapedDisplay, EscapingWriter, escape_for_display};
+use crate::git::{EscapedDisplay, EscapingWriter};
 use crate::intern;
 use crate::lockfile::normalize_path;
 use crate::package_graph::{LockPolicy, resolve_packages};
@@ -571,8 +571,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     }
 
     // The summary quotes the path or the URL and the ref as they were
-    // given on the command line.
-    println!("{}", escape_for_display(&success_summary));
+    // given on the command line, but a user and password in the URL
+    // (silt.toml keeps them).
+    println!("{}", crate::git::display_url(&success_summary));
     Ok(())
 }
 

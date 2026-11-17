@@ -1133,6 +1133,21 @@ fn shown(c: char) -> String {
     }
 }
 
+/// `url` as a message shows it: a user and password after its `//` (to
+/// the last `@` before the path) are `***`.
+fn without_userinfo(url: &str) -> String {
+    let Some(at) = url.find("//") else {
+        return url.to_string();
+    };
+    let start = at + 2;
+    let authority = &url[start..];
+    let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    match authority[..end].rfind('@') {
+        Some(last) if last > 0 => format!("{}***{}", &url[..start], &authority[last..]),
+        _ => url.to_string(),
+    }
+}
+
 /// Assert that `url` is rejected by `rule`, and that the message shows
 /// the URL: a character that must be escaped as an escape, every other
 /// character as it is.
@@ -1144,7 +1159,7 @@ fn assert_url_rejected(url: &str, rule: &str) {
         out.stderr.starts_with("error[package]: invalid manifest: "),
         "{context}: the URL must be rejected; {out:?}"
     );
-    let shown_url: String = url.chars().map(shown).collect();
+    let shown_url: String = without_userinfo(url).chars().map(shown).collect();
     let expected = format!("dependency `remote`: invalid git URL `{shown_url}`: {rule}");
     assert!(
         out.stderr

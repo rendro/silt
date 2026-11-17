@@ -763,7 +763,7 @@ impl Resolver<'_> {
                 url, resolved_sha, ..
             } => format!(
                 "`{name}` from {} at {resolved_sha}",
-                escape_for_display(url)
+                crate::git::display_url(url)
             ),
         }
     }
@@ -902,7 +902,7 @@ fn git_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef, err: &GitEr
         at,
         format!(
             "git dependency `{key}` (`{}`, {} = `{}`): {head}",
-            escape_for_display(url),
+            crate::git::display_url(url),
             ref_spec.kind(),
             escape_for_display(ref_spec.as_ref_string())
         ),
@@ -923,7 +923,7 @@ fn not_fetched_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef) -> 
         at,
         format!(
             "git dependency `{key}` (`{}`, {} = `{}`): not fetched: run `silt check`",
-            escape_for_display(url),
+            crate::git::display_url(url),
             ref_spec.kind(),
             escape_for_display(ref_spec.as_ref_string())
         ),
@@ -960,7 +960,7 @@ fn local_repository_diagnostic(at: Span, key: &str, url: &str) -> Diagnostic {
         format!(
             "git dependency `{key}`: `{}` is a repository on this machine, and this package \
              was fetched over git",
-            escape_for_display(url)
+            crate::git::display_url(url)
         ),
     )
     .with_help(
