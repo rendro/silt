@@ -3,4 +3,4 @@ error[type]: `via` cannot decode `M(Int)`: field `m` has type `Map(Int, Int)`, w
     |
  21 |   println(via("\{\"m\": \{\"x\": 1}}", M(Int)))
     |                                        ^^^^^^ here
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, url.Url, json.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
