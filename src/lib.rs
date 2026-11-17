@@ -106,6 +106,11 @@ mod types;
 // the library path, not the CLI — so gate the module to native targets only.
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
+// The reader and writer of URLs. Its first users are its tests and the
+// fuzz target `fuzz_url` (through `fuzz_invariants`), so it is built
+// with them only until the `url` module of silt uses it.
+#[cfg(any(test, feature = "test-hooks"))]
+mod url;
 mod value;
 mod vm;
 #[cfg(feature = "watch")]
