@@ -183,26 +183,11 @@ pub(crate) fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
         }
 
         // ── Compound shapes: structural recursion ──────────────────
-        Type::Container(Container::List(inner)) => {
-            Type::Container(Container::List(Box::new(canonicalize(resolver, inner))))
-        }
-        Type::Container(Container::Set(inner)) => {
-            Type::Container(Container::Set(Box::new(canonicalize(resolver, inner))))
-        }
-        Type::Container(Container::Channel(inner)) => {
-            Type::Container(Container::Channel(Box::new(canonicalize(resolver, inner))))
-        }
-        Type::Container(Container::Map(k, v)) => Type::Container(Container::Map(
-            Box::new(canonicalize(resolver, k)),
-            Box::new(canonicalize(resolver, v)),
-        )),
+        Type::Container(c) => Type::Container(c.map_parts(|t| canonicalize(resolver, t))),
         Type::Fun(params, ret) => Type::Fun(
             params.iter().map(|t| canonicalize(resolver, t)).collect(),
             Box::new(canonicalize(resolver, ret)),
         ),
-        Type::Container(Container::Tuple(elems)) => Type::Container(Container::Tuple(
-            elems.iter().map(|t| canonicalize(resolver, t)).collect(),
-        )),
         Type::Generic(name, args) => Type::Generic(
             *name,
             args.iter().map(|t| canonicalize(resolver, t)).collect(),
@@ -289,11 +274,7 @@ pub(crate) fn canonical_name(ty: &Type) -> String {
         | Type::Bool
         | Type::String
         | Type::Unit
-        | Type::Container(Container::List(_))
-        | Type::Container(Container::Map(..))
-        | Type::Container(Container::Set(_))
-        | Type::Container(Container::Channel(_))
-        | Type::Container(Container::Tuple(_))
+        | Type::Container(_)
         | Type::Fun(..) => ty.builtin_name().unwrap_or_default().to_string(),
 
         Type::Generic(name, _) => crate::intern::resolve(name.name),
@@ -348,11 +329,7 @@ pub(crate) fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         | Type::Bool
         | Type::String
         | Type::Unit
-        | Type::Container(Container::List(_))
-        | Type::Container(Container::Map(..))
-        | Type::Container(Container::Set(_))
-        | Type::Container(Container::Channel(_))
-        | Type::Container(Container::Tuple(_))
+        | Type::Container(_)
         | Type::Fun(..) => ty.builtin_name().map(TypeRef::builtin),
         Type::Generic(name, _) => Some(*name),
         // A type constructor is keyed by its head, as its types are.

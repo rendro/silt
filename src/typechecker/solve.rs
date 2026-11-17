@@ -103,12 +103,8 @@ fn replace_part(ty: &Type, part: &Type) -> Type {
     let one = |t: &Type| Box::new(replace_part(t, part));
     match ty {
         Type::Fun(params, ret) => Type::Fun(each(params), one(ret)),
-        Type::Container(Container::List(t)) => Type::Container(Container::List(one(t))),
-        Type::Container(Container::Set(t)) => Type::Container(Container::Set(one(t))),
-        Type::Container(Container::Channel(t)) => Type::Container(Container::Channel(one(t))),
-        Type::Container(Container::Tuple(ts)) => Type::Container(Container::Tuple(each(ts))),
+        Type::Container(c) => Type::Container(c.map_parts(|t| replace_part(t, part))),
         Type::Generic(name, args) => Type::Generic(*name, each(args)),
-        Type::Container(Container::Map(k, v)) => Type::Container(Container::Map(one(k), one(v))),
         _ => ty.clone(),
     }
 }
@@ -1416,15 +1412,8 @@ impl TypeChecker {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
         match &ty {
             Type::Generic(_, args) => args.clone(),
-            Type::Container(Container::List(inner))
-            | Type::Container(Container::Set(inner))
-            | Type::Container(Container::Channel(inner)) => {
-                vec![(**inner).clone()]
-            }
-            Type::Container(Container::Map(k, v)) => vec![(**k).clone(), (**v).clone()],
-            // A type constructor's: those after the first, which it
-            // fixes (`String` of `Result(_, String)`).
-            Type::Con(_, rest) => rest.clone(),
+            // A container's are its parts: the element, the key and the
+            // value, a tuple's elements.
             // Tuple-/Fn-shaped alias impls (`type P2 = (Int, Int)`;
             // `type IntOp = Fn(Int) -> Int`) register under the synthetic
             // heads `"Tuple"`/`"Fn"` with the expanded structural self
@@ -1438,7 +1427,10 @@ impl TypeChecker {
             // self type is refused by the caller; the impl for every
             // tuple (`trait T for Tuple`) has a variable for its self
             // type and no positional args at all.
-            Type::Container(Container::Tuple(elems)) => elems.clone(),
+            Type::Container(c) => c.parts().cloned().collect(),
+            // A type constructor's: those after the first, which it
+            // fixes (`String` of `Result(_, String)`).
+            Type::Con(_, rest) => rest.clone(),
             Type::Fun(params, ret) => {
                 let mut args = params.clone();
                 args.push((**ret).clone());
@@ -2535,22 +2527,10 @@ impl TypeChecker {
                     true
                 }
             },
-            (Type::Container(Container::List(x)), Type::Container(Container::List(y)))
-            | (Type::Container(Container::Set(x)), Type::Container(Container::Set(y)))
-            | (Type::Container(Container::Channel(x)), Type::Container(Container::Channel(y))) => {
-                Self::impl_arg_matches_canon(x, y, bindings)
-            }
-            (Type::Container(Container::Map(k1, v1)), Type::Container(Container::Map(k2, v2))) => {
-                Self::impl_arg_matches_canon(k1, k2, bindings)
-                    && Self::impl_arg_matches_canon(v1, v2, bindings)
-            }
-            (Type::Container(Container::Tuple(xs)), Type::Container(Container::Tuple(ys))) => {
-                xs.len() == ys.len()
-                    && xs
-                        .iter()
-                        .zip(ys.iter())
-                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
-            }
+            (Type::Container(x), Type::Container(y)) => match x.zip_parts(y) {
+                Some(mut pairs) => pairs.all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings)),
+                None => Self::trait_arg_compatible_canon(ob, im),
+            },
             (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
                 p1.len() == p2.len()
                     && p1
@@ -2593,21 +2573,10 @@ impl TypeChecker {
             | (Type::Bool, Type::Bool)
             | (Type::String, Type::String)
             | (Type::Unit, Type::Unit) => true,
-            (Type::Container(Container::List(x)), Type::Container(Container::List(y)))
-            | (Type::Container(Container::Set(x)), Type::Container(Container::Set(y)))
-            | (Type::Container(Container::Channel(x)), Type::Container(Container::Channel(y))) => {
-                Self::trait_arg_compatible_canon(x, y)
-            }
-            (Type::Container(Container::Map(k1, v1)), Type::Container(Container::Map(k2, v2))) => {
-                Self::trait_arg_compatible_canon(k1, k2) && Self::trait_arg_compatible_canon(v1, v2)
-            }
-            (Type::Container(Container::Tuple(xs)), Type::Container(Container::Tuple(ys))) => {
-                xs.len() == ys.len()
-                    && xs
-                        .iter()
-                        .zip(ys.iter())
-                        .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
-            }
+            (Type::Container(x), Type::Container(y)) => match x.zip_parts(y) {
+                Some(mut pairs) => pairs.all(|(x, y)| Self::trait_arg_compatible_canon(x, y)),
+                None => false,
+            },
             (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
                 p1.len() == p2.len()
                     && p1
@@ -2919,17 +2888,10 @@ fn probe_unify(a: &Type, b: &Type, subst: &mut HashMap<TyVar, Type>) -> bool {
             true
         }
         (Type::Rigid(x), Type::Rigid(y)) => x.var == y.var,
-        (Type::Container(Container::List(x)), Type::Container(Container::List(y)))
-        | (Type::Container(Container::Set(x)), Type::Container(Container::Set(y)))
-        | (Type::Container(Container::Channel(x)), Type::Container(Container::Channel(y))) => {
-            probe_unify(x, y, subst)
-        }
-        (Type::Container(Container::Map(xk, xv)), Type::Container(Container::Map(yk, yv))) => {
-            probe_unify(xk, yk, subst) && probe_unify(xv, yv, subst)
-        }
-        (Type::Container(Container::Tuple(xs)), Type::Container(Container::Tuple(ys))) => {
-            all(xs, ys, subst)
-        }
+        (Type::Container(x), Type::Container(y)) => match x.zip_parts(y) {
+            Some(mut pairs) => pairs.all(|(x, y)| probe_unify(x, y, subst)),
+            None => a == b,
+        },
         (Type::Fun(xs, x), Type::Fun(ys, y)) => all(xs, ys, subst) && probe_unify(x, y, subst),
         (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, subst),
         _ => a == b,
@@ -2962,17 +2924,10 @@ pub(super) fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyV
         },
         (_, Type::Var(_)) => false,
         (Type::Error, _) | (_, Type::Error) => true,
-        (Type::Container(Container::List(x)), Type::Container(Container::List(y)))
-        | (Type::Container(Container::Set(x)), Type::Container(Container::Set(y)))
-        | (Type::Container(Container::Channel(x)), Type::Container(Container::Channel(y))) => {
-            match_one_way(x, y, mapping)
-        }
-        (Type::Container(Container::Map(xk, xv)), Type::Container(Container::Map(yk, yv))) => {
-            match_one_way(xk, yk, mapping) && match_one_way(xv, yv, mapping)
-        }
-        (Type::Container(Container::Tuple(xs)), Type::Container(Container::Tuple(ys))) => {
-            all(xs, ys, mapping)
-        }
+        (Type::Container(x), Type::Container(y)) => match x.zip_parts(y) {
+            Some(mut pairs) => pairs.all(|(x, y)| match_one_way(x, y, mapping)),
+            None => pattern == ty,
+        },
         (Type::Fun(xs, x), Type::Fun(ys, y)) => {
             all(xs, ys, mapping) && match_one_way(x, y, mapping)
         }
@@ -3040,11 +2995,8 @@ pub(crate) struct ImplIndex {
 /// with a type of the same outer type compares first.
 pub(super) fn first_part(ty: &Type) -> Option<&Type> {
     match ty {
-        Type::Generic(_, parts) | Type::Container(Container::Tuple(parts)) => parts.first(),
-        Type::Container(Container::List(part))
-        | Type::Container(Container::Set(part))
-        | Type::Container(Container::Channel(part))
-        | Type::Container(Container::Map(part, _)) => Some(part),
+        Type::Generic(_, parts) => parts.first(),
+        Type::Container(c) => c.parts().next(),
         _ => None,
     }
 }
