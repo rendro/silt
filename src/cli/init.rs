@@ -44,16 +44,8 @@ pub(crate) fn dispatch(args: &[String]) {
                 "error: silt init: unexpected argument '{}' (silt init takes no positional arguments; the package name is derived from the current directory)",
                 crate::git::escape_for_display(arg)
             );
-            // (A command to paste only with a name it can hold as it
-            // stands: see `pasteable`.)
-            match crate::source::pasteable(arg) {
-                true => eprintln!(
-                    "                  to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
-                ),
-                false => eprintln!(
-                    "                  to create a package in a new directory, make the directory, go into it and run silt init there"
-                ),
-            }
+            let lib = args[2..].iter().any(|a| a == "--lib");
+            eprintln!("                  {}", what_to_do_instead(arg, lib));
             process::exit(1);
         }
     }
@@ -62,6 +54,73 @@ pub(crate) fn dispatch(args: &[String]) {
         crate::cli::once_only("init", "--lib");
     }
     init_project(libs == 1);
+}
+
+/// What to do instead of `silt init <arg>`, which takes no argument: the
+/// line under the error. A command to paste only where it works as it
+/// stands: the name can be pasted (`source::pasteable`), and the shell is
+/// a POSIX one (on Windows, where `&&` and `mkdir -p` depend on which
+/// shell runs it, the same advice in words). Else the advice in words.
+/// `lib` keeps `--lib` in the command.
+fn what_to_do_instead(arg: &str, lib: bool) -> String {
+    let init = if lib { "silt init --lib" } else { "silt init" };
+    let path = std::path::Path::new(arg);
+    let shown = crate::git::escape_for_display(arg);
+    let command = crate::source::pasteable(arg) && !cfg!(windows);
+    if arg == "." {
+        return format!("to create the package in this directory, run: {init}");
+    }
+    if path.is_dir() {
+        if path.join("silt.toml").exists() {
+            return format!("'{shown}' already holds a silt package (its silt.toml)");
+        }
+        return match command {
+            true => format!(
+                "'{arg}' is a directory; to create the package in it, run: cd {arg} && {init}"
+            ),
+            false => format!(
+                "'{shown}' is a directory; to create the package in it, go into it and run {init} there"
+            ),
+        };
+    }
+    if path.exists() {
+        return format!(
+            "'{shown}' is a file; to create a package in a new directory, make one with another \
+             name, go into it and run {init} there"
+        );
+    }
+    // The package is named after its directory: a new one is suggested
+    // only with a name that gives a package name silt takes (not `io`,
+    // a stdlib module; not `loop`, a keyword).
+    let last = path.file_name().and_then(|n| n.to_str()).unwrap_or(arg);
+    let shown_last = crate::git::escape_for_display(last);
+    let refused = match sanitize_package_name(last) {
+        None => Some(format!("a directory '{shown_last}' gives no package name")),
+        Some(name) => (crate::manifest::validate_package_name(&name).err()).map(|why| {
+            let why = why.trim_end_matches("; pick a different name");
+            format!("in a directory '{shown_last}' it would be: {why}")
+        }),
+    };
+    if let Some(why) = refused {
+        return format!(
+            "a package is named after its directory, and {why}; make a directory with another \
+             name, go into it and run {init} there"
+        );
+    }
+    // A path of more than one name needs its parents made too.
+    let mkdir = match arg.trim_end_matches('/').contains('/') {
+        true => "mkdir -p",
+        false => "mkdir",
+    };
+    match command {
+        true => format!(
+            "to create a package in a new directory, run: {mkdir} {arg} && cd {arg} && {init}"
+        ),
+        false => format!(
+            "to create a package in a new directory, make the directory, go into it and run {init} \
+             there"
+        ),
+    }
 }
 
 /// Sanitize a directory name into a valid silt identifier:
@@ -158,7 +217,8 @@ fn init_project(lib: bool) {
     if let Err(msg) = crate::manifest::validate_package_name(&package_name) {
         eprintln!("error: silt init: {msg}");
         eprintln!(
-            "                  (the package name was derived from the directory name `{dirname}`;"
+            "                  (the package name was derived from the directory name `{}`;",
+            crate::source::shown_path(dirname)
         );
         eprintln!(
             "                   rename the directory or run `silt init` from a directory whose name"

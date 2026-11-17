@@ -12,6 +12,7 @@ mod cli_global_flags_parity_tests;
 mod cli_help_and_unknown_subcommand_tests;
 mod cli_help_gaps_tests;
 mod cli_help_rows_and_banners_tests;
+mod cli_init_suggestion_tests;
 mod cli_init_tests;
 mod cli_one_path_rule_tests;
 mod cli_path_display_tests;
