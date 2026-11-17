@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::types::Type;
+use crate::types::{Container, Type};
 
 use super::fields::{RecordFields, record_field_types};
 use super::state::DefInfo;
@@ -168,7 +168,9 @@ fn collect_let_pattern_defs(
         }
         PatternKind::Tuple(pats) => {
             let elem_tys: Option<Vec<Type>> = match value_ty {
-                Some(Type::Tuple(tys)) if tys.len() == pats.len() => Some(tys.clone()),
+                Some(Type::Container(Container::Tuple(tys))) if tys.len() == pats.len() => {
+                    Some(tys.clone())
+                }
                 _ => None,
             };
             for (i, p) in pats.iter().enumerate() {
@@ -230,7 +232,9 @@ fn collect_let_pattern_defs(
         }
         PatternKind::List(pats, rest) => {
             let (elem_ty, list_ty): (Option<Type>, Option<Type>) = match value_ty {
-                Some(t @ Type::List(inner)) => (Some((**inner).clone()), Some(t.clone())),
+                Some(t @ Type::Container(Container::List(inner))) => {
+                    (Some((**inner).clone()), Some(t.clone()))
+                }
                 _ => (None, None),
             };
             for p in pats {

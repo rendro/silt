@@ -913,9 +913,13 @@ impl TypeChecker {
             Type::Fun(params, ret) => {
                 params.iter().any(|t| self.has_variable(t)) || self.has_variable(ret)
             }
-            Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(|t| self.has_variable(t)),
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.has_variable(t),
-            Type::Map(k, v) => self.has_variable(k) || self.has_variable(v),
+            Type::Generic(_, ts) | Type::Container(Container::Tuple(ts)) => {
+                ts.iter().any(|t| self.has_variable(t))
+            }
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => self.has_variable(t),
+            Type::Container(Container::Map(k, v)) => self.has_variable(k) || self.has_variable(v),
             _ => false,
         }
     }
@@ -1261,7 +1265,7 @@ impl TypeChecker {
         let (whole, vars, _) = self.tables.held_needs.get(&stand)?;
         let given = match (vars.len(), self.apply(subject)) {
             (1, one) => vec![one],
-            (_, Type::Tuple(given)) => given,
+            (_, Type::Container(Container::Tuple(given))) => given,
             _ => return None,
         };
         let mapping: HashMap<TyVar, Type> = vars.iter().copied().zip(given).collect();
@@ -1341,10 +1345,12 @@ fn mentions_type_of(ty: &Type, subject: &Type, apply: &dyn Fn(&Type) -> Type) ->
         Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
             args.first().is_some_and(|arg| apply(arg) == *subject)
         }
-        Type::Generic(_, args) | Type::Tuple(args) => args.iter().any(within),
+        Type::Generic(_, args) | Type::Container(Container::Tuple(args)) => args.iter().any(within),
         Type::Fun(params, ret) => params.iter().any(within) || within(ret),
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => within(t),
-        Type::Map(k, v) => within(k) || within(v),
+        Type::Container(Container::List(t))
+        | Type::Container(Container::Set(t))
+        | Type::Container(Container::Channel(t)) => within(t),
+        Type::Container(Container::Map(k, v)) => within(k) || within(v),
         _ => false,
     }
 }
@@ -1373,12 +1379,14 @@ fn shape_hash(types: &[&Type]) -> u64 {
                 params.iter().for_each(|t| walk(t, h, vars));
                 walk(ret, h, vars);
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, h, vars),
-            Type::Map(k, v) => {
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => walk(t, h, vars),
+            Type::Container(Container::Map(k, v)) => {
                 walk(k, h, vars);
                 walk(v, h, vars);
             }
-            Type::Tuple(ts) => ts.iter().for_each(|t| walk(t, h, vars)),
+            Type::Container(Container::Tuple(ts)) => ts.iter().for_each(|t| walk(t, h, vars)),
             _ => {}
         }
     }
@@ -1407,11 +1415,17 @@ fn same_shape(a: &[&Type], b: &[&Type]) -> bool {
             },
             (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, names),
             (Type::Fun(xs, x), Type::Fun(ys, y)) => all(xs, ys, names) && walk(x, y, names),
-            (Type::List(x), Type::List(y))
-            | (Type::Set(x), Type::Set(y))
-            | (Type::Channel(x), Type::Channel(y)) => walk(x, y, names),
-            (Type::Map(xk, xv), Type::Map(yk, yv)) => walk(xk, yk, names) && walk(xv, yv, names),
-            (Type::Tuple(xs), Type::Tuple(ys)) => all(xs, ys, names),
+            (Type::Container(Container::List(x)), Type::Container(Container::List(y)))
+            | (Type::Container(Container::Set(x)), Type::Container(Container::Set(y)))
+            | (Type::Container(Container::Channel(x)), Type::Container(Container::Channel(y))) => {
+                walk(x, y, names)
+            }
+            (Type::Container(Container::Map(xk, xv)), Type::Container(Container::Map(yk, yv))) => {
+                walk(xk, yk, names) && walk(xv, yv, names)
+            }
+            (Type::Container(Container::Tuple(xs)), Type::Container(Container::Tuple(ys))) => {
+                all(xs, ys, names)
+            }
             (x, y) => x == y,
         }
     }
@@ -1442,15 +1456,19 @@ pub(super) fn match_type(
             match_type(x, y, vars, mapping);
             match_type(xa, ya, vars, mapping);
         }
-        (Type::Tuple(xs), Type::Tuple(ys)) => zip(xs, ys),
+        (Type::Container(Container::Tuple(xs)), Type::Container(Container::Tuple(ys))) => {
+            zip(xs, ys)
+        }
         (Type::Fun(xs, x), Type::Fun(ys, y)) => {
             zip(xs, ys);
             match_type(x, y, vars, mapping);
         }
-        (Type::List(x), Type::List(y))
-        | (Type::Set(x), Type::Set(y))
-        | (Type::Channel(x), Type::Channel(y)) => match_type(x, y, vars, mapping),
-        (Type::Map(xk, xv), Type::Map(yk, yv)) => {
+        (Type::Container(Container::List(x)), Type::Container(Container::List(y)))
+        | (Type::Container(Container::Set(x)), Type::Container(Container::Set(y)))
+        | (Type::Container(Container::Channel(x)), Type::Container(Container::Channel(y))) => {
+            match_type(x, y, vars, mapping)
+        }
+        (Type::Container(Container::Map(xk, xv)), Type::Container(Container::Map(yk, yv))) => {
             match_type(xk, yk, vars, mapping);
             match_type(xv, yv, vars, mapping);
         }

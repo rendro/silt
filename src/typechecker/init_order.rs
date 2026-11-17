@@ -128,9 +128,13 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
                 .is_some_and(|def| def.module.is_builtin())
                 && all(args)
         }
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => builtin_through(checker, t),
-        Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
-        Type::Tuple(ts) => all(ts),
+        Type::Container(Container::List(t))
+        | Type::Container(Container::Set(t))
+        | Type::Container(Container::Channel(t)) => builtin_through(checker, t),
+        Type::Container(Container::Map(k, v)) => {
+            builtin_through(checker, k) && builtin_through(checker, v)
+        }
+        Type::Container(Container::Tuple(ts)) => all(ts),
         // A type the code does not know here: any type.
         Type::App(..) | Type::Con(..) => false,
         // (A function inside a value is not called by a method of the
@@ -363,12 +367,16 @@ impl TypeChecker {
                     self.parts_shown(&self.apply(field), true, parts);
                 }
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.parts_shown(t, declared, parts),
-            Type::Map(k, v) => {
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => self.parts_shown(t, declared, parts),
+            Type::Container(Container::Map(k, v)) => {
                 self.parts_shown(k, declared, parts);
                 self.parts_shown(v, declared, parts);
             }
-            Type::Tuple(ts) => ts.iter().for_each(|t| self.parts_shown(t, declared, parts)),
+            Type::Container(Container::Tuple(ts)) => {
+                ts.iter().for_each(|t| self.parts_shown(t, declared, parts))
+            }
             // A function is not shown (a type that holds one has no
             // `Display` but the one written for it, which is the
             // type's own impl, counted with the type).
