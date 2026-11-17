@@ -3049,7 +3049,26 @@ impl TypeChecker {
                         expected.clone()
                     }
                     Err(mismatch) => {
-                        self.report_mismatch(mismatch, method.span);
+                        // A variable of the trait's method named like one
+                        // of the impl's header (`a` of `for Box(a)`): in
+                        // the impl the name is the header's, so the two
+                        // `a`s of the mismatch would read alike.
+                        let own = &method_rigid[rigid.len()..];
+                        let mut writes = Vec::new();
+                        let written_types = (method.params.iter().filter_map(|p| p.ty.as_ref()))
+                            .chain(method.return_type.as_ref());
+                        for te in written_types {
+                            super::names::type_vars_of(te, &mut writes);
+                        }
+                        let clash = own
+                            .iter()
+                            .find(|r| impl_names.contains_key(&r.name) && writes.contains(&r.name));
+                        match clash {
+                            Some(clash) => {
+                                self.method_variable_is_the_impls(ti, method, clash.name, own)
+                            }
+                            None => self.report_mismatch(mismatch, method.span),
+                        }
                         written
                     }
                 }
@@ -3208,6 +3227,47 @@ impl TypeChecker {
             (None, None) => self.fresh_var(),
         };
         (param_types, ret_type)
+    }
+
+    /// The error of the impl method `method` whose signature uses `name`,
+    /// a type variable of the impl's header, where the trait declares the
+    /// method with a variable `name` of its own (`own`, the method's
+    /// variables): the impl's method is not for any type there. Said with
+    /// the two told apart, and a name the method's variable can take.
+    fn method_variable_is_the_impls(
+        &mut self,
+        ti: &TraitImpl,
+        method: &FnDecl,
+        name: Symbol,
+        own: &[RigidId],
+    ) {
+        let taken = |c: &str| {
+            let c = intern(c);
+            own.iter().any(|r| r.name == c) || ti.target_param_names.contains(&c)
+        };
+        let fresh = ('b'..='z')
+            .map(|c| c.to_string())
+            .find(|c| !taken(c))
+            .unwrap_or_else(|| format!("{name}2"));
+        self.errors.push(
+            Diagnostic::error(
+                Code::TypeMismatch,
+                method.span,
+                format!(
+                    "the type variable '{name}' of method '{}' is the impl's '{name}' here, not \
+                     the method's own",
+                    method.name
+                ),
+            )
+            .with_label(ti.header_span, format!("the impl's `{name}`"))
+            .with_help(format!(
+                "trait '{}' declares `{}` with a type variable `{name}` of its own, which \
+                 stands for any type: write it with another name in this impl, such as \
+                 `{fresh}`",
+                self.impl_trait_name(ti),
+                method.name
+            )),
+        );
     }
 
     /// One `where` clause of the impl method `method` in `declare_impl_method`:

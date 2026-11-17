@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 1
+-- The trait declares `gen` with a type variable `a` of its own; in an
+-- impl `for Box(a)` the name `a` is the header's, so the impl's method is
+-- not for any type. The error says which `a` is which and offers another
+-- name (it read "expected a, got a"). A method that does not write the
+-- name keeps the plain mismatch (audit R9, review rv-a1e).
+-- stderr-not-contains: expected a, got a
+trait Tr {
+  fn gen(self, x: a) -> a
+}
+
+type Box(a) { v: a }
+
+trait Tr for Box(a) {
+  fn gen(self, x: a) -> a { x }
+}
+
+trait Other {
+  fn put(self, x: a) -> a
+}
+
+trait Other for Box(a) {
+  fn put(self, x: Int) -> Int { x }
+}
+
+fn main() {
+  println(1)
+}
