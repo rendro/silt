@@ -1,0 +1,26 @@
+warning[type]: unused import 'mj'
+ --> main.silt:8:1
+   |
+ 8 | import mj
+   | ^^^^^^^^^ unused import 'mj'
+  = help: remove the line `import mj`
+
+error[type]: type mismatch: expected Int, got String
+ --> main.silt:13:24
+    |
+ 13 |   fn go(self) -> Int { "bad" }
+    |                        ^^^^^ type mismatch: expected Int, got String
+
+error[type]: trait 'Int' shadows builtin type 'Int'
+ --> mi.silt:1:11
+   |
+ 1 | pub trait Int {
+   |           ^^^ trait 'Int' shadows builtin type 'Int'
+  = help: choose a different name
+
+error[type]: trait 'Int' shadows builtin type 'Int'
+ --> mj.silt:1:11
+   |
+ 1 | pub trait Int {
+   |           ^^^ trait 'Int' shadows builtin type 'Int'
+  = help: choose a different name

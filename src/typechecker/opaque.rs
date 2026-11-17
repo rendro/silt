@@ -162,11 +162,13 @@ impl TypeChecker {
     fn outer_decoded(&self, ty: &Type, out: &mut Vec<(TypeRef, Vec<Type>)>) {
         use crate::typeinfo::ty as bt;
         match ty {
-            Type::List(elem) => self.outer_decoded(elem, out),
-            Type::Map(key, value) if matches!(**key, Type::String) => {
+            Type::Container(Container::List(elem)) => self.outer_decoded(elem, out),
+            Type::Container(Container::Map(key, value)) if matches!(**key, Type::String) => {
                 self.outer_decoded(value, out)
             }
-            Type::Tuple(parts) => parts.iter().for_each(|part| self.outer_decoded(part, out)),
+            Type::Container(Container::Tuple(parts)) => {
+                parts.iter().for_each(|part| self.outer_decoded(part, out))
+            }
             Type::Generic(t, args) if t.id == bt::OPTION && args.len() == 1 => {
                 self.outer_decoded(&args[0], out)
             }
@@ -215,10 +217,12 @@ impl TypeChecker {
                     .iter()
                     .find_map(|part| self.opaque_encoded(part, seen, viewer))
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.opaque_encoded(t, seen, viewer),
-            Type::Map(k, v) => (self.opaque_encoded(k, seen, viewer))
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => self.opaque_encoded(t, seen, viewer),
+            Type::Container(Container::Map(k, v)) => (self.opaque_encoded(k, seen, viewer))
                 .or_else(|| self.opaque_encoded(v, seen, viewer)),
-            Type::Tuple(parts) => parts
+            Type::Container(Container::Tuple(parts)) => parts
                 .iter()
                 .find_map(|part| self.opaque_encoded(part, seen, viewer)),
             _ => None,
@@ -242,11 +246,13 @@ impl TypeChecker {
         fn walk(ty: &Type, top: bool, out: &mut Vec<Type>) {
             match ty {
                 Type::Var(_) | Type::Rigid(_) if !top => out.push(ty.clone()),
-                Type::Generic(_, args) | Type::Tuple(args) => {
+                Type::Generic(_, args) | Type::Container(Container::Tuple(args)) => {
                     args.iter().for_each(|t| walk(t, false, out))
                 }
-                Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, false, out),
-                Type::Map(k, v) => {
+                Type::Container(Container::List(t))
+                | Type::Container(Container::Set(t))
+                | Type::Container(Container::Channel(t)) => walk(t, false, out),
+                Type::Container(Container::Map(k, v)) => {
                     walk(k, false, out);
                     walk(v, false, out);
                 }
