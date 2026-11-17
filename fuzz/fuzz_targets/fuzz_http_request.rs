@@ -2,8 +2,11 @@
 //! The reader of HTTP requests (`silt::testing::http_wire`), which `http.serve`
 //! hands whatever a client sends: on any bytes it must end without a
 //! panic, give no request beyond the server's limits, and read the
-//! same requests however the bytes arrive.
+//! same requests however the bytes arrive. Each request makes a
+//! `Request.url` that reads back as itself, or is answered 400
+//! (`silt::testing::fuzz_invariants::check_request_url`).
 use libfuzzer_sys::fuzz_target;
+use silt::testing::fuzz_invariants::check_request_url;
 use silt::testing::http_wire::{BODY_MAX, HEAD_MAX, HEADERS_MAX, Next, Reader, Request};
 use std::io::Read;
 
@@ -44,6 +47,9 @@ fn read(bytes: &[u8], piece: usize) -> (Vec<Request>, Option<u16>) {
                     length += text.len();
                 }
                 assert!(length <= HEAD_MAX);
+                if let Err(e) = check_request_url(&request.target, &request.headers) {
+                    panic!("{e}");
+                }
                 requests.push(request);
                 // Every request takes bytes: the reading ends.
                 assert!(requests.len() <= bytes.len());

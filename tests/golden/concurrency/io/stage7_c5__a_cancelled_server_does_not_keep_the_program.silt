@@ -23,7 +23,7 @@ fn main() {
   let link = "http://127.0.0.1:{tcp.local_port(listener)}"
   let server = task.spawn { ->
     http.serve(listener) { req ->
-      match req.path {
+      match url.path(req.url) {
         "/boom" -> panic("handler fails")
         _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
       }

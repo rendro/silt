@@ -97,6 +97,7 @@ import bytes
 import http
 import json
 import tcp
+import url
 
 type Todo {
   id: Int,
@@ -118,7 +119,7 @@ fn main() {
     panic("cannot listen on port 8080")
   }
   http.serve(listener) { req ->
-    match (req.method, http.segments(req.path)) {
+    match (req.method, url.segments(req.url)) {
       (http.GET, ["todos"]) -> {
         let todos = [
           Todo { id: 1, title: "Learn silt", done: true },

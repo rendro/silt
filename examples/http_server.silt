@@ -2,9 +2,8 @@ import bytes
 import http
 import int
 import json
-import list
-import string
 import tcp
+import url
 
 -- A minimal JSON API server demonstrating pattern-matched routing.
 
@@ -30,7 +29,8 @@ fn main() {
   }
   println("Listening on http://localhost:{tcp.local_port(listener)}")
   http.serve(listener) { req ->
-    let segments = string.split(req.path, "/") |> list.filter { s -> !string.is_empty(s) }
+    -- The path's segments, decoded: `/todos/1` is ["todos", "1"].
+    let segments = url.segments(req.url)
     match (req.method, segments) {
       (http.GET, []) -> http.Response {
         status: 200,

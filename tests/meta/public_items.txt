@@ -487,6 +487,7 @@ src/fuzz_invariants.rs: pub fn check_lexer_invariants
 src/fuzz_invariants.rs: pub fn check_lsp_messages
 src/fuzz_invariants.rs: pub fn check_package_files
 src/fuzz_invariants.rs: pub fn check_parser_invariants
+src/fuzz_invariants.rs: pub fn check_request_url
 src/fuzz_invariants.rs: pub fn check_toml_decoding
 src/fuzz_invariants.rs: pub fn check_url
 src/fuzz_invariants.rs: pub fn json_text_of
@@ -767,6 +768,7 @@ src/runtime/handle.rs: pub fn is_served
 src/runtime/handle.rs: pub fn is_shut
 src/runtime/handle.rs: pub fn keep
 src/runtime/handle.rs: pub fn late
+src/runtime/handle.rs: pub fn local_addr
 src/runtime/handle.rs: pub fn local_addr
 src/runtime/handle.rs: pub fn mark_joined
 src/runtime/handle.rs: pub fn new

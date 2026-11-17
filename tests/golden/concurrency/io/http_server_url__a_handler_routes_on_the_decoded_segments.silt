@@ -1,0 +1,75 @@
+-- timeout: 30
+-- requires-feature: http
+-- A handler gets the request's URL as a url.Url: `http://`, the Host and
+-- the target, in normal form. It routes on url.segments, decoded and
+-- exact (`%2F` is a `/` inside one segment, `..` is taken out before the
+-- handler sees it, a `/` at the end is a last ""), reads the query with
+-- url.query, and logs url.path. A Request shows its url in the inspect
+-- form. The requests are sent by hand, so that their targets are as
+-- written.
+import bytes
+import http
+import list
+import option
+import result
+import string
+import task
+import tcp
+import url
+
+fn reply(status: Int, text: String) -> http.Response {
+  http.Response { status: status, body: bytes.from_string(text), headers: #{} }
+}
+
+fn answer(req: http.Request) -> http.Response {
+  println("  the handler: {req.method} {url.path(req.url)} {url.segments(req.url)} {url.query(req.url)}")
+  match (req.method, url.segments(req.url)) {
+    (http.GET, ["users", id]) -> reply(200, "user {id}")
+    (http.GET, ["users", id, ""]) -> reply(200, "user {id}, with a slash")
+    -- (The client's port is another each time.)
+    (http.GET, ["show"]) -> reply(200, "{req}" |> string.replace(req.peer, "PEER"))
+    _ -> reply(404, "not found")
+  }
+}
+
+fn read_all(conn: tcp.TcpStream, got: Bytes) -> Bytes {
+  match tcp.read(conn, 65536) {
+    Ok(more) when bytes.length(more) > 0 -> read_all(conn, bytes.concat(got, more))
+    _ -> got
+  }
+}
+
+-- What the server answers to the request line `line` with the headers
+-- `headers`: the status and the body.
+fn ask(port: Int, line: String, headers: String) -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { return "cannot connect" }
+  let request = "{line}{cr}\n{headers}Connection: close{cr}\n{cr}\n"
+  let _ = tcp.write(conn, bytes.from_string(string.replace(request, "|", "{cr}\n")))
+  let answer = bytes.to_string(read_all(conn, bytes.empty())) |> result.unwrap_or("(no text)")
+  tcp.close(conn)
+  let status = answer |> string.split(" ") |> list.get(1) |> option.unwrap_or("?")
+  let body = answer |> string.split("{cr}\n{cr}\n") |> list.get(1) |> option.unwrap_or("")
+  "{status} {body}"
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let host = "Host: example.test:8080|"
+  [
+    ("GET /users/42 HTTP/1.1", host),
+    ("GET /users/a%20b HTTP/1.1", host),
+    ("GET /users/a%2Fb HTTP/1.1", host),
+    ("GET /users/42/ HTTP/1.1", host),
+    ("GET /files/../users/7?tag=a&tag=b+c HTTP/1.1", host),
+    ("GET /users/%7eann HTTP/1.1", host),
+    ("GET /show?q=1 HTTP/1.1", "Host: Example.TEST:80|"),
+    ("GET http://elsewhere.test/users/9 HTTP/1.1", host),
+  ] |> list.each { (line, headers) ->
+    println(line)
+    println("  the client: {ask(port, line, headers)}")
+  }
+  task.cancel(server)
+}

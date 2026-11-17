@@ -194,6 +194,7 @@ fn test_http_serve_concurrent_requests() {
             r#"
 import bytes
 import http
+import url
 import io
 import tcp
 
@@ -208,7 +209,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: bytes.from_string(req.path), headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(url.path(req.url)), headers: #{{}} }}
   }})
 }}
 "#
@@ -358,6 +359,7 @@ fn test_http_serve_echoes_request_path() {
             r#"
 import bytes
 import http
+import url
 import io
 import tcp
 
@@ -372,7 +374,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: bytes.from_string(req.path), headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(url.path(req.url)), headers: #{{}} }}
   }})
 }}
 "#
@@ -414,6 +416,7 @@ fn test_http_serve_echoes_query_string() {
             r#"
 import bytes
 import http
+import url
 import io
 import tcp
 
@@ -428,7 +431,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: bytes.from_string(req.query), headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(url.query_text(req.url)), headers: #{{}} }}
   }})
 }}
 "#
@@ -663,6 +666,7 @@ fn test_http_serve_routing_by_path() {
             r#"
 import bytes
 import http
+import url
 import io
 import tcp
 
@@ -677,7 +681,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    match req.path {{
+    match url.path(req.url) {{
       "/health" -> http.Response {{ status: 200, body: bytes.from_string("ok"), headers: #{{}} }}
       "/greet" -> http.Response {{ status: 200, body: bytes.from_string("hello!"), headers: #{{}} }}
       _ -> http.Response {{ status: 404, body: bytes.from_string("not found"), headers: #{{}} }}
@@ -736,6 +740,7 @@ fn test_http_serve_concurrent_requests_stress() {
             r#"
 import bytes
 import http
+import url
 import io
 import tcp
 
@@ -750,7 +755,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: bytes.from_string(req.path), headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(url.path(req.url)), headers: #{{}} }}
   }})
 }}
 "#

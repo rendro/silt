@@ -494,6 +494,7 @@ fn long_poll_handlers_wait_without_holding_a_thread() {
 import bytes
 import channel
 import http
+import url
 import io
 import tcp
 
@@ -508,7 +509,7 @@ fn bound(port_file) {{
 fn main() {{
   let mailbox = channel.new(0)
   http.serve(bound("{port_path}")) {{ req ->
-    match req.path {{
+    match url.path(req.url) {{
       "/wait" -> match channel.receive(mailbox) {{
         Some(text) -> http.Response {{ status: 200, body: bytes.from_string(text), headers: #{{}} }}
         None -> http.Response {{ status: 500, body: bytes.from_string("closed"), headers: #{{}} }}

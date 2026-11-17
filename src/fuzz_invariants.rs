@@ -1319,6 +1319,30 @@ fn check_url_changes(u: &crate::url::Url, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── HTTP requests ───────────────────────────────────────────────────
+
+/// What the server makes of the target and headers of a request that it
+/// read (`http.serve`): `Request.url`, or a 400. A URL it makes reads
+/// back as itself, is of `http` (or, from a target in absolute form, of
+/// `https`), names a host, and has the path of an origin-form target as
+/// its path's start where the target needed nothing of normalising.
+#[cfg(feature = "http")]
+pub fn check_request_url(target: &str, headers: &[(String, String)]) -> Result<(), String> {
+    let Some(url) = crate::builtins::http::request_url(target, headers, "127.0.0.1:9") else {
+        return Ok(());
+    };
+    if crate::url::parse(url.as_str()).as_ref() != Ok(&url) {
+        return Err(format!("{target:?} made {url:?}, which reads otherwise"));
+    }
+    if !matches!(url.scheme(), "http" | "https") || url.host().is_empty() {
+        return Err(format!("{target:?} made {url:?}"));
+    }
+    if target.starts_with('/') && url.scheme() != "http" {
+        return Err(format!("the target {target:?} made {url:?}, not of http"));
+    }
+    Ok(())
+}
+
 // ── HTTP responses ──────────────────────────────────────────────────
 
 /// Where the responses of [`check_http_response`] came from: a redirect
@@ -1629,6 +1653,23 @@ mod tests {
     #[test]
     fn the_seeds_of_the_url_target_hold() {
         check_seeds("fuzz_url", &["url"], check_url);
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn the_request_url_check_holds_on_targets_and_hosts() {
+        let host = |h: &str| vec![("Host".to_string(), h.to_string())];
+        for (target, headers) in [
+            ("/a/./b/../c%2Fd/%7e?x=a+b", host("Example.COM:80")),
+            ("https://other.test:8443/x?y", host("h")),
+            ("/x", host("u@h")),
+            ("*", host("h")),
+            ("/old", vec![]),
+            ("/caf%E9?q=%zz", host("[::1]:8080")),
+            ("//x", host("h")),
+        ] {
+            check_request_url(target, &headers).unwrap();
+        }
     }
 
     #[cfg(feature = "http")]

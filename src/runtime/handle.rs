@@ -726,6 +726,11 @@ impl TcpStreamHandle {
         self.with_socket(|socket| socket.peer_addr())
     }
 
+    /// The address of this end: where the other end reached it.
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.with_socket(|socket| socket.local_addr())
+    }
+
     /// Send small writes at once (`on`), or let the system gather
     /// them (Nagle's algorithm, the default).
     pub fn set_nodelay(&self, on: bool) -> std::io::Result<()> {

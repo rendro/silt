@@ -1,0 +1,9 @@
+import list
+import url
+fn main() {
+  let f = url.query
+  match url.parse("http://h/?a=1&b=2") {
+    Ok(u) -> println(list.length(f(u)))
+    Err(e) -> println(e)
+  }
+}

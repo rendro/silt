@@ -14,12 +14,12 @@ import tcp
 import url
 
 fn answer(req: http.Request) -> http.Response {
-  let status = match req.path {
+  let status = match url.path(req.url) {
     "/204" -> 204
     "/304" -> 304
     _ -> 200
   }
-  let body = match req.path {
+  let body = match url.path(req.url) {
     "/head" -> bytes.from_string("what a GET would get")
     _ -> bytes.empty()
   }

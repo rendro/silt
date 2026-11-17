@@ -17,7 +17,7 @@ fn main() {
   channel.send(locations, "#top")
   let server = task.spawn { ->
     http.serve(listener) { req ->
-      println("  the server: {req.method} {req.path} ?{req.query}")
+      println("  the server: {req.method} {url.path(req.url)} ?{url.query_text(req.url)}")
       match channel.try_receive(locations) {
         channel.Message(location) -> {
           println("  the server: 302 to \"{location}\"")

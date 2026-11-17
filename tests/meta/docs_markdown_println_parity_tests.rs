@@ -919,12 +919,12 @@ fn compile_error_comments_are_read_behind_a_statement_and_on_their_own_line() {
 #[test]
 fn a_fragment_is_wrapped_with_the_imports_it_needs() {
     let wrapped = wrap_fragment(
-        "import list.{ map }\nprintln(http.segments(\"/a/b\")) -- [\"a\", \"b\"]\nlet s = \"io.x\"\n",
+        "import list.{ map }\nprintln(url.escape(\"a b\")) -- a%20b\nlet s = \"io.x\"\n",
     );
     assert_eq!(
         wrapped,
-        "import list.{ map }\nimport http\n\nfn main() {\n  \
-         println(http.segments(\"/a/b\")) -- [\"a\", \"b\"]\n  let s = \"io.x\"\n}\n"
+        "import list.{ map }\nimport url\n\nfn main() {\n  \
+         println(url.escape(\"a b\")) -- a%20b\n  let s = \"io.x\"\n}\n"
     );
 }
 

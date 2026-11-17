@@ -1,5 +1,6 @@
 //! The `http.*` builtin functions.
 
+#[cfg(feature = "http")]
 use std::collections::BTreeMap;
 #[cfg(feature = "http")]
 use std::collections::HashMap;
@@ -19,9 +20,8 @@ use super::typed::{Arg, Bytes, Map, TcpListener, unsound};
 use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
 use crate::runtime::sync::{Arm, Cell, Fired, Wait, Wake};
-use crate::typeinfo::bv;
 #[cfg(feature = "http")]
-use crate::typeinfo::{BuiltinVariant, ty};
+use crate::typeinfo::{BuiltinVariant, bv, ty};
 #[cfg(feature = "http")]
 use crate::url::Url;
 use crate::value::Value;
@@ -64,8 +64,7 @@ fn make_http_response(status: u16, headers: crate::value::Map, body: Vec<u8>) ->
 #[cfg(feature = "http")]
 fn make_http_request_value(
     method: BuiltinVariant,
-    path: &str,
-    query: &str,
+    url: Url,
     headers: crate::value::Map,
     body: Vec<u8>,
     peer: &str,
@@ -74,8 +73,7 @@ fn make_http_request_value(
         ty::REQUEST,
         [
             ("method", Value::variant(method, [])),
-            ("path", Value::string(path)),
-            ("query", Value::string(query)),
+            ("url", Value::Url(Arc::new(url))),
             ("headers", Value::Map(headers)),
             ("body", Value::Bytes(Arc::new(body))),
             ("peer", Value::string(peer)),
@@ -1381,7 +1379,7 @@ impl Got {
     /// `held` is what was counted for the request's body: it goes
     /// with a request for the handler, and ends here otherwise. `peer`
     /// is the client's address (`ip:port`).
-    fn of(next: wire::Next, held: Held, peer: &str) -> Got {
+    fn of(next: wire::Next, held: Held, peer: &str, local: &str) -> Got {
         let request = match next {
             wire::Next::Request(request) => request,
             wire::Next::Refused(refused) => return Got::Refused(refused.status, refused.why),
@@ -1402,9 +1400,16 @@ impl Got {
             "OPTIONS" => bv::OPTIONS,
             _ => return Got::Answered(405, wire::reason(405), reply),
         };
-        let (path, query) = match request.target.split_once('?') {
-            Some((path, query)) => (path, query),
-            None => (request.target.as_str(), ""),
+        // `OPTIONS *` asks the server, not a resource: it answers itself,
+        // with the methods it serves. No other request names `*`.
+        if request.target == "*" {
+            return match method == bv::OPTIONS {
+                true => Got::Answered(204, "", reply),
+                false => Got::Answered(400, wire::reason(400), reply),
+            };
+        }
+        let Some(url) = request_url(&request.target, &request.headers, local) else {
+            return Got::Answered(400, wire::reason(400), reply);
         };
         // A header's name is in lower case, however the client wrote
         // it: a name is not case-sensitive, and a lookup has one
@@ -1414,11 +1419,36 @@ impl Got {
         let headers = header_map(headers);
         // The body is the bytes that arrived.
         Got::Request(
-            make_http_request_value(method, path, query, headers, request.body, peer),
+            make_http_request_value(method, url, headers, request.body, peer),
             reply,
             held,
         )
     }
+}
+
+/// The URL a request asks for (`Request.url`): `http://`, the host the
+/// request names (its `Host`; for an HTTP/1.0 request without one, the
+/// address the client reached, `local`) and the target as sent; a target
+/// in absolute form (`http://h/x`) is that URL, of `http` or `https`.
+/// `None` when they make no URL: a `Host` that is more than a host and a
+/// port, a target that `url.parse` refuses (an escape that is none, or
+/// no UTF-8 text). The server answers such a request 400.
+#[cfg(feature = "http")]
+pub(crate) fn request_url(target: &str, headers: &[(String, String)], local: &str) -> Option<Url> {
+    if !target.starts_with('/') {
+        let url = crate::url::parse(target).ok()?;
+        return matches!(url.scheme(), "http" | "https").then_some(url);
+    }
+    let host = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("host"))
+        .map_or(local, |(_, host)| host.as_str());
+    // (A `@`, `/`, `?` or `#` would make another part of the URL of it.)
+    let plain = |byte: u8| byte.is_ascii_alphanumeric() || b"-._:[]".contains(&byte);
+    if host.is_empty() || !host.bytes().all(plain) {
+        return None;
+    }
+    crate::url::parse(&format!("http://{host}{target}")).ok()
 }
 
 /// The read half of a connection, for the reader of its requests.
@@ -1468,12 +1498,17 @@ fn response_bytes(
 #[cfg(feature = "http")]
 const TEXT: &str = "text/plain; charset=UTF-8";
 
-/// A response of the server's own: a status, and a word as its body.
+/// A response of the server's own: a status, and a word as its body (a
+/// `204` has none).
 #[cfg(feature = "http")]
 fn plain_response(vm: &Vm, status: u16, why: &str, reply: Reply) -> Vec<u8> {
-    let mut headers = vec![("Content-Type".to_string(), TEXT.to_string())];
-    // The methods that are allowed are those of `Method`.
-    if status == 405 {
+    let mut headers = Vec::new();
+    if wire::has_body(status) {
+        headers.push(("Content-Type".to_string(), TEXT.to_string()));
+    }
+    // The methods that are allowed are those of `Method`: what a `405`
+    // and the answer to `OPTIONS *` say.
+    if matches!(status, 405 | 204) {
         let allowed = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS";
         headers.push(("Allow".to_string(), allowed.to_string()));
     }
@@ -1565,6 +1600,9 @@ struct Conn {
     /// The client's address, `ip:port` (`[::1]:port` for IPv6): the
     /// `peer` of each request.
     peer: Arc<str>,
+    /// The address the client reached, as `peer` is written: the host of
+    /// the `url` of a request that names none (HTTP/1.0).
+    local: Arc<str>,
     /// Reads the requests; it holds what was read beyond the end of
     /// one. Locked by the operation that reads.
     reader: Arc<Mutex<wire::Reader<Reads>>>,
@@ -1658,7 +1696,7 @@ impl Conn {
         let mut reader = self.reader.try_lock()?;
         // (A body that is among the bytes read is held already:
         // nothing is counted for it.)
-        let got = |next| Got::of(next, Held(self.server.clone(), 0), &self.peer);
+        let got = |next| Got::of(next, Held(self.server.clone(), 0), &self.peer, &self.local);
         if let Some(next) = reader.buffered() {
             return Some(got(next));
         }
@@ -1752,7 +1790,7 @@ impl Conn {
         );
         let (result, announced) = (got.clone(), body_follows.clone());
         let (server, pending) = (self.server.clone(), self.pending.clone());
-        let peer = self.peer.clone();
+        let (peer, local) = (self.peer.clone(), self.local.clone());
         let scheduler = vm.scheduler().clone();
         let op = vm.io_op(
             not_served,
@@ -1789,7 +1827,7 @@ impl Conn {
                 let next = reader.lock().next(&mut before_body);
                 // What the reader had counted for the body.
                 let held = Held(server, pending.swap(0, Ordering::AcqRel));
-                *result.lock() = Some(Got::of(next, held, &peer));
+                *result.lock() = Some(Got::of(next, held, &peer, &local));
                 Value::Unit
             },
         );
@@ -1888,6 +1926,7 @@ impl Conn {
             handle: handle.clone(),
             stream: self.stream.clone(),
             peer: self.peer.clone(),
+            local: self.local.clone(),
             reader: self.reader.clone(),
             begun: self.begun.clone(),
             pending: self.pending.clone(),
@@ -2209,8 +2248,13 @@ impl Serve {
             Ok(addr) => canonical(addr).to_string().into(),
             Err(_) => "".into(),
         };
+        let local: Arc<str> = match stream.local_addr() {
+            Ok(addr) => canonical(addr).to_string().into(),
+            Err(_) => "".into(),
+        };
         child.push_native_frame(Box::new(Conn {
             peer,
+            local,
             server: self.server.clone(),
             handle: handle.clone(),
             reader: Arc::new(Mutex::new(reader)),
@@ -2412,34 +2456,6 @@ builtins! {
         })))
     }
 
-    fn segments(path: &str) -> Vec<Value> {
-        path.split('/')
-            .filter(|s| !s.is_empty())
-            .map(Value::string)
-            .collect()
-    }
-
-    // The pairs are decoded as `url.decode_form` decodes them, and a
-    // pair that does not decode is its error: a query string comes from
-    // whoever sent the request. A leading `?` is taken as well.
-    fn parse_query(query: &str) -> Value {
-        let lead = usize::from(query.starts_with('?'));
-        let pairs = match crate::url::decode_form(&query[lead..]) {
-            Ok(pairs) => pairs,
-            Err(crate::url::UrlError::Invalid(what, at)) => {
-                let error = crate::url::UrlError::Invalid(what, at + lead);
-                return Value::variant(bv::ERR, [super::url::error_value(error)]);
-            }
-            Err(error) => return Value::variant(bv::ERR, [super::url::error_value(error)]),
-        };
-        // The values of a key in the order they came, the keys in order.
-        let mut out: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
-        for (key, value) in pairs {
-            out.entry(Value::string(key)).or_default().push(Value::string(value));
-        }
-        let pairs = out.into_iter().map(|(key, values)| (key, Value::list(values)));
-        Value::variant(bv::OK, [Value::map(pairs)])
-    }
 }
 
 #[cfg(all(test, feature = "http"))]
@@ -2475,23 +2491,21 @@ mod http_response_tests {
         assert_eq!((status, body), (204, &[0, 0xff, b'd'][..]));
         assert_eq!(record.fields()[0], Value::Int(204));
 
-        let request = make_http_request_value(
-            bv::POST,
-            "/jobs",
-            "n=1",
-            headers(),
-            b"go".to_vec(),
-            "[::1]:5000",
-        );
+        let url = crate::url::parse("http://h:8080/jobs?n=1").expect("a URL");
+        let request =
+            make_http_request_value(bv::POST, url, headers(), b"go".to_vec(), "[::1]:5000");
         assert_eq!(
             request.to_string(),
-            "Request {method: POST, path: \"/jobs\", query: \"n=1\", headers: #{\"accept\": \"*/*\"}, body: bytes(67 6f, length: 2), peer: \"[::1]:5000\"}"
+            "Request {method: POST, url: <url:http://h:8080/jobs?n=1>, headers: #{\"accept\": \"*/*\"}, body: bytes(67 6f, length: 2), peer: \"[::1]:5000\"}"
         );
         let Value::Record(record) = &request else {
             panic!("a record");
         };
-        assert_eq!(record.get("path"), Some(&Value::string("/jobs")));
-        assert_eq!(record.fields()[1], Value::string("/jobs"));
+        let Some(Value::Url(url)) = record.get("url") else {
+            panic!("a url field");
+        };
+        assert_eq!(url.path(), "/jobs");
+        assert!(matches!(&record.fields()[1], Value::Url(_)));
     }
 
     #[test]
@@ -2541,6 +2555,51 @@ mod serve_tests {
     use crate::runtime::sync::Outcome;
     use crate::vm::Native;
     use std::time::Instant;
+
+    /// The `url` of a request: `http://`, its `Host` (the address reached
+    /// when it names none) and its target, in normal form; a target in
+    /// absolute form as it is, of `http` or `https`; `None`, which the
+    /// server answers 400, where they make no URL.
+    #[test]
+    fn a_request_s_url_is_its_host_and_target() {
+        let host = |h: &str| vec![("Host".to_string(), h.to_string())];
+        let url = |target: &str, headers: &[(String, String)]| {
+            request_url(target, headers, "127.0.0.1:9").map(|u| u.as_str().to_string())
+        };
+        let some = |text: &str| Some(text.to_string());
+        assert_eq!(
+            url("/a/../b?x=1", &host("H:8080")),
+            some("http://h:8080/b?x=1")
+        );
+        assert_eq!(url("/x", &[]), some("http://127.0.0.1:9/x"));
+        assert_eq!(url("//x/%7e", &host("h")), some("http://h//x/~"));
+        assert_eq!(
+            url("/users/a%2Fb", &host("[::1]:80")),
+            some("http://[::1]/users/a%2Fb")
+        );
+        assert_eq!(
+            url("http://other.test/x", &host("h")),
+            some("http://other.test/x")
+        );
+        assert_eq!(
+            url("https://other.test/x", &host("h")),
+            some("https://other.test/x")
+        );
+        for (target, headers) in [
+            ("/x", host("u@h")),
+            ("/x", host("h/y")),
+            ("/x", host("h?y")),
+            ("/x", host("")),
+            ("/x", host("0x7f.1")),
+            ("/%zz", host("h")),
+            ("/caf%E9", host("h")),
+            ("ftp://h/x", host("h")),
+            ("h:80", host("h")),
+        ] {
+            assert_eq!(url(target, &headers), None, "{target} {headers:?}");
+        }
+        assert_eq!(request_url("/x", &[], ""), None);
+    }
 
     /// A server whose task was cancelled just as its accept was given
     /// a connection takes nothing: the task still runs for some steps,

@@ -13,7 +13,7 @@ import tcp
 import url
 
 fn answer(req: http.Request) -> http.Response {
-  match http.segments(req.path) {
+  match url.segments(req.url) {
     ["status"] -> http.Response { status: 1000, body: bytes.empty(), headers: #{} }
     ["fail"] -> panic("boom")
     _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
