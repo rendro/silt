@@ -1211,13 +1211,18 @@ fn check_one_url(u: &crate::url::Url) -> Result<(), String> {
             }
         }
     }
-    // (The transport takes no URL over 65,534 bytes.)
+    // What the client sends: the URL without its user and password,
+    // which go in an `authorization` header. (The transport takes no URL
+    // over 65,534 bytes; its reader of a user and password refuses some
+    // that RFC 3986 allows, such as `%5B1::1%5D:80.com:8t`.)
     #[cfg(feature = "http")]
-    if matches!(u.scheme(), "http" | "https")
-        && text.len() <= 65_534
-        && let Err(e) = text.parse::<ureq::http::Uri>()
-    {
-        return Err(format!("the transport does not take {u:?}: {e}"));
+    if matches!(u.scheme(), "http" | "https") {
+        let sent = u.with_user("").with_password("");
+        if sent.as_str().len() <= 65_534
+            && let Err(e) = sent.as_str().parse::<ureq::http::Uri>()
+        {
+            return Err(format!("the transport does not take {sent:?}: {e}"));
+        }
     }
     Ok(())
 }
@@ -1233,13 +1238,18 @@ fn check_url_changes(u: &crate::url::Url, text: &str) -> Result<(), String> {
     same("scheme", u.with_scheme(u.scheme()))?;
     same("host", u.with_host(u.host()))?;
     same("port", u.with_port(u.port().map(i64::from)))?;
-    same("user", Ok(u.with_user(&u.user())))?;
-    same("password", Ok(u.with_password(&u.password())))?;
-    same("fragment", Ok(u.with_fragment(&u.fragment())))?;
     let read_back = |what: &str, changed: &url::Url, good: bool| match good {
         true => check_one_url(changed),
         false => Err(format!("{u:?} with the {what} {text:?} is {changed:?}")),
     };
+    // (Decoded, then escaped by the writer's own rules: `%2F` in a
+    // fragment is written back as `/`, so the text may differ.)
+    let changed = u.with_user(&u.user());
+    read_back("own user", &changed, changed.user() == u.user())?;
+    let changed = u.with_password(&u.password());
+    read_back("own password", &changed, changed.password() == u.password())?;
+    let changed = u.with_fragment(&u.fragment());
+    read_back("own fragment", &changed, changed.fragment() == u.fragment())?;
     let segments = u.segments();
     let changed = (u.with_segments(&segments)).map_err(|e| format!("{u:?}: segments: {e}"))?;
     read_back("segments", &changed, changed.segments() == segments)?;
