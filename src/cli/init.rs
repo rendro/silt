@@ -44,16 +44,8 @@ pub(crate) fn dispatch(args: &[String]) {
                 "error: silt init: unexpected argument '{}' (silt init takes no positional arguments; the package name is derived from the current directory)",
                 crate::git::escape_for_display(arg)
             );
-            // (A command to paste only with a name it can hold as it
-            // stands: see `pasteable`.)
-            match crate::source::pasteable(arg) {
-                true => eprintln!(
-                    "                  to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
-                ),
-                false => eprintln!(
-                    "                  to create a package in a new directory, make the directory, go into it and run silt init there"
-                ),
-            }
+            let lib = args[2..].iter().any(|a| a == "--lib");
+            eprintln!("                  {}", what_to_do_instead(arg, lib));
             process::exit(1);
         }
     }
@@ -62,6 +54,137 @@ pub(crate) fn dispatch(args: &[String]) {
         crate::cli::once_only("init", "--lib");
     }
     init_project(libs == 1);
+}
+
+/// What to do instead of `silt init <arg>`, which takes no argument: the
+/// line under the error. A command to paste only where it works as it
+/// stands: the name can be pasted (`source::pasteable`), the shell is a
+/// POSIX one (on Windows, where `&&` and `mkdir -p` depend on which
+/// shell runs it, the same advice in words), and `silt init` would
+/// succeed there by its own checks (`init_checks`, `package_name_from`).
+/// Else the advice in words, with what stands in the way. `lib` keeps
+/// `--lib` in the command.
+fn what_to_do_instead(arg: &str, lib: bool) -> String {
+    let init = if lib { "silt init --lib" } else { "silt init" };
+    let path = std::path::Path::new(arg);
+    let shown = crate::git::escape_for_display(arg);
+    let command = crate::source::pasteable(arg) && !cfg!(windows);
+    if path.is_dir() {
+        // (By the directory's real name: `..` has none of its own.)
+        let dir = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let here = arg == ".";
+        return match (init_checks(&dir, lib), here) {
+            (Err(obstacle), true) => {
+                format!("{init} here would stop: {}", obstacle.reason())
+            }
+            (Err(Obstacle::Manifest), false) => {
+                format!("'{shown}' already holds a silt package (its silt.toml)")
+            }
+            (Err(obstacle), false) => format!(
+                "'{shown}' is a directory, and {init} there would stop: {}",
+                obstacle.reason()
+            ),
+            (Ok(_), true) => format!("to create the package in this directory, run: {init}"),
+            (Ok(_), false) if command => format!(
+                "'{arg}' is a directory; to create the package in it, run: cd {arg} && {init}"
+            ),
+            (Ok(_), false) => format!(
+                "'{shown}' is a directory; to create the package in it, go into it and run {init} there"
+            ),
+        };
+    }
+    if path.exists() {
+        return format!(
+            "'{shown}' is a file; to create a package in a new directory, make one with another \
+             name, go into it and run {init} there"
+        );
+    }
+    // A new directory: the package is named after it, so one is suggested
+    // only with a name that gives a package name init takes.
+    let last = path.file_name().and_then(|n| n.to_str()).unwrap_or(arg);
+    if let Err(obstacle) = package_name_from(last) {
+        return format!(
+            "{init} in a directory '{}' would stop: {}; make a directory with another name, go \
+             into it and run {init} there",
+            crate::git::escape_for_display(last),
+            obstacle.reason()
+        );
+    }
+    // A path of more than one name needs its parents made too.
+    let mkdir = match arg.trim_end_matches('/').contains('/') {
+        true => "mkdir -p",
+        false => "mkdir",
+    };
+    match command {
+        true => format!(
+            "to create a package in a new directory, run: {mkdir} {arg} && cd {arg} && {init}"
+        ),
+        false => format!(
+            "to create a package in a new directory, make the directory, go into it and run {init} \
+             there"
+        ),
+    }
+}
+
+/// What stops `silt init` in a directory, before it writes anything.
+enum Obstacle {
+    /// The directory holds a silt.toml.
+    Manifest,
+    /// A file init would write exists: `src/<name>`.
+    File(&'static str),
+    /// The directory's name gives no package name.
+    NoName,
+    /// The package name the directory's name gives is refused: why.
+    Refused(String),
+}
+
+impl Obstacle {
+    /// The obstacle in a few words, for the advice of `what_to_do_instead`.
+    fn reason(&self) -> String {
+        match self {
+            Obstacle::Manifest => "silt.toml already exists".to_string(),
+            Obstacle::File(name) => format!("src/{name} already exists"),
+            Obstacle::NoName => "the directory's name gives no package name".to_string(),
+            Obstacle::Refused(why) => why.trim_end_matches("; pick a different name").to_string(),
+        }
+    }
+}
+
+/// The files `silt init` writes besides silt.toml, under `src/`: the
+/// module and its first test.
+fn entry_files(lib: bool) -> (&'static str, &'static str) {
+    match lib {
+        true => ("lib.silt", "lib_test.silt"),
+        false => ("main.silt", "main_test.silt"),
+    }
+}
+
+/// The package name `silt init` gives a package in a directory named
+/// `dirname`, or why there is none: the name sanitized
+/// (`sanitize_package_name`) and accepted by the manifest's rule
+/// (`validate_package_name`: no stdlib module, no keyword).
+fn package_name_from(dirname: &str) -> Result<String, Obstacle> {
+    let name = sanitize_package_name(dirname).ok_or(Obstacle::NoName)?;
+    match crate::manifest::validate_package_name(&name) {
+        Ok(()) => Ok(name),
+        Err(why) => Err(Obstacle::Refused(why)),
+    }
+}
+
+/// The checks `silt init` makes in `dir` before it writes anything: no
+/// silt.toml, none of the files it writes, a package name from the
+/// directory's name. The package name, or the first obstacle.
+fn init_checks(dir: &std::path::Path, lib: bool) -> Result<String, Obstacle> {
+    if dir.join("silt.toml").exists() {
+        return Err(Obstacle::Manifest);
+    }
+    let (entry, test) = entry_files(lib);
+    for name in [entry, test] {
+        if dir.join("src").join(name).exists() {
+            return Err(Obstacle::File(name));
+        }
+    }
+    package_name_from(dir.file_name().and_then(|n| n.to_str()).unwrap_or(""))
 }
 
 /// Sanitize a directory name into a valid silt identifier:
@@ -107,33 +230,27 @@ fn init_project(lib: bool) {
     });
 
     let manifest_path = cwd.join("silt.toml");
-    if manifest_path.exists() {
-        eprintln!(
-            "error: silt init: silt.toml already exists at {}",
-            crate::source::shown_path(&manifest_path)
-        );
-        process::exit(1);
-    }
-    let (entry, test) = match lib {
-        true => ("lib.silt", "lib_test.silt"),
-        false => ("main.silt", "main_test.silt"),
-    };
+    let (entry, test) = entry_files(lib);
     let entry_path = cwd.join("src").join(entry);
     let test_path = cwd.join("src").join(test);
-    for (name, path) in [(entry, &entry_path), (test, &test_path)] {
-        if path.exists() {
+    let dirname = cwd.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let package_name = match init_checks(&cwd, lib) {
+        Ok(name) => name,
+        Err(Obstacle::Manifest) => {
             eprintln!(
-                "error: silt init: src/{name} already exists at {}",
-                crate::source::shown_path(path)
+                "error: silt init: silt.toml already exists at {}",
+                crate::source::shown_path(&manifest_path)
             );
             process::exit(1);
         }
-    }
-
-    let dirname = cwd.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let package_name = match sanitize_package_name(dirname) {
-        Some(name) => name,
-        None => {
+        Err(Obstacle::File(name)) => {
+            eprintln!(
+                "error: silt init: src/{name} already exists at {}",
+                crate::source::shown_path(cwd.join("src").join(name))
+            );
+            process::exit(1);
+        }
+        Err(Obstacle::NoName) => {
             eprintln!(
                 "error: silt init: cannot derive a package name from the current directory `{}`",
                 crate::source::shown_path(&cwd)
@@ -146,26 +263,24 @@ fn init_project(lib: bool) {
             );
             process::exit(1);
         }
+        // A package name that collides with a builtin module (`io`,
+        // `string`, ...) or is a keyword: the manifest's rule, shared by
+        // init, add and Manifest::load. Previously `mkdir io && cd io &&
+        // silt init` silently wrote `name = "io"`, a package whose name
+        // shadowed the stdlib `io` module.
+        Err(Obstacle::Refused(msg)) => {
+            eprintln!("error: silt init: {msg}");
+            eprintln!(
+                "                  (the package name was derived from the directory name `{}`;",
+                crate::source::shown_path(dirname)
+            );
+            eprintln!(
+                "                   rename the directory or run `silt init` from a directory whose name"
+            );
+            eprintln!("                   is not a keyword or a stdlib module).");
+            process::exit(1);
+        }
     };
-    // Reject package names that collide with a builtin module (`io`,
-    // `string`, …). Routed through the manifest module's
-    // `validate_package_name` so init / add / Manifest::load share one
-    // acceptance rule. Mirrors `silt add`'s wording for builtin
-    // collisions on dep names — see `src/cli/add.rs:273-279`.
-    // Previously `mkdir io && cd io && silt init`
-    // silently wrote `name = "io"`, producing a package whose top-level
-    // name shadowed the stdlib `io` module.
-    if let Err(msg) = crate::manifest::validate_package_name(&package_name) {
-        eprintln!("error: silt init: {msg}");
-        eprintln!(
-            "                  (the package name was derived from the directory name `{dirname}`;"
-        );
-        eprintln!(
-            "                   rename the directory or run `silt init` from a directory whose name"
-        );
-        eprintln!("                   is not a keyword or a stdlib module).");
-        process::exit(1);
-    }
 
     let manifest_contents = format!("[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\n");
     // The test imports the module it tests, as a test file of a package
