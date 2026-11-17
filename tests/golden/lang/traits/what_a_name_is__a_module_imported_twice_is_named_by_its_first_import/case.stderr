@@ -1,0 +1,11 @@
+error[type]: module 'mz' has no type 'Zed': `mz.Zed` is a variant of `zz.V`
+ --> main.silt:10:12
+    |
+ 10 | fn a(x: mz.Zed) -> Int { 1 }
+    |            ^^^ module 'mz' has no type 'Zed': `mz.Zed` is a variant of `zz.V`
+
+error[type]: module 'zz' has no trait 'Foo': `zz.Foo` is a variant of `zz.V`
+ --> main.silt:12:31
+    |
+ 12 | fn b(x: c) -> Int where c: zz.Foo { 1 }
+    |                               ^^^ module 'zz' has no trait 'Foo': `zz.Foo` is a variant of `zz.V`
