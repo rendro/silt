@@ -72,3 +72,59 @@ fn main() {
     assert_eq!(code, Some(1), "{err}");
     assert!(err.contains("error[runtime]: panic: boom"), "{err}");
 }
+
+/// The threads of the process `pid`, by its task directory (Linux).
+#[cfg(target_os = "linux")]
+fn threads_of(pid: u32) -> usize {
+    std::fs::read_dir(format!("/proc/{pid}/task"))
+        .map(|tasks| tasks.count())
+        .unwrap_or(0)
+}
+
+/// Forty tasks each printing a text longer than a print makes whole, to a
+/// stdout nobody reads yet: one of them goes, the others wait their turn,
+/// and a waiting long print holds no thread. FAIL on 0.43.1: each long
+/// print started the thread that makes its text at once (forty threads
+/// beside the runtime's), which then waited with the pieces it had made.
+#[cfg(target_os = "linux")]
+#[test]
+fn long_prints_that_wait_their_turn_hold_no_thread() {
+    let dir = std::env::temp_dir().join(format!("silt_long_prints_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.silt");
+    std::fs::write(
+        &file,
+        "import list\nimport string\nimport task\n\nfn main() {\n  let text = string.repeat(\"x\", 2000000)\n  \
+         let tasks = 1..40 |> list.map { _ -> task.spawn { -> println(text) } }\n  \
+         tasks |> list.each { t -> task.join(t) }\n}\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Held, not read, while the prints start and wait; the most threads
+    // the process had meanwhile.
+    let mut stuck = child.stdout.take().unwrap();
+    let mut most = 0;
+    let until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < until {
+        most = most.max(threads_of(child.id()));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Then read all of it: the program ends.
+    let mut out = Vec::new();
+    stuck.read_to_end(&mut out).unwrap();
+    let status = child.wait().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(status.success(), "{status:?}");
+    assert_eq!(out.len(), 40 * 2_000_001);
+    assert!(
+        most < 30,
+        "the process had {most} threads while forty long prints waited: each holds one"
+    );
+}
