@@ -459,15 +459,7 @@ impl TypeChecker {
                 (opaque.map(|def| def.module))
                     .or_else(|| args.iter().find_map(|arg| self.opaque_module_in(arg)))
             }
-            Type::Container(Container::List(t))
-            | Type::Container(Container::Set(t))
-            | Type::Container(Container::Channel(t)) => self.opaque_module_in(t),
-            Type::Container(Container::Map(k, v)) => self
-                .opaque_module_in(k)
-                .or_else(|| self.opaque_module_in(v)),
-            Type::Container(Container::Tuple(parts)) => {
-                parts.iter().find_map(|part| self.opaque_module_in(part))
-            }
+            Type::Container(c) => c.parts().find_map(|part| self.opaque_module_in(part)),
             _ => None,
         }
     }
@@ -1282,11 +1274,7 @@ impl TypeChecker {
             | Type::Float
             | Type::String
             | Type::Bool
-            | Type::Container(Container::List(_))
-            | Type::Container(Container::Map(..))
-            | Type::Container(Container::Tuple(_))
-            | Type::Container(Container::Set(_))
-            | Type::Container(Container::Channel(_)) => {
+            | Type::Container(_) => {
                 self.decode_refusal(builtin, Decoding::JSON, written, ty, owner, span)
             }
             // A type no type argument names (a function): what a

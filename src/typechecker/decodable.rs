@@ -20,13 +20,8 @@ pub(crate) const ARGUMENT_DEPTH_LIMIT: usize = 32;
 pub(crate) fn too_deep(args: &[Type]) -> bool {
     fn depth(ty: &Type) -> usize {
         1 + match ty {
-            Type::Generic(_, ts) | Type::Container(Container::Tuple(ts)) => {
-                ts.iter().map(depth).max().unwrap_or(0)
-            }
-            Type::Container(Container::List(t))
-            | Type::Container(Container::Set(t))
-            | Type::Container(Container::Channel(t)) => depth(t),
-            Type::Container(Container::Map(k, v)) => depth(k).max(depth(v)),
+            Type::Generic(_, ts) => ts.iter().map(depth).max().unwrap_or(0),
+            Type::Container(c) => c.parts().map(depth).max().unwrap_or(0),
             _ => 0,
         }
     }

@@ -571,11 +571,8 @@ impl TypeChecker {
             return Some(ty.clone());
         }
         let parts: Vec<&Type> = match ty {
-            Type::Container(Container::List(t))
-            | Type::Container(Container::Set(t))
-            | Type::Container(Container::Channel(t)) => vec![&**t],
-            Type::Container(Container::Map(k, v)) => vec![&**k, &**v],
-            Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) => ts.iter().collect(),
+            Type::Container(c) => c.parts().collect(),
+            Type::Generic(_, ts) => ts.iter().collect(),
             _ => Vec::new(),
         };
         (parts.into_iter())
