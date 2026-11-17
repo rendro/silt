@@ -5,62 +5,24 @@
 //! that is shown, which the http client's errors and the package code's
 //! (git dependencies) share.
 
-/// `msg` with the user and password of every URL in it replaced by
-/// `***`: whatever stands after a `//`, of any scheme or of none
-/// (`https://u:p@h`, `ftp://u:p@h`, `//u:p@h`), up to the LAST `@` of
-/// that URL (it ends at a space, a tab or a line feed). The user and
-/// password a client sends are before the last `@` of the authority; a
-/// password with a raw `/`, `?` or `#` in it ends the authority there,
-/// and the rest of it, with its `@`, is in what reads as the path or the
-/// query (`http://user:1234/ss@host/`), which no shape tells from an `@`
-/// of a path. So the text before any `@` of a URL is hidden, the host
-/// too at times (`https://h/users/@me` is shown `https://***@me`):
-/// more than a password, never less. `scheme://@host` stays as it is.
-/// One pass over the text.
-pub(crate) fn hide_url_userinfo(msg: &str) -> String {
-    hide_url_userinfo_counting(msg, &mut 0)
-}
-
-/// `line` with each character of the user and password of a URL in it
-/// (what [`hide_url_userinfo`] hides) replaced by a `*`: for a line of a
-/// file shown under a caret, whose columns must stay where they are
-/// (`git = "https://*****:******@host/r.git"`).
-pub(crate) fn mask_url_userinfo(line: &str) -> String {
-    let hidden = hide_url_userinfo(line);
-    if hidden == line {
-        return hidden;
-    }
-    // The places of `line` that `hide_url_userinfo` left out: the same
-    // scan, keeping the length.
-    let mut out = String::with_capacity(line.len());
-    let (mut copied, mut at) = (0, 0);
-    while let Some(found) = line[at..].find("//") {
-        let host_start = at + found + 2;
-        let url = &line[host_start..];
-        let end = url.find([' ', '\t', '\n']).unwrap_or(url.len());
-        at = match url[..end].rfind('@') {
-            Some(last @ 1..) => {
-                out.push_str(&line[copied..host_start]);
-                out.extend(url[..last].chars().map(|_| '*'));
-                copied = host_start + last;
-                copied
-            }
-            Some(_) => host_start,
-            None => host_start + end,
-        };
-    }
-    out.push_str(&line[copied..]);
-    out
-}
-
-/// [`hide_url_userinfo`], adding to `looked` the bytes it looked at
-/// (what a test asks: no more than a few times the text's length).
-pub(crate) fn hide_url_userinfo_counting(msg: &str, looked: &mut usize) -> String {
-    let mut out = String::with_capacity(msg.len());
-    // What of `msg` is in `out`, and where the search for an authority
-    // goes on: never back, so each byte is looked at a bounded number
-    // of times.
-    let (mut copied, mut at) = (0, 0);
+/// The places of `msg` that hold the user and password of a URL, the
+/// one rule of what is hidden: whatever stands after a `//`, of any
+/// scheme or of none (`https://u:p@h`, `ftp://u:p@h`, `//u:p@h`), up to
+/// the LAST `@` of that URL (it ends at a space, a tab or a line feed).
+/// The user and password a client sends are before the last `@` of the
+/// authority; a password with a raw `/`, `?` or `#` in it ends the
+/// authority there, and the rest of it, with its `@`, is in what reads
+/// as the path or the query (`http://user:1234/ss@host/`), which no shape
+/// tells from an `@` of a path. So the text before any `@` of a URL is
+/// hidden, the host too at times (`https://h/users/@me`): more than a
+/// password, never less. `scheme://@host` has none. One pass over the
+/// text; `looked` gains the bytes looked at (what a test asks: no more
+/// than a few times the text's length).
+fn userinfo_places(msg: &str, looked: &mut usize) -> Vec<std::ops::Range<usize>> {
+    let mut places = Vec::new();
+    // Where the search for a URL goes on: never back, so each byte is
+    // looked at a bounded number of times.
+    let mut at = 0;
     while let Some(found) = msg[at..].find("//") {
         *looked += found + 2;
         let host_start = at + found + 2;
@@ -69,10 +31,8 @@ pub(crate) fn hide_url_userinfo_counting(msg: &str, looked: &mut usize) -> Strin
         *looked += 2 * end;
         at = match url[..end].rfind('@') {
             Some(last @ 1..) => {
-                out.push_str(&msg[copied..host_start]);
-                out.push_str("***");
-                copied = host_start + last;
-                copied
+                places.push(host_start..host_start + last);
+                host_start + last
             }
             // (`//@host`: nothing before its one `@`.)
             Some(_) => host_start,
@@ -80,8 +40,49 @@ pub(crate) fn hide_url_userinfo_counting(msg: &str, looked: &mut usize) -> Strin
             None => host_start + end,
         };
     }
+    places
+}
+
+/// `msg` with each place of [`userinfo_places`] given by `hidden`.
+fn with_places_hidden(
+    msg: &str,
+    places: &[std::ops::Range<usize>],
+    hidden: impl Fn(&str) -> String,
+) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let mut copied = 0;
+    for place in places {
+        out.push_str(&msg[copied..place.start]);
+        out.push_str(&hidden(&msg[place.clone()]));
+        copied = place.end;
+    }
     out.push_str(&msg[copied..]);
     out
+}
+
+/// `msg` with the user and password of every URL in it
+/// ([`userinfo_places`]) replaced by `***`: what every message of silt
+/// that can quote a URL shows (the http client's errors, the package
+/// code's: git dependencies, git's command lines and output).
+/// `https://u:p@h/x` is shown `https://***@h/x`, `https://h/users/@me`
+/// `https://***@me`.
+pub(crate) fn hide_url_userinfo(msg: &str) -> String {
+    hide_url_userinfo_counting(msg, &mut 0)
+}
+
+/// `line` with each character of the user and password of a URL in it
+/// (the places [`hide_url_userinfo`] hides) replaced by a `*`: for a line
+/// of a file shown under a caret, whose columns must stay where they are
+/// (`git = "https://*****:******@host/r.git"`).
+pub(crate) fn mask_url_userinfo(line: &str) -> String {
+    let places = userinfo_places(line, &mut 0);
+    with_places_hidden(line, &places, |place| place.chars().map(|_| '*').collect())
+}
+
+/// [`hide_url_userinfo`], adding to `looked` the bytes it looked at.
+pub(crate) fn hide_url_userinfo_counting(msg: &str, looked: &mut usize) -> String {
+    let places = userinfo_places(msg, looked);
+    with_places_hidden(msg, &places, |_| "***".to_string())
 }
 
 /// The Levenshtein edit distance of `a` and `b`, by characters: the

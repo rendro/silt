@@ -277,7 +277,9 @@ fn redact_counting(msg: &str, looked: &mut usize) -> String {
 /// tells from an `@` of a path or a query (`http://user:1234/ss@host`
 /// and `http://h:8080/users/@me` are alike): so an `@` anywhere hides
 /// what stands before it, more than a password at times, never less. A
-/// URL with no `@` after its host's start is shown as it is.
+/// URL with no `@` after its host's start is shown as it is. (The rule of
+/// `text::hide_url_userinfo`, for a text that is one URL: where its host
+/// starts is found without a `//` too, and a space does not end it.)
 #[cfg(feature = "http")]
 pub fn redact_url(url: &str) -> String {
     let slashes_from = |at: usize| url.len() - url[at..].trim_start_matches('/').len();
