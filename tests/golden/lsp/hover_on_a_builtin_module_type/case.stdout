@@ -306,8 +306,7 @@ type http.Response {
 ```silt
 type http.Request {
   method: http.Method,
-  path: String,
-  query: String,
+  url: url.Url,
   headers: Map(String, String),
   body: Bytes,
   peer: String,
