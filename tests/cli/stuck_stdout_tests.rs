@@ -86,6 +86,8 @@ fn threads_of(pid: u32) -> usize {
 /// and a waiting long print holds no thread. FAIL on 0.43.1: each long
 /// print started the thread that makes its text at once (forty threads
 /// beside the runtime's), which then waited with the pieces it had made.
+/// The runtime has a worker per core (at least two) and a few threads
+/// beside them: the bound is twenty above that, whatever the cores.
 #[cfg(target_os = "linux")]
 #[test]
 fn long_prints_that_wait_their_turn_hold_no_thread() {
@@ -123,8 +125,14 @@ fn long_prints_that_wait_their_turn_hold_no_thread() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(status.success(), "{status:?}");
     assert_eq!(out.len(), 40 * 2_000_001);
+    // (As many workers as the runtime starts: one per core, at least two.)
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(2);
     assert!(
-        most < 30,
-        "the process had {most} threads while forty long prints waited: each holds one"
+        most < workers + 24,
+        "the process had {most} threads ({workers} workers) while forty long prints waited: \
+         each holds one"
     );
 }
