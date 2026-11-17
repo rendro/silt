@@ -1,0 +1,10 @@
+unescape Invalid: `%` at the end is no escape, at 3
+unescape Invalid: the escape %C3 is no UTF-8 text, at 0
+decode_form Invalid: `%ZZ` is no escape, at 6
+decode_form: the escape %FF is no UTF-8 text, at 0
+random_bytes InvalidLength: -1
+crypto.random_bytes: 2000000 bytes exceed the cap of 1048576 (1 MiB)
+parse Invalid: invalid character: found `n` at 1
+invalid uuid: invalid character: found `n` at 1
+Ok("00000000-0000-0000-0000-000000000000")
+Ok("a b")

@@ -215,10 +215,22 @@ builtins! {
         result(url::unescape(s).map(Value::string))
     }
 
+    // Pair by pair: the pairs can hold one long string many times, so
+    // the text is stopped where it would pass the limit.
     fn encode_form(pairs: List) -> Result<String, VmError> {
         pairs.writable()?;
         let pairs = self::pairs("url.encode_form", pairs)?;
-        text("url.encode_form", url::encode_form(&pairs))
+        let mut out = String::new();
+        for (at, pair) in pairs.into_iter().enumerate() {
+            if at > 0 {
+                out.push('&');
+            }
+            out.push_str(&url::encode_form(&[pair]));
+            if out.len() > MAX_TEXT_LEN {
+                return Err(too_long_text("url.encode_form", out.len()));
+            }
+        }
+        Ok(out)
     }
 
     fn decode_form(body: &str) -> Value {

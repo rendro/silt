@@ -37,7 +37,6 @@ syntax keyword siltConstructor Connect Tls InvalidUrl InvalidResponse ClosedEarl
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
 syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange
 syntax keyword siltConstructor InvalidLength
-syntax keyword siltConstructor InvalidPercent
 syntax keyword siltConstructor Invalid InvalidPart
 syntax keyword siltConstructor Bind
 " The builtin types, then the record and enum types of the modules.
@@ -46,12 +45,11 @@ syntax keyword siltType TcpStream Regex Url
 syntax keyword siltType IoError IntError FloatError Step ChannelResult ChannelOp Selected TaskError
 syntax keyword siltType RegexError JsonError Value TomlError Instant Date Time DateTime Duration
 syntax keyword siltType Weekday TimeError Method Response Request HttpError FileStat PostgresError
-syntax keyword siltType Notification BytesError CryptoError EncodingError UrlError TcpError
-syntax keyword siltType UuidError CsvError
+syntax keyword siltType Notification BytesError CryptoError UrlError TcpError UuidError CsvError
 " The free functions of the prelude.
 syntax keyword siltBuiltin panic print println
 " A builtin module's name before a dot.
-syntax match siltModule "\<\(io\|string\|int\|float\|list\|map\|result\|option\|test\|channel\|task\|regex\|json\|toml\|set\|math\|time\|http\|fs\|env\|postgres\|bytes\|crypto\|encoding\|url\|tcp\|stream\|uuid\|process\|csv\)\>\ze\."
+syntax match siltModule "\<\(io\|string\|int\|float\|list\|map\|result\|option\|test\|channel\|task\|regex\|json\|toml\|set\|math\|time\|http\|fs\|env\|postgres\|bytes\|crypto\|url\|tcp\|stream\|uuid\|process\|csv\)\>\ze\."
 " ── End of the generated names ──────────────────────────────────────────
 
 " ── Comments ────────────────────────────────────────────────────────

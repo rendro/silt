@@ -196,8 +196,8 @@ builtins! {
         text_fits("bytes.to_hex", b.len().saturating_mul(2))?;
         let mut s = String::with_capacity(b.len() * 2);
         for byte in b.iter() {
-            s.push(nibble_to_hex(byte >> 4, false));
-            s.push(nibble_to_hex(byte & 0x0f, false));
+            s.push(nibble_to_hex(byte >> 4));
+            s.push(nibble_to_hex(byte & 0x0f));
         }
         Ok(s)
     }

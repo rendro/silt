@@ -1,0 +1,10 @@
+import url
+fn main() {
+  match url.decode_form("flag") {
+    Ok(pairs) -> match pairs {
+      [(k, v)] -> println("{k}={v}")
+      _ -> println("wrong-shape")
+    }
+    Err(_) -> println("err")
+  }
+}

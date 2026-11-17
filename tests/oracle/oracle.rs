@@ -74,8 +74,8 @@ use silt::{Buffer, Clock, HostIo, Value, Vm};
 /// network, the process's arguments or its stdin.
 const INSIDE_MODULES: &[&str] = &[
     "", "string", "int", "float", "list", "map", "set", "result", "option", "test", "math",
-    "regex", "json", "toml", "bytes", "encoding", "crypto", "uuid", "time", "task", "channel",
-    "stream", "csv", "url",
+    "regex", "json", "toml", "bytes", "crypto", "uuid", "time", "task", "channel", "stream", "csv",
+    "url",
 ];
 
 /// The functions of [`INSIDE_MODULES`] that read or write a file, a

@@ -1,0 +1,7 @@
+import url
+import list
+fn main() {
+  let seeded = [("k", "v")]
+  let pairs = list.tail(seeded)
+  println("[{url.encode_form(pairs)}]")
+}

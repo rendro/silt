@@ -13,7 +13,7 @@ use std::process::Command;
 /// 4,000,000 bytes, at hand.
 fn error_of(body: &str) -> String {
     let source = format!(
-        "import bytes\nimport encoding\nimport io\nimport string\n\
+        "import bytes\nimport io\nimport string\nimport url\n\
          fn main() {{\n  let s = string.repeat(\"ab\", 2_000_000)\n  {body}\n}}\n"
     );
     run_str(&source).expect_err(body)
@@ -32,8 +32,8 @@ fn a_text_past_the_limit_is_an_error_of_what_makes_it() {
             "bytes.to_base64",
         ),
         (
-            "let _ = encoding.url_encode(string.repeat(\"/\", 4_000_000))",
-            "encoding.url_encode",
+            "let _ = url.escape(string.repeat(\"/\", 4_000_000))",
+            "url.escape",
         ),
         (
             "let _ = string.to_upper(string.repeat(\"\u{390}\", 2_000_000))",

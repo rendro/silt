@@ -1,0 +1,10 @@
+-- verdict: same
+import url
+fn main() {
+  let v_url_decode_form: Int = url.decode_form
+  let v_url_encode_form: Int = url.encode_form
+  let v_url_unescape: Int = url.unescape
+  let v_url_escape: Int = url.escape
+  let v_url_parse: Int = url.parse
+  let v_url_with_query: Int = url.with_query
+}

@@ -1,0 +1,6 @@
+import url
+import option
+import string
+fn main() {
+  println(url.escape((string.from_char_code(0) |> option.unwrap_or(""))))
+}

@@ -1,0 +1,11 @@
+import url
+fn main() {
+  match url.unescape("%2F") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+  match url.unescape("%2f") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+}

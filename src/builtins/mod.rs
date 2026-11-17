@@ -14,7 +14,6 @@ pub(crate) mod crypto;
 pub(crate) mod csv;
 pub(crate) mod data;
 pub(crate) mod decode;
-pub(crate) mod encoding;
 pub mod http;
 pub(crate) mod io;
 pub(crate) mod json;

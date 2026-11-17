@@ -387,20 +387,23 @@ Returned by `crypto.random_bytes`.
 | `Other(String)` | message | the OS CSPRNG failed |
 > hover 82:20
 ```silt
-type encoding.EncodingError {
-  InvalidPercent(String),
-  InvalidUtf8(String),
+type url.UrlError {
+  Invalid(String, Int),
+  InvalidPart(String),
 }
 ```
 
 ---
 
-Returned by `encoding.url_decode` and `encoding.form_decode`.
+Returned by `url.parse`, `url.resolve`, `url.unescape` and
+`url.decode_form` for a text that is no URL or no escaped text, and by the
+`with_` functions that check their part. It never holds the text it was
+given, which may hold a password.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `InvalidPercent(String)` | what and where | a `%` that two hex digits do not follow |
-| `InvalidUtf8(String)` | where | decoded bytes are not valid UTF-8 |
+| `Invalid(String, Int)` | what is wrong, and the character where: counted from 0, as `string.slice` counts; the text's length when it ends too early | the text is no URL, or no escaped text |
+| `InvalidPart(String)` | what is wrong | a part a `with_` function was given that the URL cannot hold |
 > hover 83:16
 ```silt
 type uuid.UuidError {
