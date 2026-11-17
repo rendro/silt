@@ -212,6 +212,7 @@ pub(crate) enum Parts<'a> {
 impl<'a> Iterator for Parts<'a> {
     type Item = &'a Type;
 
+    #[inline]
     fn next(&mut self) -> Option<&'a Type> {
         match self {
             Parts::Boxed(first, second) => first.take().or_else(|| second.take()),
@@ -224,6 +225,7 @@ impl Container {
     /// The types the container is made of, in order: the element of a
     /// list, a set or a channel; the key, then the value, of a map; the
     /// elements of a tuple.
+    #[inline]
     pub(crate) fn parts(&self) -> Parts<'_> {
         match self {
             Container::List(t) | Container::Set(t) | Container::Channel(t) => {
@@ -236,6 +238,7 @@ impl Container {
 
     /// The head of the container's type constructor (the table
     /// `CONTAINERS`); `None` for a tuple, which has none.
+    #[inline]
     pub(crate) fn head(&self) -> Option<Head> {
         match self {
             Container::List(_) => Some(Head::List),
@@ -257,6 +260,7 @@ impl Container {
 
     /// The same container of `f` of each part, the parts taken in the
     /// order [`Container::parts`] gives them.
+    #[inline]
     pub(crate) fn map_parts(&self, mut f: impl FnMut(&Type) -> Type) -> Container {
         match self {
             Container::List(t) => Container::List(Box::new(f(t))),
@@ -272,6 +276,7 @@ impl Container {
 
     /// The parts of `self` and of `other`, side by side, when the two are
     /// one kind of container (and tuples of one length); `None` when not.
+    #[inline]
     pub(crate) fn zip_parts<'a>(
         &'a self,
         other: &'a Container,
