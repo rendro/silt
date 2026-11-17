@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A bound that names no trait (here a variant of the module) is reported
+-- at the name in the `where` clause, of a function and of an impl, not at
+-- the whole declaration (audit R9, review rv-o8 N6).
+type T { Foo(Int), Bar }
+
+trait Loud {
+  fn loud(self) -> String
+}
+
+fn u(x: a) -> Int where a: Foo { 1 }
+
+trait Loud for List(a) where a: Bar {
+  fn loud(self) -> String { "x" }
+}
+
+fn main() {
+  println((u(1), Foo(2), Bar))
+}
