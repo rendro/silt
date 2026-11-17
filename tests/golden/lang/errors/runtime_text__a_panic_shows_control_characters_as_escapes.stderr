@@ -1,0 +1,6 @@
+error[runtime]: panic: a\rb\u{1b}[31mred
+ --> runtime_text__a_panic_shows_control_characters_as_escapes.silt:10:3
+    |
+ 10 |   panic("a\rb\u{1b}[31mred\nnext\tcolumn")
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: a\rb\u{1b}[31mred
+  = note: next\tcolumn

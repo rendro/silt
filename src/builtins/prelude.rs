@@ -40,6 +40,12 @@ pub(crate) fn print_to(
 /// any print is: a `task.deadline` around it, or a cancel of its task,
 /// ends it between two pieces; what is written then stays written (a
 /// part of the text), and the prints behind it go on.
+///
+/// The print takes its turn first, with an empty first piece, and the
+/// thread that makes its text is started when the turn has come: a long
+/// print that waits behind another holds no thread and no piece. (Each
+/// started its thread at once, which then waited with the pieces it had
+/// made: a hundred long prints at once held a hundred threads.)
 pub(crate) fn print_in_pieces(
     vm: &mut Vm,
     stream: Stream,
@@ -47,6 +53,53 @@ pub(crate) fn print_in_pieces(
     newline: bool,
     write: crate::vm::show::Writer,
 ) -> Result<Step, VmError> {
+    let end = vm.runtime.io.begin_stream();
+    let scheduler = vm.scheduler().clone();
+    let turn = Turn {
+        end,
+        stream,
+        call,
+        newline,
+        write,
+    };
+    match (vm.runtime.io).print_piece(&turn.end, stream, String::new(), &scheduler) {
+        Printed::Queued => make_pieces(vm, turn),
+        Printed::Waits(room) => {
+            let wait = Wait::new(vec![Arm::Cell(room)]);
+            let mut turn = Some(turn);
+            Ok(vm.park(call, wait, move |vm, _| match turn.take() {
+                Some(turn) => make_pieces(vm, turn),
+                None => Ok(Step::Done(Value::Unit)),
+            }))
+        }
+        Printed::Failed(why) => match stream {
+            Stream::Stdout => Err(VmError::new(format!("cannot write to stdout: {why}"))),
+            Stream::Stderr => Ok(Step::Done(Value::Unit)),
+        },
+    }
+}
+
+/// A print in pieces whose turn has come or is awaited
+/// ([`print_in_pieces`]): what its thread is started with.
+struct Turn {
+    /// Lets the prints behind it go on when it is dropped.
+    end: crate::vm::StreamEnd,
+    stream: Stream,
+    call: &'static str,
+    newline: bool,
+    write: crate::vm::show::Writer,
+}
+
+/// Start the thread that makes the text of the print `turn`, whose turn
+/// has come, and give its pieces to the writer.
+fn make_pieces(vm: &mut Vm, turn: Turn) -> Result<Step, VmError> {
+    let Turn {
+        end,
+        stream,
+        call,
+        newline,
+        write,
+    } = turn;
     /// The pieces of a text, each sent when it is full, and then
     /// `None`: the text is at its end.
     struct Pieces {
@@ -105,7 +158,7 @@ pub(crate) fn print_in_pieces(
     }
     let printing = Printing {
         pieces: receive,
-        end: vm.runtime.io.begin_stream(),
+        end,
         stream,
         call,
     };
@@ -170,7 +223,7 @@ builtins! {
     }
 
     fn panic(vm, message: &Value) -> Result<Step, VmError> {
-        vm.show(message, |_, text| Err(VmError::new(format!("panic: {text}"))))
+        vm.show(message, |_, text| Err(VmError::panic(&text)))
     }
 }
 

@@ -101,6 +101,25 @@ impl VmError {
         }
     }
 
+    /// The program's `panic(text)`: `panic: <text>`. The text is the
+    /// program's, and the report is silt's: each of its lines is shown by
+    /// the display rule of silt's messages (`git::escape_for_display`),
+    /// each control character (a carriage return, a tab, ESC), unusual
+    /// space or invisible character as an escape (`\r`, `\u{1b}`). So it
+    /// cannot move the cursor, colour or clear the terminal, in every report
+    /// of it (`silt run`, `silt test`, the REPL, a joined task, a task
+    /// nobody joined). Its line ends stay: a panic's text may go on for
+    /// several lines, the first the headline and the others a note under it
+    /// (`VmError::to_diagnostic`). `main`'s `Err` is the program's own
+    /// message and keeps its text (`VmError::of_a_returned_err`).
+    pub(crate) fn panic(text: &str) -> Self {
+        let lines: Vec<String> = text
+            .split('\n')
+            .map(crate::git::escape_for_display)
+            .collect();
+        VmError::new(format!("panic: {}", lines.join("\n")))
+    }
+
     /// The step budget of the program is used up: what still runs of
     /// it ends with this.
     pub(crate) fn budget_used_up() -> Self {

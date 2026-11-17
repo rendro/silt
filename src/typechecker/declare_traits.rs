@@ -1635,7 +1635,12 @@ impl TypeChecker {
                         let ty = self.resolve_type_expr(te, &mut names);
                         // (What `check_supertrait_arity` reports in its own
                         // words is not reported again here; what else is
-                        // wrong in the argument is, as in any type.)
+                        // wrong in the argument is, as in any type. An
+                        // argument the resolver had nothing to say of
+                        // needs no look.)
+                        if self.errors.len() == reported {
+                            return ty;
+                        }
                         let mut hidden = Vec::new();
                         no_supertrait_parts(te, &params, &mut hidden);
                         if !hidden.is_empty() {
@@ -1656,6 +1661,9 @@ impl TypeChecker {
                 _ => None,
             })
             .collect();
+        if no_type.is_empty() {
+            return resolved;
+        }
         (resolved.into_iter())
             .map(|args| {
                 (args.iter())
@@ -1959,7 +1967,10 @@ impl TypeChecker {
             .filter(|(_, arg)| is_hole(arg))
             .map(|(i, _)| i)
             .collect();
-        let trait_name = self.impl_trait_name(ti);
+        // (The trait's name for a message is made where one is written:
+        // made for every impl, it looked at every trait of the session for
+        // one of the same name, and n modules with an impl each took time
+        // n squared.)
         let head = resolve(ti.target_type);
         let arity = self.type_arity(written).or_else(|| {
             builtin_type_name(written)
@@ -2010,6 +2021,7 @@ impl TypeChecker {
             if holes.is_empty() {
                 return true;
             }
+            let trait_name = self.impl_trait_name(ti);
             // Each `_` a name the header does not use yet.
             let mut letters = ('a'..='z')
                 .map(|c| c.to_string())
@@ -2027,6 +2039,7 @@ impl TypeChecker {
             self.error_help(Code::KindMismatch, (message, Some(help)), ti.header_span);
             return false;
         }
+        let trait_name = self.impl_trait_name(ti);
         match holes.as_slice() {
             [0] => self.header_rest_are_variables(ti, &trait_name, &head),
             // No `_`, or one more after the first: the header with `_`

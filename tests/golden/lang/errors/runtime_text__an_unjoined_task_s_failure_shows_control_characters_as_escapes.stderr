@@ -1,0 +1,6 @@
+error[runtime]: a task failed and was never joined: panic: bell\u{7} and back\u{8}space
+ --> runtime_text__an_unjoined_task_s_failure_shows_control_characters_as_escapes.silt:7:27
+   |
+ 7 |   let _ = task.spawn { -> panic("bell\u{7} and back\u{8}space") }
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a task failed and was never joined: panic: bell\u{7} and back\u{8}space
+  = help: the task was spawned at runtime_text__an_unjoined_task_s_failure_shows_control_characters_as_escapes.silt:7:11: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
