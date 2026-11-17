@@ -245,13 +245,38 @@ impl TypeChecker {
             .or_else(|| self.refused_own_trait(ti))
     }
 
-    /// The trait of the module, refused at its declaration (`trait Int`),
-    /// that the impl `ti` names: it takes no name, but its impls are
+    /// The trait refused at its declaration (`trait Int`) that the impl
+    /// `ti` names: the module's own, one it imports by item (whose name
+    /// it takes into its own refused names), or one of a module it names
+    /// (`trait mi.Int for Box`). It takes no name, but its impls are
     /// checked as any trait's (`register_trait_decl_user`).
     pub(super) fn refused_own_trait(&self, ti: &TraitImpl) -> Option<TraitKey> {
-        (ti.trait_module.is_none() && self.refused_traits.contains(&ti.trait_name))
-            .then(|| self.own_traits.get(&ti.trait_name).copied())
-            .flatten()
+        let name = ti.trait_name;
+        let of_module = |module: crate::defs::ModuleId| {
+            (self.tables.refused_trait_keys.iter())
+                .filter(|k| k.name == name)
+                .find(|k| self.def(k.id.0).is_some_and(|d| d.module == module))
+                .copied()
+        };
+        match ti.trait_module {
+            None if self.refused_traits.contains(&name) => {
+                (self.own_traits.get(&name).copied()).or_else(|| {
+                    // (Imported by item: the one refused trait of that name
+                    // of another module.)
+                    let mut others = (self.tables.refused_trait_keys.iter())
+                        .filter(|k| k.name == name)
+                        .filter(|k| self.def(k.id.0).is_some_and(|d| d.module != self.module));
+                    match (others.next(), others.next()) {
+                        (Some(k), None) => Some(*k),
+                        _ => None,
+                    }
+                })
+            }
+            None => None,
+            Some(q) => (self.module_spelled.iter())
+                .find(|(_, spelled)| **spelled == q.name)
+                .and_then(|(module, _)| of_module(*module)),
+        }
     }
 
     /// The type variable a `type a` parameter introduces (or names, when

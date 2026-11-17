@@ -1113,6 +1113,8 @@ impl TypeChecker {
             );
             self.refused_traits.insert(t.name);
             (self.tables.refused_trait_methods).extend(t.methods.iter().map(|m| (t.name, m.name)));
+            let key = self.own_trait(t.name);
+            self.tables.refused_trait_keys.insert(key);
             // The trait takes no name, but it is declared all the same
             // (under its key, which no name of the module reaches): its
             // default methods and its impls are checked as any trait's,
@@ -3092,6 +3094,7 @@ impl TypeChecker {
                         clashes.dedup();
                         match clashes.is_empty() {
                             false => self.method_variable_is_the_impls(ti, method, &clashes, own),
+                            ),
                             true => self.report_mismatch(mismatch, method.span),
                         }
                         written
