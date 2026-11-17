@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- The same with a known trait beside it (`Display + Nope3`): the unknown one
+-- is reported (audit R9, review rv-o9 N4).
+trait Tm {
+  fn m(self, x: b) -> Int where b: Display + Nope3
+}
+
+fn main() { println(1) }

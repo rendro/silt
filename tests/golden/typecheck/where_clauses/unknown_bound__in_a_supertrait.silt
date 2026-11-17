@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A supertrait that names no trait: reported at the supertrait's name, not
+-- at the whole declaration (audit R9, review rv-o9 N4).
+trait Tm: Nope3 {
+  fn m(self) -> Int
+}
+
+fn main() { println(1) }

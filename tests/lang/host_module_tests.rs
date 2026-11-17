@@ -1506,3 +1506,19 @@ fn a_host_signature_that_names_a_parameter_twice_is_refused() {
         );
     }
 }
+
+/// A bound in a host function's signature that names no trait is
+/// reported, as in a program's function (audit R9, review rv-o9 N4).
+#[test]
+fn an_unknown_bound_in_a_host_signature_is_reported() {
+    let host = HostModule::new("h").function("fn f(x: a) -> Int where a: Nope3", |_: &HostCall| {
+        Ok(Value::Int(1))
+    });
+    let errors = errors("import h\nfn main() { let _ = h.f(1) }", host);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message() == "unknown trait 'Nope3' in where clause for 'a'"),
+        "{errors:?}"
+    );
+}

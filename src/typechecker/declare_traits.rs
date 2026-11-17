@@ -1314,7 +1314,7 @@ impl TypeChecker {
                 None => self.error(
                     Code::UnknownTrait,
                     format!("trait '{}' lists unknown supertrait '{}'", t.name, r.name),
-                    t.span,
+                    r.span,
                 ),
             }
         }
@@ -1464,7 +1464,8 @@ impl TypeChecker {
             known_vars.extend(own.iter().map(|(v, _)| *v));
             var_names.extend(own);
             // The method's own bounds. (An unknown trait in one is
-            // reported where a body is checked against the method.)
+            // reported here for a method without a body; a default
+            // method's is reported where its body is checked.)
             let mut bounds: Vec<Pred> = Vec::new();
             for wc in &m.where_clauses {
                 // (A trait method's bound on a variable its signature
@@ -1479,15 +1480,22 @@ impl TypeChecker {
                 // (A trait of the module declared further down is known
                 // here as one declared above: the order of declarations
                 // does not matter.)
-                let (Some(Type::Var(tv)), Some(bound)) = (
-                    param_map.get(&wc.type_param).cloned(),
-                    self.named_trait(wc.trait_res, wc.trait_name)
-                        .filter(|bound| {
-                            self.tables.traits.contains_key(bound)
-                                || *bound == key
-                                || self.own_traits.values().any(|own| own == bound)
-                        }),
-                ) else {
+                let bound = self
+                    .named_trait(wc.trait_res, wc.trait_name)
+                    .filter(|bound| {
+                        self.tables.traits.contains_key(bound)
+                            || *bound == key
+                            || self.own_traits.values().any(|own| own == bound)
+                    });
+                if bound.is_none()
+                    && m.is_signature_only
+                    && wc.trait_res != Some(crate::defs::Res::Error)
+                {
+                    self.unknown_bound(wc);
+                }
+                let (Some(Type::Var(tv)), Some(bound)) =
+                    (param_map.get(&wc.type_param).cloned(), bound)
+                else {
                     continue;
                 };
                 if !self.bound_fits_kind(
@@ -1550,7 +1558,12 @@ impl TypeChecker {
             .param_where_clauses
             .iter()
             .filter_map(|wc| {
-                let bound = self.named_trait(wc.trait_res, wc.trait_name)?;
+                let Some(bound) = self.named_trait(wc.trait_res, wc.trait_name) else {
+                    if wc.trait_res != Some(crate::defs::Res::Error) {
+                        self.unknown_bound(wc);
+                    }
+                    return None;
+                };
                 let args: Vec<Type> = (wc.trait_args.iter())
                     .map(|te| self.resolve_type_expr(te, &mut param_names))
                     .collect();
@@ -3261,6 +3274,21 @@ impl TypeChecker {
                 self.impl_trait_name(ti),
                 method.name
             )),
+        );
+    }
+
+    /// The error of the bound `wc` that names no trait, in a `where`
+    /// clause of a trait's header, of a method the trait declares without
+    /// a body or of a host function, worded as a function's: at the
+    /// trait's name.
+    pub(super) fn unknown_bound(&mut self, wc: &WhereClause) {
+        self.error(
+            Code::UnknownTrait,
+            format!(
+                "unknown trait '{}' in where clause for '{}'",
+                wc.trait_name, wc.type_param
+            ),
+            wc.trait_name_span,
         );
     }
 

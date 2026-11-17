@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A default method's bound that names no trait: reported once, at the name
+-- (audit R9, review rv-o9 N4).
+trait Tm {
+  fn m(self, x: b) -> Int where b: Nope3 { 1 }
+}
+
+fn main() { println(1) }

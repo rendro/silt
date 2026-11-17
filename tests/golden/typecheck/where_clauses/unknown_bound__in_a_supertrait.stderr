@@ -1,0 +1,5 @@
+error[type]: trait 'Tm' lists unknown supertrait 'Nope3'
+ --> unknown_bound__in_a_supertrait.silt:5:11
+   |
+ 5 | trait Tm: Nope3 {
+   |           ^^^^^ trait 'Tm' lists unknown supertrait 'Nope3'

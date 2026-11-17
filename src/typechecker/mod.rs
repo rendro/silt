@@ -1760,6 +1760,18 @@ impl TypeChecker {
                     {
                         self.frame_owner = Some(unused::FrameOwner::TopLevel(f.name));
                         self.check_body(f, sig, env);
+                    } else if self.signatures_only {
+                        // (A host function has no body to check its
+                        // bounds with: a bound that names no trait is
+                        // reported here.)
+                        for wc in &f.where_clauses {
+                            let known = self
+                                .named_trait(wc.trait_res, wc.trait_name)
+                                .is_some_and(|t| self.tables.traits.contains_key(&t));
+                            if !known && wc.trait_res != Some(crate::defs::Res::Error) {
+                                self.unknown_bound(wc);
+                            }
+                        }
                     }
                 }
                 (
