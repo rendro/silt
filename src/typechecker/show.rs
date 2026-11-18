@@ -615,9 +615,15 @@ impl TypeChecker {
         }
         // (A URL written as text where a Url is taken.)
         if matches!(got, Type::String) && expected.is_builtin("Url") {
+            // (With the import to add where the file has none.)
+            let module = crate::defs::ModuleId::builtin("url");
+            let after = module
+                .filter(|module| self.spelled_module(*module).is_none())
+                .and_then(|module| self.import_path(module))
+                .map_or(String::new(), |path| format!(" (after `import {path}`)"));
             return Some(format!(
-                "a URL is a `{}`: read one with `{}(text)`, or build one with the url \
-                 module, and pass it on",
+                "a URL is a `{}`: read one with `{}(text)`{after}, or build one with the \
+                 url module, and pass it on",
                 self.written_builtin("url.Url"),
                 self.written_builtin("url.parse")
             ));

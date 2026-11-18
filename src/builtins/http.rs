@@ -940,7 +940,7 @@ fn do_http_request_on(
         // above or none, and without its fragment, which is no server's.
         let sent_url = url.with_user("").with_password("").with_fragment("");
         if sent_url.as_str().len() > URL_MAX {
-            return invalid_url(url.to_string());
+            return invalid_url(cut_short(&url.to_string()));
         }
         let result = send_request(agent, method, sent_url.as_str(), body, &sent);
         let shown = url.to_string();
@@ -987,6 +987,16 @@ fn do_http_request_on(
 /// longer one.
 #[cfg(feature = "http")]
 const URL_MAX: usize = 65_534;
+
+/// A URL too long to send, as an `InvalidUrl` shows it: its first 200
+/// characters and how long it is, not 65 KB of text.
+#[cfg(feature = "http")]
+fn cut_short(shown: &str) -> String {
+    match shown.char_indices().nth(200) {
+        Some((at, _)) => format!("{}... ({} bytes)", &shown[..at], shown.len()),
+        None => shown.to_string(),
+    }
+}
 
 /// `Err(InvalidUrl(text))`.
 #[cfg(feature = "http")]
@@ -2875,11 +2885,10 @@ mod http_error_tests {
     fn a_url_past_the_transport_s_limit_is_invalid_url() {
         let long = format!("http://user:secret@127.0.0.1:9/{}", "a".repeat(65_534));
         let got = failure(&do_http_get(&long));
-        assert!(
-            got.starts_with("InvalidUrl(http://***@127.0.0.1:9/aaa"),
-            "{}",
-            &got[..60]
-        );
+        // (Cut short: its first 200 characters, and its length as shown.)
+        let shown = format!("http://***@127.0.0.1:9/{}", "a".repeat(65_534));
+        let want = format!("InvalidUrl({}... ({} bytes))", &shown[..200], shown.len());
+        assert_eq!(got, want);
         let just = format!("http://127.0.0.1:9/{}", "a".repeat(65_534 - 19));
         assert_eq!(just.len(), 65_534);
         let got = failure(&do_http_get(&just));
