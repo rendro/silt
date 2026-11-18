@@ -851,15 +851,17 @@ fn a_git_url_s_user_and_password_are_in_no_message() {
     let _ = fs::remove_dir_all(&ws);
 }
 
-/// What `silt check` and `silt update` print, all of it, shows nothing
-/// of the password of a git dependency's URL: a password with a space or
-/// a tab (refused, the line of silt.toml under the caret masked to its
-/// closing quote), the scp form with a password (`user:word@host:path`),
-/// a URL with its `//` left out (refused), in a double- and a
-/// single-quoted string. The `git` on PATH is a stand-in that repeats its
-/// arguments and fails: no network. FAIL before: the shown line held the
-/// password with a space; the scp form and the mistyped URL were shown
-/// whole.
+/// What `silt check`, `silt update` and `silt add` print, all of it,
+/// shows nothing of the password of a git dependency's URL: a password
+/// with a space or a tab (refused, the line of silt.toml under the caret
+/// masked to its closing quote; or taken, in a `file://` URL, and shown
+/// in the git command line and git's output), the scp form with a
+/// password (`user:word@host:path`), a URL with its `//` left out
+/// (refused), in a double- and a single-quoted string. The `git` on PATH
+/// is a stand-in that repeats its arguments on stderr and fails: no
+/// network. FAIL before: the shown line held the password with a space;
+/// the scp form and the mistyped URL were shown whole; the command line
+/// and `cannot reach` cut a `file://` URL at its space.
 #[cfg(unix)]
 #[test]
 fn no_output_of_a_command_shows_the_password_of_a_git_url() {
@@ -879,6 +881,9 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         format!("HTTP:/user:{marker}@example.com/pkg.git"),
         "https://user:S3CR/3TXYZ@example.com/pkg.git".to_string(),
         "https://user:S3CR\"3TXYZ@example.com/pkg.git".to_string(),
+        // Accepted with a space in the password: they reach git.
+        "file://user:S3CR 3TXYZ@example.com/srv/pkg.git".to_string(),
+        "file://S3CR 3TXYZ@example.com/srv/pkg.git".to_string(),
     ];
     let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
     let ws = fresh_workspace("password_output");
@@ -906,11 +911,18 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
             let _ = fs::remove_dir_all(&app);
             let dep = format!("lib = {{ git = {value}, tag = \"v1\" }}");
             write_package(&app, "app", &[dep], "main.silt", "fn main() {}\n");
-            for command in ["check", "update"] {
+            for command in ["check", "update", "add"] {
+                let adder = ws.join("adder");
+                let _ = fs::remove_dir_all(&adder);
+                write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
                 let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
-                cmd.arg(command)
-                    .current_dir(&app)
-                    .env("XDG_CACHE_HOME", ws.join("cache"))
+                match command {
+                    "add" => cmd
+                        .args(["add", "lib", "--git", url, "--tag", "v1"])
+                        .current_dir(&adder),
+                    _ => cmd.arg(command).current_dir(&app),
+                };
+                cmd.env("XDG_CACHE_HOME", ws.join("cache"))
                     .env("PATH", &path);
                 isolate_git(&mut cmd, &ws);
                 let out = cmd.output().expect("failed to spawn silt binary");

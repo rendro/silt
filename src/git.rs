@@ -149,15 +149,17 @@ impl fmt::Display for GitError {
             }
             GitError::RefNotFound { url, ref_spec } => write!(
                 f,
-                "git ref not found: {} `{}` in {url}",
+                "git ref not found: {} `{}` in {}",
                 ref_spec.kind(),
-                ref_spec.as_ref_string()
+                ref_spec.as_ref_string(),
+                display_url(url)
             ),
             GitError::InvalidInput(message) => write!(f, "{message}"),
             GitError::AmbiguousRev { url, rev } => write!(
                 f,
-                "rev `{rev}` is the prefix of more than one commit in {url}; \
-                 write the full commit id"
+                "rev `{rev}` is the prefix of more than one commit in {}; \
+                 write the full commit id",
+                display_url(url)
             ),
             GitError::Symlink { path } => write!(
                 f,
@@ -669,11 +671,17 @@ fn is_path_to_show_whole(url: &str) -> bool {
 /// `https://***@host/repo.git`, `***@host:path`), then by the display
 /// rule ([`escape_for_display`]). The files themselves keep the URL.
 pub(crate) fn display_url(url: &str) -> String {
-    let hidden = match userinfo_place(url) {
+    escape_for_display(&hide_userinfo(url))
+}
+
+/// `url` with its user and password ([`userinfo_place`]) given as `***`,
+/// and nothing escaped: one value, whatever it holds (a space in a
+/// password of a `file://` URL included).
+fn hide_userinfo(url: &str) -> String {
+    match userinfo_place(url) {
         Some(place) => format!("{}***{}", &url[..place.start], &url[place.end..]),
         None => url.to_string(),
-    };
-    escape_for_display(&hidden)
+    }
 }
 
 /// `text` (a git command line, git's output, a message that quotes a
@@ -1361,7 +1369,7 @@ fn run_git(args: &[&str]) -> Result<String, GitError> {
             stderr = hide_repeated_userinfo(arg, &stderr);
         }
         return Err(GitError::CommandFailed {
-            command: format_command("git", &full_args),
+            command: shown_command(&full_args),
             stderr,
             exit_code: output.status.code(),
         });
@@ -1369,22 +1377,35 @@ fn run_git(args: &[&str]) -> Result<String, GitError> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// The git command line `git <args>` as a message shows it: each
+/// argument hidden as one value ([`hide_userinfo`]), then joined. (Joined
+/// first, a space in a password would cut the URL in two words.)
+fn shown_command(args: &[&str]) -> String {
+    let shown: Vec<String> = args.iter().map(|arg| hide_userinfo(arg)).collect();
+    format_command("git", &shown.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
 /// `text`, what git wrote when it was given the URL `url`, with the
-/// password of `url` ([`userinfo_place`]) hidden wherever git repeats
-/// it, also apart from the URL: with its user, or alone. (Git takes
-/// `user:word@host:path` for the host `user` and the path
-/// `word@host:path`, and may name that path.) A user alone is left: git
-/// names itself `git`, as many a user is named.
+/// user and password of `url` ([`userinfo_place`]) hidden wherever git
+/// repeats them: the URL as written, whole (a space in a password
+/// included); the user and password before an `@` of another form of it
+/// (`//user@host`); and the password apart from the URL, with its user
+/// or alone. (Git takes `user:word@host:path` for the host `user` and the
+/// path `word@host:path`, and may name that path.) A user alone with no
+/// `@` after it is left: git names itself `git`, as many a user is named.
 fn hide_repeated_userinfo(url: &str, text: &str) -> String {
     let Some(place) = userinfo_place(url) else {
         return text.to_string();
     };
     let userinfo = &url[place];
+    let text = text
+        .replace(url, &hide_userinfo(url))
+        .replace(&format!("{userinfo}@"), "***@");
     match userinfo.split_once(':') {
         Some((_, password)) if !password.is_empty() => {
             text.replace(userinfo, "***").replace(password, "***")
         }
-        _ => text.to_string(),
+        _ => text,
     }
 }
 
@@ -1729,29 +1750,61 @@ mod tests {
         urls.push(format!("ssh:user:{marker}@example.com:team/pkg.git"));
         urls.push(format!("u:{marker}@example.com:team/pkg.git"));
         urls.push(format!("https://u:{marker}@example.com/x.git"));
+        // Accepted with a space in the password: a `file://` URL with an
+        // authority (and on Windows the scp form with a one-letter user).
+        for fault in ["S3CR 3TXYZ", "S3 CR3 TXYZ", " S3CR3TXYZ "] {
+            urls.push(format!("file://user:{fault}@example.com/srv/x.git"));
+            urls.push(format!("file://{fault}@example.com/srv/x.git"));
+            urls.push(format!("u:{fault}@example.com:team/pkg.git"));
+        }
+        assert_eq!(
+            validate_git_url("file://user:S3CR 3TXYZ@example.com/srv/x.git"),
+            Ok(())
+        );
+        assert!(is_local_git_url_on(
+            "u:S3CR 3TXYZ@example.com:team/pkg.git",
+            true
+        ));
         let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
         let mut refused = 0;
         for url in &urls {
             // What a command prints of it: its error, or the git command
             // line and git's output that repeat it; and the line of
             // silt.toml that holds it.
-            let mut shown = match validate_git_url(url) {
-                Err(e) => {
-                    refused += 1;
-                    vec![e.to_string()]
-                }
-                Ok(()) => vec![
-                    GitError::CommandFailed {
-                        command: format!("git ls-remote -- {url} HEAD"),
-                        stderr: hide_repeated_userinfo(
-                            url,
-                            &format!("fatal: '{url}' and '{}'\n", url.split_once(':').unwrap().1),
+            let mut shown = Vec::new();
+            if let Err(e) = validate_git_url(url) {
+                refused += 1;
+                shown.push(e.to_string());
+            }
+            // The command and git's output, as run_git makes them, for
+            // every URL: one that is refused here may be taken on another
+            // platform (`u:pa ss@host:path` is a local path on Windows).
+            shown.push(
+                GitError::CommandFailed {
+                    command: shown_command(&["ls-remote", "--", url, "HEAD"]),
+                    stderr: hide_repeated_userinfo(
+                        url,
+                        &format!(
+                            "fatal: '{url}' and '{}'\nusage: git ls-remote -- {url} HEAD\n",
+                            url.split_once(':').unwrap().1
                         ),
-                        exit_code: Some(128),
-                    }
-                    .to_string(),
-                ],
-            };
+                    ),
+                    exit_code: Some(128),
+                }
+                .to_string(),
+            );
+            for ref_error in [
+                GitError::RefNotFound {
+                    url: url.clone(),
+                    ref_spec: GitRef::Tag("v1".to_string()),
+                },
+                GitError::AmbiguousRev {
+                    url: url.clone(),
+                    rev: "abc1234".to_string(),
+                },
+            ] {
+                shown.push(ref_error.to_string());
+            }
             shown.push(mask_manifest_line(&format!(
                 "lib = {{ git = {}, tag = \"v1\" }}",
                 toml_basic_string(url)
@@ -1864,8 +1917,23 @@ mod tests {
             "fatal: '***@host:team/r.git' does not appear to be a git repository"
         );
         assert_eq!(
-            hide_repeated_userinfo("ssh://git@h/r.git", "fatal: git-upload-pack"),
-            "fatal: git-upload-pack"
+            hide_repeated_userinfo("ssh://git@h/r.git", "fatal: git-upload-pack git@h"),
+            "fatal: git-upload-pack ***@h"
+        );
+        // A space in the password: the URL is hidden whole where git
+        // repeats it, and so is the command line, argument by argument.
+        let url = "file://user:S3 X@h/srv/r.git";
+        assert_eq!(
+            hide_repeated_userinfo(url, &format!("fatal: '{url}': no")),
+            "fatal: 'file://***@h/srv/r.git': no"
+        );
+        assert_eq!(
+            shown_command(&["ls-remote", "--", url, "HEAD"]),
+            "git ls-remote -- file://***@h/srv/r.git HEAD"
+        );
+        assert_eq!(
+            shown_command(&["ls-remote", "--", "u:pa ss@h:t/r.git", "HEAD"]),
+            "git ls-remote -- ***@h:t/r.git HEAD"
         );
     }
 
