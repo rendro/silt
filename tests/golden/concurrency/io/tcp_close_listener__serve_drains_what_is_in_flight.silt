@@ -16,6 +16,7 @@ import string
 import task
 import tcp
 import time
+import url
 
 fn slow(_req: http.Request) -> http.Response {
   time.sleep(time.ms(500))
@@ -55,7 +56,7 @@ fn main() {
     "serve returned"
   }
   let client = task.spawn { ->
-    match http.get("http://127.0.0.1:{port}/") {
+    match http.get(url_of("http://127.0.0.1:{port}/")) {
       Ok(r) -> "{r.status} {bytes.to_string(r.body) |> result.unwrap_or("")}, connection {map.get(r.headers, "connection") |> option.unwrap_or("(none)")}"
       Err(e) -> "{e}"
     }
@@ -106,7 +107,7 @@ fn main() {
     }
   }
   let dclient = task.spawn { ->
-    match http.get("http://127.0.0.1:{dport}/") {
+    match http.get(url_of("http://127.0.0.1:{dport}/")) {
       Ok(r) -> "{r.status}"
       Err(e) -> "{e}"
     }
@@ -117,3 +118,9 @@ fn main() {
   println(task.join(cut))
 }
 
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
+}

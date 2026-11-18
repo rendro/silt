@@ -11,6 +11,7 @@ import list
 import map
 import task
 import tcp
+import url
 
 fn answer(req: http.Request) -> http.Response {
   let status = match req.path {
@@ -30,7 +31,7 @@ fn main() {
   let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, answer) }
   list.each([(http.HEAD, "/head"), (http.GET, "/204"), (http.GET, "/304")]) { (method, path) ->
-    match http.request(method, "http://127.0.0.1:{port}{path}", bytes.empty(), #{}) {
+    match http.request(method, url_of("http://127.0.0.1:{port}{path}"), bytes.empty(), #{}) {
       Ok(resp) -> {
         let named = ["content-encoding", "content-length", "etag"] |> list.filter { name -> map.contains(resp.headers, name) }
         println("{method} {path}: {resp.status}, {bytes.length(resp.body)} bytes, of the three headers: {named}")
@@ -39,4 +40,11 @@ fn main() {
     }
   }
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

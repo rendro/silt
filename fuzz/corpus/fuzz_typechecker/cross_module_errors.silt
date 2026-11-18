@@ -15,11 +15,12 @@ import http
 import io
 import json
 import result
+import url
 
 -- Shape of the JSON document we'll parse.
 
 type Config {
-  api_url: String,
+  api_url: url.Url,
   api_key: String,
   retries: Int,
 }

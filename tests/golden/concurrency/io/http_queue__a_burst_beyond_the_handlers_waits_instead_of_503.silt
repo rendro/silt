@@ -9,6 +9,7 @@ import list
 import task
 import tcp
 import time
+import url
 
 fn slow(_req: http.Request) -> http.Response {
   time.sleep(time.ms(20))
@@ -21,7 +22,7 @@ fn main() {
   let server = task.spawn { -> http.serve(listener, slow) }
   let clients = list.map(1..300) { _ ->
     task.spawn { ->
-      match http.get("http://127.0.0.1:{port}/") {
+      match http.get(url_of("http://127.0.0.1:{port}/")) {
         Ok(r) -> r.status
         Err(_) -> 0
       }
@@ -32,4 +33,11 @@ fn main() {
   println("{ok} of {list.length(statuses)} answered 200")
   tcp.close_listener(listener)
   task.join(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

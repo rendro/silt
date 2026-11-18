@@ -2,12 +2,13 @@
 -- requires-feature: http
 -- A redirect's location is read by its form (RFC 3986): one with a scheme
 -- other than http or https (`file:`, `ftp:`, `mailto:`) is not followed,
--- and is `InvalidUrl` with the location (what stands before an `@` in it
--- hidden, as a user and a password are); `file:///etc/passwd` was taken
--- for a path and asked of the same server. A location with bytes a URL
--- cannot hold (a space, `é`, a byte that is no UTF-8) is followed with
--- those bytes percent-encoded, as browsers send them; it was handed back
--- as the 302 itself.
+-- and is `InvalidUrl` with the location (a user and password in it
+-- hidden: of a URL exactly, of a text that is no URL by the rule of
+-- messages, which hides what follows a `//`); `file:///etc/passwd` was taken
+-- for a path and asked of the same server. A location with characters a
+-- URL cannot hold (a space, `é`) is followed with them percent-encoded, as
+-- browsers send them; it was handed back as the 302 itself. A byte that is
+-- no UTF-8 (Latin-1) makes no URL (`url.resolve` refuses it): InvalidUrl.
 import bytes
 import http
 import list
@@ -16,6 +17,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn moved(location: Bytes) -> Bytes {
   let head = bytes.from_string("HTTP/1.1 302 Found\r\nConnection: close\r\nContent-Length: 0\r\nLocation: ")
@@ -38,7 +40,7 @@ fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let port = tcp.local_port(listener)
   let peer = task.spawn { ->
-    [1, 2, 3, 4, 5, 6, 7] |> list.each { _ ->
+    [1, 2, 3, 4, 5, 6] |> list.each { _ ->
       when let Ok(c) = tcp.accept(listener) else { return () }
       let head = tcp.read(c, 65536) |> result.unwrap_or(bytes.empty())
       let line = bytes.to_string(head) |> result.unwrap_or("") |> string.split("\r\n") |> list.first |> option.unwrap_or("")
@@ -53,10 +55,17 @@ fn main() {
   }
   ["/r-file", "/r-ftp", "/r-mailto", "/r-nonascii", "/r-latin1"] |> list.each { path ->
     println("GET {path}")
-    match http.get("http://127.0.0.1:{port}{path}") {
+    match http.get(url_of("http://127.0.0.1:{port}{path}")) {
       Ok(resp) -> println("  the client: {resp.status} {bytes.to_string(resp.body) |> result.unwrap_or("not text")}")
       Err(e) -> println("  the client: {e}")
     }
   }
   task.join(peer)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

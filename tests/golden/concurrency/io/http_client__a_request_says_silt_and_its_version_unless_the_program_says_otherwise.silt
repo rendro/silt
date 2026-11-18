@@ -15,6 +15,7 @@ import result
 import string
 import task
 import tcp
+import url
 
 fn answer(req: http.Request) -> http.Response {
   let agent = map.get(req.headers, "user-agent") |> option.unwrap_or("(none)")
@@ -47,9 +48,16 @@ fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, answer) }
-  let url = "http://127.0.0.1:{port}/"
-  println("get: {shown(http.get(url))}")
-  println("post: {shown(http.request(http.POST, url, bytes.from_string("x"), #{}))}")
-  println("own: {shown(http.request(http.GET, url, bytes.empty(), #{ "user-agent": "probe/1" }))}")
+  let link = "http://127.0.0.1:{port}/"
+  println("get: {shown(http.get(url_of(link)))}")
+  println("post: {shown(http.request(http.POST, url_of(link), bytes.from_string("x"), #{}))}")
+  println("own: {shown(http.request(http.GET, url_of(link), bytes.empty(), #{ "user-agent": "probe/1" }))}")
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

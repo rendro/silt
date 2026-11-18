@@ -14,11 +14,19 @@ import process
 import task
 import tcp
 import test
+import url
 
 fn test_handler_exits() {
   when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("listen") }
   let port = tcp.local_port(l)
   let s = task.spawn { -> http.serve(l) { _req -> process.exit(7) } }
-  let _ = http.get("http://127.0.0.1:{port}/")
+  let _ = http.get(url_of("http://127.0.0.1:{port}/"))
   task.cancel(s)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

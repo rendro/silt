@@ -501,8 +501,8 @@ pub(super) fn modules() -> Vec<Module> {
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError" => http::error_text,
             rows: [
-                f("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request", http::get).feature("http"),
-                f("fn request(method: Method, url: String, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
+                f("fn get(u: Url) -> Result(Response, HttpError)", "HTTP GET request", http::get).feature("http"),
+                f("fn request(method: Method, u: Url, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
                 f("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection", http::serve).feature("http"),
                 f("fn segments(path: String) -> List(String)", "Split URL path into segments", http::segments),
                 f("fn parse_query(query: String) -> Result(Map(String, List(String)), UrlError)", "Parse a URL query string into a multi-value map", http::parse_query),

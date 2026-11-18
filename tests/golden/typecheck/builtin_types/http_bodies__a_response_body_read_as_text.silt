@@ -5,10 +5,18 @@
 -- until the program has made text of it.
 import http
 import string
+import url
 
 fn main() {
-  match http.get("http://127.0.0.1:1/") {
+  match http.get(url_of("http://127.0.0.1:1/")) {
     Ok(resp) -> println(string.length(resp.body))
     Err(e) -> println("{e}")
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
   }
 }

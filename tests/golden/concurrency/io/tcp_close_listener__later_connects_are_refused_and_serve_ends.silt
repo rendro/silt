@@ -9,6 +9,7 @@ import http
 import task
 import tcp
 import time
+import url
 
 fn answer(_req: http.Request) -> http.Response {
   http.Response { status: 200, body: bytes.from_string("hi"), headers: #{} }
@@ -44,7 +45,7 @@ fn main() {
     http.serve(s, answer)
     "serve returned"
   }
-  match http.get("http://127.0.0.1:{sport}/") {
+  match http.get(url_of("http://127.0.0.1:{sport}/")) {
     Ok(r) -> println(r.status)
     Err(e) -> println(e)
   }
@@ -61,5 +62,12 @@ fn main() {
   match tcp.listen("127.0.0.1:{port}") {
     Ok(_) -> println("bound again")
     Err(e) -> println(e)
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
   }
 }

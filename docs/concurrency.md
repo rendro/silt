@@ -1231,7 +1231,7 @@ Linux.
 | `io.write_file(path, content)` | Always (file I/O) |
 | `io.read_line()` | Always (stdin) |
 | `io.read_stdin()`, `io.read_stdin_bytes()` | Always (stdin) |
-| `http.get(url)` | Always (network) |
+| `http.get(u)` | Always (network) |
 | `http.request(...)` | Always (network) |
 | `print`, `println`, `io.eprint`, `io.eprintln` | The output's writer holds 64 KiB that its reader has not taken yet -- resumes when there is room |
 

@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(feature = "http")]
 use std::time::Duration;
 
+#[cfg(feature = "http")]
+use super::typed;
 use super::typed::builtins;
 #[cfg(feature = "http")]
 use super::typed::{Arg, Bytes, Map, TcpListener, unsound};
@@ -20,6 +22,8 @@ use crate::runtime::sync::{Arm, Cell, Fired, Wait, Wake};
 use crate::typeinfo::bv;
 #[cfg(feature = "http")]
 use crate::typeinfo::{BuiltinVariant, ty};
+#[cfg(feature = "http")]
+use crate::url::Url;
 use crate::value::Value;
 #[cfg(feature = "http")]
 use crate::vm::{Leave, Limit, Step, Vm, VmError};
@@ -249,8 +253,10 @@ pub(crate) fn ureq_response_to_value(
 /// `@` in a path by its shape, so the text before any `@` of a URL is
 /// hidden (`https://h/users/@me` is shown `https://***@me`): what is
 /// hidden may be more than a password, never less. `scheme://@host`
-/// stays as it is. One pass over the text. A text that is one URL, as
-/// the program wrote it, is scrubbed with [`redact_url`].
+/// stays as it is. One pass over the text. (A `url.Url` is shown with
+/// exactly its user and password hidden: its `Display`. The client
+/// sends no user or password in the URL it hands the library, so this
+/// is a guard.)
 #[cfg(feature = "http")]
 pub fn redact_http_url_userinfo(msg: &str) -> String {
     redact_counting(msg, &mut 0)
@@ -261,38 +267,6 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 #[cfg(feature = "http")]
 fn redact_counting(msg: &str, looked: &mut usize) -> String {
     crate::text::hide_url_userinfo_counting(msg, looked)
-}
-
-/// Scrub the userinfo of `url`, a text that is one URL as the program
-/// wrote it (or a server's `Location`), for an `InvalidUrl` that quotes
-/// it. Its authority begins after its scheme (`scheme_of`) and the
-/// slashes that follow (`http:/u:p@h` has one too), or after the
-/// slashes it begins with when no slash follows a scheme of it
-/// (`//u:p@h`, `u:p@h/x`, `http:u:p@h`, which hides the scheme too).
-/// All that stands from there to the URL's last `@` is hidden: the
-/// userinfo the client sends is before the last `@` of the authority,
-/// and a password with a raw `/`, `?`, `#`, space or tab in it has the
-/// rest of it, and its `@`, later in the URL, in a form that no shape
-/// tells from an `@` of a path or a query (`http://user:1234/ss@host`
-/// and `http://h:8080/users/@me` are alike): so an `@` anywhere hides
-/// what stands before it, more than a password at times, never less. A
-/// URL with no `@` after its host's start is shown as it is. (The rule of
-/// `text::hide_url_userinfo`, for a text that is one URL: where its host
-/// starts is found without a `//` too, and a space does not end it.)
-#[cfg(feature = "http")]
-pub fn redact_url(url: &str) -> String {
-    let slashes_from = |at: usize| url.len() - url[at..].trim_start_matches('/').len();
-    // (`u:p@h` has no scheme `u`: what stands before a colon that no
-    // slash follows may be the user's name.)
-    let host_start = match scheme_of(url) {
-        Some(scheme) if url[scheme.len() + 1..].starts_with('/') => slashes_from(scheme.len() + 1),
-        _ => slashes_from(0),
-    };
-    let rest = &url[host_start..];
-    match rest.rfind('@') {
-        Some(last @ 1..) => format!("{}***{}", &url[..host_start], &rest[last..]),
-        _ => url.to_string(),
-    }
 }
 
 /// The error of an `http` function whose operation has no value of
@@ -311,16 +285,16 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 }
 
 /// The `HttpError` of a failure of the transport library, for a
-/// request to `url`.
+/// request to `url` (as a message shows it).
 ///
 /// The library says what kind of failure it is (the variants of
 /// `ureq::Error`, and for one of the socket the kind of the
 /// `io::Error`), and that alone decides the variant: no text of a
 /// message is looked at. The message is what the variant carries.
 ///
-/// - A URL that cannot be read as one, or whose scheme is not `http`
-///   or `https`, or that has no host: `InvalidUrl(url)`, with the URL
-///   as it was written (less a password in it).
+/// (A URL is a `url.Url`, read and checked before the library sees it:
+/// [`do_http_request_on`] refuses one of another scheme as
+/// `InvalidUrl`.)
 /// - No connection was made (refused, no route, no such host):
 ///   `Connect(why)`.
 /// - One of the request's times passed: `Timeout`.
@@ -361,10 +335,6 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
             bv::HTTP_TLS,
             [Value::string(redact_http_url_userinfo(&reason))],
         )
-    };
-    let invalid_url = || {
-        let url = redact_url(url);
-        Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)])
     };
     let https = url
         .get(.."https://".len())
@@ -420,9 +390,6 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
         Error::HostNotFound | Error::ConnectionFailed | Error::ConnectProxyFailed(_) => {
             Value::variant(bv::HTTP_CONNECT, why())
         }
-        Error::BadUri(_) => invalid_url(),
-        Error::Http(http) if http.is::<ureq::http::uri::InvalidUri>() => invalid_url(),
-        Error::Http(http) if http.is::<ureq::http::uri::InvalidUriParts>() => invalid_url(),
         Error::Protocol(_) | Error::LargeResponseHeader(..) => {
             Value::variant(bv::HTTP_INVALID_RESPONSE, why())
         }
@@ -431,37 +398,6 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
         // response, and the library's error for one is never made.)
         _ => Value::variant(bv::HTTP_OTHER, why()),
     }
-}
-
-/// `Err(InvalidUrl(url))` for a URL whose port is no port: not a
-/// number, empty, or not in 1..=65535.
-///
-/// The transport library does not refuse such a URL. Its URL type
-/// keeps the port as text and gives no port when the text is not one,
-/// and the request then goes to the default port of the scheme:
-/// `http://host:99999/` was asked of port 80. So it is refused here,
-/// before any connection is made. (A URL that cannot be read at all
-/// is the library's to refuse: [`http_error`].)
-#[cfg(feature = "http")]
-fn refuse_port(url: &str) -> Option<Value> {
-    let uri = url.parse::<ureq::http::Uri>().ok()?;
-    let authority = uri.authority()?.as_str();
-    // Behind the user's name and password, and behind the brackets of
-    // an IPv6 address, whose colons are no port's.
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    let port = match host.rfind(']') {
-        Some(bracket) => host[bracket + 1..].strip_prefix(':'),
-        None => host.rsplit_once(':').map(|(_, port)| port),
-    }?;
-    let digits = !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit());
-    if digits && matches!(port.parse::<u16>(), Ok(1..)) {
-        return None;
-    }
-    let url = redact_url(url);
-    let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)]);
-    Some(Value::variant(bv::ERR, [invalid]))
 }
 
 /// What a request of the transport library came to, as the value of
@@ -914,6 +850,12 @@ fn do_http_get(url: &str) -> Value {
     do_http_request("GET", url, &[], &[])
 }
 
+/// Test-only: the Url of `text`, which is one.
+#[cfg(all(test, feature = "http"))]
+fn url_of(text: &str) -> Url {
+    crate::url::parse(text).unwrap_or_else(|e| panic!("{text}: {e}"))
+}
+
 /// How many redirects `http.get` and `http.request` follow, as many as
 /// ureq would.
 #[cfg(feature = "http")]
@@ -928,7 +870,7 @@ fn do_http_request(
     body: &[u8],
     headers: &[(String, String)],
 ) -> Value {
-    do_http_request_on(&client().agent, method_tag, url, body, headers)
+    do_http_request_on(&client().agent, method_tag, &url_of(url), body, headers)
 }
 
 /// Perform a synchronous HTTP request with the client `agent` and
@@ -938,14 +880,13 @@ fn do_http_request(
 /// body again: a 303 goes on as a GET without a body (a HEAD stays a
 /// HEAD) and without the program's `content-type` header, and so does
 /// a POST that gets a 301 or 302; any other request goes on with the
-/// same method and body. As ureq does, a
-/// redirect drops the `authorization`, `proxy-authorization` and `cookie`
-/// headers, and the user
-/// and password of the URL, which are sent as `authorization` (decoded,
-/// [`basic_of_url`]) where the program sets none. A `content-length`
-/// header of the program's is not sent:
-/// the body's own length is (an empty body of a method that takes
-/// none by default has none).
+/// same method and body. As ureq does, a redirect drops the
+/// `authorization`, `proxy-authorization` and `cookie` headers, and the
+/// user and password of the URL, which are sent as `authorization`
+/// (decoded, [`basic_of_url`]) where the program sets none, never in the
+/// URL. A `content-length` header of the program's is not sent: the
+/// body's own length is (an empty body of a method that takes none by
+/// default has none).
 ///
 /// A shutdown of `agent` (`ureq::Agent::shutdown`, from another thread)
 /// ends the request: a read or a write it waits in, a TLS handshake,
@@ -955,7 +896,7 @@ fn do_http_request(
 fn do_http_request_on(
     agent: &ureq::Agent,
     method_tag: &str,
-    url: &str,
+    url: &Url,
     body: &[u8],
     headers: &[(String, String)],
 ) -> Value {
@@ -963,16 +904,10 @@ fn do_http_request_on(
         method_tag,
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
     ) {
-        return Value::variant(
-            bv::ERR,
-            [Value::variant(
-                bv::HTTP_INVALID_URL,
-                [Value::string(format!("unknown method: {method_tag}"))],
-            )],
-        );
+        return invalid_url(format!("unknown method: {method_tag}"));
     }
     let mut method = method_tag;
-    let mut url = url.to_string();
+    let mut url = url.clone();
     let mut body = body;
     // How the body goes and what becomes of the connection are the
     // client's to say: the body is sent whole, with its length.
@@ -983,8 +918,9 @@ fn do_http_request_on(
         .map(|(key, val)| (key.as_str(), val.as_str()))
         .collect();
     for _ in 0..=REDIRECTS_MAX {
-        if let Some(refused) = refuse_port(&url) {
-            return refused;
+        // (A Url of another scheme is a valid URL, and no URL of http's.)
+        if !matches!(url.scheme(), "http" | "https") {
+            return invalid_url(url.to_string());
         }
         // The user and password of the URL, when the program set no
         // `authorization` itself.
@@ -995,33 +931,32 @@ fn do_http_request_on(
             true => None,
             false => match basic_of_url(&url) {
                 Ok(basic) => basic,
-                Err(()) => {
-                    let url = redact_url(&url);
-                    let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)]);
-                    return Value::variant(bv::ERR, [invalid]);
-                }
+                Err(()) => return invalid_url(url.to_string()),
             },
         };
         let mut sent = headers.clone();
         if let Some(basic) = &basic {
             sent.push(("authorization", basic));
         }
-        // (Without its user and password: they are the authorization
-        // above, or none. The library would send its own of an empty
-        // one, `http://@host/`: `Basic Og==`.)
-        let sent_url = path_in_ascii(&without_userinfo(&url)).into_owned();
-        let result = send_request(agent, method, &sent_url, body, &sent);
+        // Without its user and password, which are the authorization
+        // above or none, and without its fragment, which is no server's.
+        let sent_url = url.with_user("").with_password("").with_fragment("");
+        if sent_url.as_str().len() > URL_MAX {
+            return invalid_url(url.to_string());
+        }
+        let result = send_request(agent, method, sent_url.as_str(), body, &sent);
+        let shown = url.to_string();
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
-            return finish_http_response(result, &url, method == "HEAD");
+            return finish_http_response(result, &shown, method == "HEAD");
+        };
+        let next = match next {
+            Ok(next) => next,
+            Err(location) => return invalid_url(location),
         };
         // A redirect to another scheme is not followed: `file:`, `ftp:`
         // and the like are no URL of http's.
-        if !scheme_of(&next).is_some_and(|scheme| {
-            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
-        }) {
-            let next = redact_url(&next);
-            let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(next)]);
-            return Value::variant(bv::ERR, [invalid]);
+        if !matches!(next.scheme(), "http" | "https") {
+            return invalid_url(next.to_string());
         }
         // A 303 goes on without a body, as a GET (a HEAD stays a HEAD);
         // a 301 or 302 so only for a POST (RFC 9110); a 307 or 308
@@ -1047,88 +982,43 @@ fn do_http_request_on(
         });
         url = next;
     }
-    finish_http_response(Err(ureq::Error::TooManyRedirects), &url, false)
+    finish_http_response(Err(ureq::Error::TooManyRedirects), &url.to_string(), false)
 }
 
-/// The `authorization` header of the user and password of `url`
-/// (`http://user:pa%20ss@host/`): `Basic` with `user:pa ss`, each
-/// percent-decoded first (RFC 3986 writes a `@`, `:`, `/` or a space in
-/// them so, RFC 7617 sends them as they are). The user ends at the first
-/// `:`, the password at the last `@`, as ureq reads them. `Ok(None)` for
-/// a URL without them, and for one whose user and password are both
-/// empty (`http://@host/`). `Err(())` for a user that has a colon once
-/// decoded (`us%3Aer`): RFC 7617 has none in it, and a server would read
-/// the user up to it and the rest as the password.
+/// The longest URL the transport sends: its reader of URLs takes no
+/// longer one.
 #[cfg(feature = "http")]
-fn basic_of_url(url: &str) -> Result<Option<String>, ()> {
+const URL_MAX: usize = 65_534;
+
+/// `Err(InvalidUrl(text))`.
+#[cfg(feature = "http")]
+fn invalid_url(text: String) -> Value {
+    Value::variant(
+        bv::ERR,
+        [Value::variant(bv::HTTP_INVALID_URL, [Value::string(text)])],
+    )
+}
+/// The `authorization` header of the user and password of `url`:
+/// `Basic` with `user:password`, each decoded (RFC 3986 writes a `@`,
+/// `:`, `/` or a space in them escaped, RFC 7617 sends them as they
+/// are). `Ok(None)` for a URL without them. `Err(())` for a user that
+/// has a colon once decoded (`us%3Aer`): RFC 7617 has none in it, and a
+/// server would read the user up to it and the rest as the password.
+#[cfg(feature = "http")]
+fn basic_of_url(url: &Url) -> Result<Option<String>, ()> {
     use base64::Engine;
-    let Some(userinfo) = url
-        .parse::<ureq::http::Uri>()
-        .ok()
-        .and_then(|uri| Some(uri.authority()?.as_str().rsplit_once('@')?.0.to_string()))
-    else {
-        return Ok(None);
-    };
-    let (user, password) = userinfo.split_once(':').unwrap_or((&userinfo, ""));
+    let (user, password) = (url.user(), url.password());
     if user.is_empty() && password.is_empty() {
         return Ok(None);
     }
-    let user: Vec<u8> = percent_encoding::percent_decode_str(user).collect();
-    if user.contains(&b':') {
+    if user.contains(':') {
         return Err(());
     }
-    let mut pair = user;
-    pair.push(b':');
-    pair.extend(percent_encoding::percent_decode_str(password));
     Ok(Some(format!(
         "Basic {}",
-        base64::engine::general_purpose::STANDARD.encode(pair)
+        base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"))
     )))
 }
-
-/// `url` without the user and password in its authority, if it has
-/// them (`http://u:p@h/x` is `http://h/x`).
-#[cfg(feature = "http")]
-fn without_userinfo(url: &str) -> std::borrow::Cow<'_, str> {
-    let authority = url.parse::<ureq::http::Uri>().ok().and_then(|uri| {
-        let authority = uri.authority()?.as_str();
-        let (_, host) = authority.rsplit_once('@')?;
-        Some((authority.to_string(), host.to_string()))
-    });
-    match authority {
-        Some((authority, host)) => url.replacen(&authority, &host, 1).into(),
-        None => url.into(),
-    }
-}
-
-/// `url` with each byte of its path, query and fragment that is no ASCII,
-/// and DEL, percent-encoded (`/h%C3%A9llo` for `/héllo`, `%7F`), as a
-/// redirect's location is ([`redirect`]): such a byte was sent raw, which
-/// no URL may hold. The scheme and the host are left as they are. (The
-/// other control bytes, and a space, make the URL an `InvalidUrl`.)
-#[cfg(feature = "http")]
-fn path_in_ascii(url: &str) -> std::borrow::Cow<'_, str> {
-    use std::fmt::Write;
-    let sent_raw = |byte: u8| byte >= 0x7f;
-    if !url.bytes().any(sent_raw) {
-        return url.into();
-    }
-    let host_start = url.find("//").map_or(0, |at| at + 2);
-    let path_start =
-        (url[host_start..].find(['/', '?', '#'])).map_or(url.len(), |at| host_start + at);
-    let mut text = String::with_capacity(url.len() + 16);
-    text.push_str(&url[..path_start]);
-    for &byte in &url.as_bytes()[path_start..] {
-        match sent_raw(byte) {
-            false => text.push(byte as char),
-            true => {
-                let _ = write!(text, "%{byte:02X}");
-            }
-        }
-    }
-    text.into()
-}
-
 /// Send one request of `http.request`, following no redirect. Every
 /// method sends the body, with its length; an empty body sends
 /// nothing, not even a length for the methods that take none by
@@ -1182,12 +1072,16 @@ fn send_request(
 /// response came from; `None` for any other response, and for a
 /// redirect without a location. A byte of the location that is not
 /// printable ASCII (a space, the bytes of `é`, which a URL cannot hold)
-/// is percent-encoded first, as browsers and curl do (`%20`, `%C3%A9`).
+/// is escaped first, as browsers and curl do (`%20`, `%C3%A9`); then it
+/// is resolved against `url` without its user and password, which are
+/// not sent on (`url.resolve`), and without a fragment, which is never
+/// sent. A location that does not resolve is `Err` of its text, with what
+/// may be a user and password in it hidden.
 #[cfg(feature = "http")]
 pub(crate) fn redirect(
     response: &ureq::http::Response<ureq::Body>,
-    url: &str,
-) -> Option<(u16, String)> {
+    url: &Url,
+) -> Option<(u16, Result<Url, String>)> {
     use std::fmt::Write;
     let status = response.status().as_u16();
     if !matches!(status, 301 | 302 | 303 | 307 | 308) {
@@ -1203,124 +1097,12 @@ pub(crate) fn redirect(
             }
         }
     }
-    Some((status, resolve_location(url, &text)))
+    let base = url.with_user("").with_password("");
+    let next = crate::url::resolve(&base, &text)
+        .map(|next| next.with_fragment(""))
+        .map_err(|_| redact_http_url_userinfo(&text));
+    Some((status, next))
 }
-
-/// The scheme of `reference` (RFC 3986: a letter, then letters, digits,
-/// `+`, `-` and `.`, up to a `:` that comes before any `/`, `?` or `#`),
-/// or `None` for a reference that has none (`/x`, `//host/x`, `x/y:z`).
-#[cfg(feature = "http")]
-fn scheme_of(reference: &str) -> Option<&str> {
-    let end = reference.find([':', '/', '?', '#'])?;
-    let scheme = &reference[..end];
-    let mut chars = scheme.chars();
-    let lettered = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
-    let rest = chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
-    (reference[end..].starts_with(':') && lettered && rest).then_some(scheme)
-}
-
-/// `location` resolved against `base` (RFC 3986): a URL with a scheme
-/// ([`scheme_of`]) as it is, one without (`//host/x`) on the base's scheme, a path from
-/// the root on the base's scheme and host, a query alone (`?y=2`) on
-/// the base's path, any other path next to the base's; a path's `.` and
-/// `..` segments are taken away, and its query is left as it is. A
-/// fragment (`#x`) is not sent to a server, so it is dropped first; a
-/// location that is then empty is the base's own path and query.
-#[cfg(feature = "http")]
-fn resolve_location(base: &str, location: &str) -> String {
-    let location = location.split('#').next().unwrap_or_default();
-    // (By its form, not by whether it is an http URL: `file:///x` is a
-    // URL with a scheme, never a path on the base's host.)
-    if scheme_of(location).is_some() {
-        return with_dot_segments_taken_away(location);
-    }
-    let Ok(uri) = base.parse::<ureq::http::Uri>() else {
-        return location.to_string();
-    };
-    // (Without the user and password of the base: they are not sent to
-    // where a redirect leads, as the `authorization` header is not.)
-    let origin = match (uri.scheme_str(), uri.authority()) {
-        (Some(scheme), Some(authority)) => {
-            let host = authority.as_str().rsplit_once('@');
-            let host = host.map_or(authority.as_str(), |(_, host)| host);
-            format!("{scheme}://{host}")
-        }
-        _ => String::new(),
-    };
-    if location.starts_with("//") {
-        return match uri.scheme_str() {
-            Some(scheme) => with_dot_segments_taken_away(&format!("{scheme}:{location}")),
-            None => location.to_string(),
-        };
-    }
-    if location.starts_with('?') {
-        return format!("{origin}{}{location}", uri.path());
-    }
-    if location.is_empty() {
-        let own = uri.path_and_query().map_or("/", |own| own.as_str());
-        return format!("{origin}{own}");
-    }
-    let (path, query) = location.split_at(location.find('?').unwrap_or(location.len()));
-    let path = match path.starts_with('/') {
-        true => path.to_string(),
-        // (Next to the base's: after its last `/`.)
-        false => {
-            let own = uri.path();
-            format!("{}{path}", &own[..own.rfind('/').map_or(0, |at| at + 1)])
-        }
-    };
-    format!("{origin}{}{query}", without_dot_segments(&path))
-}
-
-/// The URL `url`, which has a scheme and a host, with the `.` and `..`
-/// segments of its path taken away; its query as it is.
-#[cfg(feature = "http")]
-fn with_dot_segments_taken_away(url: &str) -> String {
-    let Ok(uri) = url.parse::<ureq::http::Uri>() else {
-        return url.to_string();
-    };
-    let dotted = uri
-        .path()
-        .split('/')
-        .any(|segment| matches!(segment, "." | ".."));
-    match (dotted, uri.scheme_str(), uri.authority()) {
-        (true, Some(scheme), Some(authority)) => {
-            let query = uri
-                .query()
-                .map_or(String::new(), |query| format!("?{query}"));
-            format!(
-                "{scheme}://{authority}{}{query}",
-                without_dot_segments(uri.path())
-            )
-        }
-        _ => url.to_string(),
-    }
-}
-
-/// The path `path`, which starts with `/`, with its `.` and `..`
-/// segments taken away (RFC 3986 5.2.4): a last one leaves the path
-/// ending in `/` (`/a/b/..` is `/a/`).
-#[cfg(feature = "http")]
-fn without_dot_segments(path: &str) -> String {
-    let segments: Vec<&str> = path.split('/').skip(1).collect();
-    let mut kept: Vec<&str> = Vec::new();
-    for (at, segment) in segments.iter().enumerate() {
-        let last = at + 1 == segments.len();
-        match *segment {
-            "." | ".." => {
-                if *segment == ".." {
-                    kept.pop();
-                }
-                if last {
-                    kept.push("");
-                }
-            }
-            other => kept.push(other),
-        }
-    }
-    format!("/{}", kept.join("/"))
-}
-
 // ── The server ──────────────────────────────────────────────────────
 //
 // `http.serve` is a frame of the task that calls it ([`Serve`]): it
@@ -2582,8 +2364,8 @@ impl<'a> Arg<'a> for Method<'a> {
 
 builtins! {
     #[cfg(feature = "http")]
-    fn get(vm, url: &str) -> Result<Step, VmError> {
-        let url = url.to_string();
+    fn get(vm, u: typed::Url) -> Result<Step, VmError> {
+        let url = Url::clone(u);
         // A request that nobody waits for any more (cancelled, ended
         // by its deadline) is ended: its client is shut down.
         let client = client();
@@ -2593,8 +2375,8 @@ builtins! {
     }
 
     #[cfg(feature = "http")]
-    fn request(vm, method: Method, url: &str, body: Bytes, headers: Map) -> Result<Step, VmError> {
-        let (method, url, body) = (method.0.to_string(), url.to_string(), body.clone());
+    fn request(vm, method: Method, u: typed::Url, body: Bytes, headers: Map) -> Result<Step, VmError> {
+        let (method, url, body) = (method.0.to_string(), Url::clone(u), body.clone());
         let headers: Vec<(String, String)> = headers
             .iter()
             .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
@@ -3008,73 +2790,41 @@ mod http_error_tests {
         failure(&finish_http_response(agent(ms).get(url).call(), url, false))
     }
 
+    /// A Url of another scheme than `http` and `https` is a valid URL and no
+    /// URL of http's: `InvalidUrl`, with its user and password hidden.
     #[test]
-    fn a_url_that_is_none_is_invalid_url_with_the_url_as_written() {
-        for url in [
-            "not a url",
-            "",
-            "example.com/page",
-            "http://",
-            "http://127.0.0.1/a b",
-            "ftp://127.0.0.1/file",
+    fn a_url_of_another_scheme_is_invalid_url() {
+        for (url, expected) in [
+            ("ftp://127.0.0.1/file", "InvalidUrl(ftp://127.0.0.1/file)"),
+            ("file:///etc/hosts", "InvalidUrl(file:///etc/hosts)"),
+            (
+                "ftp://user:secret@127.0.0.1/x",
+                "InvalidUrl(ftp://***@127.0.0.1/x)",
+            ),
         ] {
-            let expected = format!("InvalidUrl({url})");
             assert_eq!(failure(&do_http_get(url)), expected);
             assert_eq!(
                 failure(&do_http_request("POST", url, b"body", &[])),
                 expected
             );
         }
-        // What stands before an `@` where no slash follows the colon may
-        // be a user and a password (`u:pw@host`): it is hidden, a
-        // `mailto:` too.
-        let mailto = "mailto:someone@example.com";
-        assert_eq!(failure(&do_http_get(mailto)), "InvalidUrl(***@example.com)");
-        // A password in an http URL is not handed back.
-        assert_eq!(
-            failure(&do_http_get("http://user:secret@127.0.0.1/a b")),
-            "InvalidUrl(http://***@127.0.0.1/a b)"
-        );
     }
 
+    /// A URL longer than the transport takes (65,534 bytes) is
+    /// `InvalidUrl`, and nothing is asked: nothing listens at port 9.
     #[test]
-    fn a_port_that_is_no_port_is_invalid_url_and_nothing_is_asked() {
-        for url in [
-            "http://127.0.0.1:99999/",
-            "http://127.0.0.1:65536/",
-            "http://127.0.0.1:0/",
-            "http://127.0.0.1:abc/",
-            "http://127.0.0.1:/",
-            "http://127.0.0.1:80x/page?q=1",
-            "http://127.0.0.1:-1/",
-            "http://127.0.0.1:+80/",
-            "http://[::1]:99999/",
-            "https://example.com:123456",
-        ] {
-            let expected = format!("InvalidUrl({url})");
-            assert_eq!(failure(&do_http_get(url)), expected);
-            assert_eq!(
-                failure(&do_http_request("POST", url, b"body", &[])),
-                expected
-            );
-        }
-        assert_eq!(
-            failure(&do_http_get("http://user:secret@127.0.0.1:99999/")),
-            "InvalidUrl(http://***@127.0.0.1:99999/)"
+    fn a_url_past_the_transport_s_limit_is_invalid_url() {
+        let long = format!("http://user:secret@127.0.0.1:9/{}", "a".repeat(65_534));
+        let got = failure(&do_http_get(&long));
+        assert!(
+            got.starts_with("InvalidUrl(http://***@127.0.0.1:9/aaa"),
+            "{}",
+            &got[..60]
         );
-        // A port that is one is not refused here: the colons of an IPv6
-        // address and of a password are no port's.
-        for url in [
-            "http://127.0.0.1:1/",
-            "http://127.0.0.1:65535/",
-            "http://127.0.0.1/",
-            "http://[::1]:1/",
-            "http://[::1]/",
-            "http://user:secret@127.0.0.1:1/",
-            "http://user:99999@127.0.0.1/",
-        ] {
-            assert!(refuse_port(url).is_none(), "{url}");
-        }
+        let just = format!("http://127.0.0.1:9/{}", "a".repeat(65_534 - 19));
+        assert_eq!(just.len(), 65_534);
+        let got = failure(&do_http_get(&just));
+        assert!(got.starts_with("Connect("), "{got}");
     }
 
     /// A host whose name is not found is `Connect`, as for `tcp.connect`
@@ -3136,8 +2886,8 @@ mod http_error_tests {
         assert_eq!(lower.matches("host:").count(), 1, "{head}");
     }
 
-    /// A path and a query that are no ASCII go out percent-encoded, as a
-    /// redirect's location does (they went out raw: `GET /h\xc3\xa9llo`).
+    /// A path and a query that are no ASCII go out escaped: the Url holds
+    /// them so (they went out raw: `GET /h\xc3\xa9llo`).
     #[test]
     fn a_path_that_is_no_ascii_is_sent_percent_encoded() {
         let head = head_sent("http://{}/h\u{e9}llo?q=\u{fc}", &[]);
@@ -3145,18 +2895,14 @@ mod http_error_tests {
             head.starts_with("GET /h%C3%A9llo?q=%C3%BC HTTP/1.1\r\n"),
             "{head}"
         );
-        // DEL too (it went out raw); the other control bytes are no URL.
-        let head = head_sent("http://{}/del\u{7f}x", &[]);
-        assert!(head.starts_with("GET /del%7Fx HTTP/1.1\r\n"), "{head}");
-        for control in ["\u{1}", "\u{1f}", "\t", "\r\nX-Evil: 1"] {
-            let url = format!("http://127.0.0.1:9/a{control}b");
-            let done = do_http_request("GET", &url, &[], &[]);
-            assert!(
-                failure(&done).starts_with("InvalidUrl("),
-                "{control:?}: {}",
-                failure(&done)
-            );
-        }
+    }
+
+    /// The fragment of a Url is not sent, and the path goes out in its
+    /// normal form: without dot segments.
+    #[test]
+    fn the_fragment_is_not_sent_and_the_path_is_normal() {
+        let head = head_sent("http://{}/a/./b/../c?x=1#top", &[]);
+        assert!(head.starts_with("GET /a/c?x=1 HTTP/1.1\r\n"), "{head}");
     }
 
     /// A user with a colon once decoded (`us%3Aer`) is refused before
@@ -3220,27 +2966,6 @@ mod http_error_tests {
             if piece == "https://a@" {
                 assert!(!out.contains("a@"), "{piece}: the user is hidden");
             }
-        }
-    }
-
-    /// A scheme is told by its form (RFC 3986), whatever follows its colon.
-    #[test]
-    fn a_scheme_is_told_by_its_form() {
-        for (reference, scheme) in [
-            ("http://h/x", Some("http")),
-            ("HTTPS://h", Some("HTTPS")),
-            ("file:///etc/passwd", Some("file")),
-            ("mailto:a@b", Some("mailto")),
-            ("svn+ssh://h", Some("svn+ssh")),
-            ("/x", None),
-            ("//h/x", None),
-            ("x/y:z", None),
-            ("?a:b", None),
-            ("1x:y", None),
-            (":x", None),
-            ("x", None),
-        ] {
-            assert_eq!(scheme_of(reference), scheme, "{reference}");
         }
     }
 
@@ -3537,8 +3262,21 @@ mod http_body_tests {
         assert!(got.starts_with("InvalidResponse("), "{got}");
     }
 
+    /// Where the redirect of `status` to `location` from `base` goes.
+    fn redirected(base: &str, status: u16, location: &[u8]) -> Option<Result<String, String>> {
+        let response = ureq::http::Response::builder()
+            .status(status)
+            .header("location", location)
+            .body(ureq::Body::builder().data(Vec::new()))
+            .expect("a response");
+        let (code, next) = redirect(&response, &url_of(base))?;
+        assert_eq!(code, status);
+        Some(next.map(|next| next.as_str().to_string()))
+    }
+
     /// A redirect's location is resolved against the URL that answered
-    /// as RFC 3986 says.
+    /// as RFC 3986 says (`url.resolve`), without a fragment, and without
+    /// the user and password of the URL that answered.
     #[test]
     fn a_location_is_resolved_against_the_url_that_answered() {
         let base = "http://a.test:8/p/q?x=1";
@@ -3569,9 +3307,37 @@ mod http_body_tests {
             ("//b.test:9/a/./b/../c", "http://b.test:9/a/c"),
             ("https://b.test/a/..", "https://b.test/"),
             ("https://b.test/a/b?c=/../d", "https://b.test/a/b?c=/../d"),
+            ("/h\u{e9} x", "http://a.test:8/h%C3%A9%20x"),
         ] {
-            assert_eq!(resolve_location(base, location), resolved, "{location}");
+            let got = redirected(base, 302, location.as_bytes());
+            assert_eq!(got, Some(Ok(resolved.to_string())), "{location}");
         }
+        // The user and password of the URL that answered do not go on; a
+        // location's own do.
+        let with_user = "http://u:p@a.test/p/q";
+        assert_eq!(
+            redirected(with_user, 301, b"r"),
+            Some(Ok("http://a.test/p/r".to_string()))
+        );
+        assert_eq!(
+            redirected(with_user, 301, b"http://v:w@b.test/"),
+            Some(Ok("http://v:w@b.test/".to_string()))
+        );
+        // A location that does not resolve is its text, a user and
+        // password in it hidden; a Latin-1 byte is no UTF-8 text.
+        assert_eq!(
+            redirected(base, 302, b"http://u:secret@h:99999/"),
+            Some(Err("http://***@h:99999/".to_string()))
+        );
+        assert_eq!(
+            redirected(base, 302, b"mailto:a@b"),
+            Some(Err("mailto:a@b".to_string()))
+        );
+        assert_eq!(
+            redirected(base, 302, b"/caf\xe9"),
+            Some(Err("/caf%E9".to_string()))
+        );
+        assert_eq!(redirected(base, 200, b"/x"), None);
     }
 }
 

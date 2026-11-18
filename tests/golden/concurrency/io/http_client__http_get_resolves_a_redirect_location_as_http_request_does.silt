@@ -11,6 +11,7 @@ import http
 import list
 import task
 import tcp
+import url
 
 fn moved(location: String) -> http.Response {
   http.Response { status: 302, body: bytes.empty(), headers: #{"location": location} }
@@ -48,14 +49,21 @@ fn main() {
     }
   }
   let two = task.spawn { -> http.serve(second) { req -> echo("second", req) } }
-  let url = "http://127.0.0.1:{tcp.local_port(first)}"
+  let link = "http://127.0.0.1:{tcp.local_port(first)}"
   list.each(["/q?x=1", "/far", "/a/b?x=1"]) { path ->
     println("GET {path}")
-    match http.get("{url}{path}") {
+    match http.get(url_of("{link}{path}")) {
       Ok(resp) -> println("  the client: {resp.status}")
       Err(e) -> println("  the client: {e}")
     }
   }
   task.cancel(one)
   task.cancel(two)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

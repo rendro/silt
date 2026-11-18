@@ -589,11 +589,15 @@ import http
 import io
 import task
 import time
+import url
 
 fn tries(n: Int) {{
   match {{
     n > 0 -> {{
-      let _ = task.deadline(time.ms(2)) {{ -> http.get("http://{addr}/") }}
+      match url.parse("http://{addr}/") {{
+        Ok(u) -> {{ let _ = task.deadline(time.ms(2)) {{ -> http.get(u) }} }}
+        Err(e) -> panic("{{e}}")
+      }}
       tries(n - 1)
     }}
     _ -> ()

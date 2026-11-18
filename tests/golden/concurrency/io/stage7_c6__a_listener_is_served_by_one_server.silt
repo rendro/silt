@@ -10,6 +10,7 @@ import http
 import result
 import task
 import tcp
+import url
 
 -- A body as text.
 fn text(body: Bytes) -> String {
@@ -22,9 +23,16 @@ fn main() {
     http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("first"), headers: #{} } }
   }
   -- The server serves when it has answered.
-  match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
+  match http.get(url_of("http://127.0.0.1:{tcp.local_port(listener)}/")) {
     Ok(r) -> println("{r.status} {text(r.body)}")
     Err(e) -> println("error: {e}")
   }
   http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("second"), headers: #{} } }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

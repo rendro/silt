@@ -16,6 +16,7 @@ import map
 import option
 import task
 import tcp
+import url
 
 fn moved(status: Int, location: String) -> http.Response {
   http.Response { status: status, body: bytes.empty(), headers: #{"location": location} }
@@ -48,7 +49,7 @@ fn main() {
     }
   }
   let two = task.spawn { -> http.serve(second) { req -> echo("second", req) } }
-  let url = "http://127.0.0.1:{tcp.local_port(first)}"
+  let link = "http://127.0.0.1:{tcp.local_port(first)}"
   let typed = #{"content-type": "text/plain"}
   let asks = [
     (http.GET, "/q?x=1"),
@@ -63,11 +64,18 @@ fn main() {
   ]
   list.each(asks) { (method, path) ->
     println("{method} {path}")
-    match http.request(method, "{url}{path}", bytes.from_string("abc"), typed) {
+    match http.request(method, url_of("{link}{path}"), bytes.from_string("abc"), typed) {
       Ok(resp) -> println("  the client: {resp.status}")
       Err(e) -> println("  the client: {e}")
     }
   }
   task.cancel(one)
   task.cancel(two)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

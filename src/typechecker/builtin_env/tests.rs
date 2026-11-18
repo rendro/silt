@@ -241,8 +241,12 @@ fn test_http_get_type() {
     assert_no_errors(
         r#"
 import http
+import url
 fn main() {
-  let _ = http.get("http://example.com")
+  match url.parse("http://example.com") {
+    Ok(u) -> { let _ = http.get(u) }
+    Err(_) -> ()
+  }
 }
         "#,
     );

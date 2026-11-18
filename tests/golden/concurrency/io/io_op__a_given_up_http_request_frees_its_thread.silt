@@ -11,11 +11,12 @@ import string
 import task
 import tcp
 import time
+import url
 
 fn give_up(port: Int, n: Int) {
   match {
     n > 0 -> {
-      let _ = task.deadline(time.ms(5)) { -> http.get("http://127.0.0.1:{port}/") }
+      let _ = task.deadline(time.ms(5)) { -> http.get(url_of("http://127.0.0.1:{port}/")) }
       give_up(port, n - 1)
     }
     _ -> ()
@@ -28,5 +29,12 @@ fn main() {
   match io.read_file("io_op__a_given_up_http_request_frees_its_thread.silt") {
     Ok(text) -> println("read the file: {string.length(text) > 0}")
     Err(e) -> println("read_file: {e}")
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
   }
 }

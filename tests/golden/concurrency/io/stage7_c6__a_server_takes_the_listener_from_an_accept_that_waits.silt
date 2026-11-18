@@ -9,6 +9,7 @@ import http
 import result
 import task
 import tcp
+import url
 
 -- A body as text.
 fn text(body: Bytes) -> String {
@@ -29,9 +30,16 @@ fn main() {
   -- Whichever of the two ran first, the accept ends when the server has
   -- the listener: no client has connected yet.
   println("the accept: {task.join(waiting)}")
-  match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
+  match http.get(url_of("http://127.0.0.1:{tcp.local_port(listener)}/")) {
     Ok(r) -> println("the client: {r.status} {text(r.body)}")
     Err(e) -> println("the client: {e}")
   }
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

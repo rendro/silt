@@ -10,6 +10,7 @@ import map
 import option
 import task
 import tcp
+import url
 
 fn answer(req: http.Request) -> http.Response {
   let a = map.get(req.headers, "x-a") |> option.unwrap_or("none")
@@ -23,10 +24,10 @@ fn answer(req: http.Request) -> http.Response {
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let link = "http://127.0.0.1:{tcp.local_port(listener)}/"
   let server = task.spawn { -> http.serve(listener, answer) }
   let sent = #{ "X-A": "1", "x-a": "2", "X-B": "3" }
-  match http.request(http.GET, url, bytes.empty(), sent) {
+  match http.request(http.GET, url_of(link), bytes.empty(), sent) {
     Ok(response) -> {
       println(bytes.to_string(response.body) |> result_text)
       println("set-cookie: {map.get(response.headers, "set-cookie") |> option.unwrap_or("none")}")
@@ -41,5 +42,12 @@ fn result_text(r: Result(String, bytes.BytesError)) -> String {
   match r {
     Ok(text) -> text
     Err(_) -> "(no text)"
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
   }
 }

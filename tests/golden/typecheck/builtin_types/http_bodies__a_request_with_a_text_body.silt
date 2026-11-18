@@ -4,8 +4,16 @@
 -- The body `http.request` sends is `Bytes`: a text is no body until the
 -- program makes bytes of it.
 import http
+import url
 
 fn main() {
-  let sent = http.request(http.POST, "http://127.0.0.1:1/", "text", #{})
+  let sent = http.request(http.POST, url_of("http://127.0.0.1:1/"), "text", #{})
   println(sent)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

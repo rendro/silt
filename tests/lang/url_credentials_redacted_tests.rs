@@ -284,20 +284,20 @@ fn a_message_hides_the_credentials_of_any_scheme() {
     }
 }
 
-/// Over awkward users and passwords (a raw `/`, `@`, `:`, `?`, `#`, a
-/// space, percent-escapes, an empty user, an empty password), hosts with
-/// a port, IPv4 and IPv6, and paths with and without an `@`: no part of
-/// the user or the password is shown, by the scrubbing of a URL the
-/// program wrote nor of a message that quotes it. FAILS on 0.43.0: a
-/// password of digits up to a raw `/` (`http://user:1234/ss@host`) and
-/// one without a colon before the raw `/` were shown.
+/// Over awkward users and passwords (a raw `/`, `@`, `:`, `?`, `#`,
+/// percent-escapes, an empty user, an empty password), hosts with a
+/// port, IPv4 and IPv6, and paths with and without an `@`: no part of
+/// the user or the password is shown in a message that quotes the URL.
+/// FAILS on 0.43.0: a password of digits up to a raw `/`
+/// (`http://user:1234/ss@host`) and one without a colon before the raw
+/// `/` were shown. (A `url.Url` is shown by its own rule: the url
+/// module's tests.)
 #[cfg(feature = "http")]
 #[test]
 fn no_part_of_an_awkward_password_is_shown() {
-    use silt::testing::builtins::http::redact_url;
     let schemes = ["http://", "https://", "HTTPS://", "ftp://", "//"];
     let users = ["", "U1", "U1%40x", "U1/U2", "U1?U2", "U1#U2"];
-    let parts = ["/", "@", ":", "?", "#", "%40", "%2F", "", "9/", "/9", " "];
+    let parts = ["/", "@", ":", "?", "#", "%40", "%2F", "", "9/", "/9"];
     let hosts = ["h", "h:8080", "127.0.0.1:9", "[::1]", "[::1]:80"];
     let tails = ["", "/x", "/a@b", "?q=1", "#f", "/p?e=a@b"];
     let mut checked = 0;
@@ -308,18 +308,10 @@ fn no_part_of_an_awkward_password_is_shown() {
                     for tail in tails {
                         let password = format!("P1{part}P2");
                         let url = format!("{scheme}{user}:{password}@{host}{tail}");
-                        let shown = redact_url(&url);
+                        let message = format!("GET {url}: failed");
+                        let shown = redact_http_url_userinfo(&message);
                         for secret in ["U1", "U2", "P1", "P2"] {
-                            assert!(!shown.contains(secret), "{url:?} -> {shown:?}");
-                        }
-                        // A message ends a URL at a space: a password with a
-                        // raw space is the URL's own case (above).
-                        if !part.contains(' ') {
-                            let message = format!("GET {url}: failed");
-                            let shown = redact_http_url_userinfo(&message);
-                            for secret in ["U1", "U2", "P1", "P2"] {
-                                assert!(!shown.contains(secret), "{message:?} -> {shown:?}");
-                            }
+                            assert!(!shown.contains(secret), "{message:?} -> {shown:?}");
                         }
                         checked += 1;
                     }
@@ -327,52 +319,5 @@ fn no_part_of_an_awkward_password_is_shown() {
             }
         }
     }
-    assert_eq!(checked, 5 * 6 * 11 * 5 * 6);
-}
-
-/// A text that is one URL, as the program wrote it, has its userinfo
-/// hidden however the URL is spelt: one slash after the scheme, none, no
-/// scheme, a raw space or tab in the password (it ended the authority of
-/// a message, and the rest of the password and the user were shown).
-#[cfg(feature = "http")]
-#[test]
-fn a_url_hides_its_credentials_however_it_is_spelt() {
-    use silt::testing::builtins::http::redact_url;
-    for (input, expected) in [
-        ("http://u:pw@h/x", "http://***@h/x"),
-        ("http:/u:pw@h/x", "http:/***@h/x"),
-        ("http:u:pw@h/x", "***@h/x"),
-        ("//u:pw@h/x", "//***@h/x"),
-        ("u:pw@h/x", "***@h/x"),
-        ("ftp://u:pw@h/", "ftp://***@h/"),
-        ("http://u:p w@h/", "http://***@h/"),
-        ("http://u:p\tw@h/", "http://***@h/"),
-        ("http://u:p@w@h/", "http://***@h/"),
-        // A raw `/`, `?` or `#` in the password: hidden too, to the last `@`.
-        ("http://u:p/w@h/x", "http://***@h/x"),
-        ("http://u:p?w@h/x", "http://***@h/x"),
-        ("http://u:p#w@h/x y", "http://***@h/x y"),
-        ("https://user:pa/ss@host/x", "https://***@host/x"),
-        ("u:p/w@h", "***@h"),
-        // A password that is digits up to its raw `/`, and one with no
-        // colon before the raw `/`: shown whole before (the rest read as a
-        // port and a path). No shape tells them from an `@` in a path or a
-        // query, so what stands before any `@` is hidden, the host too.
-        ("http://user:1234/ss@host/x y", "http://***@host/x y"),
-        ("http://user/ss:x@host/x y", "http://***@host/x y"),
-        ("http://u:12?34@h/x", "http://***@h/x"),
-        ("http://u:12#34@h/x", "http://***@h/x"),
-        ("https://host.example:99999/users/@me", "https://***@me"),
-        (
-            "https://host.example/search?email=ann@example.com&page=2",
-            "https://***@example.com&page=2",
-        ),
-        ("http://h/a@b", "http://***@b"),
-        ("http://h:8080/a@b", "http://***@b"),
-        ("http://h/?next=ftp://u:pw@x/", "http://***@x/"),
-        ("http://@h/", "http://@h/"),
-        ("http://h", "http://h"),
-    ] {
-        assert_eq!(redact_url(input), expected, "{input}");
-    }
+    assert_eq!(checked, 5 * 6 * 10 * 5 * 6);
 }

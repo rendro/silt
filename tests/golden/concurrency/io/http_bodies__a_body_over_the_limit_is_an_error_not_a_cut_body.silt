@@ -13,6 +13,7 @@ import option
 import string
 import task
 import tcp
+import url
 
 fn line_end() -> String {
   let cr = string.from_char_code(13) |> option.unwrap_or("")
@@ -90,7 +91,7 @@ fn by_hand(parts: List(Bytes)) -> Result(http.Response, http.HttpError) {
     let _ = read_message(conn, None)
     tcp.close(conn)
   }
-  let got = http.get("http://127.0.0.1:{tcp.local_port(listener)}/")
+  let got = http.get(url_of("http://127.0.0.1:{tcp.local_port(listener)}/"))
   task.cancel(writer)
   got
 }
@@ -115,12 +116,19 @@ fn main() {
   let body = body_of_length(10000000)
   let one = bytes.from_string("z")
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let url = "http://127.0.0.1:{tcp.local_port(listener)}"
+  let link = "http://127.0.0.1:{tcp.local_port(listener)}"
   let server = task.spawn { -> http.serve(listener, answer) }
-  show("10000000 bytes with its length", http.get("{url}/at"))
+  show("10000000 bytes with its length", http.get(url_of("{link}/at")))
   task.cancel(server)
   let head = bytes.from_string("HTTP/1.1 200 OK{nl}Content-Length: 10000001{nl}Connection: close{nl}{nl}")
   show("one byte more with its length", by_hand([head, body, one]))
   show("10000000 bytes in chunks", by_hand(in_chunks(body, bytes.empty(), "4C4B40", "4C4B40")))
   show("one byte more in chunks", by_hand(in_chunks(body, one, "4C4B40", "4C4B41")))
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

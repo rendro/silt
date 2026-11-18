@@ -10,6 +10,7 @@ import option
 import string
 import task
 import tcp
+import url
 
 fn line_end() -> String {
   let cr = string.from_char_code(13) |> option.unwrap_or("")
@@ -77,7 +78,7 @@ fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, answer) }
-  match http.request(http.POST, "http://127.0.0.1:{port}/", bytes.empty(), #{}) {
+  match http.request(http.POST, url_of("http://127.0.0.1:{port}/"), bytes.empty(), #{}) {
     Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
     Err(e) -> println("  http.request: {e}")
   }
@@ -100,11 +101,18 @@ fn main() {
     tcp.close(conn)
     sent
   }
-  let got = http.request(http.POST, "http://127.0.0.1:{tcp.local_port(by_hand)}/", bytes.empty(), #{})
+  let got = http.request(http.POST, url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"), bytes.empty(), #{})
   let sent = task.join(reader)
   println("  the request on the wire: {length_line(sent)}, {bytes.length(body_of(sent) |> option.unwrap_or(bytes.empty()))} bytes after the head")
   match got {
     Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
     Err(e) -> println("  http.request: {e}")
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
   }
 }

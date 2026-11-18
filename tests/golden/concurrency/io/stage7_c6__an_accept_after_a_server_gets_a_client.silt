@@ -11,6 +11,7 @@ import http
 import list
 import task
 import tcp
+import url
 
 fn main() {
   let bad = 1..200 |> list.fold(0) { bad, round ->
@@ -19,7 +20,7 @@ fn main() {
     let server = task.spawn { ->
       http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} } }
     }
-    let _ = http.get("http://127.0.0.1:{port}/")
+    let _ = http.get(url_of("http://127.0.0.1:{port}/"))
     task.cancel(server)
     let client = task.spawn { ->
       when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
@@ -49,4 +50,11 @@ fn main() {
     }
   }
   println("{bad} of 200 accepts got something else than the client")
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

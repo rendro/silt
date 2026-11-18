@@ -1,9 +1,9 @@
 -- requires-feature: http
 -- timeout: 60
 -- What a request that fails gives is decided by the kind of the
--- failure, as the transport says it: a URL that cannot be read as one
--- or whose scheme is not http or whose port is no port is `InvalidUrl`
--- with the URL as it was written; a port nobody listens on is `Connect`; a server that goes
+-- failure, as the transport says it: a Url whose scheme is not http or
+-- https is `InvalidUrl` with the URL (a text that is no URL is refused
+-- by url.parse before); a port nobody listens on is `Connect`; a server that goes
 -- away before its response is complete is `ClosedEarly`; one that
 -- sends what is no HTTP is `InvalidResponse`.
 import bytes
@@ -12,11 +12,12 @@ import option
 import string
 import task
 import tcp
+import url
 
 fn kind(r) {
   match r {
     Ok(_) -> "Ok"
-    Err(http.InvalidUrl(url)) -> "InvalidUrl(\"{url}\")"
+    Err(http.InvalidUrl(link)) -> "InvalidUrl(\"{link}\")"
     Err(http.Connect(_)) -> "Connect"
     Err(http.ClosedEarly) -> "ClosedEarly"
     Err(http.InvalidResponse(_)) -> "InvalidResponse"
@@ -37,7 +38,7 @@ fn against(answer) {
     let _ = tcp.write(conn, bytes.from_string(answer))
     tcp.close(conn)
   }
-  let out = http.get("http://127.0.0.1:{port}/")
+  let out = http.get(url_of("http://127.0.0.1:{port}/"))
   task.join(server)
   out
 }
@@ -45,16 +46,19 @@ fn against(answer) {
 fn main() {
   let cr = string.from_char_code(13) |> option.unwrap_or("")
   let nl = "{cr}\n"
-  println("not a url: {kind(http.get("not a url"))}")
-  println("no scheme: {kind(http.get("example.com/page"))}")
-  println("empty: {kind(http.get(""))}")
-  println("another scheme: {kind(http.get("ftp://127.0.0.1/file"))}")
-  println("a port that is none: {kind(http.get("http://127.0.0.1:99999/"))}")
-  println("a posted one: {kind(http.request(http.POST, "not a url", bytes.from_string("body"), #{}))}")
-  println("nobody listens: {kind(http.get("http://127.0.0.1:1/"))}")
+  println("another scheme: {kind(http.get(url_of("ftp://127.0.0.1/file")))}")
+  println("a posted one: {kind(http.request(http.POST, url_of("file:///etc/hosts"), bytes.from_string("body"), #{}))}")
+  println("nobody listens: {kind(http.get(url_of("http://127.0.0.1:1/")))}")
   println("the server goes away: {kind(against(""))}")
   println("in the head: {kind(against("HTTP/1.1 200 OK{nl}Content-Le"))}")
   println("in the body: {kind(against("HTTP/1.1 200 OK{nl}Content-Length: 10{nl}{nl}abc"))}")
   println("no HTTP: {kind(against("garbage{nl}{nl}"))}")
   println("a response: {kind(against("HTTP/1.1 200 OK{nl}Content-Length: 2{nl}{nl}ok"))}")
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }

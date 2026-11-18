@@ -48,6 +48,7 @@ one with `bytes.to_string(resp.body)`, a `Result`: it is
 ```silt
 import bytes
 import http
+import url
 
 -- Text into a body: what a handler answers.
 fn hello(_req: http.Request) -> http.Response {
@@ -55,23 +56,32 @@ fn hello(_req: http.Request) -> http.Response {
 }
 
 -- Text out of a body: what a client got.
-fn main() {
-  match http.get("http://127.0.0.1:8080/") {
+fn main() -> Result((), url.UrlError) {
+  let home = url.parse("http://127.0.0.1:8080/")?
+  match http.get(home) {
     Ok(resp) -> match bytes.to_string(resp.body) {
       Ok(text) -> println(text)
       Err(e) -> println("the body is no text: {e}")
     }
     Err(e) -> println("{e}")
   }
+  Ok(())
 }
 ```
+
+The client takes a [`url.Url`](url.md), never a text: a URL is read
+(`url.parse`) or built (`url.add_segments`, `url.with_query`) by the url
+module, which checks and escapes it, and the client never reads URL text
+the program wrote. A value put into a URL with the url module stays one
+value: a name holding `/`, `?`, `#`, `&` or `..` asks for no other
+resource.
 
 ## Summary
 
 | Name | Signature | Description |
 |------|-----------|-------------|
-| `get` | `(String) -> Result(Response, HttpError)` | HTTP GET request |
-| `request` | `(Method, String, Bytes, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
+| `get` | `(Url) -> Result(Response, HttpError)` | HTTP GET request |
+| `request` | `(Method, Url, Bytes, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
 | `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 | `parse_query` | `(String) -> Result(Map(String, List(String)), UrlError)` | Parse a URL query string into a multi-value map |
@@ -93,7 +103,7 @@ rendered string.
 | `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
-| `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made. Also the location of a redirect with such a scheme, which is not followed |
+| `InvalidUrl(url)` | `String` | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes (the transport's limit), or has a user with a `:` in it once decoded; no connection is made. Also the location of a redirect that is no URL or has such a scheme, which is not followed. The URL is shown with its user and password hidden |
 | `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, too many redirects |
@@ -118,7 +128,7 @@ system's own time.
 ## `http.get`
 
 ```
-http.get(url: String) -> Result(Response, HttpError)
+http.get(u: Url) -> Result(Response, HttpError)
 ```
 
 Makes an HTTP GET request. Returns `Ok(Response)` for a response of any
@@ -158,26 +168,33 @@ call site looks the same.
 ```silt
 import bytes
 import http
+import url
 
 fn main() {
-  match http.get("https://api.github.com/users/torvalds") {
-    Ok(resp) -> println("Status: {resp.status}, body length: {bytes.length(resp.body)}")
-    Err(http.Timeout) -> println("timed out; retry later")
-    Err(e) -> println("Network error: {e}")
+  match url.parse("https://api.github.com/users/torvalds") {
+    Ok(u) -> match http.get(u) {
+      Ok(resp) -> println("Status: {resp.status}, body length: {bytes.length(resp.body)}")
+      Err(http.Timeout) -> println("timed out; retry later")
+      Err(e) -> println("Network error: {e}")
+    }
+    Err(e) -> println("not a URL: {e}")
   }
 }
 ```
 
-Compose with `bytes.to_string`, `json.parse` and `?` for typed API
-responses. Since the three return different error types, wrap each in
-a local enum using `result.map_err` with a variant constructor as a
-first-class `Fn`:
+Compose with `url.add_segments`, `bytes.to_string`, `json.parse` and `?`
+for typed API responses. Since they return different error types, wrap
+each in a local enum using `result.map_err` with a variant constructor as
+a first-class `Fn`. The user's name is one path segment, escaped: a name
+`ann/../admin?x=1` asks for `/v1/users/ann%2F..%2Fadmin%3Fx=1`, one user,
+as meant.
 
 ```silt
 import bytes
 import http
 import json
 import result
+import url
 
 type User {
   name: String,
@@ -185,13 +202,16 @@ type User {
 }
 
 type FetchError {
+  BadUrl(url.UrlError),
   Network(http.HttpError),
   NotText(bytes.BytesError),
   Parse(json.JsonError),
 }
 
-fn fetch_user(name: String) -> Result(User, FetchError) {
-  let resp = http.get("https://api.example.com/users/{name}") |> result.map_err(Network)?
+-- `api` is the base of the API, `https://api.example.com/v1/`.
+fn fetch_user(api: url.Url, name: String) -> Result(User, FetchError) {
+  let u = api |> url.add_segments(["users", name]) |> result.map_err(BadUrl)?
+  let resp = http.get(u) |> result.map_err(Network)?
   let text = bytes.to_string(resp.body) |> result.map_err(NotText)?
   json.parse(text, User) |> result.map_err(Parse)
 }
@@ -201,7 +221,7 @@ fn fetch_user(name: String) -> Result(User, FetchError) {
 ## `http.request`
 
 ```
-http.request(method: Method, url: String, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)
+http.request(method: Method, u: Url, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)
 ```
 
 Makes an HTTP request with full control over method, body, and headers. Use this for POST, PUT, DELETE, or any request that needs custom headers.
@@ -214,25 +234,18 @@ say, in a `Content-Type` header among `headers`: none is added. A
 `Transfer-Encoding` and a `Connection` among `headers` are not sent: the
 body goes whole, with its own length, and the connection is the client's.
 
-A user and password in the URL (`https://user:pa%20ss@host/`) are sent
-as `authorization: Basic ...` (RFC 7617), unless `headers` has an
-`authorization` of its own, for `http.get` too. They are percent-decoded
-first: write a `@`, `:`, `/` or a space in them encoded (`pa%20ss` is the
-password `pa ss`). A user that has a colon once decoded (`us%3Aer`) is
-an `InvalidUrl`: RFC 7617 has none in it. A URL whose user and password
-are both empty (`http://@host/`) sends no `authorization`. No error
-shows them: the URL of an `InvalidUrl` has `***` in their place. A password
-is written percent-encoded, as the user is: a raw `/`, `?` or `#` in it
-ends the URL's host part, and the rest is read as a path. Since such a
-password cannot be told from an `@` in a path or a query, an error hides
-all of a URL from its host to its last `@`: `https://host/users/@me` is
-shown as `https://***@me`. A password with a `/`, `?` or `#` in it
-belongs in a URL percent-escaped (`%2F`, `%3F`, `%23`): written raw, it
-is not sent as the password at all.
+The user and password of the URL (`url.with_user`, `url.with_password`,
+which escape them) are sent as `authorization: Basic ...` (RFC 7617),
+decoded, unless `headers` has an `authorization` of its own, for
+`http.get` too; they are never sent in the URL itself. A user that has a
+colon (`us:er`) is an `InvalidUrl`: RFC 7617 has none in it. No error
+shows them: the URL of an `InvalidUrl` is shown as `url.Url` is, with
+`***@` in their place.
 
-A byte of the URL's path or query that is no ASCII (the bytes of `é`)
-is sent percent-encoded (`/h%C3%A9llo` for `/héllo`), as a redirect's
-location is; a space in it is an `InvalidUrl`.
+The URL goes out as the `Url` holds it, in its normal form: escaped
+(`/h%C3%A9llo` for `/héllo`), its `.` and `..` segments taken out, without
+its fragment, which is no server's. A URL longer than 65,534 bytes is an
+`InvalidUrl`: the transport takes no longer one.
 
 A redirect is followed, up to ten of them: after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
@@ -242,38 +255,45 @@ method and body. The credentials are not sent to where a redirect leads,
 also when it leads to the same host: the `authorization`,
 `proxy-authorization` and `cookie` headers, and the user and password of
 the URL. Every other header among `headers` is, and so is the body after
-a 307 or 308, also to another host, as curl and Go send them. A location that is no full URL is resolved against
-the URL that answered: `?y=2` on its path, `//host/x` on its scheme. An
+a 307 or 308, also to another host, as curl and Go send them. A location
+is resolved against the URL that answered with `url.resolve`: `?y=2` on
+its path, `//host/x` on its scheme, `../x` next to its path. An
 empty location, or one that is a fragment alone (`#top`), is the URL that
 answered itself, as RFC 3986 reads it: after a 303 that is a `GET` of the
 same URL, and a server that answers it so every time ends in
 `Err(Other("too many redirects"))`. A response without a location is
-handed back as it is, its status 3xx. A
-location with a scheme other than `http` and `https` (`file:///x`,
-`ftp://host/x`, `mailto:a@b`) is not followed: it is
-`Err(InvalidUrl(location))`. A byte of a location that a URL cannot hold
-(a space, the bytes of `é`) is sent percent-encoded (`%20`, `%C3%A9`), as
-browsers send it.
+handed back as it is, its status 3xx. A byte of a location that a URL
+cannot hold (a space, the bytes of `é`) is escaped first (`%20`,
+`%C3%A9`), as browsers send it. A location that does not resolve to a URL
+(`url.resolve` refuses it: escapes that are no UTF-8 text, a host that is
+none, `mailto:a@b`), or that resolves to one of a scheme other than
+`http` and `https` (`file:///x`, `ftp://host/x`), is not followed: it is
+`Err(InvalidUrl(location))`, a user and password in it hidden.
 
 Like `http.get`, this transparently yields to the scheduler when called from
 a spawned task.
 
 ```silt
+-- `api` is a Url, `https://api.example.com/`.
+
 -- POST with JSON body
+let users = api |> url.add_segments(["users"])?
 let resp = http.request(
   http.POST,
-  "https://api.example.com/users",
+  users,
   bytes.from_string(json.stringify(#{ "name": "Alice" })),
   #{ "Content-Type": "application/json", "Authorization": "Bearer tok123" },
 )?
 
 -- DELETE
-let resp = http.request(http.DELETE, "https://api.example.com/users/42", bytes.empty(), #{})?
+let user = api |> url.add_segments(["users", "42"])?
+let resp = http.request(http.DELETE, user, bytes.empty(), #{})?
 
--- GET with custom headers
+-- GET with a query and custom headers
+let data = api |> url.add_segments(["data"])?
 let resp = http.request(
   http.GET,
-  "https://api.example.com/data",
+  data |> url.with_query([("page", "2")]),
   bytes.empty(),
   #{ "Accept": "text/plain" },
 )?
@@ -491,6 +511,7 @@ import bytes
 import http
 import task
 import tcp
+import url
 
 fn hello(_req: http.Request) -> http.Response {
   http.Response { status: 200, body: bytes.from_string("hi"), headers: #{} }
@@ -501,14 +522,17 @@ fn main() {
     panic("cannot listen")
   }
   let port = tcp.local_port(listener)
+  when let Ok(home) = url.parse("http://127.0.0.1:{port}/") else {
+    panic("no URL")
+  }
   let server = task.spawn { -> http.serve(listener, hello) }
-  match http.get("http://127.0.0.1:{port}/") {
+  match http.get(home) {
     Ok(r) -> println(r.status) -- 200
     Err(e) -> println("{e}")
   }
   tcp.close_listener(listener)
   task.join(server)
-  match http.get("http://127.0.0.1:{port}/") {
+  match http.get(home) {
     Ok(_) -> println("still served")
     Err(_) -> println("refused") -- refused
   }

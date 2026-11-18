@@ -800,10 +800,12 @@ import http
 import task
 import channel
 import tcp
+import url
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let port = tcp.local_port(listener)
+  when let Ok(target) = url.parse("http://127.0.0.1:{port}/test") else { panic("no URL") }
   let result_ch = channel.new(1)
 
   -- Start the server in a task
@@ -815,7 +817,7 @@ fn main() {
 
   -- Make a request from another task
   let client = task.spawn({ ->
-    let body = match http.get("http://127.0.0.1:{port}/test") {
+    let body = match http.get(target) {
       Ok(resp) -> match bytes.to_string(resp.body) {
         Ok(text) -> text
         Err(e) -> "the body is no text: {e}"
