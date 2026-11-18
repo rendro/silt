@@ -1438,16 +1438,27 @@ impl Got {
 
 /// The URL a request asks for (`Request.url`): `http://`, the host the
 /// request names (its `Host`; for an HTTP/1.0 request without one, the
-/// address the client reached, `local`) and the target as sent; a target
-/// in absolute form (`http://h/x`) is that URL, of `http` or `https`.
-/// `None` when they make no URL: a `Host` that is more than a host and a
-/// port, a target that `url.parse` refuses (an escape that is none, or
-/// no UTF-8 text). The server answers such a request 400.
+/// address the client reached, `local`) and the target as sent, without a
+/// fragment (no server is asked for one). A target in absolute form
+/// (`http://h/x`) is that URL, and its Host is not looked at (RFC 9112):
+/// of `http`, or of `https` written as `http` with the port as written
+/// (`https://h/x` is `http://h/x`, `https://h:443/x` is
+/// `http://h:443/x`), for the scheme is always `http`: the server speaks
+/// no TLS, and the client does not say otherwise. `None` when they make no
+/// URL: a `Host` that is more than a host and a port, a target with a user
+/// or a password, a target that `url.parse` refuses (an escape that is
+/// none, or no UTF-8 text), one of another scheme. The server answers such
+/// a request 400.
 #[cfg(feature = "http")]
 pub(crate) fn request_url(target: &str, headers: &[(String, String)], local: &str) -> Option<Url> {
     if !target.starts_with('/') {
-        let url = crate::url::parse(target).ok()?;
-        return matches!(url.scheme(), "http" | "https").then_some(url);
+        let (scheme, rest) = target.split_once("://")?;
+        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+            return None;
+        }
+        let url = crate::url::parse(&format!("http://{rest}")).ok()?;
+        let credentials = !url.user().is_empty() || !url.password().is_empty();
+        return (!credentials).then(|| url.with_fragment(""));
     }
     let host = headers
         .iter()
@@ -1458,7 +1469,8 @@ pub(crate) fn request_url(target: &str, headers: &[(String, String)], local: &st
     if host.is_empty() || !host.bytes().all(plain) {
         return None;
     }
-    crate::url::parse(&format!("http://{host}{target}")).ok()
+    let url = crate::url::parse(&format!("http://{host}{target}")).ok()?;
+    Some(url.with_fragment(""))
 }
 
 /// The read half of a connection, for the reader of its requests.
@@ -2604,11 +2616,34 @@ mod serve_tests {
             url("http://other.test/x", &host("h")),
             some("http://other.test/x")
         );
+        // The scheme is always http: an https target keeps its host and the
+        // port as written.
+        for (target, want) in [
+            ("https://other.test/x", "http://other.test/x"),
+            ("HTTPS://other.test:443/x", "http://other.test:443/x"),
+            ("https://other.test:80/x", "http://other.test/x"),
+            (
+                "https://other.test:8443/x?q#f",
+                "http://other.test:8443/x?q",
+            ),
+        ] {
+            assert_eq!(url(target, &host("h")), some(want), "{target}");
+        }
+        // No fragment: no server is asked for one.
+        assert_eq!(url("/x?q=1#frag", &host("h")), some("http://h/x?q=1"));
         assert_eq!(
-            url("https://other.test/x", &host("h")),
-            some("https://other.test/x")
+            url("http://o.test/x#frag", &host("h")),
+            some("http://o.test/x")
+        );
+        // With an absolute target the Host is not looked at (RFC 9112).
+        assert_eq!(
+            url("http://o.test/x", &host("u@bad")),
+            some("http://o.test/x")
         );
         for (target, headers) in [
+            ("http://u:p@other.test/x", host("h")),
+            ("https://u@other.test/x", host("h")),
+            ("/x", host("h.test:")),
             ("/x", host("u@h")),
             ("/x", host("h/y")),
             ("/x", host("h?y")),

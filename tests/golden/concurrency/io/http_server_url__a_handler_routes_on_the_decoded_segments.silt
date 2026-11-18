@@ -4,9 +4,10 @@
 -- the target, in normal form. It routes on url.segments, decoded and
 -- exact (`%2F` is a `/` inside one segment, `..` is taken out before the
 -- handler sees it, a `/` at the end is a last ""), reads the query with
--- url.query, and logs url.path. A Request shows its url in the inspect
--- form. The requests are sent by hand, so that their targets are as
--- written.
+-- url.query, and prints url.to_string. A Request shows its url in the
+-- inspect form. The scheme is always http: an https target in absolute
+-- form is written as http, its port as written; a fragment is dropped.
+-- The requests are sent by hand, so that their targets are as written.
 import bytes
 import http
 import list
@@ -22,7 +23,7 @@ fn reply(status: Int, text: String) -> http.Response {
 }
 
 fn answer(req: http.Request) -> http.Response {
-  println("  the handler: {req.method} {url.path(req.url)} {url.segments(req.url)} {url.query(req.url)}")
+  println("  the handler: {req.method} {url.to_string(req.url)} {url.segments(req.url)} {url.query(req.url)}")
   match (req.method, url.segments(req.url)) {
     (http.GET, ["users", id]) -> reply(200, "user {id}")
     (http.GET, ["users", id, ""]) -> reply(200, "user {id}, with a slash")
@@ -67,6 +68,10 @@ fn main() {
     ("GET /users/%7eann HTTP/1.1", host),
     ("GET /show?q=1 HTTP/1.1", "Host: Example.TEST:80|"),
     ("GET http://elsewhere.test/users/9 HTTP/1.1", host),
+    ("GET https://elsewhere.test/users/10 HTTP/1.1", host),
+    ("GET https://elsewhere.test:443/users/11 HTTP/1.1", host),
+    ("GET https://elsewhere.test:80/users/12 HTTP/1.1", host),
+    ("GET /users/13#frag HTTP/1.1", host),
   ] |> list.each { (line, headers) ->
     println(line)
     println("  the client: {ask(port, line, headers)}")
