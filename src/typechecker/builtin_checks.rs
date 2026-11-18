@@ -1045,16 +1045,8 @@ fn type_variables(ty: &Type) -> Vec<Type> {
     fn walk(ty: &Type, out: &mut Vec<Type>) {
         match ty {
             Type::Var(_) | Type::Rigid(_) if !out.contains(ty) => out.push(ty.clone()),
-            Type::Generic(_, ts) | Type::Container(Container::Tuple(ts)) => {
-                ts.iter().for_each(|t| walk(t, out))
-            }
-            Type::Container(Container::List(t))
-            | Type::Container(Container::Set(t))
-            | Type::Container(Container::Channel(t)) => walk(t, out),
-            Type::Container(Container::Map(k, v)) => {
-                walk(k, out);
-                walk(v, out);
-            }
+            Type::Generic(_, ts) => ts.iter().for_each(|t| walk(t, out)),
+            Type::Container(c) => c.parts().for_each(|t| walk(t, out)),
             _ => {}
         }
     }
