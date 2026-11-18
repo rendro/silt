@@ -11,7 +11,7 @@ import tcp
 import url
 
 fn answer(req: http.Request) -> http.Response {
-  match http.segments(req.path) {
+  match url.segments(req.url) {
     ["fail"] -> panic("boom\nhttp.serve: handler error: forged by the request")
     _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
   }

@@ -10,7 +10,7 @@ silt ships fourteen libfuzzer targets:
 | `fuzz_roundtrip`   | parse → format → parse (must preserve structure)   |
 | `fuzz_typechecker` | the session's analysis + diagnostic well-formedness |
 | `fuzz_compiler`    | `Compiler::compile_program` on clean programs + disassembly decode |
-| `fuzz_http_request` | the reader of `http.serve`'s requests (`src/http_wire.rs`): no panic, no request beyond a limit, the same requests however the bytes arrive |
+| `fuzz_http_request` | the reader of `http.serve`'s requests (`src/http_wire.rs`): no panic, no request beyond a limit, the same requests however the bytes arrive, and each request's `Request.url` reads back as itself or the request is answered 400 |
 | `fuzz_decode`      | the decoder on any text (`src/fuzz_invariants.rs`): `json.parse`, `toml.parse`, `toml.parse_map` and `toml.parse_list` into each of a set of types, with and without written impls of a fixed set, as the VM's frame runs a decoding: no panic, the same result again, and `json.decode` of a JSON document's `json.Value` decodes alike (value or error, the impls' calls in order); the JSON and TOML text the input's bytes choose too |
 | `fuzz_package_files` | the readers of `silt.toml` and `silt.lock` on any text (`src/fuzz_invariants.rs`): no panic, an error's place inside the text, and a lockfile that reads is written to a text that reads back as the same lockfile and is written alike again |
 | `fuzz_csv`         | the csv reader of `csv.parse` and `csv.split_line` on any text (`src/fuzz_invariants.rs`): no panic, an error's place inside the text, and records that read, written again with every field quoted, read back the same |

@@ -1,0 +1,67 @@
+-- timeout: 30
+-- requires-feature: http
+-- A request whose target or Host makes no URL is answered 400 by the
+-- server, and the handler is not called: a Host that is more than a host
+-- and a port, a target with an escape that is none or no UTF-8 text, a
+-- target of another scheme. `OPTIONS *` is answered by the server itself:
+-- 204 with the methods it serves. An HTTP/1.0 request without a Host has
+-- the address the client reached as its host.
+import bytes
+import http
+import list
+import option
+import result
+import string
+import task
+import tcp
+import url
+
+fn answer(req: http.Request) -> http.Response {
+  println("  the handler: {url.scheme(req.url)} {url.host(req.url)} {url.path(req.url)}")
+  http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
+}
+
+fn read_all(conn: tcp.TcpStream, got: Bytes) -> Bytes {
+  match tcp.read(conn, 65536) {
+    Ok(more) when bytes.length(more) > 0 -> read_all(conn, bytes.concat(got, more))
+    _ -> got
+  }
+}
+
+-- The status line, the Allow header if any, and the body.
+fn ask(port: Int, request: String) -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { return "cannot connect" }
+  let _ = tcp.write(conn, bytes.from_string(string.replace(request, "|", "{cr}\n")))
+  let answer = bytes.to_string(read_all(conn, bytes.empty())) |> result.unwrap_or("(no text)")
+  tcp.close(conn)
+  let lines = string.split(answer, "{cr}\n")
+  let status = list.first(lines) |> option.unwrap_or("?")
+  let allow = lines |> list.filter { l -> string.starts_with(l, "Allow:") } |> list.first |> option.unwrap_or("")
+  let body = answer |> string.split("{cr}\n{cr}\n") |> list.get(1) |> option.unwrap_or("")
+  "{status} [{allow}] {body}"
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  [
+    ("a Host with a user", "GET /x HTTP/1.1|Host: u@h|Connection: close||"),
+    ("a Host with a path", "GET /x HTTP/1.1|Host: h/y|Connection: close||"),
+    ("a number-like Host", "GET /x HTTP/1.1|Host: 0x7f.1|Connection: close||"),
+    ("a Host with an empty port", "GET /x HTTP/1.1|Host: h.test:|Connection: close||"),
+    ("a user in a target in absolute form", "GET http://u:p@other.test/x HTTP/1.1|Host: h|Connection: close||"),
+    ("an escape that is none", "GET /%zz HTTP/1.1|Host: h|Connection: close||"),
+    ("an escape that is no UTF-8", "GET /caf%E9 HTTP/1.1|Host: h|Connection: close||"),
+    ("another scheme", "GET ftp://h/x HTTP/1.1|Host: h|Connection: close||"),
+    ("OPTIONS *", "OPTIONS * HTTP/1.1|Host: h|Connection: close||"),
+    ("GET *", "GET * HTTP/1.1|Host: h|Connection: close||"),
+    ("HTTP/1.0 without a Host", "GET /old HTTP/1.0||"),
+  ] |> list.each { (what, request) ->
+    println(what)
+    let said = ask(port, request) |> string.replace("127.0.0.1:{port}", "127.0.0.1:PORT")
+    println("  the client: {said}")
+  }
+  task.cancel(server)
+}

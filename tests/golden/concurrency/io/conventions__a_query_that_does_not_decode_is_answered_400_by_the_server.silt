@@ -1,17 +1,19 @@
 -- timeout: 30
 -- requires-feature: http
 -- A query string comes from whoever sent the request. One that does not
--- decode is an error value in the handler, which answers 400 itself and
--- goes on serving: the next request is answered as the first was.
+-- decode (an escape that is none, escapes that are no UTF-8 text) makes no
+-- URL: the server answers 400 itself, the handler is not called, and the
+-- server goes on serving: the next request is answered as the first was.
+-- The handler reads the decoded query with url.query.
 import bytes
 import http
 import list
-import map
 import option
 import result
 import string
 import task
 import tcp
+import url
 
 -- A body as text.
 fn text(body: Bytes) -> String {
@@ -19,12 +21,10 @@ fn text(body: Bytes) -> String {
 }
 
 fn answer(req: http.Request) -> http.Response {
-  match http.parse_query(req.query) {
-    Ok(query) -> match map.get(query, "name") {
-      Some([name, ..rest]) -> http.Response { status: 200, body: bytes.from_string("hello, {name}"), headers: #{} }
-      _ -> http.Response { status: 200, body: bytes.from_string("hello"), headers: #{} }
-    }
-    Err(e) -> http.Response { status: 400, body: bytes.from_string("bad query: {e}"), headers: #{} }
+  let names = url.query(req.url) |> list.filter { (key, _) -> key == "name" }
+  match names {
+    [(_, name), ..] -> http.Response { status: 200, body: bytes.from_string("hello, {name}"), headers: #{} }
+    _ -> http.Response { status: 200, body: bytes.from_string("hello"), headers: #{} }
   }
 }
 

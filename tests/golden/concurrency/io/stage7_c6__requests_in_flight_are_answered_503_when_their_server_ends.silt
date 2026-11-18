@@ -26,7 +26,7 @@ fn main() {
   let entered = channel.new(0)
   let server = task.spawn { ->
     http.serve(listener) { req ->
-      match req.path {
+      match url.path(req.url) {
         "/quick" -> http.Response { status: 200, body: bytes.from_string("quick"), headers: #{} }
         _ -> {
           channel.send(entered, ())

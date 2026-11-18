@@ -30,9 +30,9 @@ const PATIENCE: Duration = Duration::from_secs(60);
 
 /// A handler that answers with what it was asked, and fails on
 /// `/fail`.
-const ECHO: &str = r#"match req.path {
+const ECHO: &str = r#"match path_of(req) {
         "/fail" -> panic("the handler failed: secret-detail")
-        _ -> http.Response { status: 200, body: bytes.from_string("{req.method} {req.path} [{text(req.body)}]"), headers: #{} }
+        _ -> http.Response { status: 200, body: bytes.from_string("{req.method} {path_of(req)} [{text(req.body)}]"), headers: #{} }
       }"#;
 
 /// A clock that stands still unless the test moves it: its reading,
@@ -138,10 +138,16 @@ import result
 import string
 import task
 import tcp
+import url
 
 -- A body as text, for a handler that answers with it.
 fn text(body: Bytes) -> String {{
   bytes.to_string(body) |> result.unwrap_or("(not UTF-8)")
+}}
+
+-- The path of a request, as it stands in its URL.
+fn path_of(req: http.Request) -> String {{
+  url.path(req.url)
 }}
 
 fn main() {{
@@ -520,7 +526,7 @@ fn a_handler_that_fails_is_500_and_the_connection_goes_on() {
 #[test]
 fn a_status_that_is_none_is_500() {
     let server = Server::new(
-        r#"match req.path {
+        r#"match path_of(req) {
         "/100" -> http.Response { status: 100, body: bytes.empty(), headers: #{} }
         "/0" -> http.Response { status: 0, body: bytes.empty(), headers: #{} }
         "/1000" -> http.Response { status: 1000, body: bytes.empty(), headers: #{} }
@@ -580,6 +586,7 @@ fn a_connection_gives_way_after_a_few_requests() {
 import bytes
 import channel
 import http
+import url
 import list
 import task
 import tcp
@@ -592,7 +599,7 @@ fn main() {{
   let log = channel.new(100000)
   let server = task.spawn {{ ->
     http.serve(listener) {{ req ->
-      match req.path {{
+      match url.path(req.url) {{
         "/gate" -> {{
           channel.send(at_the_gate, ())
           let _ = channel.receive(gate)
@@ -865,9 +872,9 @@ fn a_request_of_uncertain_length_is_refused_and_nothing_after_it_is_served() {
 #[test]
 fn what_is_no_request_is_not_served() {
     let server = Server::new(
-        r#"match req.path {
+        r#"match path_of(req) {
         "/fine" -> http.Response { status: 200, body: bytes.from_string("fine"), headers: #{} }
-        _ -> panic("called for {req.path}")
+        _ -> panic("called for {path_of(req)}")
       }"#,
     );
     // Cut short at every byte, and the connection closed.
@@ -1544,9 +1551,9 @@ fn a_request_behind_a_response_that_is_not_read_is_served() {
     const LENGTH: usize = 64_000_000;
     let (big, _file) = Server::big_answer(LENGTH);
     let server = Server::new(&format!(
-        r#"match req.path {{
+        r#"match path_of(req) {{
         "/big" -> {big}
-        _ -> http.Response {{ status: 200, body: bytes.from_string("{{req.path}} [{{text(req.body)}}]"), headers: #{{}} }}
+        _ -> http.Response {{ status: 200, body: bytes.from_string("{{path_of(req)}} [{{text(req.body)}}]"), headers: #{{}} }}
       }}"#
     ));
     let mut client = server.connect();

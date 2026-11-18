@@ -472,9 +472,9 @@ fn a_function_named_like_a_builtin_module_does_not_hide_it() {
     #[cfg(feature = "http")]
     {
         let host = HostModule::new("web").function(
-            "fn path(r: http.Request) -> String",
+            "fn target(r: http.Request) -> url.Url",
             |call: &HostCall| match &call.args[0] {
-                Value::Record(r) => Ok(r.get("path").cloned().unwrap_or(Value::Unit)),
+                Value::Record(r) => Ok(r.get("url").cloned().unwrap_or(Value::Unit)),
                 _ => Err(VmError::new("expected a request".into())),
             },
         );

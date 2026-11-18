@@ -6,7 +6,7 @@ order: 15
 
 # http
 
-HTTP client and server. Included by default (the server needs [tcp](tcp.md), which the `http` feature brings with it). Exclude with `--no-default-features` for WASM or minimal builds: a program that names `http.get`, `http.request` or `http.serve` then does not check (the error names the cargo feature `http`), while `http.segments`, `http.parse_query` and the module's types remain.
+HTTP client and server. Included by default (the server needs [tcp](tcp.md), which the `http` feature brings with it). Exclude with `--no-default-features` for WASM or minimal builds: a program that names `http.get`, `http.request` or `http.serve` then does not check (the error names the cargo feature `http`), while the module's types remain. A URL is a [`url.Url`](url.md), in a request the client sends and in one the server gets.
 
 ## Types
 
@@ -23,8 +23,7 @@ type Method {
 
 type Request {
   method: Method,
-  path: String,
-  query: String,
+  url: url.Url,
   headers: Map(String, String),
   body: Bytes,
   peer: String,
@@ -83,8 +82,6 @@ resource.
 | `get` | `(Url) -> Result(Response, HttpError)` | HTTP GET request |
 | `request` | `(Method, Url, Bytes, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
 | `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
-| `segments` | `(String) -> List(String)` | Split URL path into segments |
-| `parse_query` | `(String) -> Result(Map(String, List(String)), UrlError)` | Parse a URL query string into a multi-value map |
 
 ## Errors
 
@@ -331,11 +328,16 @@ again (see [When a program ends](../concurrency.md#when-a-program-ends)).
 import bytes
 import http
 import tcp
+import url
 
 fn main() -> Result((), tcp.TcpError) {
   let listener = tcp.listen("127.0.0.1:8080")?
   http.serve(listener) { req ->
-    http.Response { status: 200, body: bytes.from_string("you asked for {req.path}"), headers: #{} }
+    http.Response {
+      status: 200,
+      body: bytes.from_string("you asked for {url.path(req.url)}"),
+      headers: #{},
+    }
   }
   Ok(())
 }
@@ -362,6 +364,8 @@ The handler receives a `Request` and must return a `Response` whose
 | The handler fails, or returns a status that is none | `500`. The failure is written to stderr as one line (a line end in its text shown as `\n`) and nothing of it is sent. The connection stays usable. |
 | 128 handlers are being called already | The request waits for one to return, in the server's queue, first come first served: a short burst is answered as the handlers free up. A request that has waited 5 s, or one that finds 1,024 waiting already, is answered `503`. A request that would release the handlers that wait is queued like any other: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
 | The method is none of `Method`'s (e.g. `TRACE`) | `405`, with an `Allow` header that names the seven |
+| The target or the `Host` makes no URL (see `req.url` below): a `Host` that is more than a host and a port, or whose port is empty (`h.test:`); a user or password in a target in absolute form; an escape that is none or no UTF-8 text; a target of another scheme than `http` and `https` | `400`; the handler is not called. The connection stays usable. |
+| `OPTIONS *`, which asks the server and no resource | `204`, with the `Allow` header of a `405`; the handler is not called |
 | The method is `HEAD` | the handler is called; its response is sent without the body, with the length the body has |
 
 **A client that leaves is not noticed while its handler runs.** The
@@ -446,17 +450,34 @@ An `Expect` header that asks for anything but `100-continue` is answered
   A handler that wants text says so: `bytes.to_string(req.body)` is
   `Err(InvalidUtf8(offset))` for a body that is no UTF-8. The body of the
   `Response` it returns is `Bytes` in the same way, sent exactly.
-- `req.path` and `req.query` are the request target as sent, cut at the
-  first `?`: nothing is decoded or normalised. A target in absolute form
-  (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
-  `#fragment` stays where it is.
+- `req.url` is the URL the request asks for, a [`url.Url`](url.md):
+  `http://`, the host the request names (its `Host` header) and the target
+  as sent, in its normal form. Route on `url.segments(req.url)`, the
+  path's segments decoded (`/users/a%20b` is `["users", "a b"]`, `%2F` a
+  `/` inside one segment, a `/` at the end a last `""`); read the query
+  with `url.query(req.url)`, its pairs decoded. `.` and `..` are taken out
+  before the handler sees the URL (`/a/../b` arrives as `/b`), and so is
+  a needless escape (`%7e` arrives as `~`): the text exactly as the client
+  sent it is not kept, so a signature over the raw request line cannot be
+  checked. `url.path(req.url)` and `url.query_text(req.url)` give the path
+  and the query as they stand in the URL, escaped, for a log line. A
+  fragment in the target (`GET /x#top`) is dropped: no server is asked for
+  one. The scheme is always `http`: the server speaks no TLS (behind a
+  proxy that does, `x-forwarded-proto` is the handler's to read). A target
+  in absolute form (`GET http://other.example/x HTTP/1.1`) is that URL, an
+  `https` one written as `http` with its host and the port as written
+  (`https://h/x` is `http://h/x`); its `Host` header is not looked at, as
+  RFC 9112 says, and stays in `req.headers`, so a handler reads the host
+  from `url.host(req.url)`, not from the header. An HTTP/1.0 request
+  without a `Host` has the address the client reached as its host
+  (`127.0.0.1:8080`).
 - `req.peer` is the address of the client's end of the connection, as
   `ip:port`: `127.0.0.1:53422`, and an IPv6 address in brackets,
   `[::1]:53422`. An IPv4 client of a listener on `[::]` is written by its
   IPv4 address too, not as `[::ffff:127.0.0.1]:53422`. It is the connection's, so behind a reverse proxy it is
   the proxy's; the client's own address is then in a header the proxy
   sets (such as `x-forwarded-for`). An access log line:
-  `io.eprintln("{req.peer} {req.method} {req.path}")`.
+  `io.eprintln("{req.peer} {req.method} {url.path(req.url)}")`.
 - A handler that cancels its own server still has its response sent.
 - If the program fails while requests are in flight, it ends as a
   process: their connections are closed without an answer.
@@ -556,13 +577,14 @@ When the task that serves is cancelled (or its deadline passes):
 An accept that fails (the process has no file descriptor left) is
 written to stderr once, and the server tries again after 100 ms.
 
-Use pattern matching on `(req.method, segments)` for routing:
+Use pattern matching on `(req.method, url.segments(req.url))` for routing:
 
 ```silt
 import bytes
 import http
 import json
 import tcp
+import url
 
 type User {
   id: Int,
@@ -585,7 +607,7 @@ fn main() {
   println("Listening on :{tcp.local_port(listener)}")
 
   http.serve(listener) { req ->
-    match (req.method, http.segments(req.path)) {
+    match (req.method, url.segments(req.url)) {
       (http.GET, []) -> reply(200, "Hello!")
 
       (http.GET, ["users", id]) -> reply(200, "User {id}")
@@ -607,68 +629,3 @@ fn main() {
   }
 }
 ```
-
-
-## `http.segments`
-
-```
-http.segments(path: String) -> List(String)
-```
-
-Splits a URL path into non-empty segments. Useful for pattern-matched routing.
-
-```silt
-println(http.segments("/api/users/42")) -- ["api", "users", "42"]
-println(http.segments("/")) -- []
-println(http.segments("//foo//bar/")) -- ["foo", "bar"]
-```
-
-This function has no dependencies and works even with `--no-default-features`.
-
-
-## `http.parse_query`
-
-```
-http.parse_query(query: String) -> Result(Map(String, List(String)), UrlError)
-```
-
-Parses a URL query string into a map from key to a list of values. Repeated
-keys accumulate into the same list in the order they appear, so a query like
-`tag=a&tag=b` parses as `#{"tag": ["a", "b"]}`.
-
-- A leading `?` is accepted and ignored.
-- Percent escapes (`%HH`) in both keys and values are decoded. A query
-  string comes from whoever sent the request, so one that does not decode
-  is an error value, not a failure of the program: a `%` that is no escape,
-  or escapes that are no UTF-8 text, are `Err(url.Invalid(what, at))`, as
-  from `url.decode_form`, which decodes the same pairs into a list in their
-  order.
-- Following the `application/x-www-form-urlencoded` convention, `+` decodes
-  to a space in values.
-- A key with no `=` (e.g. `flag&other=x`) is treated as having an empty
-  string value: `#{"flag": [""], "other": ["x"]}`.
-- Empty segments from leading, doubled, or trailing `&` are silently skipped.
-- An empty input (or a bare `?`) returns the empty map.
-
-```silt
-import http
-import io
-
-fn main() {
-  println(io.inspect(http.parse_query("name=alice&tag=dev&tag=admin")))
-  -- Ok(#{"name": ["alice"], "tag": ["dev", "admin"]})
-
-  println(io.inspect(http.parse_query("?q=hello%20world")))
-  -- Ok(#{"q": ["hello world"]})
-
-  println(io.inspect(http.parse_query("")))
-  -- Ok(#{})
-
-  println(http.parse_query("q=100%"))
-  -- Err(`%` at the end is no escape, at 5)
-}
-```
-
-Like `http.segments`, this function has no network dependencies and works
-with `--no-default-features`. Pair it with `req.query` in an `http.serve`
-handler to route on query parameters.

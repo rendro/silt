@@ -1,0 +1,36 @@
+GET /users/42 HTTP/1.1
+  the handler: GET http://example.test:8080/users/42 ["users", "42"] []
+  the client: 200 user 42
+GET /users/a%20b HTTP/1.1
+  the handler: GET http://example.test:8080/users/a%20b ["users", "a b"] []
+  the client: 200 user a b
+GET /users/a%2Fb HTTP/1.1
+  the handler: GET http://example.test:8080/users/a%2Fb ["users", "a/b"] []
+  the client: 200 user a/b
+GET /users/42/ HTTP/1.1
+  the handler: GET http://example.test:8080/users/42/ ["users", "42", ""] []
+  the client: 200 user 42, with a slash
+GET /files/../users/7?tag=a&tag=b+c HTTP/1.1
+  the handler: GET http://example.test:8080/users/7?tag=a&tag=b+c ["users", "7"] [("tag", "a"), ("tag", "b c")]
+  the client: 200 user 7
+GET /users/%7eann HTTP/1.1
+  the handler: GET http://example.test:8080/users/~ann ["users", "~ann"] []
+  the client: 200 user ~ann
+GET /show?q=1 HTTP/1.1
+  the handler: GET http://example.test/show?q=1 ["show"] [("q", "1")]
+  the client: 200 Request {method: GET, url: <url:http://example.test/show?q=1>, headers: #{"connection": "close", "host": "Example.TEST:80"}, body: bytes(, length: 0), peer: "PEER"}
+GET http://elsewhere.test/users/9 HTTP/1.1
+  the handler: GET http://elsewhere.test/users/9 ["users", "9"] []
+  the client: 200 user 9
+GET https://elsewhere.test/users/10 HTTP/1.1
+  the handler: GET http://elsewhere.test/users/10 ["users", "10"] []
+  the client: 200 user 10
+GET https://elsewhere.test:443/users/11 HTTP/1.1
+  the handler: GET http://elsewhere.test:443/users/11 ["users", "11"] []
+  the client: 200 user 11
+GET https://elsewhere.test:80/users/12 HTTP/1.1
+  the handler: GET http://elsewhere.test/users/12 ["users", "12"] []
+  the client: 200 user 12
+GET /users/13#frag HTTP/1.1
+  the handler: GET http://example.test:8080/users/13 ["users", "13"] []
+  the client: 200 user 13

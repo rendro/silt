@@ -44,7 +44,11 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         // The call ends the program: the line that says it ran comes
         // first, and the exit's code 0 is the run's.
         "process" => "{\n    println(\"OK:process\")\n    process.exit(0)\n  }",
-        "http" if cfg!(feature = "http") => "http.segments(\"/a/b\")",
+        // Port 1 on loopback refuses at once; the call returns an Err.
+        // (The URL is the url module's: see `also_imported`.)
+        "http" if cfg!(feature = "http") => {
+            "match url.parse(\"http://127.0.0.1:1/\") {\n    Ok(u) -> { let _ = http.get(u) }\n    Err(_) -> ()\n  }"
+        }
         "postgres" if cfg!(feature = "postgres") => "postgres.connect(\"not a url\")",
         // Port 1 on loopback refuses at once; the call returns an Err.
         "tcp" if cfg!(feature = "tcp") => "tcp.connect(\"127.0.0.1:1\")",
@@ -52,6 +56,14 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         _ => return None,
     };
     Some(Some(call))
+}
+
+/// The modules the call of `module` names besides it.
+fn also_imported(module: &str) -> &'static str {
+    match module {
+        "http" => "import url\n",
+        _ => "",
+    }
 }
 
 fn temp_path(label: &str) -> std::path::PathBuf {
@@ -86,7 +98,8 @@ fn a_function_of_every_builtin_module_runs() {
         };
         let Some(call) = call else { continue };
         let src = format!(
-            "import {module}\nfn main() {{\n  let _ = {call}\n  println(\"OK:{module}\")\n}}\n"
+            "import {module}\n{}fn main() {{\n  let _ = {call}\n  println(\"OK:{module}\")\n}}\n",
+            also_imported(module)
         );
         let out = silt("run", module, &src);
         let stdout = String::from_utf8_lossy(&out.stdout);

@@ -25,7 +25,7 @@ fn moved(status: Int, location: String) -> http.Response {
 }
 
 fn answer(req: http.Request) -> http.Response {
-  match req.path {
+  match url.path(req.url) {
     "/301" -> moved(301, "/echo")
     "/302" -> moved(302, "/echo")
     "/303" -> moved(303, "/echo")
@@ -38,7 +38,7 @@ fn answer(req: http.Request) -> http.Response {
         Some(_) -> "with"
         None -> "without"
       }
-      println("  the handler: {req.method} {req.path} [{text(req.body)}], {auth} authorization")
+      println("  the handler: {req.method} {url.path(req.url)} [{text(req.body)}], {auth} authorization")
       http.Response { status: 200, body: req.body, headers: #{} }
     }
   }

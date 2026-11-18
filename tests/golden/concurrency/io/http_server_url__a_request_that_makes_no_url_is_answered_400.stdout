@@ -1,0 +1,23 @@
+a Host with a user
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a Host with a path
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a number-like Host
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a Host with an empty port
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a user in a target in absolute form
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+an escape that is none
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+an escape that is no UTF-8
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+another scheme
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+OPTIONS *
+  the client: HTTP/1.1 204 No Content [Allow: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] 
+GET *
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+HTTP/1.0 without a Host
+  the handler: http 127.0.0.1 /old
+  the client: HTTP/1.1 200 OK [] ok

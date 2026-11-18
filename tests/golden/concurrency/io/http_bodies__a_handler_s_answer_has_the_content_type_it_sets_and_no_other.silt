@@ -16,7 +16,7 @@ import tcp
 import url
 
 fn answer(req: http.Request) -> http.Response {
-  match req.path {
+  match url.path(req.url) {
     "/text" -> http.Response { status: 200, body: bytes.from_string("hello"), headers: #{} }
     "/set" -> http.Response {
       status: 200,

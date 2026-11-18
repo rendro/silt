@@ -24,7 +24,7 @@ fn moved(status: Int, location: String) -> http.Response {
 
 fn echo(server: String, req: http.Request) -> http.Response {
   let typed = map.get(req.headers, "content-type") |> option.unwrap_or("no content-type")
-  println("  {server}: {req.method} {req.path} ?{req.query}, {typed}")
+  println("  {server}: {req.method} {url.path(req.url)} ?{url.query_text(req.url)}, {typed}")
   http.Response { status: 200, body: bytes.empty(), headers: #{} }
 }
 
@@ -34,8 +34,8 @@ fn main() {
   let other = "//127.0.0.1:{tcp.local_port(second)}"
   let one = task.spawn { ->
     http.serve(first) { req ->
-      match req.path {
-        "/q" when req.query == "x=1" -> moved(302, "?y=2")
+      match url.path(req.url) {
+        "/q" when url.query_text(req.url) == "x=1" -> moved(302, "?y=2")
         "/far" -> moved(307, "{other}/there")
         "/far/dots" -> moved(307, "{other}/x/./y/../../there?q=/..")
         "/far/scheme" -> moved(307, "http:{other}/x/../there")
