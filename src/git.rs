@@ -511,15 +511,44 @@ fn has_accepted_url_form(url: &str) -> bool {
 /// read as URLs ([`PARSED_GIT_URL_SCHEMES`]): a port that is no port, a
 /// host that is none, an escape that is none. `None` for a URL that
 /// reads, and for any other form. (The URL is kept as written: silt.lock
-/// and the cache name it so.)
+/// and the cache name it so.) A fault in the user or password is named
+/// without its text or its place, which the message hides; the scp form
+/// written with `ssh://` (`ssh://git@host:team/repo.git`) is told what
+/// to write.
 fn not_a_url(url: &str) -> Option<String> {
-    if !PARSED_GIT_URL_SCHEMES
+    let scheme = PARSED_GIT_URL_SCHEMES
         .iter()
-        .any(|scheme| url.starts_with(scheme))
-    {
-        return None;
+        .find(|scheme| url.starts_with(**scheme))?;
+    let why = crate::url::parse(url).err()?;
+    let crate::url::UrlError::Invalid(what, at) = &why else {
+        return Some(why.to_string());
+    };
+    // The user and password end at the last `@` of the authority.
+    let rest = &url[scheme.len()..];
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if let Some(end) = authority.rfind('@') {
+        let userinfo_end = scheme.chars().count() + authority[..end].chars().count();
+        if *at < userinfo_end {
+            return Some(
+                "its user or password is not written as a URL takes it \
+                 (write a `%`, `@`, `:` or `/` in it as `%25`, `%40`, `%3A`, `%2F`)"
+                    .to_string(),
+            );
+        }
     }
-    crate::url::parse(url).err().map(|why| why.to_string())
+    if *scheme == "ssh://" && what.starts_with("a port cannot hold") {
+        // `ssh://git@host:team/repo.git`: the path after a `:`, as the
+        // scp form writes it.
+        if let Some((host, path)) = authority.split_once(':') {
+            let rest_path = &rest[authority.len()..];
+            return Some(format!(
+                "{why}; for the form `user@host:path` leave out `ssh://` \
+                 (`{host}:{path}{rest_path}`), or write the path after a `/` \
+                 (`ssh://{host}/{path}{rest_path}`)"
+            ));
+        }
+    }
+    Some(why.to_string())
 }
 
 /// [`validate_git_url`] as a [`GitError`], for the functions below that
@@ -1333,6 +1362,34 @@ mod tests {
         }
         // `file://` is git's own form (`file://C:/repo` on Windows).
         assert_eq!(validate_git_url("file://C:/repo"), Ok(()));
+        // A fault in the user or the password is named without its text
+        // or its place: the message hides both.
+        for url in [
+            "https://user:pa%zzss@example.com/pkg.git",
+            "https://us%E9r@example.com/pkg.git",
+            "ssh://git:%@example.com/pkg.git",
+        ] {
+            let reason = rejection_reason(url);
+            assert!(
+                reason.starts_with(
+                    "is not a valid URL: its user or password is not written as a URL takes it"
+                ),
+                "{url:?}: {reason}"
+            );
+            for shown in ["%zz", "%E9", "pa%", ", at "] {
+                assert!(!reason.contains(shown), "{url:?}: {reason}");
+            }
+        }
+        // The scp form written with `ssh://` is told what to write.
+        let reason = rejection_reason("ssh://git@github.com:user/repo.git");
+        assert!(
+            reason.starts_with(
+                "is not a valid URL: a port cannot hold 'u', at 21; for the form `user@host:path` \
+                 leave out `ssh://` (`git@github.com:user/repo.git`), or write the path after a \
+                 `/` (`ssh://git@github.com/user/repo.git`);"
+            ),
+            "{reason}"
+        );
     }
 
     #[test]

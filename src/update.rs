@@ -359,8 +359,23 @@ fn next_hop(current: &str, said: &str) -> Result<Option<String>, String> {
         .ok()
         .filter(|base| base.scheme() == "https")
         .ok_or_else(|| format!("a download from {current}, not https"))?;
+    // The scheme the Location writes, if it writes one.
+    let scheme = location
+        .split_once(':')
+        .map(|(scheme, _)| scheme)
+        .filter(|scheme| {
+            scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+        });
+    if scheme.is_some_and(|scheme| !scheme.eq_ignore_ascii_case("https")) {
+        return Err(format!(
+            "a download was redirected to {location}, which is not https"
+        ));
+    }
     // (`url.resolve`, as RFC 3986 reads a reference: a text that is no URL
-    // of `//` form, `https:/x` and `file:/x` among them, goes nowhere.)
+    // of `//` form, `https:/x` among them, goes nowhere.)
     let next = match crate::url::resolve(&base, &location) {
         Ok(next) if next.scheme() == "https" => next,
         Ok(_) => {
@@ -370,11 +385,17 @@ fn next_hop(current: &str, said: &str) -> Result<Option<String>, String> {
         }
         Err(why) => {
             return Err(format!(
-                "a download was redirected to {location}, which is not https ({why})"
+                "a download was redirected to {location}, which is no valid URL ({why})"
             ));
         }
     };
-    Ok(Some(next.as_str().to_string()))
+    // A Location with a scheme goes on as the server wrote it, its scheme
+    // in lower case: a signed URL is signed as it was issued, and its bytes
+    // can matter. A relative one goes on resolved.
+    Ok(Some(match scheme {
+        Some(scheme) => format!("https{}", &location[scheme.len()..]),
+        None => next.as_str().to_string(),
+    }))
 }
 
 /// What the GitHub CLI says of the build attestation of an archive.
@@ -758,11 +779,44 @@ mod tests {
             "ftp://example.com/a",
             "HTTP://example.com/a",
             "file:/etc/passwd",
-            "https:/example.com/a",
         ] {
             let error = next_hop(from, &said(refused)).expect_err(refused);
-            assert!(error.contains("which is not https"), "{error}");
+            assert!(error.ends_with("which is not https"), "{error}");
         }
+        // A Location that is no URL: said so, with why.
+        for (refused, why) in [
+            ("https://evil.example:8a/a", "a port cannot hold 'a', at 22"),
+            ("/a%zz", "`%zz` is no escape, at 2"),
+            ("https://ex ample.com/a", "a host cannot hold ' ', at 10"),
+            (
+                "/a\u{1}b",
+                "a URL cannot hold the control character U+0001, at 2",
+            ),
+            (
+                "///evil.example/a",
+                "a URL of scheme `https` has a host, at 2",
+            ),
+            ("https:///x", "a URL of scheme `https` has a host, at 8"),
+            (
+                "https:/example.com/a",
+                "a URL has `//` after its scheme, at 6",
+            ),
+        ] {
+            let error = next_hop(from, &said(refused)).expect_err(refused);
+            assert_eq!(
+                error,
+                format!("a download was redirected to {refused}, which is no valid URL ({why})"),
+                "{refused}"
+            );
+        }
+        // A Location with a scheme goes on as the server wrote it (a signed
+        // URL is signed as issued), its scheme in lower case; its normal form
+        // would differ.
+        let signed = "HTTPS://Release-Assets.example:443/a/../b?X-Sig=ab%2b&disp=attachment%3b%20filename%3dx&k=%7Ea";
+        assert_eq!(
+            next_hop(from, &said(signed)),
+            Ok(Some(format!("https{}", &signed["HTTPS".len()..])))
+        );
         assert_eq!(next_hop(from, "  HTTP/1.1 404 Not Found\n"), Ok(None));
     }
 
