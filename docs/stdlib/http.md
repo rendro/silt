@@ -357,7 +357,7 @@ The handler receives a `Request` and must return a `Response` whose
 
 | What happens | What the client gets |
 |---|---|
-| The handler fails, or returns a status that is none | `500`. The failure is written to stderr and nothing of it is sent. The connection stays usable. |
+| The handler fails, or returns a status that is none | `500`. The failure is written to stderr as one line (a line end in its text shown as `\n`) and nothing of it is sent. The connection stays usable. |
 | 128 handlers are being called already | The request waits for one to return, in the server's queue, first come first served: a short burst is answered as the handlers free up. A request that has waited 5 s, or one that finds 1,024 waiting already, is answered `503`. A request that would release the handlers that wait is queued like any other: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
 | The method is none of `Method`'s (e.g. `TRACE`) | `405`, with an `Allow` header that names the seven |
 | The target or the `Host` makes no URL (see `req.url` below): a `Host` that is more than a host and a port, an escape that is none or no UTF-8 text, a target of another scheme than `http` and `https` | `400`; the handler is not called. The connection stays usable. |

@@ -1498,6 +1498,18 @@ fn response_bytes(
 #[cfg(feature = "http")]
 const TEXT: &str = "text/plain; charset=UTF-8";
 
+/// The message of a handler's failure as the one log line of
+/// `http.serve` writes it: its line ends as `\n` (and `\r`). The text
+/// can be the program's (a panic with data of the request in it), and
+/// each log line is one of the server's: a line end in it must not
+/// start a line of its own. (The other control characters of a panic's
+/// text are escapes already, `VmError::panic`; the report of a failed
+/// program keeps a panic's line ends.)
+#[cfg(feature = "http")]
+fn log_text(message: &str) -> String {
+    message.replace('\r', "\\r").replace('\n', "\\n")
+}
+
 /// A response of the server's own: a status, and a word as its body (a
 /// `204` has none).
 #[cfg(feature = "http")]
@@ -1539,7 +1551,7 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
             // respond generically.
             vm.runtime.io.err(&format!(
                 "http.serve: handler returned malformed Response: {}\n",
-                e.message
+                log_text(&e.message)
             ));
             plain_response(vm, 500, wire::reason(500), reply)
         }
@@ -2147,9 +2159,10 @@ impl crate::vm::Native for Conn {
                     // body — that leaks implementation details and
                     // potentially sensitive values across the security
                     // boundary (MED-1). Log to the host's stderr instead.
-                    vm.runtime
-                        .io
-                        .err(&format!("http.serve: handler error: {}\n", e.message));
+                    vm.runtime.io.err(&format!(
+                        "http.serve: handler error: {}\n",
+                        log_text(&e.message)
+                    ));
                 }
                 if !self.go_on_in_a_new_task(vm, reply) && !self.handed_on {
                     let bytes = plain_response(vm, 500, wire::reason(500), unavailable);

@@ -135,6 +135,16 @@ pub(crate) fn run_repl() {
         }
     };
     rl.set_helper(Some(helper));
+    // A SIGINT from outside (`kill -INT`) while the prompt waits ends the
+    // read as Ctrl-C at the keyboard does: the entry is dropped and a
+    // fresh prompt shown. The editor notes the signal in a pipe, and
+    // watches that pipe only while it also waits for an external
+    // printer: without one, the read of the terminal retries the
+    // interrupted read and the signal is lost (the typed text stays and
+    // the next keys go on with it). The printer is kept for the session
+    // and never used.
+    #[cfg(unix)]
+    let _sigint_watch = rl.create_external_printer().ok();
     let history_path = history_path();
     if let Some(ref p) = history_path {
         let _ = rl.load_history(p);

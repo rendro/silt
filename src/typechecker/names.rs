@@ -89,6 +89,10 @@ pub struct ModuleScope {
     /// named like a type or a variant it sees (`refused_trait`): a use of
     /// one where a trait stands is reported at the trait, not again.
     pub(crate) refused_traits: HashSet<Symbol>,
+    /// Of those, each imported by item, with the module it was imported
+    /// from (`import mi.{ Int }`): an impl of it by the bare name is an
+    /// impl of that module's trait (`TypeChecker::refused_own_trait`).
+    pub(crate) refused_imports: HashMap<Symbol, ModuleId>,
 }
 
 impl ModuleScope {
@@ -434,6 +438,7 @@ pub(crate) fn resolve_module(
         own_aliases: HashMap::new(),
         diagnostics,
         hidden_modules: Vec::new(),
+        first_names: first_import_names(program, &scope),
         type_vars: Vec::new(),
         header_vars: Vec::new(),
         type_receiver: false,
@@ -801,6 +806,12 @@ fn bind_imports(
                     // reported again.
                     if value.is_none() && ty.is_none() && exports.refused_traits.contains(item) {
                         scope.refused_traits.insert(*item);
+                        if let Imported::Module(id, _)
+                        | Imported::Cell(id, _)
+                        | Imported::Builtin(id) = imported
+                        {
+                            scope.refused_imports.insert(*item, id);
+                        }
                         continue;
                     }
                     if value.is_none() && ty.is_none() {
@@ -934,6 +945,31 @@ pub(crate) fn bare_variants(
             && let DefKind::Variant { ty, .. } = defs.get(*id).kind
         {
             out.entry(*name).or_insert(ty);
+        }
+    }
+    out
+}
+
+/// Each module the module binds by a name (`import m`, `import m as n`),
+/// with the name of its first import: a module imported twice is named by
+/// its first import in messages and in the editor alike (`import da`, then
+/// `import da as errs`: `da`). The bindings of the scope come in no order;
+/// the imports of `program` do.
+pub(crate) fn first_import_names(
+    program: &Program,
+    scope: &ModuleScope,
+) -> HashMap<ModuleId, Symbol> {
+    let mut out = HashMap::new();
+    for decl in &program.decls {
+        let Decl::Import(target, _) = decl else {
+            continue;
+        };
+        let bound = match target {
+            ImportTarget::Module(name) | ImportTarget::Alias(_, name, _) => *name,
+            ImportTarget::Items(..) => continue,
+        };
+        if let Some(Binding::Module(id)) = scope.values.get(&bound) {
+            out.entry(*id).or_insert(bound);
         }
     }
     out
@@ -1453,6 +1489,9 @@ struct Resolver<'a> {
     own_aliases: HashMap<DefId, DefId>,
     diagnostics: Vec<Diagnostic>,
     hidden_modules: Vec<HiddenModule>,
+    /// Each module the module binds by a name, by the name of its first
+    /// import (`first_import_names`): a message names a module so.
+    first_names: HashMap<ModuleId, Symbol>,
     /// The type variables of the signature of the function or method
     /// being resolved and of the header of its impl: `a.empty()` calls a
     /// method of a bound of `a` where no value is named `a`.
@@ -2423,10 +2462,29 @@ impl Resolver<'_> {
                 } else {
                     let candidates: Vec<String> =
                         exports.types.keys().map(|t| resolve(*t)).collect();
+                    // (What the name is in the module where it is a variant,
+                    // as the checker says it of a bare name:
+                    // `TypeChecker::what_the_name_is`.)
+                    // (The variant as written here; its enum by the
+                    // module's name in the file, that of its first import.)
+                    let is = match exports.values.get(&name) {
+                        Some(Binding::Def(id)) => match self.defs.get(*id).kind {
+                            DefKind::Variant { ty, .. } => format!(
+                                ": `{}.{name}` is a variant of `{}.{}`",
+                                module.name,
+                                (self.first_names.get(&self.defs.get(ty.0).module))
+                                    .copied()
+                                    .unwrap_or(module.name),
+                                self.defs.get(ty.0).name
+                            ),
+                            _ => String::new(),
+                        },
+                        _ => String::new(),
+                    };
                     let mut d = Diagnostic::error(
                         Code::NotExported,
                         span,
-                        format!("module '{}' has no {what} '{name}'", module.name),
+                        format!("module '{}' has no {what} '{name}'{is}", module.name),
                     );
                     let name_str = resolve(name);
                     if let Some(help) = (!is_trait).then(|| prelude_type_help(&name_str)).flatten()

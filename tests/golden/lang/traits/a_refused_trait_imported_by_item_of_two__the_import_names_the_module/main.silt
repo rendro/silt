@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- Two modules each refuse a `pub trait Int`; an impl by the bare name of
+-- the one imported by item (`import mi.{ Int }`) is an impl of mi's, and
+-- its body is checked (it was checked only when one refused trait of the
+-- name existed) (review rv-o1 re-check).
+import mi.{ Int }
+import mj
+
+type Box { b: Int }
+
+trait Int for Box {
+  fn go(self) -> Int { "bad" }
+}
+
+fn main() {
+  println(1)
+}

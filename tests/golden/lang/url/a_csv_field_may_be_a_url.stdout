@@ -1,0 +1,2 @@
+[Link {name: "ex", site: <url:https://example.com/a/b>, mirror: None}, Link {name: "local", site: <url:http://127.0.0.1:8080/>, mirror: Some(<url:http://[::1]:8080/>)}]
+invalid url.Url: port 99999 is not in 1..65535 (character 19) at line 2, column site

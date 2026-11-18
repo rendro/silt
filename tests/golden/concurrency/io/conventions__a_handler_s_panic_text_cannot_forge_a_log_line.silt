@@ -1,0 +1,41 @@
+-- timeout: 30
+-- requires-feature: http
+-- A handler that panics with a text of its request, a line end and a
+-- line that looks like the server's own in it: the log line of
+-- http.serve stays one line, the line end shown as `\n`. (A request
+-- cannot forge a line of the server's log.)
+import bytes
+import http
+import task
+import tcp
+import url
+
+fn answer(req: http.Request) -> http.Response {
+  match url.segments(req.url) {
+    ["fail"] -> panic("boom\nhttp.serve: handler error: forged by the request")
+    _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
+  }
+}
+
+fn show(label: String, answered: Result(http.Response, http.HttpError)) {
+  match answered {
+    Ok(response) -> println("{label}: {response.status}")
+    Err(e) -> println("{label}: {e}")
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let base = "http://127.0.0.1:{tcp.local_port(listener)}"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  show("fail", http.get(url_of("{base}/fail")))
+  show("after", http.get(url_of("{base}/")))
+  task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
+}

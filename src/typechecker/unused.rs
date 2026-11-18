@@ -656,9 +656,13 @@ fn param_text(pattern: &Pattern) -> std::string::String {
 fn holds(ty: &Type, v: TyVar) -> bool {
     match ty {
         Type::Var(w) => *w == v,
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds(t, v),
-        Type::Map(key, value) => holds(key, v) || holds(value, v),
-        Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().any(|t| holds(t, v)),
+        Type::Container(Container::List(t))
+        | Type::Container(Container::Set(t))
+        | Type::Container(Container::Channel(t)) => holds(t, v),
+        Type::Container(Container::Map(key, value)) => holds(key, v) || holds(value, v),
+        Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) => {
+            ts.iter().any(|t| holds(t, v))
+        }
         // (What the constructor is decides whether it holds its
         // argument.)
         Type::App(head, arg) => holds(head, v) || holds(arg, v),
@@ -681,9 +685,11 @@ fn holds(ty: &Type, v: TyVar) -> bool {
 fn holds_result(ty: &Type) -> bool {
     match ty {
         Type::Generic(_, args) => ty.is_builtin("Result") || args.iter().any(holds_result),
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_result(t),
-        Type::Map(key, value) => holds_result(key) || holds_result(value),
-        Type::Tuple(ts) => ts.iter().any(holds_result),
+        Type::Container(Container::List(t))
+        | Type::Container(Container::Set(t))
+        | Type::Container(Container::Channel(t)) => holds_result(t),
+        Type::Container(Container::Map(key, value)) => holds_result(key) || holds_result(value),
+        Type::Container(Container::Tuple(ts)) => ts.iter().any(holds_result),
         Type::App(_, arg) => holds_result(arg),
         Type::Fun(..)
         | Type::Con(..)
