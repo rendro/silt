@@ -1,0 +1,9 @@
+error[runtime]: joined task failed: panic: x\u{1b}[2Jy
+ --> runtime_text__a_joined_task_s_panic_shows_control_characters_as_escapes.silt:7:27
+   |
+ 7 |   let h = task.spawn { -> panic("x\u{1b}[2Jy") }
+   |                           ^^^^^^^^^^^^^^^^^^^^ joined task failed: panic: x\u{1b}[2Jy
+
+call stack:
+  -> closure in main  at runtime_text__a_joined_task_s_panic_shows_control_characters_as_escapes.silt:7:27
+  -> main  at runtime_text__a_joined_task_s_panic_shows_control_characters_as_escapes.silt:8:11

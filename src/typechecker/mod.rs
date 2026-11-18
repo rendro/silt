@@ -33,7 +33,7 @@ mod solve;
 mod structural;
 mod tables;
 pub(crate) mod typeexpr;
-pub(crate) use show::{ModuleWritten, written_builtin_member};
+pub(crate) use show::{ModuleNames, written_builtin_member};
 #[cfg(feature = "lsp")]
 pub(crate) use typeexpr::type_expr_text;
 mod unify;
@@ -608,7 +608,7 @@ pub(crate) struct TypeChecker {
     pub(super) let_order: Vec<Span>,
     /// Those of them, by the span of each, that are reported because
     /// they reach themselves.
-    pub(super) let_rings: Vec<Span>,
+    pub(super) let_rings: std::collections::HashSet<Span>,
     /// The top-level `let`s of a closure whose decode only its
     /// parameters' values decide: of one type, which a later use in
     /// the module decides (in a REPL cell, a use in the same entry).
@@ -972,7 +972,7 @@ impl TypeChecker {
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),
             let_order: Vec::new(),
-            let_rings: Vec::new(),
+            let_rings: std::collections::HashSet::new(),
             decided_by_use: Vec::new(),
             escaped_vars: std::collections::HashSet::new(),
             use_callees: HashMap::new(),
@@ -1740,6 +1740,9 @@ impl TypeChecker {
             }
         }
         let mut awaited: Vec<(Symbol, Type)> = Vec::new();
+        // (Where each name is in `awaited`: a `let` of a group of n
+        // looked through all n.)
+        let mut awaited_at: HashMap<Symbol, Vec<usize>> = HashMap::new();
         for &i in &component.members {
             match (&decls[i], &sigs[i]) {
                 (Decl::Fn(f), Some(sig)) if !sig.complete => {
@@ -1750,6 +1753,7 @@ impl TypeChecker {
                     for name in pattern.binder_names() {
                         let ty = self.fresh_var();
                         env.define(name, Scheme::mono(ty.clone()));
+                        awaited_at.entry(name).or_default().push(awaited.len());
                         awaited.push((name, ty));
                     }
                 }
@@ -1822,10 +1826,14 @@ impl TypeChecker {
                     {
                         self.copy_readings((of, inference::written_name(value)), to);
                     }
-                    for (name, awaited_ty) in &awaited {
-                        if names.contains(name)
-                            && let Some(bound) = env.lookup(*name).cloned()
-                        {
+                    // (Those of its names, in the order they were awaited.)
+                    let mut at: Vec<usize> = (names.iter())
+                        .flat_map(|name| awaited_at.get(name).into_iter().flatten().copied())
+                        .collect();
+                    at.sort_unstable();
+                    at.dedup();
+                    for (name, awaited_ty) in at.into_iter().map(|k| &awaited[k]) {
+                        if let Some(bound) = env.lookup(*name).cloned() {
                             self.unify(&bound.ty, awaited_ty, *span);
                         }
                     }
@@ -2263,9 +2271,10 @@ pub(crate) struct ModuleCheck {
     /// point (`TypeChecker::entry_errors_shown`).
     pub entry_display: HashMap<Symbol, Diagnostic>,
     /// How the module writes each other module of the program where it
-    /// names one of its types (`ModuleWritten`): for the editor, which
-    /// writes types as the messages do. Empty unless `for_editor`.
-    pub(crate) modules_written: HashMap<crate::defs::ModuleId, ModuleWritten>,
+    /// names one of its types (`ModuleWritten`), made when the editor asks
+    /// (`ModuleNames::written`): for the editor, which writes types as the
+    /// messages do. None unless `for_editor`.
+    pub(crate) module_names: Option<ModuleNames>,
     /// The names the module binds the builtin modules it imports to
     /// (`TypeChecker::builtin_bindings`), for the session's helps.
     pub(crate) builtin_bindings: HashMap<crate::defs::ModuleId, Symbol>,
@@ -2417,7 +2426,7 @@ pub(crate) struct ModuleContext<'a> {
     /// them is recorded, see [`Tables::forget`].
     pub(crate) tables: &'a mut Tables,
     /// Whether to keep what only an editor reads
-    /// (`ModuleCheck::modules_written`).
+    /// (`ModuleCheck::module_names`).
     pub(crate) for_editor: bool,
 }
 
@@ -2643,10 +2652,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     // (Only for an editor: the commands read none of it, and on a long
     // chain of imports it costs as much as the check.)
     let builtin_bindings = checker.builtin_bindings();
-    let modules_written = match for_editor {
-        true => checker.modules_written(),
-        false => HashMap::new(),
-    };
+    let module_names = for_editor.then(|| checker.module_names());
     *tables = std::mem::take(&mut checker.tables);
     let rows = tables.take_rows();
     tables.rows.insert(module, rows);
@@ -2670,7 +2676,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
         signatures,
         let_order: checker.let_order,
         entry_display,
-        modules_written,
+        module_names,
         builtin_bindings,
     }
 }

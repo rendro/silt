@@ -1288,7 +1288,11 @@ pub(crate) fn unwinding<R>(call: impl FnOnce() -> R) -> R {
 /// So a process has Rust's lines for a panic of silt's own code, the
 /// internal-error line and the status 101 all together or none of
 /// them. (A stdout whose reader has gone does not kill a process that
-/// is ending so: `no_death_by_a_closed_stdout`.)
+/// is ending so: `no_death_by_a_closed_stdout`. A death by the closed
+/// pipe that the kernel decided before, for a write at SIGPIPE's
+/// default, is not silt's to stop: on macOS a pending default-action
+/// kill acts like SIGKILL, and a thread that panics in that moment can
+/// still get Rust's lines out before the process is gone.)
 pub(crate) fn exit_on_panic() {
     ITS_PANICS_ARE_SILTS.with(|silts| silts.set(true));
     static HOOKED: Once = Once::new();

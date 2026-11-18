@@ -1,0 +1,9 @@
+-- exit: 1
+-- A task's panic reaches the task that joins it with its text escaped,
+-- as a panic of main does.
+import task
+
+fn main() {
+  let h = task.spawn { -> panic("x\u{1b}[2Jy") }
+  println(task.join(h))
+}
