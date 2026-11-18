@@ -621,13 +621,22 @@ pub(crate) fn needs_escape(c: char) -> bool {
 /// of the scp form (`user:word@host:path`, shown `***@host:path`) or of
 /// a mistyped URL (`https:/user:word@host/r.git`). The scp form's user
 /// alone is shown (`git@host:path`), as a ref is (`v1@x`). A `file://`
-/// URL and a local path have no user: nothing
-/// (`file:///srv/team@work/r.git` is shown as written). An `@` of a path
-/// or a query is taken for the end of a user too: more is hidden then,
-/// never less.
+/// URL is hidden only up to an `@` of its authority, what stands
+/// between `//` and the next `/` (`file://***@host/srv/r.git`;
+/// `file:///srv/team@work/r.git` is shown as written), and a local path
+/// not at all, but for one that starts with `//` (`//user:word@host/r`):
+/// a directory may hold an `@`. An `@` of a path or a query
+/// of another URL is taken for the end of a user too: more is hidden
+/// then, never less.
 fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
     let last = url.rfind('@')?;
-    if is_local_git_url(url) {
+    if let Some(rest) = url.strip_prefix("file://") {
+        let authority = rest.split('/').next().unwrap_or(rest);
+        let at = authority.rfind('@')?;
+        return (at > 0).then_some(7..7 + at);
+    }
+    // (`//host/...` reads as a URL without its scheme too.)
+    if is_local_git_url(url) && !url.starts_with("//") {
         return None;
     }
     let start = match url.find(':') {
@@ -650,23 +659,28 @@ pub(crate) fn display_url(url: &str) -> String {
     escape_for_display(&hidden)
 }
 
-/// `text` (a git command line, git's output, a summary that quotes a
+/// `text` (a git command line, git's output, a message that quotes a
 /// URL) with the user and password of each git URL in it hidden: each
 /// word of it (a URL in a text ends at a space, a tab or a line break)
-/// is hidden as [`display_url`] hides one URL.
+/// is hidden as [`display_url`] hides one URL, after the quotes and
+/// brackets that open it (`` `***@host:path` ``).
 pub(crate) fn hide_git_userinfo(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
     for (start, word) in words(text) {
-        if let Some(place) = userinfo_place(word) {
-            out.push_str(&text[copied..start + place.start]);
+        let opening = word.len() - word.trim_start_matches(OPENING_MARKS).len();
+        if let Some(place) = userinfo_place(&word[opening..]) {
+            out.push_str(&text[copied..start + opening + place.start]);
             out.push_str("***");
-            copied = start + place.end;
+            copied = start + opening + place.end;
         }
     }
     out.push_str(&text[copied..]);
     out
 }
+
+/// The characters that open a quoted or bracketed word in a text.
+const OPENING_MARKS: [char; 6] = ['`', '\'', '"', '(', '[', '<'];
 
 /// The words of `text` with their places: what stands between spaces,
 /// tabs and line breaks.
@@ -681,28 +695,22 @@ fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
 }
 
 /// A line of a `silt.toml` shown under a caret, with each character of
-/// a user and password of a git URL in it replaced by a `*`, so that the
+/// a user and password of a URL in it replaced by a `*`, so that the
 /// columns stay where they are (`git = "https://*********@host/r.git"`).
-/// Each quoted string of the line is one value, hidden as
+/// The quoted value of a `git` key is one git URL, hidden as
 /// [`display_url`] hides it: up to its closing quote, a space in it
 /// included, and read with its escapes (`@` is an `@`). The rest of
-/// the line (a key, a comment) is hidden word by word, as
-/// [`hide_git_userinfo`] hides a text.
+/// the line (another value, a key, a comment) is ordinary text, where
+/// only a URL with `//` has a user and password: after its `//` up to
+/// its last `@`, the URL ending at a space or a tab
+/// (`homepage = "https://*****@host/"`; `note = "Contact: bob@host"` is
+/// shown as written).
 pub(crate) fn mask_manifest_line(line: &str) -> String {
     // Which bytes of the line are shown as a `*`.
     let mut masked: Vec<bool> = vec![false; line.len()];
-    fn mark(masked: &mut [bool], range: std::ops::Range<usize>) {
-        masked[range].iter_mut().for_each(|m| *m = true);
-    }
-    fn mark_words(masked: &mut [bool], line: &str, from: usize, to: usize) {
-        for (start, word) in words(&line[from..to]) {
-            if let Some(place) = userinfo_place(word) {
-                mark(masked, from + start + place.start..from + start + place.end);
-            }
-        }
-    }
+    // The line with the git values blanked, for the rule of the rest.
+    let mut rest = line.as_bytes().to_vec();
     let bytes = line.as_bytes();
-    let mut outside = 0;
     let mut at = 0;
     while at < line.len() {
         let quote = bytes[at];
@@ -713,24 +721,54 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
             at += 1;
             continue;
         }
-        mark_words(&mut masked, line, outside, at);
         let triple = line[at..].starts_with(if quote == b'"' { "\"\"\"" } else { "'''" });
         let open = if triple { 3 } else { 1 };
         let (value, end) = toml_string_value(&line[at + open..], quote, triple);
-        if let Some(place) = userinfo_place(&value.text) {
-            for (decoded_at, raw) in &value.raw {
-                if place.contains(decoded_at) {
-                    mark(&mut masked, at + open + raw.start..at + open + raw.end);
+        let content = at + open..at + open + value.raw.last().map_or(0, |(_, raw)| raw.end);
+        if is_git_key_before(&line[..at]) {
+            rest[content.clone()].iter_mut().for_each(|b| *b = b' ');
+            if let Some(place) = userinfo_place(&value.text) {
+                for (decoded_at, raw) in &value.raw {
+                    if place.contains(decoded_at) {
+                        let raw = at + open + raw.start..at + open + raw.end;
+                        masked[raw].iter_mut().for_each(|m| *m = true);
+                    }
                 }
             }
         }
         at += open + end;
-        outside = at;
     }
-    mark_words(&mut masked, line, outside, line.len());
+    // (Only ASCII spaces replaced whole characters: still UTF-8.)
+    let rest = String::from_utf8(rest).unwrap_or_default();
+    for (start, word) in words(&rest) {
+        let Some(slashes) = word.find("//") else {
+            continue;
+        };
+        if let Some(last) = word[slashes + 2..].rfind('@') {
+            let place = start + slashes + 2..start + slashes + 2 + last;
+            masked[place].iter_mut().for_each(|m| *m = true);
+        }
+    }
     line.char_indices()
         .map(|(i, c)| if masked[i] { '*' } else { c })
         .collect()
+}
+
+/// Whether the text of a line before a value, `before`, ends with the
+/// key `git` and its `=` (`git = `, `lib = { git = `, `"git" = `,
+/// `lib.git = `).
+fn is_git_key_before(before: &str) -> bool {
+    let Some(key) = before.trim_end().strip_suffix('=') else {
+        return false;
+    };
+    let key = key.trim_end();
+    let Some(head) = ["git", "\"git\"", "'git'"]
+        .iter()
+        .find_map(|name| key.strip_suffix(name))
+    else {
+        return false;
+    };
+    head.is_empty() || head.ends_with([' ', '\t', '{', ',', '.'])
 }
 
 /// A quoted TOML string's value, with the raw bytes each of its
@@ -1749,6 +1787,8 @@ mod tests {
             ),
             ("git@github.com:team/r.git", "git@github.com:team/r.git"),
             ("file:///srv/team@work/r.git", "file:///srv/team@work/r.git"),
+            ("file://u:p@host/srv/r.git", "file://***@host/srv/r.git"),
+            ("file://host/srv/a@b/r.git", "file://host/srv/a@b/r.git"),
             ("/srv//git/team@x/r.git", "/srv//git/team@x/r.git"),
             ("./a:b@c/r.git", "./a:b@c/r.git"),
         ] {
@@ -1763,6 +1803,15 @@ mod tests {
         assert_eq!(
             hide_git_userinfo("git clone -- file:///srv/a@b/r.git d"),
             "git clone -- file:///srv/a@b/r.git d"
+        );
+        // The quote or bracket that opens a word is no part of a URL.
+        assert_eq!(
+            hide_git_userinfo("cannot reach `user:pw@h:t/p.git`: no"),
+            "cannot reach `***@h:t/p.git`: no"
+        );
+        assert_eq!(
+            hide_git_userinfo("('user:pw@h:t' \"https://u:p@h/\" <u:p@h:t>)"),
+            "('***@h:t' \"https://***@h/\" <***@h:t>)"
         );
         // Git's output names the password apart from the URL: the scp
         // form's path.
@@ -1820,6 +1869,38 @@ mod tests {
             ),
             ("no url here", "no url here"),
             ("git = \"http://@h/\"", "git = \"http://@h/\""),
+            // The value of a `git` key, however the key is written.
+            ("git = 'user:word@h:t/r'", "git = '*********@h:t/r'"),
+            (
+                "lib.git = \"user:word@h:t/r\"",
+                "lib.git = \"*********@h:t/r\"",
+            ),
+            (
+                "\"git\" = \"user:word@h:t/r\"",
+                "\"git\" = \"*********@h:t/r\"",
+            ),
+            (
+                "git = \"file://u:p@host/srv/r.git\"",
+                "git = \"file://***@host/srv/r.git\"",
+            ),
+            // Text that is no git URL: only a URL with `//` is hidden.
+            (
+                "lib = { git = \"ssh://h/r\", note = \"Contact: bob@example.com\" }",
+                "lib = { git = \"ssh://h/r\", note = \"Contact: bob@example.com\" }",
+            ),
+            (
+                "note = \"Name:bob@example.com at 12:30@place key:value@x\"",
+                "note = \"Name:bob@example.com at 12:30@place key:value@x\"",
+            ),
+            ("digit = \"user:word@h:t/r\"", "digit = \"user:word@h:t/r\""),
+            (
+                "\"a:b@c\" = { git = \"ssh://h/r\" } # mail Name:bob@example.com",
+                "\"a:b@c\" = { git = \"ssh://h/r\" } # mail Name:bob@example.com",
+            ),
+            (
+                "homepage = \"https://user:pw@h/\"",
+                "homepage = \"https://*******@h/\"",
+            ),
         ] {
             assert_eq!(mask_manifest_line(line), masked, "{line}");
             assert_eq!(masked.chars().count(), line.chars().count(), "{line}");

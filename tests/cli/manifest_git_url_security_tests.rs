@@ -931,3 +931,70 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
     }
     let _ = fs::remove_dir_all(&ws);
 }
+
+/// Under an error, the line of silt.toml hides the user and password of
+/// the `git` value only: another value, a key or a comment that holds an
+/// address is shown as written. `silt add` quotes the hidden URL whole,
+/// its backticks kept. FAIL before: `note = "************@example.com"`,
+/// `# ********@example.com`, and `cannot reach ***@...`` without its
+/// opening backtick.
+#[cfg(unix)]
+#[test]
+fn only_a_git_url_is_hidden_in_what_a_command_prints() {
+    use std::os::unix::fs::PermissionsExt;
+    let ws = fresh_workspace("hidden_text");
+    let bin = ws.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let git = bin.join("git");
+    fs::write(&git, "#!/bin/sh\necho \"fatal: '$*'\" >&2\nexit 128\n").unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let run = |cwd: &Path, args: &[&str]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+        cmd.args(args)
+            .current_dir(cwd)
+            .env("XDG_CACHE_HOME", ws.join("cache"))
+            .env("PATH", &path);
+        isolate_git(&mut cmd, &ws);
+        let out = cmd.output().expect("failed to spawn silt binary");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+
+    let app = ws.join("app");
+    let dep = "lib = { git = \"user:S3CR3TXYZ@example.com:team/pkg.git\", \
+               note = \"Contact: bob@example.com\", tag = \"v1\" } # Name:bob@example.com";
+    write_package(
+        &app,
+        "app",
+        &[dep.to_string()],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let stderr = run(&app, &["check"]);
+    let shown = "lib = { git = \"**************@example.com:team/pkg.git\", \
+                 note = \"Contact: bob@example.com\", tag = \"v1\" } # Name:bob@example.com";
+    assert!(stderr.contains(shown), "{stderr}");
+
+    let other = ws.join("other");
+    write_package(&other, "other", &[], "main.silt", "fn main() {}\n");
+    let stderr = run(
+        &other,
+        &[
+            "add",
+            "lib",
+            "--git",
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "--tag",
+            "v1",
+        ],
+    );
+    assert!(
+        stderr.contains("`***@example.com:team/pkg.git`") && !stderr.contains("S3C"),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
