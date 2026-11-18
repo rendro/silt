@@ -8,6 +8,7 @@ import bytes
 import http
 import task
 import tcp
+import url
 
 fn answer(req: http.Request) -> http.Response {
   match http.segments(req.path) {
@@ -27,7 +28,14 @@ fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let base = "http://127.0.0.1:{tcp.local_port(listener)}"
   let server = task.spawn { -> http.serve(listener, answer) }
-  show("fail", http.get("{base}/fail"))
-  show("after", http.get("{base}/"))
+  show("fail", http.get(url_of("{base}/fail")))
+  show("after", http.get(url_of("{base}/")))
   task.cancel(server)
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
 }
