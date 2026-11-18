@@ -1,0 +1,8 @@
+-- exit: 1
+-- The report of a task that failed and was never joined shows the
+-- program's text with its control characters as escapes.
+import task
+
+fn main() {
+  let _ = task.spawn { -> panic("bell\u{7} and back\u{8}space") }
+}

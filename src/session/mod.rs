@@ -218,7 +218,7 @@ pub struct Session {
     /// modules, found when the packages are resolved.
     module_name_problems: Vec<Diagnostic>,
     /// Whether the checks keep what only an editor reads
-    /// (`ModuleAnalysis::modules_written`): set by the language server
+    /// (`ModuleAnalysis::module_names`): set by the language server
     /// (`Session::for_editor`); a command pays nothing for it.
     for_editor: bool,
 }
@@ -250,7 +250,7 @@ impl Session {
     }
 
     /// Have the checks keep what only an editor reads: how each module
-    /// writes the other modules' types (`ModuleAnalysis::modules_written`).
+    /// writes the other modules' types (`ModuleAnalysis::module_names`).
     /// For the language server, and for the REPL's `:type` while it checks
     /// its expression; the commands leave it unset and pay nothing for it.
     #[cfg(any(feature = "lsp", feature = "repl"))]
@@ -282,7 +282,9 @@ impl Session {
         {
             return None;
         }
-        let written = |module: ModuleId| analysis.modules_written.get(&module);
+        let written = |module: ModuleId| {
+            (analysis.module_names.as_ref())?.written(module, &self.tables, &self.defs)
+        };
         match crate::defs::builtin_types().get(r.id.0.0 as usize) {
             Some((_, None)) => None,
             Some((_, Some(module))) => Some(match ModuleId::builtin(module).and_then(written) {
@@ -314,7 +316,9 @@ impl Session {
             };
         }
         let module = self.defs.get(t.id.0).module;
-        match analysis.modules_written.get(&module) {
+        match (analysis.module_names.as_ref())
+            .and_then(|names| names.written(module, &self.tables, &self.defs))
+        {
             Some(written) => written
                 .type_name(t.name)
                 .replace(crate::types::AFTER_ARGUMENTS, ""),
@@ -845,7 +849,7 @@ impl Session {
             let_order: check.let_order,
             diagnostics,
             entry_display: check.entry_display,
-            modules_written: check.modules_written,
+            module_names: check.module_names,
             builtin_bindings: check.builtin_bindings,
         }
     }
@@ -889,19 +893,27 @@ impl Session {
         // imports before it and the entry last: first why a module failed
         // (its parse errors, a file that cannot be read, a name that
         // resolves to nothing, a cycle), then the type diagnostics.
+        // The problems of the imports of each module (a module whose file
+        // could not be read: each import of it), in the order of the
+        // importers and of their imports. (Found once: looking through
+        // every import of the program for each module took time n squared
+        // in a chain of n modules.)
+        let mut import_problems: HashMap<ModuleId, Vec<&Diagnostic>> = HashMap::new();
+        for &importer in &ordering.modules {
+            for import in &self.graph.module(importer).imports {
+                if let ImportResolution::Module(target) = import.resolution
+                    && let Some(d) = &import.problem
+                {
+                    import_problems.entry(target).or_default().push(d);
+                }
+            }
+        }
         for &id in &ordering.modules {
             for d in &self.graph.module(id).problems {
                 push(d, &mut out);
             }
-            // A module whose file could not be read: each import of it.
-            for &importer in &ordering.modules {
-                for import in &self.graph.module(importer).imports {
-                    if matches!(import.resolution, ImportResolution::Module(t) if t == id)
-                        && let Some(d) = &import.problem
-                    {
-                        push(d, &mut out);
-                    }
-                }
+            for d in import_problems.get(&id).into_iter().flatten() {
+                push(d, &mut out);
             }
         }
         for &id in &ordering.modules {
