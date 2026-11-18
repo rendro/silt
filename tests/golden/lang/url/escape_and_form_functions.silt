@@ -1,0 +1,13 @@
+-- url.escape, url.unescape, url.encode_form and url.decode_form: the same
+-- bytes as before, errors with the character where.
+import url
+
+fn main() {
+  println(url.escape("a b&c/é+~"))
+  println(url.unescape("a%20b%2bc+d"))
+  println(url.unescape("100%"))
+  println(url.unescape("ab%E9"))
+  println(url.encode_form([("q", "silt lang"), ("a&b", "c=d+e"), ("", "*-._~é")]))
+  println(url.decode_form("a=1&&b&=c&d=e=f&x=a+b%2B"))
+  println(url.decode_form("a=1&b%zz=2"))
+}

@@ -56,6 +56,7 @@ example. An editor shows the same text when you hover a name.
 - [result / option](stdlib/result-option.md) -- combinators of `Result` and `Option`
 - [bytes](stdlib/bytes.md) -- byte strings, hex and base64
 - [encoding](stdlib/encoding.md) -- URL and form encoding
+- [url](stdlib/url.md) -- URLs: reading, building and escaping them
 - [crypto](stdlib/crypto.md) -- hashes, HMAC, random bytes
 - [uuid](stdlib/uuid.md) -- making, parsing and checking UUIDs
 - [regex](stdlib/regex.md) -- regular expressions

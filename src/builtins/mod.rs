@@ -32,6 +32,7 @@ pub(crate) mod tcp;
 pub(crate) mod time;
 pub(crate) mod toml;
 pub(crate) mod typed;
+pub(crate) mod url;
 pub(crate) mod uuid;
 
 /// The text of a variant of a builtin error enum, as it is shown

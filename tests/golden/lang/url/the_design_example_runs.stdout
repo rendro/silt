@@ -1,0 +1,10 @@
+https://api.example.com/v1/
+["v1", ""]
+https://api.example.com/v1/users/ann%2F..%2Fadmin%3Fx=1?q=silt%20lang&tag=a%26b
+["v1", "users", "ann/../admin?x=1"]
+/v1/users/ann%2F..%2Fadmin%3Fx=1
+[("q", "silt lang"), ("tag", "a&b")]
+q=silt%20lang&tag=a%26b
+postgresql://***@localhost/app
+postgresql://app:p%40ss%2Fw%3Ard@localhost/app
+https://api.example.com/v1/docs?x=1#top

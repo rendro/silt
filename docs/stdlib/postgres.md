@@ -440,6 +440,7 @@ type may have these types:
 - `Int`, `Float`, `String`, `Bool`
 - `Bytes`, as the field, in an `Option` or in a `List` (a `bytea` column)
 - `time.Date`, `time.Time`, `time.DateTime`
+- `url.Url`, from a text column that `url.parse` reads (an error names what is wrong, not the text)
 - `time.Instant` and `time.Duration`, from a `json` or `jsonb` column as `json.parse` reads them
 - `json.Value`, any column as the table's last column says
 - `List(T)`, `Option(T)`, `Map(String, T)`
@@ -507,7 +508,7 @@ the call's `Err`.
 | `int2`, `int4`, `int8` | `Int`; `Float` (the nearest) | `json.Int` |
 | `float4`, `float8` | `Float` (`NaN` and `Infinity` are errors) | `json.Float` |
 | `numeric` | `String` (the exact text), `Float` (the nearest) | `json.String`, the exact text |
-| `text`, `varchar`, `char(n)`, `name`, `"char"`, an enum | `String` | `json.String` |
+| `text`, `varchar`, `char(n)`, `name`, `"char"`, an enum | `String`; `url.Url`, read by `url.parse` | `json.String` |
 | `uuid` | `String` | `json.String` |
 | `bytea` | `Bytes` | `json.String`, the hex text `\x00ff` |
 | `date` | `time.Date` | `json.String`, as silt shows a `Date` |

@@ -97,6 +97,8 @@ pub enum Value {
     /// A compiled regex pattern (`regex.compile`): equal to another of
     /// the same pattern text.
     Regex(Arc<crate::value::Compiled>),
+    /// A URL (`url.parse`): equal to another of the same text.
+    Url(Arc<crate::url::Url>),
     /// A dictionary (`bytecode::dict`): no program value is one; the
     /// code passes it, hidden, to what has bounds of a program's trait.
     Dict(bytecode::dict::Dict),
@@ -267,6 +269,7 @@ impl Value {
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",
             Value::Regex(_) => "Regex",
+            Value::Url(_) => "Url",
             Value::Dict(_) => "Dict",
             Value::Unit => "()",
         }
@@ -335,6 +338,35 @@ impl Value {
                     Some(false) => {}
                     None => pending.extend(items.iter()),
                 },
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(record) => pending.extend(record.fields()),
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Whether the value is a URL or holds one: the parts of a URL that
+    /// are shown hidden (`***@`) can make two values that differ be
+    /// written alike (a failed `test.assert_eq` says so).
+    pub(crate) fn holds_url(&self) -> bool {
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::Url(_) => return true,
+                Value::List(items) => {
+                    for run in items.runs() {
+                        pending.extend(run);
+                    }
+                }
+                Value::Tuple(items) => pending.extend(items.iter()),
+                Value::Variant(variant) => pending.extend(variant.fields()),
+                Value::Set(items) => pending.extend(items.iter()),
                 Value::Map(entries) => {
                     for (k, v) in entries.iter() {
                         pending.push(k);

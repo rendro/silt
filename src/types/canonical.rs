@@ -358,6 +358,7 @@ pub(crate) struct KindTypes {
     pub(crate) tcp_listener: TypeId,
     pub(crate) tcp_stream: TypeId,
     pub(crate) regex: TypeId,
+    pub(crate) url: TypeId,
 }
 
 pub(crate) fn kind_types() -> &'static KindTypes {
@@ -382,13 +383,14 @@ pub(crate) fn kind_types() -> &'static KindTypes {
             tcp_listener: TypeRef::builtin("TcpListener").id,
             tcp_stream: TypeRef::builtin("TcpStream").id,
             regex: TypeRef::builtin("Regex").id,
+            url: TypeRef::builtin("Url").id,
         }
     })
 }
 
 /// Whether `id` is an opaque type of a builtin module whose values are a
 /// kind of their own: `task.Handle`, `tcp.TcpListener`, `tcp.TcpStream`,
-/// `regex.Regex`, and the handles of `postgres` (`PgPool`, `PgTx`,
+/// `regex.Regex`, `url.Url`, and the handles of `postgres` (`PgPool`, `PgTx`,
 /// `PgCursor`), variants of types of their own that no program can make.
 pub(crate) fn is_opaque_value_type(id: TypeId) -> bool {
     let kinds = kind_types();
@@ -397,6 +399,7 @@ pub(crate) fn is_opaque_value_type(id: TypeId) -> bool {
         kinds.tcp_listener,
         kinds.tcp_stream,
         kinds.regex,
+        kinds.url,
         crate::typeinfo::ty::PG_POOL,
         crate::typeinfo::ty::PG_TX,
         crate::typeinfo::ty::PG_CURSOR,

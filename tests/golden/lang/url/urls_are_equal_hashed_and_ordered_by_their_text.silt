@@ -1,0 +1,28 @@
+-- `==` on the normal text: texts that differ only by normalising are one
+-- Url; a Url is a map key and a set element, and Urls sort by their text.
+import list
+import map
+import set
+import url
+
+fn main() -> Result((), url.UrlError) {
+  let a = url.parse("HTTP://H:80/a/./b")?
+  let b = url.parse("http://h/a/b")?
+  println(a == b)
+  println(url.parse("http://h/?a=1&b=2")? == url.parse("http://h/?b=2&a=1")?)
+  println(url.parse("http://h/a%2Fb")? == url.parse("http://h/a/b")?)
+  let visits = #{a: 1}
+  println(map.get(visits, b))
+  println(set.length(#[a, b]))
+  let sorted = list.sort([url.parse("https://b/")?, url.parse("http://z/")?, url.parse("https://a/")?])
+  println(sorted |> list.map { u -> url.to_string(u) })
+  println(url.parse("http://a/")? < url.parse("http://b/")?)
+  println(url.parse("http://b/")? >= url.parse("http://b/")?)
+  println(bigger(url.parse("http://a/")?, url.parse("http://b/")?))
+  Ok(())
+}
+
+-- The order through a bound, as of any type that has Compare.
+fn bigger(a: a, b: a) -> Bool where a: Compare {
+  a > b
+}

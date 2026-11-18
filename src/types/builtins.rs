@@ -157,6 +157,12 @@ pub(crate) static BUILTIN_TYPES: &[BuiltinType] = &[
         arity: Some(0),
         kind: BuiltinKind::Container,
     },
+    // A URL of the url module (`url.parse`).
+    BuiltinType {
+        name: "Url",
+        arity: Some(0),
+        kind: BuiltinKind::Container,
+    },
 ];
 
 /// Look up a built-in type entry by surface name. Returns `None` for
@@ -253,6 +259,7 @@ mod tests {
             ("TcpListener", "tcp"),
             ("TcpStream", "tcp"),
             ("Regex", "regex"),
+            ("Url", "url"),
         ] {
             assert_eq!(module_of(name), Some(module), "{name}");
             assert!(!is_prelude_name(name), "{name}");

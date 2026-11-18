@@ -354,6 +354,11 @@ fn begin<'a>(
         // inside a structure too, as a value with a `Display` impl is.
         Value::Regex(re) if shown => return f.write_str(&re.pattern).map(|()| None),
         Value::Regex(re) => return write!(f, "<regex:{}>", re.pattern).map(|()| None),
+        // A URL is shown with its user and password hidden (`***@`); inside
+        // a structure, and by `io.inspect`, in its own brackets, so that it
+        // does not read as a `String`.
+        Value::Url(u) if shown && !inside => return write!(f, "{u}").map(|()| None),
+        Value::Url(u) => return write!(f, "<url:{u}>").map(|()| None),
         Value::Dict(crate::bytecode::dict::Dict::Built(d)) => {
             return write!(f, "<dict:{}>", d.template.name).map(|()| None);
         }

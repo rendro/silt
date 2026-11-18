@@ -46,13 +46,15 @@ pub enum Leaf {
     Date,
     Time,
     DateTime,
+    /// `url.Url`, a string `url.parse` reads.
+    Url,
     JsonValue,
 }
 
 impl Leaf {
     /// Every leaf, in the order the help texts name them.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub const ALL: [Leaf; 9] = [
+    pub const ALL: [Leaf; 10] = [
         Leaf::Int,
         Leaf::Float,
         Leaf::String,
@@ -61,6 +63,7 @@ impl Leaf {
         Leaf::Date,
         Leaf::Time,
         Leaf::DateTime,
+        Leaf::Url,
         Leaf::JsonValue,
     ];
 
@@ -77,6 +80,7 @@ impl Leaf {
             Leaf::Date => "time.Date",         // (not a text)
             Leaf::Time => "time.Time",         // (not a text)
             Leaf::DateTime => "time.DateTime", // (not a text)
+            Leaf::Url => "url.Url",            // (not a text)
             Leaf::JsonValue => "json.Value",   // (not a text)
         }
     }
@@ -93,6 +97,7 @@ impl Leaf {
             FieldType::Date => Leaf::Date,
             FieldType::Time => Leaf::Time,
             FieldType::DateTime => Leaf::DateTime,
+            FieldType::Url => Leaf::Url,
             FieldType::JsonValue => Leaf::JsonValue,
             _ => return None,
         })
@@ -110,13 +115,17 @@ impl Family {
     pub fn leaves(self) -> &'static [Leaf] {
         use Leaf::*;
         match self {
-            Family::Json => &[Int, Float, String, Bool, Date, Time, DateTime, JsonValue],
-            Family::Toml => &[Int, Float, String, Bool, Date, Time, DateTime, JsonValue],
+            Family::Json => &[
+                Int, Float, String, Bool, Date, Time, DateTime, Url, JsonValue,
+            ],
+            Family::Toml => &[
+                Int, Float, String, Bool, Date, Time, DateTime, Url, JsonValue,
+            ],
             // `Bytes` from a `bytea` column.
             Family::Postgres => &[
-                Int, Float, String, Bool, Bytes, Date, Time, DateTime, JsonValue,
+                Int, Float, String, Bool, Bytes, Date, Time, DateTime, Url, JsonValue,
             ],
-            Family::Csv => &[Int, Float, String, Bool, Date, Time, DateTime],
+            Family::Csv => &[Int, Float, String, Bool, Date, Time, DateTime, Url],
         }
     }
 
@@ -386,8 +395,8 @@ mod tests {
 
     /// What a program imports: `postgres` where it is built.
     const IMPORTS: &str = match cfg!(feature = "postgres") {
-        true => "import csv\nimport json\nimport postgres\nimport time\nimport toml\n",
-        false => "import csv\nimport json\nimport time\nimport toml\n",
+        true => "import csv\nimport json\nimport postgres\nimport time\nimport toml\nimport url\n",
+        false => "import csv\nimport json\nimport time\nimport toml\nimport url\n",
     };
 
     /// A program with the record types `R { f: field }` and `Inner { x:

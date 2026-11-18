@@ -38,6 +38,7 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "bytes" => "bytes.empty()",
         "crypto" => "crypto.random_bytes(4)",
         "encoding" => "encoding.url_encode(\"a b\")",
+        "url" => "url.escape(\"a b\")",
         "stream" => "stream.from_list([1])",
         "uuid" => "uuid.nil()",
         "csv" => "csv.split_line(\"a,b\")",

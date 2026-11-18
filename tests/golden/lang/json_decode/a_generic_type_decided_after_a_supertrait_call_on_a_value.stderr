@@ -3,7 +3,7 @@ error[type]: `Dec.again` cannot decode `S(Int)`: field `s` has type `Set(Int)`, 
     |
  38 |   let f = { x -> Dec.again(S { s: x, n: 1 }, """{"s": [1], "n": 1}""") }
     |                  ^^^^^^^^^ `Dec.again` cannot decode `S(Int)`: field `s` has type `Set(Int)`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, url.Url, json.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: type `Bx(String)` does not implement trait `json.Decode`: the only impl is for `Bx(Int)`
  --> a_generic_type_decided_after_a_supertrait_call_on_a_value.silt:39:18

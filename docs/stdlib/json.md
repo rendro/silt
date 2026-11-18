@@ -68,6 +68,7 @@ record and enum type nested in them), may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `time.Date`, `time.Time`, `time.DateTime`
+- `url.Url`, a string that `url.parse` reads (an error names what is wrong, not the text)
 - `time.Instant` and `time.Duration`, as `json.stringify` writes them: `{"epoch_ns": n}`, `{"ns": n}`
 - `json.Value`, which keeps that part of the document as it is
 - `List(T)`, `Option(T)`, `Map(String, T)`

@@ -374,6 +374,9 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     register_structural_traits_for(checker, &["Bytes"], &["Hash"]);
     // A Regex is shown as its pattern: the text its `==` compares.
     register_structural_traits_for(checker, &["Regex"], &["Display"]);
+    // A Url is shown with its user and password hidden, and is a map key,
+    // a set element and ordered by its whole text.
+    register_structural_traits_for(checker, &["Url"], &["Display", "Hash", "Compare"]);
 
     register_builtin_impls(checker);
 
@@ -439,7 +442,7 @@ fn register_builtin_impls(checker: &mut TypeChecker) {
 /// The builtin types that are no record or enum and have a json form,
 /// so `json.Encode` by their structure.
 pub(super) const JSON_FORMS: &[&str] = &[
-    "Int", "Float", "Bool", "String", "()", "List", "Tuple", "Map",
+    "Int", "Float", "Bool", "String", "()", "List", "Tuple", "Map", "Url",
 ];
 
 /// The builtin types besides `json.Value` that are `json.Decode` by

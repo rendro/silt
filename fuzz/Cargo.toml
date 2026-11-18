@@ -85,3 +85,8 @@ doc = false
 name = "fuzz_lsp_messages"
 path = "fuzz_targets/fuzz_lsp_messages.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_url"
+path = "fuzz_targets/fuzz_url.rs"
+doc = false

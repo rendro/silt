@@ -1110,6 +1110,228 @@ pub fn check_csv(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── URLs ────────────────────────────────────────────────────────────
+
+/// What the reader of URLs (`src/url.rs`) makes of any text: it ends
+/// without a panic, with an error's place inside the text. A URL that
+/// reads is written as printable ASCII that reads back as the same URL
+/// and is written alike again; shown, it hides exactly its user and
+/// password; its host names its machine plainly; the http client's
+/// transport takes it; and what each reader gives, each `with_`
+/// function writes back. The text is also resolved as a reference, and
+/// escaped, unescaped and decoded as a form body.
+pub fn check_url(text: &str) -> Result<(), String> {
+    use crate::url::{self, UrlError};
+    // (No error holds the text: the longest message is the punycode
+    // hint of a 253-character host.)
+    let placed = |what: &str, e: UrlError, len: usize| match e {
+        UrlError::Invalid(why, at) if at <= len && why.chars().count() <= 320 => Ok(()),
+        e => Err(format!("{what}: {e:?}, in {len} characters")),
+    };
+    let chars = text.chars().count();
+    if let Err(e) = url::unescape(text) {
+        placed("unescape", e, chars)?;
+    }
+    if let Err(e) = url::decode_form(text) {
+        placed("decode_form", e, chars)?;
+    }
+    if url::unescape(&url::escape(text)).as_deref() != Ok(text) {
+        return Err("unescape(escape(text)) is not the text".into());
+    }
+    let form = vec![(text.to_string(), text.to_string())];
+    if url::decode_form(&url::encode_form(&form)).as_ref() != Ok(&form) {
+        return Err("the form of the text does not decode to it".into());
+    }
+    let base = url::parse("http://a/b/c/d;p?q").map_err(|e| format!("the base: {e}"))?;
+    match url::resolve(&base, text) {
+        Ok(u) => check_one_url(&u).map_err(|e| format!("resolved on {base:?}: {e}"))?,
+        Err(e) => placed("resolve", e, chars)?,
+    }
+    match url::parse(text) {
+        Ok(u) => {
+            check_one_url(&u)?;
+            check_url_changes(&u, text)
+        }
+        Err(e) => placed("parse", e, chars),
+    }
+}
+
+/// The checks of [`check_url`] on one URL, apart from its changes.
+fn check_one_url(u: &crate::url::Url) -> Result<(), String> {
+    let text = u.as_str();
+    if !text.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(format!("{u:?} is not written in printable ASCII"));
+    }
+    match crate::url::parse(text) {
+        Ok(again) if again == *u && again.as_str() == text => {}
+        again => return Err(format!("{u:?} is read back as {again:?}")),
+    }
+    // (Every part decodes exactly when the whole text does: the
+    // delimiters are ASCII.)
+    if crate::url::unescape(text).is_err() {
+        return Err(format!("{u:?}: an escape does not decode"));
+    }
+    if u.segments().iter().any(|s| s == "." || s == "..") {
+        return Err(format!("{u:?}: a dot segment"));
+    }
+    let credentials = !u.user().is_empty() || !u.password().is_empty();
+    let shown = u.to_string();
+    let want = match (credentials, text.split_once('@')) {
+        (true, Some((_, rest))) => format!("{}://***@{rest}", u.scheme()),
+        (true, None) => return Err(format!("{u:?} has a user or password but no `@`")),
+        (false, _) => text.to_string(),
+    };
+    if shown != want {
+        return Err(format!("{u:?} is shown as {shown:?}"));
+    }
+    let host = u.host();
+    match host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+    {
+        Some(inside) => {
+            let address: std::net::Ipv6Addr = inside
+                .parse()
+                .map_err(|_| format!("{u:?}: the host is no IPv6 address"))?;
+            let segments = address.segments();
+            let holds_ipv4 = address.to_ipv4_mapped().is_some()
+                || (segments[..6] == [0; 6] && !matches!(segments[6..], [0, 0] | [0, 1]));
+            if holds_ipv4 || address.to_string() != inside {
+                return Err(format!("{u:?}: the IPv6 host is not plain"));
+            }
+        }
+        None => {
+            let name = host.strip_suffix('.').unwrap_or(host);
+            let last = name.rsplit('.').next().unwrap_or(name);
+            let number_like =
+                last.bytes().all(|byte| byte.is_ascii_digit()) || last.starts_with("0x");
+            let plain = host
+                .parse::<std::net::Ipv4Addr>()
+                .is_ok_and(|address| address.to_string() == host);
+            if !host.is_empty() && number_like && !plain {
+                return Err(format!("{u:?}: the host looks like a number"));
+            }
+            let lower = |byte: u8| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'_' | b'.')
+            };
+            if !host.bytes().all(lower) {
+                return Err(format!("{u:?}: the host is not a lower-case name"));
+            }
+        }
+    }
+    // What the client sends: the URL without its user and password,
+    // which go in an `authorization` header. (The transport takes no URL
+    // over 65,534 bytes; its reader of a user and password refuses some
+    // that RFC 3986 allows, such as `%5B1::1%5D:80.com:8t`.)
+    #[cfg(feature = "http")]
+    if matches!(u.scheme(), "http" | "https") {
+        let sent = u.with_user("").with_password("");
+        if sent.as_str().len() <= 65_534
+            && let Err(e) = sent.as_str().parse::<ureq::http::Uri>()
+        {
+            return Err(format!("the transport does not take {sent:?}: {e}"));
+        }
+    }
+    Ok(())
+}
+
+/// The changes of [`check_url`]: each `with_` function writes back what
+/// the reader of its part gives, and writes `text` as that part.
+fn check_url_changes(u: &crate::url::Url, text: &str) -> Result<(), String> {
+    use crate::url;
+    let same = |what: &str, changed: Result<url::Url, url::UrlError>| match changed {
+        Ok(changed) if changed == *u => Ok(()),
+        changed => Err(format!("{u:?} with its own {what} is {changed:?}")),
+    };
+    if u.add_segments(&[]).as_ref() != Ok(u) {
+        return Err(format!("{u:?} with no segments added changed"));
+    }
+    same("scheme", u.with_scheme(u.scheme()))?;
+    same("host", u.with_host(u.host()))?;
+    same("port", u.with_port(u.port().map(i64::from)))?;
+    let read_back = |what: &str, changed: &url::Url, good: bool| match good {
+        true => check_one_url(changed),
+        false => Err(format!("{u:?} with the {what} {text:?} is {changed:?}")),
+    };
+    // (Decoded, then escaped by the writer's own rules: `%2F` in a
+    // fragment is written back as `/`, so the text may differ.)
+    let changed = u.with_user(&u.user());
+    read_back("own user", &changed, changed.user() == u.user())?;
+    let changed = u.with_password(&u.password());
+    read_back("own password", &changed, changed.password() == u.password())?;
+    let changed = u.with_fragment(&u.fragment());
+    read_back("own fragment", &changed, changed.fragment() == u.fragment())?;
+    let segments = u.segments();
+    let changed = (u.with_segments(&segments)).map_err(|e| format!("{u:?}: segments: {e}"))?;
+    read_back("segments", &changed, changed.segments() == segments)?;
+    let query = u.query();
+    let changed = u.with_query(&query);
+    read_back("query", &changed, changed.query() == query)?;
+    let changed = u.with_user(text);
+    read_back("user", &changed, changed.user() == text)?;
+    let changed = u.with_password(text);
+    read_back("password", &changed, changed.password() == text)?;
+    let changed = u.with_fragment(text);
+    read_back("fragment", &changed, changed.fragment() == text)?;
+    let pair = vec![(text.to_string(), text.to_string())];
+    let changed = u.with_query(&pair);
+    read_back("query", &changed, changed.query() == pair)?;
+    let dots = matches!(text, "." | "..");
+    let one = vec![text.to_string()];
+    match (u.with_segments(&one), dots) {
+        (Ok(changed), false) => {
+            let want = if text.is_empty() { vec![] } else { one.clone() };
+            read_back("segment", &changed, changed.segments() == want)?;
+        }
+        (Err(_), true) => {}
+        (changed, _) => return Err(format!("{u:?} with the segment {text:?}: {changed:?}")),
+    }
+    match (u.add_segments(&one), dots) {
+        (Ok(changed), false) => {
+            let mut want = u.segments();
+            if want.last().is_some_and(String::is_empty) {
+                want.pop();
+            }
+            want.push(text.to_string());
+            if want == [""] {
+                want.clear();
+            }
+            read_back("added segment", &changed, changed.segments() == want)?;
+        }
+        (Err(_), true) => {}
+        (changed, _) => return Err(format!("{u:?} and the segment {text:?}: {changed:?}")),
+    }
+    for changed in [u.with_scheme(text), u.with_host(text)]
+        .into_iter()
+        .flatten()
+    {
+        check_one_url(&changed)?;
+    }
+    if let Ok(port) = text.parse::<i64>()
+        && let Ok(changed) = u.with_port(Some(port))
+    {
+        check_one_url(&changed)?;
+    }
+    for reference in [
+        "",
+        "#f",
+        "?q",
+        "../x",
+        "/y",
+        "//h2/z",
+        "./a:b",
+        "g;x=1/../y",
+        text,
+    ] {
+        if let Ok(resolved) = url::resolve(u, reference) {
+            check_one_url(&resolved).map_err(|e| format!("{reference:?} on {u:?}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
 // ── HTTP responses ──────────────────────────────────────────────────
 
 /// Where the responses of [`check_http_response`] came from: a redirect
@@ -1399,6 +1621,11 @@ mod tests {
     fn the_seeds_of_the_package_files_and_csv_targets_hold() {
         check_seeds("fuzz_package_files", &["toml", "lock"], check_package_files);
         check_seeds("fuzz_csv", &["csv"], check_csv);
+    }
+
+    #[test]
+    fn the_seeds_of_the_url_target_hold() {
+        check_seeds("fuzz_url", &["url"], check_url);
     }
 
     #[cfg(feature = "http")]

@@ -1,0 +1,19 @@
+-- toml.parse reads a field of type url.Url with url.parse.
+import toml
+import url
+
+type Upstream {
+  name: String,
+  base: url.Url,
+}
+
+fn main() {
+  match toml.parse("name = \"api\"\nbase = \"HTTPS://API.example.com:443/v1/\"\n", Upstream) {
+    Ok(up) -> println("{up.name} {up.base} {url.segments(up.base)}")
+    Err(e) -> println(e)
+  }
+  match toml.parse("name = \"api\"\nbase = \"api.example.com\"\n", Upstream) {
+    Ok(up) -> println(up.base)
+    Err(e) -> println(e)
+  }
+}

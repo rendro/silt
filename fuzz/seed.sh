@@ -27,8 +27,9 @@ done
 # (fuzz/corpus/fuzz_package_files/*.toml and *.lock); for fuzz_csv,
 # which reads csv texts (fuzz/corpus/fuzz_csv/*.csv); for
 # fuzz_http_response, which reads HTTP responses
-# (fuzz/corpus/fuzz_http_response/*.http); or for fuzz_lsp_messages,
+# (fuzz/corpus/fuzz_http_response/*.http); for fuzz_lsp_messages,
 # which reads an editor's framed messages
-# (fuzz/corpus/fuzz_lsp_messages/*.lsp).
+# (fuzz/corpus/fuzz_lsp_messages/*.lsp); or for fuzz_url, which reads
+# URLs (fuzz/corpus/fuzz_url/*.url).
 
 echo "Seeded corpora from examples/ into fuzz/corpus/<target>/"

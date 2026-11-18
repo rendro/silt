@@ -106,6 +106,7 @@ mod types;
 // the library path, not the CLI — so gate the module to native targets only.
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
+mod url;
 mod value;
 mod vm;
 #[cfg(feature = "watch")]
