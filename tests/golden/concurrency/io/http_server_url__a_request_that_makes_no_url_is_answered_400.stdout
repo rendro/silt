@@ -4,6 +4,10 @@ a Host with a path
   the client: HTTP/1.1 400 Bad Request [] Bad Request
 a number-like Host
   the client: HTTP/1.1 400 Bad Request [] Bad Request
+a Host with an empty port
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a user in a target in absolute form
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
 an escape that is none
   the client: HTTP/1.1 400 Bad Request [] Bad Request
 an escape that is no UTF-8

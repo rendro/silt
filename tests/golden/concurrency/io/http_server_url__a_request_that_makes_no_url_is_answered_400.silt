@@ -50,6 +50,8 @@ fn main() {
     ("a Host with a user", "GET /x HTTP/1.1|Host: u@h|Connection: close||"),
     ("a Host with a path", "GET /x HTTP/1.1|Host: h/y|Connection: close||"),
     ("a number-like Host", "GET /x HTTP/1.1|Host: 0x7f.1|Connection: close||"),
+    ("a Host with an empty port", "GET /x HTTP/1.1|Host: h.test:|Connection: close||"),
+    ("a user in a target in absolute form", "GET http://u:p@other.test/x HTTP/1.1|Host: h|Connection: close||"),
     ("an escape that is none", "GET /%zz HTTP/1.1|Host: h|Connection: close||"),
     ("an escape that is no UTF-8", "GET /caf%E9 HTTP/1.1|Host: h|Connection: close||"),
     ("another scheme", "GET ftp://h/x HTTP/1.1|Host: h|Connection: close||"),

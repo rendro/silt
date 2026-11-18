@@ -1336,9 +1336,10 @@ fn check_url_changes(u: &crate::url::Url, text: &str) -> Result<(), String> {
 
 /// What the server makes of the target and headers of a request that it
 /// read (`http.serve`): `Request.url`, or a 400. A URL it makes reads
-/// back as itself, is of `http` (or, from a target in absolute form, of
-/// `https`), names a host, and has the path of an origin-form target as
-/// its path's start where the target needed nothing of normalising.
+/// back as itself, is of `http`, names a host, and has no user, password
+/// or fragment. For a target in origin form (`/x?y`) its host and port are
+/// the `Host` header's (nothing of the target can move them), and its path
+/// and query are the target's own, normalised.
 #[cfg(feature = "http")]
 pub fn check_request_url(target: &str, headers: &[(String, String)]) -> Result<(), String> {
     let Some(url) = crate::builtins::http::request_url(target, headers, "127.0.0.1:9") else {
@@ -1347,11 +1348,28 @@ pub fn check_request_url(target: &str, headers: &[(String, String)]) -> Result<(
     if crate::url::parse(url.as_str()).as_ref() != Ok(&url) {
         return Err(format!("{target:?} made {url:?}, which reads otherwise"));
     }
-    if !matches!(url.scheme(), "http" | "https") || url.host().is_empty() {
+    if url.scheme() != "http" || url.host().is_empty() {
         return Err(format!("{target:?} made {url:?}"));
     }
-    if target.starts_with('/') && url.scheme() != "http" {
-        return Err(format!("the target {target:?} made {url:?}, not of http"));
+    if !url.user().is_empty() || !url.password().is_empty() || !url.fragment().is_empty() {
+        return Err(format!(
+            "{target:?} made {url:?}, with a user, password or fragment"
+        ));
+    }
+    if !target.starts_with('/') {
+        return Ok(());
+    }
+    // The host and port are the Host header's, nothing of the target's.
+    if let Some((_, host)) = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("host")) {
+        let named = crate::url::parse(&format!("http://{host}/")).ok();
+        if named.as_ref().map(|u| (u.host(), u.port())) != Some((url.host(), url.port())) {
+            return Err(format!("{target:?} with Host {host:?} made {url:?}"));
+        }
+    }
+    // The path and query are the target's own, normalised.
+    let alone = crate::url::parse(&format!("http://h{target}")).map_err(|e| e.to_string())?;
+    if (alone.path(), alone.query_text()) != (url.path(), url.query_text()) {
+        return Err(format!("{target:?} made {url:?}"));
     }
     Ok(())
 }
@@ -1680,6 +1698,10 @@ mod tests {
             ("/old", vec![]),
             ("/caf%E9?q=%zz", host("[::1]:8080")),
             ("//x", host("h")),
+            ("/x#frag", host("h")),
+            ("http://u:p@o.test/x", host("h")),
+            ("HTTPS://o.test:443/x#f", host("h")),
+            ("http://o.test/x", host("u@bad")),
         ] {
             check_request_url(target, &headers).unwrap();
         }
