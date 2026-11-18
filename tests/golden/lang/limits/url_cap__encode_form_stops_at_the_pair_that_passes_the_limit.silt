@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: url.encode_form: result would exceed maximum string size (10000005 bytes > 10000000 limit)
+-- stderr-not-contains: not reached
+-- Three thousand pairs that hold one long string: the body stops at the
+-- second pair, which passes the limit, and the pairs are never copied
+-- (15 GB of them would be).
+import list
+import string
+import url
+
+fn main() {
+  let big = string.repeat("a", 5000000)
+  let pairs = list.map(1..3000) { _ -> ("k", big) }
+  let _ = url.encode_form(pairs)
+  println("not reached")
+}
