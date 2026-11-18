@@ -125,7 +125,7 @@ impl Family {
             Family::Postgres => &[
                 Int, Float, String, Bool, Bytes, Date, Time, DateTime, Url, JsonValue,
             ],
-            Family::Csv => &[Int, Float, String, Bool, Date, Time, DateTime],
+            Family::Csv => &[Int, Float, String, Bool, Date, Time, DateTime, Url],
         }
     }
 

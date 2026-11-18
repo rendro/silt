@@ -198,8 +198,8 @@ Returned by `csv.split_line` and `csv.parse`.
 
 Returned by `url.parse`, `url.resolve`, `url.unescape` and
 `url.decode_form` for a text that is no URL or no escaped text, and by the
-`with_` functions that check their part. It never holds the text it was
-given, which may hold a password.
+`with_` functions that check their part. It does not repeat the text it was
+given, which may hold a password: it names the character that is wrong.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|

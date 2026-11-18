@@ -388,6 +388,13 @@ fn the_punycode_form_is_named_only_where_it_is_sure() {
     ] {
         assert_eq!(hint(host), unsure, "{host}");
     }
+    // A token before a raw `/` would read as the host: an `@` after the
+    // host's start names no ASCII form.
+    assert_eq!(refusal("https://t\u{f6}k\u{e9}n/x@h/").0, unsure);
+    assert_eq!(
+        refusal("https://u:p@b\u{fc}cher.de/").0,
+        "a host name must be ASCII: write it as xn--bcher-kva.de"
+    );
     assert_eq!(punycode("\u{fc}").as_deref(), Some("tda"));
     assert_eq!(punycode("espa\u{f1}a").as_deref(), Some("espaa-rta"));
     assert_eq!(punycode("\u{138}a").as_deref(), Some("a-ska"));
