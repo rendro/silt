@@ -1585,9 +1585,13 @@ fn holds_constructor(ty: &Type) -> bool {
     match ty {
         Type::App(..) | Type::Con(..) => true,
         Type::Fun(params, ret) => params.iter().any(holds_constructor) || holds_constructor(ret),
-        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => holds_constructor(inner),
-        Type::Map(k, v) => holds_constructor(k) || holds_constructor(v),
-        Type::Tuple(parts) | Type::Generic(_, parts) => parts.iter().any(holds_constructor),
+        Type::Container(Container::List(inner))
+        | Type::Container(Container::Set(inner))
+        | Type::Container(Container::Channel(inner)) => holds_constructor(inner),
+        Type::Container(Container::Map(k, v)) => holds_constructor(k) || holds_constructor(v),
+        Type::Container(Container::Tuple(parts)) | Type::Generic(_, parts) => {
+            parts.iter().any(holds_constructor)
+        }
         _ => false,
     }
 }

@@ -12,7 +12,7 @@ use super::Server;
 use super::ast_walk::find_type_at_offset;
 use super::conversions::position_to_offset;
 use super::local_bindings::find_local_binding_at_offset;
-use crate::types::Type;
+use crate::types::{Container, Type};
 
 impl Server {
     // ── Go to type definition ──────────────────────────────────────
@@ -76,9 +76,13 @@ fn type_heads(ty: &Type) -> Vec<crate::defs::TypeId> {
                 heads.push(head);
             }
             match ty {
-                Type::Generic(_, args) | Type::Tuple(args) => next.extend(args),
-                Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => next.push(&**inner),
-                Type::Map(k, v) => next.extend([&**k, &**v]),
+                Type::Generic(_, args) | Type::Container(Container::Tuple(args)) => {
+                    next.extend(args)
+                }
+                Type::Container(Container::List(inner))
+                | Type::Container(Container::Set(inner))
+                | Type::Container(Container::Channel(inner)) => next.push(&**inner),
+                Type::Container(Container::Map(k, v)) => next.extend([&**k, &**v]),
                 Type::Fun(params, ret) => {
                     next.extend(params);
                     next.push(&**ret);

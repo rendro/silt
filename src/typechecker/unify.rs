@@ -58,11 +58,9 @@ impl TyVarSupply {
             match t {
                 Type::Never => true,
                 Type::Fun(params, ret) => params.iter().any(holds_never) || holds_never(ret),
-                Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => holds_never(inner),
-                Type::Map(k, v) | Type::App(k, v) => holds_never(k) || holds_never(v),
-                Type::Tuple(parts) | Type::Generic(_, parts) | Type::Con(_, parts) => {
-                    parts.iter().any(holds_never)
-                }
+                Type::Container(c) => c.parts().any(holds_never),
+                Type::App(k, v) => holds_never(k) || holds_never(v),
+                Type::Generic(_, parts) | Type::Con(_, parts) => parts.iter().any(holds_never),
                 _ => false,
             }
         }
@@ -82,18 +80,11 @@ impl TyVarSupply {
                 let params = each(&params, self);
                 Type::Fun(params, Box::new(self.without_never(*ret)))
             }
-            Type::List(inner) => Type::List(Box::new(self.without_never(*inner))),
-            Type::Set(inner) => Type::Set(Box::new(self.without_never(*inner))),
-            Type::Channel(inner) => Type::Channel(Box::new(self.without_never(*inner))),
-            Type::Map(k, v) => {
-                let k = self.without_never(*k);
-                Type::Map(Box::new(k), Box::new(self.without_never(*v)))
-            }
+            Type::Container(c) => Type::Container(c.map_parts(|t| self.without_never(t.clone()))),
             Type::App(head, arg) => {
                 let head = self.without_never(*head);
                 Type::applied(head, self.without_never(*arg))
             }
-            Type::Tuple(parts) => Type::Tuple(each(&parts, self)),
             Type::Generic(name, args) => Type::Generic(name, each(&args, self)),
             Type::Con(head, rest) => Type::Con(head, each(&rest, self)),
             other => other,
@@ -278,15 +269,11 @@ impl TypeChecker {
                 let ret = Box::new(self.apply(ret));
                 Type::Fun(params, ret)
             }
-            Type::List(inner) => Type::List(Box::new(self.apply(inner))),
-            Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.apply(e)).collect()),
+            Type::Container(c) => Type::Container(c.map_parts(|t| self.apply(t))),
             Type::Generic(name, args) => {
                 let args = args.iter().map(|a| self.apply(a)).collect();
                 Type::Generic(*name, args)
             }
-            Type::Map(k, v) => Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v))),
-            Type::Set(inner) => Type::Set(Box::new(self.apply(inner))),
-            Type::Channel(inner) => Type::Channel(Box::new(self.apply(inner))),
             Type::Rigid(r) if !self.rigid_alias.is_empty() => Type::Rigid(self.rigid_rep(*r)),
             // A constructor variable applied, once the variable is a
             // constructor, is the full type (`Option(_)` at `Int` is
@@ -792,40 +779,27 @@ impl TypeChecker {
                 }
             }
 
-            (Type::List(a), Type::List(b)) => {
-                self.unify_into(a, b, out);
+            (Type::Container(Container::Tuple(a)), Type::Container(Container::Tuple(b)))
+                if a.len() != b.len() =>
+            {
+                // Directional convention: t1 (=a) is the "got" side,
+                // t2 (=b) is the "expected" side. Earlier wording
+                // "expected {a.len()}, got {b.len()}" reversed this.
+                out.push(Fault::new(
+                    Code::TypeMismatch,
+                    format!(
+                        "tuple length mismatch: expected {}, got {}",
+                        b.len(),
+                        a.len()
+                    ),
+                ));
             }
 
-            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
-                self.unify_into(k1, k2, out);
-                self.unify_into(v1, v2, out);
-            }
-
-            (Type::Set(a), Type::Set(b)) => {
-                self.unify_into(a, b, out);
-            }
-
-            (Type::Channel(a), Type::Channel(b)) => {
-                self.unify_into(a, b, out);
-            }
-
-            (Type::Tuple(a), Type::Tuple(b)) => {
-                if a.len() != b.len() {
-                    // Directional convention: t1 (=a) is the "got" side,
-                    // t2 (=b) is the "expected" side. Earlier wording
-                    // "expected {a.len()}, got {b.len()}" reversed this.
-                    out.push(Fault::new(
-                        Code::TypeMismatch,
-                        format!(
-                            "tuple length mismatch: expected {}, got {}",
-                            b.len(),
-                            a.len()
-                        ),
-                    ));
-                } else {
-                    for (x, y) in a.iter().zip(b.iter()) {
-                        self.unify_into(x, y, out);
-                    }
+            // Two containers of one kind: part by part (a map's key, then
+            // its value).
+            (Type::Container(a), Type::Container(b)) if let Some(pairs) = a.zip_parts(b) => {
+                for (x, y) in pairs {
+                    self.unify_into(x, y, out);
                 }
             }
 
@@ -898,10 +872,8 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
     match ty {
         Type::Rigid(r) => Some(*r),
         Type::Fun(params, ret) => params.iter().find_map(rigid_in).or_else(|| rigid_in(ret)),
-        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => rigid_in(inner),
-        Type::Tuple(elems) => elems.iter().find_map(rigid_in),
+        Type::Container(c) => c.parts().find_map(rigid_in),
         Type::Generic(_, args) => args.iter().find_map(rigid_in),
-        Type::Map(k, v) => rigid_in(k).or_else(|| rigid_in(v)),
         Type::App(head, arg) => rigid_in(head).or_else(|| rigid_in(arg)),
         Type::Con(_, rest) => rest.iter().find_map(rigid_in),
         Type::Int
@@ -920,12 +892,8 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
     match ty {
         Type::Var(v) => *v == var,
         Type::Fun(params, ret) => params.iter().any(|p| occurs_in(var, p)) || occurs_in(var, ret),
-        Type::List(inner) => occurs_in(var, inner),
-        Type::Tuple(elems) => elems.iter().any(|e| occurs_in(var, e)),
+        Type::Container(c) => c.parts().any(|t| occurs_in(var, t)),
         Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),
-        Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
-        Type::Set(inner) => occurs_in(var, inner),
-        Type::Channel(inner) => occurs_in(var, inner),
         Type::App(head, arg) => occurs_in(var, head) || occurs_in(var, arg),
         Type::Con(_, rest) => rest.iter().any(|t| occurs_in(var, t)),
         Type::Int

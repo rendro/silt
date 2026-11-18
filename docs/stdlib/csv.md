@@ -94,6 +94,7 @@ The fields of the record type may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `time.Date`, `time.Time`, `time.DateTime`
+- `url.Url`, a cell that `url.parse` reads (an error names what is wrong, not the text)
 - `Option(T)` of these: an empty cell is `None`
 - type aliases of these
 

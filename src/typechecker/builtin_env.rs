@@ -365,7 +365,7 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
     // The elements of the list a writer writes: a decoder of what it
     // writes reads them back, so they are of a type it decodes.
     if let Some(decoding) = row.writes
-        && let Some(Type::List(element)) = params.first()
+        && let Some(Type::Container(Container::List(element))) = params.first()
     {
         let check = BuiltinCheck::Decodes {
             builtin,

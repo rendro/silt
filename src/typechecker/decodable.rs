@@ -20,9 +20,13 @@ pub(crate) const ARGUMENT_DEPTH_LIMIT: usize = 32;
 pub(crate) fn too_deep(args: &[Type]) -> bool {
     fn depth(ty: &Type) -> usize {
         1 + match ty {
-            Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().map(depth).max().unwrap_or(0),
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => depth(t),
-            Type::Map(k, v) => depth(k).max(depth(v)),
+            Type::Generic(_, ts) | Type::Container(Container::Tuple(ts)) => {
+                ts.iter().map(depth).max().unwrap_or(0)
+            }
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => depth(t),
+            Type::Container(Container::Map(k, v)) => depth(k).max(depth(v)),
             _ => 0,
         }
     }
@@ -155,19 +159,19 @@ impl Tables {
                     .map_err(|_| ty.clone()),
                 None => Err(ty.clone()),
             },
-            Type::List(elem) => Ok(FieldType::List(Box::new(part(elem)?))),
+            Type::Container(Container::List(elem)) => Ok(FieldType::List(Box::new(part(elem)?))),
             // The keys of a JSON object or a TOML table are strings.
-            Type::Map(key, value) if matches!(**key, Type::String) => {
+            Type::Container(Container::Map(key, value)) if matches!(**key, Type::String) => {
                 Ok(FieldType::Map(Box::new(part(value)?)))
             }
             // (A key of a type parameter is one at the type's arguments.)
-            Type::Map(key, value)
+            Type::Container(Container::Map(key, value))
                 if let Some(at) = params.iter().position(|p| p == &**key)
                     && let Ok(at) = u16::try_from(at) =>
             {
                 Ok(FieldType::KeyedMap(at, Box::new(part(value)?)))
             }
-            Type::Tuple(elems) if !elems.is_empty() => {
+            Type::Container(Container::Tuple(elems)) if !elems.is_empty() => {
                 let parts: Result<Vec<_>, _> = elems.iter().map(part).collect();
                 Ok(FieldType::Tuple(parts?))
             }

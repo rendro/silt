@@ -164,3 +164,78 @@ fn signature_help_lexes_a_document_once() {
          the document is lexed for each request"
     );
 }
+
+/// A chain of `n` modules in `dir`, `m0` importing `m1` and so on, each
+/// with a type and a function that calls the next one's; `main.silt`
+/// imports `m0`.
+fn chain_workspace(dir: &std::path::Path, n: usize) {
+    std::fs::create_dir_all(dir).unwrap();
+    for i in 0..n {
+        let (import, call) = match i + 1 < n {
+            true => (format!("import m{}\n", i + 1), format!("m{}.f()", i + 1)),
+            false => (String::new(), "1".to_string()),
+        };
+        let module =
+            format!("{import}pub type T{i} {{ v: Int }}\npub fn f() -> Int {{ {call} }}\n");
+        std::fs::write(dir.join(format!("m{i}.silt")), module).unwrap();
+    }
+    std::fs::write(
+        dir.join("main.silt"),
+        "import m0\n\nfn main() {\n  println(m0.f())\n}\n",
+    )
+    .unwrap();
+}
+
+/// How long the language server takes, in the workspace `dir`, to give
+/// the diagnostics of its `main.silt` once it is opened.
+fn first_diagnostics(dir: &std::path::Path) -> Duration {
+    let uri_of = |path: &std::path::Path| {
+        silt::testing::lsp::path_to_file_uri(path)
+            .expect("a file URI")
+            .as_str()
+            .to_string()
+    };
+    let mut client = LspClient::spawn_with_root(Some(&uri_of(dir)));
+    let main = dir.join("main.silt");
+    let text = std::fs::read_to_string(&main).unwrap();
+    let start = Instant::now();
+    client.did_open_and_wait(&uri_of(&main), &text);
+    let took = start.elapsed();
+    client.shutdown();
+    took
+}
+
+/// In an editor, a chain of four times the modules takes at most six times
+/// as long to give its first diagnostics, from 500 to 2,000: about two and
+/// a half times (debug build). Each module's check named, for the editor,
+/// every module it reaches (how hover writes their types): n squared, twelve
+/// times as long on main b40b8a48 (4.0 s, 50 s; 47 s of CPU at 4,000). The
+/// names are made when hover asks for one.
+#[test]
+fn an_editor_s_chain_of_four_times_the_modules_takes_at_most_six_times_as_long() {
+    let base = std::env::temp_dir().join(format!("silt_lsp_chain_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (small, large) = (500, 2_000);
+    let dir_of = |n: usize| silt::testing::source::canonical_path(&base.join(n.to_string()));
+    for n in [small, large] {
+        chain_workspace(&base.join(n.to_string()), n);
+    }
+    let mut over = Vec::new();
+    for _ in 0..3 {
+        let best = |n: usize| (0..2).map(|_| first_diagnostics(&dir_of(n))).min().unwrap();
+        let (at_large, at_small) = (best(large), best(small));
+        let ratio = at_large.as_secs_f64() / at_small.as_secs_f64();
+        if ratio <= 6.0 {
+            over.clear();
+            break;
+        }
+        over.push((at_large, at_small, ratio));
+    }
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(
+        over.is_empty(),
+        "in the language server, a chain of {large} modules took more than six times as long as \
+         one of {small} to give its first diagnostics, three times: {over:?}: each module names \
+         every module it reaches"
+    );
+}

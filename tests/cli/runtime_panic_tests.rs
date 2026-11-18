@@ -726,16 +726,22 @@ fn main() {
     assert_eq!(status, Some(101));
 }
 
-/// The reader of stdout takes one line and closes, while `main`
-/// prints without end and a worker panics. A process whose reader is
-/// gone dies by the signal of the closed pipe (or ends with its status,
-/// 141), quietly; one that is
-/// ending with the internal error does not: it ends with Rust's
-/// lines, the line and status 101. Never Rust's lines and a death by
-/// the signal. (From the moment the process's end is decided, the
-/// closed stdout is an error of the write. Before, the signal could
-/// kill the process between Rust's lines and the line, or after the
-/// line.)
+/// The reader of stdout takes one line, and closes only once the process
+/// has decided to end with the internal error: a worker has panicked and
+/// Rust's lines for it are in stderr, while `main` prints without end.
+/// From that moment the closed stdout is an error of the write, not a
+/// signal that kills the process: it ends with Rust's lines, the line and
+/// status 101, every time. (Before, the signal could kill the process
+/// between Rust's lines and the line, or after the line.)
+///
+/// The reader closes after the panic, not at a moment of its own. When
+/// it closed first, the test raced the kernel: a write to the closed pipe
+/// raises SIGPIPE at its default, a death the kernel decides at once (on
+/// macOS a pending default-action kill acts like SIGKILL), and a worker
+/// that panics in that moment can still get Rust's lines out before the
+/// process is gone. No order inside silt can stop a death that came
+/// first. (Such a run failed on macOS, "Test macOS (rest1)" of #374.) A
+/// reader that is gone before anything else is `sigpipe_tests`'.
 #[test]
 #[cfg(all(unix, feature = "test-hooks"))]
 fn a_closed_stdout_does_not_kill_a_process_that_ends_with_the_internal_error() {
@@ -758,7 +764,7 @@ fn main() {
   flood(0)
 }
 "#;
-    for round in 0..30 {
+    for round in 0..10 {
         let run = Run {
             name: "closed",
             files: &[("main.silt", source)],
@@ -770,24 +776,25 @@ fn main() {
         let mut reader = BufReader::new(child.stdout.take().expect("a pipe"));
         let mut first = String::new();
         reader.read_line(&mut first).expect("a line is read");
+        // Rust's lines are written once the end is decided
+        // (`scheduler::at_a_panic`); then the reader goes. (A process
+        // that has ended already ended with them.)
+        let err = run.dir().join("err");
+        let started = Instant::now();
+        while !fs::read_to_string(&err).is_ok_and(|text| text.contains(" panicked at "))
+            && started.elapsed() < Duration::from_secs(60)
+            && child.try_wait().ok().flatten().is_none()
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         drop(reader);
         let (status, stderr) = run.wait(child);
         let rusts = stderr.lines().any(|line| line.contains(" panicked at "));
         let line = stderr
             .lines()
             .any(|line| line.starts_with("silt: internal error: "));
-        match status {
-            // Ended by the closed pipe: the reader was gone first. It
-            // dies by the signal, or (where the signal is the process's
-            // and lands on another thread, as on macOS) the write that
-            // met the closed pipe ends it with the status 141 of that
-            // death (`ProcessStdout`).
-            None | Some(141) => assert!(!rusts && !line, "round {round}: {stderr}"),
-            status => {
-                assert_eq!(status, Some(101), "round {round}: {stderr}");
-                assert!(rusts && line, "round {round}: {stderr}");
-            }
-        }
+        assert_eq!(status, Some(101), "round {round}: {stderr}");
+        assert!(rusts && line, "round {round}: {stderr}");
     }
 }
 

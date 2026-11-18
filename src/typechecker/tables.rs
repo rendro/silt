@@ -448,6 +448,10 @@ pub(crate) struct Tables {
     /// a call through the name in a module that declares or imports the
     /// refused trait is not reported again (`TypeChecker::refused_traits`).
     pub(super) refused_trait_methods: std::collections::HashSet<(Symbol, Symbol)>,
+    /// The traits refused at their declaration, by key: they are declared
+    /// (their bodies and impls are checked) but take no name, so no help
+    /// in any module offers one (`TypeChecker::sees_trait`).
+    pub(super) refused_trait_keys: std::collections::HashSet<TraitKey>,
     /// The methods of every impl, by type, name and trait.
     pub(super) impl_methods: ImplMethods,
     /// Tracks which (trait_name, type) pairs have been implemented.
@@ -857,6 +861,7 @@ impl Tables {
         }
         for t in rows.traits {
             self.traits.remove(&t);
+            self.refused_trait_keys.remove(&t);
         }
         for key in rows.impl_methods {
             self.impl_methods.remove(&key);

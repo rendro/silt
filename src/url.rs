@@ -560,7 +560,11 @@ fn host_and_port(
         },
         false => written.find(':').map_or(range.end, |at| range.start + at),
     };
-    let host = checked_host(&text[range.start..host_end], scheme)
+    // (An `@` after the host's start may end a user's token that a raw
+    // `/` cut short, `https://tökén/x@h/`: then what reads as the host is
+    // the token, and its ASCII form is not named.)
+    let named = !text[range.start..].contains('@');
+    let host = checked_host(&text[range.start..host_end], scheme, named)
         .map_err(|fault| Fault::new(fault.what, range.start + fault.at))?;
     let port = match host_end < range.end {
         true => Some(port_of(text, host_end + 1..range.end)?),
@@ -600,7 +604,7 @@ const NUMBER_LIKE: &str =
 
 /// The normal form of the host `host` of a URL of `scheme`, or what is
 /// wrong with it and at which of its bytes.
-fn checked_host(host: &str, scheme: &str) -> Result<String, Fault> {
+fn checked_host(host: &str, scheme: &str, named: bool) -> Result<String, Fault> {
     if host.is_empty() {
         return match needs_host(scheme) {
             true => Err(Fault::new(
@@ -618,7 +622,7 @@ fn checked_host(host: &str, scheme: &str) -> Result<String, Fault> {
             continue;
         }
         if !c.is_ascii() {
-            let what = match punycode_host(host) {
+            let what = match punycode_host(host).filter(|_| named) {
                 Some(ascii) => format!("a host name must be ASCII: write it as {ascii}"),
                 None => "a host name must be ASCII: write its punycode form (xn--...)".into(),
             };
@@ -721,7 +725,7 @@ fn punycode_host(host: &str) -> Option<String> {
     }
     let ascii = labels.join(".");
     // (The scheme matters only for an empty host, which this is not.)
-    checked_host(&ascii, "").ok()
+    checked_host(&ascii, "", false).ok()
 }
 
 /// RFC 3492's encoding of `label`, without the `xn--`.
@@ -855,7 +859,9 @@ fn decoded(text: &str, plus_is_space: bool) -> Result<String, Fault> {
 
 /// A part of a Url decoded: it holds only valid escapes of UTF-8 text.
 fn decoded_part(text: &str, plus_is_space: bool) -> String {
-    decoded(text, plus_is_space).unwrap_or_else(|_| text.to_string())
+    let got = decoded(text, plus_is_space);
+    debug_assert!(got.is_ok(), "a part of a Url does not decode");
+    got.unwrap_or_else(|_| text.to_string())
 }
 
 // ── The Url's parts ─────────────────────────────────────────────────
@@ -987,8 +993,8 @@ impl Url {
 
     /// The Url with the host `host`, written as [`Url::host`] gives one.
     pub(crate) fn with_host(&self, host: &str) -> Result<Url, UrlError> {
-        let host =
-            checked_host(host, self.scheme()).map_err(|fault| UrlError::InvalidPart(fault.what))?;
+        let host = checked_host(host, self.scheme(), true)
+            .map_err(|fault| UrlError::InvalidPart(fault.what))?;
         Ok(assemble(Parts {
             host: &host,
             ..self.parts()
@@ -1029,8 +1035,12 @@ impl Url {
 
     /// The Url with `segments` after its path, each escaped, a last
     /// empty segment of its path (a `/` at its end) dropped first: `/v1`
-    /// and `/v1/` with `users` both give `/v1/users`.
+    /// and `/v1/` with `users` both give `/v1/users`. No segments give
+    /// the Url as it is.
     pub(crate) fn add_segments(&self, segments: &[String]) -> Result<Url, UrlError> {
+        if segments.is_empty() {
+            return Ok(self.clone());
+        }
         let base = self.path().strip_suffix('/').unwrap_or(self.path());
         let path = segments_path(base, segments)?;
         let path = if path.is_empty() { "/" } else { &path };

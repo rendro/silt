@@ -1,0 +1,10 @@
+error[type]: the type variables 'a' and 'b' of method 'gen' are the impl's 'a' and 'b' here, not the method's own
+ --> impl_method_variables_named_like_the_impls__every_one_is_named.silt:14:3
+    |
+ 14 |   fn gen(self, x: a, y: b) -> (a, b) { (x, y) }
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type variables 'a' and 'b' of method 'gen' are the impl's 'a' and 'b' here, not the method's own
+ ::: impl_method_variables_named_like_the_impls__every_one_is_named.silt:13:1
+    |
+ 13 | trait Tr for Pair(a, b) {
+    | ----------------------- the impl's `a` and `b`
+  = help: trait 'Tr' declares `gen` with type variables `a` and `b` of its own, which stand for any types: write them with other names in this impl, such as `c` and `d`

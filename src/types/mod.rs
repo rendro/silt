@@ -165,20 +165,12 @@ pub enum Type {
     Rigid(RigidId),
     /// Function type: param types -> return type.
     Fun(Vec<Type>, Box<Type>),
-    /// Homogeneous list type.
-    List(Box<Type>),
-    /// Tuple type (fixed length, heterogeneous).
-    Tuple(Vec<Type>),
+    /// A builtin container: a list, a map, a set, a channel or a tuple.
+    Container(Container),
     /// A named type with its arguments, like `Result(Int, String)`: an
     /// enum, a nominal record (its fields are the checker's), a builtin
     /// type.
     Generic(TypeRef, Vec<Type>),
-    /// Map type: key type -> value type.
-    Map(Box<Type>, Box<Type>),
-    /// Set type: element type.
-    Set(Box<Type>),
-    /// Channel type: element type carried through the channel.
-    Channel(Box<Type>),
     /// An error type used to allow inference to continue after errors.
     Error,
     /// A bottom type for expressions that never produce a value (return, panic).
@@ -192,6 +184,108 @@ pub enum Type {
     /// the others `rest` (`Option(_)`, `Result(_, String)`), what a type
     /// constructor variable stands for.
     Con(Head, Vec<Type>),
+}
+
+/// The five builtin container types, one form of [`Type`]: what a match
+/// does alike to all of them it does to [`Container::parts`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Container {
+    /// Homogeneous list type.
+    List(Box<Type>),
+    /// Map type: key type -> value type.
+    Map(Box<Type>, Box<Type>),
+    /// Set type: element type.
+    Set(Box<Type>),
+    /// Channel type: element type carried through the channel.
+    Channel(Box<Type>),
+    /// Tuple type (fixed length, heterogeneous).
+    Tuple(Vec<Type>),
+}
+
+/// The parts of a container, in order ([`Container::parts`]): one or two
+/// boxed parts, or a tuple's elements.
+pub(crate) enum Parts<'a> {
+    Boxed(Option<&'a Type>, Option<&'a Type>),
+    Elements(std::slice::Iter<'a, Type>),
+}
+
+impl<'a> Iterator for Parts<'a> {
+    type Item = &'a Type;
+
+    fn next(&mut self) -> Option<&'a Type> {
+        match self {
+            Parts::Boxed(first, second) => first.take().or_else(|| second.take()),
+            Parts::Elements(elements) => elements.next(),
+        }
+    }
+}
+
+impl Container {
+    /// The types the container is made of, in order: the element of a
+    /// list, a set or a channel; the key, then the value, of a map; the
+    /// elements of a tuple.
+    pub(crate) fn parts(&self) -> Parts<'_> {
+        match self {
+            Container::List(t) | Container::Set(t) | Container::Channel(t) => {
+                Parts::Boxed(Some(t), None)
+            }
+            Container::Map(k, v) => Parts::Boxed(Some(k), Some(v)),
+            Container::Tuple(ts) => Parts::Elements(ts.iter()),
+        }
+    }
+
+    /// The head of the container's type constructor (the table
+    /// `CONTAINERS`); `None` for a tuple, which has none.
+    pub(crate) fn head(&self) -> Option<Head> {
+        match self {
+            Container::List(_) => Some(Head::List),
+            Container::Map(..) => Some(Head::Map),
+            Container::Set(_) => Some(Head::Set),
+            Container::Channel(_) => Some(Head::Channel),
+            Container::Tuple(_) => None,
+        }
+    }
+
+    /// The container's builtin type, by its name: `List`, `Map`, `Set`,
+    /// `Channel` (from `CONTAINERS`), `Tuple`.
+    pub(crate) fn name(&self) -> &'static str {
+        match self.head() {
+            Some(head) => head.container_name().unwrap_or_default(),
+            None => "Tuple",
+        }
+    }
+
+    /// The same container of `f` of each part, the parts taken in the
+    /// order [`Container::parts`] gives them.
+    pub(crate) fn map_parts(&self, mut f: impl FnMut(&Type) -> Type) -> Container {
+        match self {
+            Container::List(t) => Container::List(Box::new(f(t))),
+            Container::Set(t) => Container::Set(Box::new(f(t))),
+            Container::Channel(t) => Container::Channel(Box::new(f(t))),
+            Container::Map(k, v) => {
+                let k = f(k);
+                Container::Map(Box::new(k), Box::new(f(v)))
+            }
+            Container::Tuple(ts) => Container::Tuple(ts.iter().map(f).collect()),
+        }
+    }
+
+    /// The parts of `self` and of `other`, side by side, when the two are
+    /// one kind of container (and tuples of one length); `None` when not.
+    pub(crate) fn zip_parts<'a>(
+        &'a self,
+        other: &'a Container,
+    ) -> Option<std::iter::Zip<Parts<'a>, Parts<'a>>> {
+        let alike = match (self, other) {
+            (Container::List(_), Container::List(_))
+            | (Container::Set(_), Container::Set(_))
+            | (Container::Channel(_), Container::Channel(_))
+            | (Container::Map(..), Container::Map(..)) => true,
+            (Container::Tuple(a), Container::Tuple(b)) => a.len() == b.len(),
+            _ => false,
+        };
+        alike.then(|| self.parts().zip(other.parts()))
+    }
 }
 
 /// The head of a type constructor ([`Type::Con`]): a named type, or one
@@ -275,12 +369,12 @@ impl Head {
             let mut it = args.into_iter().map(Box::new);
             let mut next = || it.next().unwrap_or_else(|| Box::new(Type::Error));
             return Some(match self {
-                Head::List => Type::List(next()),
-                Head::Set => Type::Set(next()),
-                Head::Channel => Type::Channel(next()),
+                Head::List => Type::Container(Container::List(next())),
+                Head::Set => Type::Container(Container::Set(next())),
+                Head::Channel => Type::Container(Container::Channel(next())),
                 _ => {
                     let k = next();
-                    Type::Map(k, next())
+                    Type::Container(Container::Map(k, next()))
                 }
             });
         };
@@ -295,12 +389,12 @@ impl Head {
                 rest.insert(0, arg);
                 Type::Generic(r, rest)
             }
-            Head::List => Type::List(Box::new(arg)),
-            Head::Set => Type::Set(Box::new(arg)),
-            Head::Channel => Type::Channel(Box::new(arg)),
+            Head::List => Type::Container(Container::List(Box::new(arg))),
+            Head::Set => Type::Container(Container::Set(Box::new(arg))),
+            Head::Channel => Type::Container(Container::Channel(Box::new(arg))),
             Head::Map => {
                 let value = rest.pop().unwrap_or(Type::Error);
-                Type::Map(Box::new(arg), Box::new(value))
+                Type::Container(Container::Map(Box::new(arg), Box::new(value)))
             }
         }
     }
@@ -379,11 +473,8 @@ impl Type {
             Type::Bool => "Bool",
             Type::String => "String",
             Type::Unit => "()",
-            Type::Tuple(_) => "Tuple",
+            Type::Container(c) => c.name(),
             Type::Fun(..) => "Fn",
-            Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Channel(_) => {
-                return self.container_head()?.container_name();
-            }
             Type::Var(_)
             | Type::Rigid(_)
             | Type::Generic(..)
@@ -397,10 +488,7 @@ impl Type {
     /// The builtin container `self` is; `None` for any other type.
     pub(crate) fn container_head(&self) -> Option<Head> {
         match self {
-            Type::List(_) => Some(Head::List),
-            Type::Map(..) => Some(Head::Map),
-            Type::Set(_) => Some(Head::Set),
-            Type::Channel(_) => Some(Head::Channel),
+            Type::Container(c) => c.head(),
             _ => None,
         }
     }
@@ -411,10 +499,8 @@ impl Type {
     /// type.
     pub(crate) fn head_and_args(&self) -> Option<(Head, Vec<&Type>)> {
         match self {
-            Type::List(t) => Some((Head::List, vec![&**t])),
-            Type::Set(t) => Some((Head::Set, vec![&**t])),
-            Type::Channel(t) => Some((Head::Channel, vec![&**t])),
-            Type::Map(k, v) => Some((Head::Map, vec![&**k, &**v])),
+            // (A tuple has no head.)
+            Type::Container(c) => Some((c.head()?, c.parts().collect())),
             Type::Generic(r, args) => Some((Head::Named(*r), args.iter().collect())),
             _ => None,
         }
@@ -489,10 +575,9 @@ impl Type {
     pub fn holds_error(&self) -> bool {
         match self {
             Type::Error => true,
-            Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(Type::holds_error),
+            Type::Generic(_, ts) => ts.iter().any(Type::holds_error),
+            Type::Container(c) => c.parts().any(Type::holds_error),
             Type::Fun(params, ret) => params.iter().any(Type::holds_error) || ret.holds_error(),
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => t.holds_error(),
-            Type::Map(k, v) => k.holds_error() || v.holds_error(),
             Type::App(head, arg) => head.holds_error() || arg.holds_error(),
             Type::Con(_, rest) => rest.iter().any(Type::holds_error),
             Type::Int
@@ -521,13 +606,8 @@ impl Type {
                 }
                 ret.collect_refs(out);
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => t.collect_refs(out),
-            Type::Map(k, v) => {
-                k.collect_refs(out);
-                v.collect_refs(out);
-            }
-            Type::Tuple(ts) => {
-                for t in ts {
+            Type::Container(c) => {
+                for t in c.parts() {
                     t.collect_refs(out);
                 }
             }
@@ -652,8 +732,8 @@ impl std::fmt::Display for Shown<'_> {
                 }
                 write!(f, ") -> {}", self.of(ret))
             }
-            Type::List(inner) => write!(f, "List({})", self.of(inner)),
-            Type::Tuple(elems) => {
+            Type::Container(Container::List(inner)) => write!(f, "List({})", self.of(inner)),
+            Type::Container(Container::Tuple(elems)) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {
                     if i > 0 {
@@ -684,9 +764,11 @@ impl std::fmt::Display for Shown<'_> {
                     Ok(())
                 })
             }
-            Type::Map(k, v) => write!(f, "Map({}, {})", self.of(k), self.of(v)),
-            Type::Set(inner) => write!(f, "Set({})", self.of(inner)),
-            Type::Channel(inner) => write!(f, "Channel({})", self.of(inner)),
+            Type::Container(Container::Map(k, v)) => {
+                write!(f, "Map({}, {})", self.of(k), self.of(v))
+            }
+            Type::Container(Container::Set(inner)) => write!(f, "Set({})", self.of(inner)),
+            Type::Container(Container::Channel(inner)) => write!(f, "Channel({})", self.of(inner)),
             // A type that reached `Type::Error` already triggered a
             // prior diagnostic; rendering `<error>` on cascading
             // messages reads as double-reporting. An empty placeholder
@@ -1069,14 +1151,8 @@ pub(crate) fn constructor_heads(ty: &Type) -> Vec<TyVar> {
                 params.iter().for_each(|t| walk(t, out));
                 walk(ret, out);
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
-            Type::Map(k, v) => {
-                walk(k, out);
-                walk(v, out);
-            }
-            Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
-                ts.iter().for_each(|t| walk(t, out))
-            }
+            Type::Container(c) => c.parts().for_each(|t| walk(t, out)),
+            Type::Generic(_, ts) | Type::Con(_, ts) => ts.iter().for_each(|t| walk(t, out)),
             _ => {}
         }
     }
@@ -1097,14 +1173,8 @@ pub(crate) fn free_vars_in(ty: &Type) -> Vec<TyVar> {
                 params.iter().for_each(|t| walk(t, out));
                 walk(ret, out);
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
-            Type::Map(k, v) => {
-                walk(k, out);
-                walk(v, out);
-            }
-            Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
-                ts.iter().for_each(|t| walk(t, out))
-            }
+            Type::Container(c) => c.parts().for_each(|t| walk(t, out)),
+            Type::Generic(_, ts) | Type::Con(_, ts) => ts.iter().for_each(|t| walk(t, out)),
             Type::App(head, arg) => {
                 walk(head, out);
                 walk(arg, out);
@@ -1226,14 +1296,10 @@ pub(crate) fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type 
             let params = params.iter().map(|p| map_rigid(p, f)).collect();
             Type::Fun(params, Box::new(map_rigid(ret, f)))
         }
-        Type::List(inner) => Type::List(Box::new(map_rigid(inner, f))),
-        Type::Set(inner) => Type::Set(Box::new(map_rigid(inner, f))),
-        Type::Channel(inner) => Type::Channel(Box::new(map_rigid(inner, f))),
-        Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| map_rigid(e, f)).collect()),
+        Type::Container(c) => Type::Container(c.map_parts(|t| map_rigid(t, f))),
         Type::Generic(name, args) => {
             Type::Generic(*name, args.iter().map(|a| map_rigid(a, f)).collect())
         }
-        Type::Map(k, v) => Type::Map(Box::new(map_rigid(k, f)), Box::new(map_rigid(v, f))),
         Type::App(head, arg) => Type::applied(map_rigid(head, f), map_rigid(arg, f)),
         Type::Con(head, rest) => Type::Con(*head, rest.iter().map(|t| map_rigid(t, f)).collect()),
         Type::Int
@@ -1257,11 +1323,7 @@ pub(crate) fn map_refs(ty: &Type, f: &impl Fn(TypeRef) -> TypeRef) -> Type {
     match ty {
         Type::Generic(r, args) => Type::Generic(f(*r), each(args)),
         Type::Fun(params, ret) => Type::Fun(each(params), boxed(ret)),
-        Type::List(inner) => Type::List(boxed(inner)),
-        Type::Set(inner) => Type::Set(boxed(inner)),
-        Type::Channel(inner) => Type::Channel(boxed(inner)),
-        Type::Tuple(elems) => Type::Tuple(each(elems)),
-        Type::Map(k, v) => Type::Map(boxed(k), boxed(v)),
+        Type::Container(c) => Type::Container(c.map_parts(|t| map_refs(t, f))),
         Type::App(head, arg) => Type::App(boxed(head), boxed(arg)),
         Type::Con(head, rest) => {
             let head = match head {
@@ -1304,14 +1366,13 @@ pub(crate) fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar,
         (Type::Fun(gp, gr), Type::Fun(ap, ar)) => {
             all(gp, ap) && all(std::slice::from_ref(&**gr), std::slice::from_ref(&**ar))
         }
-        (Type::List(g), Type::List(a))
-        | (Type::Set(g), Type::Set(a))
-        | (Type::Channel(g), Type::Channel(a)) => instance_of(g, a, stands),
-        (Type::Tuple(g), Type::Tuple(a)) => all(g, a),
+        // (Two containers of one kind, part by part; of two kinds, or
+        // tuples of two lengths, they are not equal.)
+        (Type::Container(g), Type::Container(a)) => match g.zip_parts(a) {
+            Some(mut pairs) => pairs.all(|(g, a)| instance_of(g, a, stands)),
+            None => general == at,
+        },
         (Type::Generic(gn, g), Type::Generic(an, a)) => gn == an && all(g, a),
-        (Type::Map(gk, gv), Type::Map(ak, av)) => {
-            instance_of(gk, ak, stands) && instance_of(gv, av, stands)
-        }
         (Type::App(gh, ga), Type::App(ah, aa)) => {
             instance_of(gh, ah, stands) && instance_of(ga, aa, stands)
         }
@@ -1335,20 +1396,11 @@ pub(crate) fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type
             let ret = Box::new(substitute_vars(ret, mapping));
             Type::Fun(params, ret)
         }
-        Type::List(inner) => Type::List(Box::new(substitute_vars(inner, mapping))),
-        Type::Tuple(elems) => {
-            Type::Tuple(elems.iter().map(|e| substitute_vars(e, mapping)).collect())
-        }
+        Type::Container(c) => Type::Container(c.map_parts(|t| substitute_vars(t, mapping))),
         Type::Generic(name, args) => {
             let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
             Type::Generic(*name, args)
         }
-        Type::Map(k, v) => Type::Map(
-            Box::new(substitute_vars(k, mapping)),
-            Box::new(substitute_vars(v, mapping)),
-        ),
-        Type::Set(inner) => Type::Set(Box::new(substitute_vars(inner, mapping))),
-        Type::Channel(inner) => Type::Channel(Box::new(substitute_vars(inner, mapping))),
         Type::App(head, arg) => Type::applied(
             substitute_vars(head, mapping),
             substitute_vars(arg, mapping),
@@ -1390,17 +1442,9 @@ pub(crate) fn substitute_enum_params(
             let ret = Box::new(substitute_enum_params(ret, param_var_ids, type_args));
             Type::Fun(params, ret)
         }
-        Type::List(inner) => Type::List(Box::new(substitute_enum_params(
-            inner,
-            param_var_ids,
-            type_args,
-        ))),
-        Type::Tuple(elems) => Type::Tuple(
-            elems
-                .iter()
-                .map(|e| substitute_enum_params(e, param_var_ids, type_args))
-                .collect(),
-        ),
+        Type::Container(c) => {
+            Type::Container(c.map_parts(|t| substitute_enum_params(t, param_var_ids, type_args)))
+        }
         Type::Generic(name, args) => {
             let args = args
                 .iter()
@@ -1408,20 +1452,6 @@ pub(crate) fn substitute_enum_params(
                 .collect();
             Type::Generic(*name, args)
         }
-        Type::Channel(inner) => Type::Channel(Box::new(substitute_enum_params(
-            inner,
-            param_var_ids,
-            type_args,
-        ))),
-        Type::Map(k, v) => Type::Map(
-            Box::new(substitute_enum_params(k, param_var_ids, type_args)),
-            Box::new(substitute_enum_params(v, param_var_ids, type_args)),
-        ),
-        Type::Set(t) => Type::Set(Box::new(substitute_enum_params(
-            t,
-            param_var_ids,
-            type_args,
-        ))),
         _ => field_ty.clone(),
     }
 }
@@ -1459,6 +1489,50 @@ mod tests {
         }
     }
 
+    // ── The one form of the five containers ──────────────────────────
+
+    #[test]
+    fn a_container_s_parts_are_its_types_in_order() {
+        let list = Container::List(Box::new(Type::Int));
+        let map = Container::Map(Box::new(Type::String), Box::new(Type::Bool));
+        let tuple = Container::Tuple(vec![Type::Int, Type::Float, Type::Unit]);
+        assert_eq!(list.parts().cloned().collect::<Vec<_>>(), vec![Type::Int]);
+        assert_eq!(
+            map.parts().cloned().collect::<Vec<_>>(),
+            vec![Type::String, Type::Bool]
+        );
+        assert_eq!(
+            tuple.parts().cloned().collect::<Vec<_>>(),
+            vec![Type::Int, Type::Float, Type::Unit]
+        );
+        // map_parts keeps the kind and visits the parts in that order.
+        let mut seen = Vec::new();
+        let mapped = map.map_parts(|t| {
+            seen.push(t.clone());
+            Type::Unit
+        });
+        assert_eq!(seen, vec![Type::String, Type::Bool]);
+        assert_eq!(
+            mapped,
+            Container::Map(Box::new(Type::Unit), Box::new(Type::Unit))
+        );
+        // zip_parts: one kind (and one tuple length), else none.
+        assert_eq!(map.zip_parts(&map).map(|z| z.count()), Some(2));
+        assert!(
+            list.zip_parts(&Container::Set(Box::new(Type::Int)))
+                .is_none()
+        );
+        assert!(
+            tuple
+                .zip_parts(&Container::Tuple(vec![Type::Int]))
+                .is_none()
+        );
+        // The names come from the table of containers.
+        for (c, name) in [(&list, "List"), (&map, "Map"), (&tuple, "Tuple")] {
+            assert_eq!(c.name(), name);
+        }
+    }
+
     // ── Regression: substitute_enum_params recurses into Map/Set ───────
     // Locks in 3a4edd6 B3: prior to the fix these branches fell through
     // to `_ => field_ty.clone()`, so a variant field typed
@@ -1473,11 +1547,14 @@ mod tests {
         // as `Box(Int)`: enum param var is TyVar 0, type_args is [Int].
         let param_var_ids = vec![0usize];
         let type_args = vec![Type::Int];
-        let field = Type::Map(Box::new(Type::String), Box::new(Type::Var(0)));
+        let field = Type::Container(Container::Map(
+            Box::new(Type::String),
+            Box::new(Type::Var(0)),
+        ));
         let result = substitute_enum_params(&field, &param_var_ids, &type_args);
         assert_eq!(
             result,
-            Type::Map(Box::new(Type::String), Box::new(Type::Int)),
+            Type::Container(Container::Map(Box::new(Type::String), Box::new(Type::Int))),
             "Map value type variable must be substituted"
         );
     }
@@ -1487,11 +1564,11 @@ mod tests {
         // A pathological but legal shape: `Map(a, Int)`.
         let param_var_ids = vec![0usize];
         let type_args = vec![Type::String];
-        let field = Type::Map(Box::new(Type::Var(0)), Box::new(Type::Int));
+        let field = Type::Container(Container::Map(Box::new(Type::Var(0)), Box::new(Type::Int)));
         let result = substitute_enum_params(&field, &param_var_ids, &type_args);
         assert_eq!(
             result,
-            Type::Map(Box::new(Type::String), Box::new(Type::Int)),
+            Type::Container(Container::Map(Box::new(Type::String), Box::new(Type::Int))),
             "Map key type variable must be substituted"
         );
     }
@@ -1501,11 +1578,11 @@ mod tests {
         // Simulate `type Bag(a) { Contents(Set(a)) }` as `Bag(Int)`.
         let param_var_ids = vec![0usize];
         let type_args = vec![Type::Int];
-        let field = Type::Set(Box::new(Type::Var(0)));
+        let field = Type::Container(Container::Set(Box::new(Type::Var(0))));
         let result = substitute_enum_params(&field, &param_var_ids, &type_args);
         assert_eq!(
             result,
-            Type::Set(Box::new(Type::Int)),
+            Type::Container(Container::Set(Box::new(Type::Int))),
             "Set element type variable must be substituted"
         );
     }
@@ -1516,17 +1593,17 @@ mod tests {
         // outermost container is substituted.
         let param_var_ids = vec![0usize];
         let type_args = vec![Type::Int];
-        let field = Type::Map(
+        let field = Type::Container(Container::Map(
             Box::new(Type::String),
-            Box::new(Type::Set(Box::new(Type::Var(0)))),
-        );
+            Box::new(Type::Container(Container::Set(Box::new(Type::Var(0))))),
+        ));
         let result = substitute_enum_params(&field, &param_var_ids, &type_args);
         assert_eq!(
             result,
-            Type::Map(
+            Type::Container(Container::Map(
                 Box::new(Type::String),
-                Box::new(Type::Set(Box::new(Type::Int))),
-            ),
+                Box::new(Type::Container(Container::Set(Box::new(Type::Int)))),
+            )),
             "nested Set inside Map must be substituted"
         );
     }
@@ -1556,7 +1633,10 @@ mod tests {
         // `Fn(Int, String) -> Int` is a 2-arg fn. These must render
         // distinctly so diagnostics don't conflate arity with tupling.
         let tuple_arg = Type::Fun(
-            vec![Type::Tuple(vec![Type::Int, Type::String])],
+            vec![Type::Container(Container::Tuple(vec![
+                Type::Int,
+                Type::String,
+            ]))],
             Box::new(Type::Int),
         );
         let two_arg = Type::Fun(vec![Type::Int, Type::String], Box::new(Type::Int));
