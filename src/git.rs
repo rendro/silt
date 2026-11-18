@@ -511,10 +511,11 @@ fn has_accepted_url_form(url: &str) -> bool {
 /// read as URLs ([`PARSED_GIT_URL_SCHEMES`]): a port that is no port, a
 /// host that is none, an escape that is none. `None` for a URL that
 /// reads, and for any other form. (The URL is kept as written: silt.lock
-/// and the cache name it so.) A fault in the user or password is named
-/// without its text or its place, which the message hides; the scp form
-/// written with `ssh://` (`ssh://git@host:team/repo.git`) is told what
-/// to write.
+/// and the cache name it so.) A fault that an `@` follows, which may lie
+/// in the user or password, is named without its text or its place, which
+/// the message hides; the scp form written with `ssh://`
+/// (`ssh://git@host:team/repo.git`) is told the two forms to write, by
+/// their shapes.
 fn not_a_url(url: &str) -> Option<String> {
     let scheme = PARSED_GIT_URL_SCHEMES
         .iter()
@@ -523,30 +524,33 @@ fn not_a_url(url: &str) -> Option<String> {
     let crate::url::UrlError::Invalid(what, at) = &why else {
         return Some(why.to_string());
     };
-    // The user and password end at the last `@` of the authority.
+    // A fault with an `@` after it may lie in the user or password: a raw
+    // `/`, `?` or `#` in a password ends the authority early, and the
+    // message hides all of the text up to the last `@`. Such a fault is
+    // named without its text or its place.
+    if url.chars().skip(*at + 1).any(|c| c == '@') {
+        return Some(
+            "its user or password is not written as a URL takes it \
+             (write a `%`, `@`, `:`, `/`, `?` or `#` in it as `%25`, `%40`, `%3A`, `%2F`, \
+             `%3F`, `%23`)"
+                .to_string(),
+        );
+    }
+    // `ssh://git@host:team/repo.git`: the scp form's path after a `:`. Told
+    // by its shapes only, so that nothing of the URL is repeated.
     let rest = &url[scheme.len()..];
     let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    if let Some(end) = authority.rfind('@') {
-        let userinfo_end = scheme.chars().count() + authority[..end].chars().count();
-        if *at < userinfo_end {
-            return Some(
-                "its user or password is not written as a URL takes it \
-                 (write a `%`, `@`, `:` or `/` in it as `%25`, `%40`, `%3A`, `%2F`)"
-                    .to_string(),
-            );
-        }
-    }
-    if *scheme == "ssh://" && what.starts_with("a port cannot hold") {
-        // `ssh://git@host:team/repo.git`: the path after a `:`, as the
-        // scp form writes it.
-        if let Some((host, path)) = authority.split_once(':') {
-            let rest_path = &rest[authority.len()..];
-            return Some(format!(
-                "{why}; for the form `user@host:path` leave out `ssh://` \
-                 (`{host}:{path}{rest_path}`), or write the path after a `/` \
-                 (`ssh://{host}/{path}{rest_path}`)"
-            ));
-        }
+    let host_and_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, after)| after);
+    let scp_like = host_and_port
+        .split_once(':')
+        .is_some_and(|(_, after)| !after.starts_with(|c: char| c.is_ascii_digit()));
+    if *scheme == "ssh://" && what.starts_with("a port cannot hold") && scp_like {
+        return Some(format!(
+            "{why}; for the form `user@host:path` leave out `ssh://`, \
+             or write the path after a `/`: `ssh://user@host/path`"
+        ));
     }
     Some(why.to_string())
 }
@@ -596,11 +600,21 @@ pub(crate) fn needs_escape(c: char) -> bool {
 }
 
 /// A URL from a manifest or a lock file, as a message shows it: its
-/// user and password hidden (`https://***@host/repo.git`,
-/// [`crate::text::hide_url_userinfo`]), then by the display rule
-/// ([`escape_for_display`]). The files themselves keep the URL.
+/// user and password hidden (`https://***@host/repo.git`), then by the
+/// display rule ([`escape_for_display`]). The files themselves keep the
+/// URL. The value is one URL: after its `//`, all of it up to its last
+/// `@` is hidden, a space or a `/` in a password included; a value
+/// without `//` (`user@host:path`, a path) by the rule of messages,
+/// [`crate::text::hide_url_userinfo`].
 pub(crate) fn display_url(url: &str) -> String {
-    escape_for_display(&crate::text::hide_url_userinfo(url))
+    let hidden = match url.find("//") {
+        Some(start) => match url[start + 2..].rfind('@') {
+            Some(last) => format!("{}***{}", &url[..start + 2], &url[start + 2 + last..]),
+            None => url.to_string(),
+        },
+        None => crate::text::hide_url_userinfo(url),
+    };
+    escape_for_display(&hidden)
 }
 
 /// Render an untrusted string for a message, by the display rule
@@ -1380,15 +1394,76 @@ mod tests {
                 assert!(!reason.contains(shown), "{url:?}: {reason}");
             }
         }
-        // The scp form written with `ssh://` is told what to write.
-        let reason = rejection_reason("ssh://git@github.com:user/repo.git");
+        // The scp form written with `ssh://` is told the two forms by their
+        // shapes; a port that starts with a digit is a bad port, no scp form.
+        for url in [
+            "ssh://git@github.com:user/repo.git",
+            "ssh://git:s3cr3t@github.com:user/repo.git",
+        ] {
+            let reason = rejection_reason(url);
+            assert!(
+                reason.contains(
+                    "; for the form `user@host:path` leave out `ssh://`, or write the path after \
+                     a `/`: `ssh://user@host/path`;"
+                ),
+                "{url}: {reason}"
+            );
+        }
+        let reason = rejection_reason("ssh://git@host:22x/repo.git");
+        assert!(!reason.contains("leave out"), "{reason}");
+    }
+
+    /// No error of a git URL shows a part of its password: a marker password
+    /// with every kind of fault, in the password and in the user, with and
+    /// without a port, and in the scp form written with `ssh://`; no three
+    /// characters of the marker are in the whole message.
+    #[test]
+    fn no_error_of_a_git_url_shows_its_password() {
+        let marker = "S3CR3TXYZ";
+        let faults = [
+            "S3CR3TXYZ%zz",
+            "S3C%zzR3TXYZ",
+            "S3CR/3TXYZ",
+            "S3CR#3TXYZ",
+            "S3CR?3TXYZ",
+            "S3CR@3TXYZ",
+            "S3CR:3TXYZ",
+            "S3CR 3TXYZ",
+            "S3CR\u{20ac}3TXYZ",
+            "S3CR\u{1}3TXYZ",
+            "S3CR%E93TXYZ",
+            "%S3CR3TXYZ",
+        ];
+        let mut urls = Vec::new();
+        for fault in faults {
+            for scheme in ["https", "http", "ssh", "git"] {
+                urls.push(format!("{scheme}://user:{fault}@example.com/x.git"));
+                urls.push(format!("{scheme}://{fault}@example.com/x.git"));
+                urls.push(format!("{scheme}://{fault}:pw@example.com/x.git"));
+                urls.push(format!("{scheme}://user:{fault}@example.com:8a/x.git"));
+                urls.push(format!("{scheme}://user:{fault}@example.com:22/x.git"));
+            }
+            urls.push(format!("ssh://git:{fault}@github.com:user/repo.git"));
+            urls.push(format!("ssh://{fault}@github.com:user/repo.git"));
+        }
+        urls.push(format!("ssh://git:{marker}@github.com:user/repo.git"));
+        urls.push(format!("https://user:{marker}@example.com:8a/x.git"));
+        let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
+        let mut refused = 0;
+        for url in &urls {
+            let Err(e) = validate_git_url(url) else {
+                continue;
+            };
+            refused += 1;
+            let shown = e.to_string();
+            for piece in &pieces {
+                assert!(!shown.contains(piece), "{url:?}: {shown}");
+            }
+        }
         assert!(
-            reason.starts_with(
-                "is not a valid URL: a port cannot hold 'u', at 21; for the form `user@host:path` \
-                 leave out `ssh://` (`git@github.com:user/repo.git`), or write the path after a \
-                 `/` (`ssh://git@github.com/user/repo.git`);"
-            ),
-            "{reason}"
+            refused > urls.len() / 2,
+            "{refused} of {} refused",
+            urls.len()
         );
     }
 
