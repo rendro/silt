@@ -350,4 +350,33 @@ impl Value {
         }
         false
     }
+
+    /// Whether the value is a URL or holds one: the parts of a URL that
+    /// are shown hidden (`***@`) can make two values that differ be
+    /// written alike (a failed `test.assert_eq` says so).
+    pub(crate) fn holds_url(&self) -> bool {
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::Url(_) => return true,
+                Value::List(items) => {
+                    for run in items.runs() {
+                        pending.extend(run);
+                    }
+                }
+                Value::Tuple(items) => pending.extend(items.iter()),
+                Value::Variant(variant) => pending.extend(variant.fields()),
+                Value::Set(items) => pending.extend(items.iter()),
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(record) => pending.extend(record.fields()),
+                _ => {}
+            }
+        }
+        false
+    }
 }
