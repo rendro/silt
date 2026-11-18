@@ -235,10 +235,14 @@ pub(crate) mod test {
                 true => Ok(()),
                 // (Two values that are written alike and differ are URLs,
                 // or hold URLs, that differ where they are hidden.)
-                false if left.format_silt() == right.format_silt() => Err(failed(format!(
-                    "{} (the two differ in their hidden user or password)",
-                    two_values(left, right, "!=")
-                ))),
+                false if (left.holds_url() || right.holds_url())
+                    && left.format_silt() == right.format_silt() =>
+                {
+                    Err(failed(format!(
+                        "{} (the two differ in their hidden user or password)",
+                        two_values(left, right, "!=")
+                    )))
+                }
                 false => Err(failed(two_values(left, right, "!="))),
             }
         }

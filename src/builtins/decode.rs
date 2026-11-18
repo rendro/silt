@@ -115,7 +115,22 @@ pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
 /// is none, `why`.
 /// The message of a decoder's error for a string that is no URL: what is
 /// wrong and where, without the text, which may hold a password.
-pub(crate) fn invalid_url_message(why: crate::url::UrlError) -> std::string::String {
+/// The Url a decoder reads from the string `text`, or the message of
+/// its error: a text that is no URL, or a URL longer than a string may
+/// be (its normal form escapes what it holds: `é` is six bytes).
+pub(crate) fn decoded_url(text: &str) -> Result<crate::url::Url, std::string::String> {
+    let url = crate::url::parse(text).map_err(invalid_url_message)?;
+    let len = url.as_str().len();
+    match len > crate::value::MAX_TEXT_LEN {
+        true => Err(format!(
+            "invalid url.Url: longer than a string may be ({len} bytes > {} limit)",
+            crate::value::MAX_TEXT_LEN
+        )),
+        false => Ok(url),
+    }
+}
+
+fn invalid_url_message(why: crate::url::UrlError) -> std::string::String {
     match why {
         crate::url::UrlError::Invalid(what, at) => {
             format!("invalid url.Url: {what} (character {at})")

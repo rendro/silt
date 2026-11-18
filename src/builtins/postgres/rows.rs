@@ -1041,8 +1041,7 @@ fn cell(
         // A URL is a text that `url.parse` reads.
         (Col::Text | Col::Char, F::Url) => {
             let text = text(col, raw).map_err(malformed)?;
-            let u = crate::url::parse(&text)
-                .map_err(|why| Mismatch::new(rt, field, decode::invalid_url_message(why)))?;
+            let u = decode::decoded_url(&text).map_err(|why| Mismatch::new(rt, field, why))?;
             Value::Url(Arc::new(u))
         }
         (Col::Date, F::Date) => make_date(date(raw).map_err(|why| Mismatch::new(rt, field, why))?),

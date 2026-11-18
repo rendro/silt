@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: assertion failed:
+-- stderr-not-contains: hidden user or password
+-- Two long Bytes that differ near their ends are written alike, cut
+-- short: the failure says nothing of a hidden user or password, which
+-- only a URL has.
+import bytes
+import string
+import test
+
+fn main() {
+  let a = bytes.from_string("{string.repeat("a", 5000)}x")
+  let b = bytes.from_string("{string.repeat("a", 5000)}y")
+  test.assert_eq((a, 1), (b, 1))
+}
