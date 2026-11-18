@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: url.with_query: result would exceed maximum string size (10000002 bytes > 10000000 limit)
+-- stderr-not-contains: not reached
+-- Pairs longer together than a string may be make a Url that is longer:
+-- they are refused before they are copied.
+import list
+import string
+import url
+
+fn main() {
+  let big = string.repeat("a", 5000000)
+  when let Ok(u) = url.parse("http://h/") else { panic("no URL") }
+  let _ = url.with_query(u, list.map(1..3000) { _ -> ("k", big) })
+  println("not reached")
+}

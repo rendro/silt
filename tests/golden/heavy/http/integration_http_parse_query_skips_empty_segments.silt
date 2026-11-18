@@ -1,5 +1,5 @@
 -- Leading, doubled, and trailing `&` produce empty segments that
--- are silently skipped (same as `encoding.form_decode`).
+-- are silently skipped (same as `url.decode_form`).
 import io
 import http
 fn program() {

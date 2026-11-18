@@ -1,0 +1,7 @@
+import url
+fn main() {
+  match url.decode_form("a=bad%ZZ") {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e)
+  }
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+import url
+fn main() {
+  let _ = url.escape(42)
+}

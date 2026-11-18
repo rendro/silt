@@ -1,0 +1,8 @@
+import url
+import list
+fn main() {
+  match url.decode_form("&a=1&&b=2&") {
+    Ok(pairs) -> println(list.length(pairs))
+    Err(_) -> println(-1)
+  }
+}

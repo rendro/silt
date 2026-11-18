@@ -39,7 +39,7 @@
 import bytes
 import channel
 import crypto
-import encoding
+import url
 import float
 import fs
 import http
@@ -79,7 +79,7 @@ fn f22(x: http.HttpError) -> Int { 0 }
 fn f23(x: fs.FileStat) -> Int { 0 }
 fn f24(x: bytes.BytesError) -> Int { 0 }
 fn f25(x: crypto.CryptoError) -> Int { 0 }
-fn f26(x: encoding.EncodingError) -> Int { 0 }
+fn f26(x: url.UrlError) -> Int { 0 }
 fn f27(x: uuid.UuidError) -> Int { 0 }
 fn f28(x: task.Handle(Int)) -> Int { 0 }
 

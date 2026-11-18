@@ -111,10 +111,6 @@ pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
     NaiveDate::parse_from_str(&signed_year(s), "%Y-%m-%d")
 }
 
-/// The message of a decoder's error for `s`, the string of a date that
-/// is none, `why`.
-/// The message of a decoder's error for a string that is no URL: what is
-/// wrong and where, without the text, which may hold a password.
 /// The Url a decoder reads from the string `text`, or the message of
 /// its error: a text that is no URL, or a URL longer than a string may
 /// be (its normal form escapes what it holds: `é` is six bytes).
@@ -130,6 +126,8 @@ pub(crate) fn decoded_url(text: &str) -> Result<crate::url::Url, std::string::St
     }
 }
 
+/// The message of a decoder's error for a string that is no URL: what is
+/// wrong and where, without the text, which may hold a password.
 fn invalid_url_message(why: crate::url::UrlError) -> std::string::String {
     match why {
         crate::url::UrlError::Invalid(what, at) => {
@@ -139,6 +137,8 @@ fn invalid_url_message(why: crate::url::UrlError) -> std::string::String {
     }
 }
 
+/// The message of a decoder's error for `s`, the string of a date that
+/// is none, `why`.
 fn invalid_date_message(s: &str, why: chrono::ParseError) -> std::string::String {
     format!("invalid date '{s}' (expected YYYY-MM-DD): {why}")
 }

@@ -1,0 +1,12 @@
+import url
+import option
+import string
+fn main() {
+  let nul = string.from_char_code(0) |> option.unwrap_or("")
+  let s = "a{nul}b"
+  let encoded = url.escape(s)
+  match url.unescape(encoded) {
+    Ok(back) -> println(string.byte_length(back))
+    Err(_) -> println(-1)
+  }
+}

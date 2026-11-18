@@ -1,0 +1,7 @@
+import url
+fn main() {
+  match url.unescape("bad%") {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e)
+  }
+}

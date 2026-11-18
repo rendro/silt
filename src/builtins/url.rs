@@ -66,28 +66,45 @@ fn text(name: &str, out: String) -> Result<String, VmError> {
 }
 
 /// The strings of a `List(String)`.
+/// (A part is never written shorter than it is: parts longer together
+/// than a string may be make a Url that is longer, and are refused before
+/// they are copied.)
 fn strings(name: &str, list: List) -> Result<Vec<String>, VmError> {
-    list.iter()
-        .map(|item| match item {
-            Value::String(s, _) => Ok(s.to_string()),
-            _ => Err(unsound(name, "segments")),
-        })
-        .collect()
+    let mut held = 0;
+    let mut out = Vec::new();
+    for item in list.iter() {
+        let Value::String(s, _) = item else {
+            return Err(unsound(name, "segments"));
+        };
+        held += s.len();
+        if held > MAX_TEXT_LEN {
+            return Err(too_long_text(name, held));
+        }
+        out.push(s.to_string());
+    }
+    Ok(out)
 }
 
 /// The pairs of a `List((String, String))`.
+/// (Refused before they are copied when they are longer together than a
+/// string may be, as [`strings`] does.)
 fn pairs(name: &str, list: List) -> Result<Vec<(String, String)>, VmError> {
-    list.iter()
-        .map(|pair| match &pair {
-            Value::Tuple(pair) => match &pair[..] {
-                [Value::String(key, _), Value::String(value, _)] => {
-                    Ok((key.to_string(), value.to_string()))
-                }
-                _ => Err(unsound(name, "pairs")),
-            },
-            _ => Err(unsound(name, "pairs")),
-        })
-        .collect()
+    let mut held = 0;
+    let mut out = Vec::new();
+    for pair in list.iter() {
+        let Value::Tuple(pair) = &pair else {
+            return Err(unsound(name, "pairs"));
+        };
+        let [Value::String(key, _), Value::String(value, _)] = &pair[..] else {
+            return Err(unsound(name, "pairs"));
+        };
+        held += key.len() + value.len();
+        if held > MAX_TEXT_LEN {
+            return Err(too_long_text(name, held));
+        }
+        out.push((key.to_string(), value.to_string()));
+    }
+    Ok(out)
 }
 
 fn string_pairs(pairs: Vec<(String, String)>) -> Value {
@@ -216,10 +233,28 @@ builtins! {
         result(url::unescape(s).map(Value::string))
     }
 
+    // Pair by pair: the pairs can hold one long string many times, so
+    // the text is stopped where it would pass the limit.
     fn encode_form(pairs: List) -> Result<String, VmError> {
         pairs.writable()?;
-        let pairs = self::pairs("url.encode_form", pairs)?;
-        text("url.encode_form", url::encode_form(&pairs))
+        let mut out = String::new();
+        for (at, pair) in pairs.iter().enumerate() {
+            let pair = match &pair {
+                Value::Tuple(pair) => &pair[..],
+                _ => &[],
+            };
+            let [Value::String(key, _), Value::String(value, _)] = pair else {
+                return Err(unsound("url.encode_form", "pairs"));
+            };
+            if at > 0 {
+                out.push('&');
+            }
+            url::push_form_pair(&mut out, key, value);
+            if out.len() > MAX_TEXT_LEN {
+                return Err(too_long_text("url.encode_form", out.len()));
+            }
+        }
+        Ok(out)
     }
 
     fn decode_form(body: &str) -> Value {

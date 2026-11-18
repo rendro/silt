@@ -1,0 +1,18 @@
+import url
+import list
+fn main() {
+  let cases = [
+    "hello world",
+    "a & b = c ? d # e",
+    "café ☕ 🚀",
+    "quotes: \" and `backtick`",
+    "",
+    "just.a-simple_url.com/path",
+  ]
+  list.each(cases, { s ->
+    match url.unescape(url.escape(s)) {
+      Ok(back) -> println("[{back}]")
+      Err(e) -> println("error: {e}")
+    }
+  })
+}

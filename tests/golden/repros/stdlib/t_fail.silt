@@ -14,7 +14,7 @@ import json
 import channel
 import io
 import fs
-import encoding
+import url
 import uuid
 import crypto
 import toml
@@ -22,7 +22,7 @@ import result
 import option
 fn main() {
   println(uuid.parse("zz"))
-  println(encoding.url_decode("%%zz"))
+  println(url.unescape("%%zz"))
   println(crypto.random_bytes(-1))
   println(crypto.random_bytes(99999999))
 }

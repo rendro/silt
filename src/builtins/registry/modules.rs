@@ -16,8 +16,8 @@ use crate::builtins::prelude;
 #[cfg(feature = "tcp")]
 use crate::builtins::tcp;
 use crate::builtins::{
-    applicative, bytes, concurrency, core, crypto, csv, encoding, http, io, json, process, regex,
-    stream, string, time, toml, url, uuid,
+    applicative, bytes, concurrency, core, crypto, csv, http, io, json, process, regex, stream,
+    string, time, toml, url, uuid,
 };
 
 /// The functions of the prelude: called by their bare names, each
@@ -505,7 +505,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn request(method: Method, url: String, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
                 f("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection", http::serve).feature("http"),
                 f("fn segments(path: String) -> List(String)", "Split URL path into segments", http::segments),
-                f("fn parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)", "Parse a URL query string into a multi-value map", http::parse_query),
+                f("fn parse_query(query: String) -> Result(Map(String, List(String)), UrlError)", "Parse a URL query string into a multi-value map", http::parse_query),
             ],
         },
         module! {
@@ -612,20 +612,6 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn hmac_sha512(key: Bytes, msg: Bytes) -> Bytes", "HMAC-SHA512 over `(key, msg)` (64 bytes)", crypto::hmac_sha512),
                 f("fn random_bytes(n: Int) -> Result(Bytes, CryptoError)", "OS CSPRNG, `0..=1_048_576` bytes", crypto::random_bytes),
                 f("fn constant_time_eq(a: Bytes, b: Bytes) -> Bool", "Timing-safe comparison (lengths leak)", crypto::constant_time_eq),
-            ],
-        },
-        module! {
-            name: "encoding",
-            page: "encoding.md",
-            types: "\
-                pub type EncodingError { InvalidPercent(String), InvalidUtf8(String) }\n\
-            ",
-            error: "EncodingError" => encoding::error_text,
-            rows: [
-                f("fn url_encode(s: String) -> String", "Percent-encode per RFC 3986 (unreserved = `ALPHA` / `DIGIT` / `-._~`)", encoding::url_encode),
-                f("fn url_decode(s: String) -> Result(String, EncodingError)", "Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding", encoding::url_decode),
-                f("fn form_encode(pairs: List((String, String))) -> String", "Build an `application/x-www-form-urlencoded` body", encoding::form_encode),
-                f("fn form_decode(body: String) -> Result(List((String, String)), EncodingError)", "Parse an `application/x-www-form-urlencoded` body into pairs", encoding::form_decode),
             ],
         },
         module! {

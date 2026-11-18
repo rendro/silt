@@ -26,7 +26,7 @@ fn the_builtin_scope_binds_the_prelude_and_the_registry_s_rows() {
         "FloatError.Other",
         "RegexError.Other",
         "BytesError.Other",
-        "EncodingError.Other",
+        "UrlError.Other",
         "TimeError.Other",
         "UuidError.Other",
         "TaskError.Other",

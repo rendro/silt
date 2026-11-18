@@ -1,5 +1,5 @@
 import bytes
-import encoding
+import url
 import float
 import int
 import regex
@@ -41,10 +41,10 @@ fn bytes_text(e: bytes.BytesError) -> String {
   }
 }
 
-fn encoding_text(e: encoding.EncodingError) -> String {
+fn url_text(e: url.UrlError) -> String {
   match e {
-    encoding.InvalidPercent(why) -> "percent: {why}"
-    encoding.InvalidUtf8(why) -> "utf-8: {why}"
+    url.Invalid(what, at) -> "invalid: {what}, at {at}"
+    url.InvalidPart(what) -> "part: {what}"
   }
 }
 
@@ -65,8 +65,8 @@ fn main() {
     Ok(_) -> ()
     Err(e) -> println(bytes_text(e))
   }
-  match encoding.url_decode("%C3%28") {
+  match url.unescape("%C3%28") {
     Ok(_) -> ()
-    Err(e) -> println(encoding_text(e))
+    Err(e) -> println(url_text(e))
   }
 }

@@ -47,7 +47,6 @@ fn every_builtin_error_enum_is_shown_as_its_text() {
         ("BytesError", "bytes", "InvalidUtf8(0)"),
         ("TcpError", "tcp", r#"Connect("x")"#),
         ("CryptoError", "crypto", "InvalidLength(-1)"),
-        ("EncodingError", "encoding", r#"InvalidPercent("x")"#),
         ("UrlError", "url", r#"InvalidPart("x")"#),
         ("UuidError", "uuid", r#"Invalid("x")"#),
         ("CsvError", "csv", r#"Syntax("x", 0)"#),

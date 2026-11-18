@@ -138,7 +138,7 @@ That holds for everything that grows a collection or joins two
 value hold at most 10,000,000 bytes where they are joined or built
 (string interpolation, `string.from`, `string.join`, `string.repeat`,
 `string.replace`, `regex.replace`, `regex.replace_first`,
-`regex.replace_with`, `encoding.form_encode`, `json.stringify`,
+`regex.replace_with`, `url.encode_form`, `url.escape`, `json.stringify`,
 `json.pretty`, `toml.stringify`, `toml.pretty`, `bytes.concat`,
 `bytes.concat_all`). One read from a file or stdin (`io.read_file`,
 `io.read_bytes`, `io.read_line`, a line of `stream.file_lines`) is as

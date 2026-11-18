@@ -1,0 +1,7 @@
+import url
+fn main() {
+  match url.unescape("a+b") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+}

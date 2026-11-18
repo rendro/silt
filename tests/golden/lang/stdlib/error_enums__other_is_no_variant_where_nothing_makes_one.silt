@@ -4,12 +4,12 @@
 -- stderr-contains: module 'float' has no member 'Other'
 -- stderr-contains: module 'regex' has no member 'Other'
 -- stderr-contains: module 'bytes' has no member 'Other'
--- stderr-contains: module 'encoding' has no member 'Other'
+-- stderr-contains: module 'url' has no member 'Other'
 -- stderr-contains: module 'time' has no member 'Other'
 -- stderr-contains: module 'uuid' has no member 'Other'
 -- stderr-contains: module 'task' has no member 'Other'
 import bytes
-import encoding
+import url
 import float
 import int
 import io
@@ -23,7 +23,7 @@ fn main() {
   println(float.Other("x"))
   println(regex.Other("x"))
   println(bytes.Other("x"))
-  println(encoding.Other("x"))
+  println(url.Other("x"))
   println(time.Other("x"))
   println(uuid.Other("x"))
   println(task.Other("x"))

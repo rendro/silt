@@ -795,7 +795,7 @@ fn resolve_keeps_the_base_and_checks_the_reference() {
 // ── Escaping text ───────────────────────────────────────────────────
 
 #[test]
-fn escape_and_unescape_are_the_old_encoding_functions() {
+fn escape_and_unescape_write_and_read_every_byte() {
     assert_eq!(escape("a b&c"), "a%20b%26c");
     assert_eq!(escape("-._~AZaz09"), "-._~AZaz09");
     assert_eq!(escape("+/?#é"), "%2B%2F%3F%23%C3%A9");
@@ -816,7 +816,7 @@ fn escape_and_unescape_are_the_old_encoding_functions() {
 }
 
 #[test]
-fn form_bodies_are_the_old_encoding_functions() {
+fn form_bodies_are_written_and_read() {
     assert_eq!(encode_form(&pairs(&[("q", "silt lang")])), "q=silt+lang");
     assert_eq!(
         encode_form(&pairs(&[("a&b", "c=d+e"), ("", "*-._~é")])),

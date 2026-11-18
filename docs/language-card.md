@@ -698,7 +698,7 @@ type Response { status: Int, body: Bytes, headers: Map(String, String) }
 type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes, peer: String }
 type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, Other(String) }
 http.get(url: String) -> Result(Response, HttpError)  -- cargo feature `http`
-http.parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)
+http.parse_query(query: String) -> Result(Map(String, List(String)), UrlError)
 http.request(method: Method, url: String, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)  -- cargo feature `http`
 http.segments(path: String) -> List(String)
 http.serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()  -- cargo feature `http`
@@ -793,16 +793,6 @@ crypto.md5(data: Bytes) -> Bytes
 crypto.random_bytes(n: Int) -> Result(Bytes, CryptoError)
 crypto.sha256(data: Bytes) -> Bytes
 crypto.sha512(data: Bytes) -> Bytes
-```
-
-### encoding
-
-```
-type EncodingError { InvalidPercent(String), InvalidUtf8(String) }
-encoding.form_decode(body: String) -> Result(List((String, String)), EncodingError)
-encoding.form_encode(pairs: List((String, String))) -> String
-encoding.url_decode(s: String) -> Result(String, EncodingError)
-encoding.url_encode(s: String) -> String
 ```
 
 ### url

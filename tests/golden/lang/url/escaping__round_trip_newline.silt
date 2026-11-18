@@ -1,0 +1,8 @@
+import url
+fn main() {
+  let s = "line1\nline2"
+  match url.unescape(url.escape(s)) {
+    Ok(back) -> println(back)
+    Err(e) -> println(e)
+  }
+}

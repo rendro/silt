@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(feature = "http")]
 use std::time::Duration;
 
-use super::encoding::form_decode_component;
 use super::typed::builtins;
 #[cfg(feature = "http")]
 use super::typed::{Arg, Bytes, Map, TcpListener, unsound};
@@ -2651,40 +2650,23 @@ builtins! {
             .collect()
     }
 
-    // The pairs are decoded as `encoding.form_decode` decodes them, and
-    // a pair that does not decode is its error: a query string comes
-    // from whoever sent the request.
+    // The pairs are decoded as `url.decode_form` decodes them, and a
+    // pair that does not decode is its error: a query string comes from
+    // whoever sent the request. A leading `?` is taken as well.
     fn parse_query(query: &str) -> Value {
-        // Accept a leading `?` for convenience — e.g. directly
-        // passing a URL fragment like `?a=1&b=2` shouldn't require
-        // the caller to strip it first.
-        let body = query.strip_prefix('?').unwrap_or(query);
-        // Preserve insertion order of first appearance for each
-        // key. BTreeMap gives us stable ordering by key, which is
-        // fine for a value-semantic Map — repeated keys always
-        // append to the same List in encounter order.
-        let mut out: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
-        for (i, segment) in body.split('&').enumerate() {
-            // Empty segments (leading `&`, `&&`, trailing `&`) are
-            // skipped, matching WHATWG's form-urlencoded parser and
-            // `encoding.form_decode`.
-            if segment.is_empty() {
-                continue;
+        let lead = usize::from(query.starts_with('?'));
+        let pairs = match crate::url::decode_form(&query[lead..]) {
+            Ok(pairs) => pairs,
+            Err(crate::url::UrlError::Invalid(what, at)) => {
+                let error = crate::url::UrlError::Invalid(what, at + lead);
+                return Value::variant(bv::ERR, [super::url::error_value(error)]);
             }
-            // Split on the FIRST `=`. Missing `=` → value is "".
-            // The spec says a bare key with no separator means
-            // "present with empty value", which matches how forms
-            // serialize a checkbox with value "".
-            let (raw_key, raw_val) = segment.split_once('=').unwrap_or((segment, ""));
-            let key = match form_decode_component(raw_key) {
-                Ok(key) => key,
-                Err(error) => return error.err(&format!("pair {i}: key: ")),
-            };
-            let val = match form_decode_component(raw_val) {
-                Ok(val) => val,
-                Err(error) => return error.err(&format!("pair {i}: value: ")),
-            };
-            out.entry(Value::string(key)).or_default().push(Value::string(val));
+            Err(error) => return Value::variant(bv::ERR, [super::url::error_value(error)]),
+        };
+        // The values of a key in the order they came, the keys in order.
+        let mut out: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
+        for (key, value) in pairs {
+            out.entry(Value::string(key)).or_default().push(Value::string(value));
         }
         let pairs = out.into_iter().map(|(key, values)| (key, Value::list(values)));
         Value::variant(bv::OK, [Value::map(pairs)])

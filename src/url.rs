@@ -1178,8 +1178,23 @@ pub(crate) fn unescape(text: &str) -> Result<String, UrlError> {
 /// The form body (`application/x-www-form-urlencoded`) of `pairs`:
 /// `key=value` joined by `&`, a space written `+`, every byte but
 /// letters, digits and `*` `-` `.` `_` escaped.
+// (The builtin writes pair by pair, `push_form_pair`; the whole list at
+// once is the fuzz check's and the tests'.)
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn encode_form(pairs: &[(String, String)]) -> String {
     let mut out = String::new();
+    for (at, (key, value)) in pairs.iter().enumerate() {
+        if at > 0 {
+            out.push('&');
+        }
+        push_form_pair(&mut out, key, value);
+    }
+    out
+}
+
+/// One pair of a form body, `key=value`, after `out` (see
+/// [`encode_form`]).
+pub(crate) fn push_form_pair(out: &mut String, key: &str, value: &str) {
     let component = |out: &mut String, text: &str| {
         for &byte in text.as_bytes() {
             match byte {
@@ -1193,15 +1208,9 @@ pub(crate) fn encode_form(pairs: &[(String, String)]) -> String {
             }
         }
     };
-    for (at, (key, value)) in pairs.iter().enumerate() {
-        if at > 0 {
-            out.push('&');
-        }
-        component(&mut out, key);
-        out.push('=');
-        component(&mut out, value);
-    }
-    out
+    component(out, key);
+    out.push('=');
+    component(out, value);
 }
 
 /// The pairs of the form body `body`: split on `&` (an empty piece is

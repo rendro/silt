@@ -609,13 +609,12 @@ pub(crate) mod ty {
     pub(crate) const NOTIFICATION: TypeId = TypeId(DefId(28));
     pub(crate) const FLOAT_ERROR: TypeId = TypeId(DefId(29));
     pub(crate) const CRYPTO_ERROR: TypeId = TypeId(DefId(30));
-    pub(crate) const ENCODING_ERROR: TypeId = TypeId(DefId(31));
-    pub(crate) const UUID_ERROR: TypeId = TypeId(DefId(32));
-    pub(crate) const TASK_ERROR: TypeId = TypeId(DefId(33));
-    pub(crate) const SELECTED: TypeId = TypeId(DefId(34));
-    pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(35));
-    pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(36));
-    pub(crate) const URL_ERROR: TypeId = TypeId(DefId(37));
+    pub(crate) const UUID_ERROR: TypeId = TypeId(DefId(31));
+    pub(crate) const TASK_ERROR: TypeId = TypeId(DefId(32));
+    pub(crate) const SELECTED: TypeId = TypeId(DefId(33));
+    pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(34));
+    pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(35));
+    pub(crate) const URL_ERROR: TypeId = TypeId(DefId(36));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -688,10 +687,6 @@ pub mod bv {
     pub(crate) const CRYPTO_INVALID_LENGTH: BuiltinVariant =
         BuiltinVariant::new(ty::CRYPTO_ERROR, 0);
     pub(crate) const CRYPTO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 1);
-    pub(crate) const ENCODING_INVALID_PERCENT: BuiltinVariant =
-        BuiltinVariant::new(ty::ENCODING_ERROR, 0);
-    pub(crate) const ENCODING_INVALID_UTF8: BuiltinVariant =
-        BuiltinVariant::new(ty::ENCODING_ERROR, 1);
     pub(crate) const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
     pub(crate) const URL_INVALID: BuiltinVariant = BuiltinVariant::new(ty::URL_ERROR, 0);
     pub(crate) const URL_INVALID_PART: BuiltinVariant = BuiltinVariant::new(ty::URL_ERROR, 1);
@@ -780,7 +775,6 @@ pub(crate) const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "Notification",
     "FloatError",
     "CryptoError",
-    "EncodingError",
     "UuidError",
     "TaskError",
     "Selected",
@@ -1022,8 +1016,6 @@ mod tests {
             (bv::FLOAT_NOT_FINITE, "NotFinite"),
             (bv::CRYPTO_INVALID_LENGTH, "InvalidLength"),
             (bv::CRYPTO_OTHER, "Other"),
-            (bv::ENCODING_INVALID_PERCENT, "InvalidPercent"),
-            (bv::ENCODING_INVALID_UTF8, "InvalidUtf8"),
             (bv::UUID_INVALID, "Invalid"),
             (bv::URL_INVALID, "Invalid"),
             (bv::URL_INVALID_PART, "InvalidPart"),

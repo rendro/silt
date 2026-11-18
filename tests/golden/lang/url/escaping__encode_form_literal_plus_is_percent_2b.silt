@@ -1,0 +1,4 @@
+import url
+fn main() {
+  println(url.encode_form([("math", "1+1")]))
+}

@@ -37,7 +37,6 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "env" => "env.get(\"SILT_NO_SUCH_VAR_XYZ\")",
         "bytes" => "bytes.empty()",
         "crypto" => "crypto.random_bytes(4)",
-        "encoding" => "encoding.url_encode(\"a b\")",
         "url" => "url.escape(\"a b\")",
         "stream" => "stream.from_list([1])",
         "uuid" => "uuid.nil()",

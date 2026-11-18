@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+import url
+fn main() {
+  let e = url.escape("hello world")
+  let _ = url.unescape(e)
+}

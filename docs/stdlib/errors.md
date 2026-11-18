@@ -157,15 +157,6 @@ Returned by `task.deadline`.
 |---------|--------|---------|
 | `Timeout` | — | the function was ended because its time was over |
 
-### `EncodingError` (requires `import encoding`)
-
-Returned by `encoding.url_decode` and `encoding.form_decode`.
-
-| Variant | Fields | Meaning |
-|---------|--------|---------|
-| `InvalidPercent(String)` | what and where | a `%` that two hex digits do not follow |
-| `InvalidUtf8(String)` | where | decoded bytes are not valid UTF-8 |
-
 ### `CryptoError` (requires `import crypto`)
 
 Returned by `crypto.random_bytes`.

@@ -1,0 +1,42 @@
+-- No function returns `Result(_, String)`: `url`, `crypto` and `uuid`
+-- have error enums of their own.
+import crypto
+import url
+import uuid
+
+fn main() {
+  match url.unescape("bad%") {
+    Err(url.Invalid(what, at)) -> println("unescape Invalid: {what}, at {at}")
+    other -> println(other)
+  }
+  match url.unescape("%C3%28") {
+    Err(url.Invalid(what, at)) -> println("unescape Invalid: {what}, at {at}")
+    other -> println(other)
+  }
+  match url.decode_form("a=1&b=%ZZ") {
+    Err(url.Invalid(what, at)) -> println("decode_form Invalid: {what}, at {at}")
+    other -> println(other)
+  }
+  match url.decode_form("%FF=1") {
+    Err(e) -> println("decode_form: {e}")
+    Ok(pairs) -> println(pairs)
+  }
+  match crypto.random_bytes(-1) {
+    Err(crypto.InvalidLength(n)) -> println("random_bytes InvalidLength: {n}")
+    _ -> println("something else")
+  }
+  match crypto.random_bytes(2000000) {
+    Err(e) -> println("{e}")
+    Ok(_) -> println("two million bytes")
+  }
+  match uuid.parse("not-a-uuid") {
+    Err(uuid.Invalid(why)) -> println("parse Invalid: {why}")
+    other -> println(other)
+  }
+  match uuid.parse("not-a-uuid") {
+    Err(e) -> println(e)
+    Ok(text) -> println(text)
+  }
+  println(uuid.parse("00000000-0000-0000-0000-000000000000"))
+  println(url.unescape("a%20b"))
+}
