@@ -1,0 +1,17 @@
+error[type]: unknown trait 'zz.V' in where clause for 'b': `zz.V` is a type
+ --> main.silt:8:43
+   |
+ 8 | fn type_as_bound(x: b) -> Int where b: zz.V { 1 }
+   |                                           ^ unknown trait 'zz.V' in where clause for 'b': `zz.V` is a type
+
+error[type]: unknown type 'zz.Later2': `zz.Later2` is a trait
+ --> main.silt:10:21
+    |
+ 10 | fn trait_as_type(x: zz.Later2) -> Int { 1 }
+    |                     ^^^^^^^^^ unknown type 'zz.Later2': `zz.Later2` is a trait
+
+error[type]: trait 'Sub' lists unknown supertrait 'zz.V': `zz.V` is a type
+ --> main.silt:12:15
+    |
+ 12 | trait Sub: zz.V {
+    |               ^ trait 'Sub' lists unknown supertrait 'zz.V': `zz.V` is a type

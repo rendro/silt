@@ -571,9 +571,11 @@ impl TypeChecker {
             return Some(ty.clone());
         }
         let parts: Vec<&Type> = match ty {
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => vec![&**t],
-            Type::Map(k, v) => vec![&**k, &**v],
-            Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().collect(),
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => vec![&**t],
+            Type::Container(Container::Map(k, v)) => vec![&**k, &**v],
+            Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) => ts.iter().collect(),
             _ => Vec::new(),
         };
         (parts.into_iter())
@@ -1113,7 +1115,13 @@ impl TypeChecker {
             );
             self.refused_traits.insert(t.name);
             (self.tables.refused_trait_methods).extend(t.methods.iter().map(|m| (t.name, m.name)));
-            return;
+            let key = self.own_trait(t.name);
+            self.tables.refused_trait_keys.insert(key);
+            // The trait takes no name, but it is declared all the same
+            // (under its key, which no name of the module reaches): its
+            // default methods and its impls are checked as any trait's,
+            // so an error in their bodies shows now, not once the trait
+            // is renamed.
         }
         self.register_trait_decl_inner(t);
     }
@@ -1312,13 +1320,14 @@ impl TypeChecker {
                 Some(sup) => supertraits.push((sup, r.args.clone())),
                 None if r.res == Some(crate::defs::Res::Error) => {}
                 None => {
-                    let is = (self.what_the_name_is(r.res, r.name, true))
+                    let is = (self.what_the_name_is(r.res, (r.module, r.name), true))
                         .map_or_else(String::new, |is| format!(": {is}"));
                     self.error(
                         Code::UnknownTrait,
                         format!(
                             "trait '{}' lists unknown supertrait '{}'{is}",
-                            t.name, r.name
+                            t.name,
+                            Qualifier::written(r.module, r.name)
                         ),
                         r.span,
                     )
@@ -1629,7 +1638,12 @@ impl TypeChecker {
                         let ty = self.resolve_type_expr(te, &mut names);
                         // (What `check_supertrait_arity` reports in its own
                         // words is not reported again here; what else is
-                        // wrong in the argument is, as in any type.)
+                        // wrong in the argument is, as in any type. An
+                        // argument the resolver had nothing to say of
+                        // needs no look.)
+                        if self.errors.len() == reported {
+                            return ty;
+                        }
                         let mut hidden = Vec::new();
                         no_supertrait_parts(te, &params, &mut hidden);
                         if !hidden.is_empty() {
@@ -1650,6 +1664,9 @@ impl TypeChecker {
                 _ => None,
             })
             .collect();
+        if no_type.is_empty() {
+            return resolved;
+        }
         (resolved.into_iter())
             .map(|args| {
                 (args.iter())
@@ -1953,7 +1970,10 @@ impl TypeChecker {
             .filter(|(_, arg)| is_hole(arg))
             .map(|(i, _)| i)
             .collect();
-        let trait_name = self.impl_trait_name(ti);
+        // (The trait's name for a message is made where one is written:
+        // made for every impl, it looked at every trait of the session for
+        // one of the same name, and n modules with an impl each took time
+        // n squared.)
         let head = resolve(ti.target_type);
         let arity = self.type_arity(written).or_else(|| {
             builtin_type_name(written)
@@ -2004,6 +2024,7 @@ impl TypeChecker {
             if holes.is_empty() {
                 return true;
             }
+            let trait_name = self.impl_trait_name(ti);
             // Each `_` a name the header does not use yet.
             let mut letters = ('a'..='z')
                 .map(|c| c.to_string())
@@ -2021,6 +2042,7 @@ impl TypeChecker {
             self.error_help(Code::KindMismatch, (message, Some(help)), ti.header_span);
             return false;
         }
+        let trait_name = self.impl_trait_name(ti);
         match holes.as_slice() {
             [0] => self.header_rest_are_variables(ti, &trait_name, &head),
             // No `_`, or one more after the first: the header with `_`
@@ -2411,9 +2433,12 @@ impl TypeChecker {
         // nothing: it reported why.
         // So is an impl of a trait of the module refused at its
         // declaration (`trait Int`).
-        if ti.trait_res == Some(crate::defs::Res::Error)
+        // An impl of a trait of the module refused at its declaration
+        // (`trait Int`) is checked as an impl of that trait, which the
+        // name no longer reaches (`register_trait_decl_user`).
+        let refused_own = self.refused_own_trait(ti);
+        if (ti.trait_res == Some(crate::defs::Res::Error) && refused_own.is_none())
             || ti.target_res == Some(crate::defs::Res::Error)
-            || (ti.trait_module.is_none() && self.refused_traits.contains(&ti.trait_name))
         {
             return None;
         }
@@ -2754,13 +2779,13 @@ impl TypeChecker {
             .named_trait(wc.trait_res, wc.trait_name)
             .filter(|t| self.tables.traits.contains_key(t))
         else {
-            let is = (self.what_the_name_is(wc.trait_res, wc.trait_name, true))
+            let is = (self.what_the_name_is(wc.trait_res, (wc.trait_module, wc.trait_name), true))
                 .map_or_else(String::new, |is| format!(": {is}"));
             self.error(
                 Code::UnknownTrait,
                 format!(
                     "unknown trait '{}' in where clause on trait impl '{} for {}'{is}",
-                    resolve(wc.trait_name),
+                    Qualifier::written(wc.trait_module, wc.trait_name),
                     self.impl_trait_name(ti),
                     resolve(ti.target_type)
                 ),
@@ -3061,7 +3086,15 @@ impl TypeChecker {
                 let unified = self.unify_types(&written, expected);
                 match unified {
                     Ok(()) => {
-                        self.refuse_variables_the_trait_types(ti, method, &param_map, impl_names);
+                        // (The trait's declared type, unseeded: where it
+                        // writes `Self`.)
+                        let declared_type = declared.map(|(info, ty)| (info.self_var, ty.clone()));
+                        self.refuse_variables_the_trait_types(
+                            ti,
+                            method,
+                            (&param_map, impl_names),
+                            declared_type,
+                        );
                         expected.clone()
                     }
                     Err(mismatch) => {
@@ -3076,14 +3109,20 @@ impl TypeChecker {
                         for te in written_types {
                             super::names::type_vars_of(te, &mut writes);
                         }
-                        let clash = own
-                            .iter()
-                            .find(|r| impl_names.contains_key(&r.name) && writes.contains(&r.name));
-                        match clash {
-                            Some(clash) => {
-                                self.method_variable_is_the_impls(ti, method, clash.name, own)
-                            }
-                            None => self.report_mismatch(mismatch, method.span),
+                        let mut clashes: Vec<Symbol> = (own.iter())
+                            .map(|r| r.name)
+                            .filter(|name| impl_names.contains_key(name) && writes.contains(name))
+                            .collect();
+                        clashes.sort_by_key(|name| writes.iter().position(|w| w == name));
+                        clashes.dedup();
+                        match clashes.is_empty() {
+                            false => self.method_variable_is_the_impls(
+                                ti,
+                                method,
+                                &clashes,
+                                (own, &writes),
+                            ),
+                            true => self.report_mismatch(mismatch, method.span),
                         }
                         written
                     }
@@ -3245,44 +3284,78 @@ impl TypeChecker {
         (param_types, ret_type)
     }
 
-    /// The error of the impl method `method` whose signature uses `name`,
-    /// a type variable of the impl's header, where the trait declares the
-    /// method with a variable `name` of its own (`own`, the method's
-    /// variables): the impl's method is not for any type there. Said with
-    /// the two told apart, and a name the method's variable can take.
+    /// The error of the impl method `method` whose signature uses `names`,
+    /// type variables of the impl's header, where the trait declares the
+    /// method with variables of those names of its own (`own`, the
+    /// method's variables): the impl's method is not for any type there.
+    /// Said with the two of each name told apart, every one of them named,
+    /// and a name each of the method's variables can take.
     fn method_variable_is_the_impls(
         &mut self,
         ti: &TraitImpl,
         method: &FnDecl,
-        name: Symbol,
-        own: &[RigidId],
+        names: &[Symbol],
+        (own, writes): (&[RigidId], &[Symbol]),
     ) {
+        // (A name the trait's method, the impl's header or the method's
+        // own signature already has is no name to offer.)
         let taken = |c: &str| {
             let c = intern(c);
-            own.iter().any(|r| r.name == c) || ti.target_param_names.contains(&c)
+            own.iter().any(|r| r.name == c)
+                || ti.target_param_names.contains(&c)
+                || writes.contains(&c)
         };
-        let fresh = ('b'..='z')
+        let mut fresh: Vec<String> = ('b'..='z')
             .map(|c| c.to_string())
-            .find(|c| !taken(c))
-            .unwrap_or_else(|| format!("{name}2"));
-        self.errors.push(
-            Diagnostic::error(
-                Code::TypeMismatch,
-                method.span,
+            .filter(|c| !taken(c))
+            .take(names.len())
+            .collect();
+        for name in names.iter().skip(fresh.len()) {
+            fresh.push(format!("{name}2"));
+        }
+        // "`a`", "`a` and `b`", "`a`, `b` and `c`".
+        let listed = |items: Vec<String>| match items.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            _ => items.concat(),
+        };
+        let quoted = |q: &str| listed(names.iter().map(|n| format!("{q}{n}{q}")).collect());
+        let trait_name = self.impl_trait_name(ti);
+        let offered = listed(fresh.iter().map(|n| format!("`{n}`")).collect());
+        let (message, help) = match names {
+            [name] => (
                 format!(
                     "the type variable '{name}' of method '{}' is the impl's '{name}' here, not \
                      the method's own",
                     method.name
                 ),
-            )
-            .with_label(ti.header_span, format!("the impl's `{name}`"))
-            .with_help(format!(
-                "trait '{}' declares `{}` with a type variable `{name}` of its own, which \
-                 stands for any type: write it with another name in this impl, such as \
-                 `{fresh}`",
-                self.impl_trait_name(ti),
-                method.name
-            )),
+                format!(
+                    "trait '{trait_name}' declares `{}` with a type variable `{name}` of its \
+                     own, which stands for any type: write it with another name in this impl, \
+                     such as {offered}",
+                    method.name
+                ),
+            ),
+            _ => (
+                format!(
+                    "the type variables {} of method '{}' are the impl's {} here, not the \
+                     method's own",
+                    quoted("'"),
+                    method.name,
+                    quoted("'")
+                ),
+                format!(
+                    "trait '{trait_name}' declares `{}` with type variables {} of its own, \
+                     which stand for any types: write them with other names in this impl, \
+                     such as {offered}",
+                    method.name,
+                    quoted("`")
+                ),
+            ),
+        };
+        self.errors.push(
+            Diagnostic::error(Code::TypeMismatch, method.span, message)
+                .with_label(ti.header_span, format!("the impl's {}", quoted("`")))
+                .with_help(help),
         );
     }
 
@@ -3294,13 +3367,14 @@ impl TypeChecker {
         if !self.reported_bounds.insert(wc.trait_name_span) {
             return;
         }
-        let is = (self.what_the_name_is(wc.trait_res, wc.trait_name, true))
+        let is = (self.what_the_name_is(wc.trait_res, (wc.trait_module, wc.trait_name), true))
             .map_or_else(String::new, |is| format!(": {is}"));
         self.error(
             Code::UnknownTrait,
             format!(
                 "unknown trait '{}' in where clause for '{}'{is}",
-                wc.trait_name, wc.type_param
+                Qualifier::written(wc.trait_module, wc.trait_name),
+                wc.type_param
             ),
             wc.trait_name_span,
         );
@@ -3445,16 +3519,23 @@ impl TypeChecker {
     /// and a variable of a signature stands for any type. And refuse two
     /// of its variables that stand for one type (`x: a, y: b` for the
     /// trait's `x: t, y: t`, or where the impl's header or `Self` makes
-    /// them one): they are one only because the trait says so. `names` are the variables of the method's signature,
-    /// `impl_names` the impl header's. A type the help writes names the
+    /// them one): they are one only because the trait says so. And refuse
+    /// one that stands for a variable of the impl's header (`y: b` where
+    /// the trait declares the impl's `a`, through a trait argument or
+    /// `Self`): in the impl that type is the header's, which the method
+    /// writes by its name. So each of the method's own variables is a
+    /// variable of the trait's method, a different one each (owner, card
+    /// TV-1). `names` are the variables of the method's signature,
+    /// `impl_names` the impl header's; `declared` the trait's type of the
+    /// method, with its `Self` variable. A type the help writes names the
     /// trait's variables as the method does (`List(b)` where the method
     /// calls the trait's `a` `b`).
     fn refuse_variables_the_trait_types(
         &mut self,
         ti: &TraitImpl,
         method: &FnDecl,
-        names: &HashMap<Symbol, Type>,
-        impl_names: &HashMap<Symbol, Type>,
+        (names, impl_names): (&HashMap<Symbol, Type>, &HashMap<Symbol, Type>),
+        declared: Option<(TyVar, Type)>,
     ) {
         let mut own: Vec<(Symbol, TyVar)> = (names.iter())
             .filter(|(name, _)| !impl_names.contains_key(*name))
@@ -3467,15 +3548,29 @@ impl TypeChecker {
         let at = |checker: &Self, var: &TyVar| {
             checker.var_written.get(var).copied().unwrap_or(method.span)
         };
+        // The impl header's variables, by what each is now.
+        let header: HashMap<TyVar, Symbol> = (impl_names.iter())
+            .filter_map(|(name, ty)| match self.apply(ty) {
+                Type::Var(v) => Some((v, *name)),
+                Type::Rigid(r) => Some((r.var, *name)),
+                _ => None,
+            })
+            .collect();
         // The method's name for each variable of the trait it writes one
         // for, the first written.
         let mut written: HashMap<TyVar, Symbol> = HashMap::new();
+        // The method's own variables that stand for one of the header's.
+        let mut for_header: Vec<(Symbol, TyVar, Symbol)> = Vec::new();
         for (name, var) in &own {
             let variable = match self.apply(&Type::Var(*var)) {
                 Type::Var(v) => v,
                 Type::Rigid(r) => r.var,
                 _ => continue,
             };
+            if let Some(impls) = header.get(&variable) {
+                for_header.push((*name, *var, *impls));
+                continue;
+            }
             match written.get(&variable) {
                 None => {
                     written.insert(variable, *name);
@@ -3499,6 +3594,33 @@ impl TypeChecker {
                 }
             }
         }
+        for (name, var, impls) in for_header {
+            let (message, help) = match self
+                .trait_writes_self_where(method, name, declared.as_ref())
+                .is_some()
+            {
+                true => {
+                    let target = impl_target_written(ti);
+                    (
+                        format!(
+                            "method '{}' writes its own type variable `{name}` where trait '{}' \
+                             declares `Self`, `{target}`",
+                            method.name, ti.trait_name
+                        ),
+                        format!("write `{target}`, or `Self`"),
+                    )
+                }
+                false => (
+                    format!(
+                        "method '{}' writes its own type variable `{name}` where trait '{}' \
+                         declares `{impls}`, the impl's",
+                        method.name, ti.trait_name
+                    ),
+                    format!("in this impl that type is the header's `{impls}`: write `{impls}`"),
+                ),
+            };
+            self.error_help(Code::TypeMismatch, (message, Some(help)), at(self, &var));
+        }
         let as_written = |ty: &Type| {
             let rename = |var: TyVar| written.get(&var).map(|name| RigidId { var, name: *name });
             let ty = map_rigid(ty, &mut |r| Type::Rigid(rename(r.var).unwrap_or(r)));
@@ -3507,27 +3629,78 @@ impl TypeChecker {
                 .collect();
             substitute_vars(&ty, &vars)
         };
+        let trait_type = declared.as_ref();
         for (name, var) in own {
             let declared = self.apply(&Type::Var(var));
             if matches!(declared, Type::Var(_) | Type::Rigid(_) | Type::Error) {
                 continue;
             }
             let declared = self.show_type(&as_written(&declared));
+            // (Where the trait writes `Self` for the whole variable, the
+            // help offers both forms, as for a header's variable there.)
+            let (said, written) = match self.trait_writes_self_where(method, name, trait_type) {
+                Some(true) => (
+                    format!("`Self`, `{declared}`"),
+                    format!("`{declared}`, or `Self`"),
+                ),
+                _ => (
+                    format!("`{declared}`"),
+                    format!("`{declared}`, as the trait does"),
+                ),
+            };
             self.error_help(
                 Code::TypeMismatch,
                 (
                     format!(
                         "method '{}' writes the type variable `{name}` where trait '{}' declares \
-                         `{declared}`",
+                         {said}",
                         method.name, ti.trait_name
                     ),
                     Some(format!(
-                        "a type variable stands for any type: write `{declared}`, as the trait does"
+                        "a type variable stands for any type: write {written}"
                     )),
                 ),
                 at(self, &var),
             );
         }
+    }
+
+    /// Where the impl method `method` first writes its variable `name` (the
+    /// first parameter or result whose written type has it), whether the
+    /// trait's type there (`declared`, with its `Self` variable) is `Self`:
+    /// `Some(true)` for `Self` itself, `Some(false)` for a type made of
+    /// `Self` and nothing else of the trait's (`List(Self)`), `None`
+    /// otherwise.
+    fn trait_writes_self_where(
+        &self,
+        method: &FnDecl,
+        name: Symbol,
+        declared: Option<&(TyVar, Type)>,
+    ) -> Option<bool> {
+        let Some((self_var, Type::Fun(params, ret))) = declared else {
+            return None;
+        };
+        let has = |te: &TypeExpr| {
+            let mut vars = Vec::new();
+            super::names::type_vars_of(te, &mut vars);
+            vars.contains(&name)
+        };
+        let at = (method.params.iter().enumerate())
+            .find(|(_, p)| p.ty.as_ref().is_some_and(has))
+            .map(|(i, _)| params.get(i))
+            .or_else(|| {
+                method
+                    .return_type
+                    .as_ref()
+                    .filter(|te| has(te))
+                    .map(|_| Some(&**ret))
+            });
+        let at = at.flatten()?;
+        if matches!(at, Type::Var(v) if v == self_var) {
+            return Some(true);
+        }
+        let vars = free_vars_in(at);
+        (vars.contains(self_var) && vars.len() == 1).then_some(false)
     }
 
     /// Report the impl method `method`, written with a number of
@@ -3932,7 +4105,9 @@ impl TypeChecker {
                     match builtin_type_name(written).unwrap_or_default() {
                         // A tuple of the impl's arity: `(a, b)` of
                         // `Tuple(a, b)`, which a pair's type is.
-                        "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
+                        "Tuple" if resolved_args.len() >= 2 => {
+                            Type::Container(Container::Tuple(resolved_args))
+                        }
                         // A primitive takes no arguments (the error above
                         // says so): the impl is for the type itself, not a
                         // phantom `Int(_)` that no value has.
@@ -4618,5 +4793,18 @@ fn no_supertrait_parts(
             .chain(std::iter::once(ret.as_ref()))
             .for_each(|arg| no_supertrait_parts(arg, params, out)),
         TypeExprKind::Named { .. } => {}
+    }
+}
+
+/// The impl's type as its header writes it (`Box(a)`, `m.Shape`), for a
+/// message that says what `Self` is in the impl.
+fn impl_target_written(ti: &TraitImpl) -> String {
+    let head = Qualifier::written(ti.target_module, ti.target_type);
+    match ti.target_type_args.is_empty() {
+        true => head,
+        false => {
+            let args: Vec<String> = ti.target_type_args.iter().map(type_expr_text).collect();
+            format!("{head}({})", args.join(", "))
+        }
     }
 }

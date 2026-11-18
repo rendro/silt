@@ -41,7 +41,7 @@ impl TypeChecker {
         };
         if elems.is_empty() {
             let tv = self.fresh_var();
-            Type::List(Box::new(tv))
+            Type::Container(Container::List(Box::new(tv)))
         } else {
             // Each element is inferred first (without unifying),
             // so that one "list elements must have the same type"
@@ -59,7 +59,7 @@ impl TypeChecker {
                     ListElem::Spread(e) => {
                         let t = self.infer_expr(e, env);
                         let inner = self.fresh_var();
-                        let list = Type::List(Box::new(inner.clone()));
+                        let list = Type::Container(Container::List(Box::new(inner.clone())));
                         if self.unify_types(&t, &list).is_ok() {
                             elem_infos.push((idx, inner, e.span));
                         } else {
@@ -112,7 +112,7 @@ impl TypeChecker {
                 }
             }
 
-            Type::List(Box::new(elem_type))
+            Type::Container(Container::List(Box::new(elem_type)))
         }
     }
 
@@ -124,7 +124,7 @@ impl TypeChecker {
         if entries.is_empty() {
             let k = self.fresh_var();
             let v = self.fresh_var();
-            Type::Map(Box::new(k), Box::new(v))
+            Type::Container(Container::Map(Box::new(k), Box::new(v)))
         } else {
             let mut iter = entries.iter_mut();
             let first_entry = iter.next().unwrap();
@@ -167,7 +167,7 @@ impl TypeChecker {
             }
             // A map hashes its keys.
             self.want_hash(&first_k, span);
-            Type::Map(Box::new(first_k), Box::new(first_v))
+            Type::Container(Container::Map(Box::new(first_k), Box::new(first_v)))
         }
     }
 
@@ -178,7 +178,7 @@ impl TypeChecker {
         };
         if elems.is_empty() {
             let tv = self.fresh_var();
-            Type::Set(Box::new(tv))
+            Type::Container(Container::Set(Box::new(tv)))
         } else {
             // The same direction and curated message as the map arm
             // above (`#[1, 2, "x"]` expects Int, got String), in the
@@ -203,7 +203,7 @@ impl TypeChecker {
             }
             // A set hashes its elements.
             self.want_hash(&elem_type, span);
-            Type::Set(Box::new(elem_type))
+            Type::Container(Container::Set(Box::new(elem_type)))
         }
     }
 }

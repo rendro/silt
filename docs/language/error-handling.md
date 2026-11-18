@@ -143,6 +143,15 @@ and it is how a tool fails: the `Err` is the program's message to its user.
 | it returns `Err(e)` | the one line `error: e` on stderr, exit status 1 |
 | a runtime error or a `panic` | the error with its place and calls on stderr, exit status 1 |
 
+The `error: e` line is the program's own text, written exactly as the
+program made it, colours and other control characters included. A
+`panic`'s text, and the report of a task that failed (joined or never
+joined), are silt's reports of a fault: the program's text in them shows
+each control character (a carriage return, a tab, an escape sequence) or
+invisible character as an escape (`\r`, `\t`, `\u{1b}`), as silt's other
+messages show a value, so it cannot move the cursor, colour or clear the
+terminal. Its line ends stay: the lines after the first are a note.
+
 The payload is shown as `println` shows it, so a tool's own error type
 with a `Display` impl reads as the tool writes it. Where that impl itself
 fails (a `panic` in it, a division by zero, a failed `task.join`), the

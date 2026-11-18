@@ -1122,8 +1122,10 @@ pub fn check_csv(text: &str) -> Result<(), String> {
 /// escaped, unescaped and decoded as a form body.
 pub fn check_url(text: &str) -> Result<(), String> {
     use crate::url::{self, UrlError};
+    // (No error holds the text: the longest message is the punycode
+    // hint of a 253-character host.)
     let placed = |what: &str, e: UrlError, len: usize| match e {
-        UrlError::Invalid(_, at) if at <= len => Ok(()),
+        UrlError::Invalid(why, at) if at <= len && why.chars().count() <= 320 => Ok(()),
         e => Err(format!("{what}: {e:?}, in {len} characters")),
     };
     let chars = text.chars().count();
@@ -1163,6 +1165,14 @@ fn check_one_url(u: &crate::url::Url) -> Result<(), String> {
     match crate::url::parse(text) {
         Ok(again) if again == *u && again.as_str() == text => {}
         again => return Err(format!("{u:?} is read back as {again:?}")),
+    }
+    // (Every part decodes exactly when the whole text does: the
+    // delimiters are ASCII.)
+    if crate::url::unescape(text).is_err() {
+        return Err(format!("{u:?}: an escape does not decode"));
+    }
+    if u.segments().iter().any(|s| s == "." || s == "..") {
+        return Err(format!("{u:?}: a dot segment"));
     }
     let credentials = !u.user().is_empty() || !u.password().is_empty();
     let shown = u.to_string();
@@ -1235,6 +1245,9 @@ fn check_url_changes(u: &crate::url::Url, text: &str) -> Result<(), String> {
         Ok(changed) if changed == *u => Ok(()),
         changed => Err(format!("{u:?} with its own {what} is {changed:?}")),
     };
+    if u.add_segments(&[]).as_ref() != Ok(u) {
+        return Err(format!("{u:?} with no segments added changed"));
+    }
     same("scheme", u.with_scheme(u.scheme()))?;
     same("host", u.with_host(u.host()))?;
     same("port", u.with_port(u.port().map(i64::from)))?;

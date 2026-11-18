@@ -179,9 +179,15 @@ impl TypeChecker {
                     && vars.iter().all(|v| self.held_by_param(*v)))
                     || args.iter().any(|arg| self.held_instance_in(arg))
             }
-            Type::List(t) | Type::Set(t) => self.held_instance_in(t),
-            Type::Map(k, v) => self.held_instance_in(k) || self.held_instance_in(v),
-            Type::Tuple(parts) => parts.iter().any(|part| self.held_instance_in(part)),
+            Type::Container(Container::List(t)) | Type::Container(Container::Set(t)) => {
+                self.held_instance_in(t)
+            }
+            Type::Container(Container::Map(k, v)) => {
+                self.held_instance_in(k) || self.held_instance_in(v)
+            }
+            Type::Container(Container::Tuple(parts)) => {
+                parts.iter().any(|part| self.held_instance_in(part))
+            }
             _ => false,
         }
     }
@@ -209,12 +215,16 @@ impl TypeChecker {
                     }
                     args.iter().for_each(|arg| walk(arg, out));
                 }
-                Type::List(t) | Type::Set(t) => walk(t, out),
-                Type::Map(k, v) => {
+                Type::Container(Container::List(t)) | Type::Container(Container::Set(t)) => {
+                    walk(t, out)
+                }
+                Type::Container(Container::Map(k, v)) => {
                     walk(k, out);
                     walk(v, out);
                 }
-                Type::Tuple(parts) => parts.iter().for_each(|part| walk(part, out)),
+                Type::Container(Container::Tuple(parts)) => {
+                    parts.iter().for_each(|part| walk(part, out))
+                }
                 _ => {}
             }
         }
@@ -449,11 +459,15 @@ impl TypeChecker {
                 (opaque.map(|def| def.module))
                     .or_else(|| args.iter().find_map(|arg| self.opaque_module_in(arg)))
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.opaque_module_in(t),
-            Type::Map(k, v) => self
+            Type::Container(Container::List(t))
+            | Type::Container(Container::Set(t))
+            | Type::Container(Container::Channel(t)) => self.opaque_module_in(t),
+            Type::Container(Container::Map(k, v)) => self
                 .opaque_module_in(k)
                 .or_else(|| self.opaque_module_in(v)),
-            Type::Tuple(parts) => parts.iter().find_map(|part| self.opaque_module_in(part)),
+            Type::Container(Container::Tuple(parts)) => {
+                parts.iter().find_map(|part| self.opaque_module_in(part))
+            }
             _ => None,
         }
     }
@@ -1268,11 +1282,11 @@ impl TypeChecker {
             | Type::Float
             | Type::String
             | Type::Bool
-            | Type::List(_)
-            | Type::Map(..)
-            | Type::Tuple(_)
-            | Type::Set(_)
-            | Type::Channel(_) => {
+            | Type::Container(Container::List(_))
+            | Type::Container(Container::Map(..))
+            | Type::Container(Container::Tuple(_))
+            | Type::Container(Container::Set(_))
+            | Type::Container(Container::Channel(_)) => {
                 self.decode_refusal(builtin, Decoding::JSON, written, ty, owner, span)
             }
             // A type no type argument names (a function): what a
@@ -1301,7 +1315,9 @@ impl TypeChecker {
 pub(super) fn held_subject(vars: &[TyVar]) -> Type {
     match vars {
         [one] => Type::Var(*one),
-        _ => Type::Tuple(vars.iter().map(|v| Type::Var(*v)).collect()),
+        _ => Type::Container(Container::Tuple(
+            vars.iter().map(|v| Type::Var(*v)).collect(),
+        )),
     }
 }
 

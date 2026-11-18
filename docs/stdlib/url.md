@@ -164,7 +164,10 @@ safe); a path segment with `/`, `%`, `?`, `#`, `[` and `]` escaped, so a
 segment never becomes two; a query key or value with `&`, `=`, `+`, `#`,
 `%`, `;`, `[` and `]` escaped and a space written `%20` (every reader takes
 `%20` as a space; some take `+` as `+`). A part given as `""` (or `[]`)
-removes it.
+removes it. Since a URL keeps its text as written, a part read from a text
+and the same part given to a `with_` function can make two URLs that are
+not equal: `url.parse("http://a!@h/")` keeps the `!` as it is and
+`url.with_user` writes it `%21`, though `url.user` is `a!` for both.
 
 `url.with_user`, `url.with_password`, `url.with_query` and
 `url.with_fragment` cannot fail. `url.with_scheme`, `url.with_host` and
@@ -176,7 +179,8 @@ the same URL, `/`.
 
 `url.add_segments` puts segments after the URL's path, dropping a `/` at its
 end first: `https://h/v1` and `https://h/v1/` with `["users", "ann"]` both give
-`https://h/v1/users/ann`. A `""` last in the list keeps a `/` at the end.
+`https://h/v1/users/ann`. A `""` last in the list keeps a `/` at the end, and
+no segments give the URL as it is.
 
 ```silt
 import url
@@ -275,8 +279,11 @@ fn main() {
 | `Invalid(String, Int)` | what is wrong, and the character where: counted from 0, as `string.slice` counts; the text's length when it ends too early | the text is no URL, or no escaped text |
 | `InvalidPart(String)` | what is wrong | a `with_` function was given a part the URL cannot hold |
 
-An error never holds the text it was given, which may hold a password: it
-names the character that is wrong.
+An error does not repeat the text it was given, which may hold a password:
+it names the character that is wrong, and at most a port that is out of
+range or the ASCII form of a host. (That form is not named when an `@`
+follows the host: what reads as the host may then be a token that a raw `/`
+cut short.)
 
 ## Summary
 

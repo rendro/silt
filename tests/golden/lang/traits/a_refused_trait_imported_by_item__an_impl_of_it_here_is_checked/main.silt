@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- An impl of another module's refused trait, imported by item, written in
+-- the importer: checked as the trait's (audit R9 later list, review rv-o1
+-- N2).
+import mi.{ Int }
+import mi
+
+type Box { b: Int }
+
+trait Int for Box {
+  fn go(self) -> Int { "bad4" }
+}
+
+fn main() {
+  println(mi.one())
+}

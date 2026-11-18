@@ -1,0 +1,11 @@
+-- exit: 1
+-- The text of a panic is the program's, the report is silt's: control
+-- characters in it (a carriage return, an escape sequence, a tab) are
+-- shown as escapes, as silt's other messages show a value, so the report
+-- cannot move the cursor or colour the terminal. Its line ends stay: the
+-- lines after the first are a note. What the program prints itself is
+-- not touched.
+fn main() {
+  println("printed \u{1b}[1mas written\u{1b}[0m")
+  panic("a\rb\u{1b}[31mred\nnext\tcolumn")
+}
