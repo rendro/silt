@@ -489,6 +489,7 @@ src/fuzz_invariants.rs: pub fn check_lsp_messages
 src/fuzz_invariants.rs: pub fn check_package_files
 src/fuzz_invariants.rs: pub fn check_parser_invariants
 src/fuzz_invariants.rs: pub fn check_toml_decoding
+src/fuzz_invariants.rs: pub fn check_url
 src/fuzz_invariants.rs: pub fn json_text_of
 src/fuzz_invariants.rs: pub fn toml_text_of
 src/git.rs: pub enum GitError

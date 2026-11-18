@@ -24,7 +24,7 @@ seconds="${2:-600}"
 
 if [ -z "$target" ]; then
   echo "usage: fuzz/local.sh <target|all> [seconds]" >&2
-  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv fuzz_http_response fuzz_lsp_messages" >&2
+  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv fuzz_http_response fuzz_lsp_messages fuzz_url" >&2
   exit 1
 fi
 
@@ -42,7 +42,7 @@ if [ "$target" = "all" ]; then
   # libfuzzer defaults to one worker per invocation; it saturates one
   # core. Running every target at once takes one core each, which is
   # the intended "use the whole machine" behaviour.
-  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv fuzz_http_response fuzz_lsp_messages; do
+  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv fuzz_http_response fuzz_lsp_messages fuzz_url; do
     run_one "$t" "$seconds" &
   done
   wait
