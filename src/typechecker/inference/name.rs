@@ -539,7 +539,7 @@ impl TypeChecker {
             // all-numeric field name, but tuple indexing is
             // intentionally unsupported: the
             // targeted diagnostic points at destructuring instead.
-            Type::Tuple(_)
+            Type::Container(Container::Tuple(_))
                 if !resolve(field).is_empty()
                     && resolve(field).bytes().all(|b| b.is_ascii_digit()) =>
             {

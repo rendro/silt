@@ -510,7 +510,7 @@ fn add_segments_puts_them_under_the_base() {
     assert_eq!(trailing.unwrap().as_str(), "https://h/v1/users/");
     assert_eq!(
         url("https://h/v1/").add_segments(&[]).unwrap().as_str(),
-        "https://h/v1"
+        "https://h/v1/"
     );
     for dots in [".", ".."] {
         assert_eq!(

@@ -62,7 +62,7 @@
 
 use crate::defs::TypeId;
 use crate::intern::Symbol;
-use crate::types::{TyVar, Type, TypeRef};
+use crate::types::{Container, TyVar, Type, TypeRef};
 use std::collections::HashMap;
 
 /// Resolved type-alias entry stored in the global alias registry.
@@ -183,20 +183,26 @@ pub(crate) fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
         }
 
         // ── Compound shapes: structural recursion ──────────────────
-        Type::List(inner) => Type::List(Box::new(canonicalize(resolver, inner))),
-        Type::Set(inner) => Type::Set(Box::new(canonicalize(resolver, inner))),
-        Type::Channel(inner) => Type::Channel(Box::new(canonicalize(resolver, inner))),
-        Type::Map(k, v) => Type::Map(
+        Type::Container(Container::List(inner)) => {
+            Type::Container(Container::List(Box::new(canonicalize(resolver, inner))))
+        }
+        Type::Container(Container::Set(inner)) => {
+            Type::Container(Container::Set(Box::new(canonicalize(resolver, inner))))
+        }
+        Type::Container(Container::Channel(inner)) => {
+            Type::Container(Container::Channel(Box::new(canonicalize(resolver, inner))))
+        }
+        Type::Container(Container::Map(k, v)) => Type::Container(Container::Map(
             Box::new(canonicalize(resolver, k)),
             Box::new(canonicalize(resolver, v)),
-        ),
+        )),
         Type::Fun(params, ret) => Type::Fun(
             params.iter().map(|t| canonicalize(resolver, t)).collect(),
             Box::new(canonicalize(resolver, ret)),
         ),
-        Type::Tuple(elems) => {
-            Type::Tuple(elems.iter().map(|t| canonicalize(resolver, t)).collect())
-        }
+        Type::Container(Container::Tuple(elems)) => Type::Container(Container::Tuple(
+            elems.iter().map(|t| canonicalize(resolver, t)).collect(),
+        )),
         Type::Generic(name, args) => Type::Generic(
             *name,
             args.iter().map(|t| canonicalize(resolver, t)).collect(),
@@ -283,11 +289,11 @@ pub(crate) fn canonical_name(ty: &Type) -> String {
         | Type::Bool
         | Type::String
         | Type::Unit
-        | Type::List(_)
-        | Type::Map(..)
-        | Type::Set(_)
-        | Type::Channel(_)
-        | Type::Tuple(_)
+        | Type::Container(Container::List(_))
+        | Type::Container(Container::Map(..))
+        | Type::Container(Container::Set(_))
+        | Type::Container(Container::Channel(_))
+        | Type::Container(Container::Tuple(_))
         | Type::Fun(..) => ty.builtin_name().unwrap_or_default().to_string(),
 
         Type::Generic(name, _) => crate::intern::resolve(name.name),
@@ -342,11 +348,11 @@ pub(crate) fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         | Type::Bool
         | Type::String
         | Type::Unit
-        | Type::List(_)
-        | Type::Map(..)
-        | Type::Set(_)
-        | Type::Channel(_)
-        | Type::Tuple(_)
+        | Type::Container(Container::List(_))
+        | Type::Container(Container::Map(..))
+        | Type::Container(Container::Set(_))
+        | Type::Container(Container::Channel(_))
+        | Type::Container(Container::Tuple(_))
         | Type::Fun(..) => ty.builtin_name().map(TypeRef::builtin),
         Type::Generic(name, _) => Some(*name),
         // A type constructor is keyed by its head, as its types are.
@@ -388,11 +394,11 @@ pub(crate) fn kind_types() -> &'static KindTypes {
             float: of(Type::Float),
             bool: of(Type::Bool),
             string: of(Type::String),
-            list: of(Type::List(unit())),
-            map: of(Type::Map(unit(), unit())),
-            set: of(Type::Set(unit())),
-            tuple: of(Type::Tuple(vec![])),
-            channel: of(Type::Channel(unit())),
+            list: of(Type::Container(Container::List(unit()))),
+            map: of(Type::Container(Container::Map(unit(), unit()))),
+            set: of(Type::Container(Container::Set(unit()))),
+            tuple: of(Type::Container(Container::Tuple(vec![]))),
+            channel: of(Type::Container(Container::Channel(unit()))),
             function: of(Type::Fun(vec![], unit())),
             unit: of(Type::Unit),
             bytes: TypeRef::builtin("Bytes").id,
@@ -454,11 +460,17 @@ mod tests {
             "Bool" => Some(Type::Bool),
             "String" => Some(Type::String),
             "()" => Some(Type::Unit),
-            "List" => Some(Type::List(Box::new(Type::Int))),
-            "Map" => Some(Type::Map(Box::new(Type::Int), Box::new(Type::Int))),
-            "Set" => Some(Type::Set(Box::new(Type::Int))),
-            "Channel" => Some(Type::Channel(Box::new(Type::Int))),
-            "Tuple" => Some(Type::Tuple(vec![Type::Int, Type::Int])),
+            "List" => Some(Type::Container(Container::List(Box::new(Type::Int)))),
+            "Map" => Some(Type::Container(Container::Map(
+                Box::new(Type::Int),
+                Box::new(Type::Int),
+            ))),
+            "Set" => Some(Type::Container(Container::Set(Box::new(Type::Int)))),
+            "Channel" => Some(Type::Container(Container::Channel(Box::new(Type::Int)))),
+            "Tuple" => Some(Type::Container(Container::Tuple(vec![
+                Type::Int,
+                Type::Int,
+            ]))),
             "Fn" => Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
             // Handle is a runtime-only resource type with no Type
             // variant; it does not participate in canonicalisation.
@@ -478,16 +490,21 @@ mod tests {
         // reducer must not change it.
         let cases = [
             Type::Int,
-            Type::List(Box::new(Type::List(Box::new(Type::Int)))),
-            Type::Fun(
-                vec![Type::List(Box::new(Type::Int))],
-                Box::new(Type::Set(Box::new(Type::Bool))),
-            ),
-            Type::Tuple(vec![Type::List(Box::new(Type::Int)), Type::Bool]),
-            Type::Map(
+            Type::Container(Container::List(Box::new(Type::Container(Container::List(
                 Box::new(Type::Int),
-                Box::new(Type::List(Box::new(Type::String))),
+            ))))),
+            Type::Fun(
+                vec![Type::Container(Container::List(Box::new(Type::Int)))],
+                Box::new(Type::Container(Container::Set(Box::new(Type::Bool)))),
             ),
+            Type::Container(Container::Tuple(vec![
+                Type::Container(Container::List(Box::new(Type::Int))),
+                Type::Bool,
+            ])),
+            Type::Container(Container::Map(
+                Box::new(Type::Int),
+                Box::new(Type::Container(Container::List(Box::new(Type::String)))),
+            )),
             Type::Var(7),
             Type::Error,
             Type::Never,
@@ -536,8 +553,8 @@ mod tests {
         let res = Resolver::new();
         assert!(!types_equal(
             &res,
-            &Type::List(Box::new(Type::Int)),
-            &Type::List(Box::new(Type::String))
+            &Type::Container(Container::List(Box::new(Type::Int))),
+            &Type::Container(Container::List(Box::new(Type::String)))
         ));
     }
 
@@ -546,9 +563,9 @@ mod tests {
         let res = Resolver::new();
         for t in [
             Type::Int,
-            Type::List(Box::new(Type::Int)),
+            Type::Container(Container::List(Box::new(Type::Int))),
             Type::Fun(vec![Type::Int], Box::new(Type::Bool)),
-            Type::Tuple(vec![Type::Int, Type::String]),
+            Type::Container(Container::Tuple(vec![Type::Int, Type::String])),
             Type::Var(3),
         ] {
             assert!(
@@ -592,18 +609,30 @@ mod tests {
 
     #[test]
     fn canonical_name_containers() {
-        assert_eq!(canonical_name(&Type::List(Box::new(Type::Int))), "List");
         assert_eq!(
-            canonical_name(&Type::Map(Box::new(Type::Int), Box::new(Type::Bool))),
+            canonical_name(&Type::Container(Container::List(Box::new(Type::Int)))),
+            "List"
+        );
+        assert_eq!(
+            canonical_name(&Type::Container(Container::Map(
+                Box::new(Type::Int),
+                Box::new(Type::Bool)
+            ))),
             "Map"
         );
-        assert_eq!(canonical_name(&Type::Set(Box::new(Type::Int))), "Set");
         assert_eq!(
-            canonical_name(&Type::Channel(Box::new(Type::Int))),
+            canonical_name(&Type::Container(Container::Set(Box::new(Type::Int)))),
+            "Set"
+        );
+        assert_eq!(
+            canonical_name(&Type::Container(Container::Channel(Box::new(Type::Int)))),
             "Channel"
         );
         assert_eq!(
-            canonical_name(&Type::Tuple(vec![Type::Int, Type::Bool])),
+            canonical_name(&Type::Container(Container::Tuple(vec![
+                Type::Int,
+                Type::Bool
+            ]))),
             "Tuple"
         );
         assert_eq!(
@@ -706,11 +735,14 @@ mod tests {
             AliasInfo {
                 params: vec![],
                 param_var_ids: vec![],
-                target: Type::List(Box::new(Type::Int)),
+                target: Type::Container(Container::List(Box::new(Type::Int))),
             },
         );
         let ty = Type::Generic(name, vec![]);
-        assert_eq!(canonicalize(&res, &ty), Type::List(Box::new(Type::Int)));
+        assert_eq!(
+            canonicalize(&res, &ty),
+            Type::Container(Container::List(Box::new(Type::Int)))
+        );
     }
 
     /// Parametric alias: the target's TyVar is substituted with the
@@ -727,13 +759,16 @@ mod tests {
             AliasInfo {
                 params: vec![intern::intern("a")],
                 param_var_ids: vec![var_id],
-                target: Type::Tuple(vec![Type::Var(var_id), Type::Var(var_id)]),
+                target: Type::Container(Container::Tuple(vec![
+                    Type::Var(var_id),
+                    Type::Var(var_id),
+                ])),
             },
         );
         let ty = Type::Generic(name, vec![Type::Int]);
         assert_eq!(
             canonicalize(&res, &ty),
-            Type::Tuple(vec![Type::Int, Type::Int])
+            Type::Container(Container::Tuple(vec![Type::Int, Type::Int]))
         );
     }
 
@@ -750,7 +785,7 @@ mod tests {
             AliasInfo {
                 params: vec![],
                 param_var_ids: vec![],
-                target: Type::List(Box::new(Type::Int)),
+                target: Type::Container(Container::List(Box::new(Type::Int))),
             },
         );
         res.register_alias(
@@ -762,7 +797,10 @@ mod tests {
             },
         );
         let ty = Type::Generic(b, vec![]);
-        assert_eq!(canonicalize(&res, &ty), Type::List(Box::new(Type::Int)));
+        assert_eq!(
+            canonicalize(&res, &ty),
+            Type::Container(Container::List(Box::new(Type::Int)))
+        );
     }
 
     /// `canonical_head` follows alias chains to the head constructor —
@@ -777,7 +815,7 @@ mod tests {
             AliasInfo {
                 params: vec![],
                 param_var_ids: vec![],
-                target: Type::List(Box::new(Type::Int)),
+                target: Type::Container(Container::List(Box::new(Type::Int))),
             },
         );
         assert_eq!(
@@ -801,7 +839,7 @@ mod tests {
             AliasInfo {
                 params: vec![],
                 param_var_ids: vec![],
-                target: Type::List(Box::new(Type::Int)),
+                target: Type::Container(Container::List(Box::new(Type::Int))),
             },
         );
         assert!(a.lookup_alias(name).is_some());

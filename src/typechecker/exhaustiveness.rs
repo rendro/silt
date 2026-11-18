@@ -734,7 +734,7 @@ impl TypeChecker {
             CtorId::Bool(value) => value.to_string(),
             CtorId::Tuple => {
                 let types: &[Type] = match &ty {
-                    Type::Tuple(types) => types,
+                    Type::Container(Container::Tuple(types)) => types,
                     _ => &[],
                 };
                 let shown: Vec<_> = fields
@@ -746,7 +746,7 @@ impl TypeChecker {
             }
             CtorId::Nil | CtorId::Cons => {
                 let elem = match &ty {
-                    Type::List(elem) => elem,
+                    Type::Container(Container::List(elem)) => elem,
                     _ => &unknown,
                 };
                 let mut shown: Vec<std::string::String> = Vec::new();

@@ -1192,6 +1192,7 @@ src/types/canonical.rs: pub target
 src/types/mod.rs: pub by
 src/types/mod.rs: pub enum Asked
 src/types/mod.rs: pub enum BuiltinCheck
+src/types/mod.rs: pub enum Container
 src/types/mod.rs: pub enum Head
 src/types/mod.rs: pub enum Pred
 src/types/mod.rs: pub enum Type

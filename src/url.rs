@@ -855,7 +855,9 @@ fn decoded(text: &str, plus_is_space: bool) -> Result<String, Fault> {
 
 /// A part of a Url decoded: it holds only valid escapes of UTF-8 text.
 fn decoded_part(text: &str, plus_is_space: bool) -> String {
-    decoded(text, plus_is_space).unwrap_or_else(|_| text.to_string())
+    let got = decoded(text, plus_is_space);
+    debug_assert!(got.is_ok(), "a part of a Url does not decode");
+    got.unwrap_or_else(|_| text.to_string())
 }
 
 // ── The Url's parts ─────────────────────────────────────────────────
@@ -1029,8 +1031,12 @@ impl Url {
 
     /// The Url with `segments` after its path, each escaped, a last
     /// empty segment of its path (a `/` at its end) dropped first: `/v1`
-    /// and `/v1/` with `users` both give `/v1/users`.
+    /// and `/v1/` with `users` both give `/v1/users`. No segments give
+    /// the Url as it is.
     pub(crate) fn add_segments(&self, segments: &[String]) -> Result<Url, UrlError> {
+        if segments.is_empty() {
+            return Ok(self.clone());
+        }
         let base = self.path().strip_suffix('/').unwrap_or(self.path());
         let path = segments_path(base, segments)?;
         let path = if path.is_empty() { "/" } else { &path };

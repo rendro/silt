@@ -58,7 +58,7 @@ regex-syntax = "0.8"
 # The trees long lists, large maps and large sets are stored in
 # (src/value/list.rs, src/value/map.rs).
 imbl = "7"
-rustyline = { version = "15", optional = true }
+rustyline = { version = "19", optional = true }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
