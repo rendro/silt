@@ -1,0 +1,25 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: url.parse: result would exceed maximum string size (24000009 bytes > 10000000 limit)
+-- stderr-not-contains: not reached
+-- A Url is written in its normal form, which escapes what it holds: four
+-- million `é` are 24,000,000 bytes of it, more than a string may hold. A
+-- decoder refuses such a text as it refuses any that is no URL; url.parse
+-- stops the program, as a with_ function does.
+import json
+import string
+import url
+
+type Site {
+  home: url.Url,
+}
+
+fn main() {
+  let long = "http://h/{string.repeat("é", 4000000)}"
+  match json.parse(json.stringify(#{"home": long}), Site) {
+    Ok(_) -> println("read")
+    Err(e) -> println(e)
+  }
+  let _ = url.parse(long)
+  println("not reached")
+}

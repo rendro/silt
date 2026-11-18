@@ -175,6 +175,8 @@ fn other_ordering(a: &Value, b: &Value) -> Result<Ordering, VmError> {
         (Value::String(a, _), Value::String(b, _)) => a.cmp(b),
         // Bytes byte by byte, each unsigned, a shorter prefix first.
         (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
+        // A URL by its whole text.
+        (Value::Url(a), Value::Url(b)) => a.cmp(b),
         // Lists are ordered element by element (`Value::cmp`), after
         // the function-leaf gate (see `ordering_with_fn_gate` below).
         (Value::List(_), Value::List(_)) => ordering_with_fn_gate(a, b)?,
