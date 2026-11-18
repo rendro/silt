@@ -7,7 +7,7 @@
 
 use crate::ast::*;
 use crate::intern::{Symbol, intern};
-use crate::types::{Container, RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
+use crate::types::{RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
 
 // ── Type display helpers ───────────────────────────────────────────
 
@@ -18,14 +18,9 @@ pub(super) fn has_unresolved_vars(ty: &Type) -> bool {
         Type::Fun(params, ret) => {
             params.iter().any(has_unresolved_vars) || has_unresolved_vars(ret)
         }
-        Type::Container(Container::List(inner))
-        | Type::Container(Container::Set(inner))
-        | Type::Container(Container::Channel(inner)) => has_unresolved_vars(inner),
-        Type::Container(Container::Tuple(elems)) => elems.iter().any(has_unresolved_vars),
+        Type::Container(c) => c.parts().any(has_unresolved_vars),
         Type::Generic(_, args) | Type::Con(_, args) => args.iter().any(has_unresolved_vars),
-        Type::Container(Container::Map(k, v)) | Type::App(k, v) => {
-            has_unresolved_vars(k) || has_unresolved_vars(v)
-        }
+        Type::App(k, v) => has_unresolved_vars(k) || has_unresolved_vars(v),
         _ => false,
     }
 }
@@ -587,6 +582,7 @@ fn find_ident_type_in_expr(expr: &Expr, name: Symbol, result: &mut Option<Type>)
 mod tests {
     use super::*;
     use crate::lsp::testing::checked_program;
+    use crate::types::Container;
 
     // ── has_unresolved_vars ───────────────────────────────────────
 

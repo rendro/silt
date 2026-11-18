@@ -241,10 +241,11 @@ key. (`json.parse` reads a map's keys as `String` only: read such a map as
 `Map(String, T)` and parse the keys.) A program that logs json of a URL hides
 it itself.
 
-A `Url` is at most as long as a string may be, 10,000,000 bytes of its normal
-text, which escapes what it holds (`é` is six bytes of it): `url.parse` and
-the `with_` functions stop the program at a longer one, as `string.repeat`
-does, and a decoder refuses such a field as it refuses a text that is no URL.
+A `Url` holds at most as many bytes as a string may hold (10,000,000; see
+[how large a collection can be](../language/collections.md#how-large-a-collection-can-be)), counted in its normal text, which
+escapes what it holds (`é` is six bytes of it): `url.parse` and the `with_`
+functions stop the program at a longer one, as `string.repeat` does, and a
+decoder refuses such a field as it refuses a text that is no URL.
 
 ```silt
 import io
