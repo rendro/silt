@@ -3305,13 +3305,8 @@ impl TypeChecker {
             match ty {
                 Type::Fun(..) => Some(ty),
                 _ if !whole => None,
-                Type::Container(Container::List(t))
-                | Type::Container(Container::Set(t))
-                | Type::Container(Container::Channel(t)) => part(t, true),
-                Type::Container(Container::Map(k, v)) => part(k, true).or_else(|| part(v, true)),
-                Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) => {
-                    ts.iter().find_map(|t| part(t, true))
-                }
+                Type::Container(c) => c.parts().find_map(|t| part(t, true)),
+                Type::Generic(_, ts) => ts.iter().find_map(|t| part(t, true)),
                 _ => None,
             }
         }
@@ -5183,16 +5178,8 @@ pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
                 params.iter().for_each(|t| walk(t, out));
                 walk(ret, out);
             }
-            Type::Container(Container::List(t))
-            | Type::Container(Container::Set(t))
-            | Type::Container(Container::Channel(t)) => walk(t, out),
-            Type::Container(Container::Map(k, v)) => {
-                walk(k, out);
-                walk(v, out);
-            }
-            Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) | Type::Con(_, ts) => {
-                ts.iter().for_each(|t| walk(t, out))
-            }
+            Type::Container(c) => c.parts().for_each(|t| walk(t, out)),
+            Type::Generic(_, ts) | Type::Con(_, ts) => ts.iter().for_each(|t| walk(t, out)),
             _ => {}
         }
     }
@@ -5206,14 +5193,9 @@ pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
 fn holds_held_type(ty: &Type) -> bool {
     match ty {
         Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => true,
-        Type::Generic(_, ts) | Type::Container(Container::Tuple(ts)) | Type::Con(_, ts) => {
-            ts.iter().any(holds_held_type)
-        }
+        Type::Generic(_, ts) | Type::Con(_, ts) => ts.iter().any(holds_held_type),
+        Type::Container(c) => c.parts().any(holds_held_type),
         Type::Fun(params, ret) => params.iter().any(holds_held_type) || holds_held_type(ret),
-        Type::Container(Container::List(t))
-        | Type::Container(Container::Set(t))
-        | Type::Container(Container::Channel(t)) => holds_held_type(t),
-        Type::Container(Container::Map(k, v)) => holds_held_type(k) || holds_held_type(v),
         Type::App(head, arg) => holds_held_type(head) || holds_held_type(arg),
         _ => false,
     }
