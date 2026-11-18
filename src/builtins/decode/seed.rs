@@ -1080,9 +1080,9 @@ impl<'s> Seed<'s> {
             },
             // A URL is a string that `url.parse` reads.
             FieldType::Url => match scalar {
-                Scalar::String(s) => crate::url::parse(s)
+                Scalar::String(s) => super::decoded_url(s)
                     .map(|u| Value::Url(std::sync::Arc::new(u)))
-                    .map_err(|e| Error::other(super::invalid_url_message(e), at)),
+                    .map_err(|e| Error::other(e, at)),
                 _ => Err(mismatch("url.Url")),
             },
             _ => unreachable!("only a primitive type, a date or a time is decoded so"),
