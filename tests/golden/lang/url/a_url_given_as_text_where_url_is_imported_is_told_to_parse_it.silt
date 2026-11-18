@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: http
+-- stderr-contains: help: a URL is a `u.Url`: read one with `u.parse(text)`, or build one with the url module, and pass it on
+-- stderr-not-contains: after `import
+-- Where the file imports the url module, the help names it as the file
+-- does, and adds no import.
+import http
+import url as u
+
+fn main() {
+  println(http.get("https://example.com/"))
+  println(u.escape("a b"))
+}
