@@ -467,8 +467,10 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // message, each line marked as git's, so users see the real
             // diagnostic, e.g. "Repository not found" or "Permission
             // denied (publickey)".
-            crate::git::verify_reachable(&url)
-                .map_err(|e| AddError::caused(format!("cannot reach `{url}`"), e))?;
+            crate::git::verify_reachable(&url).map_err(|e| {
+                let shown = crate::git::display_url(&url);
+                AddError::caused(format!("cannot reach `{shown}`"), e)
+            })?;
 
             // Whether the ref exists (`--branch nonexistent_xyz`) is
             // found out when the graph is resolved below, as a
@@ -494,7 +496,8 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             );
             (
                 format!(
-                    "Added dependency '{name}' (git = \"{stored_url}\", {} = \"{ref_value}\")",
+                    "Added dependency '{name}' (git = \"{}\", {} = \"{ref_value}\")",
+                    crate::git::display_url(&stored_url),
                     ref_spec.kind()
                 ),
                 inline,
@@ -573,7 +576,11 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // The summary quotes the path or the URL and the ref as they were
     // given on the command line, but a user and password in the URL
     // (silt.toml keeps them).
-    println!("{}", crate::git::display_url(&success_summary));
+    // (A line of text, not one URL: word by word.)
+    println!(
+        "{}",
+        crate::git::escape_for_display(&crate::git::hide_git_userinfo(&success_summary))
+    );
     Ok(())
 }
 

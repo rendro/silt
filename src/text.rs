@@ -2,8 +2,8 @@
 //! distance behind every "did you mean" hint, the checker's
 //! (`typechecker::suggest`) and the command line's (an unknown command
 //! of `silt`); and the hiding of a URL's user and password in a text
-//! that is shown, which the http client's errors and the package code's
-//! (git dependencies) share.
+//! that is shown, by the rule of the http client's errors (a git URL is
+//! hidden by the rule of `git::display_url`).
 
 /// The places of `msg` that hold the user and password of a URL, the
 /// one rule of what is hidden: whatever stands after a `//`, of any
@@ -18,6 +18,7 @@
 /// password, never less. `scheme://@host` has none. One pass over the
 /// text; `looked` gains the bytes looked at (what a test asks: no more
 /// than a few times the text's length).
+#[cfg(feature = "http")]
 fn userinfo_places(msg: &str, looked: &mut usize) -> Vec<std::ops::Range<usize>> {
     let mut places = Vec::new();
     // Where the search for a URL goes on: never back, so each byte is
@@ -43,46 +44,28 @@ fn userinfo_places(msg: &str, looked: &mut usize) -> Vec<std::ops::Range<usize>>
     places
 }
 
-/// `msg` with each place of [`userinfo_places`] given by `hidden`.
-fn with_places_hidden(
-    msg: &str,
-    places: &[std::ops::Range<usize>],
-    hidden: impl Fn(&str) -> String,
-) -> String {
-    let mut out = String::with_capacity(msg.len());
-    let mut copied = 0;
-    for place in places {
-        out.push_str(&msg[copied..place.start]);
-        out.push_str(&hidden(&msg[place.clone()]));
-        copied = place.end;
-    }
-    out.push_str(&msg[copied..]);
-    out
-}
-
 /// `msg` with the user and password of every URL in it
-/// ([`userinfo_places`]) replaced by `***`: what every message of silt
-/// that can quote a URL shows (the http client's errors, the package
-/// code's: git dependencies, git's command lines and output).
-/// `https://u:p@h/x` is shown `https://***@h/x`, `https://h/users/@me`
-/// `https://***@me`.
+/// ([`userinfo_places`]) replaced by `***`: what a message of the http
+/// client that can quote a URL shows. `https://u:p@h/x` is shown
+/// `https://***@h/x`, `https://h/users/@me` `https://***@me`.
+#[cfg(all(feature = "http", any(test, feature = "test-hooks")))]
 pub(crate) fn hide_url_userinfo(msg: &str) -> String {
     hide_url_userinfo_counting(msg, &mut 0)
 }
 
-/// `line` with each character of the user and password of a URL in it
-/// (the places [`hide_url_userinfo`] hides) replaced by a `*`: for a line
-/// of a file shown under a caret, whose columns must stay where they are
-/// (`git = "https://*****:******@host/r.git"`).
-pub(crate) fn mask_url_userinfo(line: &str) -> String {
-    let places = userinfo_places(line, &mut 0);
-    with_places_hidden(line, &places, |place| place.chars().map(|_| '*').collect())
-}
-
 /// [`hide_url_userinfo`], adding to `looked` the bytes it looked at.
+#[cfg(feature = "http")]
 pub(crate) fn hide_url_userinfo_counting(msg: &str, looked: &mut usize) -> String {
     let places = userinfo_places(msg, looked);
-    with_places_hidden(msg, &places, |_| "***".to_string())
+    let mut out = String::with_capacity(msg.len());
+    let mut copied = 0;
+    for place in places {
+        out.push_str(&msg[copied..place.start]);
+        out.push_str("***");
+        copied = place.end;
+    }
+    out.push_str(&msg[copied..]);
+    out
 }
 
 /// The Levenshtein edit distance of `a` and `b`, by characters: the
@@ -113,30 +96,14 @@ pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{hide_url_userinfo, levenshtein, mask_url_userinfo};
+    #[cfg(feature = "http")]
+    use super::hide_url_userinfo;
+    use super::levenshtein;
 
-    /// A line under a caret keeps its columns: each character of the user
-    /// and the password is a `*`; the rest of the line is as it was.
+    /// The user and password of a URL in a message are `***`.
+    #[cfg(feature = "http")]
     #[test]
-    fn a_masked_line_keeps_its_columns() {
-        for (line, masked) in [
-            (
-                r#"r = { git = "https://MU:MP@h/r.git", branch = "main" }"#,
-                r#"r = { git = "https://*****@h/r.git", branch = "main" }"#,
-            ),
-            ("a //MU@h b //c@d", "a //**@h b //*@d"),
-            ("git = \"ssh://git@h/r\"", "git = \"ssh://***@h/r\""),
-            // A password with a raw `/`: to the URL's last `@`.
-            (
-                "git = \"https://MU:M/P@h/r\"",
-                "git = \"https://******@h/r\"",
-            ),
-            ("no url here", "no url here"),
-            ("http://@h/", "http://@h/"),
-        ] {
-            assert_eq!(mask_url_userinfo(line), masked, "{line}");
-            assert_eq!(masked.chars().count(), line.chars().count(), "{line}");
-        }
+    fn a_message_hides_the_user_and_password_of_a_url() {
         assert_eq!(
             hide_url_userinfo("x https://MU:MP@h/r y"),
             "x https://***@h/r y"

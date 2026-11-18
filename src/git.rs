@@ -149,15 +149,17 @@ impl fmt::Display for GitError {
             }
             GitError::RefNotFound { url, ref_spec } => write!(
                 f,
-                "git ref not found: {} `{}` in {url}",
+                "git ref not found: {} `{}` in {}",
                 ref_spec.kind(),
-                ref_spec.as_ref_string()
+                ref_spec.as_ref_string(),
+                display_url(url)
             ),
             GitError::InvalidInput(message) => write!(f, "{message}"),
             GitError::AmbiguousRev { url, rev } => write!(
                 f,
-                "rev `{rev}` is the prefix of more than one commit in {url}; \
-                 write the full commit id"
+                "rev `{rev}` is the prefix of more than one commit in {}; \
+                 write the full commit id",
+                display_url(url)
             ),
             GitError::Symlink { path } => write!(
                 f,
@@ -191,6 +193,11 @@ impl std::error::Error for GitError {
 
 /// URL schemes accepted by [`validate_git_url`].
 const GIT_URL_SCHEMES: [&str; 5] = ["https://", "http://", "ssh://", "git://", "file://"];
+
+/// The schemes of [`GIT_URL_SCHEMES`] whose URLs are read as the `url`
+/// module reads one (port, host, escapes): `file://` is git's own (it
+/// takes `file://C:/repo` on Windows, an empty port here).
+const PARSED_GIT_URL_SCHEMES: [&str; 4] = ["https://", "http://", "ssh://", "git://"];
 
 /// The accepted git URL forms, phrased for error messages.
 const ACCEPTED_GIT_URL_FORMS: &str = concat!(
@@ -313,8 +320,13 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
              (they are allowed only in a `file://` URL or a local path)"
                 .to_string()
         }
+    } else if is_scheme_without_slashes(url) {
+        "is a URL with its `//` left out: write `://` after the scheme".to_string()
     } else if has_accepted_url_form(url) {
-        return Ok(());
+        match not_a_url(url) {
+            None => return Ok(()),
+            Some(why) => format!("is not a valid URL: {why}"),
+        }
     } else {
         match unaccepted_scheme(url) {
             Some(scheme) => format!(
@@ -373,6 +385,18 @@ fn is_windows_absolute_path(url: &str) -> bool {
         && bytes[1] == b':'
         && matches!(bytes[2], b'\\' | b'/');
     drive || url.starts_with(r"\\")
+}
+
+/// Whether `url` starts with `http:` or `https:` (of any case) and no
+/// `//` follows: a URL mistyped, which git would take for the scp form
+/// with the host `https` (`https:/user:word@host/r.git`). (A host
+/// `git` or `ssh` may be an alias of the ssh configuration.)
+fn is_scheme_without_slashes(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once(':') else {
+        return false;
+    };
+    (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+        && !rest.starts_with("//")
 }
 
 /// The scheme of a URL written as `<scheme>://...` whose scheme is not
@@ -499,6 +523,54 @@ fn has_accepted_url_form(url: &str) -> bool {
         && !path.starts_with("//")
 }
 
+/// What is wrong with `url` as a URL, for one of the schemes that are
+/// read as URLs ([`PARSED_GIT_URL_SCHEMES`]): a port that is no port, a
+/// host that is none, an escape that is none. `None` for a URL that
+/// reads, and for any other form. (The URL is kept as written: silt.lock
+/// and the cache name it so.) A fault that an `@` follows, which may lie
+/// in the user or password, is named without its text or its place, which
+/// the message hides; the scp form written with `ssh://`
+/// (`ssh://git@host:team/repo.git`) is told the two forms to write, by
+/// their shapes.
+fn not_a_url(url: &str) -> Option<String> {
+    let scheme = PARSED_GIT_URL_SCHEMES
+        .iter()
+        .find(|scheme| url.starts_with(**scheme))?;
+    let why = crate::url::parse(url).err()?;
+    let crate::url::UrlError::Invalid(what, at) = &why else {
+        return Some(why.to_string());
+    };
+    // A fault with an `@` after it may lie in the user or password: a raw
+    // `/`, `?` or `#` in a password ends the authority early, and the
+    // message hides all of the text up to the last `@`. Such a fault is
+    // named without its text or its place.
+    if url.chars().skip(*at + 1).any(|c| c == '@') {
+        return Some(
+            "its user or password is not written as a URL takes it \
+             (write a `%`, `@`, `:`, `/`, `?` or `#` in it as `%25`, `%40`, `%3A`, `%2F`, \
+             `%3F`, `%23`)"
+                .to_string(),
+        );
+    }
+    // `ssh://git@host:team/repo.git`: the scp form's path after a `:`. Told
+    // by its shapes only, so that nothing of the URL is repeated.
+    let rest = &url[scheme.len()..];
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host_and_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, after)| after);
+    let scp_like = host_and_port
+        .split_once(':')
+        .is_some_and(|(_, after)| !after.starts_with(|c: char| c.is_ascii_digit()));
+    if *scheme == "ssh://" && what.starts_with("a port cannot hold") && scp_like {
+        return Some(format!(
+            "{why}; for the form `user@host:path` leave out `ssh://`, \
+             or write the path after a `/`: `ssh://user@host/path`"
+        ));
+    }
+    Some(why.to_string())
+}
+
 /// [`validate_git_url`] as a [`GitError`], for the functions below that
 /// hand the URL to `git`.
 fn check_url(url: &str) -> Result<(), GitError> {
@@ -543,12 +615,260 @@ pub(crate) fn needs_escape(c: char) -> bool {
     c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible_format_char(c)
 }
 
+/// The bytes of the git URL `url` that hold its user and password: the
+/// one place every printed form of a git URL hides. After the `//` of
+/// `scheme://`, all of it up to the last `@` (`https://***@host/r.git`),
+/// a space or a `/` in a password included. In any other value, all of
+/// it before the last `@` when a `:` stands there: a user and password
+/// of the scp form (`user:word@host:path`, shown `***@host:path`) or of
+/// a mistyped URL (`https:/user:word@host/r.git`). The scp form's user
+/// alone is shown (`git@host:path`), as a ref is (`v1@x`). A `file://`
+/// URL is hidden only up to an `@` of its authority, what stands
+/// between `//` and the next `/` (`file://***@host/srv/r.git`;
+/// `file:///srv/team@work/r.git` is shown as written), and a local path
+/// not at all, but for one that starts with `//` (`//user:word@host/r`):
+/// a directory may hold an `@`. An `@` of a path or a query
+/// of another URL is taken for the end of a user too: more is hidden
+/// then, never less.
+fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
+    let last = url.rfind('@')?;
+    if let Some(rest) = url.strip_prefix("file://") {
+        let authority = rest.split('/').next().unwrap_or(rest);
+        let at = authority.rfind('@')?;
+        return (at > 0).then_some(7..7 + at);
+    }
+    if is_path_to_show_whole(url) {
+        return None;
+    }
+    let start = match url.find(':') {
+        Some(colon) if url[colon + 1..].starts_with("//") => colon + 3,
+        Some(colon) if colon < last => 0,
+        _ => url[..last].find("//")? + 2,
+    };
+    (last > start).then_some(start..last)
+}
+
+/// Whether `url` is a local path that a message shows as written: one
+/// that starts with `/` (not `//`: `//host/...` reads as a URL without
+/// its scheme too), `./` or `../`, or a Windows drive path, a letter, `:`
+/// and then `\` or `/` or nothing (`C:\repo\a@b`, `C:/repo/a:b@c`). The
+/// same on every platform, so that what is hidden is: `u:p@h:t` is no
+/// drive path, though Git for Windows reads `u:` as a drive.
+fn is_path_to_show_whole(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    let drive = bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes.get(2), None | Some(b'\\' | b'/'));
+    (url.starts_with('/') && !url.starts_with("//"))
+        || url.starts_with("./")
+        || url.starts_with("../")
+        || drive
+}
+
 /// A URL from a manifest or a lock file, as a message shows it: its
-/// user and password hidden (`https://***@host/repo.git`,
-/// [`crate::text::hide_url_userinfo`]), then by the display rule
-/// ([`escape_for_display`]). The files themselves keep the URL.
+/// user and password hidden ([`userinfo_place`]:
+/// `https://***@host/repo.git`, `***@host:path`), then by the display
+/// rule ([`escape_for_display`]). The files themselves keep the URL.
 pub(crate) fn display_url(url: &str) -> String {
-    escape_for_display(&crate::text::hide_url_userinfo(url))
+    escape_for_display(&hide_userinfo(url))
+}
+
+/// `url` with its user and password ([`userinfo_place`]) given as `***`,
+/// and nothing escaped: one value, whatever it holds (a space in a
+/// password of a `file://` URL included).
+fn hide_userinfo(url: &str) -> String {
+    match userinfo_place(url) {
+        Some(place) => format!("{}***{}", &url[..place.start], &url[place.end..]),
+        None => url.to_string(),
+    }
+}
+
+/// `text` (a git command line, git's output, a message that quotes a
+/// URL) with the user and password of each git URL in it hidden: each
+/// word of it (a URL in a text ends at a space, a tab or a line break)
+/// is hidden as [`display_url`] hides one URL, after the quotes and
+/// brackets that open it (`` `***@host:path` ``).
+pub(crate) fn hide_git_userinfo(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    for (start, word) in words(text) {
+        let opening = word.len() - word.trim_start_matches(OPENING_MARKS).len();
+        if let Some(place) = userinfo_place(&word[opening..]) {
+            out.push_str(&text[copied..start + opening + place.start]);
+            out.push_str("***");
+            copied = start + opening + place.end;
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
+/// The characters that open a quoted or bracketed word in a text.
+const OPENING_MARKS: [char; 6] = ['`', '\'', '"', '(', '[', '<'];
+
+/// The words of `text` with their places: what stands between spaces,
+/// tabs and line breaks.
+fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.split([' ', '\t', '\n', '\r'])
+        .scan(0, |at, word| {
+            let start = *at;
+            *at += word.len() + 1;
+            Some((start, word))
+        })
+        .filter(|(_, word)| !word.is_empty())
+}
+
+/// A line of a `silt.toml` shown under a caret, with each character of
+/// a user and password of a URL in it replaced by a `*`, so that the
+/// columns stay where they are (`git = "https://*********@host/r.git"`).
+/// The quoted value of a `git` key is one git URL, hidden as
+/// [`display_url`] hides it: up to its closing quote, a space in it
+/// included, and read with its escapes (`@` is an `@`). The rest of
+/// the line (another value, a key, a comment) is ordinary text, where
+/// only a URL with `//` has a user and password: after its `//` up to
+/// its last `@`, the URL ending at a space or a tab
+/// (`homepage = "https://*****@host/"`; `note = "Contact: bob@host"` is
+/// shown as written).
+pub(crate) fn mask_manifest_line(line: &str) -> String {
+    // Which bytes of the line are shown as a `*`.
+    let mut masked: Vec<bool> = vec![false; line.len()];
+    // The line with the git values blanked, for the rule of the rest.
+    let mut rest = line.as_bytes().to_vec();
+    let bytes = line.as_bytes();
+    let mut at = 0;
+    while at < line.len() {
+        let quote = bytes[at];
+        if quote == b'#' {
+            break;
+        }
+        if quote != b'"' && quote != b'\'' {
+            at += 1;
+            continue;
+        }
+        let triple = line[at..].starts_with(if quote == b'"' { "\"\"\"" } else { "'''" });
+        let open = if triple { 3 } else { 1 };
+        let (value, end) = toml_string_value(&line[at + open..], quote, triple);
+        let content = at + open..at + open + value.raw.last().map_or(0, |(_, raw)| raw.end);
+        if is_git_key_before(&line[..at]) {
+            rest[content.clone()].iter_mut().for_each(|b| *b = b' ');
+            if let Some(place) = userinfo_place(&value.text) {
+                for (decoded_at, raw) in &value.raw {
+                    if place.contains(decoded_at) {
+                        let raw = at + open + raw.start..at + open + raw.end;
+                        masked[raw].iter_mut().for_each(|m| *m = true);
+                    }
+                }
+            }
+        }
+        at += open + end;
+    }
+    // (Only ASCII spaces replaced whole characters: still UTF-8.)
+    let rest = String::from_utf8(rest).unwrap_or_default();
+    for (start, word) in words(&rest) {
+        let Some(slashes) = word.find("//") else {
+            continue;
+        };
+        if let Some(last) = word[slashes + 2..].rfind('@') {
+            let place = start + slashes + 2..start + slashes + 2 + last;
+            masked[place].iter_mut().for_each(|m| *m = true);
+        }
+    }
+    line.char_indices()
+        .map(|(i, c)| if masked[i] { '*' } else { c })
+        .collect()
+}
+
+/// Whether the text of a line before a value, `before`, ends with the
+/// key `git` and its `=` (`git = `, `lib = { git = `, `"git" = `,
+/// `lib.git = `).
+fn is_git_key_before(before: &str) -> bool {
+    let Some(key) = before.trim_end().strip_suffix('=') else {
+        return false;
+    };
+    let key = key.trim_end();
+    let Some(head) = ["git", "\"git\"", "'git'"]
+        .iter()
+        .find_map(|name| key.strip_suffix(name))
+    else {
+        return false;
+    };
+    head.is_empty() || head.ends_with([' ', '\t', '{', ',', '.'])
+}
+
+/// A quoted TOML string's value, with the raw bytes each of its
+/// characters is written with.
+struct TomlStringValue {
+    text: String,
+    /// The byte of `text` each character starts at, and the bytes of the
+    /// line it was read from.
+    raw: Vec<(usize, std::ops::Range<usize>)>,
+}
+
+/// The value of the TOML string whose text starts `rest` (after its
+/// opening quote), and where it ends in `rest` (after its closing quote,
+/// or the end of the line). A string of `"` reads escapes; one of `'`
+/// none.
+fn toml_string_value(rest: &str, quote: u8, triple: bool) -> (TomlStringValue, usize) {
+    let close = if triple {
+        if quote == b'"' { "\"\"\"" } else { "'''" }
+    } else if quote == b'"' {
+        "\""
+    } else {
+        "'"
+    };
+    let mut value = TomlStringValue {
+        text: String::new(),
+        raw: Vec::new(),
+    };
+    let mut chars = rest.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if rest[i..].starts_with(close) {
+            return (value, i + close.len());
+        }
+        let (decoded, end) = match c {
+            '\\' if quote == b'"' => {
+                let Some(&(_, kind)) = chars.peek() else {
+                    break;
+                };
+                chars.next();
+                let digits = match kind {
+                    'x' => 2,
+                    'u' => 4,
+                    'U' => 8,
+                    _ => 0,
+                };
+                let simple = match kind {
+                    'b' => '\u{8}',
+                    't' => '\t',
+                    'n' => '\n',
+                    'f' => '\u{c}',
+                    'r' => '\r',
+                    'e' => '\u{1b}',
+                    other => other,
+                };
+                let mut end = i + 1 + kind.len_utf8();
+                let decoded = if digits > 0 {
+                    let hex: String = rest[end..].chars().take(digits).collect();
+                    end += hex.len();
+                    for _ in 0..hex.chars().count() {
+                        chars.next();
+                    }
+                    u32::from_str_radix(&hex, 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .unwrap_or('\u{fffd}')
+                } else {
+                    simple
+                };
+                (decoded, end)
+            }
+            c => (c, i + c.len_utf8()),
+        };
+        value.raw.push((value.text.len(), i..end));
+        value.text.push(decoded);
+    }
+    (value, rest.len())
 }
 
 /// Render an untrusted string for a message, by the display rule
@@ -570,7 +890,7 @@ pub(crate) fn escape_for_display(s: &str) -> String {
 /// formatter. Everything written through it, the fixed words of the
 /// message as much as the values, is escaped by the display rule
 /// ([`needs_escape`]), and the user and password of a URL in it are
-/// hidden ([`crate::text::hide_url_userinfo`]): a git command line, a
+/// hidden ([`hide_git_userinfo`]): a git command line, a
 /// URL of a manifest, git's own output that repeats one. The message
 /// itself decides where a line ends, with [`EscapingWriter::line_break`];
 /// a line break inside a value is shown as `\n`.
@@ -603,7 +923,7 @@ impl fmt::Write for EscapingWriter<'_, '_> {
         let hidden;
         let s = match s.contains('@') {
             true => {
-                hidden = crate::text::hide_url_userinfo(s);
+                hidden = hide_git_userinfo(s);
                 hidden.as_str()
             }
             false => s,
@@ -1044,13 +1364,49 @@ fn run_git(args: &[&str]) -> Result<String, GitError> {
             }
         })?;
     if !output.status.success() {
+        let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        for arg in args {
+            stderr = hide_repeated_userinfo(arg, &stderr);
+        }
         return Err(GitError::CommandFailed {
-            command: format_command("git", &full_args),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            command: shown_command(&full_args),
+            stderr,
             exit_code: output.status.code(),
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The git command line `git <args>` as a message shows it: each
+/// argument hidden as one value ([`hide_userinfo`]), then joined. (Joined
+/// first, a space in a password would cut the URL in two words.)
+fn shown_command(args: &[&str]) -> String {
+    let shown: Vec<String> = args.iter().map(|arg| hide_userinfo(arg)).collect();
+    format_command("git", &shown.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// `text`, what git wrote when it was given the URL `url`, with the
+/// user and password of `url` ([`userinfo_place`]) hidden wherever git
+/// repeats them: the URL as written, whole (a space in a password
+/// included); the user and password before an `@` of another form of it
+/// (`//user@host`); and the password apart from the URL, with its user
+/// or alone. (Git takes `user:word@host:path` for the host `user` and the
+/// path `word@host:path`, and may name that path.) A user alone with no
+/// `@` after it is left: git names itself `git`, as many a user is named.
+fn hide_repeated_userinfo(url: &str, text: &str) -> String {
+    let Some(place) = userinfo_place(url) else {
+        return text.to_string();
+    };
+    let userinfo = &url[place];
+    let text = text
+        .replace(url, &hide_userinfo(url))
+        .replace(&format!("{userinfo}@"), "***@");
+    match userinfo.split_once(':') {
+        Some((_, password)) if !password.is_empty() => {
+            text.replace(userinfo, "***").replace(password, "***")
+        }
+        _ => text,
+    }
 }
 
 fn format_command(bin: &str, args: &[&str]) -> String {
@@ -1266,6 +1622,432 @@ mod tests {
         }
     }
 
+    /// A URL of `https`, `http`, `ssh` or `git` is read as the url module
+    /// reads one: a port that is no port, a host that is none or not
+    /// ASCII, an escape that is none is refused here, not by git later.
+    /// What is accepted is kept as written.
+    #[test]
+    fn a_network_git_url_is_read_as_a_url() {
+        for (url, why) in [
+            ("https://h:8a/r.git", "a port cannot hold 'a', at 11"),
+            (
+                "https://h:99999/r.git",
+                "port 99999 is not in 1..65535, at 10",
+            ),
+            ("https://exa%zzmple/r.git", "a host cannot hold '%', at 11"),
+            (
+                "http://0x7f.1/r.git",
+                "a host that looks like a number must be an IPv4 address (four numbers 0-255), at 7",
+            ),
+            (
+                "ssh://git@a..b/r.git",
+                "a host name has no empty label, at 12",
+            ),
+            ("git://h/r%E9.git", "the escape %E9 is no UTF-8 text, at 9"),
+            (
+                "https://caf\u{e9}.example/pkg.git",
+                "a host name must be ASCII: write it as xn--caf-dma.example, at 11",
+            ),
+        ] {
+            let reason = rejection_reason(url);
+            assert!(
+                reason.starts_with(&format!("is not a valid URL: {why};")),
+                "{url:?}: {reason}"
+            );
+        }
+        // (Read as a URL, kept as written: no normal form is written back.)
+        for url in [
+            "https://Example.COM:443/a/./b.git",
+            "ssh://git@example.com:2222/team/pkg.git",
+            "git://[::1]/pkg.git",
+            "https://h/a%20b.git",
+        ] {
+            assert_eq!(validate_git_url(url), Ok(()), "{url}");
+        }
+        // `file://` is git's own form (`file://C:/repo` on Windows).
+        assert_eq!(validate_git_url("file://C:/repo"), Ok(()));
+        // A fault in the user or the password is named without its text
+        // or its place: the message hides both.
+        for url in [
+            "https://user:pa%zzss@example.com/pkg.git",
+            "https://us%E9r@example.com/pkg.git",
+            "ssh://git:%@example.com/pkg.git",
+        ] {
+            let reason = rejection_reason(url);
+            assert!(
+                reason.starts_with(
+                    "is not a valid URL: its user or password is not written as a URL takes it"
+                ),
+                "{url:?}: {reason}"
+            );
+            for shown in ["%zz", "%E9", "pa%", ", at "] {
+                assert!(!reason.contains(shown), "{url:?}: {reason}");
+            }
+        }
+        // The scp form written with `ssh://` is told the two forms by their
+        // shapes; a port that starts with a digit is a bad port, no scp form.
+        for url in [
+            "ssh://git@github.com:user/repo.git",
+            "ssh://git:s3cr3t@github.com:user/repo.git",
+        ] {
+            let reason = rejection_reason(url);
+            assert!(
+                reason.contains(
+                    "; for the form `user@host:path` leave out `ssh://`, or write the path after \
+                     a `/`: `ssh://user@host/path`;"
+                ),
+                "{url}: {reason}"
+            );
+        }
+        let reason = rejection_reason("ssh://git@host:22x/repo.git");
+        assert!(!reason.contains("leave out"), "{reason}");
+    }
+
+    /// No error of a git URL shows a part of its password: a marker password
+    /// with every kind of fault, in the password and in the user, with and
+    /// without a port, and in the scp form written with `ssh://`; no three
+    /// characters of the marker are in the whole message.
+    #[test]
+    fn no_error_of_a_git_url_shows_its_password() {
+        let marker = "S3CR3TXYZ";
+        let faults = [
+            "S3CR3TXYZ%zz",
+            "S3C%zzR3TXYZ",
+            "S3CR/3TXYZ",
+            "S3CR#3TXYZ",
+            "S3CR?3TXYZ",
+            "S3CR@3TXYZ",
+            "S3CR:3TXYZ",
+            "S3CR 3TXYZ",
+            "S3CR\u{20ac}3TXYZ",
+            "S3CR\u{1}3TXYZ",
+            "S3CR%E93TXYZ",
+            "%S3CR3TXYZ",
+        ];
+        let mut urls = Vec::new();
+        for fault in faults {
+            for scheme in ["https", "http", "ssh", "git"] {
+                urls.push(format!("{scheme}://user:{fault}@example.com/x.git"));
+                urls.push(format!("{scheme}://{fault}@example.com/x.git"));
+                urls.push(format!("{scheme}://{fault}:pw@example.com/x.git"));
+                urls.push(format!("{scheme}://user:{fault}@example.com:8a/x.git"));
+                urls.push(format!("{scheme}://user:{fault}@example.com:22/x.git"));
+            }
+            urls.push(format!("ssh://git:{fault}@github.com:user/repo.git"));
+            urls.push(format!("ssh://{fault}@github.com:user/repo.git"));
+            // Without `//`: the scp form with a password, a mistyped URL.
+            for prefix in ["", "git:", "ssh:", "https:/", "https:", "HTTP:/", "http:"] {
+                for user in ["user", "u", "C"] {
+                    urls.push(format!("{prefix}{user}:{fault}@example.com:team/pkg.git"));
+                    urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
+                }
+            }
+        }
+        urls.push(format!("ssh://git:{marker}@github.com:user/repo.git"));
+        urls.push(format!("https://user:{marker}@example.com:8a/x.git"));
+        urls.push(format!("https://user:{marker}@example.com/x.git"));
+        urls.push(format!("user:{marker}@example.com:team/pkg.git"));
+        urls.push(format!("ssh:user:{marker}@example.com:team/pkg.git"));
+        urls.push(format!("u:{marker}@example.com:team/pkg.git"));
+        urls.push(format!("https://u:{marker}@example.com/x.git"));
+        // Accepted with a space in the password: a `file://` URL with an
+        // authority (and on Windows the scp form with a one-letter user).
+        for fault in ["S3CR 3TXYZ", "S3 CR3 TXYZ", " S3CR3TXYZ "] {
+            urls.push(format!("file://user:{fault}@example.com/srv/x.git"));
+            urls.push(format!("file://{fault}@example.com/srv/x.git"));
+            urls.push(format!("u:{fault}@example.com:team/pkg.git"));
+        }
+        assert_eq!(
+            validate_git_url("file://user:S3CR 3TXYZ@example.com/srv/x.git"),
+            Ok(())
+        );
+        assert!(is_local_git_url_on(
+            "u:S3CR 3TXYZ@example.com:team/pkg.git",
+            true
+        ));
+        let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
+        let mut refused = 0;
+        for url in &urls {
+            // What a command prints of it: its error, or the git command
+            // line and git's output that repeat it; and the line of
+            // silt.toml that holds it.
+            let mut shown = Vec::new();
+            if let Err(e) = validate_git_url(url) {
+                refused += 1;
+                shown.push(e.to_string());
+            }
+            // The command and git's output, as run_git makes them, for
+            // every URL: one that is refused here may be taken on another
+            // platform (`u:pa ss@host:path` is a local path on Windows).
+            shown.push(
+                GitError::CommandFailed {
+                    command: shown_command(&["ls-remote", "--", url, "HEAD"]),
+                    stderr: hide_repeated_userinfo(
+                        url,
+                        &format!(
+                            "fatal: '{url}' and '{}'\nusage: git ls-remote -- {url} HEAD\n",
+                            url.split_once(':').unwrap().1
+                        ),
+                    ),
+                    exit_code: Some(128),
+                }
+                .to_string(),
+            );
+            for ref_error in [
+                GitError::RefNotFound {
+                    url: url.clone(),
+                    ref_spec: GitRef::Tag("v1".to_string()),
+                },
+                GitError::AmbiguousRev {
+                    url: url.clone(),
+                    rev: "abc1234".to_string(),
+                },
+            ] {
+                shown.push(ref_error.to_string());
+            }
+            shown.push(mask_manifest_line(&format!(
+                "lib = {{ git = {}, tag = \"v1\" }}",
+                toml_basic_string(url)
+            )));
+            if !url.contains('\'') && !url.chars().any(char::is_control) {
+                shown.push(mask_manifest_line(&format!("lib = {{ git = '{url}' }}")));
+            }
+            for shown in &shown {
+                for piece in &pieces {
+                    assert!(!shown.contains(piece), "{url:?}: {shown}");
+                }
+            }
+        }
+        assert!(
+            refused > urls.len() / 2,
+            "{refused} of {} refused",
+            urls.len()
+        );
+    }
+
+    /// `s` as a TOML basic string.
+    fn toml_basic_string(s: &str) -> String {
+        let mut out = String::from("\"");
+        for c in s.chars() {
+            match c {
+                '"' | '\\' => {
+                    out.push('\\');
+                    out.push(c);
+                }
+                '\t' => out.push_str("\\t"),
+                c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    /// How a message shows a git URL: after `scheme://` up to the last
+    /// `@`; without `//` before the last `@` when a `:` stands there;
+    /// nothing of a `file://` URL or a local path.
+    #[test]
+    fn a_shown_git_url_hides_its_user_and_password() {
+        for (url, shown) in [
+            ("https://u:p@h/r.git", "https://***@h/r.git"),
+            ("https://user:S3 X@h/r.git", "https://***@h/r.git"),
+            ("ssh://git@h:22/r.git", "ssh://***@h:22/r.git"),
+            ("https://@h/r.git", "https://@h/r.git"),
+            ("user:word@host:team/r.git", "***@host:team/r.git"),
+            ("ssh:user:word@host:team/r.git", "***@host:team/r.git"),
+            (
+                "https:/user:word@example.com/pkg.git",
+                "***@example.com/pkg.git",
+            ),
+            ("git@github.com:team/r.git", "git@github.com:team/r.git"),
+            ("file:///srv/team@work/r.git", "file:///srv/team@work/r.git"),
+            ("file://u:p@host/srv/r.git", "file://***@host/srv/r.git"),
+            ("file://host/srv/a@b/r.git", "file://host/srv/a@b/r.git"),
+            ("/srv//git/team@x/r.git", "/srv//git/team@x/r.git"),
+            // A drive path on every platform; a one-letter user is none.
+            ("C:\\repo\\a@b", "C:\\repo\\a@b"),
+            ("C:/repo/a:b@c", "C:/repo/a:b@c"),
+            ("u:p@h:t/r.git", "***@h:t/r.git"),
+            ("c:repo:p@h:t", "***@h:t"),
+            ("https://u:p@h/r.git", "https://***@h/r.git"),
+            ("./a:b@c/r.git", "./a:b@c/r.git"),
+        ] {
+            assert_eq!(display_url(url), shown, "{url}");
+        }
+        assert_eq!(
+            hide_git_userinfo(
+                "git -c protocol.ext.allow=never ls-remote -- user:word@h:r.git HEAD"
+            ),
+            "git -c protocol.ext.allow=never ls-remote -- ***@h:r.git HEAD"
+        );
+        assert_eq!(
+            hide_git_userinfo("git clone -- file:///srv/a@b/r.git d"),
+            "git clone -- file:///srv/a@b/r.git d"
+        );
+        // The quote or bracket that opens a word is no part of a URL.
+        assert_eq!(
+            hide_git_userinfo("cannot reach `user:pw@h:t/p.git`: no"),
+            "cannot reach `***@h:t/p.git`: no"
+        );
+        assert_eq!(
+            hide_git_userinfo("('user:pw@h:t' \"https://u:p@h/\" <u:p@h:t>)"),
+            "('***@h:t' \"https://***@h/\" <***@h:t>)"
+        );
+        // A one-letter user in every place of a text, opened by every mark.
+        for open in ["", "`", "'", "\"", "(", "[", "<", "('"] {
+            for (text, shown) in [
+                (format!("{open}u:p@h:t"), format!("{open}***@h:t")),
+                (format!("x {open}u:p@h:t y"), format!("x {open}***@h:t y")),
+                (format!("x\n{open}u:p@h:t"), format!("x\n{open}***@h:t")),
+            ] {
+                assert_eq!(hide_git_userinfo(&text), shown, "{text:?}");
+            }
+        }
+        assert_eq!(
+            hide_git_userinfo("git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"),
+            "git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"
+        );
+        // Git's output names the password apart from the URL: the scp
+        // form's path.
+        assert_eq!(
+            hide_repeated_userinfo(
+                "user:word@host:team/r.git",
+                "fatal: 'word@host:team/r.git' does not appear to be a git repository"
+            ),
+            "fatal: '***@host:team/r.git' does not appear to be a git repository"
+        );
+        assert_eq!(
+            hide_repeated_userinfo("ssh://git@h/r.git", "fatal: git-upload-pack git@h"),
+            "fatal: git-upload-pack ***@h"
+        );
+        // A space in the password: the URL is hidden whole where git
+        // repeats it, and so is the command line, argument by argument.
+        let url = "file://user:S3 X@h/srv/r.git";
+        assert_eq!(
+            hide_repeated_userinfo(url, &format!("fatal: '{url}': no")),
+            "fatal: 'file://***@h/srv/r.git': no"
+        );
+        assert_eq!(
+            shown_command(&["ls-remote", "--", url, "HEAD"]),
+            "git ls-remote -- file://***@h/srv/r.git HEAD"
+        );
+        assert_eq!(
+            shown_command(&["ls-remote", "--", "u:pa ss@h:t/r.git", "HEAD"]),
+            "git ls-remote -- ***@h:t/r.git HEAD"
+        );
+    }
+
+    /// A line of silt.toml under a caret keeps its columns: each character
+    /// of a user and password is a `*`. A quoted value is one URL to its
+    /// closing quote, read with its escapes.
+    #[test]
+    fn a_masked_manifest_line_keeps_its_columns() {
+        for (line, masked) in [
+            (
+                r#"r = { git = "https://MU:MP@h/r.git", branch = "main" }"#,
+                r#"r = { git = "https://*****@h/r.git", branch = "main" }"#,
+            ),
+            (
+                "r = { git = 'https://user:S3 X@h/r.git', tag = \"v1\" }",
+                "r = { git = 'https://*********@h/r.git', tag = \"v1\" }",
+            ),
+            (
+                r#"r = { git = "https://user:S3\tX@h/r.git" }"#,
+                r#"r = { git = "https://**********@h/r.git" }"#,
+            ),
+            (
+                r#"r = { git = "https://user:S3X\u0040h/r.git" }"#,
+                r#"r = { git = "https://********\u0040h/r.git" }"#,
+            ),
+            (
+                r#"r = { git = "user:word@host:team/r.git" }"#,
+                r#"r = { git = "*********@host:team/r.git" }"#,
+            ),
+            (
+                r#"r = { git = "file:///srv/team@work/r.git" }"#,
+                r#"r = { git = "file:///srv/team@work/r.git" }"#,
+            ),
+            (
+                "r = { git = \"ssh://git@h/r\" } # was https://MU:MP@h/r",
+                "r = { git = \"ssh://***@h/r\" } # was https://*****@h/r",
+            ),
+            // A password with a raw `/`: to the URL's last `@`.
+            (
+                "git = \"https://MU:M/P@h/r\"",
+                "git = \"https://******@h/r\"",
+            ),
+            ("no url here", "no url here"),
+            ("git = \"http://@h/\"", "git = \"http://@h/\""),
+            // The value of a `git` key, however the key is written.
+            ("git = 'user:word@h:t/r'", "git = '*********@h:t/r'"),
+            (
+                "lib.git = \"user:word@h:t/r\"",
+                "lib.git = \"*********@h:t/r\"",
+            ),
+            (
+                "\"git\" = \"user:word@h:t/r\"",
+                "\"git\" = \"*********@h:t/r\"",
+            ),
+            (
+                "git = \"file://u:p@host/srv/r.git\"",
+                "git = \"file://***@host/srv/r.git\"",
+            ),
+            // Text that is no git URL: only a URL with `//` is hidden.
+            (
+                "lib = { git = \"ssh://h/r\", note = \"Contact: bob@example.com\" }",
+                "lib = { git = \"ssh://h/r\", note = \"Contact: bob@example.com\" }",
+            ),
+            (
+                "note = \"Name:bob@example.com at 12:30@place key:value@x\"",
+                "note = \"Name:bob@example.com at 12:30@place key:value@x\"",
+            ),
+            ("digit = \"user:word@h:t/r\"", "digit = \"user:word@h:t/r\""),
+            (
+                "\"a:b@c\" = { git = \"ssh://h/r\" } # mail Name:bob@example.com",
+                "\"a:b@c\" = { git = \"ssh://h/r\" } # mail Name:bob@example.com",
+            ),
+            (
+                "homepage = \"https://user:pw@h/\"",
+                "homepage = \"https://*******@h/\"",
+            ),
+        ] {
+            assert_eq!(mask_manifest_line(line), masked, "{line}");
+            assert_eq!(masked.chars().count(), line.chars().count(), "{line}");
+        }
+    }
+
+    /// `http:` or `https:` without `//` is a mistyped URL, refused before
+    /// git takes it for the host `https`; `git:` and `ssh:` may be hosts.
+    #[test]
+    fn a_url_with_its_slashes_left_out_is_refused() {
+        for url in [
+            "https:/user:word@example.com/pkg.git",
+            "https:example.com/pkg.git",
+            "HTTP:/example.com/pkg.git",
+            "http:example.com:pkg.git",
+        ] {
+            let reason = rejection_reason(url);
+            assert!(
+                reason
+                    .starts_with("is a URL with its `//` left out: write `://` after the scheme;"),
+                "{url}: {reason}"
+            );
+        }
+        assert_eq!(
+            validate_git_url("https:/user:word@example.com/pkg.git")
+                .unwrap_err()
+                .url,
+            "***@example.com/pkg.git"
+        );
+        for url in [
+            "git:team/pkg.git",
+            "ssh:team/pkg.git",
+            "https-mirror:team/pkg.git",
+        ] {
+            assert_eq!(validate_git_url(url), Ok(()), "{url}");
+        }
+    }
+
     #[test]
     fn git_url_accepts_scp_like_form_without_a_user() {
         for url in [
@@ -1447,7 +2229,6 @@ mod tests {
         ] {
             for url in [
                 format!("https://example.com/{name}.git"),
-                format!("https://{name}.example/pkg.git"),
                 format!("ssh://git@example.com/{name}.git"),
                 format!("git@example.com:{name}.git"),
                 format!("example.com:{name}.git"),

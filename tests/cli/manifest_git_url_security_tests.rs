@@ -344,6 +344,7 @@ const RULE_DASH: &str = "must not start with `-`";
 const RULE_SPACE: &str = "must not contain whitespace or control characters";
 const RULE_INVISIBLE: &str = "must not contain invisible or bidirectional formatting characters";
 const RULE_FORM: &str = "is not a recognised git URL form";
+const RULE_URL: &str = "is not a valid URL: ";
 
 /// Every malformed URL is a clean manifest error that names the
 /// dependency and the rule, with no panic, and with the offending
@@ -401,6 +402,13 @@ fn malformed_git_urls_are_clean_manifest_errors() {
         ("ext::sh", RULE_FORM),
         ("foo://127.0.0.1:1/pkg.git", RULE_FORM),
         ("silt-test-nonexistent/pkg.git", RULE_FORM),
+        // A URL of `https`, `http`, `ssh` or `git` is read as a URL: a
+        // port, a host or an escape that is none is refused here, not by
+        // git later.
+        ("https://127.0.0.1:8a/pkg.git", RULE_URL),
+        ("http://127.0.0.1:99999/pkg.git", RULE_URL),
+        ("ssh://git@exa%zzmple/pkg.git", RULE_URL),
+        ("git://0x7f.1/pkg.git", RULE_URL),
     ];
     for &(url, rule) in cases {
         let ws = fresh_workspace("table");
@@ -839,6 +847,166 @@ fn a_git_url_s_user_and_password_are_in_no_message() {
     assert!(
         !stderr.contains("MARKUSER") && !stderr.contains("MARKPASS"),
         "silt add shows the user or the password: {stderr}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// What `silt check`, `silt update` and `silt add` print, all of it,
+/// shows nothing of the password of a git dependency's URL: a password
+/// with a space or a tab (refused, the line of silt.toml under the caret
+/// masked to its closing quote; or taken, in a `file://` URL, and shown
+/// in the git command line and git's output), the scp form with a
+/// password (`user:word@host:path`), a URL with its `//` left out
+/// (refused), in a double- and a single-quoted string. The `git` on PATH
+/// is a stand-in that repeats its arguments on stderr and fails: no
+/// network. FAIL before: the shown line held the password with a space;
+/// the scp form and the mistyped URL were shown whole; the command line
+/// and `cannot reach` cut a `file://` URL at its space.
+#[cfg(unix)]
+#[test]
+fn no_output_of_a_command_shows_the_password_of_a_git_url() {
+    use std::os::unix::fs::PermissionsExt;
+    let marker = "S3CR3TXYZ";
+    let urls = [
+        "https://user:S3CR 3TXYZ@example.com/pkg.git".to_string(),
+        "https://user:S3CR\t3TXYZ@example.com/pkg.git".to_string(),
+        "http://S3CR 3TXYZ:pw@example.com/pkg.git".to_string(),
+        format!("https://user:{marker}@example.com/pkg.git"),
+        format!("ssh://git:{marker}@example.com:team/pkg.git"),
+        format!("user:{marker}@example.com:team/pkg.git"),
+        format!("ssh:user:{marker}@example.com:team/pkg.git"),
+        format!("git:user:{marker}@example.com:team/pkg.git"),
+        format!("https:/user:{marker}@example.com/pkg.git"),
+        format!("https:user:{marker}@example.com/pkg.git"),
+        format!("HTTP:/user:{marker}@example.com/pkg.git"),
+        "https://user:S3CR/3TXYZ@example.com/pkg.git".to_string(),
+        "https://user:S3CR\"3TXYZ@example.com/pkg.git".to_string(),
+        // Accepted with a space in the password: they reach git.
+        "file://user:S3CR 3TXYZ@example.com/srv/pkg.git".to_string(),
+        "file://S3CR 3TXYZ@example.com/srv/pkg.git".to_string(),
+    ];
+    let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
+    let ws = fresh_workspace("password_output");
+    let bin = ws.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let git = bin.join("git");
+    fs::write(
+        &git,
+        "#!/bin/sh\necho \"fatal: unable to access '$*'\" >&2\necho \"$*\"\nexit 128\n",
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    for url in &urls {
+        let mut quoted = vec![toml_str(url)];
+        if !url.contains(['\'', '\t']) {
+            quoted.push(format!("'{url}'"));
+        }
+        for value in quoted {
+            let app = ws.join("app");
+            let _ = fs::remove_dir_all(&app);
+            let dep = format!("lib = {{ git = {value}, tag = \"v1\" }}");
+            write_package(&app, "app", &[dep], "main.silt", "fn main() {}\n");
+            for command in ["check", "update", "add"] {
+                let adder = ws.join("adder");
+                let _ = fs::remove_dir_all(&adder);
+                write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
+                let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+                match command {
+                    "add" => cmd
+                        .args(["add", "lib", "--git", url, "--tag", "v1"])
+                        .current_dir(&adder),
+                    _ => cmd.arg(command).current_dir(&app),
+                };
+                cmd.env("XDG_CACHE_HOME", ws.join("cache"))
+                    .env("PATH", &path);
+                isolate_git(&mut cmd, &ws);
+                let out = cmd.output().expect("failed to spawn silt binary");
+                let all = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                assert_ne!(out.status.code(), Some(0), "{command} {value}: {all}");
+                for piece in &pieces {
+                    assert!(
+                        !all.contains(piece),
+                        "{command} {value}: `{piece}` is shown: {all}"
+                    );
+                }
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// Under an error, the line of silt.toml hides the user and password of
+/// the `git` value only: another value, a key or a comment that holds an
+/// address is shown as written. `silt add` quotes the hidden URL whole,
+/// its backticks kept. FAIL before: `note = "************@example.com"`,
+/// `# ********@example.com`, and `cannot reach ***@...`` without its
+/// opening backtick.
+#[cfg(unix)]
+#[test]
+fn only_a_git_url_is_hidden_in_what_a_command_prints() {
+    use std::os::unix::fs::PermissionsExt;
+    let ws = fresh_workspace("hidden_text");
+    let bin = ws.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let git = bin.join("git");
+    fs::write(&git, "#!/bin/sh\necho \"fatal: '$*'\" >&2\nexit 128\n").unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let run = |cwd: &Path, args: &[&str]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+        cmd.args(args)
+            .current_dir(cwd)
+            .env("XDG_CACHE_HOME", ws.join("cache"))
+            .env("PATH", &path);
+        isolate_git(&mut cmd, &ws);
+        let out = cmd.output().expect("failed to spawn silt binary");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+
+    let app = ws.join("app");
+    let dep = "lib = { git = \"user:S3CR3TXYZ@example.com:team/pkg.git\", \
+               note = \"Contact: bob@example.com\", tag = \"v1\" } # Name:bob@example.com";
+    write_package(
+        &app,
+        "app",
+        &[dep.to_string()],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let stderr = run(&app, &["check"]);
+    let shown = "lib = { git = \"**************@example.com:team/pkg.git\", \
+                 note = \"Contact: bob@example.com\", tag = \"v1\" } # Name:bob@example.com";
+    assert!(stderr.contains(shown), "{stderr}");
+
+    let other = ws.join("other");
+    write_package(&other, "other", &[], "main.silt", "fn main() {}\n");
+    let stderr = run(
+        &other,
+        &[
+            "add",
+            "lib",
+            "--git",
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "--tag",
+            "v1",
+        ],
+    );
+    assert!(
+        stderr.contains("`***@example.com:team/pkg.git`") && !stderr.contains("S3C"),
+        "{stderr}"
     );
     let _ = fs::remove_dir_all(&ws);
 }
