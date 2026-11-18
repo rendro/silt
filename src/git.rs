@@ -1297,10 +1297,19 @@ mod tests {
     fn a_network_git_url_is_read_as_a_url() {
         for (url, why) in [
             ("https://h:8a/r.git", "a port cannot hold 'a', at 11"),
-            ("https://h:99999/r.git", "port 99999 is not in 1..65535, at 10"),
+            (
+                "https://h:99999/r.git",
+                "port 99999 is not in 1..65535, at 10",
+            ),
             ("https://exa%zzmple/r.git", "a host cannot hold '%', at 11"),
-            ("http://0x7f.1/r.git", "a host that looks like a number must be an IPv4 address (four numbers 0-255), at 7"),
-            ("ssh://git@a..b/r.git", "a host name has no empty label, at 12"),
+            (
+                "http://0x7f.1/r.git",
+                "a host that looks like a number must be an IPv4 address (four numbers 0-255), at 7",
+            ),
+            (
+                "ssh://git@a..b/r.git",
+                "a host name has no empty label, at 12",
+            ),
             ("git://h/r%E9.git", "the escape %E9 is no UTF-8 text, at 9"),
             (
                 "https://caf\u{e9}.example/pkg.git",

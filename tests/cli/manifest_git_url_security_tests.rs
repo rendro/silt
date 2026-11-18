@@ -344,6 +344,7 @@ const RULE_DASH: &str = "must not start with `-`";
 const RULE_SPACE: &str = "must not contain whitespace or control characters";
 const RULE_INVISIBLE: &str = "must not contain invisible or bidirectional formatting characters";
 const RULE_FORM: &str = "is not a recognised git URL form";
+const RULE_URL: &str = "is not a valid URL: ";
 
 /// Every malformed URL is a clean manifest error that names the
 /// dependency and the rule, with no panic, and with the offending
@@ -401,6 +402,13 @@ fn malformed_git_urls_are_clean_manifest_errors() {
         ("ext::sh", RULE_FORM),
         ("foo://127.0.0.1:1/pkg.git", RULE_FORM),
         ("silt-test-nonexistent/pkg.git", RULE_FORM),
+        // A URL of `https`, `http`, `ssh` or `git` is read as a URL: a
+        // port, a host or an escape that is none is refused here, not by
+        // git later.
+        ("https://127.0.0.1:8a/pkg.git", RULE_URL),
+        ("http://127.0.0.1:99999/pkg.git", RULE_URL),
+        ("ssh://git@exa%zzmple/pkg.git", RULE_URL),
+        ("git://0x7f.1/pkg.git", RULE_URL),
     ];
     for &(url, rule) in cases {
         let ws = fresh_workspace("table");
