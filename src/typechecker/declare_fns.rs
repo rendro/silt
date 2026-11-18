@@ -548,16 +548,8 @@ pub(super) fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
                 });
                 results(ret, given, out);
             }
-            Type::Container(Container::List(t))
-            | Type::Container(Container::Set(t))
-            | Type::Container(Container::Channel(t)) => results(t, given, out),
-            Type::Container(Container::Map(k, v)) => {
-                results(k, given, out);
-                results(v, given, out);
-            }
-            Type::Generic(_, args) | Type::Container(Container::Tuple(args)) => {
-                args.iter().for_each(|t| results(t, given, out))
-            }
+            Type::Container(c) => c.parts().for_each(|t| results(t, given, out)),
+            Type::Generic(_, args) => args.iter().for_each(|t| results(t, given, out)),
             other => out.extend(free_vars_in(other)),
         }
     }
