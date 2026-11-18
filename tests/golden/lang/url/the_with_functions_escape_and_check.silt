@@ -1,0 +1,29 @@
+-- Each with_ function escapes what it is given; those that can be given
+-- a part the URL cannot hold say what is wrong.
+import url
+
+fn main() -> Result((), url.UrlError) {
+  let u = url.parse("http://localhost:8080/api?old=1#f")?
+  println(url.with_scheme(u, "HTTPS")?)
+  println(url.with_scheme(u, "1x"))
+  println(url.with_host(u, "Example.COM")?)
+  println(url.with_host(u, "[0::1]")?)
+  println(url.with_host(u, "h:1"))
+  println(url.with_host(u, "0x7f.1"))
+  println(url.with_port(u, None)?)
+  println(url.with_port(u, Some(80))?)
+  println(url.with_port(u, Some(65536)))
+  println(url.with_segments(u, ["a b", "c/d", "%", "é"])?)
+  println(url.with_segments(u, [""])? == url.with_segments(u, [])?)
+  println(url.with_segments(u, ["."]))
+  println(url.add_segments(url.parse("https://h/v1")?, ["users", "ann", ""])?)
+  println(url.with_query(u, [("a b", "c+d"), ("flag", "")]))
+  println(url.with_query(u, []))
+  println(url.with_fragment(u, "part 2#x"))
+  println(url.with_fragment(u, ""))
+  let secret = url.parse("https://h/")? |> url.with_user("a:b@c") |> url.with_password("/?#")
+  println(url.to_string(secret))
+  println("{url.user(secret)} {url.password(secret)}")
+  println(url.to_string(url.with_user(secret, "")))
+  Ok(())
+}

@@ -21,6 +21,17 @@ fn a_program_runs_and_its_output_is_collected() {
     );
 }
 
+/// The url module is pure computation: the playground has it.
+#[test]
+fn the_url_module_runs_in_the_playground() {
+    let ran = run_it(
+        "import url\nfn main() {\n  match url.parse(\"HTTPS://ann:pw@H:443/a/../b\") {\n    \
+         Ok(u) -> println(\"{u} {url.to_string(u)}\")\n    Err(e) -> println(e)\n  }\n}\n",
+    );
+    assert_eq!(ran.output, "https://***@h/b https://ann:pw@h/b\n");
+    assert!(ran.ok, "{}{}", ran.diagnostics, ran.error);
+}
+
 #[test]
 fn a_static_error_is_reported_as_silt_run_reports_it_and_nothing_runs() {
     let ran = run_it("fn main() {\n  println(\"before\")\n  list.length([1])\n}\n");

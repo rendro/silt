@@ -17,7 +17,7 @@ use crate::builtins::prelude;
 use crate::builtins::tcp;
 use crate::builtins::{
     applicative, bytes, concurrency, core, crypto, csv, encoding, http, io, json, process, regex,
-    stream, string, time, toml, uuid,
+    stream, string, time, toml, url, uuid,
 };
 
 /// The functions of the prelude: called by their bare names, each
@@ -626,6 +626,43 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn url_decode(s: String) -> Result(String, EncodingError)", "Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding", encoding::url_decode),
                 f("fn form_encode(pairs: List((String, String))) -> String", "Build an `application/x-www-form-urlencoded` body", encoding::form_encode),
                 f("fn form_decode(body: String) -> Result(List((String, String)), EncodingError)", "Parse an `application/x-www-form-urlencoded` body into pairs", encoding::form_decode),
+            ],
+        },
+        module! {
+            name: "url",
+            page: "url.md",
+            types: "\
+                pub type UrlError { Invalid(String, Int), InvalidPart(String) }\n\
+            ",
+            opaque: [("Url", 0)],
+            error: "UrlError" => url::error_text,
+            rows: [
+                f("fn parse(text: String) -> Result(Url, UrlError)", "Read a URL, in its normal form", url::parse),
+                f("fn resolve(base: Url, reference: String) -> Result(Url, UrlError)", "The URL a reference (`../x`, `?q`, `//h/x`) names on the page `base`", url::resolve),
+                f("fn to_string(u: Url) -> String", "The whole text, user and password included", url::to_string),
+                f("fn scheme(u: Url) -> String", "The scheme: `https`", url::scheme),
+                f("fn user(u: Url) -> String", "The user, decoded; `\"\"` for none", url::user),
+                f("fn password(u: Url) -> String", "The password, decoded; `\"\"` for none", url::password),
+                f("fn host(u: Url) -> String", "The host: a name, an IPv4 address, `[::1]`, or `\"\"`", url::host),
+                f("fn port(u: Url) -> Option(Int)", "The port; `None` when not written or the scheme's own", url::port),
+                f("fn path(u: Url) -> String", "The path as it stands in the URL, escaped", url::path),
+                f("fn segments(u: Url) -> List(String)", "The path's segments, decoded", url::segments),
+                f("fn query(u: Url) -> List((String, String))", "The query's pairs, decoded (`+` is a space)", url::query),
+                f("fn query_text(u: Url) -> String", "The query as it stands in the URL, escaped, without `?`", url::query_text),
+                f("fn fragment(u: Url) -> String", "The fragment, decoded; `\"\"` for none", url::fragment),
+                f("fn with_scheme(u: Url, scheme: String) -> Result(Url, UrlError)", "The URL with another scheme", url::with_scheme),
+                f("fn with_user(u: Url, user: String) -> Url", "The URL with another user, escaped; `\"\"` removes it", url::with_user),
+                f("fn with_password(u: Url, password: String) -> Url", "The URL with another password, escaped; `\"\"` removes it", url::with_password),
+                f("fn with_host(u: Url, host: String) -> Result(Url, UrlError)", "The URL with another host", url::with_host),
+                f("fn with_port(u: Url, port: Option(Int)) -> Result(Url, UrlError)", "The URL with another port; `None` for the scheme's own", url::with_port),
+                f("fn with_segments(u: Url, segments: List(String)) -> Result(Url, UrlError)", "The URL with the path of these segments, escaped", url::with_segments),
+                f("fn add_segments(u: Url, segments: List(String)) -> Result(Url, UrlError)", "The URL with these segments, escaped, after its path", url::add_segments),
+                f("fn with_query(u: Url, pairs: List((String, String))) -> Url", "The URL with the query of these pairs, escaped; `[]` removes it", url::with_query),
+                f("fn with_fragment(u: Url, fragment: String) -> Url", "The URL with another fragment, escaped; `\"\"` removes it", url::with_fragment),
+                f("fn escape(text: String) -> String", "Escape every byte but `A-Z a-z 0-9 - . _ ~` as `%HH`", url::escape),
+                f("fn unescape(text: String) -> Result(String, UrlError)", "Decode the `%HH` escapes of a text", url::unescape),
+                f("fn encode_form(pairs: List((String, String))) -> String", "Build an `application/x-www-form-urlencoded` body", url::encode_form),
+                f("fn decode_form(body: String) -> Result(List((String, String)), UrlError)", "Read an `application/x-www-form-urlencoded` body into pairs", url::decode_form),
             ],
         },
         module! {

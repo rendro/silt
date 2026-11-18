@@ -386,7 +386,8 @@ impl Col {
             | (Col::Bytea, F::Bytes)
             | (Col::Date, F::Date)
             | (Col::Time, F::Time)
-            | (Col::Timestamp | Col::Timestamptz, F::DateTime) => true,
+            | (Col::Timestamp | Col::Timestamptz, F::DateTime)
+            | (Col::Text | Col::Char, F::Url) => true,
             // An array of more dimensions fills a list of lists.
             (Col::Array(element), F::List(inner)) => {
                 element.fills(r, inner) || matches!(&**inner, F::List(_) if self.fills(r, inner))
@@ -1037,6 +1038,12 @@ fn cell(
             Value::string(text(col, raw).map_err(malformed)?)
         }
         (Col::Bytea, F::Bytes) => Value::Bytes(Arc::new(raw.to_vec())),
+        // A URL is a text that `url.parse` reads.
+        (Col::Text | Col::Char, F::Url) => {
+            let text = text(col, raw).map_err(malformed)?;
+            let u = decode::decoded_url(&text).map_err(|why| Mismatch::new(rt, field, why))?;
+            Value::Url(Arc::new(u))
+        }
         (Col::Date, F::Date) => make_date(date(raw).map_err(|why| Mismatch::new(rt, field, why))?),
         (Col::Time, F::Time) => make_time(time(raw).map_err(|why| Mismatch::new(rt, field, why))?),
         (Col::Timestamp | Col::Timestamptz, F::DateTime) => {

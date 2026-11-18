@@ -1,0 +1,5 @@
+error[runtime]: assertion failed: <url:https://***@h/x> != <url:https://***@h/x> (the two differ in their hidden user or password)
+ --> a_failed_assert_eq_says_the_hidden_parts_differ.silt:10:3
+    |
+ 10 |   test.assert_eq(a, b)
+    |   ^^^^^^^^^^^^^^^^^^^^ assertion failed: <url:https://***@h/x> != <url:https://***@h/x> (the two differ in their hidden user or password)

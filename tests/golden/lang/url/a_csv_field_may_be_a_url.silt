@@ -1,0 +1,22 @@
+-- A cell of a CSV text is read into a url.Url field with url.parse: an
+-- empty cell is the None of an Option; a cell that is no URL is an error
+-- that names what is wrong and where the cell is, not the text.
+import csv
+import url
+
+type Link {
+  name: String,
+  site: url.Url,
+  mirror: Option(url.Url),
+}
+
+fn main() {
+  match csv.parse("name,site,mirror\nex,HTTPS://Example.com:443/a/./b,\nlocal,http://127.0.0.1:8080/,http://[::1]:8080/\n", Link) {
+    Ok(links) -> println(links)
+    Err(e) -> println(e)
+  }
+  match csv.parse("name,site,mirror\nbad,https://u:secret@h:99999/,\n", Link) {
+    Ok(links) -> println(links)
+    Err(e) -> println(e)
+  }
+}

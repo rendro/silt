@@ -805,6 +805,39 @@ encoding.url_decode(s: String) -> Result(String, EncodingError)
 encoding.url_encode(s: String) -> String
 ```
 
+### url
+
+```
+type UrlError { Invalid(String, Int), InvalidPart(String) }
+type Url  -- opaque
+url.add_segments(u: Url, segments: List(String)) -> Result(Url, UrlError)
+url.decode_form(body: String) -> Result(List((String, String)), UrlError)
+url.encode_form(pairs: List((String, String))) -> String
+url.escape(text: String) -> String
+url.fragment(u: Url) -> String
+url.host(u: Url) -> String
+url.parse(text: String) -> Result(Url, UrlError)
+url.password(u: Url) -> String
+url.path(u: Url) -> String
+url.port(u: Url) -> Option(Int)
+url.query(u: Url) -> List((String, String))
+url.query_text(u: Url) -> String
+url.resolve(base: Url, reference: String) -> Result(Url, UrlError)
+url.scheme(u: Url) -> String
+url.segments(u: Url) -> List(String)
+url.to_string(u: Url) -> String
+url.unescape(text: String) -> Result(String, UrlError)
+url.user(u: Url) -> String
+url.with_fragment(u: Url, fragment: String) -> Url
+url.with_host(u: Url, host: String) -> Result(Url, UrlError)
+url.with_password(u: Url, password: String) -> Url
+url.with_port(u: Url, port: Option(Int)) -> Result(Url, UrlError)
+url.with_query(u: Url, pairs: List((String, String))) -> Url
+url.with_scheme(u: Url, scheme: String) -> Result(Url, UrlError)
+url.with_segments(u: Url, segments: List(String)) -> Result(Url, UrlError)
+url.with_user(u: Url, user: String) -> Url
+```
+
 ### tcp (cargo feature `tcp`)
 
 ```

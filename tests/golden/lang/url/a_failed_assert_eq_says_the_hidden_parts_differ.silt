@@ -1,0 +1,12 @@
+-- exit: 1
+-- Two Urls that differ only in the password are written alike; the
+-- failure says that they differ where they are hidden.
+import test
+import url
+
+fn main() -> Result((), url.UrlError) {
+  let a = url.parse("https://ann:one@h/x")?
+  let b = url.parse("https://ann:two@h/x")?
+  test.assert_eq(a, b)
+  Ok(())
+}

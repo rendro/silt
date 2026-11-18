@@ -1,0 +1,29 @@
+-- The example of the url module's design: parse, add_segments with a
+-- value that holds `/`, `..` and `?`, with_query, the readers, the
+-- credentials of a postgres URL, and resolve.
+import url
+
+fn main() -> Result((), url.UrlError) {
+  let api = url.parse("https://API.example.com:443/v1/")?
+  println(api)
+  println(url.segments(api))
+
+  let name = "ann/../admin?x=1"
+  let user_page = api |> url.add_segments(["users", name])?
+  let u = user_page |> url.with_query([("q", "silt lang"), ("tag", "a&b")])
+  println(u)
+  println(url.segments(u))
+  println(url.path(u))
+  println(url.query(u))
+  println(url.query_text(u))
+
+  let db = url.parse("postgresql://localhost/app")?
+    |> url.with_user("app")
+    |> url.with_password("p@ss/w:rd")
+  println(db)
+  println(url.to_string(db))
+
+  let next = url.resolve(u, "../docs?x=1#top")?
+  println(next)
+  Ok(())
+}

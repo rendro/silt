@@ -133,7 +133,7 @@ value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
 one (`time.Date`, `json.Value`): its type, and the types of the fields
 of the record or of the variant it is, as the declaration gives them
 at the type's arguments (`Box(Int)`: its `value: a` is an `Int`),
-inside it as deep as the check goes; a `regex.Regex`, `task.Handle(a)`,
+inside it as deep as the check goes; a `regex.Regex`, `url.Url`, `task.Handle(a)`,
 `tcp.TcpStream`, `tcp.TcpListener`, `postgres.PgPool`, `postgres.PgTx`
 or `postgres.PgCursor(r)`: that it is one (what a task gives, and what
 a cursor's rows are, is not looked at). A value belongs to the program

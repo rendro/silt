@@ -40,7 +40,7 @@ use std::ops::Range;
 /// A valid URL in its normal form: its text, and where its parts lie in
 /// it. Equal, hashed and ordered by its whole text.
 #[derive(Clone)]
-pub(crate) struct Url {
+pub struct Url {
     text: String,
     /// The scheme is `text[..scheme_end]`; `://` follows it.
     scheme_end: usize,
@@ -560,7 +560,11 @@ fn host_and_port(
         },
         false => written.find(':').map_or(range.end, |at| range.start + at),
     };
-    let host = checked_host(&text[range.start..host_end], scheme)
+    // (An `@` after the host's start may end a user's token that a raw
+    // `/` cut short, `https://tökén/x@h/`: then what reads as the host is
+    // the token, and its ASCII form is not named.)
+    let named = !text[range.start..].contains('@');
+    let host = checked_host(&text[range.start..host_end], scheme, named)
         .map_err(|fault| Fault::new(fault.what, range.start + fault.at))?;
     let port = match host_end < range.end {
         true => Some(port_of(text, host_end + 1..range.end)?),
@@ -600,7 +604,7 @@ const NUMBER_LIKE: &str =
 
 /// The normal form of the host `host` of a URL of `scheme`, or what is
 /// wrong with it and at which of its bytes.
-fn checked_host(host: &str, scheme: &str) -> Result<String, Fault> {
+fn checked_host(host: &str, scheme: &str, named: bool) -> Result<String, Fault> {
     if host.is_empty() {
         return match needs_host(scheme) {
             true => Err(Fault::new(
@@ -618,7 +622,7 @@ fn checked_host(host: &str, scheme: &str) -> Result<String, Fault> {
             continue;
         }
         if !c.is_ascii() {
-            let what = match punycode_host(host) {
+            let what = match punycode_host(host).filter(|_| named) {
                 Some(ascii) => format!("a host name must be ASCII: write it as {ascii}"),
                 None => "a host name must be ASCII: write its punycode form (xn--...)".into(),
             };
@@ -721,7 +725,7 @@ fn punycode_host(host: &str) -> Option<String> {
     }
     let ascii = labels.join(".");
     // (The scheme matters only for an empty host, which this is not.)
-    checked_host(&ascii, "").ok()
+    checked_host(&ascii, "", false).ok()
 }
 
 /// RFC 3492's encoding of `label`, without the `xn--`.
@@ -989,8 +993,8 @@ impl Url {
 
     /// The Url with the host `host`, written as [`Url::host`] gives one.
     pub(crate) fn with_host(&self, host: &str) -> Result<Url, UrlError> {
-        let host =
-            checked_host(host, self.scheme()).map_err(|fault| UrlError::InvalidPart(fault.what))?;
+        let host = checked_host(host, self.scheme(), true)
+            .map_err(|fault| UrlError::InvalidPart(fault.what))?;
         Ok(assemble(Parts {
             host: &host,
             ..self.parts()
