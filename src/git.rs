@@ -635,8 +635,7 @@ fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
         let at = authority.rfind('@')?;
         return (at > 0).then_some(7..7 + at);
     }
-    // (`//host/...` reads as a URL without its scheme too.)
-    if is_local_git_url(url) && !url.starts_with("//") {
+    if is_path_to_show_whole(url) {
         return None;
     }
     let start = match url.find(':') {
@@ -645,6 +644,24 @@ fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
         _ => url[..last].find("//")? + 2,
     };
     (last > start).then_some(start..last)
+}
+
+/// Whether `url` is a local path that a message shows as written: one
+/// that starts with `/` (not `//`: `//host/...` reads as a URL without
+/// its scheme too), `./` or `../`, or a Windows drive path, a letter, `:`
+/// and then `\` or `/` or nothing (`C:\repo\a@b`, `C:/repo/a:b@c`). The
+/// same on every platform, so that what is hidden is: `u:p@h:t` is no
+/// drive path, though Git for Windows reads `u:` as a drive.
+fn is_path_to_show_whole(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    let drive = bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes.get(2), None | Some(b'\\' | b'/'));
+    (url.starts_with('/') && !url.starts_with("//"))
+        || url.starts_with("./")
+        || url.starts_with("../")
+        || drive
 }
 
 /// A URL from a manifest or a lock file, as a message shows it: its
@@ -1699,8 +1716,10 @@ mod tests {
             urls.push(format!("ssh://{fault}@github.com:user/repo.git"));
             // Without `//`: the scp form with a password, a mistyped URL.
             for prefix in ["", "git:", "ssh:", "https:/", "https:", "HTTP:/", "http:"] {
-                urls.push(format!("{prefix}user:{fault}@example.com:team/pkg.git"));
-                urls.push(format!("{prefix}user:{fault}@example.com/pkg.git"));
+                for user in ["user", "u", "C"] {
+                    urls.push(format!("{prefix}{user}:{fault}@example.com:team/pkg.git"));
+                    urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
+                }
             }
         }
         urls.push(format!("ssh://git:{marker}@github.com:user/repo.git"));
@@ -1708,6 +1727,8 @@ mod tests {
         urls.push(format!("https://user:{marker}@example.com/x.git"));
         urls.push(format!("user:{marker}@example.com:team/pkg.git"));
         urls.push(format!("ssh:user:{marker}@example.com:team/pkg.git"));
+        urls.push(format!("u:{marker}@example.com:team/pkg.git"));
+        urls.push(format!("https://u:{marker}@example.com/x.git"));
         let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
         let mut refused = 0;
         for url in &urls {
@@ -1790,6 +1811,12 @@ mod tests {
             ("file://u:p@host/srv/r.git", "file://***@host/srv/r.git"),
             ("file://host/srv/a@b/r.git", "file://host/srv/a@b/r.git"),
             ("/srv//git/team@x/r.git", "/srv//git/team@x/r.git"),
+            // A drive path on every platform; a one-letter user is none.
+            ("C:\\repo\\a@b", "C:\\repo\\a@b"),
+            ("C:/repo/a:b@c", "C:/repo/a:b@c"),
+            ("u:p@h:t/r.git", "***@h:t/r.git"),
+            ("c:repo:p@h:t", "***@h:t"),
+            ("https://u:p@h/r.git", "https://***@h/r.git"),
             ("./a:b@c/r.git", "./a:b@c/r.git"),
         ] {
             assert_eq!(display_url(url), shown, "{url}");
@@ -1812,6 +1839,20 @@ mod tests {
         assert_eq!(
             hide_git_userinfo("('user:pw@h:t' \"https://u:p@h/\" <u:p@h:t>)"),
             "('***@h:t' \"https://***@h/\" <***@h:t>)"
+        );
+        // A one-letter user in every place of a text, opened by every mark.
+        for open in ["", "`", "'", "\"", "(", "[", "<", "('"] {
+            for (text, shown) in [
+                (format!("{open}u:p@h:t"), format!("{open}***@h:t")),
+                (format!("x {open}u:p@h:t y"), format!("x {open}***@h:t y")),
+                (format!("x\n{open}u:p@h:t"), format!("x\n{open}***@h:t")),
+            ] {
+                assert_eq!(hide_git_userinfo(&text), shown, "{text:?}");
+            }
+        }
+        assert_eq!(
+            hide_git_userinfo("git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"),
+            "git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"
         );
         // Git's output names the password apart from the URL: the scp
         // form's path.
