@@ -568,20 +568,7 @@ impl TypeChecker {
                 }
                 None
             }
-            Type::Container(Container::List(inner))
-            | Type::Container(Container::Set(inner))
-            | Type::Container(Container::Channel(inner)) => self.find_alias_cycle(inner, visiting),
-            Type::Container(Container::Map(k, v)) => self
-                .find_alias_cycle(k, visiting)
-                .or_else(|| self.find_alias_cycle(v, visiting)),
-            Type::Container(Container::Tuple(elems)) => {
-                for e in elems {
-                    if let Some(c) = self.find_alias_cycle(e, visiting) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
+            Type::Container(c) => c.parts().find_map(|t| self.find_alias_cycle(t, visiting)),
             Type::Fun(params, ret) => {
                 for p in params {
                     if let Some(c) = self.find_alias_cycle(p, visiting) {

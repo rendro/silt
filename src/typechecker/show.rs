@@ -800,16 +800,8 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
             params.iter().for_each(|t| collect_app_heads(t, f));
             collect_app_heads(ret, f);
         }
-        Type::Container(Container::List(t))
-        | Type::Container(Container::Set(t))
-        | Type::Container(Container::Channel(t)) => collect_app_heads(t, f),
-        Type::Container(Container::Map(k, v)) => {
-            collect_app_heads(k, f);
-            collect_app_heads(v, f);
-        }
-        Type::Container(Container::Tuple(ts)) | Type::Generic(_, ts) | Type::Con(_, ts) => {
-            ts.iter().for_each(|t| collect_app_heads(t, f))
-        }
+        Type::Container(c) => c.parts().for_each(|t| collect_app_heads(t, f)),
+        Type::Generic(_, ts) | Type::Con(_, ts) => ts.iter().for_each(|t| collect_app_heads(t, f)),
         _ => {}
     }
 }
