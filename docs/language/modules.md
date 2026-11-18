@@ -328,7 +328,10 @@ them). The git URL is an `https://`, `http://`, `ssh://`, `git://` or
 `https://`, `http://`, `ssh://` or `git://` URL is read as `url.parse`
 reads one, so a port that is no port, a host that is none or is not ASCII,
 or an escape that is none is an error of `silt.toml` (and of `silt add`),
-not of git later; the URL is kept as written in `silt.lock`. After adding,
+not of git later; the URL is kept as written in `silt.lock`. A value that
+starts with `http:` or `https:` without `//` is refused as a URL with its
+`//` left out. A message shows no user or password of a git URL
+(`https://***@host/repo.git`, `***@host:path`). After adding,
 imports from the dependency package work exactly like local modules. `silt remove <name>` takes one out of `silt.toml`
 and `silt.lock` again.
 

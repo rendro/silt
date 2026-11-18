@@ -573,10 +573,10 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // The summary quotes the path or the URL and the ref as they were
     // given on the command line, but a user and password in the URL
     // (silt.toml keeps them).
-    // (A line of text, not one URL: by the rule of messages.)
+    // (A line of text, not one URL: word by word.)
     println!(
         "{}",
-        crate::git::escape_for_display(&crate::text::hide_url_userinfo(&success_summary))
+        crate::git::escape_for_display(&crate::git::hide_git_userinfo(&success_summary))
     );
     Ok(())
 }
