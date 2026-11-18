@@ -323,8 +323,13 @@ program of its own.
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url> --tag <tag>` (or
 `--branch <branch>`, `--rev <commit>`: a git dependency names one of
-them). After adding, imports from the dependency package work exactly
-like local modules. `silt remove <name>` takes one out of `silt.toml`
+them). The git URL is an `https://`, `http://`, `ssh://`, `git://` or
+`file://` URL, `host:path` or `user@host:path`, or a local path. An
+`https://`, `http://`, `ssh://` or `git://` URL is read as `url.parse`
+reads one, so a port that is no port, a host that is none or is not ASCII,
+or an escape that is none is an error of `silt.toml` (and of `silt add`),
+not of git later; the URL is kept as written in `silt.lock`. After adding,
+imports from the dependency package work exactly like local modules. `silt remove <name>` takes one out of `silt.toml`
 and `silt.lock` again.
 
 `import x` in a module of a package means one of three things: the

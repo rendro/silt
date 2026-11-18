@@ -192,6 +192,11 @@ impl std::error::Error for GitError {
 /// URL schemes accepted by [`validate_git_url`].
 const GIT_URL_SCHEMES: [&str; 5] = ["https://", "http://", "ssh://", "git://", "file://"];
 
+/// The schemes of [`GIT_URL_SCHEMES`] whose URLs are read as the `url`
+/// module reads one (port, host, escapes): `file://` is git's own (it
+/// takes `file://C:/repo` on Windows, an empty port here).
+const PARSED_GIT_URL_SCHEMES: [&str; 4] = ["https://", "http://", "ssh://", "git://"];
+
 /// The accepted git URL forms, phrased for error messages.
 const ACCEPTED_GIT_URL_FORMS: &str = concat!(
     "an `https://`, `http://`, `ssh://`, `git://` or `file://` URL, ",
@@ -314,7 +319,10 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
                 .to_string()
         }
     } else if has_accepted_url_form(url) {
-        return Ok(());
+        match not_a_url(url) {
+            None => return Ok(()),
+            Some(why) => format!("is not a valid URL: {why}"),
+        }
     } else {
         match unaccepted_scheme(url) {
             Some(scheme) => format!(
@@ -497,6 +505,21 @@ fn has_accepted_url_form(url: &str) -> bool {
         && !path.starts_with(':')
         // `<scheme>://...` with an unlisted scheme: also a helper.
         && !path.starts_with("//")
+}
+
+/// What is wrong with `url` as a URL, for one of the schemes that are
+/// read as URLs ([`PARSED_GIT_URL_SCHEMES`]): a port that is no port, a
+/// host that is none, an escape that is none. `None` for a URL that
+/// reads, and for any other form. (The URL is kept as written: silt.lock
+/// and the cache name it so.)
+fn not_a_url(url: &str) -> Option<String> {
+    if !PARSED_GIT_URL_SCHEMES
+        .iter()
+        .any(|scheme| url.starts_with(scheme))
+    {
+        return None;
+    }
+    crate::url::parse(url).err().map(|why| why.to_string())
 }
 
 /// [`validate_git_url`] as a [`GitError`], for the functions below that
@@ -1266,6 +1289,43 @@ mod tests {
         }
     }
 
+    /// A URL of `https`, `http`, `ssh` or `git` is read as the url module
+    /// reads one: a port that is no port, a host that is none or not
+    /// ASCII, an escape that is none is refused here, not by git later.
+    /// What is accepted is kept as written.
+    #[test]
+    fn a_network_git_url_is_read_as_a_url() {
+        for (url, why) in [
+            ("https://h:8a/r.git", "a port cannot hold 'a', at 11"),
+            ("https://h:99999/r.git", "port 99999 is not in 1..65535, at 10"),
+            ("https://exa%zzmple/r.git", "a host cannot hold '%', at 11"),
+            ("http://0x7f.1/r.git", "a host that looks like a number must be an IPv4 address (four numbers 0-255), at 7"),
+            ("ssh://git@a..b/r.git", "a host name has no empty label, at 12"),
+            ("git://h/r%E9.git", "the escape %E9 is no UTF-8 text, at 9"),
+            (
+                "https://caf\u{e9}.example/pkg.git",
+                "a host name must be ASCII: write it as xn--caf-dma.example, at 11",
+            ),
+        ] {
+            let reason = rejection_reason(url);
+            assert!(
+                reason.starts_with(&format!("is not a valid URL: {why};")),
+                "{url:?}: {reason}"
+            );
+        }
+        // (Read as a URL, kept as written: no normal form is written back.)
+        for url in [
+            "https://Example.COM:443/a/./b.git",
+            "ssh://git@example.com:2222/team/pkg.git",
+            "git://[::1]/pkg.git",
+            "https://h/a%20b.git",
+        ] {
+            assert_eq!(validate_git_url(url), Ok(()), "{url}");
+        }
+        // `file://` is git's own form (`file://C:/repo` on Windows).
+        assert_eq!(validate_git_url("file://C:/repo"), Ok(()));
+    }
+
     #[test]
     fn git_url_accepts_scp_like_form_without_a_user() {
         for url in [
@@ -1447,7 +1507,6 @@ mod tests {
         ] {
             for url in [
                 format!("https://example.com/{name}.git"),
-                format!("https://{name}.example/pkg.git"),
                 format!("ssh://git@example.com/{name}.git"),
                 format!("git@example.com:{name}.git"),
                 format!("example.com:{name}.git"),
