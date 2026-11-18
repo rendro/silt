@@ -102,8 +102,9 @@ fn string_pairs(pairs: Vec<(String, String)>) -> Value {
 builtins! {
     // ── Making a Url ────────────────────────────────────────────────
 
-    fn parse(text: &str) -> Value {
-        result(url::parse(text).map(|u| Value::Url(Arc::new(u))))
+    // (Its normal form can be longer than the text: `é` is six bytes.)
+    fn parse(text: &str) -> Result<Value, VmError> {
+        changed("url.parse", url::parse(text))
     }
 
     fn resolve(base: typed::Url, reference: &str) -> Result<Value, VmError> {

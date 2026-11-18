@@ -91,7 +91,13 @@ import list
 import url
 
 fn main() {
-  let texts = ["localhost:8080", "http://0x7f.1/", "http://a@b@h/", "http://h/%zz", "http://h:99999/"]
+  let texts = [
+    "localhost:8080",
+    "http://0x7f.1/",
+    "http://a@b@h/",
+    "http://h/%zz",
+    "http://h:99999/",
+  ]
   list.each(texts) { text ->
     match url.parse(text) {
       Ok(u) -> println(u)
@@ -229,9 +235,16 @@ text with `"{u}"` and then used carries `***`, and fails where it is used.
 `==`, hashing and order are of the whole normal text, password included.
 `json.stringify` writes a `Url` as its whole text, password included: json
 is storage, and `json.parse` reads a field `site: url.Url` back with
-`url.parse`, as `toml.parse` and a `postgres` text column do. A map keyed by
-`Url` is written with the whole text as the key. A program that logs json of
-a URL hides it itself.
+`url.parse`, as `toml.parse`, `csv.parse` and a `postgres` text column do. A
+map keyed by `Url` is written by `json.stringify` with the whole text as the
+key. (`json.parse` reads a map's keys as `String` only: read such a map as
+`Map(String, T)` and parse the keys.) A program that logs json of a URL hides
+it itself.
+
+A `Url` is at most as long as a string may be, 10,000,000 bytes of its normal
+text, which escapes what it holds (`é` is six bytes of it): `url.parse` and
+the `with_` functions stop the program at a longer one, as `string.repeat`
+does, and a decoder refuses such a field as it refuses a text that is no URL.
 
 ```silt
 import io
