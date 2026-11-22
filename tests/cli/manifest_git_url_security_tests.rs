@@ -1143,88 +1143,179 @@ fn a_git_url_s_user_and_password_are_in_no_message() {
 /// system: a password with a space or a tab (refused, the line of
 /// silt.toml under the caret masked to its closing quote; or taken, in a
 /// `file://` URL, and shown in the git command line and git's output),
-/// the scp form with a password (`user:word@host:path`, refused; on
-/// Windows `u:word@host:path` is a drive path, which git is given), a URL
-/// with its `//` left out (refused), in a double- and a single-quoted
-/// string, the key `git` also written with an escape (`"g\u0069t"`).
+/// the scp form with a password (`user:word@host:path`, refused on every
+/// system: `u:word@host:path` is no drive on Windows; `u:word@host/path`
+/// is one there, and git does not reach it by ssh), a URL with its `//`
+/// left out (refused), in a double- and a single-quoted string, the key
+/// `git` also written with an escape (`"g\u0069t"`), in an inline table
+/// and at the start of a line of a `[dependencies.lib]` table.
 ///
 /// The real git runs, and no network is used: an `http` or `https` URL
 /// names a local port where nothing listens, an ssh form reaches a
 /// stand-in for ssh (`GIT_SSH_COMMAND`, which git runs through its own
 /// shell on every system) that prints what git asked it to reach, and
 /// `GIT_TRACE` makes git repeat its arguments, the URL whole, on stderr.
-/// Without git on PATH every value still fails, and nothing may show.
+/// With git on PATH, `silt check` of the https and the ssh:// row must
+/// show git's trace and the stand-in's line, the password starred: so
+/// the run proves that git's output was passed on. Without git every
+/// value still fails, and nothing may show.
 /// FAIL before: the shown line held the password with a space; the scp
 /// form and the mistyped URL were shown whole; the command line and
 /// `cannot reach` cut a `file://` URL at its space.
 #[test]
 fn no_output_of_a_command_shows_the_password_of_a_git_url() {
     let marker = "S3CR3TXYZ";
-    // The values, and whether silt refuses them on every system but
-    // Windows, where git takes them for a drive path.
+    /// What a value's output must show besides no piece of the marker.
+    enum Expect {
+        /// Nothing more.
+        NoMore,
+        /// silt refuses it, on every system.
+        Refused,
+        /// A drive on Windows, given to git as a local path, never to ssh;
+        /// refused elsewhere.
+        DriveOnWindows,
+        /// With git on PATH, `silt check` shows these texts of git's.
+        GitSays(&'static [&'static str]),
+    }
+    // The values, and what else their output must show (see `Expect`).
     let urls = [
         (
             "https://user:S3CR 3TXYZ@127.0.0.1:1/pkg.git".to_string(),
-            false,
+            Expect::NoMore,
         ),
         (
             "https://user:S3CR\t3TXYZ@127.0.0.1:1/pkg.git".to_string(),
-            false,
+            Expect::NoMore,
         ),
         (
             "http://S3CR 3TXYZ:pw@127.0.0.1:1/pkg.git".to_string(),
-            false,
+            Expect::NoMore,
         ),
-        (format!("https://user:{marker}@127.0.0.1:1/pkg.git"), false),
-        (format!("ssh://git:{marker}@127.0.0.1:team/pkg.git"), false),
-        (format!("ssh://git:{marker}@127.0.0.1/team/pkg.git"), false),
-        (format!("user:{marker}@127.0.0.1:team/pkg.git"), false),
-        (format!("user:{marker}@127.0.0.1:team/pkg@v2.git"), false),
-        ("user:S3CR@3TXYZ@127.0.0.1:team/pkg.git".to_string(), false),
-        (format!("host:{marker}@b:c"), false),
-        (format!("@user:{marker}@127.0.0.1:p"), false),
-        (format!("user:{marker}@127.0.0.1"), false),
-        (format!("user:{marker}@127.0.0.1/team/pkg.git"), false),
-        (format!("example.com:{marker}@v2"), false),
-        (format!("ssh:user:{marker}@127.0.0.1:team/pkg.git"), false),
-        (format!("git:user:{marker}@127.0.0.1:team/pkg.git"), false),
-        (format!("https:/user:{marker}@127.0.0.1:1/pkg.git"), false),
-        (format!("https:user:{marker}@127.0.0.1:1/pkg.git"), false),
-        (format!("HTTP:/user:{marker}@127.0.0.1:1/pkg.git"), false),
+        (
+            format!("https://user:{marker}@127.0.0.1:1/pkg.git"),
+            Expect::GitSays(&["trace: "]),
+        ),
+        (
+            format!("ssh://git:{marker}@127.0.0.1:team/pkg.git"),
+            Expect::NoMore,
+        ),
+        (
+            format!("ssh://git:{marker}@127.0.0.1/team/pkg.git"),
+            Expect::GitSays(&["ssh asked for:", "***@127.0.0.1"]),
+        ),
+        (
+            format!("user:{marker}@127.0.0.1:team/pkg.git"),
+            Expect::NoMore,
+        ),
+        (
+            format!("user:{marker}@127.0.0.1:team/pkg@v2.git"),
+            Expect::NoMore,
+        ),
+        (
+            "user:S3CR@3TXYZ@127.0.0.1:team/pkg.git".to_string(),
+            Expect::NoMore,
+        ),
+        (format!("host:{marker}@b:c"), Expect::NoMore),
+        (format!("@user:{marker}@127.0.0.1:p"), Expect::NoMore),
+        (format!("user:{marker}@127.0.0.1"), Expect::NoMore),
+        (
+            format!("user:{marker}@127.0.0.1/team/pkg.git"),
+            Expect::NoMore,
+        ),
+        (format!("example.com:{marker}@v2"), Expect::NoMore),
+        (
+            format!("ssh:user:{marker}@127.0.0.1:team/pkg.git"),
+            Expect::NoMore,
+        ),
+        (
+            format!("git:user:{marker}@127.0.0.1:team/pkg.git"),
+            Expect::NoMore,
+        ),
+        (
+            format!("https:/user:{marker}@127.0.0.1:1/pkg.git"),
+            Expect::NoMore,
+        ),
+        (
+            format!("https:user:{marker}@127.0.0.1:1/pkg.git"),
+            Expect::NoMore,
+        ),
+        (
+            format!("HTTP:/user:{marker}@127.0.0.1:1/pkg.git"),
+            Expect::NoMore,
+        ),
         (
             "https://user:S3CR/3TXYZ@127.0.0.1:1/pkg.git".to_string(),
-            false,
+            Expect::NoMore,
         ),
         (
             "https://user:S3CR\"3TXYZ@127.0.0.1:1/pkg.git".to_string(),
-            false,
+            Expect::NoMore,
         ),
         // Accepted with a space in the password: they reach git.
         (
             "file://user:S3CR 3TXYZ@127.0.0.1/srv/pkg.git".to_string(),
-            false,
+            Expect::NoMore,
         ),
-        ("file://S3CR 3TXYZ@127.0.0.1/srv/pkg.git".to_string(), false),
-        // A one-letter user: a drive on Windows, the scp form elsewhere.
-        (format!("u:{marker}@127.0.0.1:team/pkg.git"), true),
-        ("u:S3CR 3TXYZ@127.0.0.1:team/pkg.git".to_string(), true),
+        (
+            "file://S3CR 3TXYZ@127.0.0.1/srv/pkg.git".to_string(),
+            Expect::NoMore,
+        ),
+        // A one-letter user with a second `:`: the short form on every
+        // system, Windows too (no drive there), refused; without one a
+        // drive on Windows, which git does not reach by ssh.
+        (
+            format!("u:{marker}@127.0.0.1:team/pkg.git"),
+            Expect::Refused,
+        ),
+        (
+            "u:S3CR 3TXYZ@127.0.0.1:team/pkg.git".to_string(),
+            Expect::Refused,
+        ),
+        (
+            format!("u:{marker}@127.0.0.1/team/pkg.git"),
+            Expect::DriveOnWindows,
+        ),
     ];
     let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
+    // Whether git is there: only then can its output be asked for.
+    let git_is_there = Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| out.status.success());
     let ws = fresh_workspace("password_output");
-    for (url, drive_on_windows) in &urls {
-        // The key `git`, also written with an escape (`"g\u0069t"`).
-        let mut entries = vec![("git", toml_str(url)), (r#""g\u0069t""#, toml_str(url))];
+    for (url, expect) in &urls {
+        // The key `git`, also written with an escape (`"g\u0069t"`), in
+        // an inline table, and at the start of a line of a
+        // `[dependencies.lib]` table.
+        let mut entries = vec![
+            ("git", toml_str(url), false),
+            (r#""g\u0069t""#, toml_str(url), false),
+            ("git", toml_str(url), true),
+            (r#""g\u0069t""#, toml_str(url), true),
+        ];
         if !url.contains(['\'', '\t']) {
-            entries.push(("git", format!("'{url}'")));
+            entries.push(("git", format!("'{url}'"), false));
         }
-        for (key, value) in entries {
+        for (key, value, table) in entries {
             let app = ws.join("app");
             let _ = fs::remove_dir_all(&app);
-            let dep = format!("lib = {{ {key} = {value}, tag = \"v1\" }}");
-            write_package(&app, "app", &[dep], "main.silt", "fn main() {}\n");
+            if table {
+                write_package(&app, "app", &[], "main.silt", "fn main() {}\n");
+                let manifest = fs::read_to_string(app.join("silt.toml")).unwrap();
+                fs::write(
+                    app.join("silt.toml"),
+                    format!("{manifest}\n[dependencies.lib]\n{key} = {value}\ntag = \"v1\"\n"),
+                )
+                .unwrap();
+            } else {
+                let dep = format!("lib = {{ {key} = {value}, tag = \"v1\" }}");
+                write_package(&app, "app", &[dep], "main.silt", "fn main() {}\n");
+            }
             // `silt add` writes the key itself: once, with the key `git`.
-            // The escaped key is read by the one rule of the shown line.
-            let commands: &[&str] = if key == "git" {
+            // The other spellings and forms are read by the one rule of the
+            // shown line.
+            let first = key == "git" && !table && value.starts_with('"');
+            let commands: &[&str] = if first {
                 &["check", "update", "add"]
             } else {
                 &["check"]
@@ -1263,17 +1354,31 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                     String::from_utf8_lossy(&out.stdout),
                     String::from_utf8_lossy(&out.stderr)
                 );
-                let context = format!("{command} {key} = {value}");
+                let context = format!("{command} {key} = {value} (table: {table})");
                 assert_ne!(out.status.code(), Some(0), "{context}: {all}");
                 for piece in &pieces {
                     assert!(!all.contains(piece), "{context}: `{piece}` is shown: {all}");
                 }
-                if *drive_on_windows {
-                    // `check` and `update` say `invalid git URL`, `add`
-                    // `doesn't look like a git URL`.
-                    let refused =
-                        all.contains("invalid git URL") || all.contains("look like a git URL");
-                    assert_eq!(refused, !cfg!(windows), "{context}: {all}");
+                // `check` and `update` say `invalid git URL`, `add`
+                // `doesn't look like a git URL`.
+                let refused =
+                    all.contains("invalid git URL") || all.contains("look like a git URL");
+                match expect {
+                    Expect::NoMore => {}
+                    Expect::Refused => assert!(refused, "{context}: {all}"),
+                    Expect::DriveOnWindows => {
+                        assert_eq!(refused, !cfg!(windows), "{context}: {all}");
+                        assert!(!all.contains("ssh asked for:"), "{context}: {all}");
+                    }
+                    // What shows that git ran and its output was passed on
+                    // and starred: on every system with git, CI's Windows too.
+                    Expect::GitSays(texts) => {
+                        if git_is_there && command == "check" {
+                            for text in *texts {
+                                assert!(all.contains(text), "{context}: no `{text}`: {all}");
+                            }
+                        }
+                    }
                 }
             }
         }
