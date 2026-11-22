@@ -85,10 +85,10 @@ impl Timer {
     /// once (`Timer::fire_every_deadline`, test-only).
     pub(super) fn ends_passed_deadlines_at_once(&self) -> bool {
         #[cfg(any(test, feature = "test-hooks"))]
-        if self.fires_every_deadline.load(Ordering::SeqCst) {
-            return false;
-        }
-        true
+        let fires_every_deadline = self.fires_every_deadline.load(Ordering::SeqCst);
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let fires_every_deadline = false;
+        !fires_every_deadline
     }
 
     /// The clock's monotonic reading.

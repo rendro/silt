@@ -516,10 +516,7 @@ fn is_valid_version(version: &str) -> bool {
     }
     // Pre-release identifiers may be alphanumeric or numeric (no leading
     // zeros for the latter); we keep the check loose here.
-    if pre.is_some_and(|pre| !is_identifier_list(pre)) {
-        return false;
-    }
-    true
+    pre.is_none_or(is_identifier_list)
 }
 
 fn split_off_build(version: &str) -> (&str, Option<&str>) {
