@@ -170,10 +170,11 @@ impl Manifest {
         // Validation phase ----------------------------------------------------
         // Each rule's error points at the key or value that broke it.
         let doc = toml_edit::ImDocument::parse(text.as_str()).ok();
+        let find = |keys: &[&str], key_itself: bool| {
+            manifest_span(doc.as_ref(), keys, key_itself).map(span_of)
+        };
         let at = |keys: &[&str], key_itself: bool| {
-            manifest_span(doc.as_ref(), keys, key_itself)
-                .map(span_of)
-                .unwrap_or(Span::point(file, 0))
+            find(keys, key_itself).unwrap_or(Span::point(file, 0))
         };
         let invalid = |span: Span, message: String| {
             Diagnostic::error(
@@ -193,7 +194,22 @@ impl Manifest {
             let key = at(&keys, true);
             let value = at(&keys, false);
             validate_dependency_name(&raw_name).map_err(|m| invalid(key, m))?;
-            let source = convert_dependency(&raw_name, raw_dep).map_err(|m| invalid(value, m))?;
+            let source = convert_dependency(&raw_name, raw_dep).map_err(|(place, m)| {
+                let inner = |inner: &str, key_itself: bool| {
+                    find(&["dependencies", raw_name.as_str(), inner], key_itself)
+                };
+                let span = match place {
+                    DependencyPlace::Name => Some(key),
+                    DependencyPlace::Whole => Some(value),
+                    DependencyPlace::Key(inner_key) => inner(&inner_key, true),
+                    DependencyPlace::Value(inner_key) => inner(inner_key, false),
+                    DependencyPlace::LastKey(keys) => keys
+                        .iter()
+                        .filter_map(|inner_key| inner(inner_key, true))
+                        .max_by_key(|span| span.start),
+                };
+                invalid(span.unwrap_or(key), m)
+            })?;
             dependencies.insert(
                 intern::intern(&raw_name),
                 DependencyEntry { source, key, value },
@@ -420,7 +436,8 @@ fn validate_dependency_name(name: &str) -> Result<(), String> {
 }
 
 /// The byte range in `doc` of the value at the table path `keys`, or of
-/// its key with `key_itself`.
+/// its key with `key_itself`. A table given by dotted keys
+/// (`lib.git = "..."`) has no place of its own: its key stands for it.
 fn manifest_span(
     doc: Option<&toml_edit::ImDocument<&str>>,
     keys: &[&str],
@@ -431,10 +448,10 @@ fn manifest_span(
     for key in tables {
         table = table.get(key)?.as_table_like()?;
     }
-    let range = if key_itself {
-        table.get_key_value(last)?.0.span()?
-    } else {
-        table.get(last)?.span()?
+    let (key, value) = table.get_key_value(last)?;
+    let range = match value.span() {
+        Some(range) if !key_itself => range,
+        _ => key.span()?,
     };
     Some((range.start, range.end))
 }
@@ -545,11 +562,33 @@ fn validate_version(version: &str) -> Result<(), String> {
     ))
 }
 
-fn convert_dependency(name: &str, raw: RawDependency) -> Result<Dependency, String> {
+/// Where in a dependency the rule that broke lies, for its error.
+enum DependencyPlace {
+    /// The dependency's key (`lib` of `lib = { ... }`): no one key of its
+    /// table broke the rule (a key is missing).
+    Name,
+    /// The dependency's value as a whole (`"1.2.3"` of `lib = "1.2.3"`).
+    Whole,
+    /// A key of its table (an unknown key).
+    Key(String),
+    /// The value of a key of its table (a `tag` that is not a string).
+    Value(&'static str),
+    /// Of two or more keys that may not stand together, the one written
+    /// last.
+    LastKey(Vec<&'static str>),
+}
+
+/// An error of a dependency: where it lies, and its text.
+type DependencyError = (DependencyPlace, String);
+
+fn convert_dependency(name: &str, raw: RawDependency) -> Result<Dependency, DependencyError> {
     match raw {
-        RawDependency::Other(serde::de::IgnoredAny) => Err(format!(
-            "dependency `{name}` must be a table: `{name} = {{ path = \"...\" }}` or \
-             `{name} = {{ git = \"...\", tag = \"...\" }}`"
+        RawDependency::Other(serde::de::IgnoredAny) => Err((
+            DependencyPlace::Whole,
+            format!(
+                "dependency `{name}` must be a table: `{name} = {{ path = \"...\" }}` or \
+                 `{name} = {{ git = \"...\", tag = \"...\" }}`"
+            ),
         )),
         RawDependency::Inline(table) => {
             let has_path = table.contains_key("path");
@@ -557,16 +596,23 @@ fn convert_dependency(name: &str, raw: RawDependency) -> Result<Dependency, Stri
 
             // Registry deps are still future work; surface a forward-looking
             // diagnostic rather than silently treating `version` as garbage.
-            if table.contains_key("version") || table.contains_key("registry") {
-                return Err(format!(
-                    "dependency `{name}`: registry/version dependencies are not yet \
+            if let Some(key) = ["version", "registry"]
+                .into_iter()
+                .find(|key| table.contains_key(*key))
+            {
+                return Err((
+                    DependencyPlace::Key(key.to_string()),
+                    format!(
+                        "dependency `{name}`: registry/version dependencies are not yet \
                          supported; use `path` or `git` instead"
+                    ),
                 ));
             }
 
             if has_path && has_git {
-                return Err(format!(
-                    "dependency `{name}`: cannot specify both `path` and `git`; pick one"
+                return Err((
+                    DependencyPlace::LastKey(vec!["path", "git"]),
+                    format!("dependency `{name}`: cannot specify both `path` and `git`; pick one"),
                 ));
             }
 
@@ -583,18 +629,29 @@ fn convert_dependency(name: &str, raw: RawDependency) -> Result<Dependency, Stri
 fn convert_path_dependency(
     name: &str,
     table: &BTreeMap<String, toml::Value>,
-) -> Result<Dependency, String> {
+) -> Result<Dependency, DependencyError> {
     let path_value = table.get("path").ok_or_else(|| {
-        format!("dependency `{name}`: missing required key `path` (or use `git` for a git dep)")
+        (
+            DependencyPlace::Name,
+            format!(
+                "dependency `{name}`: missing required key `path` (or use `git` for a git dep)"
+            ),
+        )
     })?;
-    let path_str = path_value
-        .as_str()
-        .ok_or_else(|| format!("dependency `{name}`: `path` must be a string"))?;
+    let path_str = path_value.as_str().ok_or_else(|| {
+        (
+            DependencyPlace::Value("path"),
+            format!("dependency `{name}`: `path` must be a string"),
+        )
+    })?;
 
     for key in table.keys() {
         if key != "path" {
-            return Err(format!(
-                "dependency `{name}`: unknown key `{key}` (only `path` is recognized for path deps)"
+            return Err((
+                DependencyPlace::Key(key.clone()),
+                format!(
+                    "dependency `{name}`: unknown key `{key}` (only `path` is recognized for path deps)"
+                ),
             ));
         }
     }
@@ -607,22 +664,32 @@ fn convert_path_dependency(
 fn convert_git_dependency(
     name: &str,
     table: &BTreeMap<String, toml::Value>,
-) -> Result<Dependency, String> {
+) -> Result<Dependency, DependencyError> {
     let url = table
         .get("git")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("dependency `{name}`: `git` must be a string URL"))?
+        .ok_or_else(|| {
+            (
+                DependencyPlace::Value("git"),
+                format!("dependency `{name}`: `git` must be a string URL"),
+            )
+        })?
         .to_string();
 
     // The URL is handed to `git` at lock time, and this manifest may be
     // a transitive dependency's, so it is untrusted input: an
     // option-shaped value such as `--upload-pack=<cmd>` would make git
     // run `<cmd>`. Every manifest goes through this one check.
-    crate::git::validate_git_url(&url).map_err(|e| format!("dependency `{name}`: {e}"))?;
+    crate::git::validate_git_url(&url).map_err(|e| {
+        (
+            DependencyPlace::Value("git"),
+            format!("dependency `{name}`: {e}"),
+        )
+    })?;
 
     // Tally which ref forms are present so we can give a tailored error
     // for the multiple-forms case rather than just "missing".
-    let mut ref_forms: Vec<(&str, &toml::Value)> = Vec::new();
+    let mut ref_forms: Vec<(&'static str, &toml::Value)> = Vec::new();
     for key in ["rev", "branch", "tag"] {
         if let Some(v) = table.get(key) {
             ref_forms.push((key, v));
@@ -631,24 +698,35 @@ fn convert_git_dependency(
 
     let ref_spec = match ref_forms.len() {
         0 => {
-            return Err(format!(
-                "dependency `{name}`: git dependency requires exactly one of `rev`, \
+            return Err((
+                DependencyPlace::Name,
+                format!(
+                    "dependency `{name}`: git dependency requires exactly one of `rev`, \
                      `branch`, or `tag`"
+                ),
             ));
         }
         1 => {
             let (key, value) = ref_forms[0];
             let s = value
                 .as_str()
-                .ok_or_else(|| format!("dependency `{name}`: `{key}` must be a string"))?
+                .ok_or_else(|| {
+                    (
+                        DependencyPlace::Value(key),
+                        format!("dependency `{name}`: `{key}` must be a string"),
+                    )
+                })?
                 .to_string();
             match key {
                 // A full commit id or a prefix of one; a prefix is
                 // resolved to the commit when the graph is built.
                 "rev" if !crate::git::is_valid_sha_shape(&s) => {
-                    return Err(format!(
-                        "dependency `{name}`: `rev` must be a commit id \
-                         (7 to 64 hexadecimal characters), got `{s}`"
+                    return Err((
+                        DependencyPlace::Value("rev"),
+                        format!(
+                            "dependency `{name}`: `rev` must be a commit id \
+                             (7 to 64 hexadecimal characters), got `{s}`"
+                        ),
                     ));
                 }
                 "rev" => GitRef::Rev(s),
@@ -658,11 +736,14 @@ fn convert_git_dependency(
             }
         }
         _ => {
-            let mentioned: Vec<&str> = ref_forms.iter().map(|(k, _)| *k).collect();
-            return Err(format!(
-                "dependency `{name}`: git dependency must specify exactly one of `rev`, \
+            let mentioned: Vec<&'static str> = ref_forms.iter().map(|(k, _)| *k).collect();
+            return Err((
+                DependencyPlace::LastKey(mentioned.clone()),
+                format!(
+                    "dependency `{name}`: git dependency must specify exactly one of `rev`, \
                      `branch`, or `tag` (found: {})",
-                mentioned.join(", ")
+                    mentioned.join(", ")
+                ),
             ));
         }
     };
@@ -675,9 +756,12 @@ fn convert_git_dependency(
         match key.as_str() {
             "git" | "rev" | "branch" | "tag" => {}
             other => {
-                return Err(format!(
-                    "dependency `{name}`: unknown key `{other}` for a git dependency \
+                return Err((
+                    DependencyPlace::Key(other.to_string()),
+                    format!(
+                        "dependency `{name}`: unknown key `{other}` for a git dependency \
                          (allowed keys: `git`, `rev`, `branch`, `tag`)"
+                    ),
                 ));
             }
         }
@@ -850,6 +934,99 @@ mod tests {
             file.text[d.span.start_offset()..d.span.end_offset()].starts_with("\"x"),
             "{d:?}"
         );
+    }
+
+    /// Each error inside a dependency points at the key or the value
+    /// that caused it, in each of the three forms: an inline table, a
+    /// table of its own and dotted keys. An unknown key at the key, a
+    /// wrong value at the value, two keys that may not stand together at
+    /// the one written last, a missing key at the dependency's key. FAIL
+    /// before: at the inline table as a whole, at the table's header, at
+    /// line 1.
+    #[test]
+    fn each_error_of_a_dependency_points_at_its_key_or_value() {
+        const URL: &str = "\"https://example.com/lib.git\"";
+        const BAD_URL: &str = "\"https://example.com:8a/lib.git\"";
+        // A dependency's entries, the line the error is on, and the text
+        // its caret is under.
+        let cases: Vec<(Vec<String>, &str, &str)> = vec![
+            (
+                vec![format!("git = {BAD_URL}"), "tag = \"v1\"".into()],
+                "git = ",
+                BAD_URL,
+            ),
+            (
+                vec![
+                    format!("git = {URL}"),
+                    "tag = \"v1\"".into(),
+                    "tga = \"x\"".into(),
+                ],
+                "tga",
+                "tga",
+            ),
+            (vec![format!("git = {URL}"), "tag = 1".into()], "tag", "1"),
+            (
+                vec![format!("git = {URL}"), "rev = \"zz\"".into()],
+                "rev",
+                "\"zz\"",
+            ),
+            (vec!["git = 3".into(), "tag = \"v1\"".into()], "git", "3"),
+            (
+                vec![
+                    "tag = \"v1\"".into(),
+                    format!("git = {URL}"),
+                    "branch = \"main\"".into(),
+                ],
+                "branch",
+                "branch",
+            ),
+            (
+                vec![format!("git = {URL}"), "path = \"../x\"".into()],
+                "path",
+                "path",
+            ),
+            (
+                vec!["path = \"../x\"".into(), format!("git = {URL}")],
+                "git",
+                "git",
+            ),
+            (vec!["version = \"1\"".into()], "version", "version"),
+            (vec!["path = 3".into()], "path", "3"),
+            (
+                vec!["path = \"../x\"".into(), "tga = \"x\"".into()],
+                "tga",
+                "tga",
+            ),
+            // Nothing in the table: the dependency's key.
+            (vec![format!("git = {URL}")], "lib", "lib"),
+            (vec!["tga = \"x\"".into()], "lib", "lib"),
+        ];
+        for (entries, line_holds, caret) in cases {
+            let forms = [
+                format!("[dependencies]\nlib = {{ {} }}\n", entries.join(", ")),
+                format!("[dependencies.lib]\n{}\n", entries.join("\n")),
+                format!(
+                    "[dependencies]\n{}\n",
+                    entries
+                        .iter()
+                        .map(|entry| format!("lib.{entry}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+            ];
+            for form in forms {
+                let text = format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n{form}");
+                let (sources, d) = load_error("dependency_place", &text);
+                let shown =
+                    &sources.file(d.span.file).text[d.span.start_offset()..d.span.end_offset()];
+                let line_start = text[..d.span.start_offset()]
+                    .rfind('\n')
+                    .map_or(0, |i| i + 1);
+                let line = text[line_start..].lines().next().unwrap_or_default();
+                assert_eq!(shown, caret, "{text}\n{d:?}");
+                assert!(line.contains(line_holds), "{text}\n{line}\n{d:?}");
+            }
+        }
     }
 
     #[test]
