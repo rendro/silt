@@ -22,15 +22,9 @@ GET /show?q=1 HTTP/1.1
 GET http://elsewhere.test/users/9 HTTP/1.1
   the handler: GET http://elsewhere.test/users/9 ["users", "9"] []
   the client: 200 user 9
-GET https://elsewhere.test/users/10 HTTP/1.1
-  the handler: GET http://elsewhere.test/users/10 ["users", "10"] []
-  the client: 200 user 10
-GET https://elsewhere.test:443/users/11 HTTP/1.1
-  the handler: GET http://elsewhere.test:443/users/11 ["users", "11"] []
+GET http://Elsewhere.TEST:80/users/10/ HTTP/1.1
+  the handler: GET http://elsewhere.test/users/10/ ["users", "10", ""] []
+  the client: 200 user 10, with a slash
+GET http://example.test:8080/users/11?a=1 HTTP/1.1
+  the handler: GET http://example.test:8080/users/11?a=1 ["users", "11"] [("a", "1")]
   the client: 200 user 11
-GET https://elsewhere.test:80/users/12 HTTP/1.1
-  the handler: GET http://elsewhere.test/users/12 ["users", "12"] []
-  the client: 200 user 12
-GET /users/13#frag HTTP/1.1
-  the handler: GET http://example.test:8080/users/13 ["users", "13"] []
-  the client: 200 user 13

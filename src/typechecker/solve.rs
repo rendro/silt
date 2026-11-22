@@ -1991,11 +1991,7 @@ impl TypeChecker {
             }
             Type::Fun(..) => leaf(self, None),
             Type::Container(Container::Channel(_)) if tr.is_builtin("Equal") => None,
-            Type::Container(Container::List(_))
-            | Type::Container(Container::Set(_))
-            | Type::Container(Container::Map(..))
-            | Type::Container(Container::Tuple(_))
-            | Type::Container(Container::Channel(_))
+            Type::Container(_)
             | Type::Int
             | Type::Float
             | Type::Bool
