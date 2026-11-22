@@ -234,6 +234,8 @@ impl std::error::Error for InvalidGitUrl {}
 /// Rejects, in this order:
 ///   - the empty string;
 ///   - anything starting with `-` (git would parse it as an option);
+///   - off Windows, a Windows path (`C:\repo`, `\\server\share`), which
+///     git there reads in another way;
 ///   - any character its form does not allow, see the table;
 ///   - anything that is not one of the accepted forms below.
 ///
@@ -282,7 +284,10 @@ impl std::error::Error for InvalidGitUrl {}
 /// On Windows, a drive-absolute path (`C:\repo`, `C:/repo`) and a UNC
 /// path (`\\server\share`) are local paths too, as git takes them there
 /// (`silt add --git ./lib` stores such a path made from the working
-/// directory). Elsewhere `C:/repo` is the scp-like `host:path`.
+/// directory). Elsewhere such a value is refused: git there reads
+/// `C:/repo` as the scp-like `host:path`, with the host `C`, and
+/// `\\server\share` as a file name of the current directory (a host of
+/// one letter is written `ssh://C/repo`).
 pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     match git_url_problem(url) {
         None => Ok(()),
@@ -307,6 +312,16 @@ fn git_url_problem(url: &str) -> Option<String> {
         "must not be empty".to_string()
     } else if url.starts_with('-') {
         "must not start with `-`".to_string()
+    } else if !cfg!(windows) && is_windows_absolute_path(url) {
+        let read_as = if url.starts_with(r"\\") {
+            "a file name of the current directory"
+        } else {
+            "a host and a path"
+        };
+        format!(
+            "is a Windows path, which git on this system would read as {read_as}: \
+             write a path of this system, starting with `/`, `./` or `../`, or a URL"
+        )
     } else if url.chars().any(is_forbidden) {
         // Which rule to name: whitespace and control characters first,
         // then the invisible characters, then the rest.
@@ -338,8 +353,8 @@ fn git_url_problem(url: &str) -> Option<String> {
     } else if has_accepted_url_form(url) && is_scp_form_with_password(url) {
         "the form `user@host:path` holds no password (git would take what stands \
          before the first `:` for the host): leave the password out, and ssh asks \
-         for it or uses a key; a path whose first part holds an `@` is written \
-         `host:./pkg@v2` or as an `ssh://` URL"
+         for it or uses a key; a path with an `@` in it is written with the user \
+         in front (`git@host:dir/a@b`) or as an `ssh://` URL"
             .to_string()
     } else if has_accepted_url_form(url) {
         format!("is not a valid URL: {}", not_a_url(url)?)
@@ -427,13 +442,15 @@ fn is_scheme_without_slashes(url: &str) -> bool {
 
 /// Whether `url`, which silt reads as the scp form ([`is_short_form_on`]),
 /// holds a user and password, for which the form has no place: its first
-/// `:` stands before its first `@`, and no `/` between them, the shape
-/// `user:word@...` (`user:word@host:path`, `user:word@host/path`, a URL
-/// with its scheme forgotten). git takes what stands before the first `:`
-/// for the host, `user`, and the password for a part of the path. Every
-/// other `@` is one of the user or the path, as git reads it
-/// (`git@host:team/pkg@v2.git`, `host:dir/a@b`); a path whose first part
-/// holds an `@` is written `host:./pkg@v2`.
+/// `:` stands before its first `@`, whatever stands between them, the
+/// shape `user:word@...` (`user:word@host:path`, `user:word@host/path`,
+/// `user:wo/rd@host:path`, a URL with its scheme forgotten). git takes
+/// what stands before the first `:` for the host, `user`, and the
+/// password for a part of the path. A path with an `@` and no user in
+/// front (`host:dir/a@b`) has the same shape, and is refused too: it is
+/// written with the user in front (`git@host:dir/a@b`) or as an `ssh://`
+/// URL. An `@` after the first `@` is one of the path, as git reads it
+/// (`git@host:team/pkg@v2.git`).
 fn is_scp_form_with_password(url: &str) -> bool {
     is_scp_form_with_password_on(url, cfg!(windows))
 }
@@ -444,7 +461,7 @@ fn is_scp_form_with_password_on(url: &str, windows: bool) -> bool {
     let (Some(colon), Some(at)) = (url.find(':'), url.find('@')) else {
         return false;
     };
-    is_short_form_on(url, windows) && colon < at && !url[colon..at].contains('/')
+    is_short_form_on(url, windows) && colon < at
 }
 
 /// Whether silt reads `url` as git's short ssh form (`[user@]host:path`):
@@ -682,7 +699,7 @@ pub(crate) fn needs_escape(c: char) -> bool {
 /// is hidden before its last `@` (`user:word@host:path`, shown
 /// `***@host:path`; `user:wo@rd@host:path` too); git's short form that it
 /// takes holds no password, and is shown as git reads it
-/// (`git@host:path`, `git@host:team/pkg@v2.git`, `host:dir/a@b`), as a
+/// (`git@host:path`, `git@host:team/pkg@v2.git`), as a
 /// ref is (`v1@x`). A `file://` URL is hidden only up to an `@` of its
 /// authority, what stands between `//` and the next `/`
 /// (`file://***@host/srv/r.git`; `file:///srv/team@work/r.git` is shown as
@@ -1867,13 +1884,11 @@ mod tests {
             for prefix in ["", "git:", "ssh:", "https:/", "https:", "HTTP:/", "http:"] {
                 for user in ["user", "u", "C"] {
                     // (Without a prefix, a `/` between the first `:` and the
-                    // first `@` makes a path: `user:S3CR/3TXYZ@example.com:x`
-                    // is git's host `user` and a path, shown whole, as
-                    // `host:dir/a@b` is.)
-                    if !(prefix.is_empty() && fault.contains('/')) {
-                        urls.push(format!("{prefix}{user}:{fault}@example.com:team/pkg.git"));
-                        urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
-                    }
+                    // first `@` too: `user:S3CR/3TXYZ@example.com:x`. FAIL
+                    // before: taken as git's host `user` and a path, and
+                    // shown whole.)
+                    urls.push(format!("{prefix}{user}:{fault}@example.com:team/pkg.git"));
+                    urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
                 }
             }
         }
@@ -1999,8 +2014,8 @@ mod tests {
             ("file://u:p@host/srv/r.git", "file://***@host/srv/r.git"),
             ("file://host/srv/a@b/r.git", "file://host/srv/a@b/r.git"),
             ("/srv//git/team@x/r.git", "/srv//git/team@x/r.git"),
-            // A drive path on Windows; elsewhere the short form, where a `/`
-            // after the first `:` makes a path and none a password.
+            // A drive path on Windows; elsewhere a Windows path, refused and
+            // hidden as every refused value is.
             (
                 "C:\\repo\\a@b",
                 if cfg!(windows) {
@@ -2009,7 +2024,9 @@ mod tests {
                     "***@b"
                 },
             ),
-            ("C:/repo/a:b@c", "C:/repo/a:b@c"),
+            // A second `:`: no drive on Windows either; the short form, its
+            // first `:` before its first `@`, refused. (Shown whole before.)
+            ("C:/repo/a:b@c", "***@c"),
             ("u:p@h:t/r.git", "***@h:t/r.git"),
             ("c:repo:p@h:t", "***@h:t"),
             // git's short form: a password stands before the first `@`; an
@@ -2019,8 +2036,11 @@ mod tests {
                 "git@github.com:team/pkg@v2.git",
                 "git@github.com:team/pkg@v2.git",
             ),
-            ("host:dir/a@b", "host:dir/a@b"),
-            // A refused value is hidden before its last `@`.
+            ("git@host:dir/a@b", "git@host:dir/a@b"),
+            // A refused value is hidden before its last `@`: a `/` between
+            // the first `:` and the first `@` too. (Shown whole before.)
+            ("host:dir/a@b", "***@b"),
+            ("user:S3CR/3TXYZ@host:t", "***@host:t"),
             ("user:word@host:dir/a@b", "***@b"),
             ("user:wo@rd@host:team/r.git", "***@host:team/r.git"),
             ("@user:word@host:t", "***@host:t"),
@@ -2064,13 +2084,14 @@ mod tests {
                 assert_eq!(hide_git_userinfo(&text), shown, "{text:?}");
             }
         }
-        // `C:\repo\a@b` is a drive path on Windows, a password elsewhere.
+        // `C:\repo\a@b` is a drive path on Windows, refused elsewhere;
+        // `C:/repo/a:b@c` is refused on every system.
         assert_eq!(
             hide_git_userinfo("git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"),
             if cfg!(windows) {
-                "git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"
+                "git clone -- C:\\repo\\a@b `***@c` d"
             } else {
-                "git clone -- ***@b `C:/repo/a:b@c` d"
+                "git clone -- ***@b `***@c` d"
             }
         );
         // Git's output names the password apart from the URL: the scp
@@ -2322,16 +2343,18 @@ mod tests {
     /// `@` and its `host:path` after it (`user:password@host:path`) is
     /// refused before git runs, which would take the user for the host, and
     /// the message hides all before the last `@`. Every other `@` is one of
-    /// the user or the path, as git reads it: taken, and shown whole. On
-    /// Windows a value that starts with one character and `:` is a drive,
-    /// no short form. FAIL before: `user:word@host:path` was taken; then an
-    /// `@` of a path was refused as a password.
+    /// the user or the path, as git reads it: taken, and shown whole; with no
+    /// user in front, a `/` between the first `:` and the first `@` does not
+    /// make a path. On Windows a value that starts with one character and
+    /// `:` is a drive, no short form. FAIL before: `user:word@host:path` was
+    /// taken; then an `@` of a path was refused as a password; then
+    /// `user:S3CR/3TXYZ@host:path` and `host:dir/a@b` were taken.
     #[test]
     fn the_scp_form_holds_no_password() {
         const RULE: &str = "the form `user@host:path` holds no password (git would take what \
              stands before the first `:` for the host): leave the password out, \
-             and ssh asks for it or uses a key; a path whose first part holds an `@` \
-             is written `host:./pkg@v2` or as an `ssh://` URL; expected ";
+             and ssh asks for it or uses a key; a path with an `@` in it is written \
+             with the user in front (`git@host:dir/a@b`) or as an `ssh://` URL; expected ";
         // Refused as a password on every system, hidden to the last `@`.
         for (url, shown) in [
             (
@@ -2363,8 +2386,32 @@ mod tests {
                 "user:S3CR3TXYZ@example.com/team/pkg.git",
                 "***@example.com/team/pkg.git",
             ),
-            // A first part of the path with an `@`: written `host:./pkg@v2`.
+            // A path with an `@` and no user in front, and a password with a
+            // `/`: the same shape. FAIL before: taken and shown whole.
             ("host:pkg@v2", "***@v2"),
+            ("host:./pkg@v2", "***@v2"),
+            ("host:dir/a@b", "***@b"),
+            ("host:/srv/team@work/pkg.git", "***@work/pkg.git"),
+            ("example.com:team/x@v2", "***@v2"),
+            ("example.com:team/pkg@v2/x@y.git", "***@y.git"),
+            ("u:/x@h:p", "***@h:p"),
+            ("C:/repo/a:b@c", "***@c"),
+            (
+                "user:/S3CR3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            (
+                "user:S3CR/3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            (
+                "user:/S3CR3TXYZ@example.com/team/pkg.git",
+                "***@example.com/team/pkg.git",
+            ),
+            (
+                "u:/S3CR3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
             // One character and a second `:`: no drive on Windows either.
             (
                 "u:S3CR3TXYZ@example.com:team/pkg.git",
@@ -2379,7 +2426,6 @@ mod tests {
                 assert!(is_scp_form_with_password_on(url, windows), "{url}");
             }
         }
-        assert_eq!(validate_git_url("host:./pkg@v2"), Ok(()));
         // A drive on Windows is a value without a second `:`, as a Windows
         // path holds none; else git reads the short form there too.
         for (url, drive) in [
@@ -2397,7 +2443,7 @@ mod tests {
         let error = validate_git_url("@user:S3CR3TXYZ@example.com:p").unwrap_err();
         assert_eq!(error.url, "***@example.com:p");
         // A drive without a second `:`: a local path on Windows, the short
-        // form with a password elsewhere.
+        // form with a password elsewhere (or a Windows path, refused first).
         for (url, shown_elsewhere, shown_on_windows) in [
             (
                 "u:S3CR3TXYZ@example.com/p",
@@ -2411,7 +2457,12 @@ mod tests {
             let result = validate_git_url(url);
             assert_eq!(result.is_ok(), cfg!(windows), "{url}");
             if let Err(error) = &result {
-                assert!(error.reason.starts_with(RULE), "{url}: {}", error.reason);
+                let rule = if is_windows_absolute_path(url) {
+                    WINDOWS_PATH_RULE
+                } else {
+                    RULE
+                };
+                assert!(error.reason.starts_with(rule), "{url}: {}", error.reason);
             }
             let shown = if cfg!(windows) {
                 shown_on_windows
@@ -2426,21 +2477,22 @@ mod tests {
             "git@example.com:team/pkg.git",
             "example.com:team/pkg.git",
             "git@example.com:/srv/pkg.git",
-            // An `@` of the path: a `/` stands between the first `:` and the
-            // first `@`, or the `@` comes first.
-            "host:dir/a@b",
-            "example.com:team/x@v2",
+            // An `@` of the path: the user comes first.
+            "git@host:dir/a@b",
+            "git@example.com:team/x@v2",
             "git@github.com:team/pkg@v2.git",
             "git@example.com:x@other:p",
-            "example.com:team/pkg@v2/x@y.git",
-            "u:/x@h:p",
-            "C:/repo/x@h",
+            "git@example.com:team/pkg@v2/x@y.git",
+            "git@host:./pkg@v2",
         ] {
             assert_eq!(validate_git_url(url), Ok(()), "{url}");
             assert_eq!(display_url(url), url, "{url}");
             assert!(!is_scp_form_with_password(url), "{url}");
         }
         for url in [
+            // The `ssh://` spelling of a path with an `@` and no user.
+            "ssh://host/~/dir/a@b",
+            "ssh://host/srv/team@work/pkg.git",
             "https://user:word@example.com/pkg.git",
             "ssh://user:word@example.com/team/pkg.git",
             "file://user:word@example.com/srv/pkg.git",
@@ -2448,6 +2500,76 @@ mod tests {
         ] {
             assert_eq!(validate_git_url(url), Ok(()), "{url}");
         }
+    }
+
+    /// The message for a Windows drive path off Windows, up to its list of
+    /// the accepted forms.
+    const WINDOWS_PATH_RULE: &str = "is a Windows path, which git on this system would read \
+         as a host and a path: write a path of this system, starting with `/`, `./` or `../`, \
+         or a URL; expected ";
+
+    /// A Windows path (a letter, `:`, then `\` or `/` and no other `:`, or
+    /// one that starts with `\\`) is a folder on Windows, taken and shown
+    /// whole there. Elsewhere git would read a drive path as a host of one
+    /// letter and a path (and `\\server\share` as a file name of the current
+    /// directory), so it is refused before git runs with a message of its
+    /// own, and hidden before its last `@` as every refused value is. FAIL
+    /// before: `C:\Users\me\lib` and `C:/repo/x@h` were taken elsewhere, and
+    /// `C:\repo\x@h` was refused as a value with a password.
+    #[test]
+    fn a_windows_path_is_refused_off_windows() {
+        const UNC_RULE: &str = "is a Windows path, which git on this system would read \
+             as a file name of the current directory: write a path of this system, \
+             starting with `/`, `./` or `../`, or a URL; expected ";
+        for (url, shown_elsewhere) in [
+            (r"C:\Users\me\lib", r"C:\Users\me\lib"),
+            (r"C:\repo", r"C:\repo"),
+            ("C:/repo/x", "C:/repo/x"),
+            ("c:/repo/x", "c:/repo/x"),
+            (r"C:\my repos\pkg.git", r"C:\my repos\pkg.git"),
+            (r"C:\repo\x@h", "***@h"),
+            ("C:/repo/x@h", "***@h"),
+            // The same shape can hold a password: hidden all the same.
+            (
+                r"u:\S3CR3TXYZ@example.com/team/pkg.git",
+                "***@example.com/team/pkg.git",
+            ),
+            (r"\\server\share\x", r"\\server\share\x"),
+            (r"\\server\share\x@h", "***@h"),
+        ] {
+            assert!(is_windows_absolute_path(url), "{url}");
+            let result = validate_git_url(url);
+            if cfg!(windows) {
+                assert_eq!(result, Ok(()), "{url}");
+                assert_eq!(display_url(url), url, "{url}");
+            } else {
+                let error = result.unwrap_err();
+                let rule = if url.starts_with(r"\\") {
+                    UNC_RULE
+                } else {
+                    WINDOWS_PATH_RULE
+                };
+                assert!(error.reason.starts_with(rule), "{url}: {}", error.reason);
+                assert_eq!(error.url, shown_elsewhere, "{url}");
+                assert_eq!(display_url(url), shown_elsewhere, "{url}");
+            }
+        }
+        // No Windows path: read as before, on every system. A one-letter
+        // host is written as an `ssh://` URL.
+        for url in ["ssh://C/repo", "ssh://C/repo/x@h", "C:/repo:x"] {
+            assert!(!is_windows_absolute_path(url), "{url}");
+            assert_eq!(validate_git_url(url), Ok(()), "{url}");
+        }
+        // A second `:`: no Windows path, the short form with a password.
+        let error = validate_git_url(r"C:\repo\x@h:p").unwrap_err();
+        assert!(
+            error
+                .reason
+                .starts_with("the form `user@host:path` holds no password"),
+            "{}",
+            error.reason
+        );
+        assert_eq!(error.url, "***@h:p");
     }
 
     #[test]
@@ -2487,7 +2609,7 @@ mod tests {
             assert_eq!(validate_git_url(url), Ok(()), "{url:?} must be accepted");
         }
         // A Windows drive-letter path is a local path on Windows, and is
-        // checked as `host:path` elsewhere.
+        // refused as a Windows path elsewhere, whatever it holds.
         let drive = "C:\\my repos\\pkg.git";
         if cfg!(windows) {
             assert_eq!(
@@ -2496,7 +2618,7 @@ mod tests {
                 "{drive:?} must be accepted"
             );
         } else {
-            assert!(rejection_reason(drive).starts_with(RULE_SPACE));
+            assert!(rejection_reason(drive).starts_with(WINDOWS_PATH_RULE));
         }
         for url in [
             "https://example.com/my repos/pkg.git",
