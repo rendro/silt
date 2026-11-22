@@ -322,6 +322,11 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
         }
     } else if is_scheme_without_slashes(url) {
         "is a URL with its `//` left out: write `://` after the scheme".to_string()
+    } else if has_accepted_url_form(url) && is_scp_form_with_password(url) {
+        "the form `user@host:path` holds no password (git would take what stands \
+         before the first `:` for the host): leave the password out, and ssh asks \
+         for it or uses a key"
+            .to_string()
     } else if has_accepted_url_form(url) {
         match not_a_url(url) {
             None => return Ok(()),
@@ -402,6 +407,25 @@ fn is_scheme_without_slashes(url: &str) -> bool {
         .filter_map(|known| known.strip_suffix("://"))
         .any(|known| scheme.eq_ignore_ascii_case(known))
         && !rest.starts_with("//")
+}
+
+/// Whether `url`, which silt reads as the scp form (`user@host:path`),
+/// holds a `:` before its last `@`: a password, for which the form has
+/// no place. git takes what stands before the first `:` for the host,
+/// `user` of `user:word@host:path`, and the password for a part of the
+/// path. A URL with a scheme and a local path are not the scp form, nor
+/// on Windows a value that starts with one character and `:`, which git
+/// takes for a drive there (`u:word@host:path`).
+fn is_scp_form_with_password(url: &str) -> bool {
+    is_scp_form_with_password_on(url, cfg!(windows))
+}
+
+/// [`is_scp_form_with_password`] as it is on Windows (`windows`) or
+/// elsewhere.
+fn is_scp_form_with_password_on(url: &str, windows: bool) -> bool {
+    let scp_form = !is_local_git_url_on(url, windows)
+        && !GIT_URL_SCHEMES.iter().any(|scheme| url.starts_with(scheme));
+    scp_form && url.rfind('@').is_some_and(|last| url[..last].contains(':'))
 }
 
 /// The scheme of a URL written as `<scheme>://...` whose scheme is not
@@ -1395,8 +1419,9 @@ fn shown_command(args: &[&str]) -> String {
 /// repeats them: the URL as written, whole (a space in a password
 /// included); the user and password before an `@` of another form of it
 /// (`//user@host`); and the password apart from the URL, with its user
-/// or alone. (Git takes `user:word@host:path` for the host `user` and the
-/// path `word@host:path`, and may name that path.) A user alone with no
+/// or alone. (Git takes `u:word@host:path` on Windows for the drive `u:`
+/// and the path `word@host:path`, and may name that path; elsewhere such
+/// a value is refused before git runs.) A user alone with no
 /// `@` after it is left: git names itself `git`, as many a user is named.
 fn hide_repeated_userinfo(url: &str, text: &str) -> String {
     let Some(place) = userinfo_place(url) else {
@@ -2068,6 +2093,63 @@ mod tests {
         }
     }
 
+    /// The scp form has no place for a password: a `:` before its last
+    /// `@` is refused before git runs, which would take the user for the
+    /// host, and the message hides it. A user alone is accepted and shown.
+    /// On Windows a value that starts with one character and `:` is a
+    /// drive, no scp form. FAIL before: `user:word@host:path` was taken.
+    #[test]
+    fn the_scp_form_holds_no_password() {
+        for url in [
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "user:@example.com:team/pkg.git",
+            "user:S3CR:3TXYZ@example.com:team/pkg.git",
+            "user:S3CR@3TXYZ@example.com:team/pkg.git",
+            "ab:S3CR3TXYZ@example.com:team/pkg.git",
+            // An `@` in the path is taken for the end of a password too.
+            "example.com:team/S3CR3TXYZ@v2",
+        ] {
+            let error = validate_git_url(url).unwrap_err();
+            assert!(
+                error.reason.starts_with(
+                    "the form `user@host:path` holds no password (git would take what \
+                     stands before the first `:` for the host): leave the password out, \
+                     and ssh asks for it or uses a key; expected "
+                ),
+                "{url}: {}",
+                error.reason
+            );
+            assert!(error.url.starts_with("***@"), "{url}: {}", error.url);
+            assert!(!error.to_string().contains("3TX"), "{error}");
+        }
+        assert_eq!(
+            validate_git_url("user:S3CR3TXYZ@example.com:team/pkg.git")
+                .unwrap_err()
+                .url,
+            "***@example.com:team/pkg.git"
+        );
+        for url in [
+            "git@example.com:team/pkg.git",
+            "example.com:team/pkg.git",
+            "git@example.com:/srv/pkg.git",
+            "https://user:word@example.com/pkg.git",
+            "ssh://user:word@example.com/team/pkg.git",
+            "file://user:word@example.com/srv/pkg.git",
+            "./dir/user:word@host:path",
+        ] {
+            assert_eq!(validate_git_url(url), Ok(()), "{url}");
+        }
+        // A drive on Windows, the scp form elsewhere.
+        let one_letter = "u:word@example.com:team/pkg.git";
+        assert!(is_scp_form_with_password_on(one_letter, false));
+        assert!(!is_scp_form_with_password_on(one_letter, true));
+        assert_eq!(validate_git_url(one_letter).is_ok(), cfg!(windows));
+        for windows in [false, true] {
+            assert!(is_scp_form_with_password_on("ab:word@h:t", windows));
+            assert!(!is_scp_form_with_password_on("git@h:t", windows));
+        }
+    }
+
     #[test]
     fn git_url_accepts_scp_like_form_without_a_user() {
         for url in [
@@ -2293,7 +2375,7 @@ mod tests {
             ("fd:3", "fd::3"),
             ("example.com:pkg.git", "example.com::pkg.git"),
             ("git@example.com:pkg.git", "git@example.com::pkg.git"),
-            ("helper:git@host:path", "helper::git@host:path"),
+            ("helper:path", "helper::path"),
         ] {
             assert_eq!(
                 validate_git_url(host_path),

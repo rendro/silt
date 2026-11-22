@@ -434,6 +434,102 @@ fn malformed_git_urls_are_clean_manifest_errors() {
     }
 }
 
+/// A value git would read in another way than it reads is refused
+/// before git runs: a URL of any scheme with its `//` left out (git takes
+/// `ssh:`, `git:`, `file:` for a host), and the scp form with a password
+/// (git takes the user for the host and sends the password to it as a
+/// path), which the message hides. `git` is not on PATH, so on the
+/// unfixed code these reached `git` only to find it missing: no network.
+/// The same scp form with a user alone reaches git. FAIL before: each was
+/// taken and reached git.
+#[test]
+fn values_git_reads_otherwise_are_refused_before_git_runs() {
+    const RULE_SLASHES: &str = "is a URL with its `//` left out: write `://` after the scheme";
+    const RULE_SCP_PASSWORD: &str = "the form `user@host:path` holds no password \
+        (git would take what stands before the first `:` for the host): \
+        leave the password out, and ssh asks for it or uses a key";
+    let cases: &[(&str, &str, &str)] = &[
+        ("file:/srv/repo.git", "file:/srv/repo.git", RULE_SLASHES),
+        ("FILE:srv/repo.git", "FILE:srv/repo.git", RULE_SLASHES),
+        ("ssh:team/pkg.git", "ssh:team/pkg.git", RULE_SLASHES),
+        (
+            "ssh:/git@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            RULE_SLASHES,
+        ),
+        ("git:team/pkg.git", "git:team/pkg.git", RULE_SLASHES),
+        (
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+    ];
+    let ws = fresh_workspace("read_otherwise");
+    let no_git = ws.join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+    let run = |cwd: &Path, args: &[&str]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+        cmd.args(args)
+            .current_dir(cwd)
+            .env("XDG_CACHE_HOME", ws.join("cache"))
+            .env("LOCALAPPDATA", ws.join("cache"))
+            .env("PATH", &no_git);
+        isolate_git(&mut cmd, &ws);
+        cmd.output().expect("failed to spawn silt binary")
+    };
+    for &(url, shown, rule) in cases {
+        let app = ws.join("app");
+        let _ = fs::remove_dir_all(&app);
+        write_package(
+            &app,
+            "app",
+            &[git_dep("evil", url)],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let adder = ws.join("adder");
+        let _ = fs::remove_dir_all(&adder);
+        write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
+        for (cwd, args) in [
+            (&app, vec!["check"]),
+            (
+                &adder,
+                vec!["add", "evil", "--git", url, "--branch", "main"],
+            ),
+        ] {
+            let out = run(cwd, &args);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let context = format!("{args:?} with {url:?}");
+            assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
+            assert!(
+                stderr.contains(&format!("`{shown}`"))
+                    && stderr.contains(&format!(": {rule}; expected ")),
+                "{context}: {stderr}"
+            );
+            assert!(!stderr.contains("3TX"), "{context}: {stderr}");
+        }
+    }
+    // A user alone is the scp form git reads as written: it is taken and
+    // goes to git, which is not there.
+    let app = ws.join("app");
+    let _ = fs::remove_dir_all(&app);
+    let url = "git@example.com:team/pkg.git";
+    write_package(
+        &app,
+        "app",
+        &[git_dep("lib", url)],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let out = run(&app, &["check"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("invalid git URL") && stderr.contains(url),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── 5. Untrusted text in error output ─────────────────────────────────
 
 /// A `branch`, `tag` or `rev` value is echoed in the error when the
