@@ -2555,9 +2555,10 @@ mod tests {
 
     /// A TLS connection takes one descriptor of its own beside its socket
     /// (the handle of the socket that shuts it down without its lock), no
-    /// wake descriptor for its whole life: 64 connections take 64. FAILS
-    /// on 0.43.0: each held an eventfd too (a pipe, two, on macOS), 128 on
-    /// Linux.
+    /// wake descriptor for its whole life: 32 connections take 32. FAILS
+    /// on 0.43.0: each held an eventfd too (a pipe, two, on macOS), 64 on
+    /// Linux. (32, not more: the test holds some five descriptors a
+    /// connection, and macOS allows a process 256 by default.)
     ///
     /// The descriptors counted are the whole process's, and the other
     /// tests of this binary open and close theirs at the same time: the
@@ -2568,8 +2569,8 @@ mod tests {
     #[cfg(unix)]
     fn a_tls_connection_holds_no_wake_descriptor() {
         if std::env::var_os(COUNTING).is_some() {
-            let taken = descriptors_of_tls_connections(64);
-            println!("{COUNTING}: 64 connections took {taken}");
+            let taken = descriptors_of_tls_connections(32);
+            println!("{COUNTING}: 32 connections took {taken}");
             return;
         }
         // The test's name as the test binary gives it, without the crate.
@@ -2585,7 +2586,7 @@ mod tests {
         let errors = String::from_utf8_lossy(&child.stderr);
         assert!(child.status.success(), "{printed}\n{errors}");
         assert!(
-            printed.contains(&format!("{COUNTING}: 64 connections took")),
+            printed.contains(&format!("{COUNTING}: 32 connections took")),
             "the child ran no test named {name}:\n{printed}\n{errors}"
         );
     }
@@ -2610,7 +2611,7 @@ mod tests {
         let before = open_descriptors();
         // (Each `held` is kept to the count: dropped as its connection is
         // made, it hid the descriptor the connection took, and 0.43.0's
-        // 128 came out 64.)
+        // two a connection came out one.)
         let conns: Vec<_> = (parts.into_iter())
             .map(|(sock, held, shutter)| {
                 let conn = TcpStreamHandle::whole(0, &held, &shutter, move || {
