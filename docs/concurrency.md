@@ -1044,6 +1044,84 @@ Key points:
   path — design for outcomes-as-values instead, and keep `task.join`
   for awaiting clean completion.
 
+### Workers that fail
+
+A worker can fail in two ways: with an outcome it expected, or with a bug.
+What a program does about each:
+
+- **An expected failure is a value.** A task whose work can fail returns a
+  `Result` (or sends one on a channel, as above), and whoever joins it
+  matches on it.
+- **A server's handler that fails gets a `500`.** `http.serve` answers
+  `500` to a request whose handler fails, writes the failure to stderr as
+  one line, and goes on serving
+  ([`http.serve`](stdlib/http.md#connections-and-handlers)).
+- **A worker of the program's own that dies of a bug does not stop the
+  program.** The other tasks go on. The failure is reported when the program
+  ends, and `silt run` exits with status 1, unless the task was cancelled:
+  a cancel counts as handling it
+  ([Failures that nobody joins](#failures-that-nobody-joins)).
+- **To restart a worker, watch its heartbeat.** The worker sends a beat
+  between its steps, and a supervisor restarts it when no beat came within
+  a tolerance. A worker that is slow but alive keeps beating, so it is not
+  restarted however long its work takes:
+
+```silt
+import channel
+import task
+import time
+
+type Msg {
+  Beat,
+  Done(String),
+}
+
+-- Six steps of 200 ms, with a heartbeat after each: slow, but alive.
+-- The first try has a bug and dies after its second step.
+fn work(attempt: Int, left: Int, out: Channel(Msg)) -> String {
+  when left > 0 else {
+    return "done on try {attempt}"
+  }
+  time.sleep(time.ms(200))
+  channel.send(out, Beat)
+  when attempt > 1 || left > 5 else {
+    panic("a bug")
+  }
+  work(attempt, left - 1, out)
+}
+
+fn watch(out: Channel(Msg), worker: task.Handle(()), attempt: Int) -> String {
+  match channel.receive_timeout(out, time.ms(1000)) {
+    channel.Message(Beat) -> watch(out, worker, attempt)
+    channel.Message(Done(result)) -> result
+    _ -> {
+      -- No heartbeat within the tolerance: the worker died or is stuck.
+      task.cancel(worker)
+      println("no heartbeat for 1 s, restarting") -- no heartbeat for 1 s, restarting
+      supervise(attempt + 1)
+    }
+  }
+}
+
+fn supervise(attempt: Int) -> String {
+  let out = channel.new(16)
+  let worker = task.spawn { -> channel.send(out, Done(work(attempt, 6, out))) }
+  watch(out, worker, attempt)
+}
+
+fn main() {
+  println(supervise(1)) -- done on try 2
+}
+```
+
+The work of the second try takes 1.2 s in all, longer than the tolerance,
+and it is not restarted, since each of its steps beats within 1 s. What
+the supervisor cannot do: it notices a death one tolerance late, and the
+program does not get the failure's message (`a bug` is never seen; the
+cancel dismisses it). A worker cannot beat while it is inside one call, so
+a call that may hang (a read from a peer that went quiet) needs a bound of
+its own: [`task.deadline`](#deadlines-taskdeadlinedur-fn).
+
 
 ## 6. Runtime Model
 
