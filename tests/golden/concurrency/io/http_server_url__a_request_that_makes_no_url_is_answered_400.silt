@@ -1,11 +1,14 @@
 -- timeout: 30
 -- requires-feature: http
--- A request whose target or Host makes no URL is answered 400 by the
--- server, and the handler is not called: a Host that is more than a host
--- and a port, a target with an escape that is none or no UTF-8 text, a
--- target of another scheme. `OPTIONS *` is answered by the server itself:
--- 204 with the methods it serves. An HTTP/1.0 request without a Host has
--- the address the client reached as its host.
+-- A request whose target or Host makes no URL, or one that two readers
+-- could take differently, is answered 400 by the server, and the handler
+-- is not called: a Host that is more than a host and a port, a target with
+-- an escape that is none or no UTF-8 text, a fragment in the target, a
+-- target in absolute form of another scheme than http, or whose host and
+-- port are not the Host's. A Host of the same host and port in another
+-- spelling is taken. `OPTIONS *` is answered by the server itself: 204
+-- with the methods it serves. An HTTP/1.0 request without a Host has the
+-- address the client reached as its host, or the host of its target.
 import bytes
 import http
 import list
@@ -55,6 +58,16 @@ fn main() {
     ("an escape that is none", "GET /%zz HTTP/1.1|Host: h|Connection: close||"),
     ("an escape that is no UTF-8", "GET /caf%E9 HTTP/1.1|Host: h|Connection: close||"),
     ("another scheme", "GET ftp://h/x HTTP/1.1|Host: h|Connection: close||"),
+    ("https", "GET https://h.test/x HTTP/1.1|Host: h.test|Connection: close||"),
+    ("https to port 443", "GET https://h.test:443/x HTTP/1.1|Host: h.test:443|Connection: close||"),
+    ("a fragment", "GET /x#top HTTP/1.1|Host: h|Connection: close||"),
+    ("a fragment after a query", "GET /x?q=1#top HTTP/1.1|Host: h|Connection: close||"),
+    ("a fragment in a target in absolute form", "GET http://h.test/x#top HTTP/1.1|Host: h.test|Connection: close||"),
+    ("a target in absolute form for another host", "GET http://other.test/x HTTP/1.1|Host: h.test|Connection: close||"),
+    ("a target in absolute form for another port", "GET http://h.test:8080/x HTTP/1.1|Host: h.test|Connection: close||"),
+    ("a target in absolute form with a Host that is more than a host", "GET http://h.test/x HTTP/1.1|Host: u@h.test|Connection: close||"),
+    ("a target in absolute form and its Host in another spelling", "GET http://h.test/x HTTP/1.1|Host: H.TEST:80|Connection: close||"),
+    ("HTTP/1.0 in absolute form without a Host", "GET http://h.test/old HTTP/1.0||"),
     ("OPTIONS *", "OPTIONS * HTTP/1.1|Host: h|Connection: close||"),
     ("GET *", "GET * HTTP/1.1|Host: h|Connection: close||"),
     ("HTTP/1.0 without a Host", "GET /old HTTP/1.0||"),

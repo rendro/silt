@@ -14,6 +14,28 @@ an escape that is no UTF-8
   the client: HTTP/1.1 400 Bad Request [] Bad Request
 another scheme
   the client: HTTP/1.1 400 Bad Request [] Bad Request
+https
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+https to port 443
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a fragment
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a fragment after a query
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a fragment in a target in absolute form
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a target in absolute form for another host
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a target in absolute form for another port
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a target in absolute form with a Host that is more than a host
+  the client: HTTP/1.1 400 Bad Request [] Bad Request
+a target in absolute form and its Host in another spelling
+  the handler: http h.test /x
+  the client: HTTP/1.1 200 OK [] ok
+HTTP/1.0 in absolute form without a Host
+  the handler: http h.test /old
+  the client: HTTP/1.1 200 OK [] ok
 OPTIONS *
   the client: HTTP/1.1 204 No Content [Allow: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] 
 GET *

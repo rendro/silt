@@ -5,8 +5,8 @@
 -- exact (`%2F` is a `/` inside one segment, `..` is taken out before the
 -- handler sees it, a `/` at the end is a last ""), reads the query with
 -- url.query, and prints url.to_string. A Request shows its url in the
--- inspect form. The scheme is always http: an https target in absolute
--- form is written as http, its port as written; a fragment is dropped.
+-- inspect form. A target in absolute form is that URL, with a Host of the
+-- same host and port (port 80 the same as none).
 -- The requests are sent by hand, so that their targets are as written.
 import bytes
 import http
@@ -67,11 +67,9 @@ fn main() {
     ("GET /files/../users/7?tag=a&tag=b+c HTTP/1.1", host),
     ("GET /users/%7eann HTTP/1.1", host),
     ("GET /show?q=1 HTTP/1.1", "Host: Example.TEST:80|"),
-    ("GET http://elsewhere.test/users/9 HTTP/1.1", host),
-    ("GET https://elsewhere.test/users/10 HTTP/1.1", host),
-    ("GET https://elsewhere.test:443/users/11 HTTP/1.1", host),
-    ("GET https://elsewhere.test:80/users/12 HTTP/1.1", host),
-    ("GET /users/13#frag HTTP/1.1", host),
+    ("GET http://elsewhere.test/users/9 HTTP/1.1", "Host: elsewhere.test|"),
+    ("GET http://Elsewhere.TEST:80/users/10/ HTTP/1.1", "Host: elsewhere.test|"),
+    ("GET http://example.test:8080/users/11?a=1 HTTP/1.1", host),
   ] |> list.each { (line, headers) ->
     println(line)
     println("  the client: {ask(port, line, headers)}")

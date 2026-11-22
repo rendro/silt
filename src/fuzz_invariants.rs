@@ -1337,9 +1337,11 @@ fn check_url_changes(u: &crate::url::Url, text: &str) -> Result<(), String> {
 /// What the server makes of the target and headers of a request that it
 /// read (`http.serve`): `Request.url`, or a 400. A URL it makes reads
 /// back as itself, is of `http`, names a host, and has no user, password
-/// or fragment. For a target in origin form (`/x?y`) its host and port are
-/// the `Host` header's (nothing of the target can move them), and its path
-/// and query are the target's own, normalised.
+/// or fragment; it is made of a target with no `#`, and of a target in
+/// absolute form only when that is of `http`. Its host and port are the
+/// `Host` header's when the request has one, in either form: the URL and
+/// the header never name two hosts. For a target in origin form (`/x?y`)
+/// its path and query are the target's own, normalised.
 #[cfg(feature = "http")]
 pub fn check_request_url(target: &str, headers: &[(String, String)]) -> Result<(), String> {
     let Some(url) = crate::builtins::http::request_url(target, headers, "127.0.0.1:9") else {
@@ -1356,8 +1358,8 @@ pub fn check_request_url(target: &str, headers: &[(String, String)]) -> Result<(
             "{target:?} made {url:?}, with a user, password or fragment"
         ));
     }
-    if !target.starts_with('/') {
-        return Ok(());
+    if target.contains('#') {
+        return Err(format!("{target:?}, with a fragment, made {url:?}"));
     }
     // The host and port are the Host header's, nothing of the target's.
     if let Some((_, host)) = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("host")) {
@@ -1365,6 +1367,15 @@ pub fn check_request_url(target: &str, headers: &[(String, String)]) -> Result<(
         if named.as_ref().map(|u| (u.host(), u.port())) != Some((url.host(), url.port())) {
             return Err(format!("{target:?} with Host {host:?} made {url:?}"));
         }
+    }
+    if !target.starts_with('/') {
+        let http = target
+            .get(..7)
+            .is_some_and(|s| s.eq_ignore_ascii_case("http://"));
+        return match http {
+            true => Ok(()),
+            false => Err(format!("{target:?}, not of http, made {url:?}")),
+        };
     }
     // The path and query are the target's own, normalised.
     let alone = crate::url::parse(&format!("http://h{target}")).map_err(|e| e.to_string())?;
@@ -1699,12 +1710,38 @@ mod tests {
             ("/caf%E9?q=%zz", host("[::1]:8080")),
             ("//x", host("h")),
             ("/x#frag", host("h")),
+            ("/x?q#", host("h")),
             ("http://u:p@o.test/x", host("h")),
             ("HTTPS://o.test:443/x#f", host("h")),
+            ("http://o.test/x#f", host("o.test")),
             ("http://o.test/x", host("u@bad")),
+            ("http://o.test/x", host("other.test")),
+            ("http://o.test:8080/x", host("o.test")),
+            ("HTTP://O.test:80/x", host("o.TEST")),
+            ("http://o.test/x", vec![]),
+            ("ws://o.test/x", host("o.test")),
         ] {
             check_request_url(target, &headers).unwrap();
         }
+    }
+
+    /// The requests of the seeds of the fuzz target `fuzz_http_request`
+    /// make a URL that holds what the server promises, or a 400.
+    #[cfg(feature = "http")]
+    #[test]
+    fn the_request_url_check_holds_on_the_http_request_seeds() {
+        use crate::http_wire::{Next, Reader};
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/corpus/fuzz_http_request");
+        let mut requests = 0;
+        for seed in std::fs::read_dir(dir).expect("the seeds") {
+            let bytes = std::fs::read(seed.expect("a seed").path()).expect("its bytes");
+            let mut reader = Reader::new(&bytes[..]);
+            while let Next::Request(request) = reader.next(&mut |_| Ok(())) {
+                check_request_url(&request.target, &request.headers).unwrap();
+                requests += 1;
+            }
+        }
+        assert!(requests > 10, "only {requests} requests in the seeds");
     }
 
     #[cfg(feature = "http")]
