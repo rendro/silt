@@ -447,7 +447,8 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
     const RULE_SLASHES: &str = "is a URL with its `//` left out: write `://` after the scheme";
     const RULE_SCP_PASSWORD: &str = "the form `user@host:path` holds no password \
         (git would take what stands before the first `:` for the host): \
-        leave the password out, and ssh asks for it or uses a key";
+        leave the password out, and ssh asks for it or uses a key; \
+        a path whose first part holds an `@` is written `host:./pkg@v2` or as an `ssh://` URL";
     let cases: &[(&str, &str, &str)] = &[
         ("file:/srv/repo.git", "file:/srv/repo.git", RULE_SLASHES),
         ("FILE:srv/repo.git", "FILE:srv/repo.git", RULE_SLASHES),
@@ -463,10 +464,13 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             "***@example.com:team/pkg.git",
             RULE_SCP_PASSWORD,
         ),
-        // A `:` before the first `@` and `host:path` after it is a
-        // password: one with an `@` in it, one before a path with an `@`,
-        // one whose path has a `:`. A refused value is hidden before its
-        // last `@`, in the message and the line of silt.toml.
+        // The first `:` before the first `@`, and no `/` between them, is
+        // a password: one with an `@` in it, one before a path with an `@`,
+        // one whose path has a `:`, one with no path `:` at all (a URL
+        // with its scheme forgotten), a first part of a path with an `@`,
+        // and one-character users with a second `:` (no drive on Windows
+        // either). A refused value is hidden before its last `@`, in the
+        // message and the line of silt.toml.
         (
             "user:S3CR@3TXYZ@example.com:team/pkg.git",
             "***@example.com:team/pkg.git",
@@ -478,6 +482,23 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             RULE_SCP_PASSWORD,
         ),
         ("host:S3CR3TXYZ@b:c", "***@b:c", RULE_SCP_PASSWORD),
+        (
+            "user:S3CR3TXYZ@example.com",
+            "***@example.com",
+            RULE_SCP_PASSWORD,
+        ),
+        (
+            "user:S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        ("example.com:S3CR3TXYZ@v2", "***@v2", RULE_SCP_PASSWORD),
+        (
+            "u:S3CR3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        ("C:\\repo\\S3CR3TXYZ@x:p", "***@x:p", RULE_SCP_PASSWORD),
         // Refused for its empty user: hidden all the same.
         (
             "@user:S3CR3TXYZ@example.com:p",
@@ -530,12 +551,11 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             assert!(!stderr.contains("3TX"), "{context}: {stderr}");
         }
     }
-    // A drive shape: on Windows a local path, which git is given; elsewhere
-    // the short form with a password, refused and hidden. FAIL before: it
-    // was refused and shown whole.
+    // A drive without a second `:`: on Windows a local path, which git is
+    // given; elsewhere the short form with a password, refused and hidden.
     for (url, shown) in [
-        ("u:/S3CR3TXYZ@example.com:team/p", "***@example.com:team/p"),
-        ("C:\\repo\\S3CR3TXYZ@x:p", "***@x:p"),
+        ("u:S3CR3TXYZ@example.com/p", "***@example.com/p"),
+        ("C:\\repo\\S3CR3TXYZ@x", "***@x"),
     ] {
         let app = ws.join("app");
         let _ = fs::remove_dir_all(&app);
@@ -562,17 +582,18 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
     // written: they are taken, shown whole (the line of silt.toml too),
     // and go to git, which is not there. FAIL before (the `@` of a path):
     // refused, or shown `***@v2.git`. The rows with the marker in them
-    // are shown whole ON PURPOSE (main hid them): as git reads them they
-    // hold no password, but a host `user` and a path (`user:S3CR3TXYZ@...`
-    // without a `:` after its `@`), or an `@` of the path.
+    // are shown whole ON PURPOSE: as git reads them they hold no password
+    // but an `@` of the path (a `/` between the first `:` and the first
+    // `@`; main hid `example.com:team/S3CR3TXYZ@v2`), or a user before it
+    // (main hid `git@example.com:S3CR3TXYZ@other:p`); `u:/S3CR3TXYZ@...` is
+    // shown whole as on main.
     for url in [
         "git@example.com:team/pkg.git",
         "git@example.com:team/pkg@v2.git",
         "example.com:dir/a@b",
-        "user:S3CR3TXYZ@example.com",
-        "user:S3CR3TXYZ@example.com/team/pkg.git",
         "example.com:team/S3CR3TXYZ@v2",
         "git@example.com:S3CR3TXYZ@other:p",
+        "u:/S3CR3TXYZ@example.com:team/p",
     ] {
         let app = ws.join("app");
         let _ = fs::remove_dir_all(&app);
@@ -639,6 +660,62 @@ fn a_multi_line_git_value_is_hidden_on_each_of_its_lines() {
         assert!(all.contains("@example.com"), "{dep}: {all}");
         for piece in ["S3C", "3CR", "CR3", "R3T", "3TX", "TXY", "XYZ"] {
             assert!(!all.contains(piece), "{dep}: `{piece}` is shown: {all}");
+        }
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A `git` key at the start of a line, as a `[dependencies.lib]` table
+/// writes it, is the key `git` for the shown line of silt.toml: its
+/// value's user and password are hidden there, whatever the key's
+/// spelling, with `\n` and `\r\n` line ends. `git` is not on PATH.
+/// FAIL before: the line was shown as written.
+#[test]
+fn a_git_key_at_the_start_of_a_line_is_hidden_in_the_table_form() {
+    let ws = fresh_workspace("key_at_line_start");
+    let no_git = ws.join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+    for key in ["git", "\"git\"", "'git'", "\"g\\u0069t\""] {
+        for url in [
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "https://user:S3CR 3TXYZ@example.com/pkg.git",
+        ] {
+            for eol in ["\n", "\r\n"] {
+                let app = ws.join("app");
+                let _ = fs::remove_dir_all(&app);
+                fs::create_dir_all(app.join("src")).unwrap();
+                fs::write(app.join("src").join("main.silt"), "fn main() {}\n").unwrap();
+                let manifest = [
+                    "[package]",
+                    "name = \"app\"",
+                    "version = \"0.1.0\"",
+                    "",
+                    "[dependencies.lib]",
+                    &format!("{key} = {}", toml_str(url)),
+                    "tag = \"v1\"",
+                    "",
+                ]
+                .join(eol);
+                fs::write(app.join("silt.toml"), manifest).unwrap();
+                let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+                cmd.arg("check")
+                    .current_dir(&app)
+                    .env("XDG_CACHE_HOME", ws.join("cache"))
+                    .env("LOCALAPPDATA", ws.join("cache"))
+                    .env("PATH", &no_git);
+                isolate_git(&mut cmd, &ws);
+                let out = cmd.output().expect("failed to spawn silt binary");
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let context = format!("{key} = {url:?} ({eol:?})");
+                assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
+                assert!(
+                    stderr.contains(&format!("{key} = \"")),
+                    "{context}: {stderr}"
+                );
+                for piece in ["S3C", "3CR", "CR3", "R3T", "3TX", "TXY", "XYZ"] {
+                    assert!(!stderr.contains(piece), "{context}: `{piece}`: {stderr}");
+                }
+            }
         }
     }
     let _ = fs::remove_dir_all(&ws);
@@ -1106,6 +1183,9 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         ("user:S3CR@3TXYZ@127.0.0.1:team/pkg.git".to_string(), false),
         (format!("host:{marker}@b:c"), false),
         (format!("@user:{marker}@127.0.0.1:p"), false),
+        (format!("user:{marker}@127.0.0.1"), false),
+        (format!("user:{marker}@127.0.0.1/team/pkg.git"), false),
+        (format!("example.com:{marker}@v2"), false),
         (format!("ssh:user:{marker}@127.0.0.1:team/pkg.git"), false),
         (format!("git:user:{marker}@127.0.0.1:team/pkg.git"), false),
         (format!("https:/user:{marker}@127.0.0.1:1/pkg.git"), false),
