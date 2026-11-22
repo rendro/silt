@@ -2548,17 +2548,55 @@ mod tests {
             .count()
     }
 
+    /// Set in the process that `a_tls_connection_holds_no_wake_descriptor`
+    /// starts to count the descriptors.
+    #[cfg(unix)]
+    const COUNTING: &str = "SILT_TEST_COUNTS_DESCRIPTORS";
+
     /// A TLS connection takes one descriptor of its own beside its socket
     /// (the handle of the socket that shuts it down without its lock), no
-    /// wake descriptor for its whole life: 64 connections take 64. FAILS
-    /// on 0.43.0: each held an eventfd too (a pipe, two, on macOS), 128 on
-    /// Linux.
+    /// wake descriptor for its whole life: 32 connections take 32. FAILS
+    /// on 0.43.0: each held an eventfd too (a pipe, two, on macOS), 64 on
+    /// Linux. (32, not more: the test holds some five descriptors a
+    /// connection, and macOS allows a process 256 by default.)
+    ///
+    /// The descriptors counted are the whole process's, and the other
+    /// tests of this binary open and close theirs at the same time: the
+    /// count is made in a process of this binary that runs this test
+    /// alone. (Made here it came out less than the count before, or more
+    /// than the connections took.)
     #[test]
     #[cfg(unix)]
     fn a_tls_connection_holds_no_wake_descriptor() {
+        if std::env::var_os(COUNTING).is_some() {
+            let taken = descriptors_of_tls_connections(32);
+            println!("{COUNTING}: 32 connections took {taken}");
+            return;
+        }
+        // The test's name as the test binary gives it, without the crate.
+        let path = module_path!();
+        let path = path.split_once("::").map_or(path, |(_, path)| path);
+        let name = format!("{path}::a_tls_connection_holds_no_wake_descriptor");
+        let child = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+            .args([name.as_str(), "--exact", "--nocapture", "--test-threads=1"])
+            .env(COUNTING, "1")
+            .output()
+            .expect("the test binary runs");
+        let printed = String::from_utf8_lossy(&child.stdout);
+        let errors = String::from_utf8_lossy(&child.stderr);
+        assert!(child.status.success(), "{printed}\n{errors}");
+        assert!(
+            printed.contains(&format!("{COUNTING}: 32 connections took")),
+            "the child ran no test named {name}:\n{printed}\n{errors}"
+        );
+    }
+
+    /// How many descriptors `n` TLS-shaped connections take beside their
+    /// sockets; asserts it is about `n`. Run in a process alone.
+    #[cfg(unix)]
+    fn descriptors_of_tls_connections(n: usize) -> usize {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
-        let n = 64;
         let mut kept = Vec::new();
         let mut parts = Vec::new();
         for _ in 0..n {
@@ -2571,12 +2609,16 @@ mod tests {
             parts.push((sock, held, shutter));
         }
         let before = open_descriptors();
+        // (Each `held` is kept to the count: dropped as its connection is
+        // made, it hid the descriptor the connection took, and 0.43.0's
+        // two a connection came out one.)
         let conns: Vec<_> = (parts.into_iter())
             .map(|(sock, held, shutter)| {
-                TcpStreamHandle::whole(0, &held, &shutter, move || {
+                let conn = TcpStreamHandle::whole(0, &held, &shutter, move || {
                     Ok(Box::new(sock) as Box<dyn ReadWrite>)
                 })
-                .expect("a connection")
+                .expect("a connection");
+                (conn, held)
             })
             .collect();
         let taken = open_descriptors() - before;
@@ -2586,6 +2628,7 @@ mod tests {
             taken <= n + n / 4,
             "{n} TLS connections took {taken} descriptors of their own"
         );
+        taken
     }
 
     /// A connection that is one object (TLS) is shut down while a read
