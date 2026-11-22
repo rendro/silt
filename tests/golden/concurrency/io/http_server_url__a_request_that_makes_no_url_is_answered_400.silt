@@ -45,6 +45,21 @@ fn ask(port: Int, request: String) -> String {
   "{status} [{allow}] {body}"
 }
 
+-- The status of every response to `request`, sent on one connection.
+fn statuses(port: Int, request: String) -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { return "cannot connect" }
+  let _ = tcp.write(conn, bytes.from_string(string.replace(request, "|", "{cr}\n")))
+  let answer = bytes.to_string(read_all(conn, bytes.empty())) |> result.unwrap_or("(no text)")
+  tcp.close(conn)
+  -- (A body has no line end, so a response can start inside a line.)
+  answer
+    |> string.split("HTTP/1.1 ")
+    |> list.drop(1)
+    |> list.map { r -> string.split(r, "{cr}\n") |> list.first |> option.unwrap_or("?") }
+    |> string.join(", ")
+}
+
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let port = tcp.local_port(listener)
@@ -75,6 +90,16 @@ fn main() {
     println(what)
     let said = ask(port, request) |> string.replace("127.0.0.1:{port}", "127.0.0.1:PORT")
     println("  the client: {said}")
+  }
+  -- After one of these 400s the connection stays usable: the request was
+  -- read whole.
+  [
+    ("a fragment, then a request on the same connection", "GET /x#top HTTP/1.1|Host: h||GET /next HTTP/1.1|Host: h|Connection: close||"),
+    ("https, then a request on the same connection", "GET https://h/x HTTP/1.1|Host: h||GET /next HTTP/1.1|Host: h|Connection: close||"),
+    ("another host, with a body, then a request on the same connection", "POST http://other.test/x HTTP/1.1|Host: h|Content-Length: 3||abcGET /next HTTP/1.1|Host: h|Connection: close||"),
+  ] |> list.each { (what, request) ->
+    println(what)
+    println("  the client: {statuses(port, request)}")
   }
   task.cancel(server)
 }

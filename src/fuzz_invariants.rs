@@ -1361,9 +1361,23 @@ pub fn check_request_url(target: &str, headers: &[(String, String)]) -> Result<(
     if target.contains('#') {
         return Err(format!("{target:?}, with a fragment, made {url:?}"));
     }
-    // The host and port are the Host header's, nothing of the target's.
+    // The host and port are the Host header's, nothing of the target's,
+    // and the Host is one the server takes in a request of its own: a host
+    // and a port, nothing more.
     if let Some((_, host)) = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("host")) {
         let named = crate::url::parse(&format!("http://{host}/")).ok();
+        let alone = named.as_ref().is_some_and(|u| {
+            u.user().is_empty()
+                && u.password().is_empty()
+                && u.path() == "/"
+                && u.query_text().is_empty()
+                && u.fragment().is_empty()
+        });
+        if !alone {
+            return Err(format!(
+                "{target:?} with Host {host:?}, which is more than a host, made {url:?}"
+            ));
+        }
         if named.as_ref().map(|u| (u.host(), u.port())) != Some((url.host(), url.port())) {
             return Err(format!("{target:?} with Host {host:?} made {url:?}"));
         }
@@ -1715,6 +1729,10 @@ mod tests {
             ("HTTPS://o.test:443/x#f", host("h")),
             ("http://o.test/x#f", host("o.test")),
             ("http://o.test/x", host("u@bad")),
+            ("http://o.test/x", host("u@o.test")),
+            ("http://o.test/x", host("o.test/zz")),
+            ("http://o.test/x", host("o.test?x")),
+            ("http://o.test/x", host("o.test#x")),
             ("http://o.test/x", host("other.test")),
             ("http://o.test:8080/x", host("o.test")),
             ("HTTP://O.test:80/x", host("o.TEST")),

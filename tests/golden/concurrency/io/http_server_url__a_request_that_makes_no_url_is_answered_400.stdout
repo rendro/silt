@@ -43,3 +43,12 @@ GET *
 HTTP/1.0 without a Host
   the handler: http 127.0.0.1 /old
   the client: HTTP/1.1 200 OK [] ok
+a fragment, then a request on the same connection
+  the handler: http h /next
+  the client: 400 Bad Request, 200 OK
+https, then a request on the same connection
+  the handler: http h /next
+  the client: 400 Bad Request, 200 OK
+another host, with a body, then a request on the same connection
+  the handler: http h /next
+  the client: 400 Bad Request, 200 OK
