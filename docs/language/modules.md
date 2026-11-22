@@ -334,9 +334,10 @@ without `//` is refused as a URL with its `//` left out, so a host named
 `ssh`, `git` or `file` is written as an `ssh://` URL
 (`ssh://git/~/team/pkg.git` for `git:team/pkg.git`). The form
 `user@host:path` holds no password, as git would take the user for the
-host: a value of that form with a `:` before its last `@` is refused (a
+host: a value of that form with a `:` before its first `@` is refused (a
 value that starts with one character and `:` is a drive on Windows, not
-this form). A message shows no user or password of a git URL
+this form). An `@` of the path is taken as git takes it
+(`git@host:team/pkg@v2.git`). A message shows no user or password of a git URL
 (`https://***@host/repo.git`, `***@host:path`). After adding,
 imports from the dependency package work exactly like local modules. `silt remove <name>` takes one out of `silt.toml`
 and `silt.lock` again.

@@ -410,8 +410,8 @@ fn is_scheme_without_slashes(url: &str) -> bool {
 }
 
 /// Whether `url`, which silt reads as the scp form (`user@host:path`),
-/// holds a `:` before its last `@`: a password, for which the form has
-/// no place. git takes what stands before the first `:` for the host,
+/// holds a user and password ([`short_form_userinfo_end`]: a `:` before
+/// its first `@`), for which the form has no place. git takes what stands before the first `:` for the host,
 /// `user` of `user:word@host:path`, and the password for a part of the
 /// path. A URL with a scheme and a local path are not the scp form, nor
 /// on Windows a value that starts with one character and `:`, which git
@@ -425,7 +425,7 @@ fn is_scp_form_with_password(url: &str) -> bool {
 fn is_scp_form_with_password_on(url: &str, windows: bool) -> bool {
     let scp_form = !is_local_git_url_on(url, windows)
         && !GIT_URL_SCHEMES.iter().any(|scheme| url.starts_with(scheme));
-    scp_form && url.rfind('@').is_some_and(|last| url[..last].contains(':'))
+    scp_form && short_form_userinfo_end(url).is_some()
 }
 
 /// The scheme of a URL written as `<scheme>://...` whose scheme is not
@@ -648,10 +648,12 @@ pub(crate) fn needs_escape(c: char) -> bool {
 /// one place every printed form of a git URL hides. After the `//` of
 /// `scheme://`, all of it up to the last `@` (`https://***@host/r.git`),
 /// a space or a `/` in a password included. In any other value, all of
-/// it before the last `@` when a `:` stands there: a user and password
-/// of the scp form (`user:word@host:path`, shown `***@host:path`) or of
-/// a mistyped URL (`https:/user:word@host/r.git`). The scp form's user
-/// alone is shown (`git@host:path`), as a ref is (`v1@x`). A `file://`
+/// it before the last `@` of a mistyped URL (`https:/user:word@host/r.git`),
+/// and of git's short form what [`short_form_userinfo_end`] says: a user
+/// and password (`user:word@host:path`, shown `***@host:path`). The
+/// short form's user alone is shown (`git@host:path`), as is an `@` of
+/// its path (`git@host:team/pkg@v2.git`, `host:dir/a@b`), as git reads
+/// them, and a ref (`v1@x`). A `file://`
 /// URL is hidden only up to an `@` of its authority, what stands
 /// between `//` and the next `/` (`file://***@host/srv/r.git`;
 /// `file:///srv/team@work/r.git` is shown as written), and a local path
@@ -671,10 +673,41 @@ fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
     }
     let start = match url.find(':') {
         Some(colon) if url[colon + 1..].starts_with("//") => colon + 3,
-        Some(colon) if colon < last => 0,
+        Some(colon) if colon < last && is_scheme_without_slashes(url) => 0,
+        Some(colon) if colon < last => {
+            return short_form_userinfo_end(url).map(|end| 0..end);
+        }
         _ => url[..last].find("//")? + 2,
     };
     (last > start).then_some(start..last)
+}
+
+/// Where the user and password of a value of git's short form
+/// (`user@host:path`) end: at an `@`, when what stands before the first
+/// `@` holds a `:`, as a user and password do, which git would take for
+/// the host (`user:word@host:path`). That is so when a `:` of the form's
+/// `host:path` follows the `@`, and then the part ends at the last `@`
+/// that a `:` follows (`user:wo@rd@host:dir/a@b` ends before `host`); or
+/// when no `/` stands before the first `@`, and then it ends at the last
+/// `@` (`user:word@host/r.git`, a URL without its scheme). Else the `@`
+/// is one of a path, as git reads it (`host:dir/a@b`), and so is every
+/// `@` after a first one that no `:` stands before (`git@host:t/pkg@v2.git`).
+/// `None` for a value that holds no user and password.
+fn short_form_userinfo_end(url: &str) -> Option<usize> {
+    let first = url.find('@')?;
+    let before = &url[..first];
+    if !before.contains(':') {
+        return None;
+    }
+    let end = if url[first + 1..].contains(':') {
+        // (The last `@` before the last `:`.)
+        url[..url.rfind(':')?].rfind('@')?
+    } else if !before.contains('/') {
+        url.rfind('@')?
+    } else {
+        return None;
+    };
+    (end > 0).then_some(end)
 }
 
 /// Whether `url` is a local path that a message shows as written: one
@@ -1781,7 +1814,11 @@ mod tests {
             for prefix in ["", "git:", "ssh:", "https:/", "https:", "HTTP:/", "http:"] {
                 for user in ["user", "u", "C"] {
                     urls.push(format!("{prefix}{user}:{fault}@example.com:team/pkg.git"));
-                    urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
+                    // (`user:S3CR/3TXYZ@example.com/pkg.git` is no password:
+                    // as `host:dir/a@b`, git's host `user` and a path.)
+                    if !(prefix.is_empty() && fault.contains('/')) {
+                        urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
+                    }
                 }
             }
         }
@@ -1911,6 +1948,17 @@ mod tests {
             ("C:/repo/a:b@c", "C:/repo/a:b@c"),
             ("u:p@h:t/r.git", "***@h:t/r.git"),
             ("c:repo:p@h:t", "***@h:t"),
+            // git's short form: a password stands before the first `@`; an
+            // `@` of the path is shown, as git reads it. FAIL before: the
+            // value was hidden up to its last `@` (`***@v2.git`).
+            (
+                "git@github.com:team/pkg@v2.git",
+                "git@github.com:team/pkg@v2.git",
+            ),
+            ("host:dir/a@b", "host:dir/a@b"),
+            ("user:word@host:dir/a@b", "***@host:dir/a@b"),
+            ("user:wo@rd@host:team/r.git", "***@host:team/r.git"),
+            ("user:word@host/r.git", "***@host/r.git"),
             ("https://u:p@h/r.git", "https://***@h/r.git"),
             ("./a:b@c/r.git", "./a:b@c/r.git"),
         ] {
@@ -1957,6 +2005,13 @@ mod tests {
                 "fatal: 'word@host:team/r.git' does not appear to be a git repository"
             ),
             "fatal: '***@host:team/r.git' does not appear to be a git repository"
+        );
+        assert_eq!(
+            hide_repeated_userinfo(
+                "git@github.com:team/pkg@v2.git",
+                "fatal: 'team/pkg@v2.git' does not appear to be a git repository"
+            ),
+            "fatal: 'team/pkg@v2.git' does not appear to be a git repository"
         );
         assert_eq!(
             hide_repeated_userinfo("ssh://git@h/r.git", "fatal: git-upload-pack git@h"),
@@ -2049,6 +2104,15 @@ mod tests {
                 "lib = { '***' = \"https://******@h/r.git\" }"
                     .replace("'***'", "'git'")
                     .as_str(),
+            ),
+            // An `@` of the short form's path is shown, as git reads it.
+            (
+                r#"lib = { git = "git@github.com:team/pkg@v2.git" }"#,
+                r#"lib = { git = "git@github.com:team/pkg@v2.git" }"#,
+            ),
+            (
+                r#"lib = { git = "user:word@host:dir/a@b" }"#,
+                r#"lib = { git = "*********@host:dir/a@b" }"#,
             ),
             // A literal key reads no escapes: `'g\u0069t'` is no `git`.
             (
@@ -2147,8 +2211,10 @@ mod tests {
             "user:S3CR:3TXYZ@example.com:team/pkg.git",
             "user:S3CR@3TXYZ@example.com:team/pkg.git",
             "ab:S3CR3TXYZ@example.com:team/pkg.git",
-            // An `@` in the path is taken for the end of a password too.
-            "example.com:team/S3CR3TXYZ@v2",
+            // No `/` before the first `@`: a URL without its scheme.
+            "user:S3CR3TXYZ@example.com/pkg.git",
+            // A password with an `@` and a path with one.
+            "user:S3CR@3TXYZ@example.com:team/a@b",
         ] {
             let error = validate_git_url(url).unwrap_err();
             assert!(
@@ -2173,6 +2239,10 @@ mod tests {
             "git@example.com:team/pkg.git",
             "example.com:team/pkg.git",
             "git@example.com:/srv/pkg.git",
+            // An `@` of the path, as git reads it: no password.
+            "git@github.com:team/pkg@v2.git",
+            "example.com:dir/a@b",
+            "example.com:team/pkg@v2/x@y.git",
             "https://user:word@example.com/pkg.git",
             "ssh://user:word@example.com/team/pkg.git",
             "file://user:word@example.com/srv/pkg.git",
