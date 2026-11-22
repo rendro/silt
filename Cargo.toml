@@ -19,11 +19,11 @@ path = "src/lib.rs"
 [features]
 default = ["repl", "lsp", "watch", "local-clock", "http", "tcp", "tcp-tls"]
 repl = ["dep:rustyline"]
-lsp = ["dep:lsp-server", "dep:lsp-types"]
+lsp = ["dep:lsp-server", "dep:lsp-types", "dep:percent-encoding"]
 watch = ["dep:notify"]
 local-clock = ["chrono/clock"]
 http = ["tcp", "dep:ureq", "dep:httparse", "dep:flate2"]
-postgres = ["dep:tokio-postgres", "dep:tokio", "dep:futures-util", "dep:postgres-protocol", "dep:r2d2", "dep:fallible-iterator"]
+postgres = ["dep:tokio-postgres", "dep:tokio", "dep:futures-util", "dep:postgres-protocol", "dep:r2d2", "dep:fallible-iterator", "dep:percent-encoding"]
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = ["dep:socket2"]
 tcp-tls = ["tcp", "dep:rustls", "dep:webpki-roots"]
@@ -70,7 +70,9 @@ hmac = "0.13"
 # graph through the RustCrypto crates.
 subtle = "2"
 getrandom = "0.4"
-percent-encoding = "2"
+# The file URIs of the language server (src/lsp) and the connection
+# strings of the postgres module.
+percent-encoding = { version = "2", optional = true }
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 toml_edit = "0.22"
 unicode-width = "0.2"

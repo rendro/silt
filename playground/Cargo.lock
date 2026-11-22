@@ -387,12 +387,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "percent-encoding"
-version = "2.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -600,7 +594,6 @@ dependencies = [
  "md-5",
  "mimalloc",
  "parking_lot",
- "percent-encoding",
  "regex",
  "regex-automata",
  "regex-syntax",
