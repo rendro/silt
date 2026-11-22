@@ -953,7 +953,8 @@ fn a_git_url_s_user_and_password_are_in_no_message() {
 /// masked to its closing quote; or taken, in a `file://` URL, and shown
 /// in the git command line and git's output), the scp form with a
 /// password (`user:word@host:path`), a URL with its `//` left out
-/// (refused), in a double- and a single-quoted string. The `git` on PATH
+/// (refused), in a double- and a single-quoted string, the key `git` also
+/// written with an escape (`"g\u0069t"`). The `git` on PATH
 /// is a stand-in that repeats its arguments on stderr and fails: no
 /// network. FAIL before: the shown line held the password with a space;
 /// the scp form and the mistyped URL were shown whole; the command line
@@ -998,16 +999,23 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         std::env::var("PATH").unwrap_or_default()
     );
     for url in &urls {
-        let mut quoted = vec![toml_str(url)];
+        // The key `git`, also written with an escape (`"g\u0069t"`).
+        let mut entries = vec![("git", toml_str(url)), (r#""g\u0069t""#, toml_str(url))];
         if !url.contains(['\'', '\t']) {
-            quoted.push(format!("'{url}'"));
+            entries.push(("git", format!("'{url}'")));
         }
-        for value in quoted {
+        for (key, value) in entries {
             let app = ws.join("app");
             let _ = fs::remove_dir_all(&app);
-            let dep = format!("lib = {{ git = {value}, tag = \"v1\" }}");
+            let dep = format!("lib = {{ {key} = {value}, tag = \"v1\" }}");
             write_package(&app, "app", &[dep], "main.silt", "fn main() {}\n");
-            for command in ["check", "update", "add"] {
+            // `silt add` writes the key itself: once, with the key `git`.
+            let commands: &[&str] = if key == "git" {
+                &["check", "update", "add"]
+            } else {
+                &["check", "update"]
+            };
+            for &command in commands {
                 let adder = ws.join("adder");
                 let _ = fs::remove_dir_all(&adder);
                 write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
@@ -1027,11 +1035,15 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                     String::from_utf8_lossy(&out.stdout),
                     String::from_utf8_lossy(&out.stderr)
                 );
-                assert_ne!(out.status.code(), Some(0), "{command} {value}: {all}");
+                assert_ne!(
+                    out.status.code(),
+                    Some(0),
+                    "{command} {key} = {value}: {all}"
+                );
                 for piece in &pieces {
                     assert!(
                         !all.contains(piece),
-                        "{command} {value}: `{piece}` is shown: {all}"
+                        "{command} {key} = {value}: `{piece}` is shown: {all}"
                     );
                 }
             }

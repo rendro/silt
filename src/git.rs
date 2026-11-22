@@ -765,6 +765,9 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
     // The line with the git values blanked, for the rule of the rest.
     let mut rest = line.as_bytes().to_vec();
     let bytes = line.as_bytes();
+    // The last quoted string passed, with its place: a key, when `=`
+    // follows it.
+    let mut last_string: Option<(std::ops::Range<usize>, String)> = None;
     let mut at = 0;
     while at < line.len() {
         let quote = bytes[at];
@@ -779,7 +782,7 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
         let open = if triple { 3 } else { 1 };
         let (value, end) = toml_string_value(&line[at + open..], quote, triple);
         let content = at + open..at + open + value.raw.last().map_or(0, |(_, raw)| raw.end);
-        if is_git_key_before(&line[..at]) {
+        if is_git_key_before(&line[..at], last_string.as_ref()) {
             rest[content.clone()].iter_mut().for_each(|b| *b = b' ');
             if let Some(place) = userinfo_place(&value.text) {
                 for (decoded_at, raw) in &value.raw {
@@ -790,6 +793,7 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
                 }
             }
         }
+        last_string = Some((at..at + open + end, value.text));
         at += open + end;
     }
     // (Only ASCII spaces replaced whole characters: still UTF-8.)
@@ -810,17 +814,25 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
 
 /// Whether the text of a line before a value, `before`, ends with the
 /// key `git` and its `=` (`git = `, `lib = { git = `, `"git" = `,
-/// `lib.git = `).
-fn is_git_key_before(before: &str) -> bool {
+/// `lib.git = `). A quoted key is the last quoted string of the line,
+/// `last_string` (its place in the line and its value): it is read as
+/// TOML reads it, with its escapes, so `"g\u0069t"` is the key `git`.
+fn is_git_key_before(before: &str, last_string: Option<&(std::ops::Range<usize>, String)>) -> bool {
     let Some(key) = before.trim_end().strip_suffix('=') else {
         return false;
     };
     let key = key.trim_end();
-    let Some(head) = ["git", "\"git\"", "'git'"]
-        .iter()
-        .find_map(|name| key.strip_suffix(name))
-    else {
-        return false;
+    let head = match last_string {
+        Some((place, name)) if place.end == key.len() => {
+            if name != "git" {
+                return false;
+            }
+            &key[..place.start]
+        }
+        _ => match key.strip_suffix("git") {
+            Some(head) => head,
+            None => return false,
+        },
     };
     head.is_empty() || head.ends_with([' ', '\t', '{', ',', '.'])
 }
@@ -2017,6 +2029,35 @@ mod tests {
             (
                 "\"git\" = \"user:word@h:t/r\"",
                 "\"git\" = \"*********@h:t/r\"",
+            ),
+            // A quoted key is read with its escapes: each is the key `git`.
+            // FAIL before: the value was ordinary text, cut at the space.
+            (
+                r#"lib = { "g\u0069t" = "https://user:S3CR 3TXYZ@example.com/pkg.git", tag = "v1" }"#,
+                r#"lib = { "g\u0069t" = "https://***************@example.com/pkg.git", tag = "v1" }"#,
+            ),
+            (
+                r#"lib."\u0067i\U00000074" = "https://u:S3 X@h/r.git""#,
+                r#"lib."\u0067i\U00000074" = "https://******@h/r.git""#,
+            ),
+            (
+                r#""g\x69t"='https://u:S3 X@h/r.git'"#,
+                r#""g\x69t"='https://******@h/r.git'"#,
+            ),
+            (
+                "lib = { 'git' = \"https://u:S3 X@h/r.git\" }",
+                "lib = { '***' = \"https://******@h/r.git\" }"
+                    .replace("'***'", "'git'")
+                    .as_str(),
+            ),
+            // A literal key reads no escapes: `'g\u0069t'` is no `git`.
+            (
+                r#"lib = { 'g\u0069t' = "https://u:S3 X@h/r.git" }"#,
+                r#"lib = { 'g\u0069t' = "https://u:S3 X@h/r.git" }"#,
+            ),
+            (
+                r#"lib = { "gi" = "https://u:S3 X@h/r.git", "xgit" = "https://u:S3 X@h/r.git" }"#,
+                r#"lib = { "gi" = "https://u:S3 X@h/r.git", "xgit" = "https://u:S3 X@h/r.git" }"#,
             ),
             (
                 "git = \"file://u:p@host/srv/r.git\"",
