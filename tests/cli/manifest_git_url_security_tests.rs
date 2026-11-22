@@ -644,6 +644,62 @@ fn a_multi_line_git_value_is_hidden_on_each_of_its_lines() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// A `git` key at the start of a line, as a `[dependencies.lib]` table
+/// writes it, is the key `git` for the shown line of silt.toml: its
+/// value's user and password are hidden there, whatever the key's
+/// spelling, with `\n` and `\r\n` line ends. `git` is not on PATH.
+/// FAIL before: the line was shown as written.
+#[test]
+fn a_git_key_at_the_start_of_a_line_is_hidden_in_the_table_form() {
+    let ws = fresh_workspace("key_at_line_start");
+    let no_git = ws.join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+    for key in ["git", "\"git\"", "'git'", "\"g\\u0069t\""] {
+        for url in [
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "https://user:S3CR 3TXYZ@example.com/pkg.git",
+        ] {
+            for eol in ["\n", "\r\n"] {
+                let app = ws.join("app");
+                let _ = fs::remove_dir_all(&app);
+                fs::create_dir_all(app.join("src")).unwrap();
+                fs::write(app.join("src").join("main.silt"), "fn main() {}\n").unwrap();
+                let manifest = [
+                    "[package]",
+                    "name = \"app\"",
+                    "version = \"0.1.0\"",
+                    "",
+                    "[dependencies.lib]",
+                    &format!("{key} = {}", toml_str(url)),
+                    "tag = \"v1\"",
+                    "",
+                ]
+                .join(eol);
+                fs::write(app.join("silt.toml"), manifest).unwrap();
+                let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+                cmd.arg("check")
+                    .current_dir(&app)
+                    .env("XDG_CACHE_HOME", ws.join("cache"))
+                    .env("LOCALAPPDATA", ws.join("cache"))
+                    .env("PATH", &no_git);
+                isolate_git(&mut cmd, &ws);
+                let out = cmd.output().expect("failed to spawn silt binary");
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let context = format!("{key} = {url:?} ({eol:?})");
+                assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
+                assert!(
+                    stderr.contains(&format!("{key} = \"")),
+                    "{context}: {stderr}"
+                );
+                for piece in ["S3C", "3CR", "CR3", "R3T", "3TX", "TXY", "XYZ"] {
+                    assert!(!stderr.contains(piece), "{context}: `{piece}`: {stderr}");
+                }
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── 5. Untrusted text in error output ─────────────────────────────────
 
 /// A `branch`, `tag` or `rev` value is echoed in the error when the

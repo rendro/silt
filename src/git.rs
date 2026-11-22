@@ -859,9 +859,9 @@ pub(crate) fn mask_manifest_text(line: &str) -> String {
         .collect()
 }
 
-/// Whether the text of a line before a value, `before`, ends with the
-/// key `git` and its `=` (`git = `, `lib = { git = `, `"git" = `,
-/// `lib.git = `). A quoted key is the last quoted string of the line,
+/// Whether the text before a value, `before`, ends with the key `git`
+/// and its `=` (`git = `, `lib = { git = `, `"git" = `, `lib.git = `), the
+/// key at the start of a line too. A quoted key is the last quoted string,
 /// `last_string` (its place in the line and its value): it is read as
 /// TOML reads it, with its escapes, so `"g\u0069t"` is the key `git`.
 fn is_git_key_before(before: &str, last_string: Option<&(std::ops::Range<usize>, String)>) -> bool {
@@ -881,7 +881,7 @@ fn is_git_key_before(before: &str, last_string: Option<&(std::ops::Range<usize>,
             None => return false,
         },
     };
-    head.is_empty() || head.ends_with([' ', '\t', '{', ',', '.'])
+    head.is_empty() || head.ends_with([' ', '\t', '\n', '\r', '{', ',', '.'])
 }
 
 /// A quoted TOML string's value, with the raw bytes each of its
@@ -2184,6 +2184,24 @@ mod tests {
             (
                 "git = \"\"\"user:S3CR\\\n   \n  3TXYZ@h:t\"\"\"",
                 "git = \"\"\"*********\\\n   \n  *****@h:t\"\"\"",
+            ),
+            // A key at the start of a line after another line, as in a
+            // `[dependencies.lib]` table. FAIL before: shown as written.
+            (
+                "[dependencies.lib]\ngit = \"user:S3CR3TXYZ@h:t\"\ntag = \"v1\"",
+                "[dependencies.lib]\ngit = \"**************@h:t\"\ntag = \"v1\"",
+            ),
+            (
+                "[dependencies.lib]\r\n\"git\" = 'https://u:S3 X@h/r'\r\n",
+                "[dependencies.lib]\r\n\"git\" = 'https://******@h/r'\r\n",
+            ),
+            (
+                "x = 1\n'git' = \"user:S3CR3TXYZ@h:t\"",
+                "x = 1\n'git' = \"**************@h:t\"",
+            ),
+            (
+                "x = 1\r\n\"g\\u0069t\" = \"https://u:S3 X@h/r\"",
+                "x = 1\r\n\"g\\u0069t\" = \"https://******@h/r\"",
             ),
             // A string of one line ends at its line.
             (
