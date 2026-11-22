@@ -1119,8 +1119,9 @@ and it is not restarted, since each of its steps beats within 1 s. What
 the supervisor cannot do: it notices a death one tolerance late, and the
 program does not get the failure's message (`a bug` is never seen; the
 cancel dismisses it). A worker cannot beat while it is inside one call, so
-a call that may hang (a read from a peer that went quiet) needs a bound of
-its own: [`task.deadline`](#deadlines-taskdeadlinedur-fn).
+a call that hangs (a read from a peer that went quiet) costs a restart of
+the whole worker; with [`task.deadline`](#deadlines-taskdeadlinedur-fn)
+around the call, the worker gets an `Err` and can go on itself.
 
 
 ## 6. Runtime Model
