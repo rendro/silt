@@ -948,57 +948,72 @@ fn a_git_url_s_user_and_password_are_in_no_message() {
 }
 
 /// What `silt check`, `silt update` and `silt add` print, all of it,
-/// shows nothing of the password of a git dependency's URL: a password
-/// with a space or a tab (refused, the line of silt.toml under the caret
-/// masked to its closing quote; or taken, in a `file://` URL, and shown
-/// in the git command line and git's output), the scp form with a
-/// password (`user:word@host:path`), a URL with its `//` left out
-/// (refused), in a double- and a single-quoted string, the key `git` also
-/// written with an escape (`"g\u0069t"`). The `git` on PATH
-/// is a stand-in that repeats its arguments on stderr and fails: no
-/// network. FAIL before: the shown line held the password with a space;
-/// the scp form and the mistyped URL were shown whole; the command line
-/// and `cannot reach` cut a `file://` URL at its space.
-#[cfg(unix)]
+/// shows nothing of the password of a git dependency's URL, on every
+/// system: a password with a space or a tab (refused, the line of
+/// silt.toml under the caret masked to its closing quote; or taken, in a
+/// `file://` URL, and shown in the git command line and git's output),
+/// the scp form with a password (`user:word@host:path`, refused; on
+/// Windows `u:word@host:path` is a drive path, which git is given), a URL
+/// with its `//` left out (refused), in a double- and a single-quoted
+/// string, the key `git` also written with an escape (`"g\u0069t"`).
+///
+/// The real git runs, and no network is used: an `http` or `https` URL
+/// names a local port where nothing listens, an ssh form reaches a
+/// stand-in for ssh (`GIT_SSH_COMMAND`, which git runs through its own
+/// shell on every system) that prints what git asked it to reach, and
+/// `GIT_TRACE` makes git repeat its arguments, the URL whole, on stderr.
+/// Without git on PATH every value still fails, and nothing may show.
+/// FAIL before: the shown line held the password with a space; the scp
+/// form and the mistyped URL were shown whole; the command line and
+/// `cannot reach` cut a `file://` URL at its space.
 #[test]
 fn no_output_of_a_command_shows_the_password_of_a_git_url() {
-    use std::os::unix::fs::PermissionsExt;
     let marker = "S3CR3TXYZ";
+    // The values, and whether silt refuses them on every system but
+    // Windows, where git takes them for a drive path.
     let urls = [
-        "https://user:S3CR 3TXYZ@example.com/pkg.git".to_string(),
-        "https://user:S3CR\t3TXYZ@example.com/pkg.git".to_string(),
-        "http://S3CR 3TXYZ:pw@example.com/pkg.git".to_string(),
-        format!("https://user:{marker}@example.com/pkg.git"),
-        format!("ssh://git:{marker}@example.com:team/pkg.git"),
-        format!("user:{marker}@example.com:team/pkg.git"),
-        format!("ssh:user:{marker}@example.com:team/pkg.git"),
-        format!("git:user:{marker}@example.com:team/pkg.git"),
-        format!("https:/user:{marker}@example.com/pkg.git"),
-        format!("https:user:{marker}@example.com/pkg.git"),
-        format!("HTTP:/user:{marker}@example.com/pkg.git"),
-        "https://user:S3CR/3TXYZ@example.com/pkg.git".to_string(),
-        "https://user:S3CR\"3TXYZ@example.com/pkg.git".to_string(),
+        (
+            "https://user:S3CR 3TXYZ@127.0.0.1:1/pkg.git".to_string(),
+            false,
+        ),
+        (
+            "https://user:S3CR\t3TXYZ@127.0.0.1:1/pkg.git".to_string(),
+            false,
+        ),
+        (
+            "http://S3CR 3TXYZ:pw@127.0.0.1:1/pkg.git".to_string(),
+            false,
+        ),
+        (format!("https://user:{marker}@127.0.0.1:1/pkg.git"), false),
+        (format!("ssh://git:{marker}@127.0.0.1:team/pkg.git"), false),
+        (format!("ssh://git:{marker}@127.0.0.1/team/pkg.git"), false),
+        (format!("user:{marker}@127.0.0.1:team/pkg.git"), false),
+        (format!("ssh:user:{marker}@127.0.0.1:team/pkg.git"), false),
+        (format!("git:user:{marker}@127.0.0.1:team/pkg.git"), false),
+        (format!("https:/user:{marker}@127.0.0.1:1/pkg.git"), false),
+        (format!("https:user:{marker}@127.0.0.1:1/pkg.git"), false),
+        (format!("HTTP:/user:{marker}@127.0.0.1:1/pkg.git"), false),
+        (
+            "https://user:S3CR/3TXYZ@127.0.0.1:1/pkg.git".to_string(),
+            false,
+        ),
+        (
+            "https://user:S3CR\"3TXYZ@127.0.0.1:1/pkg.git".to_string(),
+            false,
+        ),
         // Accepted with a space in the password: they reach git.
-        "file://user:S3CR 3TXYZ@example.com/srv/pkg.git".to_string(),
-        "file://S3CR 3TXYZ@example.com/srv/pkg.git".to_string(),
+        (
+            "file://user:S3CR 3TXYZ@127.0.0.1/srv/pkg.git".to_string(),
+            false,
+        ),
+        ("file://S3CR 3TXYZ@127.0.0.1/srv/pkg.git".to_string(), false),
+        // A one-letter user: a drive on Windows, the scp form elsewhere.
+        (format!("u:{marker}@127.0.0.1:team/pkg.git"), true),
+        ("u:S3CR 3TXYZ@127.0.0.1:team/pkg.git".to_string(), true),
     ];
     let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
     let ws = fresh_workspace("password_output");
-    let bin = ws.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let git = bin.join("git");
-    fs::write(
-        &git,
-        "#!/bin/sh\necho \"fatal: unable to access '$*'\" >&2\necho \"$*\"\nexit 128\n",
-    )
-    .unwrap();
-    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    for url in &urls {
+    for (url, drive_on_windows) in &urls {
         // The key `git`, also written with an escape (`"g\u0069t"`).
         let mut entries = vec![("git", toml_str(url)), (r#""g\u0069t""#, toml_str(url))];
         if !url.contains(['\'', '\t']) {
@@ -1010,10 +1025,11 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
             let dep = format!("lib = {{ {key} = {value}, tag = \"v1\" }}");
             write_package(&app, "app", &[dep], "main.silt", "fn main() {}\n");
             // `silt add` writes the key itself: once, with the key `git`.
+            // The escaped key is read by the one rule of the shown line.
             let commands: &[&str] = if key == "git" {
                 &["check", "update", "add"]
             } else {
-                &["check", "update"]
+                &["check"]
             };
             for &command in commands {
                 let adder = ws.join("adder");
@@ -1027,7 +1043,21 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                     _ => cmd.arg(command).current_dir(&app),
                 };
                 cmd.env("XDG_CACHE_HOME", ws.join("cache"))
-                    .env("PATH", &path);
+                    .env("LOCALAPPDATA", ws.join("cache"))
+                    .env("GIT_SSH_COMMAND", "echo >&2 ssh asked for:")
+                    .env("GIT_SSH_VARIANT", "ssh")
+                    .env("GIT_TRACE", "1");
+                for var in [
+                    "GIT_SSH",
+                    "http_proxy",
+                    "https_proxy",
+                    "HTTP_PROXY",
+                    "HTTPS_PROXY",
+                    "ALL_PROXY",
+                    "all_proxy",
+                ] {
+                    cmd.env_remove(var);
+                }
                 isolate_git(&mut cmd, &ws);
                 let out = cmd.output().expect("failed to spawn silt binary");
                 let all = format!(
@@ -1035,16 +1065,17 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                     String::from_utf8_lossy(&out.stdout),
                     String::from_utf8_lossy(&out.stderr)
                 );
-                assert_ne!(
-                    out.status.code(),
-                    Some(0),
-                    "{command} {key} = {value}: {all}"
-                );
+                let context = format!("{command} {key} = {value}");
+                assert_ne!(out.status.code(), Some(0), "{context}: {all}");
                 for piece in &pieces {
-                    assert!(
-                        !all.contains(piece),
-                        "{command} {key} = {value}: `{piece}` is shown: {all}"
-                    );
+                    assert!(!all.contains(piece), "{context}: `{piece}` is shown: {all}");
+                }
+                if *drive_on_windows {
+                    // `check` and `update` say `invalid git URL`, `add`
+                    // `doesn't look like a git URL`.
+                    let refused =
+                        all.contains("invalid git URL") || all.contains("look like a git URL");
+                    assert_eq!(refused, !cfg!(windows), "{context}: {all}");
                 }
             }
         }
