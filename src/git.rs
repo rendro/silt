@@ -2138,7 +2138,8 @@ mod tests {
                 "\"git\" = \"user:word@h:t/r\"",
                 "\"git\" = \"*********@h:t/r\"",
             ),
-            // A quoted key is read with its escapes: each is the key `git`.
+            // A quoted key is read with its escapes: each is the key `git`
+            // (but for `"g\x69t"`, below).
             // FAIL before: the value was ordinary text, cut at the space.
             (
                 r#"lib = { "g\u0069t" = "https://user:S3CR 3TXYZ@example.com/pkg.git", tag = "v1" }"#,
@@ -2148,15 +2149,16 @@ mod tests {
                 r#"lib."\u0067i\U00000074" = "https://u:S3 X@h/r.git""#,
                 r#"lib."\u0067i\U00000074" = "https://******@h/r.git""#,
             ),
+            // `\x` is no escape of silt's TOML reader, which refuses the
+            // file, so `"g\x69t"` is not the key `git` there; its value is
+            // starred all the same (more hidden, never less).
             (
                 r#""g\x69t"='https://u:S3 X@h/r.git'"#,
                 r#""g\x69t"='https://******@h/r.git'"#,
             ),
             (
                 "lib = { 'git' = \"https://u:S3 X@h/r.git\" }",
-                "lib = { '***' = \"https://******@h/r.git\" }"
-                    .replace("'***'", "'git'")
-                    .as_str(),
+                "lib = { 'git' = \"https://******@h/r.git\" }",
             ),
             // An `@` of the short form's path is shown, as git reads it.
             (
