@@ -45,14 +45,18 @@ fn read_concurrency_doc() -> String {
 /// fence shape ever moves, this extractor (and therefore the test)
 /// must be updated along with the doc.
 fn extract_supervision_snippet(doc: &str) -> String {
-    let heading = "### Supervision and restart";
+    extract_snippet(doc, "### Supervision and restart")
+}
+
+/// The first silt fenced block after `heading`.
+fn extract_snippet(doc: &str, heading: &str) -> String {
     let heading_pos = doc
         .find(heading)
-        .expect("docs/concurrency.md must contain the '### Supervision and restart' subsection");
+        .unwrap_or_else(|| panic!("docs/concurrency.md must contain the '{heading}' subsection"));
     let after = &doc[heading_pos..];
     let fence_open_rel = after
         .find("```silt")
-        .expect("the '### Supervision and restart' section must contain a ```silt fenced block");
+        .unwrap_or_else(|| panic!("the '{heading}' section must contain a ```silt fenced block"));
     // Move past the opener line.
     let after_open = &after[fence_open_rel..];
     let after_open_nl = after_open
@@ -60,9 +64,9 @@ fn extract_supervision_snippet(doc: &str) -> String {
         .expect("fence opener must be followed by a newline");
     let body_start = fence_open_rel + after_open_nl + 1;
     let body_rest = &after[body_start..];
-    let fence_close_rel = body_rest.find("\n```").expect(
-        "the '### Supervision and restart' silt fence must have a closing ``` on its own line",
-    );
+    let fence_close_rel = body_rest.find("\n```").unwrap_or_else(|| {
+        panic!("the '{heading}' silt fence must have a closing ``` on its own line")
+    });
     body_rest[..fence_close_rel].to_string()
 }
 
@@ -146,4 +150,34 @@ fn supervision_snippet_runs_to_completion_without_deadlock() {
         stdout.contains("handled b"),
         "stdout must show job `b` was handled by some worker.\nstdout:\n{stdout}"
     );
+}
+
+/// The heartbeat supervisor of "Workers that fail" prints exactly the
+/// lines its `println` comments show, in their order: one restart (of
+/// the try that died), none of the slow try that beats, and its
+/// result. The failure of the try that died was dismissed by the
+/// cancel: nothing on stderr, exit 0.
+#[test]
+fn the_heartbeat_supervisor_prints_what_the_doc_says() {
+    let doc = read_concurrency_doc();
+    let snippet = extract_snippet(&doc, "### Workers that fail");
+    let expected: String = snippet
+        .lines()
+        .filter(|line| line.contains("println("))
+        .filter_map(|line| {
+            line.rsplit_once(" -- ")
+                .map(|(_, out)| format!("{}\n", out.trim()))
+        })
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "the snippet's println lines must show their output"
+    );
+    let (stdout, stderr, ok) = run_silt_raw("heartbeat", &snippet);
+    assert!(
+        ok,
+        "the snippet must exit 0.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_eq!(stdout, expected, "stderr:\n{stderr}");
+    assert_eq!(stderr, "");
 }
