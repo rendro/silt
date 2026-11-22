@@ -341,10 +341,7 @@ fn git_url_problem(url: &str) -> Option<String> {
          for it or uses a key"
             .to_string()
     } else if has_accepted_url_form(url) {
-        match not_a_url(url) {
-            None => return None,
-            Some(why) => format!("is not a valid URL: {why}"),
-        }
+        format!("is not a valid URL: {}", not_a_url(url)?)
     } else {
         match unaccepted_scheme(url) {
             Some(scheme) => format!(
