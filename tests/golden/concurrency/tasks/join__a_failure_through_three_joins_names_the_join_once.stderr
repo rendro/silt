@@ -1,0 +1,12 @@
+error[runtime]: joined task failed: division by zero
+ --> join__a_failure_through_three_joins_names_the_join_once.silt:7:3
+   |
+ 7 |   100 / n
+   |   ^^^^^^^ joined task failed: division by zero
+
+call stack:
+  -> work  at join__a_failure_through_three_joins_names_the_join_once.silt:7:3
+  -> closure in main  at join__a_failure_through_three_joins_names_the_join_once.silt:13:35
+  -> closure in main  at join__a_failure_through_three_joins_names_the_join_once.silt:14:7
+  -> closure in main  at join__a_failure_through_three_joins_names_the_join_once.silt:16:5
+  -> main  at join__a_failure_through_three_joins_names_the_join_once.silt:18:11

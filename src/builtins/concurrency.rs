@@ -633,7 +633,13 @@ fn joined(
             if handle.can_be_handed_back() {
                 inner.taken_from = Some(TakenFrom(handle.clone()));
             }
-            inner.message = format!("joined task failed: {}", inner.message);
+            // The words are there once, however many joins the failure
+            // went through: a join of a task that failed at a join of
+            // its own keeps the message.
+            if !inner.through_a_join {
+                inner.message = format!("joined task failed: {}", inner.message);
+                inner.through_a_join = true;
+            }
             let here = vm.enrich_error(VmError::new(String::new()));
             if inner.span.is_none() {
                 inner.span = here.span;
@@ -796,6 +802,36 @@ mod tests {
         assert!(!child.has_unjoined_failure());
         let from = raised.taken_from.as_ref().map(|from| from.0.id);
         assert_eq!(from, Some(child.id));
+    }
+
+    /// A failure that comes through several joins says "joined task
+    /// failed" once. What decides is that the failure came through a
+    /// join, not its words: a task's own failure that begins with them
+    /// gets them in front like any other.
+    #[test]
+    fn a_failure_through_several_joins_names_the_join_once() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let inner = failed(&mut vm);
+        let Err(raised) = joined(&mut vm, &inner, inner.try_get().unwrap()) else {
+            panic!("the join of a failed task raises");
+        };
+        let outer = Arc::new(TaskHandle::new(vm.next_task_id()));
+        assert!(outer.fail(raised, vm.scheduler().wake()));
+        let Err(raised) = joined(&mut vm, &outer, outer.try_get().unwrap()) else {
+            panic!("the join of a failed task raises");
+        };
+        assert_eq!(raised.message, "joined task failed: boom");
+
+        let own = Arc::new(TaskHandle::new(vm.next_task_id()));
+        let words = VmError::new("joined task failed: boom".into());
+        assert!(own.fail(words, vm.scheduler().wake()));
+        let Err(raised) = joined(&mut vm, &own, own.try_get().unwrap()) else {
+            panic!("the join of a failed task raises");
+        };
+        assert_eq!(
+            raised.message,
+            "joined task failed: joined task failed: boom"
+        );
     }
 
     /// A cancel that dismisses a failure the task took from a join

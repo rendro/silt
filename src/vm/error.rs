@@ -63,6 +63,12 @@ pub struct VmError {
     /// whose failure is then reported as never joined
     /// (`Scheduler::cancel`).
     pub(crate) taken_from: Option<TakenFrom>,
+    /// If true, the failure came through a `task.join`, and its message
+    /// says so: `joined task failed: <msg>`. A join of a task that
+    /// failed this way keeps the message as it is, so the words are
+    /// there once however many joins the failure went through; the call
+    /// stack shows the tasks.
+    pub(crate) through_a_join: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
@@ -82,6 +88,7 @@ impl VmError {
             returned: None,
             display_failure: None,
             taken_from: None,
+            through_a_join: false,
             span: None,
             call_stack: Vec::new(),
         }
