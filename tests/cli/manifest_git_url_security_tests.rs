@@ -596,6 +596,54 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// A git value written as a multi-line string has its user and password
+/// hidden on every line of it that an error shows: the caret can stand
+/// on a later line of the dependency (`version`, `path` and `registry`
+/// are checked before the URL). `git` is not on PATH. FAIL before: the
+/// second line was shown as written.
+#[test]
+fn a_multi_line_git_value_is_hidden_on_each_of_its_lines() {
+    let ws = fresh_workspace("multi_line");
+    let no_git = ws.join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+    for dep in [
+        "lib = { git = \"\"\"\\\nuser:S3CR3TXYZ@example.com:team/pkg.git\"\"\", version = \"1\" }",
+        "lib = { git = \"\"\"\nhttps://user:S3CR 3TXYZ@example.com/pkg.git\"\"\", path = \"x\" }",
+        "lib = { git = '''\nuser:S3CR3TXYZ@example.com:team/pkg.git''', registry = \"r\" }",
+        // A parse error on the second line.
+        "lib = { git = \"\"\"\\\nuser:S3CR3TXYZ@example.com:team/pkg.git\"\"\" junk }",
+    ] {
+        let app = ws.join("app");
+        let _ = fs::remove_dir_all(&app);
+        write_package(
+            &app,
+            "app",
+            &[dep.to_string()],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+        cmd.arg("check")
+            .current_dir(&app)
+            .env("XDG_CACHE_HOME", ws.join("cache"))
+            .env("LOCALAPPDATA", ws.join("cache"))
+            .env("PATH", &no_git);
+        isolate_git(&mut cmd, &ws);
+        let out = cmd.output().expect("failed to spawn silt binary");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(1), "{dep}: {all}");
+        assert!(all.contains("@example.com"), "{dep}: {all}");
+        for piece in ["S3C", "3CR", "CR3", "R3T", "3TX", "TXY", "XYZ"] {
+            assert!(!all.contains(piece), "{dep}: `{piece}` is shown: {all}");
+        }
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── 5. Untrusted text in error output ─────────────────────────────────
 
 /// A `branch`, `tag` or `rev` value is echoed in the error when the

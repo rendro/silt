@@ -784,21 +784,24 @@ fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
         .filter(|(_, word)| !word.is_empty())
 }
 
-/// A line of a `silt.toml` shown under a caret, with each character of
-/// a user and password of a URL in it replaced by a `*`, so that the
-/// columns stay where they are (`git = "https://*********@host/r.git"`).
+/// The text of a `silt.toml`, whose lines are shown under a caret, with
+/// each character of a user and password of a URL in it replaced by a
+/// `*`, so that the lines and columns stay where they are
+/// (`git = "https://*********@host/r.git"`; a line break is never one).
+/// The whole text is read, so that a line of a multi-line string (`"""`,
+/// `'''`) is read as a part of that string.
 /// The quoted value of a `git` key is one git URL, hidden as
 /// [`display_url`] hides it: up to its closing quote, a space in it
 /// included, and read with its escapes (`@` is an `@`). The rest of
-/// the line (another value, a key, a comment) is ordinary text, where
+/// the text (another value, a key, a comment) is ordinary text, where
 /// only a URL with `//` has a user and password: after its `//` up to
 /// its last `@`, the URL ending at a space or a tab
 /// (`homepage = "https://*****@host/"`; `note = "Contact: bob@host"` is
 /// shown as written).
-pub(crate) fn mask_manifest_line(line: &str) -> String {
-    // Which bytes of the line are shown as a `*`.
+pub(crate) fn mask_manifest_text(line: &str) -> String {
+    // Which bytes of the text are shown as a `*`.
     let mut masked: Vec<bool> = vec![false; line.len()];
-    // The line with the git values blanked, for the rule of the rest.
+    // The text with the git values blanked, for the rule of the rest.
     let mut rest = line.as_bytes().to_vec();
     let bytes = line.as_bytes();
     // The last quoted string passed, with its place: a key, when `=`
@@ -808,7 +811,9 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
     while at < line.len() {
         let quote = bytes[at];
         if quote == b'#' {
-            break;
+            // A comment, to the end of its line.
+            at = line[at..].find('\n').map_or(line.len(), |end| at + end);
+            continue;
         }
         if quote != b'"' && quote != b'\'' {
             at += 1;
@@ -819,7 +824,10 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
         let (value, end) = toml_string_value(&line[at + open..], quote, triple);
         let content = at + open..at + open + value.raw.last().map_or(0, |(_, raw)| raw.end);
         if is_git_key_before(&line[..at], last_string.as_ref()) {
-            rest[content.clone()].iter_mut().for_each(|b| *b = b' ');
+            rest[content.clone()]
+                .iter_mut()
+                .filter(|b| **b != b'\n')
+                .for_each(|b| *b = b' ');
             if let Some(place) = userinfo_place(&value.text) {
                 for (decoded_at, raw) in &value.raw {
                     if place.contains(decoded_at) {
@@ -844,7 +852,13 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
         }
     }
     line.char_indices()
-        .map(|(i, c)| if masked[i] { '*' } else { c })
+        .map(|(i, c)| {
+            if masked[i] && c != '\n' && c != '\r' {
+                '*'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -884,8 +898,11 @@ struct TomlStringValue {
 
 /// The value of the TOML string whose text starts `rest` (after its
 /// opening quote), and where it ends in `rest` (after its closing quote,
-/// or the end of the line). A string of `"` reads escapes; one of `'`
-/// none.
+/// or, for a string of one line, the end of its line). A string of `"`
+/// reads escapes; one of `'` none. A multi-line string (`"""`, `'''`)
+/// leaves out a line break right after its opening quotes, and one of
+/// `"""` a `\` at the end of a line with the spaces and line breaks after
+/// it, as TOML reads them.
 fn toml_string_value(rest: &str, quote: u8, triple: bool) -> (TomlStringValue, usize) {
     let close = if triple {
         if quote == b'"' { "\"\"\"" } else { "'''" }
@@ -899,9 +916,36 @@ fn toml_string_value(rest: &str, quote: u8, triple: bool) -> (TomlStringValue, u
         raw: Vec::new(),
     };
     let mut chars = rest.char_indices().peekable();
+    if triple {
+        let skip = ["\r\n", "\n"]
+            .iter()
+            .find(|newline| rest.starts_with(**newline))
+            .map_or(0, |newline| newline.len());
+        while chars.peek().is_some_and(|&(i, _)| i < skip) {
+            chars.next();
+        }
+    }
     while let Some((i, c)) = chars.next() {
         if rest[i..].starts_with(close) {
             return (value, i + close.len());
+        }
+        if c == '\n' && !triple {
+            return (value, i);
+        }
+        let line_end_backslash = c == '\\'
+            && quote == b'"'
+            && triple
+            && rest[i + 1..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with(['\n', '\r']);
+        if line_end_backslash {
+            while chars
+                .peek()
+                .is_some_and(|&(_, next)| matches!(next, ' ' | '\t' | '\n' | '\r'))
+            {
+                chars.next();
+            }
+            continue;
         }
         let (decoded, end) = match c {
             '\\' if quote == b'"' => {
@@ -1887,12 +1931,12 @@ mod tests {
             ] {
                 shown.push(ref_error.to_string());
             }
-            shown.push(mask_manifest_line(&format!(
+            shown.push(mask_manifest_text(&format!(
                 "lib = {{ git = {}, tag = \"v1\" }}",
                 toml_basic_string(url)
             )));
             if !url.contains('\'') && !url.chars().any(char::is_control) {
-                shown.push(mask_manifest_line(&format!("lib = {{ git = '{url}' }}")));
+                shown.push(mask_manifest_text(&format!("lib = {{ git = '{url}' }}")));
             }
             for shown in &shown {
                 for piece in &pieces {
@@ -2123,6 +2167,30 @@ mod tests {
                 r#"lib = { git = "user:word@host:dir/a@b" }"#,
                 r#"lib = { git = "********************@b" }"#,
             ),
+            // A multi-line value: its lines are read as a part of it, the
+            // line break after `"""` and a `\` at the end of a line left
+            // out. FAIL before: the second line was ordinary text.
+            (
+                "lib = { git = \"\"\"\\\nuser:S3CR3TXYZ@example.com:team/pkg.git\"\"\", version = \"1\" }",
+                "lib = { git = \"\"\"\\\n**************@example.com:team/pkg.git\"\"\", version = \"1\" }",
+            ),
+            (
+                "git = \"\"\"\nhttps://user:S3CR 3TXYZ@example.com/pkg.git\"\"\"\n# https://a:b@c/",
+                "git = \"\"\"\nhttps://***************@example.com/pkg.git\"\"\"\n# https://***@c/",
+            ),
+            (
+                "git = '''\r\nuser:S3CR3TXYZ@h:t''' junk",
+                "git = '''\r\n**************@h:t''' junk",
+            ),
+            (
+                "git = \"\"\"user:S3CR\\\n   \n  3TXYZ@h:t\"\"\"",
+                "git = \"\"\"*********\\\n   \n  *****@h:t\"\"\"",
+            ),
+            // A string of one line ends at its line.
+            (
+                "a = \"x\nlib.git = \"user:pw@h:t\"",
+                "a = \"x\nlib.git = \"*******@h:t\"",
+            ),
             // A literal key reads no escapes: `'g\u0069t'` is no `git`.
             (
                 r#"lib = { 'g\u0069t' = "https://u:S3 X@h/r.git" }"#,
@@ -2155,7 +2223,7 @@ mod tests {
                 "homepage = \"https://*******@h/\"",
             ),
         ] {
-            assert_eq!(mask_manifest_line(line), masked, "{line}");
+            assert_eq!(mask_manifest_text(line), masked, "{line}");
             assert_eq!(masked.chars().count(), line.chars().count(), "{line}");
         }
     }
