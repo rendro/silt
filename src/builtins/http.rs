@@ -1438,39 +1438,54 @@ impl Got {
 
 /// The URL a request asks for (`Request.url`): `http://`, the host the
 /// request names (its `Host`; for an HTTP/1.0 request without one, the
-/// address the client reached, `local`) and the target as sent, without a
-/// fragment (no server is asked for one). A target in absolute form
-/// (`http://h/x`) is that URL, and its Host is not looked at (RFC 9112):
-/// of `http`, or of `https` written as `http` with the port as written
-/// (`https://h/x` is `http://h/x`, `https://h:443/x` is
-/// `http://h:443/x`), for the scheme is always `http`: the server speaks
-/// no TLS, and the client does not say otherwise. `None` when they make no
-/// URL: a `Host` that is more than a host and a port, a target with a user
-/// or a password, a target that `url.parse` refuses (an escape that is
-/// none, or no UTF-8 text), one of another scheme. The server answers such
-/// a request 400.
+/// address the client reached, `local`) and the target as sent. A target
+/// in absolute form (`http://h/x`) is that URL, of `http` only: the server
+/// speaks no TLS, so the scheme is always `http`. Its `Host`, when the
+/// request has one, must be one the server takes in a request of its own
+/// and name the same host and port (the host in any case, port 80 the same
+/// as none), so that the URL and the header never name two hosts. `None`
+/// when they make no URL, or make one that two readers could take
+/// differently: a `#` in the target (no client sends a fragment, and a
+/// proxy may read it as part of the path), a `Host` that is more than a
+/// host and a port, a target with a user or a password, a target that
+/// `url.parse` refuses (an escape that is none, or no UTF-8 text), one of
+/// another scheme, one whose host and port are not the `Host`'s. The
+/// server answers such a request 400.
 #[cfg(feature = "http")]
 pub(crate) fn request_url(target: &str, headers: &[(String, String)], local: &str) -> Option<Url> {
-    if !target.starts_with('/') {
-        let (scheme, rest) = target.split_once("://")?;
-        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-            return None;
-        }
-        let url = crate::url::parse(&format!("http://{rest}")).ok()?;
-        let credentials = !url.user().is_empty() || !url.password().is_empty();
-        return (!credentials).then(|| url.with_fragment(""));
+    if target.contains('#') {
+        return None;
     }
     let host = headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("host"))
-        .map_or(local, |(_, host)| host.as_str());
+        .map(|(_, host)| host.as_str());
     // (A `@`, `/`, `?` or `#` would make another part of the URL of it.)
     let plain = |byte: u8| byte.is_ascii_alphanumeric() || b"-._:[]".contains(&byte);
-    if host.is_empty() || !host.bytes().all(plain) {
-        return None;
+    let named = |host: &str, target: &str| {
+        let taken = !host.is_empty() && host.bytes().all(plain);
+        taken
+            .then(|| crate::url::parse(&format!("http://{host}{target}")).ok())
+            .flatten()
+    };
+    if !target.starts_with('/') {
+        let (scheme, rest) = target.split_once("://")?;
+        if !scheme.eq_ignore_ascii_case("http") {
+            return None;
+        }
+        let url = crate::url::parse(&format!("http://{rest}")).ok()?;
+        if !url.user().is_empty() || !url.password().is_empty() {
+            return None;
+        }
+        if let Some(host) = host {
+            let host = named(host, "/")?;
+            if (host.host(), host.port()) != (url.host(), url.port()) {
+                return None;
+            }
+        }
+        return Some(url);
     }
-    let url = crate::url::parse(&format!("http://{host}{target}")).ok()?;
-    Some(url.with_fragment(""))
+    named(host.unwrap_or(local), target)
 }
 
 /// The read half of a connection, for the reader of its requests.
@@ -2593,8 +2608,9 @@ mod serve_tests {
 
     /// The `url` of a request: `http://`, its `Host` (the address reached
     /// when it names none) and its target, in normal form; a target in
-    /// absolute form as it is, of `http` or `https`; `None`, which the
-    /// server answers 400, where they make no URL.
+    /// absolute form as it is, of `http` only, with a `Host` of the same
+    /// host and port; `None`, which the server answers 400, where they make
+    /// no URL or two readers could take them differently.
     #[test]
     fn a_request_s_url_is_its_host_and_target() {
         let host = |h: &str| vec![("Host".to_string(), h.to_string())];
@@ -2612,37 +2628,58 @@ mod serve_tests {
             url("/users/a%2Fb", &host("[::1]:80")),
             some("http://[::1]/users/a%2Fb")
         );
-        assert_eq!(
-            url("http://other.test/x", &host("h")),
-            some("http://other.test/x")
-        );
-        // The scheme is always http: an https target keeps its host and the
-        // port as written.
-        for (target, want) in [
-            ("https://other.test/x", "http://other.test/x"),
-            ("HTTPS://other.test:443/x", "http://other.test:443/x"),
-            ("https://other.test:80/x", "http://other.test/x"),
+        // A target in absolute form is that URL, and its Host names the same
+        // host and port: the host in any case, port 80 the same as none. An
+        // HTTP/1.0 request may have no Host.
+        for (target, headers, want) in [
             (
-                "https://other.test:8443/x?q#f",
-                "http://other.test:8443/x?q",
+                "http://other.test/x",
+                host("other.test"),
+                "http://other.test/x",
             ),
+            (
+                "HTTP://Other.TEST:80/x?q",
+                host("OTHER.test"),
+                "http://other.test/x?q",
+            ),
+            (
+                "http://other.test/x",
+                host("other.test:80"),
+                "http://other.test/x",
+            ),
+            (
+                "http://o.test:8080/x",
+                host("O.test:8080"),
+                "http://o.test:8080/x",
+            ),
+            ("http://[::1]/x", host("[::1]:80"), "http://[::1]/x"),
+            ("http://o.test/x", vec![], "http://o.test/x"),
         ] {
-            assert_eq!(url(target, &host("h")), some(want), "{target}");
+            assert_eq!(url(target, &headers), some(want), "{target} {headers:?}");
         }
-        // No fragment: no server is asked for one.
-        assert_eq!(url("/x?q=1#frag", &host("h")), some("http://h/x?q=1"));
-        assert_eq!(
-            url("http://o.test/x#frag", &host("h")),
-            some("http://o.test/x")
-        );
-        // With an absolute target the Host is not looked at (RFC 9112).
-        assert_eq!(
-            url("http://o.test/x", &host("u@bad")),
-            some("http://o.test/x")
-        );
         for (target, headers) in [
-            ("http://u:p@other.test/x", host("h")),
-            ("https://u@other.test/x", host("h")),
+            // A fragment, in either form.
+            ("/x#top", host("h")),
+            ("/x?q=1#top", host("h")),
+            ("/x#", host("h")),
+            ("http://h/x#top", host("h")),
+            // Only http in absolute form.
+            ("https://h/x", host("h")),
+            ("HTTPS://h:443/x", host("h:443")),
+            ("ftp://h/x", host("h")),
+            ("ws://h/x", host("h")),
+            // A Host of another host or port than the target's, or one the
+            // server would not take on its own.
+            ("http://other.test/x", host("h.test")),
+            ("http://h.test:8080/x", host("h.test")),
+            ("http://h.test/x", host("h.test:8080")),
+            ("http://h.test/x", host("h.test:")),
+            ("http://h.test/x", host("u@h.test")),
+            ("http://h.test/x", host("h.test/x")),
+            ("http://h.test/x", host("")),
+            // A user or password, or a Host or target that is no URL.
+            ("http://u:p@other.test/x", host("other.test")),
+            ("http://u@other.test/x", vec![]),
             ("/x", host("h.test:")),
             ("/x", host("u@h")),
             ("/x", host("h/y")),
@@ -2651,7 +2688,6 @@ mod serve_tests {
             ("/x", host("0x7f.1")),
             ("/%zz", host("h")),
             ("/caf%E9", host("h")),
-            ("ftp://h/x", host("h")),
             ("h:80", host("h")),
         ] {
             assert_eq!(url(target, &headers), None, "{target} {headers:?}");

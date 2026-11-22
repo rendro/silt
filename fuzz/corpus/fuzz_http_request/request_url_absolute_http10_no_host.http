@@ -1,0 +1,2 @@
+GET http://other.test/x HTTP/1.0
+
