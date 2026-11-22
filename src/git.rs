@@ -387,15 +387,20 @@ fn is_windows_absolute_path(url: &str) -> bool {
     drive || url.starts_with(r"\\")
 }
 
-/// Whether `url` starts with `http:` or `https:` (of any case) and no
-/// `//` follows: a URL mistyped, which git would take for the scp form
-/// with the host `https` (`https:/user:word@host/r.git`). (A host
-/// `git` or `ssh` may be an alias of the ssh configuration.)
+/// Whether `url` starts with one of the schemes of [`GIT_URL_SCHEMES`]
+/// and `:` (of any case) and no `//` follows: a URL mistyped, which
+/// git would take for the scp form with the host `https`, `ssh` or
+/// `file` (`https:/user:word@host/r.git`, `file:/srv/r.git`). A host
+/// of one of these names is written as an `ssh://` URL
+/// (`ssh://git/~/team/r.git`).
 fn is_scheme_without_slashes(url: &str) -> bool {
     let Some((scheme, rest)) = url.split_once(':') else {
         return false;
     };
-    (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+    GIT_URL_SCHEMES
+        .iter()
+        .filter_map(|known| known.strip_suffix("://"))
+        .any(|known| scheme.eq_ignore_ascii_case(known))
         && !rest.starts_with("//")
 }
 
@@ -2016,8 +2021,10 @@ mod tests {
         }
     }
 
-    /// `http:` or `https:` without `//` is a mistyped URL, refused before
-    /// git takes it for the host `https`; `git:` and `ssh:` may be hosts.
+    /// A URL of any accepted scheme without `//` is mistyped, refused
+    /// before git takes it for the host `https`, `ssh` or `file`. FAIL
+    /// before: `ssh:`, `git:` and `file:` without `//` were taken for
+    /// hosts.
     #[test]
     fn a_url_with_its_slashes_left_out_is_refused() {
         for url in [
@@ -2025,6 +2032,13 @@ mod tests {
             "https:example.com/pkg.git",
             "HTTP:/example.com/pkg.git",
             "http:example.com:pkg.git",
+            "ssh:/git@example.com/team/pkg.git",
+            "ssh:team/pkg.git",
+            "SSH:team/pkg.git",
+            "git:team/pkg.git",
+            "Git:/example.com/team/pkg.git",
+            "file:/srv/repo.git",
+            "FILE:srv/repo.git",
         ] {
             let reason = rejection_reason(url);
             assert!(
@@ -2039,10 +2053,16 @@ mod tests {
                 .url,
             "***@example.com/pkg.git"
         );
+        assert_eq!(
+            validate_git_url("file:/srv/repo.git").unwrap_err().url,
+            "file:/srv/repo.git"
+        );
         for url in [
-            "git:team/pkg.git",
-            "ssh:team/pkg.git",
             "https-mirror:team/pkg.git",
+            "gitlab:team/pkg.git",
+            "sshd:team/pkg.git",
+            "files:srv/pkg.git",
+            "ssh://git/~/team/pkg.git",
         ] {
             assert_eq!(validate_git_url(url), Ok(()), "{url}");
         }
