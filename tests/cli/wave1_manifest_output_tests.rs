@@ -1133,11 +1133,16 @@ fn shown(c: char) -> String {
     }
 }
 
-/// `url` as a message shows it: what stands after its `//` up to its
-/// last `@` is `***`.
+/// `url`, a refused value, as a message shows it: what stands after its
+/// `//` up to its last `@` is `***`; in git's short form, all of it before
+/// its last `@`, a user alone too.
 fn without_userinfo(url: &str) -> String {
     let Some(at) = url.find("//") else {
-        return url.to_string();
+        let local = url.starts_with('/') || url.starts_with("./") || url.starts_with("../");
+        return match url.rfind('@') {
+            Some(last) if last > 0 && !local => format!("***{}", &url[last..]),
+            _ => url.to_string(),
+        };
     };
     let start = at + 2;
     let authority = &url[start..];

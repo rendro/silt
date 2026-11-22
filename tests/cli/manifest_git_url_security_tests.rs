@@ -434,6 +434,293 @@ fn malformed_git_urls_are_clean_manifest_errors() {
     }
 }
 
+/// A value git would read in another way than it reads is refused
+/// before git runs: a URL of any scheme with its `//` left out (git takes
+/// `ssh:`, `git:`, `file:` for a host), and the scp form with a password
+/// (git takes the user for the host and sends the password to it as a
+/// path), which the message hides. `git` is not on PATH, so on the
+/// unfixed code these reached `git` only to find it missing: no network.
+/// The same scp form with a user alone reaches git. FAIL before: each was
+/// taken and reached git.
+#[test]
+fn values_git_reads_otherwise_are_refused_before_git_runs() {
+    const RULE_SLASHES: &str = "is a URL with its `//` left out: write `://` after the scheme";
+    const RULE_SCP_PASSWORD: &str = "the form `user@host:path` holds no password \
+        (git would take what stands before the first `:` for the host): \
+        leave the password out, and ssh asks for it or uses a key; \
+        a path whose first part holds an `@` is written `host:./pkg@v2` or as an `ssh://` URL";
+    let cases: &[(&str, &str, &str)] = &[
+        ("file:/srv/repo.git", "file:/srv/repo.git", RULE_SLASHES),
+        ("FILE:srv/repo.git", "FILE:srv/repo.git", RULE_SLASHES),
+        ("ssh:team/pkg.git", "ssh:team/pkg.git", RULE_SLASHES),
+        (
+            "ssh:/git@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            RULE_SLASHES,
+        ),
+        ("git:team/pkg.git", "git:team/pkg.git", RULE_SLASHES),
+        (
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        // The first `:` before the first `@`, and no `/` between them, is
+        // a password: one with an `@` in it, one before a path with an `@`,
+        // one whose path has a `:`, one with no path `:` at all (a URL
+        // with its scheme forgotten), a first part of a path with an `@`,
+        // and one-character users with a second `:` (no drive on Windows
+        // either). A refused value is hidden before its last `@`, in the
+        // message and the line of silt.toml.
+        (
+            "user:S3CR@3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        (
+            "user:S3CR3TXYZ@example.com:team/pkg@v2.git",
+            "***@v2.git",
+            RULE_SCP_PASSWORD,
+        ),
+        ("host:S3CR3TXYZ@b:c", "***@b:c", RULE_SCP_PASSWORD),
+        (
+            "user:S3CR3TXYZ@example.com",
+            "***@example.com",
+            RULE_SCP_PASSWORD,
+        ),
+        (
+            "user:S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        ("example.com:S3CR3TXYZ@v2", "***@v2", RULE_SCP_PASSWORD),
+        (
+            "u:S3CR3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        ("C:\\repo\\S3CR3TXYZ@x:p", "***@x:p", RULE_SCP_PASSWORD),
+        // Refused for its empty user: hidden all the same.
+        (
+            "@user:S3CR3TXYZ@example.com:p",
+            "***@example.com:p",
+            "is not a recognised git URL form",
+        ),
+    ];
+    let ws = fresh_workspace("read_otherwise");
+    let no_git = ws.join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+    let run = |cwd: &Path, args: &[&str]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+        cmd.args(args)
+            .current_dir(cwd)
+            .env("XDG_CACHE_HOME", ws.join("cache"))
+            .env("LOCALAPPDATA", ws.join("cache"))
+            .env("PATH", &no_git);
+        isolate_git(&mut cmd, &ws);
+        cmd.output().expect("failed to spawn silt binary")
+    };
+    for &(url, shown, rule) in cases {
+        let app = ws.join("app");
+        let _ = fs::remove_dir_all(&app);
+        write_package(
+            &app,
+            "app",
+            &[git_dep("evil", url)],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let adder = ws.join("adder");
+        let _ = fs::remove_dir_all(&adder);
+        write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
+        for (cwd, args) in [
+            (&app, vec!["check"]),
+            (
+                &adder,
+                vec!["add", "evil", "--git", url, "--branch", "main"],
+            ),
+        ] {
+            let out = run(cwd, &args);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let context = format!("{args:?} with {url:?}");
+            assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
+            assert!(
+                stderr.contains(&format!("`{shown}`"))
+                    && stderr.contains(&format!(": {rule}; expected ")),
+                "{context}: {stderr}"
+            );
+            assert!(!stderr.contains("3TX"), "{context}: {stderr}");
+        }
+    }
+    // A drive without a second `:`: on Windows a local path, which git is
+    // given; elsewhere the short form with a password, refused and hidden.
+    for (url, shown) in [
+        ("u:S3CR3TXYZ@example.com/p", "***@example.com/p"),
+        ("C:\\repo\\S3CR3TXYZ@x", "***@x"),
+    ] {
+        let app = ws.join("app");
+        let _ = fs::remove_dir_all(&app);
+        write_package(
+            &app,
+            "app",
+            &[git_dep("evil", url)],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let out = run(&app, &["check"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if cfg!(windows) {
+            assert!(!stderr.contains("invalid git URL"), "{url}: {stderr}");
+        } else {
+            assert!(
+                stderr.contains(&format!("`{shown}`: {RULE_SCP_PASSWORD}")),
+                "{url}: {stderr}"
+            );
+            assert!(!stderr.contains("3TX"), "{url}: {stderr}");
+        }
+    }
+    // A user alone, and a path with an `@`, are the scp form git reads as
+    // written: they are taken, shown whole (the line of silt.toml too),
+    // and go to git, which is not there. FAIL before (the `@` of a path):
+    // refused, or shown `***@v2.git`. The rows with the marker in them
+    // are shown whole ON PURPOSE: as git reads them they hold no password
+    // but an `@` of the path (a `/` between the first `:` and the first
+    // `@`; main hid `example.com:team/S3CR3TXYZ@v2`), or a user before it
+    // (main hid `git@example.com:S3CR3TXYZ@other:p`); `u:/S3CR3TXYZ@...` is
+    // shown whole as on main.
+    for url in [
+        "git@example.com:team/pkg.git",
+        "git@example.com:team/pkg@v2.git",
+        "example.com:dir/a@b",
+        "example.com:team/S3CR3TXYZ@v2",
+        "git@example.com:S3CR3TXYZ@other:p",
+        "u:/S3CR3TXYZ@example.com:team/p",
+    ] {
+        let app = ws.join("app");
+        let _ = fs::remove_dir_all(&app);
+        write_package(
+            &app,
+            "app",
+            &[git_dep("lib", url)],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let out = run(&app, &["check"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stderr.contains("invalid git URL")
+                && stderr.contains(&format!("(`{url}`, branch = `main`)"))
+                && stderr.contains(&format!("git = \"{url}\"")),
+            "{url}: {stderr}"
+        );
+        assert!(!stderr.contains("***"), "{url}: {stderr}");
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A git value written as a multi-line string has its user and password
+/// hidden on every line of it that an error shows: the caret can stand
+/// on a later line of the dependency (`version`, `path` and `registry`
+/// are checked before the URL). `git` is not on PATH. FAIL before: the
+/// second line was shown as written.
+#[test]
+fn a_multi_line_git_value_is_hidden_on_each_of_its_lines() {
+    let ws = fresh_workspace("multi_line");
+    let no_git = ws.join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+    for dep in [
+        "lib = { git = \"\"\"\\\nuser:S3CR3TXYZ@example.com:team/pkg.git\"\"\", version = \"1\" }",
+        "lib = { git = \"\"\"\nhttps://user:S3CR 3TXYZ@example.com/pkg.git\"\"\", path = \"x\" }",
+        "lib = { git = '''\nuser:S3CR3TXYZ@example.com:team/pkg.git''', registry = \"r\" }",
+        // A parse error on the second line.
+        "lib = { git = \"\"\"\\\nuser:S3CR3TXYZ@example.com:team/pkg.git\"\"\" junk }",
+    ] {
+        let app = ws.join("app");
+        let _ = fs::remove_dir_all(&app);
+        write_package(
+            &app,
+            "app",
+            &[dep.to_string()],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+        cmd.arg("check")
+            .current_dir(&app)
+            .env("XDG_CACHE_HOME", ws.join("cache"))
+            .env("LOCALAPPDATA", ws.join("cache"))
+            .env("PATH", &no_git);
+        isolate_git(&mut cmd, &ws);
+        let out = cmd.output().expect("failed to spawn silt binary");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(1), "{dep}: {all}");
+        assert!(all.contains("@example.com"), "{dep}: {all}");
+        for piece in ["S3C", "3CR", "CR3", "R3T", "3TX", "TXY", "XYZ"] {
+            assert!(!all.contains(piece), "{dep}: `{piece}` is shown: {all}");
+        }
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A `git` key at the start of a line, as a `[dependencies.lib]` table
+/// writes it, is the key `git` for the shown line of silt.toml: its
+/// value's user and password are hidden there, whatever the key's
+/// spelling, with `\n` and `\r\n` line ends. `git` is not on PATH.
+/// FAIL before: the line was shown as written.
+#[test]
+fn a_git_key_at_the_start_of_a_line_is_hidden_in_the_table_form() {
+    let ws = fresh_workspace("key_at_line_start");
+    let no_git = ws.join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+    for key in ["git", "\"git\"", "'git'", "\"g\\u0069t\""] {
+        for url in [
+            "user:S3CR3TXYZ@example.com:team/pkg.git",
+            "https://user:S3CR 3TXYZ@example.com/pkg.git",
+        ] {
+            for eol in ["\n", "\r\n"] {
+                let app = ws.join("app");
+                let _ = fs::remove_dir_all(&app);
+                fs::create_dir_all(app.join("src")).unwrap();
+                fs::write(app.join("src").join("main.silt"), "fn main() {}\n").unwrap();
+                let manifest = [
+                    "[package]",
+                    "name = \"app\"",
+                    "version = \"0.1.0\"",
+                    "",
+                    "[dependencies.lib]",
+                    &format!("{key} = {}", toml_str(url)),
+                    "tag = \"v1\"",
+                    "",
+                ]
+                .join(eol);
+                fs::write(app.join("silt.toml"), manifest).unwrap();
+                let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+                cmd.arg("check")
+                    .current_dir(&app)
+                    .env("XDG_CACHE_HOME", ws.join("cache"))
+                    .env("LOCALAPPDATA", ws.join("cache"))
+                    .env("PATH", &no_git);
+                isolate_git(&mut cmd, &ws);
+                let out = cmd.output().expect("failed to spawn silt binary");
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let context = format!("{key} = {url:?} ({eol:?})");
+                assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
+                assert!(
+                    stderr.contains(&format!("{key} = \"")),
+                    "{context}: {stderr}"
+                );
+                for piece in ["S3C", "3CR", "CR3", "R3T", "3TX", "TXY", "XYZ"] {
+                    assert!(!stderr.contains(piece), "{context}: `{piece}`: {stderr}");
+                }
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── 5. Untrusted text in error output ─────────────────────────────────
 
 /// A `branch`, `tag` or `rev` value is echoed in the error when the
@@ -857,7 +1144,8 @@ fn a_git_url_s_user_and_password_are_in_no_message() {
 /// masked to its closing quote; or taken, in a `file://` URL, and shown
 /// in the git command line and git's output), the scp form with a
 /// password (`user:word@host:path`), a URL with its `//` left out
-/// (refused), in a double- and a single-quoted string. The `git` on PATH
+/// (refused), in a double- and a single-quoted string, the key `git` also
+/// written with an escape (`"g\u0069t"`). The `git` on PATH
 /// is a stand-in that repeats its arguments on stderr and fails: no
 /// network. FAIL before: the shown line held the password with a space;
 /// the scp form and the mistyped URL were shown whole; the command line
@@ -874,6 +1162,13 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         format!("https://user:{marker}@example.com/pkg.git"),
         format!("ssh://git:{marker}@example.com:team/pkg.git"),
         format!("user:{marker}@example.com:team/pkg.git"),
+        format!("user:{marker}@example.com:team/pkg@v2.git"),
+        "user:S3CR@3TXYZ@example.com:team/pkg.git".to_string(),
+        format!("host:{marker}@b:c"),
+        format!("@user:{marker}@example.com:p"),
+        format!("user:{marker}@example.com"),
+        format!("user:{marker}@example.com/team/pkg.git"),
+        format!("example.com:{marker}@v2"),
         format!("ssh:user:{marker}@example.com:team/pkg.git"),
         format!("git:user:{marker}@example.com:team/pkg.git"),
         format!("https:/user:{marker}@example.com/pkg.git"),
@@ -902,16 +1197,23 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         std::env::var("PATH").unwrap_or_default()
     );
     for url in &urls {
-        let mut quoted = vec![toml_str(url)];
+        // The key `git`, also written with an escape (`"g\u0069t"`).
+        let mut entries = vec![("git", toml_str(url)), (r#""g\u0069t""#, toml_str(url))];
         if !url.contains(['\'', '\t']) {
-            quoted.push(format!("'{url}'"));
+            entries.push(("git", format!("'{url}'")));
         }
-        for value in quoted {
+        for (key, value) in entries {
             let app = ws.join("app");
             let _ = fs::remove_dir_all(&app);
-            let dep = format!("lib = {{ git = {value}, tag = \"v1\" }}");
+            let dep = format!("lib = {{ {key} = {value}, tag = \"v1\" }}");
             write_package(&app, "app", &[dep], "main.silt", "fn main() {}\n");
-            for command in ["check", "update", "add"] {
+            // `silt add` writes the key itself: once, with the key `git`.
+            let commands: &[&str] = if key == "git" {
+                &["check", "update", "add"]
+            } else {
+                &["check", "update"]
+            };
+            for &command in commands {
                 let adder = ws.join("adder");
                 let _ = fs::remove_dir_all(&adder);
                 write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
@@ -931,11 +1233,15 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                     String::from_utf8_lossy(&out.stdout),
                     String::from_utf8_lossy(&out.stderr)
                 );
-                assert_ne!(out.status.code(), Some(0), "{command} {value}: {all}");
+                assert_ne!(
+                    out.status.code(),
+                    Some(0),
+                    "{command} {key} = {value}: {all}"
+                );
                 for piece in &pieces {
                     assert!(
                         !all.contains(piece),
-                        "{command} {value}: `{piece}` is shown: {all}"
+                        "{command} {key} = {value}: `{piece}` is shown: {all}"
                     );
                 }
             }

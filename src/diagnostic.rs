@@ -559,7 +559,15 @@ impl SourceMap {
         let (end_line, end_col) = clamp(file.line_col(span.end.max(span.start)));
         let mut line_text = line_of(line).to_string();
         if matches!(file.path, SourceName::Manifest(_)) {
-            line_text = crate::git::escape_for_display(&crate::git::mask_manifest_line(&line_text));
+            // Masked as a part of the whole text: a line can be one of a
+            // multi-line string.
+            let masked = crate::git::mask_manifest_text(&file.text);
+            let masked_line = masked
+                .split('\n')
+                .nth(line.saturating_sub(1))
+                .unwrap_or("")
+                .trim_end_matches('\r');
+            line_text = crate::git::escape_for_display(masked_line);
         }
         Some(Position {
             line,

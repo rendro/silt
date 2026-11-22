@@ -284,6 +284,19 @@ impl std::error::Error for InvalidGitUrl {}
 /// (`silt add --git ./lib` stores such a path made from the working
 /// directory). Elsewhere `C:/repo` is the scp-like `host:path`.
 pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
+    match git_url_problem(url) {
+        None => Ok(()),
+        Some(problem) => Err(InvalidGitUrl {
+            url: display_url(url),
+            reason: format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
+        }),
+    }
+}
+
+/// The rule of [`validate_git_url`] that `url` breaks, in words, or
+/// `None` for a URL it accepts. (It names no part of `url`: the display
+/// rule, [`userinfo_place`], asks it whether a value is refused.)
+fn git_url_problem(url: &str) -> Option<String> {
     let local = is_local_git_url(url);
     let is_forbidden: fn(char) -> bool = if local {
         is_forbidden_in_local_form
@@ -322,11 +335,14 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
         }
     } else if is_scheme_without_slashes(url) {
         "is a URL with its `//` left out: write `://` after the scheme".to_string()
+    } else if has_accepted_url_form(url) && is_scp_form_with_password(url) {
+        "the form `user@host:path` holds no password (git would take what stands \
+         before the first `:` for the host): leave the password out, and ssh asks \
+         for it or uses a key; a path whose first part holds an `@` is written \
+         `host:./pkg@v2` or as an `ssh://` URL"
+            .to_string()
     } else if has_accepted_url_form(url) {
-        match not_a_url(url) {
-            None => return Ok(()),
-            Some(why) => format!("is not a valid URL: {why}"),
-        }
+        format!("is not a valid URL: {}", not_a_url(url)?)
     } else {
         match unaccepted_scheme(url) {
             Some(scheme) => format!(
@@ -336,10 +352,7 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
             None => "is not a recognised git URL form".to_string(),
         }
     };
-    Err(InvalidGitUrl {
-        url: display_url(url),
-        reason: format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
-    })
+    Some(problem)
 }
 
 /// Whether the git URL `url` names a repository on this machine: a
@@ -348,7 +361,9 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
 /// one character and `:` in front for a drive (a letter, or any name
 /// `subst` gave one), also with no slash after it
 /// (`c:repo`, relative to the current directory of that drive), where
-/// elsewhere it is the host of an scp-like URL.
+/// elsewhere it is the host of an scp-like URL; but only a value that
+/// holds no other `:`, as a Windows path holds none: `u:word@host:path`
+/// is the scp form there too, with the host `u`.
 pub(crate) fn is_local_git_url(url: &str) -> bool {
     is_local_git_url_on(url, cfg!(windows))
 }
@@ -357,8 +372,11 @@ pub(crate) fn is_local_git_url(url: &str) -> bool {
 fn is_local_git_url_on(url: &str, windows: bool) -> bool {
     // (Any one character, as Git for Windows takes a drive: `subst` can
     // name one `1:` or `ä:`.)
-    let mut chars = url.chars();
-    let drive = chars.next().is_some() && chars.next() == Some(':');
+    let mut chars = url.char_indices();
+    let drive = match (chars.next(), chars.next()) {
+        (Some(_), Some((colon, ':'))) => !url[colon + 1..].contains(':'),
+        _ => false,
+    };
     url.starts_with("file://")
         || url.starts_with('/')
         || url.starts_with("./")
@@ -383,20 +401,60 @@ fn is_windows_absolute_path(url: &str) -> bool {
     let drive = bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
-        && matches!(bytes[2], b'\\' | b'/');
+        && matches!(bytes[2], b'\\' | b'/')
+        // (A Windows path holds no other `:`; git reads `C:/a:b` as the
+        // scp form with the host `C`.)
+        && !url[2..].contains(':');
     drive || url.starts_with(r"\\")
 }
 
-/// Whether `url` starts with `http:` or `https:` (of any case) and no
-/// `//` follows: a URL mistyped, which git would take for the scp form
-/// with the host `https` (`https:/user:word@host/r.git`). (A host
-/// `git` or `ssh` may be an alias of the ssh configuration.)
+/// Whether `url` starts with one of the schemes of [`GIT_URL_SCHEMES`]
+/// and `:` (of any case) and no `//` follows: a URL mistyped, which
+/// git would take for the scp form with the host `https`, `ssh` or
+/// `file` (`https:/user:word@host/r.git`, `file:/srv/r.git`). A host
+/// of one of these names is written as an `ssh://` URL
+/// (`ssh://git/~/team/r.git`).
 fn is_scheme_without_slashes(url: &str) -> bool {
     let Some((scheme, rest)) = url.split_once(':') else {
         return false;
     };
-    (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+    GIT_URL_SCHEMES
+        .iter()
+        .filter_map(|known| known.strip_suffix("://"))
+        .any(|known| scheme.eq_ignore_ascii_case(known))
         && !rest.starts_with("//")
+}
+
+/// Whether `url`, which silt reads as the scp form ([`is_short_form_on`]),
+/// holds a user and password, for which the form has no place: its first
+/// `:` stands before its first `@`, and no `/` between them, the shape
+/// `user:word@...` (`user:word@host:path`, `user:word@host/path`, a URL
+/// with its scheme forgotten). git takes what stands before the first `:`
+/// for the host, `user`, and the password for a part of the path. Every
+/// other `@` is one of the user or the path, as git reads it
+/// (`git@host:team/pkg@v2.git`, `host:dir/a@b`); a path whose first part
+/// holds an `@` is written `host:./pkg@v2`.
+fn is_scp_form_with_password(url: &str) -> bool {
+    is_scp_form_with_password_on(url, cfg!(windows))
+}
+
+/// [`is_scp_form_with_password`] as it is on Windows (`windows`) or
+/// elsewhere.
+fn is_scp_form_with_password_on(url: &str, windows: bool) -> bool {
+    let (Some(colon), Some(at)) = (url.find(':'), url.find('@')) else {
+        return false;
+    };
+    is_short_form_on(url, windows) && colon < at && !url[colon..at].contains('/')
+}
+
+/// Whether silt reads `url` as git's short ssh form (`[user@]host:path`):
+/// not a local form ([`is_local_git_url_on`]: on Windows also a value that
+/// starts with one character and `:`, a drive), not a URL of an accepted
+/// scheme, nor one with its `//` left out.
+fn is_short_form_on(url: &str, windows: bool) -> bool {
+    !is_local_git_url_on(url, windows)
+        && !GIT_URL_SCHEMES.iter().any(|scheme| url.starts_with(scheme))
+        && !is_scheme_without_slashes(url)
 }
 
 /// The scheme of a URL written as `<scheme>://...` whose scheme is not
@@ -618,24 +676,37 @@ pub(crate) fn needs_escape(c: char) -> bool {
 /// The bytes of the git URL `url` that hold its user and password: the
 /// one place every printed form of a git URL hides. After the `//` of
 /// `scheme://`, all of it up to the last `@` (`https://***@host/r.git`),
-/// a space or a `/` in a password included. In any other value, all of
-/// it before the last `@` when a `:` stands there: a user and password
-/// of the scp form (`user:word@host:path`, shown `***@host:path`) or of
-/// a mistyped URL (`https:/user:word@host/r.git`). The scp form's user
-/// alone is shown (`git@host:path`), as a ref is (`v1@x`). A `file://`
-/// URL is hidden only up to an `@` of its authority, what stands
-/// between `//` and the next `/` (`file://***@host/srv/r.git`;
-/// `file:///srv/team@work/r.git` is shown as written), and a local path
-/// not at all, but for one that starts with `//` (`//user:word@host/r`):
-/// a directory may hold an `@`. An `@` of a path or a query
-/// of another URL is taken for the end of a user too: more is hidden
-/// then, never less.
+/// a space or a `/` in a password included; of a mistyped URL
+/// (`https:/user:word@host/r.git`), all of it before the last `@`. Any
+/// other value is read as [`validate_git_url`] reads it: one it refuses
+/// is hidden before its last `@` (`user:word@host:path`, shown
+/// `***@host:path`; `user:wo@rd@host:path` too); git's short form that it
+/// takes holds no password, and is shown as git reads it
+/// (`git@host:path`, `git@host:team/pkg@v2.git`, `host:dir/a@b`), as a
+/// ref is (`v1@x`). A `file://` URL is hidden only up to an `@` of its
+/// authority, what stands between `//` and the next `/`
+/// (`file://***@host/srv/r.git`; `file:///srv/team@work/r.git` is shown as
+/// written), and a local path not at all, but for one that starts with
+/// `//` (`//user:word@host/r`): a directory may hold an `@`. An `@` of a
+/// path or a query of another URL is taken for the end of a user too:
+/// more is hidden then, never less.
 fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
     let last = url.rfind('@')?;
     if let Some(rest) = url.strip_prefix("file://") {
         let authority = rest.split('/').next().unwrap_or(rest);
         let at = authority.rfind('@')?;
         return (at > 0).then_some(7..7 + at);
+    }
+    let scheme_url = url
+        .find(':')
+        .is_some_and(|colon| url[colon + 1..].starts_with("//"));
+    if !scheme_url && !is_scheme_without_slashes(url) {
+        if git_url_problem(url).is_some() {
+            return (last > 0).then_some(0..last);
+        }
+        if is_short_form_on(url, cfg!(windows)) {
+            return None;
+        }
     }
     if is_path_to_show_whole(url) {
         return None;
@@ -719,28 +790,36 @@ fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
         .filter(|(_, word)| !word.is_empty())
 }
 
-/// A line of a `silt.toml` shown under a caret, with each character of
-/// a user and password of a URL in it replaced by a `*`, so that the
-/// columns stay where they are (`git = "https://*********@host/r.git"`).
+/// The text of a `silt.toml`, whose lines are shown under a caret, with
+/// each character of a user and password of a URL in it replaced by a
+/// `*`, so that the lines and columns stay where they are
+/// (`git = "https://*********@host/r.git"`; a line break is never one).
+/// The whole text is read, so that a line of a multi-line string (`"""`,
+/// `'''`) is read as a part of that string.
 /// The quoted value of a `git` key is one git URL, hidden as
 /// [`display_url`] hides it: up to its closing quote, a space in it
 /// included, and read with its escapes (`@` is an `@`). The rest of
-/// the line (another value, a key, a comment) is ordinary text, where
+/// the text (another value, a key, a comment) is ordinary text, where
 /// only a URL with `//` has a user and password: after its `//` up to
 /// its last `@`, the URL ending at a space or a tab
 /// (`homepage = "https://*****@host/"`; `note = "Contact: bob@host"` is
 /// shown as written).
-pub(crate) fn mask_manifest_line(line: &str) -> String {
-    // Which bytes of the line are shown as a `*`.
+pub(crate) fn mask_manifest_text(line: &str) -> String {
+    // Which bytes of the text are shown as a `*`.
     let mut masked: Vec<bool> = vec![false; line.len()];
-    // The line with the git values blanked, for the rule of the rest.
+    // The text with the git values blanked, for the rule of the rest.
     let mut rest = line.as_bytes().to_vec();
     let bytes = line.as_bytes();
+    // The last quoted string passed, with its place: a key, when `=`
+    // follows it.
+    let mut last_string: Option<(std::ops::Range<usize>, String)> = None;
     let mut at = 0;
     while at < line.len() {
         let quote = bytes[at];
         if quote == b'#' {
-            break;
+            // A comment, to the end of its line.
+            at = line[at..].find('\n').map_or(line.len(), |end| at + end);
+            continue;
         }
         if quote != b'"' && quote != b'\'' {
             at += 1;
@@ -750,8 +829,11 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
         let open = if triple { 3 } else { 1 };
         let (value, end) = toml_string_value(&line[at + open..], quote, triple);
         let content = at + open..at + open + value.raw.last().map_or(0, |(_, raw)| raw.end);
-        if is_git_key_before(&line[..at]) {
-            rest[content.clone()].iter_mut().for_each(|b| *b = b' ');
+        if is_git_key_before(&line[..at], last_string.as_ref()) {
+            rest[content.clone()]
+                .iter_mut()
+                .filter(|b| **b != b'\n')
+                .for_each(|b| *b = b' ');
             if let Some(place) = userinfo_place(&value.text) {
                 for (decoded_at, raw) in &value.raw {
                     if place.contains(decoded_at) {
@@ -761,6 +843,7 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
                 }
             }
         }
+        last_string = Some((at..at + open + end, value.text));
         at += open + end;
     }
     // (Only ASCII spaces replaced whole characters: still UTF-8.)
@@ -775,25 +858,39 @@ pub(crate) fn mask_manifest_line(line: &str) -> String {
         }
     }
     line.char_indices()
-        .map(|(i, c)| if masked[i] { '*' } else { c })
+        .map(|(i, c)| {
+            if masked[i] && c != '\n' && c != '\r' {
+                '*'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
-/// Whether the text of a line before a value, `before`, ends with the
-/// key `git` and its `=` (`git = `, `lib = { git = `, `"git" = `,
-/// `lib.git = `).
-fn is_git_key_before(before: &str) -> bool {
+/// Whether the text before a value, `before`, ends with the key `git`
+/// and its `=` (`git = `, `lib = { git = `, `"git" = `, `lib.git = `), the
+/// key at the start of a line too. A quoted key is the last quoted string,
+/// `last_string` (its place in the line and its value): it is read as
+/// TOML reads it, with its escapes, so `"g\u0069t"` is the key `git`.
+fn is_git_key_before(before: &str, last_string: Option<&(std::ops::Range<usize>, String)>) -> bool {
     let Some(key) = before.trim_end().strip_suffix('=') else {
         return false;
     };
     let key = key.trim_end();
-    let Some(head) = ["git", "\"git\"", "'git'"]
-        .iter()
-        .find_map(|name| key.strip_suffix(name))
-    else {
-        return false;
+    let head = match last_string {
+        Some((place, name)) if place.end == key.len() => {
+            if name != "git" {
+                return false;
+            }
+            &key[..place.start]
+        }
+        _ => match key.strip_suffix("git") {
+            Some(head) => head,
+            None => return false,
+        },
     };
-    head.is_empty() || head.ends_with([' ', '\t', '{', ',', '.'])
+    head.is_empty() || head.ends_with([' ', '\t', '\n', '\r', '{', ',', '.'])
 }
 
 /// A quoted TOML string's value, with the raw bytes each of its
@@ -807,8 +904,11 @@ struct TomlStringValue {
 
 /// The value of the TOML string whose text starts `rest` (after its
 /// opening quote), and where it ends in `rest` (after its closing quote,
-/// or the end of the line). A string of `"` reads escapes; one of `'`
-/// none.
+/// or, for a string of one line, the end of its line). A string of `"`
+/// reads escapes; one of `'` none. A multi-line string (`"""`, `'''`)
+/// leaves out a line break right after its opening quotes, and one of
+/// `"""` a `\` at the end of a line with the spaces and line breaks after
+/// it, as TOML reads them.
 fn toml_string_value(rest: &str, quote: u8, triple: bool) -> (TomlStringValue, usize) {
     let close = if triple {
         if quote == b'"' { "\"\"\"" } else { "'''" }
@@ -822,9 +922,36 @@ fn toml_string_value(rest: &str, quote: u8, triple: bool) -> (TomlStringValue, u
         raw: Vec::new(),
     };
     let mut chars = rest.char_indices().peekable();
+    if triple {
+        let skip = ["\r\n", "\n"]
+            .iter()
+            .find(|newline| rest.starts_with(**newline))
+            .map_or(0, |newline| newline.len());
+        while chars.peek().is_some_and(|&(i, _)| i < skip) {
+            chars.next();
+        }
+    }
     while let Some((i, c)) = chars.next() {
         if rest[i..].starts_with(close) {
             return (value, i + close.len());
+        }
+        if c == '\n' && !triple {
+            return (value, i);
+        }
+        let line_end_backslash = c == '\\'
+            && quote == b'"'
+            && triple
+            && rest[i + 1..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with(['\n', '\r']);
+        if line_end_backslash {
+            while chars
+                .peek()
+                .is_some_and(|&(_, next)| matches!(next, ' ' | '\t' | '\n' | '\r'))
+            {
+                chars.next();
+            }
+            continue;
         }
         let (decoded, end) = match c {
             '\\' if quote == b'"' => {
@@ -1390,8 +1517,9 @@ fn shown_command(args: &[&str]) -> String {
 /// repeats them: the URL as written, whole (a space in a password
 /// included); the user and password before an `@` of another form of it
 /// (`//user@host`); and the password apart from the URL, with its user
-/// or alone. (Git takes `user:word@host:path` for the host `user` and the
-/// path `word@host:path`, and may name that path.) A user alone with no
+/// or alone. (The short form with a password, which git would name as a
+/// path, is refused before git runs; a URL's password may still stand
+/// alone in what git prints.) A user alone with no
 /// `@` after it is left: git names itself `git`, as many a user is named.
 fn hide_repeated_userinfo(url: &str, text: &str) -> String {
     let Some(place) = userinfo_place(url) else {
@@ -1738,8 +1866,14 @@ mod tests {
             // Without `//`: the scp form with a password, a mistyped URL.
             for prefix in ["", "git:", "ssh:", "https:/", "https:", "HTTP:/", "http:"] {
                 for user in ["user", "u", "C"] {
-                    urls.push(format!("{prefix}{user}:{fault}@example.com:team/pkg.git"));
-                    urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
+                    // (Without a prefix, a `/` between the first `:` and the
+                    // first `@` makes a path: `user:S3CR/3TXYZ@example.com:x`
+                    // is git's host `user` and a path, shown whole, as
+                    // `host:dir/a@b` is.)
+                    if !(prefix.is_empty() && fault.contains('/')) {
+                        urls.push(format!("{prefix}{user}:{fault}@example.com:team/pkg.git"));
+                        urls.push(format!("{prefix}{user}:{fault}@example.com/pkg.git"));
+                    }
                 }
             }
         }
@@ -1751,7 +1885,8 @@ mod tests {
         urls.push(format!("u:{marker}@example.com:team/pkg.git"));
         urls.push(format!("https://u:{marker}@example.com/x.git"));
         // Accepted with a space in the password: a `file://` URL with an
-        // authority (and on Windows the scp form with a one-letter user).
+        // authority. (A one-letter user is refused on Windows too: a value
+        // with a second `:` is no drive there.)
         for fault in ["S3CR 3TXYZ", "S3 CR3 TXYZ", " S3CR3TXYZ "] {
             urls.push(format!("file://user:{fault}@example.com/srv/x.git"));
             urls.push(format!("file://{fault}@example.com/srv/x.git"));
@@ -1761,7 +1896,7 @@ mod tests {
             validate_git_url("file://user:S3CR 3TXYZ@example.com/srv/x.git"),
             Ok(())
         );
-        assert!(is_local_git_url_on(
+        assert!(!is_local_git_url_on(
             "u:S3CR 3TXYZ@example.com:team/pkg.git",
             true
         ));
@@ -1805,12 +1940,12 @@ mod tests {
             ] {
                 shown.push(ref_error.to_string());
             }
-            shown.push(mask_manifest_line(&format!(
+            shown.push(mask_manifest_text(&format!(
                 "lib = {{ git = {}, tag = \"v1\" }}",
                 toml_basic_string(url)
             )));
             if !url.contains('\'') && !url.chars().any(char::is_control) {
-                shown.push(mask_manifest_line(&format!("lib = {{ git = '{url}' }}")));
+                shown.push(mask_manifest_text(&format!("lib = {{ git = '{url}' }}")));
             }
             for shown in &shown {
                 for piece in &pieces {
@@ -1864,11 +1999,37 @@ mod tests {
             ("file://u:p@host/srv/r.git", "file://***@host/srv/r.git"),
             ("file://host/srv/a@b/r.git", "file://host/srv/a@b/r.git"),
             ("/srv//git/team@x/r.git", "/srv//git/team@x/r.git"),
-            // A drive path on every platform; a one-letter user is none.
-            ("C:\\repo\\a@b", "C:\\repo\\a@b"),
+            // A drive path on Windows; elsewhere the short form, where a `/`
+            // after the first `:` makes a path and none a password.
+            (
+                "C:\\repo\\a@b",
+                if cfg!(windows) {
+                    "C:\\repo\\a@b"
+                } else {
+                    "***@b"
+                },
+            ),
             ("C:/repo/a:b@c", "C:/repo/a:b@c"),
             ("u:p@h:t/r.git", "***@h:t/r.git"),
             ("c:repo:p@h:t", "***@h:t"),
+            // git's short form: a password stands before the first `@`; an
+            // `@` of the path is shown, as git reads it. FAIL before: the
+            // value was hidden up to its last `@` (`***@v2.git`).
+            (
+                "git@github.com:team/pkg@v2.git",
+                "git@github.com:team/pkg@v2.git",
+            ),
+            ("host:dir/a@b", "host:dir/a@b"),
+            // A refused value is hidden before its last `@`.
+            ("user:word@host:dir/a@b", "***@b"),
+            ("user:wo@rd@host:team/r.git", "***@host:team/r.git"),
+            ("@user:word@host:t", "***@host:t"),
+            ("host:a@b:c", "***@b:c"),
+            // No `/` between the first `:` and the first `@`: a password.
+            ("user:word@host/r.git", "***@host/r.git"),
+            // The `@` first: a user and a path, shown as git reads them.
+            // (Hidden on main.)
+            ("git@example.com:x@other:p", "git@example.com:x@other:p"),
             ("https://u:p@h/r.git", "https://***@h/r.git"),
             ("./a:b@c/r.git", "./a:b@c/r.git"),
         ] {
@@ -1903,9 +2064,14 @@ mod tests {
                 assert_eq!(hide_git_userinfo(&text), shown, "{text:?}");
             }
         }
+        // `C:\repo\a@b` is a drive path on Windows, a password elsewhere.
         assert_eq!(
             hide_git_userinfo("git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"),
-            "git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"
+            if cfg!(windows) {
+                "git clone -- C:\\repo\\a@b `C:/repo/a:b@c` d"
+            } else {
+                "git clone -- ***@b `C:/repo/a:b@c` d"
+            }
         );
         // Git's output names the password apart from the URL: the scp
         // form's path.
@@ -1915,6 +2081,13 @@ mod tests {
                 "fatal: 'word@host:team/r.git' does not appear to be a git repository"
             ),
             "fatal: '***@host:team/r.git' does not appear to be a git repository"
+        );
+        assert_eq!(
+            hide_repeated_userinfo(
+                "git@github.com:team/pkg@v2.git",
+                "fatal: 'team/pkg@v2.git' does not appear to be a git repository"
+            ),
+            "fatal: 'team/pkg@v2.git' does not appear to be a git repository"
         );
         assert_eq!(
             hide_repeated_userinfo("ssh://git@h/r.git", "fatal: git-upload-pack git@h"),
@@ -1988,6 +2161,88 @@ mod tests {
                 "\"git\" = \"user:word@h:t/r\"",
                 "\"git\" = \"*********@h:t/r\"",
             ),
+            // A quoted key is read with its escapes: each is the key `git`
+            // (but for `"g\x69t"`, below).
+            // FAIL before: the value was ordinary text, cut at the space.
+            (
+                r#"lib = { "g\u0069t" = "https://user:S3CR 3TXYZ@example.com/pkg.git", tag = "v1" }"#,
+                r#"lib = { "g\u0069t" = "https://***************@example.com/pkg.git", tag = "v1" }"#,
+            ),
+            (
+                r#"lib."\u0067i\U00000074" = "https://u:S3 X@h/r.git""#,
+                r#"lib."\u0067i\U00000074" = "https://******@h/r.git""#,
+            ),
+            // `\x` is no escape of silt's TOML reader, which refuses the
+            // file, so `"g\x69t"` is not the key `git` there; its value is
+            // starred all the same (more hidden, never less).
+            (
+                r#""g\x69t"='https://u:S3 X@h/r.git'"#,
+                r#""g\x69t"='https://******@h/r.git'"#,
+            ),
+            (
+                "lib = { 'git' = \"https://u:S3 X@h/r.git\" }",
+                "lib = { 'git' = \"https://******@h/r.git\" }",
+            ),
+            // An `@` of the short form's path is shown, as git reads it.
+            (
+                r#"lib = { git = "git@github.com:team/pkg@v2.git" }"#,
+                r#"lib = { git = "git@github.com:team/pkg@v2.git" }"#,
+            ),
+            (
+                r#"lib = { git = "user:word@host:dir/a@b" }"#,
+                r#"lib = { git = "********************@b" }"#,
+            ),
+            // A multi-line value: its lines are read as a part of it, the
+            // line break after `"""` and a `\` at the end of a line left
+            // out. FAIL before: the second line was ordinary text.
+            (
+                "lib = { git = \"\"\"\\\nuser:S3CR3TXYZ@example.com:team/pkg.git\"\"\", version = \"1\" }",
+                "lib = { git = \"\"\"\\\n**************@example.com:team/pkg.git\"\"\", version = \"1\" }",
+            ),
+            (
+                "git = \"\"\"\nhttps://user:S3CR 3TXYZ@example.com/pkg.git\"\"\"\n# https://a:b@c/",
+                "git = \"\"\"\nhttps://***************@example.com/pkg.git\"\"\"\n# https://***@c/",
+            ),
+            (
+                "git = '''\r\nuser:S3CR3TXYZ@h:t''' junk",
+                "git = '''\r\n**************@h:t''' junk",
+            ),
+            (
+                "git = \"\"\"user:S3CR\\\n   \n  3TXYZ@h:t\"\"\"",
+                "git = \"\"\"*********\\\n   \n  *****@h:t\"\"\"",
+            ),
+            // A key at the start of a line after another line, as in a
+            // `[dependencies.lib]` table. FAIL before: shown as written.
+            (
+                "[dependencies.lib]\ngit = \"user:S3CR3TXYZ@h:t\"\ntag = \"v1\"",
+                "[dependencies.lib]\ngit = \"**************@h:t\"\ntag = \"v1\"",
+            ),
+            (
+                "[dependencies.lib]\r\n\"git\" = 'https://u:S3 X@h/r'\r\n",
+                "[dependencies.lib]\r\n\"git\" = 'https://******@h/r'\r\n",
+            ),
+            (
+                "x = 1\n'git' = \"user:S3CR3TXYZ@h:t\"",
+                "x = 1\n'git' = \"**************@h:t\"",
+            ),
+            (
+                "x = 1\r\n\"g\\u0069t\" = \"https://u:S3 X@h/r\"",
+                "x = 1\r\n\"g\\u0069t\" = \"https://******@h/r\"",
+            ),
+            // A string of one line ends at its line.
+            (
+                "a = \"x\nlib.git = \"user:pw@h:t\"",
+                "a = \"x\nlib.git = \"*******@h:t\"",
+            ),
+            // A literal key reads no escapes: `'g\u0069t'` is no `git`.
+            (
+                r#"lib = { 'g\u0069t' = "https://u:S3 X@h/r.git" }"#,
+                r#"lib = { 'g\u0069t' = "https://u:S3 X@h/r.git" }"#,
+            ),
+            (
+                r#"lib = { "gi" = "https://u:S3 X@h/r.git", "xgit" = "https://u:S3 X@h/r.git" }"#,
+                r#"lib = { "gi" = "https://u:S3 X@h/r.git", "xgit" = "https://u:S3 X@h/r.git" }"#,
+            ),
             (
                 "git = \"file://u:p@host/srv/r.git\"",
                 "git = \"file://***@host/srv/r.git\"",
@@ -2011,13 +2266,15 @@ mod tests {
                 "homepage = \"https://*******@h/\"",
             ),
         ] {
-            assert_eq!(mask_manifest_line(line), masked, "{line}");
+            assert_eq!(mask_manifest_text(line), masked, "{line}");
             assert_eq!(masked.chars().count(), line.chars().count(), "{line}");
         }
     }
 
-    /// `http:` or `https:` without `//` is a mistyped URL, refused before
-    /// git takes it for the host `https`; `git:` and `ssh:` may be hosts.
+    /// A URL of any accepted scheme without `//` is mistyped, refused
+    /// before git takes it for the host `https`, `ssh` or `file`. FAIL
+    /// before: `ssh:`, `git:` and `file:` without `//` were taken for
+    /// hosts.
     #[test]
     fn a_url_with_its_slashes_left_out_is_refused() {
         for url in [
@@ -2025,6 +2282,13 @@ mod tests {
             "https:example.com/pkg.git",
             "HTTP:/example.com/pkg.git",
             "http:example.com:pkg.git",
+            "ssh:/git@example.com/team/pkg.git",
+            "ssh:team/pkg.git",
+            "SSH:team/pkg.git",
+            "git:team/pkg.git",
+            "Git:/example.com/team/pkg.git",
+            "file:/srv/repo.git",
+            "FILE:srv/repo.git",
         ] {
             let reason = rejection_reason(url);
             assert!(
@@ -2039,10 +2303,148 @@ mod tests {
                 .url,
             "***@example.com/pkg.git"
         );
+        assert_eq!(
+            validate_git_url("file:/srv/repo.git").unwrap_err().url,
+            "file:/srv/repo.git"
+        );
         for url in [
-            "git:team/pkg.git",
-            "ssh:team/pkg.git",
             "https-mirror:team/pkg.git",
+            "gitlab:team/pkg.git",
+            "sshd:team/pkg.git",
+            "files:srv/pkg.git",
+            "ssh://git/~/team/pkg.git",
+        ] {
+            assert_eq!(validate_git_url(url), Ok(()), "{url}");
+        }
+    }
+
+    /// git's short form has no place for a password: a `:` before its first
+    /// `@` and its `host:path` after it (`user:password@host:path`) is
+    /// refused before git runs, which would take the user for the host, and
+    /// the message hides all before the last `@`. Every other `@` is one of
+    /// the user or the path, as git reads it: taken, and shown whole. On
+    /// Windows a value that starts with one character and `:` is a drive,
+    /// no short form. FAIL before: `user:word@host:path` was taken; then an
+    /// `@` of a path was refused as a password.
+    #[test]
+    fn the_scp_form_holds_no_password() {
+        const RULE: &str = "the form `user@host:path` holds no password (git would take what \
+             stands before the first `:` for the host): leave the password out, \
+             and ssh asks for it or uses a key; a path whose first part holds an `@` \
+             is written `host:./pkg@v2` or as an `ssh://` URL; expected ";
+        // Refused as a password on every system, hidden to the last `@`.
+        for (url, shown) in [
+            (
+                "user:S3CR3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            (
+                "user:@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            (
+                "user:S3CR:3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            (
+                "user:S3CR@3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            (
+                "ab:S3CR3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            ("user:S3CR3TXYZ@example.com:team/a@b", "***@b"),
+            ("host:a@b:c", "***@b:c"),
+            // No `:` after the `@`: a URL with its scheme forgotten. FAIL
+            // at the 9:13 rule: taken and shown whole.
+            ("user:S3CR3TXYZ@example.com", "***@example.com"),
+            (
+                "user:S3CR3TXYZ@example.com/team/pkg.git",
+                "***@example.com/team/pkg.git",
+            ),
+            // A first part of the path with an `@`: written `host:./pkg@v2`.
+            ("host:pkg@v2", "***@v2"),
+            // One character and a second `:`: no drive on Windows either.
+            (
+                "u:S3CR3TXYZ@example.com:team/pkg.git",
+                "***@example.com:team/pkg.git",
+            ),
+            ("C:\\repo\\S3CR3TXYZ@x:p", "***@x:p"),
+        ] {
+            let error = validate_git_url(url).unwrap_err();
+            assert!(error.reason.starts_with(RULE), "{url}: {}", error.reason);
+            assert_eq!(error.url, shown, "{url}");
+            for windows in [false, true] {
+                assert!(is_scp_form_with_password_on(url, windows), "{url}");
+            }
+        }
+        assert_eq!(validate_git_url("host:./pkg@v2"), Ok(()));
+        // A drive on Windows is a value without a second `:`, as a Windows
+        // path holds none; else git reads the short form there too.
+        for (url, drive) in [
+            ("c:repo", true),
+            ("C:\\repo\\a@b", true),
+            ("C:/repo/a@b", true),
+            ("u:word@host:path", false),
+            ("C:/repo:x", false),
+            ("C:\\repo\\a@h:p", false),
+        ] {
+            assert_eq!(is_local_git_url_on(url, true), drive, "{url}");
+            assert!(!is_local_git_url_on(url, false), "{url}");
+        }
+        // Refused for its empty user, hidden all the same.
+        let error = validate_git_url("@user:S3CR3TXYZ@example.com:p").unwrap_err();
+        assert_eq!(error.url, "***@example.com:p");
+        // A drive without a second `:`: a local path on Windows, the short
+        // form with a password elsewhere.
+        for (url, shown_elsewhere, shown_on_windows) in [
+            (
+                "u:S3CR3TXYZ@example.com/p",
+                "***@example.com/p",
+                "***@example.com/p",
+            ),
+            ("C:\\repo\\S3CR3TXYZ@x", "***@x", "C:\\repo\\S3CR3TXYZ@x"),
+        ] {
+            assert!(is_scp_form_with_password_on(url, false), "{url}");
+            assert!(!is_scp_form_with_password_on(url, true), "{url}");
+            let result = validate_git_url(url);
+            assert_eq!(result.is_ok(), cfg!(windows), "{url}");
+            if let Err(error) = &result {
+                assert!(error.reason.starts_with(RULE), "{url}: {}", error.reason);
+            }
+            let shown = if cfg!(windows) {
+                shown_on_windows
+            } else {
+                shown_elsewhere
+            };
+            assert_eq!(display_url(url), shown, "{url}");
+        }
+        // Taken, and shown as written: no password as git reads them, on
+        // every system.
+        for url in [
+            "git@example.com:team/pkg.git",
+            "example.com:team/pkg.git",
+            "git@example.com:/srv/pkg.git",
+            // An `@` of the path: a `/` stands between the first `:` and the
+            // first `@`, or the `@` comes first.
+            "host:dir/a@b",
+            "example.com:team/x@v2",
+            "git@github.com:team/pkg@v2.git",
+            "git@example.com:x@other:p",
+            "example.com:team/pkg@v2/x@y.git",
+            "u:/x@h:p",
+            "C:/repo/x@h",
+        ] {
+            assert_eq!(validate_git_url(url), Ok(()), "{url}");
+            assert_eq!(display_url(url), url, "{url}");
+            assert!(!is_scp_form_with_password(url), "{url}");
+        }
+        for url in [
+            "https://user:word@example.com/pkg.git",
+            "ssh://user:word@example.com/team/pkg.git",
+            "file://user:word@example.com/srv/pkg.git",
+            "./dir/user:word@host:path",
         ] {
             assert_eq!(validate_git_url(url), Ok(()), "{url}");
         }
@@ -2273,7 +2675,7 @@ mod tests {
             ("fd:3", "fd::3"),
             ("example.com:pkg.git", "example.com::pkg.git"),
             ("git@example.com:pkg.git", "git@example.com::pkg.git"),
-            ("helper:git@host:path", "helper::git@host:path"),
+            ("helper:path", "helper::path"),
         ] {
             assert_eq!(
                 validate_git_url(host_path),

@@ -329,8 +329,17 @@ them). The git URL is an `https://`, `http://`, `ssh://`, `git://` or
 reads one, so a port that is no port, a host that is none or is not ASCII,
 or an escape that is none is an error of `silt.toml` (and of `silt add`),
 not of git later; the URL is kept as written in `silt.lock`. A value that
-starts with `http:` or `https:` without `//` is refused as a URL with its
-`//` left out. A message shows no user or password of a git URL
+starts with `https:`, `http:`, `ssh:`, `git:` or `file:` (in any case)
+without `//` is refused as a URL with its `//` left out, so a host named
+`ssh`, `git` or `file` is written as an `ssh://` URL
+(`ssh://git/~/team/pkg.git` for `git:team/pkg.git`). The form
+`user@host:path` holds no password, as git would take the user for the
+host: a value of that form whose first `:` stands before its first `@`, with
+no `/` between them (`user:word@host:path`, `user:word@host/path`), is
+refused. A path may hold an `@` after a `/` (`git@host:team/pkg@v2.git`,
+`host:dir/a@b`); one whose first part holds an `@` is written
+`host:./pkg@v2`. On Windows a value that starts with one character and
+`:` and holds no other `:` is a drive, not this form. A message shows no user or password of a git URL
 (`https://***@host/repo.git`, `***@host:path`). After adding,
 imports from the dependency package work exactly like local modules. `silt remove <name>` takes one out of `silt.toml`
 and `silt.lock` again.
