@@ -521,6 +521,9 @@ failed: cancelled` for a cancelled handle, `joined task failed: division by
 zero` for a panicking task body). The error points at where the task failed,
 and its call stack goes on, below the task's own calls, with the calls that
 led to the `task.join`; the error of a cancelled task points at the join.
+A failure that went through several joins (a task that joins a task that
+failed, and is joined in turn) says `joined task failed:` once; its call
+stack shows each task and each join it went through.
 Silt has no `try`/`catch`, so a joined
 failure is terminal for the joining task — when cancellation or task
 failure is an expected outcome, use a channel handshake or sentinel value

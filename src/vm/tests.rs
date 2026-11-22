@@ -3937,6 +3937,32 @@ fn main() {
     }
 
     #[test]
+    fn through_three_joins() {
+        // The words of the join are there once; the call stack has
+        // each task and each join.
+        let source = "\
+import task
+fn work(n: Int) -> Int {
+  10 / n
+}
+fn main() {
+  let outer = task.spawn({ ->
+    let middle = task.spawn({ ->
+      let inner = task.spawn({ -> work(0) })
+      task.join(inner)
+    })
+    task.join(middle)
+  })
+  println(task.join(outer))
+}
+";
+        assert_eq!(
+            stops(source),
+            "joined task failed: division by zero at 3:3; work 3:3; closure in main 8:35; closure in main 9:7; closure in main 11:5; main 13:11; <script> 5:1"
+        );
+    }
+
+    #[test]
     fn the_join_of_a_cancelled_task() {
         let source = "\
 import channel
