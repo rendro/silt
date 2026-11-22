@@ -463,6 +463,18 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             "***@example.com:team/pkg.git",
             RULE_SCP_PASSWORD,
         ),
+        // A password stands before the first `@`: one with an `@` in it,
+        // and one before a path with an `@`.
+        (
+            "user:S3CR@3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        (
+            "user:S3CR3TXYZ@example.com:team/pkg@v2.git",
+            "***@example.com:team/pkg@v2.git",
+            RULE_SCP_PASSWORD,
+        ),
     ];
     let ws = fresh_workspace("read_otherwise");
     let no_git = ws.join("no-git");
@@ -509,24 +521,34 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             assert!(!stderr.contains("3TX"), "{context}: {stderr}");
         }
     }
-    // A user alone is the scp form git reads as written: it is taken and
-    // goes to git, which is not there.
-    let app = ws.join("app");
-    let _ = fs::remove_dir_all(&app);
-    let url = "git@example.com:team/pkg.git";
-    write_package(
-        &app,
-        "app",
-        &[git_dep("lib", url)],
-        "main.silt",
-        "fn main() {}\n",
-    );
-    let out = run(&app, &["check"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        !stderr.contains("invalid git URL") && stderr.contains(url),
-        "{stderr}"
-    );
+    // A user alone, and a path with an `@`, are the scp form git reads as
+    // written: they are taken, shown whole (the line of silt.toml too),
+    // and go to git, which is not there. FAIL before (the `@` of a path):
+    // refused, or shown `***@v2.git`.
+    for url in [
+        "git@example.com:team/pkg.git",
+        "git@example.com:team/pkg@v2.git",
+        "example.com:dir/a@b",
+    ] {
+        let app = ws.join("app");
+        let _ = fs::remove_dir_all(&app);
+        write_package(
+            &app,
+            "app",
+            &[git_dep("lib", url)],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let out = run(&app, &["check"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stderr.contains("invalid git URL")
+                && stderr.contains(&format!("(`{url}`, branch = `main`)"))
+                && stderr.contains(&format!("git = \"{url}\"")),
+            "{url}: {stderr}"
+        );
+        assert!(!stderr.contains("***"), "{url}: {stderr}");
+    }
     let _ = fs::remove_dir_all(&ws);
 }
 
@@ -971,6 +993,8 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         format!("https://user:{marker}@example.com/pkg.git"),
         format!("ssh://git:{marker}@example.com:team/pkg.git"),
         format!("user:{marker}@example.com:team/pkg.git"),
+        format!("user:{marker}@example.com:team/pkg@v2.git"),
+        "user:S3CR@3TXYZ@example.com:team/pkg.git".to_string(),
         format!("ssh:user:{marker}@example.com:team/pkg.git"),
         format!("git:user:{marker}@example.com:team/pkg.git"),
         format!("https:/user:{marker}@example.com/pkg.git"),
