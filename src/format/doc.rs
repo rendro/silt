@@ -204,7 +204,11 @@ pub(crate) fn render(doc: &Doc, width: usize) -> String {
                 stack.push((indent, mode, chosen));
             }
             Doc::Hang(inner) => {
+                // (At the start of a line, after a comment that broke it,
+                // the body is where it would go.)
                 let behind = mode == Mode::Flat
+                    || r.at_line_start
+                    || r.line_is_closed
                     || inner.forces_break()
                     || r.fits_at(r.start(), (indent, Mode::Flat, doc), &stack)
                     || !r.fits_at(

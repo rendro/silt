@@ -258,13 +258,18 @@ impl Server {
         if let Some(signature) = signature {
             value.push_str(&super::conversions::code_block(&signature));
         } else if let Some(t) = ty {
-            // A name the checker found no type for at all, and that has
-            // no docs, has nothing to describe (not `_`).
-            if doc_text.is_none()
-                && matches!(t, crate::types::Type::Var(_) | crate::types::Type::Error)
-            {
+            // A name the checker could not type at all, and that has no
+            // docs, has nothing to describe (not `_`). One whose type is
+            // a type variable shows it as its binding does, by a letter.
+            if doc_text.is_none() && matches!(t, crate::types::Type::Error) {
                 return None;
             }
+            let t = match t {
+                crate::types::Type::Var(_) if doc_text.is_none() => {
+                    super::ast_walk::written_with_letters(&t)
+                }
+                t => t,
+            };
             // (So does a name the checker has no type for, a function
             // of a feature that is not built: its docs say what it is.)
             let untyped = has_unresolved_vars(&t) || matches!(t, crate::types::Type::Error);

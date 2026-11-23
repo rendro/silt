@@ -1,0 +1,17 @@
+-- cmd: fmt
+-- A comment behind the `->` ends its line; the body stands on the next
+-- line, one level deeper, with no empty line before it, also when it
+-- fills that line to the margin and another comment follows it.
+fn f(s: String) -> Int {
+  1
+}
+
+fn main() {
+  let x = Some(1)
+  let n = match x {
+    Some(y) -> -- one
+      f("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") -- two
+    None -> 1
+  }
+  println(n)
+}

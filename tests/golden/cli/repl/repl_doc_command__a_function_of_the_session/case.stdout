@@ -5,3 +5,9 @@ A page viewed as often as another keeps its place.
 [PageCount {page: "a", views: 1}]
 larger(x: a, y: a) -> a where a: Compare
 bare(x: Int) -> Int
+larger(x: a, y: a) -> a where a: Compare
+1
+bare(x: Int) -> Int
+stats.top_pages(views: List(String), n: Int) -> List(stats.PageCount)
+The `n` pages viewed most, the most viewed first.
+A page viewed as often as another keeps its place.

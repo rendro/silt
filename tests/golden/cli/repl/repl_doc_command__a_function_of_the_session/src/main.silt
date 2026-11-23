@@ -1,9 +1,10 @@
 -- cmd: repl
--- stdin: :doc stats.top_pages\nimport stats\n:doc stats.top_pages\n:doc stats.take_first\nstats.top_pages(["a", "b"], 1)\nfn larger(x: a, y: a) -> a where a: Compare { match x > y { true -> x\n false -> y } }\n:doc larger\nfn bare(x: Int) -> Int { x }\n:doc bare\nlet n = 1\n:doc n\n:doc nope\n:quit\n
+-- stdin: :doc stats.top_pages\nimport stats\n:doc stats.top_pages\n:doc stats.take_first\nstats.top_pages(["a", "b"], 1)\nfn larger(x: a, y: a) -> a where a: Compare { match x > y { true -> x\n false -> y } }\n:doc larger\nfn bare(x: Int) -> Int { x }\n:doc bare\nlet n = 1\n:doc n\n:doc larger\nbare(n)\nfn third(x: Int) -> Int { x }\n:doc bare\n:doc stats.top_pages\n:doc nope\n:quit\n
 -- `:doc` shows a function the session sees: one of a module an input
 -- imported (`stats.top_pages`, after `import stats`) and one an input
 -- defined, with its signature and its doc comment. A name that is no
 -- such function (a module's private one, a `let`) is no builtin either.
+-- A function stays found after later inputs have run.
 fn main() {
   println("not run")
 }

@@ -764,13 +764,13 @@ impl Repl {
         if !matches!(entry.kind, crate::defs::DefKind::Fn) {
             return None;
         }
-        let decl =
-            (session.module_analysis(entry.module)?.ast.decls.iter()).find_map(
-                |decl| match decl {
-                    crate::ast::Decl::Fn(f) if f.name_span == entry.span => Some(f),
-                    _ => None,
-                },
-            )?;
+        // (The declaration as parsed: the session gives up the check of a
+        // cell that a later cell imports no longer.)
+        let program = session.graph().module(entry.module).ast.as_ref()?;
+        let decl = (program.decls.iter()).find_map(|decl| match decl {
+            crate::ast::Decl::Fn(f) if f.name_span == entry.span => Some(f),
+            _ => None,
+        })?;
         let params: Vec<String> = (decl.params.iter())
             .map(|param| match &param.pattern.kind {
                 crate::ast::PatternKind::Ident(name) => intern::resolve(*name),
