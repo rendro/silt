@@ -402,8 +402,9 @@ every offset also reads `Z` (or `z`) for UTC:
 `Err(ParseFormat(...))` that says so (`the UTC offset at byte 19 needs hours
 and minutes (+hh:mm or +hhmm)`). `%+` reads an RFC 3339 date and time
 whole (`2026-11-01T08:00:00+05:30`, `Z` for UTC, a space for the `T`), and
-also one whose offset is written without its colon (`+0530`); seconds are
-written, and the offset has hours and minutes. `%s` (seconds since the
+also one whose offset is written without its colon (`+0530`), with spaces
+before the offset or several for the `T`, or with a lower-case `t` and `z`;
+seconds are written, and the offset has hours and minutes. `%s` (seconds since the
 epoch, `-1` for the second before it) names an instant without an offset.
 `time.to_datetime(i, 0)` gives the UTC date and time of the instant.
 

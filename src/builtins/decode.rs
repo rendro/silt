@@ -162,7 +162,11 @@ fn invalid_url_message(why: crate::url::UrlError) -> std::string::String {
 /// is none, `why`: how a date is written, for a text that is not
 /// written so; else the field that is out of its range.
 fn invalid_date_message(s: &str, why: chrono::ParseError) -> std::string::String {
-    match out_of_range(&signed_year(s), DATE, "date", why) {
+    let range = match date_written(s) == Some("") {
+        true => out_of_range(&signed_year(s), DATE, "date", why),
+        false => None,
+    };
+    match range {
         Some(range) => format!("invalid date '{s}': {range}"),
         None => format!("invalid date '{s}' (expected YYYY-MM-DD): {why}"),
     }
@@ -184,10 +188,10 @@ fn invalid_time_message(s: &str, why: &Unread) -> std::string::String {
 pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, Unread> {
     let t = NaiveTime::parse_from_str(s, TIME).or_else(|full| {
         NaiveTime::parse_from_str(s, TIME_MINUTES).map_err(|short| {
-            match [(TIME, full), (TIME_MINUTES, short)]
+            let range = [(TIME, full), (TIME_MINUTES, short)]
                 .into_iter()
-                .find_map(|(pattern, err)| out_of_range(s, pattern, "time", err))
-            {
+                .find_map(|(pattern, err)| out_of_range(s, pattern, "time", err));
+            match range.filter(|_| time_written(s) == Some("")) {
                 Some(range) => Unread::Value(range),
                 None => Unread::Shape(short.to_string()),
             }
@@ -221,27 +225,93 @@ pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::Stri
     match dt {
         Some(dt) if is_leap_second(dt.time()) => Err(leap_datetime_message(s)),
         Some(dt) => Ok(dt),
-        None => Err(match datetime_out_of_range(read) {
+        None => Err(match datetime_out_of_range(s, read) {
             Some(range) => format!("invalid datetime '{s}': {range}"),
             None => format!("invalid datetime '{s}'"),
         }),
     }
 }
 
-/// Why `s`, written as a date and time with or without an offset, is
-/// none: the field out of its range. `None` for a text not written so.
-fn datetime_out_of_range(s: &str) -> Option<std::string::String> {
+/// Why `s` (`read` with its year signed as [`parse_date`] reads it),
+/// written as a date and time with or without an offset, is none: the
+/// field out of its range. `None` for a text not written so. An offset
+/// `Z` is read as `+00:00`, which chrono's `%z` reads.
+fn datetime_out_of_range(s: &str, read: &str) -> Option<std::string::String> {
+    if datetime_written(s) != Some("") {
+        return None;
+    }
+    let zulu = match read.strip_suffix(['Z', 'z']) {
+        Some(before) => format!("{before}+00:00"),
+        None => read.to_string(),
+    };
     let offset = DATETIME_OFFSET.into_iter().filter_map(|pattern| {
-        let err = chrono::DateTime::parse_from_str(s, pattern).err()?;
-        Some((pattern, err))
+        let err = chrono::DateTime::parse_from_str(&zulu, pattern).err()?;
+        Some((pattern, err, &*zulu))
     });
     let naive = DATETIME.into_iter().filter_map(|pattern| {
-        let err = NaiveDateTime::parse_from_str(s, pattern).err()?;
-        Some((pattern, err))
+        let err = NaiveDateTime::parse_from_str(read, pattern).err()?;
+        Some((pattern, err, read))
     });
     naive
         .chain(offset)
-        .find_map(|(pattern, err)| out_of_range(s, pattern, "datetime", err))
+        .find_map(|(pattern, err, text)| out_of_range(text, pattern, "datetime", err))
+}
+
+/// The text after a run of `min` to `max` ASCII digits at the start of
+/// `s`, if it starts with one.
+fn after_digits(s: &str, min: usize, max: usize) -> Option<&str> {
+    let n = s.bytes().take_while(u8::is_ascii_digit).count();
+    (min..=max).contains(&n).then(|| &s[n..])
+}
+
+/// What follows a date at the start of `s` written as a document writes
+/// one, whatever its fields hold: a year of 4 or more digits, or of any
+/// number after a sign, `-`, a month of 1 or 2 digits, `-`, a day of 1
+/// or 2. `None` if `s` starts with none: a text a message then says how
+/// a date is written for.
+fn date_written(s: &str) -> Option<&str> {
+    let (fewest, s) = match s.strip_prefix(['+', '-']) {
+        Some(unsigned) => (1, unsigned),
+        None => (4, s),
+    };
+    let s = after_digits(s, fewest, usize::MAX)?;
+    let s = after_digits(s.strip_prefix('-')?, 1, 2)?;
+    after_digits(s.strip_prefix('-')?, 1, 2)
+}
+
+/// What follows a time of day at the start of `s` written as a document
+/// writes one: hours and minutes of 1 or 2 digits each, then seconds, with
+/// a fraction, or none. `None` if `s` starts with none.
+fn time_written(s: &str) -> Option<&str> {
+    let s = after_digits(s, 1, 2)?;
+    let s = after_digits(s.strip_prefix(':')?, 1, 2)?;
+    let Some(seconds) = s.strip_prefix(':') else {
+        return Some(s);
+    };
+    let s = after_digits(seconds, 1, 2)?;
+    match s.strip_prefix('.') {
+        Some(fraction) => after_digits(fraction, 1, usize::MAX),
+        None => Some(s),
+    }
+}
+
+/// What follows a date and time at the start of `s` written as a
+/// document writes one: a date, `T` or a space, a time of day, and an
+/// offset (`Z`, `+hh:mm`, `+hhmm`) or none. `None` if `s` starts
+/// with none.
+fn datetime_written(s: &str) -> Option<&str> {
+    let s = date_written(s)?.strip_prefix(['T', 't', ' '])?;
+    let s = time_written(s)?;
+    if let Some(after) = s.strip_prefix(['Z', 'z']) {
+        return Some(after);
+    }
+    let Some(offset) = s.strip_prefix(['+', '-']) else {
+        return Some(s);
+    };
+    match after_digits(offset, 4, 4) {
+        Some(after) => Some(after),
+        None => after_digits(after_digits(offset, 2, 2)?.strip_prefix(':')?, 2, 2),
+    }
 }
 
 // ── Record types ────────────────────────────────────────────────────
@@ -1102,10 +1172,30 @@ mod tests {
                 with(r#"{"d": "2026-13-01"}"#),
                 "Other invalid date '2026-13-01': the month is out of range at d",
             ),
+            (
+                with(r#"{"d": "11-23-2026"}"#),
+                "Other invalid date '11-23-2026' (expected YYYY-MM-DD): input is out of range at d",
+            ),
+            (
+                with(r#"{"d": "2025-13-01x"}"#),
+                "Other invalid date '2025-13-01x' (expected YYYY-MM-DD): input is out of range at d",
+            ),
             (with(r#"{"d": 20261019}"#), "TypeMismatch at d"),
             (
                 with(r#"{"tm": "25:00"}"#),
                 "Other invalid time '25:00': the hour is out of range at tm",
+            ),
+            (
+                with(r#"{"tm": "930"}"#),
+                "Other invalid time '930' (expected HH:MM:SS): input is out of range at tm",
+            ),
+            (
+                with(r#"{"at": "2026-02-30T10:00:00Z"}"#),
+                "Other invalid datetime '2026-02-30T10:00:00Z': the day is out of range: February 2026 has 28 days at at",
+            ),
+            (
+                with(r#"{"at": "11-23-2026 10:00"}"#),
+                "Other invalid datetime '11-23-2026 10:00' at at",
             ),
             (
                 with(r#"{"at": "2016-12-31T23:59:60Z"}"#),

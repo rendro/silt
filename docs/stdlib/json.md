@@ -690,12 +690,14 @@ A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an
 `Other` that names the text, such as
 `invalid time '23:59:60': a leap second (second 60) is not read`. So is any
-text written as a date or a time whose field is out of its range, which
-says the field: `invalid date '2026-13-01': the month is out of range`,
-`invalid date '2026-11-31': the day is out of range: November 2026 has 30
-days`. A text not written so says how a value of the type is written:
-`invalid date '2026/11/30' (expected YYYY-MM-DD): input contains invalid
-characters`.
+text written as a date, a time or a date and time (in a form of the table)
+whose field is out of its range, which says the field: `invalid date
+'2026-13-01': the month is out of range`, `invalid datetime
+'2026-02-30T10:00:00Z': the day is out of range: February 2026 has 28
+days`. A date or a time of day not written so says how one is written,
+whatever its fields hold: `invalid date '11-23-2026' (expected YYYY-MM-DD):
+input is out of range`, `invalid time '930' (expected HH:MM:SS): ...`; a
+date and time not written so is `invalid datetime '<text>'`.
 
 ```silt
 import json
