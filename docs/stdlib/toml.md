@@ -276,7 +276,9 @@ is not kept: `1979-05-27T07:32:00+05:30` reads as `1979-05-27T02:02:00`.
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an `Other`
 that names the text, from a string and from a literal alike:
-`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
+`invalid time '23:59:60': a leap second (second 60) is not read`; a field
+out of its range is named as for [`json.parse`](json.md) (`invalid date
+'1979-02-30': the day is out of range: February 1979 has 28 days`).
 A date or a time that is none has one message whether it is written in
 quotes or as a literal: `d = 07:32:00` for a `Date` field `d` is
 `invalid date '07:32:00' (expected YYYY-MM-DD): input contains invalid characters at d`.

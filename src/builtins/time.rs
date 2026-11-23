@@ -317,6 +317,25 @@ pub(crate) fn leap_datetime_message(s: &str) -> String {
     format!("invalid datetime '{s}': {LEAP_SECOND}")
 }
 
+/// Why `s`, which chrono refused (`err`) as a `what` written by
+/// `pattern`, is none, where `s` is written so and a field is out of its
+/// range: in [`why_unread`]'s words (`the month is out of range`, `the
+/// day is out of range: February 2026 has 28 days`). `None` where `err`
+/// is of another kind: then `s` is not written as `pattern` writes.
+pub(crate) fn out_of_range(
+    s: &str,
+    pattern: &'static str,
+    what: &str,
+    err: chrono::ParseError,
+) -> Option<String> {
+    use chrono::format::{ParseErrorKind, StrftimeItems};
+    if err.kind() != ParseErrorKind::OutOfRange {
+        return None;
+    }
+    let items: Vec<_> = StrftimeItems::new(pattern).collect();
+    Some(why_unread(s, &items, what, err))
+}
+
 // ── Time helpers ────────────────────────────────────────────────────
 
 /// Build a Silt `Date` record Value from chrono NaiveDate.

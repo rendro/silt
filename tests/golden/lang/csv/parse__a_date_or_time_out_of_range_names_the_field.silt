@@ -1,0 +1,27 @@
+-- A cell written as a date or a time whose field is out of its range says
+-- which field, as time.parse_date does; only a cell not written so says how
+-- a date is written.
+import csv
+import json
+import time
+
+type U {
+  id: String,
+  signup: time.Date,
+}
+
+type T {
+  at: time.Time,
+  when: time.DateTime,
+}
+
+fn main() {
+  println(csv.parse("id,signup\nu1,2025-03-09\nu2,2025-13-01\n", U))
+  println(csv.parse("id,signup\nu2,2026-02-30\n", U))
+  println(csv.parse("id,signup\nu2,2026/02/03\n", U))
+  println(csv.parse("at,when\n25:00,2026-01-01T00:00\n", T))
+  println(csv.parse("at,when\n12:00,2026-01-01T24:00\n", T))
+  println(csv.parse("at,when\nnoon,2026-01-01T00:00\n", T))
+  println(json.parse("""{"id": "u", "signup": "2026-11-31"}""", U))
+  println(json.parse("""{"at": "12:00", "when": "2026-11-01T08:00:00+24:00"}""", T))
+}

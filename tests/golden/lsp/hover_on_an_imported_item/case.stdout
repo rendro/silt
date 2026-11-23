@@ -106,7 +106,13 @@ as for an `Int` field: `{"d": 1}` for a `Date` field `d` is
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an
 `Other` that names the text, such as
-`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
+`invalid time '23:59:60': a leap second (second 60) is not read`. So is any
+text written as a date or a time whose field is out of its range, which
+says the field: `invalid date '2026-13-01': the month is out of range`,
+`invalid date '2026-11-31': the day is out of range: November 2026 has 30
+days`. A text not written so says how a value of the type is written:
+`invalid date '2026/11/30' (expected YYYY-MM-DD): input contains invalid
+characters`.
 
 ```silt
 import json
