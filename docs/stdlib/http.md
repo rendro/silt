@@ -379,6 +379,35 @@ in the queue and gets `503`. A
 handler that waits needs a limit of its own, for example
 `channel.receive_timeout` instead of `channel.receive`.
 
+**Long polls and health checks: serve them on two listeners.** Every
+request to one server takes a place among its 128 handlers, so 128 long
+polls that wait hold every place, and a health check (`GET /health`) waits
+in the queue behind them until one returns, or is answered `503` after
+5 s. A request that must
+be answered at once while others wait goes to a second server on another
+port, which has 128 places of its own:
+
+```silt
+import bytes
+import http
+import task
+import tcp
+
+fn text(body: String) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string(body), headers: #{} }
+}
+
+fn main() -> Result((), tcp.TcpError) {
+  let api = tcp.listen("127.0.0.1:8080")?
+  let health = tcp.listen("127.0.0.1:8081")?
+  let checks = task.spawn { -> http.serve(health) { _ -> text("up") } }
+  -- the long polls, and every other request, are served on 8080
+  http.serve(api) { _ -> text("done") }
+  task.cancel(checks)
+  Ok(())
+}
+```
+
 ### What the server reads and sends
 
 The server speaks HTTP/1.1, and HTTP/1.0 to a client that does (the
