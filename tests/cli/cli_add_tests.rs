@@ -252,6 +252,14 @@ fn test_add_fails_on_duplicate() {
         stderr.contains("dependency 'foo' is already declared"),
         "expected 'already declared' diagnostic; got: {stderr}"
     );
+    // The way forward. FAIL before: the error said nothing more.
+    assert!(
+        stderr.ends_with(
+            "is already declared\n  = help: to change it, edit its line in silt.toml, or run \
+             `silt remove foo` first\n"
+        ),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -571,10 +579,78 @@ fn test_add_git_with_invalid_url_errors() {
         .unwrap();
     assert!(!out.status.success(), "should reject non-URL input");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("doesn't look like a git URL"),
-        "expected URL-shape diagnostic; got: {stderr}"
+    assert_eq!(
+        stderr.lines().next().unwrap_or_default(),
+        "error: silt add: --git URL `not a url` must not contain whitespace or control \
+         characters (a space is allowed only in a `file://` URL or a local path); expected \
+         an `https://`, `http://`, `ssh://`, `git://` or `file://` URL, `host:path` or \
+         `user@host:path`, or a local path starting with `/`, `./` or `../`",
+        "{stderr}"
     );
+}
+
+/// Each refusal of a `--git` value is one sentence about it, and tells
+/// the one way to write it when there is one: the `//` of a URL put
+/// back, `./` in front of the name of a directory here. FAIL before:
+/// "doesn't look like a git URL: is a URL with its `//` left out: write
+/// `://` after the scheme; expected ...", and the same list for a
+/// directory's name.
+#[test]
+fn test_add_git_url_refusals_read_as_sentences() {
+    const FORMS: &str = "expected an `https://`, `http://`, `ssh://`, `git://` or \
+                         `file://` URL, `host:path` or `user@host:path`, or a local path \
+                         starting with `/`, `./` or `../`";
+    let ws = fresh_workspace("git_url_sentences");
+    let app = ws.join("app");
+    write_app_package(&app, "git_sentences_app", "fn main() {}\n");
+    fs::create_dir_all(app.join("lib")).unwrap();
+    let before = fs::read_to_string(app.join("silt.toml")).unwrap();
+    for (url, expected) in [
+        (
+            "file:/srv/frontmatter",
+            "--git URL `file:/srv/frontmatter` is a URL with its `//` left out: \
+             write it `file:///srv/frontmatter`"
+                .to_string(),
+        ),
+        (
+            "https:example.com/x.git",
+            "--git URL `https:example.com/x.git` is a URL with its `//` left out: \
+             write it `https://example.com/x.git`"
+                .to_string(),
+        ),
+        (
+            "lib",
+            "--git URL `lib` is not a recognised git URL form; a local path starts with \
+             `/`, `./` or `../`: write it `./lib`"
+                .to_string(),
+        ),
+        (
+            "nothere",
+            format!("--git URL `nothere` is not a recognised git URL form; {FORMS}"),
+        ),
+        // The password rule keeps its words; the URL is hidden to its `@`.
+        (
+            "ann:S3CR3TXYZ@localhost:x.git",
+            format!(
+                "--git URL `***@localhost:x.git`: the form `user@host:path` holds no \
+                 password (git would take what stands before the first `:` for the host): \
+                 leave the password out, and ssh asks for it or uses a key; a path with an \
+                 `@` in it is written with the user in front (`git@host:dir/a@b`) or as an \
+                 `ssh://` URL; {FORMS}"
+            ),
+        ),
+    ] {
+        let out = silt_cmd()
+            .args(["add", "x", "--git", url, "--tag", "v0.1.0"])
+            .current_dir(&app)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{url}: {stderr}");
+        assert_eq!(stderr, format!("error: silt add: {expected}\n"), "{url}");
+        assert!(!stderr.contains("3TX"), "{url}: {stderr}");
+    }
+    assert_eq!(fs::read_to_string(app.join("silt.toml")).unwrap(), before);
 }
 
 /// `--rev` value must look like a SHA. This must run *before* any

@@ -28,6 +28,8 @@ enum AddError {
     Message(String),
     /// A usage error: the message, then a line pointing at `--help`.
     Usage(String),
+    /// A message of one line, then a line of help.
+    Helped { message: String, help: String },
     /// A failure reported by git: the context, then that error's own
     /// message, which can run over several lines.
     Caused {
@@ -58,6 +60,11 @@ impl fmt::Display for AddError {
                 write!(f, "{message}")?;
                 f.line_break()?;
                 write!(f, "Run 'silt add --help' for usage.")
+            }
+            AddError::Helped { message, help } => {
+                write!(f, "{message}")?;
+                f.line_break()?;
+                write!(f, "  = help: {help}")
             }
             AddError::Caused { context, cause } => {
                 write!(f, "{context}: ")?;
@@ -364,7 +371,12 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         .keys()
         .any(|sym| intern::resolve(*sym) == name);
     if already_present {
-        return Err(format!("dependency '{name}' is already declared").into());
+        return Err(AddError::Helped {
+            message: format!("dependency '{name}' is already declared"),
+            help: format!(
+                "to change it, edit its line in silt.toml, or run `silt remove {name}` first"
+            ),
+        });
     }
 
     // ── Source validation + the rendered TOML inline-table ────────────
@@ -442,11 +454,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // roundtrip, and option-shaped input (`--upload-pack=...`)
             // before it can reach `git` at all.
             if let Err(e) = crate::git::validate_git_url(&url) {
-                return Err(format!(
-                    "--git URL `{}` doesn't look like a git URL: {}",
-                    e.url, e.reason
-                )
-                .into());
+                return Err(invalid_git_url(&cwd, &url, &e).into());
             }
             // Shape-validate Rev locally so a malformed SHA fails before
             // any network traffic. `verify_reachable` would catch this
@@ -582,6 +590,29 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         crate::git::escape_for_display(&crate::git::hide_git_userinfo(&success_summary))
     );
     Ok(())
+}
+
+/// The refusal of the `--git` value `url`, given in the working
+/// directory `cwd`: one sentence about it. A value that names a
+/// directory here, and is a local path once `./` is put in front, is
+/// told that form.
+fn invalid_git_url(cwd: &Path, url: &str, error: &crate::git::InvalidGitUrl) -> String {
+    let subject = format!("--git URL `{}`", error.url);
+    let local = format!("./{url}");
+    let names_a_directory = !crate::git::is_local_git_url(url)
+        && !Path::new(url).is_absolute()
+        && cwd.join(url).is_dir()
+        && crate::git::validate_git_url(&local).is_ok()
+        && crate::git::is_local_git_url(&local);
+    if names_a_directory {
+        format!(
+            "{subject} is not a recognised git URL form; a local path starts with `/`, `./` or `../`: \
+             write it `{}`",
+            crate::git::display_url(&local)
+        )
+    } else {
+        error.sentence(&subject)
+    }
 }
 
 /// The local git URL `url` (absolute) as silt.toml stores it: relative

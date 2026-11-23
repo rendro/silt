@@ -291,10 +291,61 @@ impl std::error::Error for InvalidGitUrl {}
 pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     match git_url_problem(url) {
         None => Ok(()),
-        Some(problem) => Err(InvalidGitUrl {
-            url: display_url(url),
-            reason: format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
-        }),
+        Some(problem) => {
+            // A URL with its `//` left out has one fix, written out
+            // whole (its user and password hidden, as everywhere).
+            let fixed = (problem == SCHEME_WITHOUT_SLASHES)
+                .then(|| with_scheme_slashes(url))
+                .flatten()
+                .filter(|fixed| git_url_problem(fixed).is_none());
+            let reason = match fixed {
+                Some(fixed) => format!(
+                    "is a URL with its `//` left out: write it `{}`",
+                    display_url(&fixed)
+                ),
+                None => format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
+            };
+            Err(InvalidGitUrl {
+                url: display_url(url),
+                reason,
+            })
+        }
+    }
+}
+
+/// The rule of [`validate_git_url`] that a URL of a known scheme with its
+/// `//` left out breaks ([`is_scheme_without_slashes`]).
+const SCHEME_WITHOUT_SLASHES: &str =
+    "is a URL with its `//` left out: write `://` after the scheme";
+
+/// `url`, a URL of a known scheme with its `//` left out, as it is
+/// written with them: `file:/srv/r.git` is `file:///srv/r.git`,
+/// `https:host/r.git` and `https:/host/r.git` are `https://host/r.git`;
+/// the scheme in lower case. `None` when there is no one way to write
+/// it: nothing after the scheme, or a `file:` URL of a relative path.
+/// (Whether the result is a URL [`validate_git_url`] takes is the
+/// caller's question.)
+fn with_scheme_slashes(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once(':')?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme == "file" {
+        // A file URL names an absolute path: `file://` and the path.
+        return rest.starts_with('/').then(|| format!("file://{rest}"));
+    }
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    (!rest.is_empty() && !rest.starts_with('/')).then(|| format!("{scheme}://{rest}"))
+}
+
+impl InvalidGitUrl {
+    /// The refusal as one sentence about `subject` (`--git URL \`x\``):
+    /// the subject and the rule when the rule is said of it (`must not
+    /// ...`, `is ...`), else the subject, `:` and the rule.
+    pub(crate) fn sentence(&self, subject: &str) -> String {
+        if self.reason.starts_with("must ") || self.reason.starts_with("is ") {
+            format!("{subject} {}", self.reason)
+        } else {
+            format!("{subject}: {}", self.reason)
+        }
     }
 }
 
@@ -355,7 +406,7 @@ fn git_url_problem(url: &str) -> Option<String> {
                 .to_string()
         }
     } else if is_scheme_without_slashes(url) {
-        "is a URL with its `//` left out: write `://` after the scheme".to_string()
+        SCHEME_WITHOUT_SLASHES.to_string()
     } else if has_accepted_url_form(url) && is_scp_form_with_password(url) {
         "the form `user@host:path` holds no password (git would take what stands \
          before the first `:` for the host): leave the password out, and ssh asks \
@@ -2314,31 +2365,84 @@ mod tests {
         }
     }
 
+    /// A refusal is one sentence about what was refused: the subject and
+    /// the rule said of it, or, for the one rule that is not said of the
+    /// value, the subject, `:` and the rule (its words as they are).
+    /// FAIL before: `silt add` put `doesn't look like a git URL:` in
+    /// front of every rule.
+    #[test]
+    fn a_refusal_reads_as_one_sentence_about_its_subject() {
+        for (url, joined) in [
+            ("", "S must not be empty;"),
+            ("-x", "S must not start with `-`;"),
+            ("a b", "S must not contain whitespace"),
+            ("src", "S is not a recognised git URL form;"),
+            (
+                "file:/srv/r.git",
+                "S is a URL with its `//` left out: write it",
+            ),
+            ("https://h:x/r.git", "S is not a valid URL:"),
+            (
+                "user:word@host:p",
+                "S: the form `user@host:path` holds no password (git would take what \
+                 stands before the first `:` for the host)",
+            ),
+        ] {
+            let sentence = validate_git_url(url).unwrap_err().sentence("S");
+            assert!(sentence.starts_with(joined), "{url:?}: {sentence}");
+        }
+    }
+
     /// A URL of any accepted scheme without `//` is mistyped, refused
     /// before git takes it for the host `https`, `ssh` or `file`. FAIL
     /// before: `ssh:`, `git:` and `file:` without `//` were taken for
-    /// hosts.
+    /// hosts. The message writes the URL out with its `//` when that is a
+    /// URL silt takes, its user and password hidden. FAIL before: it said
+    /// only "write `://` after the scheme".
     #[test]
     fn a_url_with_its_slashes_left_out_is_refused() {
-        for url in [
-            "https:/user:word@example.com/pkg.git",
-            "https:example.com/pkg.git",
-            "HTTP:/example.com/pkg.git",
-            "http:example.com:pkg.git",
-            "ssh:/git@example.com/team/pkg.git",
-            "ssh:team/pkg.git",
-            "SSH:team/pkg.git",
-            "git:team/pkg.git",
-            "Git:/example.com/team/pkg.git",
-            "file:/srv/repo.git",
-            "FILE:srv/repo.git",
+        const RULE: &str = "is a URL with its `//` left out: write `://` after the scheme;";
+        for (url, fixed) in [
+            (
+                "https:/user:word@example.com/pkg.git",
+                Some("https://***@example.com/pkg.git"),
+            ),
+            (
+                "https:example.com/pkg.git",
+                Some("https://example.com/pkg.git"),
+            ),
+            (
+                "HTTP:/example.com/pkg.git",
+                Some("http://example.com/pkg.git"),
+            ),
+            // Written with `//` it has no port: no one way to write it.
+            ("http:example.com:pkg.git", None),
+            (
+                "ssh:/git@example.com/team/pkg.git",
+                Some("ssh://***@example.com/team/pkg.git"),
+            ),
+            ("ssh:team/pkg.git", Some("ssh://team/pkg.git")),
+            ("SSH:team/pkg.git", Some("ssh://team/pkg.git")),
+            ("git:team/pkg.git", Some("git://team/pkg.git")),
+            (
+                "Git:/example.com/team/pkg.git",
+                Some("git://example.com/team/pkg.git"),
+            ),
+            ("file:/srv/repo.git", Some("file:///srv/repo.git")),
+            // A file URL of a relative path: no one way to write it.
+            ("FILE:srv/repo.git", None),
+            ("https:", None),
         ] {
             let reason = rejection_reason(url);
-            assert!(
-                reason
-                    .starts_with("is a URL with its `//` left out: write `://` after the scheme;"),
-                "{url}: {reason}"
-            );
+            match fixed {
+                Some(fixed) => assert_eq!(
+                    reason,
+                    format!("is a URL with its `//` left out: write it `{fixed}`"),
+                    "{url}"
+                ),
+                None => assert!(reason.starts_with(RULE), "{url}: {reason}"),
+            }
+            assert!(!reason.contains("word"), "{url}: {reason}");
         }
         assert_eq!(
             validate_git_url("https:/user:word@example.com/pkg.git")
