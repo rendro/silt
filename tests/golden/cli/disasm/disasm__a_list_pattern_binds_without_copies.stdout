@@ -29,9 +29,7 @@
 0038  Recur                2  slot 1  -40   -> 0006
 0046  Constant             2     ; "non-exhaustive match: no arm matched"
 0049  Panic
-0050  Slide                3
-0053  Slide                1
-0056  Return
+0050  Return
 
 == pairs (arity=1, upvalues=0) ==
 0000  GetLocal             0

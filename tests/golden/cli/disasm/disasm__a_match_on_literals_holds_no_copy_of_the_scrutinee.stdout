@@ -26,8 +26,7 @@
 0032  GetLocal             1
 0035  Add
 0036  Recur                2  slot 1  -38   -> 0006
-0044  Slide                1
-0047  Return
+0044  Return
 
 == fib (arity=1, upvalues=0) ==
 0000  GetLocal             0

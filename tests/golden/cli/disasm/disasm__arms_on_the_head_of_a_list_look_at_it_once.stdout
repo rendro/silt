@@ -39,9 +39,7 @@
 0082  Recur                2  slot 1  -84   -> 0006
 0090  Constant             4     ; "non-exhaustive match: no arm matched"
 0093  Panic
-0094  Slide                3
-0097  Slide                1
-0100  Return
+0094  Return
 
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>

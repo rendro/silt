@@ -1,0 +1,75 @@
+-- timeout: 90
+-- A call in tail position inside a loop's body is a tail call when the
+-- loop is in tail position: a supervisor that restarts by calling itself
+-- from inside its loop runs in one frame however often it restarts. A
+-- loop whose value is still used (`let x = loop ...`, `1 + loop ...`)
+-- is not in tail position, and a call in its body returns to it.
+import task
+
+fn sup(n: Int) -> Int {
+  loop k = 0 {
+    match k {
+      0 -> loop(1)
+      _ -> match n {
+        0 -> 0
+        _ -> sup(n - 1)
+      }
+    }
+  }
+}
+
+fn bare(n: Int) -> Int {
+  loop {
+    match n {
+      0 -> 7
+      _ -> bare(n - 1)
+    }
+  }
+}
+
+fn used_by_let(n: Int) -> Int {
+  let x = loop k = n {
+    match k {
+      0 -> 0
+      _ -> used_by_let(k - 1)
+    }
+  }
+  x + 1
+}
+
+fn used_by_plus(n: Int) -> Int {
+  1 + loop k = n {
+    match k {
+      0 -> 0
+      _ -> used_by_plus(k - 1)
+    }
+  }
+}
+
+fn main() {
+  println(sup(1_000_000))
+  println(bare(200_000))
+  let count = { n: Int ->
+    loop k = 0 {
+      match k {
+        0 -> loop(1)
+        _ -> match n {
+          0 -> "closure done"
+          _ -> count(n - 1)
+        }
+      }
+    }
+  }
+  println(count(200_000))
+  let h = task.spawn({ ->
+    loop k = 0 {
+      match k {
+        0 -> loop(1)
+        _ -> sup(200_000)
+      }
+    }
+  })
+  println(task.join(h))
+  println(used_by_let(10))
+  println(used_by_plus(10))
+}
