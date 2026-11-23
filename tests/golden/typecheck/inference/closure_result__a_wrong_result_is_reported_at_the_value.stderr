@@ -1,0 +1,51 @@
+error[type]: type mismatch: expected http.Response, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:16:5
+    |
+ 16 |     "hello"
+    |     ^^^^^^^ type mismatch: expected http.Response, got String
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:15:17
+    |
+ 15 |   http.serve(l) { req ->
+    |                 -------- the result of this closure is to be http.Response
+
+error[type]: type mismatch: expected http.Response, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:23:19
+    |
+ 23 |       http.GET -> "a"
+    |                   ^^^ type mismatch: expected http.Response, got String
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:21:17
+    |
+ 21 |   http.serve(l) { req ->
+    |                 -------- the result of this closure is to be http.Response
+
+error[type]: type mismatch: expected http.Response, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:24:12
+    |
+ 24 |       _ -> "b"
+    |            ^^^ type mismatch: expected http.Response, got String
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:21:17
+    |
+ 21 |   http.serve(l) { req ->
+    |                 -------- the result of this closure is to be http.Response
+
+error[type]: type mismatch: expected http.Response, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:33:12
+    |
+ 33 |       _ -> "nope"
+    |            ^^^^^^ type mismatch: expected http.Response, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:41:5
+    |
+ 41 |     "{acc}"
+    |     ^^^^^^^ type mismatch: expected Int, got String
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:39:36
+    |
+ 39 |   let total = list.fold([1, 2], 0) { acc, x ->
+    |                                    ----------- the result of this closure is to be Int
+
+error[type]: type mismatch: expected Int, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:44:23
+    |
+ 44 |   let xs: List(Int) = list.map([1, 2]) { x -> "s{x}" }
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got String

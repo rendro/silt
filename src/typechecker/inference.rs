@@ -3975,9 +3975,9 @@ impl TypeChecker {
         let arg = &mut args[i];
         let param = params.get(i + implicit_self);
         if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
-            && let Type::Fun(expected, _) = self.apply(param)
+            && let Type::Fun(expected, result) = self.apply(param)
         {
-            self.expected_closure = Some(expected);
+            self.expected_closure = Some((expected, *result));
         }
         // A `type a` argument that names both a type and its
         // variant (`type Box(a) { Box(a), Empty }`) is the

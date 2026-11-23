@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- A closure passed where a function of a known result type is wanted,
+-- whose result is of another type: the mismatch is at the value the
+-- closure gives (its last expression, or each arm of a final `match`),
+-- with the closure as a label. An arm unlike the others is reported once.
+-- A result the place leaves open (`list.map`'s) is checked where the
+-- whole value is used, as before.
+import bytes
+import list
+import tcp
+import http
+
+fn handle(l: tcp.TcpListener) {
+  http.serve(l) { req ->
+    "hello"
+  }
+}
+
+fn arms(l: tcp.TcpListener) {
+  http.serve(l) { req ->
+    match req.method {
+      http.GET -> "a"
+      _ -> "b"
+    }
+  }
+}
+
+fn one_arm(l: tcp.TcpListener) {
+  http.serve(l) { req ->
+    match req.method {
+      http.GET -> http.Response { status: 200, body: bytes.from_string("a"), headers: #{} }
+      _ -> "nope"
+    }
+  }
+}
+
+fn main() {
+  let total = list.fold([1, 2], 0) { acc, x ->
+    let _y = x
+    "{acc}"
+  }
+  println(total)
+  let xs: List(Int) = list.map([1, 2]) { x -> "s{x}" }
+  println(xs)
+}
