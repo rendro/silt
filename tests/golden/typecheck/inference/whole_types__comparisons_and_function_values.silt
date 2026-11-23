@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- The operands of a comparison that differ in a part of their types are
+-- told by the whole types, with the part as a note and no `?` help (no
+-- `?` on `ys` reaches its Options). A function value that differs in a
+-- part of its type is told by the part, without that help either: no `?`
+-- changes the function written. Two whole types (`1 == Some(1)`) keep it.
+import channel
+
+type Pt { x: Int }
+
+fn takes_fn(f: Fn(Int) -> List(Int)) -> Int {
+  0
+}
+
+fn wants(f: Fn(Int) -> Int) -> Int {
+  f(1)
+}
+
+fn maybe(n: Int) -> Option(Int) {
+  Some(n)
+}
+
+fn main() {
+  let xs = [1]
+  let ys = [Some(1)]
+  println(xs == ys)
+  let c: Channel(Int) = channel.new(1)
+  let d: Channel(Option(Int)) = channel.new(1)
+  println(c == d)
+  let p = Pt { x: 1 }
+  println([p] == [1])
+  let g = { n: Int -> [Some(n)] }
+  println(takes_fn(g))
+  println(wants(maybe))
+  println(1 == Some(1))
+}

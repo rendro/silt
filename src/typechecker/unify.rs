@@ -419,9 +419,16 @@ impl TypeChecker {
     /// the faults of parts of them (`Int` and `Option(Int)` inside
     /// `Channel(...)`) become one, "expected Channel(Int), got
     /// Channel(Option(Int))", with a note for each part that differs and
-    /// the help the whole types have. A fault of the whole types, or one
+    /// the help the whole types have. Of two function types the part is
+    /// still what is said, without the help of the part, which no change
+    /// to the function written gives. A fault of the whole types, or one
     /// that is no plain mismatch of two types, stays as it is.
-    fn of_whole_types(&self, Mismatch(faults): Mismatch, got: &Type, expected: &Type) -> Mismatch {
+    pub(super) fn of_whole_types(
+        &self,
+        Mismatch(faults): Mismatch,
+        got: &Type,
+        expected: &Type,
+    ) -> Mismatch {
         let (got, expected) = (self.apply(got), self.apply(expected));
         // (Of two functions, the part is what is said: the result a
         // callback is to have, a parameter's type.)
@@ -443,6 +450,22 @@ impl TypeChecker {
                 {
                     let (part_got, part_expected) = self.show_apart(part_got, part_expected);
                     format!("the part that differs: expected {part_expected}, got {part_got}")
+                }
+                // A part of two function types keeps its text, without
+                // what would change a value of the part (`?`, `Ok(...)`):
+                // the value written is a function, which no `?` changes.
+                Some((part_got, part_expected))
+                    if fault.code == Code::TypeMismatch
+                        && (matches!(got, Type::Fun(..)) || matches!(expected, Type::Fun(..)))
+                        && (self.apply(part_got), self.apply(part_expected))
+                            != (got.clone(), expected.clone()) =>
+                {
+                    out.push(Fault {
+                        help: None,
+                        nested: true,
+                        ..fault
+                    });
+                    continue;
                 }
                 _ => {
                     out.push(fault);

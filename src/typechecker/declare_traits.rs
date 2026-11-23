@@ -3119,7 +3119,10 @@ impl TypeChecker {
                                 &clashes,
                                 (own, &writes),
                             ),
-                            true => self.report_mismatch(mismatch, method.span),
+                            true => {
+                                let mismatch = self.of_whole_types(mismatch, &written, expected);
+                                self.report_mismatch(mismatch, method.span)
+                            }
                         }
                         written
                     }

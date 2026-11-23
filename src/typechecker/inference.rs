@@ -4969,6 +4969,7 @@ impl TypeChecker {
                 d.help.extend(self.chain_hint(offender, other));
                 self.errors.push(d);
             } else {
+                let mismatch = self.of_whole_types(mismatch, rt, lt);
                 self.report_mismatch(mismatch, rhs_span);
             }
             return false;
