@@ -4,6 +4,8 @@
 -- from inside its loop runs in one frame however often it restarts. A
 -- loop whose value is still used (`let x = loop ...`, `1 + loop ...`)
 -- is not in tail position, and a call in its body returns to it.
+-- Each count is more than the 100,000 frames a stack may hold, and few
+-- enough that the oracle's full sweep runs the program to its end.
 import task
 
 fn sup(n: Int) -> Int {
@@ -47,8 +49,8 @@ fn used_by_plus(n: Int) -> Int {
 }
 
 fn main() {
-  println(sup(1_000_000))
-  println(bare(200_000))
+  println(sup(150_000))
+  println(bare(150_000))
   let count = { n: Int ->
     loop k = 0 {
       match k {
@@ -60,12 +62,12 @@ fn main() {
       }
     }
   }
-  println(count(200_000))
+  println(count(150_000))
   let h = task.spawn({ ->
     loop k = 0 {
       match k {
         0 -> loop(1)
-        _ -> sup(200_000)
+        _ -> sup(150_000)
       }
     }
   })
