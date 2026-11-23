@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A name that is all of a string's interpolation and is bound to nothing
+-- was most likely meant as text, as in a regex's `\p{L}`: the help says
+-- how to write a literal brace.
+import regex
+
+fn main() {
+  println(regex.compile("\\p{L}+"))
+}

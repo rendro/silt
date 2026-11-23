@@ -435,6 +435,7 @@ pub(crate) fn resolve_module(
         previous: HashMap::new(),
         named_closures: Vec::new(),
         bound_now: Vec::new(),
+        interpolated_name: false,
         own_aliases: HashMap::new(),
         diagnostics,
         hidden_modules: Vec::new(),
@@ -1484,6 +1485,10 @@ struct Resolver<'a> {
     /// The names of the local `let`s whose value, not a closure, is
     /// being resolved: a name there is not yet bound.
     bound_now: Vec<Symbol>,
+    /// Whether the name being resolved is the whole code of a string's
+    /// interpolation (`"\p{L}"`): one that resolves to nothing was
+    /// most likely meant as text.
+    interpolated_name: bool,
     /// The type each alias the module declares names by its head (see
     /// `DefTable::through_alias`, which has those of other modules).
     own_aliases: HashMap<DefId, DefId>,
@@ -3132,7 +3137,9 @@ impl Resolver<'_> {
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
+                        self.interpolated_name = matches!(e.kind, ExprKind::Ident(_));
                         self.expr(e);
+                        self.interpolated_name = false;
                     }
                 }
             }
@@ -3491,6 +3498,16 @@ impl Resolver<'_> {
                 }
             }
         };
+        // A name that is all of an interpolation, with no other help: a
+        // `{` meant as text (`"\p{L}"`, `"x{n}"` in a regex).
+        let help = help.or_else(|| {
+            self.interpolated_name.then(|| {
+                format!(
+                    "`{{{name_str}}}` in a string is an interpolation: {}",
+                    crate::lexer::LITERAL_BRACE_HELP
+                )
+            })
+        });
         let mut d = Diagnostic::error(Code::UnresolvedName, span, message);
         if let Some(help) = help {
             d = d.with_help(help);

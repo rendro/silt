@@ -1,0 +1,6 @@
+error[type]: undefined variable 'L'
+ --> interpolation_name__an_undefined_one_is_told_about_literal_braces.silt:9:30
+   |
+ 9 |   println(regex.compile("\\p{L}+"))
+   |                              ^ undefined variable 'L'
+  = help: `{L}` in a string is an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`
