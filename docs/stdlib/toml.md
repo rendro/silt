@@ -239,7 +239,25 @@ a variant with fields (see [Enums](#enums)), a `json.Value`, or a type with a
 `json.Decode` impl. The type is passed as a
 `type` parameter (see [Generics](../language/generics.md) — not a string).
 Fields are matched by name; `Option` fields default to `None` if missing
-from the document.
+from the document. A key that no field names is skipped, in a table at any
+depth, as `json.parse` skips it, so a misspelled key is no error: the field
+it was meant for is missing, an `Err(MissingField(...))`, or `None` for an
+`Option` field.
+
+```silt
+import toml
+
+type Meta {
+  title: String,
+  draft: Option(Bool),
+}
+
+fn main() {
+  -- "drafts" for "draft": skipped, and draft is None
+  println(toml.parse("title = \"T\"\ndrafts = true\n", Meta)) -- Ok(Meta {title: "T", draft: None})
+  println(toml.parse("titel = \"T\"\n", Meta)) -- Err(toml missing field: title)
+}
+```
 
 Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) accept
 either a TOML native datetime literal or an ISO 8601 string — the same formats
