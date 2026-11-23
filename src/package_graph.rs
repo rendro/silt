@@ -154,35 +154,18 @@ pub enum LockChange {
     Rewritten,
 }
 
-/// The checkout of each git package resolved in this process, with the
-/// key of the dependency that reached it first and what the package is
-/// in words: how a terminal names a file in it ([`shown_place`]).
+/// The checkout of each git package resolved in this process, with what
+/// the package is in words and the help that leads out of an error in
+/// it: how a terminal names a file in it ([`shown_place`]).
 static FETCHED: std::sync::Mutex<Vec<(PathBuf, String, String)>> =
     std::sync::Mutex::new(Vec::new());
 
-/// Note the checkout `root` (canonical) of a git package, reached as the
-/// dependency `key`, at `locked`.
-fn note_fetched(root: &Path, key: &str, locked: &LockedSource) {
-    let LockedSource::Git {
-        ref_spec,
-        resolved_sha,
-        ..
-    } = locked
-    else {
-        return;
-    };
-    let commit = &resolved_sha[..resolved_sha.len().min(7)];
-    let what = match ref_spec {
-        GitRef::Rev(_) => format!("dependency `{key}` at {commit}"),
-        GitRef::Branch(name) | GitRef::Tag(name) => format!(
-            "dependency `{key}`, {} `{}` at {commit}",
-            ref_spec.kind(),
-            escape_for_display(name)
-        ),
-    };
+/// Note the checkout `root` (canonical) of a git package: what it is
+/// (`what`) and the help for an error in it.
+fn note_fetched(root: &Path, what: String, help: String) {
     let mut fetched = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
     fetched.retain(|(r, _, _)| r != root);
-    fetched.push((root.to_path_buf(), key.to_string(), what));
+    fetched.push((root.to_path_buf(), what, help));
 }
 
 /// How a terminal names the file `name` when it is in the checkout of a
@@ -202,7 +185,7 @@ pub(crate) fn shown_place(
         return None;
     }
     let canonical = crate::source::canonical_path_lenient(path);
-    fetched.iter().find_map(|(root, key, what)| {
+    fetched.iter().find_map(|(root, what, help)| {
         let inner = path
             .strip_prefix(root)
             .or_else(|_| canonical.strip_prefix(root))
@@ -214,7 +197,7 @@ pub(crate) fn shown_place(
         Some(crate::diagnostic::ShownPlace {
             path: parts.join("/"),
             what: what.clone(),
-            dependency: Some(key.clone()),
+            help: Some(help.clone()),
         })
     })
 }
@@ -628,7 +611,9 @@ impl Resolver<'_> {
             self.failed.insert(source);
             return None;
         }
-        note_fetched(&root, key_name, &locked);
+        if let Some((what, help)) = self.fetched_words(from, key_name, &locked) {
+            note_fetched(&root, what, help);
+        }
         let manifest = match Manifest::load(&root.join("silt.toml"), self.sources) {
             Ok(manifest) => manifest,
             Err(d) => {
@@ -804,6 +789,82 @@ impl Resolver<'_> {
                 }
                 _ => None,
             })
+    }
+
+    /// What the git package at `locked`, the dependency `key` of `from`,
+    /// is in words, and the help for an error in its code; `None` for
+    /// another package. The help names what this package's own files can
+    /// change: the ref of the dependency in the silt.toml that declares
+    /// it, or, for one that comes with a fetched package, the ref of that
+    /// package in the silt.toml that declares it.
+    fn fetched_words(
+        &self,
+        from: PackageId,
+        key: &str,
+        locked: &LockedSource,
+    ) -> Option<(String, String)> {
+        let LockedSource::Git {
+            ref_spec,
+            resolved_sha,
+            ..
+        } = locked
+        else {
+            return None;
+        };
+        let commit = &resolved_sha[..resolved_sha.len().min(7)];
+        let pin = match ref_spec {
+            GitRef::Rev(_) => format!(" at {commit}"),
+            GitRef::Branch(name) | GitRef::Tag(name) => format!(
+                ", {} `{}` at {commit}",
+                ref_spec.kind(),
+                escape_for_display(name)
+            ),
+        };
+        let root = PackageId(0);
+        if from == root {
+            return Some((
+                format!("dependency `{key}`{pin}"),
+                format!(
+                    "the error is in the dependency `{key}`, not in this package: pin another \
+                     branch, tag or rev of it in silt.toml, or have it fixed in its repository"
+                ),
+            ));
+        }
+        let parent = self.via_key(from);
+        // The first package on the way up that this package's own files
+        // declare: the dependency itself when `from` is local, else the
+        // fetched package it comes with.
+        let (target, declarer) = if self.inside[from.0 as usize].is_none() {
+            (key.to_string(), from)
+        } else {
+            let mut at = from;
+            loop {
+                let (up, _) = self.via[at.0 as usize]?;
+                if self.inside[up.0 as usize].is_none() {
+                    break (self.via_key(at), up);
+                }
+                at = up;
+            }
+        };
+        let manifest = if declarer == root {
+            "silt.toml".to_string()
+        } else {
+            crate::source::shown_path(display_path(
+                &self.nodes[declarer.0 as usize].root.join("silt.toml"),
+            ))
+        };
+        let it = if target == key {
+            "it".to_string()
+        } else {
+            format!("`{target}`")
+        };
+        Some((
+            format!("dependency `{key}` of `{parent}`{pin}"),
+            format!(
+                "the error is in `{key}`, a dependency of `{parent}`, not in this package: pin \
+                 another branch, tag or rev of {it} in {manifest}, or have it fixed in its repository"
+            ),
+        ))
     }
 
     /// The key of the dependency that first reached `id`; its name for the

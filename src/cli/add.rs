@@ -624,7 +624,7 @@ impl crate::diagnostic::SourceView for WouldWrite<'_> {
             located.shown = Some(crate::diagnostic::ShownPlace {
                 path: located.file.clone(),
                 what: "as silt add would write it".to_string(),
-                dependency: None,
+                help: None,
             });
         }
         Some(located)
@@ -638,7 +638,13 @@ impl crate::diagnostic::SourceView for WouldWrite<'_> {
 fn invalid_git_url(cwd: &Path, url: &str, error: &crate::git::InvalidGitUrl) -> String {
     let subject = format!("--git URL `{}`", error.url);
     let local = format!("./{url}");
-    let names_a_directory = !url.is_empty()
+    // Only for a value refused as no form at all, and with no `@`, which
+    // the refusal hides the text before.
+    let names_a_directory = error
+        .reason
+        .starts_with("is not a recognised git URL form;")
+        && !url.contains('@')
+        && !url.is_empty()
         && !crate::git::is_local_git_url(url)
         && !Path::new(url).is_absolute()
         && cwd.join(url).is_dir()

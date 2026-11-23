@@ -604,6 +604,8 @@ fn test_add_git_url_refusals_read_as_sentences() {
     let app = ws.join("app");
     write_app_package(&app, "git_sentences_app", "fn main() {}\n");
     fs::create_dir_all(app.join("lib")).unwrap();
+    fs::create_dir_all(app.join("-d")).unwrap();
+    fs::create_dir_all(app.join("sub@S3CR3TXYZ@e")).unwrap();
     let before = fs::read_to_string(app.join("silt.toml")).unwrap();
     for (url, expected) in [
         (
@@ -627,6 +629,18 @@ fn test_add_git_url_refusals_read_as_sentences() {
         (
             "nothere",
             format!("--git URL `nothere` is not a recognised git URL form; {FORMS}"),
+        ),
+        // A directory here, but the value breaks another rule, or holds an
+        // `@` that the refusal hides the text before: no `./` hint. FAIL
+        // before the review fix: "write it `./-d`", and the hidden text
+        // shown in the hint.
+        (
+            "-d",
+            format!("--git URL `-d` must not start with `-`; {FORMS}"),
+        ),
+        (
+            "sub@S3CR3TXYZ@e",
+            format!("--git URL `***@e` is not a recognised git URL form; {FORMS}"),
         ),
         // The password rule keeps its words; the URL is hidden to its `@`.
         (

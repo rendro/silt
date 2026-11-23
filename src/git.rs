@@ -301,7 +301,7 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
             let reason = match fixed {
                 Some(fixed) => format!(
                     "is a URL with its `//` left out: write it `{}`",
-                    display_url(&fixed)
+                    shown_like(url, &fixed)
                 ),
                 None => format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
             };
@@ -310,6 +310,22 @@ pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
                 reason,
             })
         }
+    }
+}
+
+/// `fixed`, the URL `url` written in another way, shown so that it shows
+/// no more of it than `url` shows ([`display_url`]): when `url` is shown
+/// with a part hidden (all before its last `@`), so is `fixed`, all after
+/// its `://` and before its last `@` (`file://***@host/r.git`), whatever
+/// its form would show of itself (a `file://` URL is shown whole after
+/// its authority).
+fn shown_like(url: &str, fixed: &str) -> String {
+    match (userinfo_place(url), fixed.rfind('@')) {
+        (Some(_), Some(last)) => {
+            let start = fixed.find("://").map_or(0, |at| at + 3).min(last);
+            escape_for_display(&format!("{}***{}", &fixed[..start], &fixed[last..]))
+        }
+        _ => display_url(fixed),
     }
 }
 
@@ -1370,8 +1386,13 @@ pub(crate) fn remote_ref_names(url: &str, tags: bool) -> Result<Vec<String>, Git
 }
 
 /// `a` and `b` in the order of versions: each run of digits compared as
-/// a number, everything else as text (`v0.9.0` before `v0.10.0`).
+/// a number, everything else as text (`v0.9.0` before `v0.10.0`); a
+/// number before a text where one stands against the other, a name
+/// before a longer one that starts with its runs, and names whose runs
+/// are all equal (`1` and `01`) by their text. A total order, whatever
+/// names a repository has.
 fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
     // The runs of digits and of other characters, in turn.
     fn runs(s: &str) -> Vec<&str> {
         let mut out = Vec::new();
@@ -1385,19 +1406,23 @@ fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
         }
         out
     }
-    let number = |run: &str| run.bytes().all(|b| b.is_ascii_digit()) && !run.is_empty();
-    for (x, y) in runs(a).into_iter().zip(runs(b)) {
-        let order = if number(x) && number(y) {
+    let number = |run: &str| !run.is_empty() && run.bytes().all(|b| b.is_ascii_digit());
+    let run_order = |x: &str, y: &str| match (number(x), number(y)) {
+        (true, true) => {
             let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
             x.len().cmp(&y.len()).then_with(|| x.cmp(y))
-        } else {
-            x.cmp(y)
-        };
-        if order != std::cmp::Ordering::Equal {
-            return order;
         }
-    }
-    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => x.cmp(y),
+    };
+    let (ra, rb) = (runs(a), runs(b));
+    ra.iter()
+        .zip(&rb)
+        .map(|(x, y)| run_order(x, y))
+        .find(|order| *order != Ordering::Equal)
+        .unwrap_or_else(|| ra.len().cmp(&rb.len()))
+        .then_with(|| a.cmp(b))
 }
 
 /// Cheap reachability check: `git ls-remote -- <url> HEAD`. Used by
@@ -2511,6 +2536,23 @@ mod tests {
             // A file URL of a relative path: no one way to write it.
             ("FILE:srv/repo.git", None),
             ("https:", None),
+            // The value is shown hidden before its last `@`: so is the
+            // URL written out, though a `file://` URL shows an `@` after its
+            // authority. FAIL before: the password was shown.
+            (
+                "file:/ann:S3CR3TXYZ@localhost/srv/r.git",
+                Some("file://***@localhost/srv/r.git"),
+            ),
+            (
+                "file:/srv/ann:S3CR3TXYZ@x/r.git",
+                Some("file://***@x/r.git"),
+            ),
+            ("file:/srv/r.git?t=S3CR3TXYZ@x", Some("file://***@x")),
+            ("FILE:/ann:S3CR3TXYZ@h/r.git", Some("file://***@h/r.git")),
+            (
+                "file:/S3CR3TXYZ@localhost/srv/r.git",
+                Some("file://***@localhost/srv/r.git"),
+            ),
         ] {
             let reason = rejection_reason(url);
             match fixed {
@@ -2521,7 +2563,10 @@ mod tests {
                 ),
                 None => assert!(reason.starts_with(RULE), "{url}: {reason}"),
             }
-            assert!(!reason.contains("word"), "{url}: {reason}");
+            assert!(
+                !reason.contains("word") && !reason.contains("3TX"),
+                "{url}: {reason}"
+            );
         }
         assert_eq!(
             validate_git_url("https:/user:word@example.com/pkg.git")

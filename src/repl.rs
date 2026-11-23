@@ -785,7 +785,8 @@ impl ReplFiles<'_> {
 
 impl SourceView for ReplFiles<'_> {
     fn locate(&self, span: Span) -> Option<Located> {
-        let file = match &self.sources.get(span.file)?.path {
+        let name = &self.sources.get(span.file)?.path;
+        let file = match name {
             SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p) => {
                 self.relative(p).unwrap_or_else(|| p.display().to_string())
             }
@@ -794,7 +795,7 @@ impl SourceView for ReplFiles<'_> {
         Some(Located {
             file,
             position: self.sources.position(span),
-            shown: None,
+            shown: crate::package_graph::shown_place(name),
         })
     }
 }

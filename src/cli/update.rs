@@ -174,15 +174,32 @@ fn change(old: &LockedPackage, new: &LockedPackage, root: &Path) -> Option<Strin
                     escape_for_display(new_ref.as_ref_string())
                 )
             }
-            (LockedSource::Git { url: old_url, .. }, LockedSource::Git { url: new_url, .. })
-                if old_url != new_url =>
-            {
-                format!(
-                    "{} -> {}, from {}",
-                    pin(&old.source),
-                    pin(&new.source),
-                    crate::git::display_url(new_url)
-                )
+            (
+                LockedSource::Git {
+                    url: old_url,
+                    ref_spec: old_ref,
+                    resolved_sha: old_sha,
+                },
+                LockedSource::Git {
+                    url: new_url,
+                    ref_spec: new_ref,
+                    resolved_sha: new_sha,
+                },
+            ) if old_url != new_url => {
+                // The URL that changed, then the pin: once when it is the
+                // same, with an arrow when it moved too.
+                let (old_shown, new_shown) = (
+                    crate::git::display_url(old_url),
+                    crate::git::display_url(new_url),
+                );
+                let url = match old_shown == new_shown {
+                    true => "the user or password of its URL changed".to_string(),
+                    false => format!("URL {old_shown} -> {new_shown}"),
+                };
+                match old_ref == new_ref && old_sha == new_sha {
+                    true => format!("{url}, {}", pin(&new.source)),
+                    false => format!("{url}, {} -> {}", pin(&old.source), pin(&new.source)),
+                }
             }
             _ => format!("{} -> {}", pin(&old.source), pin(&new.source)),
         })

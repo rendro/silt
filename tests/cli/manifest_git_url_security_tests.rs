@@ -1300,7 +1300,7 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         GitSays(&'static [&'static str]),
     }
     // The values, and what else their output must show (see `Expect`).
-    let urls = [
+    let mut urls = vec![
         (
             "https://user:S3CR 3TXYZ@127.0.0.1:1/pkg.git".to_string(),
             Expect::NoMore,
@@ -1418,7 +1418,37 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
             format!("u:{marker}@127.0.0.1/team/pkg.git"),
             Expect::DriveOnWindows,
         ),
+        // A URL with its `//` left out, written out by the refusal: hidden
+        // as the value is, though a `file://` URL shows an `@` after its
+        // authority. FAIL before the review fix: the written-out URL showed
+        // the password.
+        (
+            format!("file:/ann:{marker}@localhost/srv/r.git"),
+            Expect::Refused,
+        ),
+        (format!("file:/srv/ann:{marker}@x/r.git"), Expect::Refused),
+        (format!("file:/srv/r.git?t={marker}@x"), Expect::Refused),
+        (format!("FILE:/ann:{marker}@h/r.git"), Expect::Refused),
+        (
+            format!("file:/{marker}@localhost/srv/r.git"),
+            Expect::Refused,
+        ),
+        // The name of a directory beside `silt add` (see `directories`):
+        // no "write it `./...`" for a value with an `@`. FAIL before the
+        // review fix: shown whole in that hint.
+        (format!("x/{marker}@d"), Expect::Refused),
+        (format!("sub@{marker}@e"), Expect::Refused),
     ];
+    // Values that `silt add` finds as a directory in its working
+    // directory (`:` names none on Windows).
+    let mut directories = vec![format!("x/{marker}@d"), format!("sub@{marker}@e")];
+    if cfg!(unix) {
+        directories.push(format!("ann:{marker}@dir"));
+    }
+
+    if cfg!(unix) {
+        urls.push((format!("ann:{marker}@dir"), Expect::Refused));
+    }
     let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
     // Whether git is there: only then can its output be asked for.
     let git_is_there = Command::new("git")
@@ -1467,6 +1497,9 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                 let adder = ws.join("adder");
                 let _ = fs::remove_dir_all(&adder);
                 write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
+                if directories.contains(url) {
+                    fs::create_dir_all(adder.join(url)).unwrap();
+                }
                 let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
                 match command {
                     "add" => cmd

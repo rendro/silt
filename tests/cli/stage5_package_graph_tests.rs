@@ -914,6 +914,47 @@ fn silt_add_of_a_missing_ref_says_what_it_would_write_and_what_there_is() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// The tag names of a repository, whatever they are, are listed, and
+/// silt.toml is left as it was. FAILS before the review fix: sorting these
+/// 64 names panicked (an order that was no order), and silt.toml kept the
+/// new entry.
+#[test]
+fn silt_add_lists_any_tag_names_and_leaves_the_manifest_alone() {
+    let ws = fresh_workspace("add_many_tags");
+    if !git_installed() {
+        return;
+    }
+    sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let repo = ws.join("lib");
+    for zeros in 0..16 {
+        for suffix in ["", "a", "b", "c"] {
+            git(
+                &ws,
+                &repo,
+                &["tag", &format!("{}1{suffix}", "0".repeat(zeros))],
+            );
+        }
+    }
+    let app = ws.join("app");
+    write_package(&app, "app", &[], "main.silt", "fn main() {}\n");
+    let before = fs::read_to_string(app.join("silt.toml")).unwrap();
+    let out = silt(
+        &ws,
+        &app,
+        &["add", "remote", "--git", "../lib", "--tag", "nope"],
+    );
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains(
+            "= note: tags there: `00001c`, `0001c`, `001c`, `01c`, `1c` (the last 5 of 64)\n"
+        ),
+        "{err}"
+    );
+    assert_eq!(fs::read_to_string(app.join("silt.toml")).unwrap(), before);
+    let _ = fs::remove_dir_all(&ws);
+}
+
 /// An error in the code of a fetched dependency is shown at its path in
 /// the dependency, with the dependency, its ref and its commit after the
 /// place, and a help that leads out; `--format json` names the file by
@@ -963,6 +1004,116 @@ fn an_error_in_a_fetched_dependency_names_the_dependency() {
     assert!(
         Path::new(&file).is_absolute() && file.ends_with(&format!("{head}/src/lib.silt")),
         "{reported}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// An error in a dependency of a dependency: the place names the package
+/// it comes with, and the help the ref this package can change, that of
+/// the package in its own silt.toml. FAILS before the review fix: "pin
+/// another branch, tag or rev of it in silt.toml", which has no entry for
+/// it. The inner repository is reached by a network URL that git's
+/// configuration rewrites to a directory here: no network.
+#[test]
+fn an_error_in_a_dependency_of_a_dependency_names_the_one_it_comes_with() {
+    let ws = fresh_workspace("error_two_levels");
+    if !git_installed() {
+        return;
+    }
+    let inner = ws.join("inner");
+    write_package(
+        &inner,
+        "inner",
+        &[],
+        "lib.silt",
+        "pub fn one() { 1 }\n\npub fn two() {\n  one(1)\n}\n",
+    );
+    let inner_head = commit_all(&ws, &inner, "inner");
+    let outer = ws.join("outer");
+    write_package(
+        &outer,
+        "outer",
+        &["inner = { git = \"https://example.invalid/inner\", branch = \"main\" }"],
+        "lib.silt",
+        "import inner\npub fn f() { inner.two() }\n",
+    );
+    commit_all(&ws, &outer, "outer");
+    let inner_dir = inner.display().to_string().replace('\\', "/");
+    fs::write(
+        ws.join("gitconfig"),
+        format!("[url \"{inner_dir}\"]\n\tinsteadOf = https://example.invalid/inner\n"),
+    )
+    .unwrap();
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &["outer = { git = \"../outer\", branch = \"main\" }"],
+        "main.silt",
+        "import outer\nfn main() { println(outer.f()) }\n",
+    );
+
+    let out = silt(&ws, &app, &["check"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains(&format!(
+            " --> src/lib.silt:4:3 (dependency `inner` of `outer`, branch `main` at {})\n",
+            &inner_head[..7]
+        )) && err.contains(
+            "= help: the error is in `inner`, a dependency of `outer`, not in this package: \
+             pin another branch, tag or rev of `outer` in silt.toml, or have it fixed in its \
+             repository"
+        ),
+        "{err}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// The REPL names a place in a fetched dependency as `silt run` does.
+/// FAILS before the review fix: the file's path in the cache.
+#[cfg(feature = "repl")]
+#[test]
+fn the_repl_names_a_place_in_a_fetched_dependency() {
+    use std::io::Write;
+    let ws = fresh_workspace("repl_git_dep");
+    if !git_installed() {
+        return;
+    }
+    let head = sibling_repository(&ws, "pub fn boom(n: Int) -> Int {\n  10 / n\n}\n");
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &["fm = { git = \"../lib\", branch = \"main\" }"],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
+    cmd.arg("repl")
+        .current_dir(&app)
+        .env("XDG_CACHE_HOME", ws.join("cache"))
+        .env("LOCALAPPDATA", ws.join("cache"))
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    isolate_git(&mut cmd, &ws);
+    let mut child = cmd.spawn().expect("spawn silt repl");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"import fm\nfm.boom(0)\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let all = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        all.contains(&format!(
+            "src/lib.silt:2:3 (dependency `fm`, branch `main` at {})",
+            &head[..7]
+        )) && !all.contains("cache"),
+        "{all}"
     );
     let _ = fs::remove_dir_all(&ws);
 }
@@ -1084,6 +1235,22 @@ fn silt_update_says_what_moved() {
         format!(
             "remote: {} -> {} (tag `v0.1.0` now names another commit), version 0.1.0 -> 0.2.0\n",
             &first[..7],
+            &second[..7]
+        )
+    );
+
+    // The same commit from another URL: the URL, then the pin once. FAIL
+    // before the review fix: the same pin on both sides of an arrow.
+    git(&ws, &ws, &["clone", "--quiet", "lib", "lib2"]);
+    let moved = [
+        "remote = { git = \"../lib2\", tag = \"v0.1.0\" }",
+        "calc = { path = \"../calc\" }",
+    ];
+    write_package(&app, "app", &moved, "main.silt", "fn main() {}\n");
+    assert_eq!(
+        update(),
+        format!(
+            "remote: URL ../lib -> ../lib2, tag `v0.1.0` at {}\n",
             &second[..7]
         )
     );

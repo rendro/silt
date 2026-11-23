@@ -501,8 +501,9 @@ pub struct ShownPlace {
     pub path: String,
     /// What the file is, in words that are shown as they are.
     pub what: String,
-    /// The key of the fetched dependency the file is of, if it is one's.
-    pub dependency: Option<String>,
+    /// The help for an error found there (not at run time), if there is
+    /// one: the way out of an error in a fetched dependency's code.
+    pub help: Option<String>,
 }
 
 impl Located {
@@ -835,20 +836,16 @@ pub(crate) fn render_human_in(view: &dyn SourceView, d: &Diagnostic, c: &Colors)
     }
     // An error found in the code of a fetched dependency, not at run
     // time (where this package's own call can be the cause): the way out
-    // is in silt.toml or upstream.
-    let dependency = located
+    // is in a silt.toml or upstream.
+    let place_help = located
         .as_ref()
         .and_then(|l| l.shown.as_ref())
-        .and_then(|s| s.dependency.as_ref());
-    if let Some(key) = dependency
+        .and_then(|s| s.help.as_ref());
+    if let Some(help) = place_help
         && d.is_error()
         && !runtime
     {
-        let help = format!(
-            "the error is in the dependency `{key}`, not in this package: pin another \
-             branch, tag or rev of it in silt.toml, or have it fixed in its repository"
-        );
-        write_body(&mut out, c, "= help:", &visible_text(&help));
+        write_body(&mut out, c, "= help:", &visible_text(help));
     }
     if runtime {
         let frames: Vec<(String, Span)> = d
