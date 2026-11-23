@@ -6,36 +6,42 @@
 -- with the closure as a label. An arm unlike the others is reported once.
 -- A result the place leaves open (`list.map`'s) is checked where the
 -- whole value is used, as before.
-import bytes
 import list
-import tcp
-import http
 
-fn handle(l: tcp.TcpListener) {
-  http.serve(l) { req ->
+type Reply {
+  status: Int,
+}
+
+fn serve(handler: Fn(Int) -> Reply) -> Reply {
+  handler(1)
+}
+
+fn handle() -> Reply {
+  serve { n ->
     "hello"
   }
 }
 
-fn arms(l: tcp.TcpListener) {
-  http.serve(l) { req ->
-    match req.method {
-      http.GET -> "a"
+fn arms() -> Reply {
+  serve { n ->
+    match n {
+      0 -> "a"
       _ -> "b"
     }
   }
 }
 
-fn one_arm(l: tcp.TcpListener) {
-  http.serve(l) { req ->
-    match req.method {
-      http.GET -> http.Response { status: 200, body: bytes.from_string("a"), headers: #{} }
+fn one_arm() -> Reply {
+  serve { n ->
+    match n {
+      0 -> Reply { status: 200 }
       _ -> "nope"
     }
   }
 }
 
 fn main() {
+  println(handle().status + arms().status + one_arm().status)
   let total = list.fold([1, 2], 0) { acc, x ->
     let _y = x
     "{acc}"

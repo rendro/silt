@@ -1,52 +1,52 @@
-error[type]: type mismatch: expected http.Response, got String
- --> closure_result__a_wrong_result_is_reported_at_the_value.silt:16:5
+error[type]: type mismatch: expected Reply, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:21:5
     |
- 16 |     "hello"
-    |     ^^^^^^^ type mismatch: expected http.Response, got String
- ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:15:17
+ 21 |     "hello"
+    |     ^^^^^^^ type mismatch: expected Reply, got String
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:20:9
     |
- 15 |   http.serve(l) { req ->
-    |                 -------- the result of this closure is to be http.Response
+ 20 |   serve { n ->
+    |         ------ the result of this closure is to be Reply
 
-error[type]: type mismatch: expected http.Response, got String
- --> closure_result__a_wrong_result_is_reported_at_the_value.silt:23:19
+error[type]: type mismatch: expected Reply, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:28:12
     |
- 23 |       http.GET -> "a"
-    |                   ^^^ type mismatch: expected http.Response, got String
- ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:21:17
+ 28 |       0 -> "a"
+    |            ^^^ type mismatch: expected Reply, got String
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:26:9
     |
- 21 |   http.serve(l) { req ->
-    |                 -------- the result of this closure is to be http.Response
+ 26 |   serve { n ->
+    |         ------ the result of this closure is to be Reply
 
-error[type]: type mismatch: expected http.Response, got String
- --> closure_result__a_wrong_result_is_reported_at_the_value.silt:24:12
+error[type]: type mismatch: expected Reply, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:29:12
     |
- 24 |       _ -> "b"
-    |            ^^^ type mismatch: expected http.Response, got String
- ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:21:17
+ 29 |       _ -> "b"
+    |            ^^^ type mismatch: expected Reply, got String
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:26:9
     |
- 21 |   http.serve(l) { req ->
-    |                 -------- the result of this closure is to be http.Response
+ 26 |   serve { n ->
+    |         ------ the result of this closure is to be Reply
 
-error[type]: type mismatch: expected http.Response, got String
- --> closure_result__a_wrong_result_is_reported_at_the_value.silt:33:12
+error[type]: type mismatch: expected Reply, got String
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:38:12
     |
- 33 |       _ -> "nope"
-    |            ^^^^^^ type mismatch: expected http.Response, got String
+ 38 |       _ -> "nope"
+    |            ^^^^^^ type mismatch: expected Reply, got String
 
 error[type]: type mismatch: expected Int, got String
- --> closure_result__a_wrong_result_is_reported_at_the_value.silt:41:5
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:47:5
     |
- 41 |     "{acc}"
+ 47 |     "{acc}"
     |     ^^^^^^^ type mismatch: expected Int, got String
- ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:39:36
+ ::: closure_result__a_wrong_result_is_reported_at_the_value.silt:45:36
     |
- 39 |   let total = list.fold([1, 2], 0) { acc, x ->
+ 45 |   let total = list.fold([1, 2], 0) { acc, x ->
     |                                    ----------- the result of this closure is to be Int
 
 error[type]: type mismatch: expected List(Int), got List(String)
- --> closure_result__a_wrong_result_is_reported_at_the_value.silt:44:23
+ --> closure_result__a_wrong_result_is_reported_at_the_value.silt:50:23
     |
- 44 |   let xs: List(Int) = list.map([1, 2]) { x -> "s{x}" }
+ 50 |   let xs: List(Int) = list.map([1, 2]) { x -> "s{x}" }
     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected List(Int), got List(String)
   = note: the part that differs: expected Int, got String
