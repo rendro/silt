@@ -376,6 +376,7 @@ impl Session {
 
     /// Whether the project's packages were read and could not be
     /// resolved (see `packages`).
+    #[cfg(feature = "lsp")]
     pub(crate) fn packages_failed(&self) -> bool {
         matches!(self.packages, Some(Err(_)))
     }
