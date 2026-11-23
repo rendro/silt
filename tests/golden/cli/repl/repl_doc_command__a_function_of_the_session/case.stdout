@@ -1,0 +1,7 @@
+Silt REPL (type :quit to exit, :help for commands)
+stats.top_pages(views: List(String), n: Int) -> List(stats.PageCount)
+The `n` pages viewed most, the most viewed first.
+A page viewed as often as another keeps its place.
+[PageCount {page: "a", views: 1}]
+larger(x: a, y: a) -> a where a: Compare
+bare(x: Int) -> Int

@@ -1,0 +1,23 @@
+import list
+
+pub type PageCount { page: String, views: Int }
+
+-- The `n` pages viewed most, the most viewed first.
+-- A page viewed as often as another keeps its place.
+pub fn top_pages(views: List(String), n: Int) -> List(PageCount) {
+  list.map(take_first(views, n), counted)
+}
+
+fn counted(page: String) -> PageCount {
+  PageCount { page: page, views: 1 }
+}
+
+fn take_first(xs: List(a), n: Int) -> List(a) {
+  match xs {
+    [] -> []
+    [x, ..rest] -> match n > 0 {
+      true -> [x, ..take_first(rest, n - 1)]
+      false -> []
+    }
+  }
+}
