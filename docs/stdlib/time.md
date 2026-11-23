@@ -400,10 +400,22 @@ every offset also reads `Z` (or `z`) for UTC:
 
 `%z` and `%:z` want hours and minutes: `+02` by them is
 `Err(ParseFormat(...))` that says so (`the UTC offset at byte 19 needs hours
-and minutes (+hh:mm or +hhmm)`). `%+` reads RFC 3339 whole, and `%s`
-(seconds since the epoch, `-1` for the second before it) names an
-instant without an offset.
+and minutes (+hh:mm or +hhmm)`). `%+` reads an RFC 3339 date and time
+whole (`2026-11-01T08:00:00+05:30`, `Z` for UTC, a space for the `T`), and
+also one whose offset is written without its colon (`+0530`); seconds are
+written, and the offset has hours and minutes. `%s` (seconds since the
+epoch, `-1` for the second before it) names an instant without an offset.
 `time.to_datetime(i, 0)` gives the UTC date and time of the instant.
+
+```silt
+import time
+
+fn main() {
+  println(time.parse_instant("2026-11-01T08:00:00+05:30", "%+")) -- Ok(Instant {epoch_ns: 1793500200000000000})
+  println(time.parse_instant("2026-11-01T08:00:00+0530", "%+")) -- Ok(Instant {epoch_ns: 1793500200000000000})
+  println(time.parse_instant("2026-11-01 02:30:00Z", "%+")) -- Ok(Instant {epoch_ns: 1793500200000000000})
+}
+```
 
 A pattern without an offset is `Err(InvalidFormat(why))` whatever the
 text, as a pattern without a time of day is for `time.parse`:
