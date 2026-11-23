@@ -5,7 +5,7 @@
 -- stderr-contains: note: the closure returns `Bool` by its `return`, where `()` is expected
 -- stderr-contains: help: to stop early, use `list.find`, `list.any` or `list.fold_until`, or a `loop`
 -- stderr-contains: note: the ?-ed expression is Result(Int, int.IntError), but the closure it is in returns Int
--- stderr-contains: help: a `?` in a closure ends the closure, not the function; over a list, `list.traverse(xs) { x -> ... }?` stops at the first `Err`
+-- stderr-contains: help: a `?` in a closure ends the closure, not the function; over a list, `list.traverse(xs) { x -> ... }?` calls the closure on every element, then gives the first `Err`; to stop at the first `Err`, use `list.fold_until` or a `loop`
 -- stderr-not-contains: expected (), got Bool
 -- stderr-not-contains: expected Bool, got ()
 import int

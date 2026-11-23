@@ -3042,8 +3042,10 @@ impl TypeChecker {
                 };
                 diagnostic = diagnostic.with_help(format!(
                     "a `?` in a closure ends the closure, not the function; over a list, \
-                     `{}(xs) {{ x -> ... }}?` stops at the first `{fails}`",
-                    self.written_builtin("list.traverse")
+                     `{}(xs) {{ x -> ... }}?` calls the closure on every element, then gives \
+                     the first `{fails}`; to stop at the first `{fails}`, use `{}` or a `loop`",
+                    self.written_builtin("list.traverse"),
+                    self.written_builtin("list.fold_until"),
                 ));
             }
             self.errors.push(diagnostic);
