@@ -456,6 +456,8 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
     const RULE_UNC_PATH: &str = "is a Windows path, which git on this system would read \
         as a file name of the current directory: write a path of this system, \
         starting with `/`, `./` or `../`, or a URL";
+    const RULE_LETTER_SCHEME: &str = "is not a recognised git URL form: the scheme `c://` \
+        is not accepted, use `ssh://` or `https://` instead";
     let cases: &[(&str, &str, &str)] = &[
         ("file:/srv/repo.git", "file:/srv/repo.git", RULE_SLASHES),
         ("FILE:srv/repo.git", "FILE:srv/repo.git", RULE_SLASHES),
@@ -536,6 +538,21 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             RULE_SCP_PASSWORD,
         ),
         ("C:\\repo\\S3CR3TXYZ@x:p", "***@x:p", RULE_SCP_PASSWORD),
+        // A scheme of one letter with a second `:`: no drive on Windows
+        // either, a scheme silt does not take, hidden. FAIL before: shown
+        // whole.
+        (
+            "C://user:S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            "is not a recognised git URL form: the scheme `C://` is not accepted, \
+             use `ssh://` or `https://` instead",
+        ),
+        (
+            "u://us:S3CR3TXYZ@h/p",
+            "***@h/p",
+            "is not a recognised git URL form: the scheme `u://` is not accepted, \
+             use `ssh://` or `https://` instead",
+        ),
         // Refused for its empty user: hidden all the same.
         (
             "@user:S3CR3TXYZ@example.com:p",
@@ -614,6 +631,18 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
         ("C:/repo/x", "C:/repo/x", RULE_WINDOWS_PATH),
         ("C:/repo/x@h", "***@h", RULE_WINDOWS_PATH),
         ("\\\\server\\share\\x@h", "***@h", RULE_UNC_PATH),
+        // A `:` with no `/` before it: git reads the short form.
+        ("\\\\h:p", "\\\\h:p", RULE_WINDOWS_PATH),
+        // One letter, `:` and `//`: a drive on Windows, elsewhere a URL of
+        // the scheme `c` to git, refused as one and hidden. FAIL before:
+        // shown whole.
+        ("c://S3CR3TXYZ@h", "***@h", RULE_LETTER_SCHEME),
+        (
+            "C://S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            "is not a recognised git URL form: the scheme `C://` is not accepted, \
+             use `ssh://` or `https://` instead",
+        ),
     ] {
         // (On Windows a UNC path names a host of the network: not run there.)
         if cfg!(windows) && url.starts_with(r"\\") {
@@ -1313,6 +1342,12 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
             Expect::Refused,
         ),
         (format!("127.0.0.1:team/{marker}@v2"), Expect::Refused),
+        // A scheme of one letter with a second `:`, on every system. FAIL
+        // before: shown whole.
+        (
+            format!("C://user:{marker}@127.0.0.1/team/pkg.git"),
+            Expect::Refused,
+        ),
         (
             format!("ssh:user:{marker}@127.0.0.1:team/pkg.git"),
             Expect::NoMore,

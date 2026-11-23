@@ -312,11 +312,17 @@ fn git_url_problem(url: &str) -> Option<String> {
         "must not be empty".to_string()
     } else if url.starts_with('-') {
         "must not start with `-`".to_string()
-    } else if !cfg!(windows) && is_windows_absolute_path(url) {
-        let read_as = if url.starts_with(r"\\") {
-            "a file name of the current directory"
-        } else {
+    } else if !cfg!(windows) && is_windows_absolute_path(url) && !url[1..].starts_with("://") {
+        // (`c://x` is a URL of the scheme `c` to git, refused below as
+        // one.) As git reads it: the short form when its first `:` has no
+        // `/` before it (`C:\repo`, `\\h:p`), else a local path.
+        let short_form = url
+            .find(':')
+            .is_some_and(|colon| !url[..colon].contains('/'));
+        let read_as = if short_form {
             "a host and a path"
+        } else {
+            "a file name of the current directory"
         };
         format!(
             "is a Windows path, which git on this system would read as {read_as}: \
@@ -692,7 +698,7 @@ pub(crate) fn needs_escape(c: char) -> bool {
 
 /// The bytes of the git URL `url` that hold its user and password: the
 /// one place every printed form of a git URL hides. After the `//` of
-/// `scheme://`, all of it up to the last `@` (`https://***@host/r.git`),
+/// `scheme://` (a scheme of two letters or more), all of it up to the last `@` (`https://***@host/r.git`),
 /// a space or a `/` in a password included; of a mistyped URL
 /// (`https:/user:word@host/r.git`), all of it before the last `@`. Any
 /// other value is read as [`validate_git_url`] reads it: one it refuses
@@ -714,9 +720,11 @@ fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
         let at = authority.rfind('@')?;
         return (at > 0).then_some(7..7 + at);
     }
+    // (A "scheme" of one letter is a drive on Windows, `c://x@h`, and no
+    // accepted scheme anywhere: read as every other value.)
     let scheme_url = url
         .find(':')
-        .is_some_and(|colon| url[colon + 1..].starts_with("//"));
+        .is_some_and(|colon| colon > 1 && url[colon + 1..].starts_with("//"));
     if !scheme_url && !is_scheme_without_slashes(url) {
         if git_url_problem(url).is_some() {
             return (last > 0).then_some(0..last);
@@ -736,12 +744,15 @@ fn userinfo_place(url: &str) -> Option<std::ops::Range<usize>> {
     (last > start).then_some(start..last)
 }
 
-/// Whether `url` is a local path that a message shows as written: one
-/// that starts with `/` (not `//`: `//host/...` reads as a URL without
-/// its scheme too), `./` or `../`, or a Windows drive path, a letter, `:`
-/// and then `\` or `/` or nothing (`C:\repo\a@b`, `C:/repo/a:b@c`). The
-/// same on every platform, so that what is hidden is: `u:p@h:t` is no
-/// drive path, though Git for Windows reads `u:` as a drive.
+/// Whether `url`, a value that [`validate_git_url`] accepts (a refused one
+/// is hidden before its last `@` before this is asked), is a local path
+/// that a message shows as written: one that starts with `/` (not `//`:
+/// `//host/...` reads as a URL without its scheme too), `./` or `../`, or
+/// a Windows drive path, a letter, `:` and then `\` or `/` or nothing
+/// (`C:\repo\a@b`, `c://x@h`), which only Windows accepts: elsewhere such
+/// a value is refused, and so hidden. A drive with anything else after it
+/// (`c:repo@x`, a local path on Windows) is hidden before its last `@`
+/// all the same: by its shape it can be `user:word@host`.
 fn is_path_to_show_whole(url: &str) -> bool {
     let bytes = url.as_bytes();
     let drive = bytes.len() >= 2
@@ -2029,6 +2040,17 @@ mod tests {
             ("C:/repo/a:b@c", "***@c"),
             ("u:p@h:t/r.git", "***@h:t/r.git"),
             ("c:repo:p@h:t", "***@h:t"),
+            // A scheme of one letter: a drive on Windows, refused elsewhere,
+            // and refused everywhere with a second `:`. (Shown whole before.)
+            (
+                "c://S3CR3TXYZ@h",
+                if cfg!(windows) {
+                    "c://S3CR3TXYZ@h"
+                } else {
+                    "***@h"
+                },
+            ),
+            ("u://us:S3CR3TXYZ@h/p", "***@h/p"),
             // git's short form: a password stands before the first `@`; an
             // `@` of the path is shown, as git reads it. FAIL before: the
             // value was hidden up to its last `@` (`***@v2.git`).
@@ -2536,6 +2558,9 @@ mod tests {
             ),
             (r"\\server\share\x", r"\\server\share\x"),
             (r"\\server\share\x@h", "***@h"),
+            // A `:` with no `/` before it: git reads the short form, the
+            // host `\\h`. FAIL before: "a file name of the current directory".
+            (r"\\h:p", r"\\h:p"),
         ] {
             assert!(is_windows_absolute_path(url), "{url}");
             let result = validate_git_url(url);
@@ -2544,7 +2569,7 @@ mod tests {
                 assert_eq!(display_url(url), url, "{url}");
             } else {
                 let error = result.unwrap_err();
-                let rule = if url.starts_with(r"\\") {
+                let rule = if url.starts_with(r"\\") && !url.contains(':') {
                     UNC_RULE
                 } else {
                     WINDOWS_PATH_RULE
@@ -2552,6 +2577,49 @@ mod tests {
                 assert!(error.reason.starts_with(rule), "{url}: {}", error.reason);
                 assert_eq!(error.url, shown_elsewhere, "{url}");
                 assert_eq!(display_url(url), shown_elsewhere, "{url}");
+            }
+        }
+        if !cfg!(windows) {
+            let error = validate_git_url(r"\\u:S3CR3TXYZ@h\share").unwrap_err();
+            assert!(
+                error.reason.starts_with(WINDOWS_PATH_RULE),
+                "{}",
+                error.reason
+            );
+            assert_eq!(error.url, r"***@h\share");
+        }
+        // One letter, `:` and `//`: a drive on Windows when no other `:`
+        // follows; elsewhere, and with a second `:` on Windows too, git reads
+        // a URL of the scheme `c`, refused as a scheme silt does not take.
+        // Refused, it is hidden before its last `@`. FAIL before: shown
+        // whole (`c://S3CR3TXYZ@h` in the message and the line of silt.toml).
+        for (url, refused_on_windows, shown) in [
+            ("c://S3CR3TXYZ@h", false, "***@h"),
+            (
+                "C://S3CR3TXYZ@example.com/team/pkg.git",
+                false,
+                "***@example.com/team/pkg.git",
+            ),
+            (
+                "C://user:S3CR3TXYZ@example.com/team/pkg.git",
+                true,
+                "***@example.com/team/pkg.git",
+            ),
+            ("u://us:S3CR3TXYZ@h/p", true, "***@h/p"),
+        ] {
+            let result = validate_git_url(url);
+            if cfg!(windows) && !refused_on_windows {
+                assert_eq!(result, Ok(()), "{url}");
+                assert_eq!(display_url(url), url, "{url}");
+            } else {
+                let error = result.unwrap_err();
+                let rule = format!(
+                    "is not a recognised git URL form: the scheme `{}://` is not accepted",
+                    &url[..1]
+                );
+                assert!(error.reason.starts_with(&rule), "{url}: {}", error.reason);
+                assert_eq!(error.url, shown, "{url}");
+                assert_eq!(display_url(url), shown, "{url}");
             }
         }
         // No Windows path: read as before, on every system. A one-letter
