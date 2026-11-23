@@ -448,7 +448,16 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
     const RULE_SCP_PASSWORD: &str = "the form `user@host:path` holds no password \
         (git would take what stands before the first `:` for the host): \
         leave the password out, and ssh asks for it or uses a key; \
-        a path whose first part holds an `@` is written `host:./pkg@v2` or as an `ssh://` URL";
+        a path with an `@` in it is written with the user in front (`git@host:dir/a@b`) \
+        or as an `ssh://` URL";
+    const RULE_WINDOWS_PATH: &str = "is a Windows path, which git on this system would read \
+        as a host and a path: write a path of this system, starting with `/`, `./` or `../`, \
+        or a URL";
+    const RULE_UNC_PATH: &str = "is a Windows path, which git on this system would read \
+        as a file name of the current directory: write a path of this system, \
+        starting with `/`, `./` or `../`, or a URL";
+    const RULE_LETTER_SCHEME: &str = "is not a recognised git URL form: the scheme `c://` \
+        is not accepted, use `ssh://` or `https://` instead";
     let cases: &[(&str, &str, &str)] = &[
         ("file:/srv/repo.git", "file:/srv/repo.git", RULE_SLASHES),
         ("FILE:srv/repo.git", "FILE:srv/repo.git", RULE_SLASHES),
@@ -464,13 +473,15 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             "***@example.com:team/pkg.git",
             RULE_SCP_PASSWORD,
         ),
-        // The first `:` before the first `@`, and no `/` between them, is
-        // a password: one with an `@` in it, one before a path with an `@`,
-        // one whose path has a `:`, one with no path `:` at all (a URL
-        // with its scheme forgotten), a first part of a path with an `@`,
-        // and one-character users with a second `:` (no drive on Windows
+        // The first `:` before the first `@`, whatever stands between
+        // them, is a password: one with an `@` in it, one before a path with
+        // an `@`, one whose path has a `:`, one with no path `:` at all (a
+        // URL with its scheme forgotten), ones with a `/` in them, a path
+        // with an `@` and no user in front (the same shape), and
+        // one-character users with a second `:` (no drive on Windows
         // either). A refused value is hidden before its last `@`, in the
-        // message and the line of silt.toml.
+        // message and the line of silt.toml. FAIL before (the rows with a
+        // `/` before the first `@`): taken, shown whole and given to git.
         (
             "user:S3CR@3TXYZ@example.com:team/pkg.git",
             "***@example.com:team/pkg.git",
@@ -494,11 +505,54 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
         ),
         ("example.com:S3CR3TXYZ@v2", "***@v2", RULE_SCP_PASSWORD),
         (
+            "user:/S3CR3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        (
+            "user:S3CR/3TXYZ@example.com:team/pkg.git",
+            "***@example.com:team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        (
+            "user:/S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        (
+            "u:/S3CR3TXYZ@example.com:team/p",
+            "***@example.com:team/p",
+            RULE_SCP_PASSWORD,
+        ),
+        ("example.com:team/S3CR3TXYZ@v2", "***@v2", RULE_SCP_PASSWORD),
+        ("example.com:dir/a@b", "***@b", RULE_SCP_PASSWORD),
+        (
+            "example.com:/srv/team@work/pkg.git",
+            "***@work/pkg.git",
+            RULE_SCP_PASSWORD,
+        ),
+        ("example.com:./pkg@v2", "***@v2", RULE_SCP_PASSWORD),
+        (
             "u:S3CR3TXYZ@example.com:team/pkg.git",
             "***@example.com:team/pkg.git",
             RULE_SCP_PASSWORD,
         ),
         ("C:\\repo\\S3CR3TXYZ@x:p", "***@x:p", RULE_SCP_PASSWORD),
+        // A scheme of one letter with a second `:`: no drive on Windows
+        // either, a scheme silt does not take, hidden. FAIL before: shown
+        // whole.
+        (
+            "C://user:S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            "is not a recognised git URL form: the scheme `C://` is not accepted, \
+             use `ssh://` or `https://` instead",
+        ),
+        (
+            "u://us:S3CR3TXYZ@h/p",
+            "***@h/p",
+            "is not a recognised git URL form: the scheme `u://` is not accepted, \
+             use `ssh://` or `https://` instead",
+        ),
         // Refused for its empty user: hidden all the same.
         (
             "@user:S3CR3TXYZ@example.com:p",
@@ -552,11 +606,48 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
         }
     }
     // A drive without a second `:`: on Windows a local path, which git is
-    // given; elsewhere the short form with a password, refused and hidden.
-    for (url, shown) in [
-        ("u:S3CR3TXYZ@example.com/p", "***@example.com/p"),
-        ("C:\\repo\\S3CR3TXYZ@x", "***@x"),
+    // given; elsewhere the short form with a password, or a Windows path (a
+    // letter, `:`, then `\` or `/`; or one that starts with `\\`), refused
+    // and hidden before its last `@`, by `check` and by `add`. FAIL before
+    // (the Windows paths): refused as a password (`C:\repo\S3CR3TXYZ@x`), or
+    // taken and given to git.
+    for (url, shown, rule) in [
+        (
+            "u:S3CR3TXYZ@example.com/p",
+            "***@example.com/p",
+            RULE_SCP_PASSWORD,
+        ),
+        ("C:\\repo\\S3CR3TXYZ@x", "***@x", RULE_WINDOWS_PATH),
+        (
+            "u:\\S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            RULE_WINDOWS_PATH,
+        ),
+        (
+            "C:\\Users\\me\\lib",
+            "C:\\Users\\me\\lib",
+            RULE_WINDOWS_PATH,
+        ),
+        ("C:/repo/x", "C:/repo/x", RULE_WINDOWS_PATH),
+        ("C:/repo/x@h", "***@h", RULE_WINDOWS_PATH),
+        ("\\\\server\\share\\x@h", "***@h", RULE_UNC_PATH),
+        // A `:` with no `/` before it: git reads the short form.
+        ("\\\\h:p", "\\\\h:p", RULE_WINDOWS_PATH),
+        // One letter, `:` and `//`: a drive on Windows, elsewhere a URL of
+        // the scheme `c` to git, refused as one and hidden. FAIL before:
+        // shown whole.
+        ("c://S3CR3TXYZ@h", "***@h", RULE_LETTER_SCHEME),
+        (
+            "C://S3CR3TXYZ@example.com/team/pkg.git",
+            "***@example.com/team/pkg.git",
+            "is not a recognised git URL form: the scheme `C://` is not accepted, \
+             use `ssh://` or `https://` instead",
+        ),
     ] {
+        // (On Windows a UNC path names a host of the network: not run there.)
+        if cfg!(windows) && url.starts_with(r"\\") {
+            continue;
+        }
         let app = ws.join("app");
         let _ = fs::remove_dir_all(&app);
         write_package(
@@ -566,34 +657,47 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             "main.silt",
             "fn main() {}\n",
         );
-        let out = run(&app, &["check"]);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        if cfg!(windows) {
-            assert!(!stderr.contains("invalid git URL"), "{url}: {stderr}");
-        } else {
-            assert!(
-                stderr.contains(&format!("`{shown}`: {RULE_SCP_PASSWORD}")),
-                "{url}: {stderr}"
-            );
-            assert!(!stderr.contains("3TX"), "{url}: {stderr}");
+        let adder = ws.join("adder");
+        let _ = fs::remove_dir_all(&adder);
+        write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
+        for (cwd, args) in [
+            (&app, vec!["check"]),
+            (
+                &adder,
+                vec!["add", "evil", "--git", url, "--branch", "main"],
+            ),
+        ] {
+            let out = run(cwd, &args);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let context = format!("{args:?} with {url:?}");
+            if cfg!(windows) {
+                assert!(
+                    !stderr.contains("invalid git URL") && !stderr.contains("look like a git URL"),
+                    "{context}: {stderr}"
+                );
+            } else {
+                assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
+                assert!(
+                    stderr.contains(&format!("`{shown}`"))
+                        && stderr.contains(&format!(": {rule}; expected ")),
+                    "{context}: {stderr}"
+                );
+                assert!(!stderr.contains("3TX"), "{context}: {stderr}");
+            }
         }
     }
-    // A user alone, and a path with an `@`, are the scp form git reads as
-    // written: they are taken, shown whole (the line of silt.toml too),
-    // and go to git, which is not there. FAIL before (the `@` of a path):
-    // refused, or shown `***@v2.git`. The rows with the marker in them
-    // are shown whole ON PURPOSE: as git reads them they hold no password
-    // but an `@` of the path (a `/` between the first `:` and the first
-    // `@`; main hid `example.com:team/S3CR3TXYZ@v2`), or a user before it
-    // (main hid `git@example.com:S3CR3TXYZ@other:p`); `u:/S3CR3TXYZ@...` is
-    // shown whole as on main.
+    // A user alone, and a path with an `@` after the user, are the scp form
+    // git reads as written: they are taken, shown whole (the line of
+    // silt.toml too), and go to git, which is not there. FAIL before (the
+    // `@` of a path): refused, or shown `***@v2.git`. The row with the
+    // marker in it is shown whole ON PURPOSE: as git reads it, it holds no
+    // password but a user and an `@` of the path (main hid
+    // `git@example.com:S3CR3TXYZ@other:p`).
     for url in [
         "git@example.com:team/pkg.git",
         "git@example.com:team/pkg@v2.git",
-        "example.com:dir/a@b",
-        "example.com:team/S3CR3TXYZ@v2",
+        "git@example.com:dir/a@b",
         "git@example.com:S3CR3TXYZ@other:p",
-        "u:/S3CR3TXYZ@example.com:team/p",
     ] {
         let app = ws.join("app");
         let _ = fs::remove_dir_all(&app);
@@ -1223,6 +1327,27 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
             Expect::NoMore,
         ),
         (format!("example.com:{marker}@v2"), Expect::NoMore),
+        // A `/` between the first `:` and the first `@`, on every system.
+        // FAIL before: taken, and shown whole.
+        (
+            format!("user:/{marker}@127.0.0.1:team/pkg.git"),
+            Expect::Refused,
+        ),
+        (
+            "user:S3CR/3TXYZ@127.0.0.1:team/pkg.git".to_string(),
+            Expect::Refused,
+        ),
+        (
+            format!("user:/{marker}@127.0.0.1/team/pkg.git"),
+            Expect::Refused,
+        ),
+        (format!("127.0.0.1:team/{marker}@v2"), Expect::Refused),
+        // A scheme of one letter with a second `:`, on every system. FAIL
+        // before: shown whole.
+        (
+            format!("C://user:{marker}@127.0.0.1/team/pkg.git"),
+            Expect::Refused,
+        ),
         (
             format!("ssh:user:{marker}@127.0.0.1:team/pkg.git"),
             Expect::NoMore,
