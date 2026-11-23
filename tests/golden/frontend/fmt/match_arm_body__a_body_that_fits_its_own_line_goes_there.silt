@@ -1,0 +1,50 @@
+-- cmd: fmt
+-- An arm whose body does not fit behind its `->`, but fits the next
+-- line, has the body on the next line, one level deeper, and not split
+-- inside its call. A body that does not fit the next line either is
+-- laid out behind the `->` by its own rules.
+type Target {
+  Internal(String),
+  External(String),
+}
+
+fn fail(status: Int, msg: String) -> String {
+  "{status} {msg}"
+}
+
+fn route(method: String, path: List(String)) -> String {
+  match (method, path) {
+    ("GET", ["jobs"]) -> "list"
+    (_, ["jobs"]) | (_, ["jobs", _]) | (_, ["health"]) | (_, ["shutdown"]) -> fail(
+      405,
+      "method not allowed",
+    )
+    _ -> fail(404, "a text that is long, so long that the call it is in fits no line of its own at all")
+  }
+}
+
+fn resolve(page: String, link: String) -> Target {
+  match link {
+    l when string_length(l) > string_length(page) && string_length(l) < 20 -> Internal(
+      "{page}/{link}/index",
+    )
+    _ -> External(link)
+  }
+}
+
+fn kind(n: Int) -> String {
+  match {
+    n > 1000000 && n < 2000000 && n != 1500000 && n != 1600000 && n != 1700000 && n != 18 -> fail(1, "big")
+    _ -> "small"
+  }
+}
+
+fn string_length(s: String) -> Int {
+  0
+}
+
+fn main() {
+  println(route("PUT", ["jobs"]))
+  println(resolve("a", "b"))
+  println(kind(2))
+}

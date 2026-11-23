@@ -10,12 +10,8 @@ fn main() {
     fourth = (1, 2, 3)
   {
     match {
-      first_counter < 3 -> loop(
-        first_counter + 1,
-        [first_counter, ..second_accumulator],
-        third_state_value,
-        fourth,
-      )
+      first_counter < 3 ->
+        loop(first_counter + 1, [first_counter, ..second_accumulator], third_state_value, fourth)
       _ -> println((second_accumulator, third_state_value, fourth))
     }
   }

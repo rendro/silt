@@ -53,6 +53,11 @@ pub(crate) enum Doc {
     /// in an interpolation): the line suffixes that wait are written
     /// first, where they were met.
     Settle,
+    /// What stands behind a mark (an arm's body behind its `->`): behind
+    /// it after a space, laid out as it lays itself out; but on the next
+    /// line, one level deeper, when it does not fit behind the mark on
+    /// one line and does fit there.
+    Hang(Box<Doc>),
 }
 
 impl Doc {
@@ -77,6 +82,10 @@ impl Doc {
         Doc::IfBreak(Box::new(broken), Box::new(flat))
     }
 
+    pub(crate) fn hang(doc: Doc) -> Doc {
+        Doc::Hang(Box::new(doc))
+    }
+
     /// Whether the document holds a forced break outside the branches of
     /// an `IfBreak`: a group around it cannot be on one line. A nested
     /// group answers from its flag, so building a document looks at each
@@ -91,7 +100,7 @@ impl Doc {
                         return true;
                     }
                 }
-                Doc::Nest(inner) => stack.push(inner),
+                Doc::Nest(inner) | Doc::Hang(inner) => stack.push(inner),
                 Doc::Concat(parts) => stack.extend(parts.iter()),
                 Doc::Nil
                 | Doc::Text(_)
@@ -194,6 +203,23 @@ pub(crate) fn render(doc: &Doc, width: usize) -> String {
                 let chosen = if mode == Mode::Break { broken } else { flat };
                 stack.push((indent, mode, chosen));
             }
+            Doc::Hang(inner) => {
+                let behind = mode == Mode::Flat
+                    || inner.forces_break()
+                    || r.fits_at(r.start(), (indent, Mode::Flat, doc), &stack)
+                    || !r.fits_at(
+                        indent + INDENT,
+                        (indent + INDENT, Mode::Flat, inner),
+                        &stack,
+                    );
+                if behind {
+                    stack.push((indent, mode, inner));
+                    r.text(" ", indent);
+                } else {
+                    r.newline(indent + INDENT);
+                    stack.push((indent + INDENT, Mode::Flat, inner));
+                }
+            }
             Doc::LineSuffix(text) => {
                 let breaks_here = comment_before_line_break(&stack);
                 r.suffix(text, indent);
@@ -251,7 +277,7 @@ fn comment_before_line_break(rest: &[Cmd]) -> bool {
             }
             Doc::HardLine | Doc::BlankLine | Doc::OwnLine(_) => return false,
             Doc::Group(inner, forced) => stack.push((*forced, inner)),
-            Doc::Nest(inner) => stack.push((broken, inner)),
+            Doc::Nest(inner) | Doc::Hang(inner) => stack.push((broken, inner)),
             Doc::Concat(parts) => stack.extend(parts.iter().rev().map(|part| (broken, part))),
             Doc::IfBreak(on_break, flat) => {
                 stack.push((broken, if broken { on_break } else { flat }));
@@ -270,16 +296,26 @@ impl Renderer {
     /// group is the one to break. A group that opens behind the comment
     /// is not broken for it.
     fn fits(&self, next: Cmd, rest: &[Cmd]) -> bool {
+        self.fits_at(self.start(), next, rest)
+    }
+
+    /// The column the next text is written at.
+    fn start(&self) -> usize {
+        if self.at_line_start {
+            self.indent
+        } else {
+            self.col
+        }
+    }
+
+    /// [`Renderer::fits`], on a line whose next text is written at
+    /// column `start`.
+    fn fits_at(&self, start: usize, next: Cmd, rest: &[Cmd]) -> bool {
         enum Step<'a> {
             Doc(Cmd<'a>),
             /// The end of a group inside `next`.
             GroupEnd,
         }
-        let start = if self.at_line_start {
-            self.indent
-        } else {
-            self.col
-        };
         let mut left = self.width as isize - start as isize;
         // How deep in groups the walk is; `next` itself is at 0.
         let mut depth: isize = 0;
@@ -345,6 +381,11 @@ impl Renderer {
                     stack.push(Step::Doc((indent, mode, inner)));
                 }
                 Doc::Nest(inner) => stack.push(Step::Doc((indent, mode, inner))),
+                // (As it is laid out behind its mark.)
+                Doc::Hang(inner) => {
+                    left -= 1;
+                    stack.push(Step::Doc((indent, mode, inner)));
+                }
                 Doc::Concat(parts) => {
                     stack.extend(
                         parts

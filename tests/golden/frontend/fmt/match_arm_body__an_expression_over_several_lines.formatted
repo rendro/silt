@@ -20,8 +20,8 @@ fn pick(n, xs, name: Name) {
       let y = x * 2
       acc + y
     }
-    5 -> some_function_with_a_long_name(n, list.length(xs), string.length(name.first), n + 100000) +
-      1
+    5 ->
+      some_function_with_a_long_name(n, list.length(xs), string.length(name.first), n + 100000) + 1
     6 -> xs
       |> list.map { x -> x * 1000 }
       |> list.filter { x -> x > 100000 }
