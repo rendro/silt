@@ -2,7 +2,7 @@
 csv missing field: score
 csv type mismatch: expected Float, got 'x' at line 2, column score
 csv type mismatch: expected Bool, got 'yes' at line 2, column ok
-invalid date '2020-13-01' (expected YYYY-MM-DD): input is out of range at line 2, column born
+invalid date '2020-13-01': the month is out of range at line 2, column born
 csv type mismatch: expected Int, got an empty cell at line 2, column age
 csv syntax error at byte 23: line 2: a row of 4 fields, and the header has 5
 csv syntax error at byte 0: line 1: the header names the column `name` twice

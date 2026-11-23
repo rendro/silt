@@ -44,6 +44,19 @@ sites destructure specific variants when they need to branch (e.g. "create
 a default when the file does not exist") and show the error otherwise. See
 [stdlib errors](errors.md) for how every error enum is shown.
 
+`NotFound(path)` from a function that writes (`io.write_file`,
+`stream.write_to_file`, the target of `fs.copy` and `fs.rename`) names the
+file it was to write, and means the folder it writes into is missing: the
+folder is not made. Shown, it reads `file not found: <path>` as for a read.
+
+```silt
+import io
+
+fn main() {
+  println(io.write_file("no-such-dir/out.txt", "x")) -- Err(file not found: no-such-dir/out.txt)
+}
+```
+
 See also [bytes](bytes.md) for reading/writing binary data.
 
 

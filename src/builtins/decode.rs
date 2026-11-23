@@ -11,7 +11,7 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 use super::registry::decoding::{Family, ROW_TYPE_HELP};
 use super::registry::registry;
-use super::time::{LEAP_SECOND, is_leap_second, leap_datetime_message};
+use super::time::{LEAP_SECOND, is_leap_second, leap_datetime_message, out_of_range};
 use super::typed::Type;
 use crate::defs::TypeId;
 use crate::typeinfo::{BuiltinVariant, FieldType, Shape, TypeInfo, bv, ty};
@@ -108,7 +108,28 @@ fn signed_year(s: &str) -> std::borrow::Cow<'_, str> {
 /// year with more digits or a sign where it has them, as silt shows it
 /// (`12026-01-01`, `-001-01-01`).
 pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
-    NaiveDate::parse_from_str(&signed_year(s), "%Y-%m-%d")
+    NaiveDate::parse_from_str(&signed_year(s), DATE)
+}
+
+/// How a document writes a date, a time of day (with seconds or without)
+/// and a date and time (with an offset or without).
+const DATE: &str = "%Y-%m-%d";
+const TIME: &str = "%H:%M:%S%.f";
+const TIME_MINUTES: &str = "%H:%M";
+const DATETIME_OFFSET: [&str; 2] = ["%Y-%m-%dT%H:%M:%S%.f%z", "%Y-%m-%d %H:%M:%S%.f%z"];
+const DATETIME: [&str; 3] = [
+    "%Y-%m-%dT%H:%M:%S%.f",
+    "%Y-%m-%d %H:%M:%S%.f",
+    "%Y-%m-%dT%H:%M",
+];
+
+/// Why the text of a time of day is none: it is not written as one
+/// (`Shape`, in chrono's words), or it is and its fields make none
+/// (`Value`: an hour 25, a leap second).
+#[derive(Debug, PartialEq)]
+pub(crate) enum Unread {
+    Shape(std::string::String),
+    Value(std::string::String),
 }
 
 /// The Url a decoder reads from the string `text`, or the message of
@@ -138,27 +159,46 @@ fn invalid_url_message(why: crate::url::UrlError) -> std::string::String {
 }
 
 /// The message of a decoder's error for `s`, the string of a date that
-/// is none, `why`.
+/// is none, `why`: how a date is written, for a text that is not
+/// written so; else the field that is out of its range.
 fn invalid_date_message(s: &str, why: chrono::ParseError) -> std::string::String {
-    format!("invalid date '{s}' (expected YYYY-MM-DD): {why}")
+    let range = match date_written(s) == Some("") {
+        true => out_of_range(&signed_year(s), DATE, "date", why),
+        false => None,
+    };
+    match range {
+        Some(range) => format!("invalid date '{s}': {range}"),
+        None => format!("invalid date '{s}' (expected YYYY-MM-DD): {why}"),
+    }
 }
 
 /// The message of a decoder's error for `s`, the string of a time of
 /// day that is none, `why`.
-fn invalid_time_message(s: &str, why: &str) -> std::string::String {
-    format!("invalid time '{s}' (expected HH:MM:SS): {why}")
+fn invalid_time_message(s: &str, why: &Unread) -> std::string::String {
+    match why {
+        Unread::Shape(why) => format!("invalid time '{s}' (expected HH:MM:SS): {why}"),
+        Unread::Value(why) => format!("invalid time '{s}': {why}"),
+    }
 }
 
 /// The time of day that the text `s` of a document writes: `HH:MM:SS`,
 /// with a fraction of a second up to nanoseconds (`13:14:15.25`), or
 /// `HH:MM`. Else why it is none: a second 60 is a leap second, which is
 /// refused.
-pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, std::string::String> {
-    let t = NaiveTime::parse_from_str(s, "%H:%M:%S%.f")
-        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
-        .map_err(|e| e.to_string())?;
+pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, Unread> {
+    let t = NaiveTime::parse_from_str(s, TIME).or_else(|full| {
+        NaiveTime::parse_from_str(s, TIME_MINUTES).map_err(|short| {
+            let range = [(TIME, full), (TIME_MINUTES, short)]
+                .into_iter()
+                .find_map(|(pattern, err)| out_of_range(s, pattern, "time", err));
+            match range.filter(|_| time_written(s) == Some("")) {
+                Some(range) => Unread::Value(range),
+                None => Unread::Shape(short.to_string()),
+            }
+        })
+    })?;
     match is_leap_second(t) {
-        true => Err(LEAP_SECOND.into()),
+        true => Err(Unread::Value(LEAP_SECOND.into())),
         false => Ok(t),
     }
 }
@@ -168,17 +208,13 @@ pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, std::string::String> {
 /// or without an offset; seconds with a fraction up to nanoseconds, or
 /// no seconds (`2024-03-09T07:30`); the year as in [`parse_date`]. Else
 /// the message of the decoder's error: a second 60 is a leap second,
-/// which is refused.
+/// which is refused, and a text written so whose field is out of its
+/// range says which.
 pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::String> {
     let signed = signed_year(s);
     let read = &*signed;
-    let offset = ["%Y-%m-%dT%H:%M:%S%.f%z", "%Y-%m-%d %H:%M:%S%.f%z"].into_iter();
-    let naive = [
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M",
-    ]
-    .into_iter();
+    let offset = DATETIME_OFFSET.into_iter();
+    let naive = DATETIME.into_iter();
     let dt = chrono::DateTime::parse_from_rfc3339(read)
         .ok()
         .into_iter()
@@ -189,7 +225,92 @@ pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::Stri
     match dt {
         Some(dt) if is_leap_second(dt.time()) => Err(leap_datetime_message(s)),
         Some(dt) => Ok(dt),
-        None => Err(format!("invalid datetime '{s}'")),
+        None => Err(match datetime_out_of_range(s, read) {
+            Some(range) => format!("invalid datetime '{s}': {range}"),
+            None => format!("invalid datetime '{s}'"),
+        }),
+    }
+}
+
+/// Why `s` (`read` with its year signed as [`parse_date`] reads it),
+/// written as a date and time with or without an offset, is none: the
+/// field out of its range. `None` for a text not written so. An offset
+/// `Z` is read as `+00:00`, which chrono's `%z` reads.
+fn datetime_out_of_range(s: &str, read: &str) -> Option<std::string::String> {
+    if datetime_written(s) != Some("") {
+        return None;
+    }
+    let zulu = match read.strip_suffix(['Z', 'z']) {
+        Some(before) => format!("{before}+00:00"),
+        None => read.to_string(),
+    };
+    let offset = DATETIME_OFFSET.into_iter().filter_map(|pattern| {
+        let err = chrono::DateTime::parse_from_str(&zulu, pattern).err()?;
+        Some((pattern, err, &*zulu))
+    });
+    let naive = DATETIME.into_iter().filter_map(|pattern| {
+        let err = NaiveDateTime::parse_from_str(read, pattern).err()?;
+        Some((pattern, err, read))
+    });
+    naive
+        .chain(offset)
+        .find_map(|(pattern, err, text)| out_of_range(text, pattern, "datetime", err))
+}
+
+/// The text after a run of `min` to `max` ASCII digits at the start of
+/// `s`, if it starts with one.
+fn after_digits(s: &str, min: usize, max: usize) -> Option<&str> {
+    let n = s.bytes().take_while(u8::is_ascii_digit).count();
+    (min..=max).contains(&n).then(|| &s[n..])
+}
+
+/// What follows a date at the start of `s` written as a document writes
+/// one, whatever its fields hold: a year of 4 or more digits, or of any
+/// number after a sign, `-`, a month of 1 or 2 digits, `-`, a day of 1
+/// or 2. `None` if `s` starts with none: a text a message then says how
+/// a date is written for.
+fn date_written(s: &str) -> Option<&str> {
+    let (fewest, s) = match s.strip_prefix(['+', '-']) {
+        Some(unsigned) => (1, unsigned),
+        None => (4, s),
+    };
+    let s = after_digits(s, fewest, usize::MAX)?;
+    let s = after_digits(s.strip_prefix('-')?, 1, 2)?;
+    after_digits(s.strip_prefix('-')?, 1, 2)
+}
+
+/// What follows a time of day at the start of `s` written as a document
+/// writes one: hours and minutes of 1 or 2 digits each, then seconds, with
+/// a fraction, or none. `None` if `s` starts with none.
+fn time_written(s: &str) -> Option<&str> {
+    let s = after_digits(s, 1, 2)?;
+    let s = after_digits(s.strip_prefix(':')?, 1, 2)?;
+    let Some(seconds) = s.strip_prefix(':') else {
+        return Some(s);
+    };
+    let s = after_digits(seconds, 1, 2)?;
+    match s.strip_prefix('.') {
+        Some(fraction) => after_digits(fraction, 1, usize::MAX),
+        None => Some(s),
+    }
+}
+
+/// What follows a date and time at the start of `s` written as a
+/// document writes one: a date, `T` or a space, a time of day, and an
+/// offset (`Z`, `+hh:mm`, `+hhmm`) or none. `None` if `s` starts
+/// with none.
+fn datetime_written(s: &str) -> Option<&str> {
+    let s = date_written(s)?.strip_prefix(['T', 't', ' '])?;
+    let s = time_written(s)?;
+    if let Some(after) = s.strip_prefix(['Z', 'z']) {
+        return Some(after);
+    }
+    let Some(offset) = s.strip_prefix(['+', '-']) else {
+        return Some(s);
+    };
+    match after_digits(offset, 4, 4) {
+        Some(after) => Some(after),
+        None => after_digits(after_digits(offset, 2, 2)?.strip_prefix(':')?, 2, 2),
     }
 }
 
@@ -883,8 +1004,9 @@ mod tests {
     /// minute, with a fraction and with an offset; second 59 is read.
     #[test]
     fn a_leap_second_is_refused() {
-        assert_eq!(parse_time("23:59:60"), Err(LEAP_SECOND.to_string()));
-        assert_eq!(parse_time("12:30:60.5"), Err(LEAP_SECOND.to_string()));
+        let leap = || Err(Unread::Value(LEAP_SECOND.to_string()));
+        assert_eq!(parse_time("23:59:60"), leap());
+        assert_eq!(parse_time("12:30:60.5"), leap());
         assert!(parse_time("23:59:59.999999999").is_ok());
         for s in [
             "2016-12-31T23:59:60",
@@ -1048,12 +1170,32 @@ mod tests {
             ),
             (
                 with(r#"{"d": "2026-13-01"}"#),
-                "Other invalid date '2026-13-01' (expected YYYY-MM-DD): input is out of range at d",
+                "Other invalid date '2026-13-01': the month is out of range at d",
+            ),
+            (
+                with(r#"{"d": "11-23-2026"}"#),
+                "Other invalid date '11-23-2026' (expected YYYY-MM-DD): input is out of range at d",
+            ),
+            (
+                with(r#"{"d": "2025-13-01x"}"#),
+                "Other invalid date '2025-13-01x' (expected YYYY-MM-DD): input is out of range at d",
             ),
             (with(r#"{"d": 20261019}"#), "TypeMismatch at d"),
             (
                 with(r#"{"tm": "25:00"}"#),
-                "Other invalid time '25:00' (expected HH:MM:SS): input is out of range at tm",
+                "Other invalid time '25:00': the hour is out of range at tm",
+            ),
+            (
+                with(r#"{"tm": "930"}"#),
+                "Other invalid time '930' (expected HH:MM:SS): input is out of range at tm",
+            ),
+            (
+                with(r#"{"at": "2026-02-30T10:00:00Z"}"#),
+                "Other invalid datetime '2026-02-30T10:00:00Z': the day is out of range: February 2026 has 28 days at at",
+            ),
+            (
+                with(r#"{"at": "11-23-2026 10:00"}"#),
+                "Other invalid datetime '11-23-2026 10:00' at at",
             ),
             (
                 with(r#"{"at": "2016-12-31T23:59:60Z"}"#),

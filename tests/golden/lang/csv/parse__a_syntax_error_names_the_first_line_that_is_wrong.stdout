@@ -1,0 +1,4 @@
+csv syntax error at byte 13: line 2: a row of 2 fields, and the header has 3
+csv syntax error at byte 20: line 3: a blank line: every row has the header's 3 fields
+csv syntax error at byte 0: line 1: the header names the column `id` twice
+csv syntax error at byte 23: line 3: a quoted field is not closed

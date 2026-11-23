@@ -208,28 +208,31 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
         true => '\u{feff}'.len_utf8(),
         false => 0,
     };
-    let mut records = Vec::new();
+    // Each record is checked as it is split, so the first line that is
+    // wrong is the one an error names, whatever follows it.
     let (mut at, mut line) = (start, 1);
-    while at < text.len() {
-        let (fields, starts, next) = record_at(text, at).map_err(|m| {
-            let line = line + text[at..m.at].matches('\n').count();
+    let next_record = |at: &mut usize, line: &mut usize| {
+        let from = *at;
+        let (fields, starts, next) = record_at(text, from).map_err(|m| {
+            let line = *line + text[from..m.at].matches('\n').count();
             syntax_at(line, m.why, m.at)
         })?;
         // (A line with nothing on it: no field, not even "".)
-        let blank = matches!(&text[at..next], "" | "\n" | "\r\n");
-        records.push((fields, starts, line, at, blank));
-        line += text[at..next].matches('\n').count();
-        at = next;
-    }
-    let mut records = records.into_iter();
-    let Some((header, header_at, _, _, header_blank)) = records.next() else {
+        let blank = matches!(&text[from..next], "" | "\n" | "\r\n");
+        let record = (fields, starts, *line, from, blank);
+        *line += text[from..next].matches('\n').count();
+        *at = next;
+        Ok::<_, Value>(record)
+    };
+    if at >= text.len() {
         return Ok(Table {
             header: Vec::new(),
             header_at: Vec::new(),
             rows: Vec::new(),
             lines: Vec::new(),
         });
-    };
+    }
+    let (header, header_at, _, _, header_blank) = next_record(&mut at, &mut line)?;
     for (k, name) in header.iter().enumerate() {
         if header[..k].contains(name) {
             let why = format!("the header names the column `{name}` twice");
@@ -241,7 +244,8 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
         1 => "1 field".to_string(),
         n => format!("{n} fields"),
     };
-    for (fields, _, line, at, blank) in records {
+    while at < text.len() {
+        let (fields, _, row_line, row_at, blank) = next_record(&mut at, &mut line)?;
         // (A blank line is a row of one empty field: of a text of one
         // column, that is a row.)
         if blank && header.len() > 1 {
@@ -249,7 +253,7 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
                 "a blank line: every row has the header's {}",
                 fields_of(header.len())
             );
-            return Err(syntax_at(line, why, at));
+            return Err(syntax_at(row_line, why, row_at));
         }
         // (A text that begins with a blank line has a header of one empty
         // column: the rows that follow are not what is wrong, nor is a
@@ -264,10 +268,10 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
                 fields_of(fields.len()),
                 header.len()
             );
-            return Err(syntax_at(line, why, at));
+            return Err(syntax_at(row_line, why, row_at));
         }
         rows.push(fields);
-        lines.push(line);
+        lines.push(row_line);
     }
     Ok(Table {
         header,
@@ -602,7 +606,10 @@ builtins! {
 
 #[cfg(test)]
 mod tests {
-    use super::{AFTER_QUOTE, BARE_CR, Malformed, UNCLOSED, fields_of_line as split_line, record};
+    use super::{
+        AFTER_QUOTE, BARE_CR, Malformed, UNCLOSED, fields_of_line as split_line, record, syntax_at,
+        table,
+    };
 
     fn fields(line: &str) -> Vec<String> {
         split_line(line).unwrap_or_else(|e| panic!("{line:?}: {e:?}"))
@@ -694,5 +701,25 @@ mod tests {
             (third, next),
             (vec!["last".into(), String::new()], text.len())
         );
+    }
+
+    #[test]
+    fn the_first_line_that_is_wrong_is_the_one_an_error_names() {
+        let refused = |text: &str| table(text).err().expect(text);
+        // Line 2 has 2 fields; line 3 opens a quote it does not close.
+        assert_eq!(
+            refused("id,name,plan\nu2,Bob \"the\" Lee\nu3,\"open,free\n"),
+            syntax_at(2, "a row of 2 fields, and the header has 3", 13)
+        );
+        assert_eq!(
+            refused("a,b\n1,2\n\n3,\"4\n"),
+            syntax_at(3, "a blank line: every row has the header's 2 fields", 8)
+        );
+        assert_eq!(
+            refused("a,a\n\"1,2\n"),
+            syntax_at(1, "the header names the column `a` twice", 0)
+        );
+        // A field that is no CSV is still named where it goes wrong.
+        assert_eq!(refused("a,b\n1,\"2"), syntax_at(2, UNCLOSED, 6));
     }
 }

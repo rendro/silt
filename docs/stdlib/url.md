@@ -233,8 +233,8 @@ differs from `"{u}"` when the URL has a user or a password. A URL put into a
 text with `"{u}"` and then used carries `***`, and fails where it is used.
 
 `==`, hashing and order are of the whole normal text, password included.
-`json.stringify` writes a `Url` as its whole text, password included: json
-is storage, and `json.parse` reads a field `site: url.Url` back with
+`json.stringify` and `csv.stringify` write a `Url` as its whole text,
+password included: json and csv are storage, and `json.parse` reads a field `site: url.Url` back with
 `url.parse`, as `toml.parse`, `csv.parse` and a `postgres` text column do. A
 map keyed by `Url` is written by `json.stringify` with the whole text as the
 key. (`json.parse` reads a map's keys as `String` only: read such a map as

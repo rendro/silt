@@ -1,0 +1,25 @@
+-- Each record is checked as it is split: the first line with a syntax error
+-- is the one an error names, though a later line is no CSV (the short row on
+-- line 2, not the unclosed quote on line 3). A cell that does not decode is
+-- found after the whole text is split, so a later syntax error comes first.
+import csv
+
+type U {
+  id: String,
+  name: String,
+  plan: String,
+}
+
+fn show(r: Result(List(U), csv.CsvError)) -> String {
+  match r {
+    Ok(rows) -> "Ok({rows})"
+    Err(e) -> "{e}"
+  }
+}
+
+fn main() {
+  println(show(csv.parse("id,name,plan\nu2,Bob \"the\" Lee\nu3,\"open,free\n", U)))
+  println(show(csv.parse("id,name,plan\nu1,a,b\n\nu3,\"open\n", U)))
+  println(show(csv.parse("id,id,plan\nu3,\"open\n", U)))
+  println(show(csv.parse("id,name,plan\nu1,a,b\nu3,\"open\n", U)))
+}

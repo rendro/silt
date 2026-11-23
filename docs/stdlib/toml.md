@@ -239,7 +239,25 @@ a variant with fields (see [Enums](#enums)), a `json.Value`, or a type with a
 `json.Decode` impl. The type is passed as a
 `type` parameter (see [Generics](../language/generics.md) — not a string).
 Fields are matched by name; `Option` fields default to `None` if missing
-from the document.
+from the document. A key that no field names is skipped, in a table at any
+depth, as `json.parse` skips it, so a misspelled key is no error: the field
+it was meant for is missing, an `Err(MissingField(...))`, or `None` for an
+`Option` field.
+
+```silt
+import toml
+
+type Meta {
+  title: String,
+  draft: Option(Bool),
+}
+
+fn main() {
+  -- "drafts" for "draft": skipped, and draft is None
+  println(toml.parse("title = \"T\"\ndrafts = true\n", Meta)) -- Ok(Meta {title: "T", draft: None})
+  println(toml.parse("titel = \"T\"\n", Meta)) -- Err(toml missing field: title)
+}
+```
 
 Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) accept
 either a TOML native datetime literal or an ISO 8601 string — the same formats
@@ -258,7 +276,9 @@ is not kept: `1979-05-27T07:32:00+05:30` reads as `1979-05-27T02:02:00`.
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an `Other`
 that names the text, from a string and from a literal alike:
-`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
+`invalid time '23:59:60': a leap second (second 60) is not read`; a field
+out of its range is named as for [`json.parse`](json.md) (`invalid date
+'1979-02-30': the day is out of range: February 1979 has 28 days`).
 A date or a time that is none has one message whether it is written in
 quotes or as a literal: `d = 07:32:00` for a `Date` field `d` is
 `invalid date '07:32:00' (expected YYYY-MM-DD): input contains invalid characters at d`.

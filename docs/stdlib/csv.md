@@ -216,14 +216,16 @@ empty text, which `csv.parse` reads as `Ok([])`.
 
 The records' type is checked as `csv.parse`'s type argument is: a record
 type whose fields are `Int`, `Float`, `String`, `Bool`, `time.Date`,
-`time.Time`, `time.DateTime`, an `Option` of these or an alias of these.
-Anything else is a compile error (`csv.stringify cannot write ...`).
+`time.Time`, `time.DateTime`, `url.Url`, an `Option` of these or an alias
+of these. Anything else is a compile error (`csv.stringify cannot write
+...`).
 
 A cell is written as `csv.parse` reads it: a number as silt shows it
 (`42`, `1.5`), a `Bool` as `true` or `false`, a date or a time as
-`json.stringify` writes one (`2024-03-09`), a `String` as it is, and `None`
-as an empty cell. So `Some("")` of an `Option(String)` is an empty cell
-too, which `csv.parse` reads as `None`.
+`json.stringify` writes one (`2024-03-09`), a `url.Url` as its whole text,
+password included, as `json.stringify` writes it, a `String` as it is, and
+`None` as an empty cell. So `Some("")` of an `Option(String)` is an empty
+cell too, which `csv.parse` reads as `None`.
 
 ```silt
 import csv
@@ -245,5 +247,27 @@ fn main() {
   -- "Smith, John",42,john@example.com
   -- Ada,36,
   println(csv.parse(text, Person) == Ok(people)) -- true
+}
+```
+
+A `url.Url` is written whole, its password too, though `"{u}"` hides it:
+
+```silt
+import csv
+import url
+
+type Site {
+  name: String,
+  site: url.Url,
+}
+
+fn main() -> Result((), url.UrlError) {
+  let rows = [Site { name: "a", site: url.parse("https://ann:pw@example.com/x")? }]
+  let text = csv.stringify(rows)
+  print(text)
+  -- name,site
+  -- a,https://ann:pw@example.com/x
+  println(csv.parse(text, Site) == Ok(rows)) -- true
+  Ok(())
 }
 ```
