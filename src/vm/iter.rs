@@ -24,7 +24,10 @@ pub(crate) fn stop(value: Value) -> Flow {
 }
 
 /// What puts the arguments of the call for an item on the stack.
-pub(crate) type Args<S> = fn(&S, &Value, &mut Vec<Value>);
+/// It may take what it gives out of the state, if the step puts it
+/// back (a fold's accumulator: handed over, the value the call is
+/// given has no other holder).
+pub(crate) type Args<S> = fn(&mut S, &Value, &mut Vec<Value>);
 
 /// The items of an iteration ([`iterate`]): the elements of a list,
 /// the entries of a map, each the item `(key, value)`, or the members
@@ -104,7 +107,7 @@ impl<S: Send> Native for Iterate<S> {
             return (self.finish)(&mut self.state).map(Step::Done);
         };
         let call = vm.call_step(self.callback.clone(), |stack| {
-            (self.args)(&self.state, &item, stack)
+            (self.args)(&mut self.state, &item, stack)
         });
         self.current = Some(item);
         Ok(call)
@@ -137,8 +140,43 @@ pub(crate) fn iterate<S: Send + 'static>(
 }
 
 /// The arguments of a function that takes the item.
-pub(crate) fn item_arg<S>(_: &S, item: &Value, stack: &mut Vec<Value>) {
+pub(crate) fn item_arg<S>(_: &mut S, item: &Value, stack: &mut Vec<Value>) {
     stack.push(item.clone());
+}
+
+/// A builtin whose value is made right after the call: when its
+/// frame is first resumed, the call's arguments are let go of.
+struct AfterArgs<F> {
+    name: &'static str,
+    make: Option<F>,
+}
+
+impl<F> Native for AfterArgs<F>
+where
+    F: FnOnce() -> Result<Value, VmError> + Send,
+{
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn resume(&mut self, _: &mut Vm, _: Value) -> Result<Step, VmError> {
+        let make = self.make.take().expect("a frame is resumed once");
+        make().map(Step::Done)
+    }
+}
+
+/// The builtin `name`, whose value `make()` makes once the call's
+/// arguments are let go of: a value they alone held is then held by
+/// `make` alone (`map.set` of the map a fold hands over changes it in
+/// place).
+pub(crate) fn after_args<F>(name: &'static str, make: F) -> Step
+where
+    F: FnOnce() -> Result<Value, VmError> + Send + 'static,
+{
+    Step::Run(Box::new(AfterArgs {
+        name,
+        make: Some(make),
+    }))
 }
 
 /// A builtin that makes one call and makes its value from the result.

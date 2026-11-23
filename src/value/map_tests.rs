@@ -252,6 +252,11 @@ enum Change {
     RemoveRun(i64, usize),
     /// `map.update`: the value of a key changed by a function.
     Update(i64),
+    /// `Map::put`: of the map, which is held on to, and of a copy of
+    /// it that has no other holder.
+    Put(i64, i64),
+    /// Put many into a copy that has no other holder, one at a time.
+    PutRun(i64, usize),
     /// `map.merge` or `set.union`, the made one first or second.
     Merge(Made, bool),
     Intersection(Made, bool),
@@ -274,7 +279,9 @@ fn change_strategy() -> impl proptest::strategy::Strategy<Value = Change> {
         2 => (k.clone(), run.clone()).prop_map(|(k, n)| Change::InsertRun(k, n)),
         3 => k.clone().prop_map(Change::Remove),
         2 => (k.clone(), run).prop_map(|(k, n)| Change::RemoveRun(k, n)),
-        2 => k.prop_map(Change::Update),
+        2 => k.clone().prop_map(Change::Update),
+        3 => (k.clone(), -3i64..50).prop_map(|(k, v)| Change::Put(k, v)),
+        2 => (k.clone(), 0..3 * FLAT_MOST).prop_map(|(k, n)| Change::PutRun(k, n)),
         2 => (made_strategy(), any::<bool>()).prop_map(|(m, first)| Change::Merge(m, first)),
         1 => (made_strategy(), any::<bool>()).prop_map(|(m, f)| Change::Intersection(m, f)),
         1 => (made_strategy(), any::<bool>()).prop_map(|(m, f)| Change::Difference(m, f)),
@@ -289,6 +296,12 @@ fn change_strategy() -> impl proptest::strategy::Strategy<Value = Change> {
 /// A key the model tests change from `k`, `i` steps on.
 fn run_key(k: i64, i: usize) -> i64 {
     (k + 7 * i as i64) % (3 * FLAT_MOST as i64)
+}
+
+/// A copy of `map`, kept as it is, that nothing else holds.
+fn own_copy(map: &Map) -> Map {
+    let entries = map.iter().map(|(k, v)| (k.clone(), v.clone()));
+    Map::stored(entries.collect(), map.kept_as())
 }
 
 /// A way to keep a map, or a set, other than `kind`: the twin of one
@@ -433,6 +446,25 @@ proptest::proptest! {
                     model.insert(key(k), int(now + 1));
                     (map.insert(key(k), int(now + 1)), model)
                 }
+                Change::Put(k, v) => {
+                    let mut changed = model.clone();
+                    changed.insert(key(k), int(v));
+                    // The map is held, by `map`: it stays as it was.
+                    let put = map.clone().put(key(k), int(v));
+                    the_map_is_its_model(&map, &model, &map);
+                    the_map_is_its_model(&put, &changed, &map);
+                    // A copy with no other holder is changed in place.
+                    (own_copy(&map).put(key(k), int(v)), changed)
+                }
+                Change::PutRun(k, n) => {
+                    let mut model = model.clone();
+                    let mut own = own_copy(&map);
+                    for i in 0..n {
+                        model.insert(key(run_key(k, i)), int(i as i64));
+                        own = own.put(key(run_key(k, i)), int(i as i64));
+                    }
+                    (own, model)
+                }
                 Change::Merge(other, first) => {
                     let (other_map, other_model) = (other.map(), other.model());
                     match first {
@@ -481,12 +513,12 @@ proptest::proptest! {
                 false => (set.clone(), other.set(), model.clone(), other.set_model()),
             };
             let (next, next_model) = match change {
-                Change::Insert(k, _) => {
+                Change::Insert(k, _) | Change::Put(k, _) => {
                     let mut model = model.clone();
                     model.insert(key(k));
                     (set.insert(key(k)), model)
                 }
-                Change::InsertRun(k, n) => {
+                Change::InsertRun(k, n) | Change::PutRun(k, n) => {
                     let (mut set, mut model) = (set.clone(), model.clone());
                     for i in 0..n {
                         model.insert(key(run_key(k, i)));
@@ -575,6 +607,95 @@ import host
     let walked = super::map::walks::count() - before;
     assert_eq!(given.last(), Some(int(21_000)));
     assert!(walked < 25_000, "{walked} members walked");
+}
+
+// ── Changes in place ───────────────────────────────────────────────
+
+/// How many puts of a map held elsewhere too ([`Map::put`]) `f` makes.
+fn shared_puts(f: impl FnOnce()) -> u64 {
+    let before = super::map::shares::count();
+    f();
+    super::map::shares::count() - before
+}
+
+/// A fold that counts with `map.update`, or with `map.get` and
+/// `map.set`, hands the one map it grows from step to step, and each
+/// step changes it in place: 40,000 changes of maps of 2,000 keys find
+/// the map held nowhere else. (Each copied the path of the tree to its
+/// key, a hundred entries and more, for the one it changed: counting
+/// took five times as long as `list.group_by`.)
+#[test]
+fn a_fold_that_counts_with_map_update_or_map_set_changes_its_map_in_place() {
+    let (program, given) = crate::session::testing::compile_given(
+        r#"
+import list
+import map
+import option
+fn bump(n: Int) -> Int {
+  n + 1
+}
+fn main() {
+  let keys = list.map(1..20000) { i -> "k{i % 2000}" }
+  let updated = list.fold(keys, #{}) { m, k -> map.update(m, k, 0) { n -> n + 1 } }
+  let set = list.fold(keys, #{}) { m, k -> map.set(m, k, map.get(m, k) |> option.unwrap_or(0) |> bump) }
+  host.give((map.length(updated), map.get(updated, "k7"), updated == set))
+}
+import host
+"#,
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    let shared = shared_puts(|| {
+        crate::vm::Vm::new(crate::HostIo::process())
+            .run_program(&program)
+            .expect("it runs")
+    });
+    let seven = Value::variant(crate::typeinfo::bv::SOME, [int(10)]);
+    assert_eq!(
+        given.last(),
+        Some(Value::tuple(vec![int(2_000), seven, Value::Bool(true)]))
+    );
+    assert!(
+        shared < 20,
+        "{shared} of 40,000 changes copied a shared map"
+    );
+}
+
+/// A map that is held elsewhere when it is changed stays as it was:
+/// the map a fold starts from and `main` still holds, the map an
+/// update of it captures, each map of a `list.scan` (the first is the
+/// one it starts from), a map in a record.
+#[test]
+fn a_map_held_elsewhere_stays_as_it_was_when_a_fold_changes_it() {
+    let (program, given) = crate::session::testing::compile_given(
+        r#"
+import list
+import map
+type Tally {
+  counts: Map(String, Int),
+}
+fn main() {
+  let keys = list.map(1..3000) { i -> "k{i % 300}" }
+  let start = list.fold(keys, #{}) { m, k -> map.update(m, k, 0) { n -> n + 1 } }
+  let again = list.fold(keys, start) { m, k -> map.update(m, k, 0) { n -> n + 1 } }
+  let seen = list.fold(keys, start) { m, k -> map.update(m, k, 0) { n -> n + map.length(start) } }
+  let steps = list.scan(list.take(keys, 40), start) { m, k -> map.set(m, k, 0) }
+  let tally = Tally { counts: start }
+  let later = list.fold(keys, tally) { t, k -> t.{ counts: map.update(t.counts, k, 0) { n -> n + 1 } } }
+  let sum = { m -> list.fold(map.values(m), 0) { a, n -> a + n } }
+  let sums = [sum(start), sum(again), sum(seen), sum(tally.counts), sum(later.counts)]
+  host.give((sums, list.map(steps) { m -> sum(m) }))
+}
+import host
+"#,
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    crate::vm::Vm::new(crate::HostIo::process())
+        .run_program(&program)
+        .expect("it runs");
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    let steps: Vec<i64> = (0..=40).map(|i| 3_000 - 10 * i).collect();
+    let sums = ints(&[3_000, 6_000, 3_000 + 3_000 * 300, 3_000, 6_000]);
+    assert_eq!(given.last(), Some(Value::tuple(vec![sums, ints(&steps)])));
 }
 
 // ── Deep values ────────────────────────────────────────────────────

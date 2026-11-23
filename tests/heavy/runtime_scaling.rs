@@ -727,3 +727,64 @@ fn a_parse_by_a_pattern_used_before_does_not_check_it_again() {
         "200,000 parses of a time by one pattern, against 20,000 by a new pattern each",
     );
 }
+
+/// A program that counts how often each of 20,000 names occurs among
+/// 100,000, with a fold of `change` (of the map `m` so far, for the
+/// name `k`). Of the fold's state, a pair, the second is the map so
+/// far; the first is the map before it when `held`, or no map: a map
+/// that is held is changed as a copy.
+fn counting_program(change: &str, held: bool) -> String {
+    let (start, step) = match held {
+        true => ("(#{}, #{})", format!("{{ (_, m), k -> (m, {change}) }}")),
+        false => ("#{}", format!("{{ m, k -> {change} }}")),
+    };
+    let counts = match held {
+        true => format!("let (_, counts) = list.fold(names, {start}) {step}"),
+        false => format!("let counts = list.fold(names, {start}) {step}"),
+    };
+    format!(
+        "import list
+import map
+import option
+
+fn bump(n: Option(Int)) -> Int {{
+  option.unwrap_or(n, 0) + 1
+}}
+
+fn main() {{
+  let names = (0..99999) |> list.map {{ i -> \"u{{(i * 7919) % 20000}}\" }}
+  {counts}
+  println(map.length(counts))
+}}
+"
+    )
+}
+
+/// A fold that counts with `map.update`, or with `map.get` and
+/// `map.set`, hands the one map it grows from step to step, and the
+/// map is changed in place: the fold takes at most three quarters of
+/// the time it takes when the map before each step is held too and
+/// each change is a copy (about half, in debug and release builds
+/// alike). Each change copied the path of the tree to its key, a
+/// hundred entries and more, held or not: both took as long, and
+/// counting took five times as long as `list.group_by`.
+#[test]
+fn a_fold_that_counts_changes_the_map_in_place() {
+    let programs = Programs::new("counting");
+    for (name, change) in [
+        ("map.update", "map.update(m, k, 0) { n -> n + 1 }"),
+        ("map.get and map.set", "map.set(m, k, bump(map.get(m, k)))"),
+    ] {
+        let given = programs.file("given.silt", &counting_program(change, false));
+        let held = programs.file("held.silt", &counting_program(change, true));
+        assert_within(
+            0.75,
+            (&given, "20000"),
+            (&held, "20000"),
+            &format!(
+                "counting 100,000 names of 20,000 by a fold with {name}, against the same \
+                 fold that holds the map before each step"
+            ),
+        );
+    }
+}

@@ -28,7 +28,7 @@ pub(crate) use io::{
 pub(crate) use io::{output_ends_a_line, stderr_ends_a_line, stdout_and_stderr_are_one};
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
-pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
+pub(crate) use iter::{Flow, after_args, call_then, item_arg, iterate, next, stop};
 pub(crate) use runtime::Runtime;
 pub(crate) use runtime::{CallFrame, Frame, Native, Step};
 
