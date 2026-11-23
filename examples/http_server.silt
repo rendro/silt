@@ -32,11 +32,8 @@ fn main() {
     -- The path's segments, decoded: `/todos/1` is ["todos", "1"].
     let segments = url.segments(req.url)
     match (req.method, segments) {
-      (http.GET, []) -> http.Response {
-        status: 200,
-        body: bytes.from_string("Welcome to silt!"),
-        headers: #{},
-      }
+      (http.GET, []) ->
+        http.Response { status: 200, body: bytes.from_string("Welcome to silt!"), headers: #{} }
       (http.GET, ["todos"]) -> {
         let todos = [
           Todo { id: 1, title: "Learn silt", done: true },
@@ -55,11 +52,8 @@ fn main() {
         Ok(id) -> json_response(200, Todo { id: id, title: "Todo {id}", done: false })
         Err(_) -> json_response(400, #{ "error": "invalid id" })
       }
-      (http.DELETE, ["todos", _]) -> http.Response {
-        status: 204,
-        body: bytes.empty(),
-        headers: #{},
-      }
+      (http.DELETE, ["todos", _]) ->
+        http.Response { status: 204, body: bytes.empty(), headers: #{} }
       _ -> http.Response { status: 404, body: bytes.from_string("Not found"), headers: #{} }
     }
   }

@@ -1,0 +1,15 @@
+-- cmd: lsp
+-- lsp: hover 11:11
+-- lsp: hover 12:11
+-- lsp: hover 15:15
+-- lsp: hover 15:10
+-- A name the checker could not type (one that is not defined) has
+-- nothing to describe: no hover, not `_`. A name whose type is a type
+-- variable shows it by a letter, as its binding does.
+
+fn main() {
+  let a = nowhere
+  println(a)
+}
+
+fn ident(x) { x }

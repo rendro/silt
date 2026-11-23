@@ -29,6 +29,12 @@ whose last expression is the arm's value. One expression needs no braces, and
 `silt fmt` takes them away: `0 -> { "done" }` becomes `0 -> "done"`. (It
 leaves them where taking them away would move a comment to the next arm or
 change how the next arm is read, and inside a string it keeps as written.)
+The body may stand on the line after the `->`, one level deeper. `silt fmt`
+first lays out the arm's pattern and guard: it breaks them over lines when
+they do not fit their line together with the start of the body (up to the
+first place the body can break, such as the `(` of a call). Then it puts the
+body on the next line when the body does not fit behind the `->` but fits
+that line.
 
 ## Match without Scrutinee (Boolean Dispatch)
 

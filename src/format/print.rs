@@ -572,7 +572,7 @@ fn spans_lines(doc: &Doc) -> bool {
                     return true;
                 }
             }
-            Doc::Group(inner, _) | Doc::Nest(inner) => stack.push(inner),
+            Doc::Group(inner, _) | Doc::Nest(inner) | Doc::Hang(inner) => stack.push(inner),
             Doc::Concat(parts) => stack.extend(parts.iter()),
             Doc::IfBreak(broken, flat) => stack.extend([&**broken, &**flat]),
             Doc::Nil
@@ -2526,7 +2526,11 @@ impl Printer<'_> {
             unwritten.push(wrappers);
             body = inner;
         }
-        docs.push(self.after(body));
+        // (On the next line when it fits there and not behind the `->`.)
+        docs.push(match self.cur.own_line_comment_ahead() {
+            true => self.after(body),
+            false => Doc::hang(self.expr(body, Ctx::top())),
+        });
         for wrappers in unwritten.iter().rev() {
             self.cur.skip_n(&Token::RBrace, 1);
             self.cur.skip_n(&Token::RParen, *wrappers);

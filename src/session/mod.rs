@@ -251,8 +251,8 @@ impl Session {
 
     /// Have the checks keep what only an editor reads: how each module
     /// writes the other modules' types (`ModuleAnalysis::module_names`).
-    /// For the language server, and for the REPL's `:type` while it checks
-    /// its expression; the commands leave it unset and pay nothing for it.
+    /// For the language server and the REPL (`:type`, `:doc`); the
+    /// commands leave it unset and pay nothing for it.
     #[cfg(any(feature = "lsp", feature = "repl"))]
     pub(crate) fn set_for_editor(&mut self, on: bool) {
         self.for_editor = on;
@@ -372,6 +372,13 @@ impl Session {
     /// The module graph.
     pub(crate) fn graph(&self) -> &ModuleGraph {
         &self.graph
+    }
+
+    /// Whether the project's packages were read and could not be
+    /// resolved (see `packages`).
+    #[cfg(feature = "lsp")]
+    pub(crate) fn packages_failed(&self) -> bool {
+        matches!(self.packages, Some(Err(_)))
     }
 
     /// The packages of the project: its manifests and `silt.lock` are
@@ -590,6 +597,19 @@ impl Session {
             return None;
         };
         Some(crate::types::Scheme { ty: *ret, ..scheme })
+    }
+
+    /// The scheme of the definition `def`, as its module's check left
+    /// it.
+    #[cfg(feature = "repl")]
+    pub(crate) fn def_scheme(&self, def: crate::defs::DefId) -> Option<crate::types::Scheme> {
+        self.tables.scheme_of(def)
+    }
+
+    /// The file of the REPL cell that is module `id`.
+    #[cfg(feature = "repl")]
+    pub(crate) fn cell_file(&self, id: ModuleId) -> Option<FileId> {
+        self.cells.info.get(&id).map(|cell| cell.file)
     }
 
     /// How a message about the REPL cell `file` writes the type or

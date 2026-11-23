@@ -115,6 +115,15 @@ impl Server {
         }
     }
 
+    /// Whether the open document `doc` was not checked: its project's
+    /// packages cannot be resolved (a `silt.toml` has errors), so what
+    /// the checker left in it has no types to show.
+    pub(super) fn unchecked(&self, doc: &Document) -> bool {
+        (doc.module.as_ref())
+            .and_then(|m| self.projects.get(&m.project))
+            .is_some_and(|project| project.session.packages_failed())
+    }
+
     pub(super) fn checked_tables(&self, doc: &Document) -> Option<&crate::typechecker::Tables> {
         let module = doc.module.as_ref()?;
         Some(self.projects.get(&module.project)?.session.tables())

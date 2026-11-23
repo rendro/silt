@@ -213,7 +213,7 @@ pub(crate) fn run_repl() {
                         }
                         other if command(other, ":doc").is_some() => {
                             let _ = rl.add_history_entry(other);
-                            show_doc(command(other, ":doc").unwrap_or_default());
+                            show_doc(&repl.borrow(), command(other, ":doc").unwrap_or_default());
                             continue;
                         }
                         other if other.starts_with(':') && !other.starts_with("::") => {
@@ -333,12 +333,15 @@ fn show_type(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input
     });
 }
 
-/// `:doc name`: what [`doc_text`] says of the builtin `name`.
-fn show_doc(name: &str) {
-    crate::scheduler::report(|| match (name, doc_text(name)) {
+/// `:doc name`: what [`Repl::session_doc`] says of the function
+/// `name` of the session, else what [`doc_text`] says of the builtin
+/// `name`.
+fn show_doc(repl: &Repl, name: &str) {
+    let text = repl.session_doc(name).or_else(|| doc_text(name));
+    crate::scheduler::report(|| match (name, text) {
         ("", _) => eprintln!(":doc needs a name, as in :doc list.map"),
         (_, Some(text)) => println!("{text}"),
-        (_, None) => eprintln!("no builtin named '{name}'"),
+        (_, None) => eprintln!("no builtin and no function of this session is named '{name}'"),
     });
 }
 
@@ -395,6 +398,28 @@ pub(crate) fn written_scheme(
     scheme: &Scheme,
     named: impl Fn(crate::defs::DefId, intern::Symbol) -> Option<String>,
 ) -> String {
+    written(scheme, None, named)
+}
+
+/// The signature of the function `name` of type `scheme`, its
+/// parameters named `params`, as `:doc` writes a builtin's
+/// (`stats.top(xs: List(a), n: Int) -> List(a) where a: Compare`), its
+/// types and bounds as [`written_scheme`] writes them.
+fn written_signature(
+    scheme: &Scheme,
+    name: &str,
+    params: &[String],
+    named: impl Fn(crate::defs::DefId, intern::Symbol) -> Option<String>,
+) -> String {
+    written(scheme, Some((name, params)), named)
+}
+
+/// [`written_scheme`], or with `call` [`written_signature`].
+fn written(
+    scheme: &Scheme,
+    call: Option<(&str, &[String])>,
+    named: impl Fn(crate::defs::DefId, intern::Symbol) -> Option<String>,
+) -> String {
     let letters: HashMap<TyVar, Type> = (scheme.letters().into_iter())
         .map(|(var, name)| (var, Type::Rigid(RigidId { var, name })))
         .collect();
@@ -403,7 +428,19 @@ pub(crate) fn written_scheme(
             .pop()
             .unwrap_or_default()
     };
-    let mut text = show(&substitute_vars(&scheme.ty, &letters));
+    let ty = substitute_vars(&scheme.ty, &letters);
+    let mut text = match (call, &ty) {
+        (Some((name, params)), Type::Fun(args, ret)) if args.len() == params.len() => {
+            let types: Vec<&Type> = args.iter().chain([ret.as_ref()]).collect();
+            let mut shown = Type::show_all(&types, |r, _| named(r.id.0, r.name));
+            let ret = shown.pop().unwrap_or_default();
+            let params: Vec<String> = (params.iter().zip(&shown))
+                .map(|(param, ty)| format!("{param}: {ty}"))
+                .collect();
+            format!("{name}({}) -> {ret}", params.join(", "))
+        }
+        _ => show(&ty),
+    };
     // Each lettered variable's bounds, in the order of the letters.
     let mut bounds: Vec<(String, Vec<String>)> = Vec::new();
     for pred in &scheme.preds {
@@ -571,13 +608,17 @@ impl Repl {
             ProjectSetup::Discover(dir) | ProjectSetup::Script(dir) => Some(dir.clone()),
             ProjectSetup::None => None,
         };
+        let mut session = Session::new(Config {
+            project,
+            lock: LockPolicy::Update,
+            host: Vec::new(),
+            builtins: crate::session::Builtins::All,
+        });
+        // (Each check keeps how its module writes the other modules'
+        // types, which `:type` and `:doc` write as its messages do.)
+        session.set_for_editor(true);
         Repl {
-            session: Session::new(Config {
-                project,
-                lock: LockPolicy::Update,
-                host: Vec::new(),
-                builtins: crate::session::Builtins::All,
-            }),
+            session,
             vm: Vm::new(crate::HostIo::process()),
             cwd,
             committed: None,
@@ -676,13 +717,8 @@ impl Repl {
     /// have no value.
     pub(crate) fn type_of(&mut self, input: &str) -> Result<Typed, NotAnExpression> {
         let file = self.session.add_cell(input.to_string());
-        // (The check of the expression keeps how the cell writes the other
-        // modules' types, for `written_type_name`; an entry that runs does
-        // not pay for it.)
-        self.session.set_for_editor(true);
         let analysis = self.session.analyze(file);
         let (diagnostics, failed) = (analysis.diagnostics.clone(), analysis.has_errors());
-        self.session.set_for_editor(false);
         if failed {
             return Ok(Typed {
                 diagnostics: self.not_shown_yet(&diagnostics),
@@ -699,6 +735,58 @@ impl Repl {
                 self.session.shadowed_cell_name(file, def, name)
             })),
         })
+    }
+
+    /// What `:doc name` shows of a function the next input sees, `f`
+    /// (one an earlier input defined) or `m.f` (one of a module an
+    /// earlier input imported): its signature, as `:doc` writes a
+    /// builtin's and its types as `:type` writes them, and its doc
+    /// comment. `None` when the name is no such function.
+    pub(crate) fn session_doc(&self, name: &str) -> Option<String> {
+        let session = &self.session;
+        let committed = self.committed?;
+        let scope = &session.module_analysis(committed)?.scope;
+        let function = |binding: Option<&Binding>| match binding {
+            Some(Binding::Def(id)) => Some(*id),
+            _ => None,
+        };
+        let def = match name.split_once('.') {
+            None => function(scope.values.get(&intern::intern(name)))?,
+            Some((module, member)) => {
+                let Some(Binding::Module(id)) = scope.values.get(&intern::intern(module)) else {
+                    return None;
+                };
+                let exports = &session.module_analysis(*id)?.scope.exports;
+                function(exports.values.get(&intern::intern(member)))?
+            }
+        };
+        let entry = session.defs().get(def);
+        if !matches!(entry.kind, crate::defs::DefKind::Fn) {
+            return None;
+        }
+        // (The declaration as parsed: the session gives up the check of a
+        // cell that a later cell imports no longer.)
+        let program = session.graph().module(entry.module).ast.as_ref()?;
+        let decl = (program.decls.iter()).find_map(|decl| match decl {
+            crate::ast::Decl::Fn(f) if f.name_span == entry.span => Some(f),
+            _ => None,
+        })?;
+        let params: Vec<String> = (decl.params.iter())
+            .map(|param| match &param.pattern.kind {
+                crate::ast::PatternKind::Ident(name) => intern::resolve(*name),
+                _ => "_".to_string(),
+            })
+            .collect();
+        let scheme = session.def_scheme(def)?;
+        let file = session.cell_file(committed)?;
+        let mut text = written_signature(&scheme, name, &params, |def, name| {
+            session.shadowed_cell_name(file, def, name)
+        });
+        if let Some(doc) = decl.doc.as_ref().filter(|doc| !doc.trim().is_empty()) {
+            text.push('\n');
+            text.push_str(doc.trim_end());
+        }
+        Some(text)
     }
 
     /// The names `<Tab>` offers now: those of [`builtin_names`], and
@@ -915,7 +1003,9 @@ fn print_help() {
     println!("  :help, :h      Show this help");
     println!("  :quit, :q      Exit the REPL");
     println!("  :type <expr>   Show the type of an expression without running it");
-    println!("  :doc <name>    Show a builtin's signature and summary (list.map, Option, string)");
+    println!(
+        "  :doc <name>    Show the signature and docs of a builtin (list.map, Option, string) or of a function defined or imported here"
+    );
     println!("  <Tab>          Autocomplete builtins and user-defined names");
     println!();
     println!("Enter expressions to evaluate, or declarations (fn, type, trait, import).");

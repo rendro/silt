@@ -1,0 +1,13 @@
+11:11 error undefined variable 'nowhere'
+> hover 11:11
+(nothing)
+> hover 12:11
+(nothing)
+> hover 15:15
+```silt
+a
+```
+> hover 15:10
+```silt
+a
+```

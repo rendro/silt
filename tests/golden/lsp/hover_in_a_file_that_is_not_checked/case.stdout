@@ -1,0 +1,10 @@
+1:1 info this file is not checked: the project's silt.toml has errors (see silt.toml)
+silt.toml:6:8 error dependency `nope`: path `../does-not-exist` does not exist
+> hover 12:18
+(nothing)
+> hover 13:11
+(nothing)
+> hover 14:3
+(nothing)
+> hover 14:14
+(nothing)
