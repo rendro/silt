@@ -720,9 +720,6 @@ mod tests {
             syntax_at(1, "the header names the column `a` twice", 0)
         );
         // A field that is no CSV is still named where it goes wrong.
-        assert_eq!(
-            refused("a,b\n1,\"2"),
-            syntax_at(2, UNCLOSED, 6)
-        );
+        assert_eq!(refused("a,b\n1,\"2"), syntax_at(2, UNCLOSED, 6));
     }
 }
