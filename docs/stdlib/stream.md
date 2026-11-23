@@ -230,6 +230,66 @@ fn main() {
 }
 ```
 
+### The lines of a file that has lines that are no UTF-8
+
+`stream.file_lines` ends at the first line that is no UTF-8, and
+`io.read_bytes` with `bytes.to_string_lossy` reads the whole file at once
+and writes U+FFFD in such a line. To read a large file a piece at a time
+and have each line that is no UTF-8 as an `Err` of its own, read it with
+`stream.file_chunks`, split each piece at `\n` and keep its last part, the
+start of a line the next piece goes on with. A line keeps the `\r` of a
+`\r\n` line end.
+
+```silt
+import bytes
+import io
+import list
+import option
+import stream
+
+-- Calls f with each line of the file at path, as it reads the file 64 KiB
+-- at a time: Ok(text), or Err(why) for a line that is no UTF-8.
+fn each_line(
+  path: String,
+  f: Fn(Result(String, bytes.BytesError)) -> (),
+) -> Result((), io.IoError) {
+  let nl = bytes.from_string("\n")
+  let rest = stream.file_chunks(path, 65536)
+    |> stream.fold(Ok(bytes.empty())) { carry, chunk ->
+      match (carry, chunk) {
+        (Ok(before), Ok(b)) -> {
+          -- the last part is a line the next chunk goes on with
+          let parts = bytes.split(bytes.concat(before, b), nl)
+          list.each(list.take(parts, list.length(parts) - 1)) { line -> f(bytes.to_string(line)) }
+          Ok(list.last(parts) |> option.unwrap_or(bytes.empty()))
+        }
+        (Err(e), _) -> Err(e)
+        (_, Err(e)) -> Err(e)
+      }
+    }
+  match rest {
+    Ok(last) when bytes.is_empty(last) -> Ok(())
+    Ok(last) -> Ok(f(bytes.to_string(last)))
+    Err(e) -> Err(e)
+  }
+}
+
+fn main() {
+  -- "one\nbad \xff\ntwo\n"
+  when let Ok(raw) = bytes.from_hex("6f6e650a62616420ff0a74776f0a") else {
+    panic("no hex")
+  }
+  let _ = stream.write_to_file(stream.from_list([raw]), "mixed.log")
+  let read = each_line("mixed.log") { line ->
+    match line {
+      Ok(text) -> println(text)
+      Err(e) -> println("skipped: {e}")
+    }
+  }
+  println(read) -- Ok(())
+}
+```
+
 ## Design notes
 
 - **Streams are channels.** No new value type. `stream.collect(ch)` works
@@ -345,7 +405,10 @@ fn main() {
   (`InvalidInput("line 3 of app.log is not UTF-8")`). No byte is replaced:
   a program that wants the other lines of such a file reads it with
   `io.read_bytes` and decodes it with `bytes.to_string_lossy`, which
-  writes U+FFFD for what is no UTF-8. To change only the `Ok` values and pass each `Err(_)`
+  writes U+FFFD for what is no UTF-8, or reads it a piece at a time with
+  `stream.file_chunks`, each such line an `Err` of its own (see [the lines
+  of a file that has lines that are no
+  UTF-8](#the-lines-of-a-file-that-has-lines-that-are-no-utf-8)). To change only the `Ok` values and pass each `Err(_)`
   through, map with `result.map`:
   `ch |> stream.map { r -> result.map(r, f) }`.
 - **No async/await.** Stages are tasks of the silt scheduler; file and
