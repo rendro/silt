@@ -1138,11 +1138,17 @@ fn locked_checksum(app: &Path) -> String {
 /// `expected`: its message, place, both checksums and the checkout.
 fn assert_checksum_error(out: &Output, expected: &str, checkout: &Path) {
     let err = stderr(out);
-    // The checkout as silt shows it from the app: its URL's directory
-    // of the cache and its commit, with `/` between them on every
-    // platform (the display rule of package paths).
+    // The checkout as silt shows it: an absolute path, written as the
+    // system writes it (`\` between its parts on Windows), ending in its
+    // URL's directory of the cache and its commit. (Only a relative
+    // package path is written with `/` on every system.)
     let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
-    let checkout_shown = format!("{}/{}", name(checkout.parent().unwrap()), name(checkout));
+    let checkout_shown = format!(
+        "{}{}{}",
+        name(checkout.parent().unwrap()),
+        std::path::MAIN_SEPARATOR,
+        name(checkout)
+    );
     assert_eq!(out.status.code(), Some(1), "{err}");
     assert!(
         err.starts_with(

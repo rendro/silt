@@ -255,7 +255,8 @@ impl Manifest {
 /// run in `src/` shows `../silt.toml`), written with `/` as a manifest
 /// entry is; else (only the root in common, or a file in the cache of
 /// fetched git dependencies, which no `..` from here names well) as it
-/// is, absolute. Both sides are
+/// is: absolute, in the system's own form (`\` between its parts on
+/// Windows), so that it can be pasted. Both sides are
 /// compared in canonical form, a path that does not exist (a missing
 /// dependency) by its nearest existing ancestor, so two spellings of one
 /// place (on Windows a short 8.3 name, a verbatim prefix) agree.
