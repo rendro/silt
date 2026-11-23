@@ -23,7 +23,7 @@
 //! field.
 
 use std::cell::{Cell, RefCell};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, OnceLock};
 
 use imbl::Vector;
@@ -321,6 +321,16 @@ where
 
     fn deref(&self) -> &T {
         &self.kept
+    }
+}
+
+impl<T> DerefMut for Kept<T>
+where
+    T: Default,
+    Held: From<T>,
+{
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.kept
     }
 }
 

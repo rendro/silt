@@ -7,7 +7,9 @@ use super::typed::{List, Map, Set, builtins, unsound};
 use crate::bytecode::dict::Dict;
 use crate::typeinfo::bv;
 use crate::value::{IntTotal, MAX_COLLECTION_LEN, Value};
-use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
+use crate::vm::{
+    Flow, Native, Step, Vm, VmError, after_args, call_then, item_arg, iterate, next, stop,
+};
 
 /// Which total of a list of numbers `list.sum` and `list.product` are.
 #[derive(Clone, Copy)]
@@ -182,15 +184,18 @@ fn made(xs: List) -> Result<crate::value::List, VmError> {
 }
 
 /// The arguments of a function that takes the state and the item
-/// (`list.fold`).
-fn acc_and_item(acc: &Value, item: &Value, stack: &mut Vec<Value>) {
-    stack.push(acc.clone());
+/// (`list.fold`). The state is handed over, not copied: the step puts
+/// the call's result in its place, and a map the call is given has no
+/// other holder, so `map.update` and `map.set` change it where it is
+/// ([`crate::value::Map::put`]).
+fn acc_and_item(acc: &mut Value, item: &Value, stack: &mut Vec<Value>) {
+    stack.push(std::mem::replace(acc, Value::Unit));
     stack.push(item.clone());
 }
 
 /// The arguments of a function that takes the key and the value of a
 /// map's entry, which is the item `(key, value)`.
-fn key_and_value<S>(_: &S, entry: &Value, stack: &mut Vec<Value>) {
+fn key_and_value<S>(_: &mut S, entry: &Value, stack: &mut Vec<Value>) {
     match entry {
         Value::Tuple(pair) => stack.extend(pair.iter().cloned()),
         other => stack.push(other.clone()),
@@ -210,9 +215,10 @@ fn keep_item_if(out: &mut Vec<Value>, item: Value, result: Value) -> Flow {
 }
 
 /// The arguments of a function that takes the state, then the key
-/// and the value of a map's entry (`map.fold`).
-fn acc_key_and_value(acc: &Value, entry: &Value, stack: &mut Vec<Value>) {
-    stack.push(acc.clone());
+/// and the value of a map's entry (`map.fold`): the state handed
+/// over, as by [`acc_and_item`].
+fn acc_key_and_value(acc: &mut Value, entry: &Value, stack: &mut Vec<Value>) {
+    stack.push(std::mem::replace(acc, Value::Unit));
     key_and_value(acc, entry, stack);
 }
 
@@ -1148,9 +1154,12 @@ pub(crate) mod map {
                     default.clone()
                 }
             };
+            // (The map is changed when `f` has returned: by then this
+            // call's arguments are let go of, and a map they alone held,
+            // as a fold hands its map over, is changed in place.)
             let (m, key) = (m.clone(), key.clone());
             Ok(call_then("map.update", f.clone(), [current], move |new_val| {
-                Ok(Value::Map(m.insert(key, new_val)))
+                Ok(Value::Map(m.put(key, new_val)))
             }))
         }
 
@@ -1158,11 +1167,19 @@ pub(crate) mod map {
             m.get(k).cloned()
         }
 
-        fn set(m: Map, k: &Value, v: &Value) -> Result<Value, VmError> {
+        fn set(m: Map, k: &Value, v: &Value) -> Result<Step, VmError> {
             if !m.contains_key(k) {
                 fits("map.set", Kind::Map, m.len() + 1)?;
             }
-            Ok(Value::Map(m.insert(k.clone(), v.clone())))
+            let (k, v) = (k.clone(), v.clone());
+            // A map in a tree that this call's argument alone holds (a
+            // fold hands its map over) is changed once the argument is
+            // let go of, in place; any other map now, as a new one.
+            if m.held_alone_in_tree() {
+                let m = m.clone();
+                return Ok(after_args("map.set", move || Ok(Value::Map(m.put(k, v)))));
+            }
+            Ok(Step::Done(Value::Map(m.clone().put(k, v))))
         }
 
         fn remove(m: Map, key: &Value) -> Value {

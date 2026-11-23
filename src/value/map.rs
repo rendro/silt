@@ -339,6 +339,46 @@ impl Map {
         }
     }
 
+    /// Whether this is the one holder of the map's entries, and they are
+    /// in a tree: given away, the map is changed in place by
+    /// [`Map::put`], where a change of a map that is held elsewhere too
+    /// copies the path of the tree to the key.
+    pub(crate) fn held_alone_in_tree(&self) -> bool {
+        Arc::strong_count(&self.0) == 1 && matches!(self.entries(), Entries::Tree(_))
+    }
+
+    /// [`Map::insert`] of a map given away: when it is the one holder
+    /// of its entries, they are changed where they are, for no other
+    /// map and no value of a program has them to see the change. Else
+    /// the map is left as it is and the change is a new map, as with
+    /// `insert`. (`map.update` and `map.set` change so the map a fold
+    /// hands from step to step: each change copied the path of the tree
+    /// to the key, a hundred entries and more.)
+    pub(crate) fn put(mut self, key: Value, value: Value) -> Map {
+        let Some(entries) = Arc::get_mut(&mut self.0) else {
+            if let Entries::Tree(_) = self.entries() {
+                shared_change();
+            }
+            return self.insert(key, value);
+        };
+        match &mut **entries {
+            Entries::Tree(tree) => {
+                copied(1);
+                tree.insert(key, value);
+                self
+            }
+            Entries::Flat(flat) => match find(flat, &key) {
+                Ok(at) => {
+                    copied(1);
+                    flat[at].1 = value;
+                    self
+                }
+                Err(_) => self.insert(key, value),
+            },
+            Entries::Side { .. } => self.insert(key, value),
+        }
+    }
+
     /// The map without `key`.
     pub fn remove(&self, key: &Value) -> Map {
         match self.entries() {
@@ -993,6 +1033,30 @@ pub(super) mod walks {
     /// The members walked on this thread so far.
     pub(crate) fn count() -> u64 {
         WALKED.get()
+    }
+}
+
+/// Count a [`Map::put`] of a map in a tree that another holder shares.
+#[inline]
+fn shared_change() {
+    #[cfg(test)]
+    shares::SHARED.set(shares::SHARED.get() + 1);
+}
+
+/// How many [`Map::put`]s found their map in a tree held elsewhere
+/// too, and copied the path of the tree to the key: what the test of a
+/// fold that counts with `map.update` or `map.set` counts.
+#[cfg(test)]
+pub(super) mod shares {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static SHARED: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The puts of shared maps on this thread so far.
+    pub(crate) fn count() -> u64 {
+        SHARED.get()
     }
 }
 
