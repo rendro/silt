@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'nme'
+-- stderr-contains: help: did you mean `name`?
+-- stderr-contains: undefined variable 'zz'
+-- stderr-not-contains: literal brace
+-- A misspelt name in an interpolation keeps its "did you mean", and an
+-- interpolation that is more than a name (`{zz.y}`) gets no help about
+-- literal braces.
+fn main() {
+  let name = "ann"
+  println("hello {nme} {zz.y}")
+}

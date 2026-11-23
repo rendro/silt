@@ -3042,8 +3042,10 @@ impl TypeChecker {
                 };
                 diagnostic = diagnostic.with_help(format!(
                     "a `?` in a closure ends the closure, not the function; over a list, \
-                     `{}(xs) {{ x -> ... }}?` stops at the first `{fails}`",
-                    self.written_builtin("list.traverse")
+                     `{}(xs) {{ x -> ... }}?` calls the closure on every element, then gives \
+                     the first `{fails}`; to stop at the first `{fails}`, use `{}` or a `loop`",
+                    self.written_builtin("list.traverse"),
+                    self.written_builtin("list.fold_until"),
                 ));
             }
             self.errors.push(diagnostic);
@@ -3973,9 +3975,9 @@ impl TypeChecker {
         let arg = &mut args[i];
         let param = params.get(i + implicit_self);
         if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
-            && let Type::Fun(expected, _) = self.apply(param)
+            && let Type::Fun(expected, result) = self.apply(param)
         {
-            self.expected_closure = Some(expected);
+            self.expected_closure = Some((expected, *result));
         }
         // A `type a` argument that names both a type and its
         // variant (`type Box(a) { Box(a), Empty }`) is the
@@ -4967,6 +4969,7 @@ impl TypeChecker {
                 d.help.extend(self.chain_hint(offender, other));
                 self.errors.push(d);
             } else {
+                let mismatch = self.of_whole_types(mismatch, rt, lt);
                 self.report_mismatch(mismatch, rhs_span);
             }
             return false;

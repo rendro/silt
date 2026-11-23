@@ -500,10 +500,10 @@ pub(crate) struct TypeChecker {
     pub(super) taken_up: std::collections::HashSet<crate::source::FileId>,
     /// The expression being checked.
     pub(super) at: Span,
-    /// The parameter types the closure literal checked next is expected
-    /// to have: it is an argument of a call whose callee is known. The
-    /// closure takes it.
-    pub(super) expected_closure: Option<Vec<Type>>,
+    /// The parameter types and the result type the closure literal
+    /// checked next is expected to have: it is an argument of a call
+    /// whose callee is known. The closure takes it.
+    pub(super) expected_closure: Option<(Vec<Type>, Type)>,
     /// The annotation variables of the declaration whose body is being
     /// checked, by name: an annotation in the body that writes one of the
     /// names means the same variable.

@@ -1,0 +1,9 @@
+-- cmd: check
+-- stderr-contains: 'kind' is never used
+-- stderr-not-contains: raw string
+-- `\{kind}` in a "..." string is text on purpose: the warning about the
+-- unused local says nothing about raw strings.
+fn main() {
+  let kind = "fail"
+  println("\{kind}")
+}

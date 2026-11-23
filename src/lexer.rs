@@ -425,7 +425,7 @@ const LITERAL_BRACE_LABEL: &str = "this `{` opens an interpolation: write `\\{` 
      or use a raw string `\"\"\"...\"\"\"`";
 
 /// The help of an interpolation that the text ends in.
-const LITERAL_BRACE_HELP: &str =
+pub(crate) const LITERAL_BRACE_HELP: &str =
     "write `\\{` for a literal brace, or use a raw string `\"\"\"...\"\"\"`";
 
 pub struct Lexer {

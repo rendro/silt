@@ -1,5 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type mismatch: expected Int, got String
+-- stderr-contains: type mismatch: expected (Int, Int), got (Int, String)
+-- stderr-contains: note: the part that differs: expected Int, got String
 fn process(pair) { match pair { (a, b) -> b + 10 } }
 fn main() { let _ = process((1, "hello")) }

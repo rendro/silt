@@ -1,0 +1,52 @@
+-- cmd: check
+-- exit: 1
+-- A closure passed where a function of a known result type is wanted,
+-- whose result is of another type: the mismatch is at the value the
+-- closure gives (its last expression, or each arm of a final `match`),
+-- with the closure as a label. An arm unlike the others is reported once.
+-- A result the place leaves open (`list.map`'s) is checked where the
+-- whole value is used, as before.
+import list
+
+type Reply {
+  status: Int,
+}
+
+fn serve(handler: Fn(Int) -> Reply) -> Reply {
+  handler(1)
+}
+
+fn handle() -> Reply {
+  serve { n ->
+    "hello"
+  }
+}
+
+fn arms() -> Reply {
+  serve { n ->
+    match n {
+      0 -> "a"
+      _ -> "b"
+    }
+  }
+}
+
+fn one_arm() -> Reply {
+  serve { n ->
+    match n {
+      0 -> Reply { status: 200 }
+      _ -> "nope"
+    }
+  }
+}
+
+fn main() {
+  println(handle().status + arms().status + one_arm().status)
+  let total = list.fold([1, 2], 0) { acc, x ->
+    let _y = x
+    "{acc}"
+  }
+  println(total)
+  let xs: List(Int) = list.map([1, 2]) { x -> "s{x}" }
+  println(xs)
+}

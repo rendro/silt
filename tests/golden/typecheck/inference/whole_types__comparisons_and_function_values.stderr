@@ -1,0 +1,39 @@
+error[type]: type mismatch: expected List(Int), got List(Option(Int))
+ --> whole_types__comparisons_and_function_values.silt:27:17
+    |
+ 27 |   println(xs == ys)
+    |                 ^^ type mismatch: expected List(Int), got List(Option(Int))
+  = note: the part that differs: expected Int, got Option(Int)
+
+error[type]: type mismatch: expected Channel(Int), got Channel(Option(Int))
+ --> whole_types__comparisons_and_function_values.silt:30:16
+    |
+ 30 |   println(c == d)
+    |                ^ type mismatch: expected Channel(Int), got Channel(Option(Int))
+  = note: the part that differs: expected Int, got Option(Int)
+
+error[type]: type mismatch: expected List(Pt), got List(Int)
+ --> whole_types__comparisons_and_function_values.silt:32:18
+    |
+ 32 |   println([p] == [1])
+    |                  ^^^ type mismatch: expected List(Pt), got List(Int)
+  = note: the part that differs: expected Pt, got Int
+
+error[type]: type mismatch: expected Int, got Option(Int)
+ --> whole_types__comparisons_and_function_values.silt:34:20
+    |
+ 34 |   println(takes_fn(g))
+    |                    ^ type mismatch: expected Int, got Option(Int)
+
+error[type]: type mismatch: expected Int, got Option(Int)
+ --> whole_types__comparisons_and_function_values.silt:35:17
+    |
+ 35 |   println(wants(maybe))
+    |                 ^^^^^ type mismatch: expected Int, got Option(Int)
+
+error[type]: type mismatch: expected Int, got Option(Int)
+ --> whole_types__comparisons_and_function_values.silt:36:16
+    |
+ 36 |   println(1 == Some(1))
+    |                ^^^^^^^ type mismatch: expected Int, got Option(Int)
+  = help: to chain through an `Option`, use `?` to propagate `None`, or `|> option.flat_map { x -> ... }` to continue the pipeline on the Some value

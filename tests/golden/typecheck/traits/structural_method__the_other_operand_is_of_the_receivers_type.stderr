@@ -16,14 +16,16 @@ error[type]: type mismatch: expected P, got String
  15 |   println(Compare.compare(p, "x"))
     |                              ^^^ type mismatch: expected P, got String
 
-error[type]: type mismatch: expected Int, got String
+error[type]: type mismatch: expected List(Int), got List(String)
  --> structural_method__the_other_operand_is_of_the_receivers_type.silt:16:18
     |
  16 |   println([1] == ["a"])
-    |                  ^^^^^ type mismatch: expected Int, got String
+    |                  ^^^^^ type mismatch: expected List(Int), got List(String)
+  = note: the part that differs: expected Int, got String
 
-error[type]: type mismatch: expected Int, got String
+error[type]: type mismatch: expected Option(Int), got Option(String)
  --> structural_method__the_other_operand_is_of_the_receivers_type.silt:17:22
     |
  17 |   println(Some(1) == Some("a"))
-    |                      ^^^^^^^^^ type mismatch: expected Int, got String
+    |                      ^^^^^^^^^ type mismatch: expected Option(Int), got Option(String)
+  = note: the part that differs: expected Int, got String

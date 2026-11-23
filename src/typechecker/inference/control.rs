@@ -103,10 +103,12 @@ impl TypeChecker {
         // expects (an argument of a call whose callee is known):
         // an unannotated parameter has that type before the body
         // is checked.
-        let expected = self
-            .expected_closure
-            .take()
-            .filter(|expected| expected.len() == params.len());
+        let (expected, expected_result) = match self.expected_closure.take() {
+            Some((expected, result)) if expected.len() == params.len() => {
+                (Some(expected), Some(result))
+            }
+            _ => (None, None),
+        };
         let param_types: Vec<Type> = params
             .iter_mut()
             .enumerate()
@@ -166,6 +168,7 @@ impl TypeChecker {
             read_fields,
         });
         self.closure_returns.push(Vec::new());
+        let in_body = self.errors.len();
         let body_type = self.infer_expr(body, env);
         self.fn_frames.pop();
         env.pop();
@@ -189,14 +192,77 @@ impl TypeChecker {
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
 
+        // A result of a type the place does not take is reported at
+        // the value that gives it, not at the closure.
+        let result_misfit = match expected_result {
+            Some(expected) if !question_misfit => {
+                self.closure_result_misfit(body, &expected, in_body, span)
+            }
+            _ => false,
+        };
+
         // `lambda_ret` rather than `body_type`: identical when the
         // unify above succeeded, and on failure it carries any
         // `?`-imposed Result/Option constraint, which is the type
         // the VM actually returns.
-        match question_misfit {
+        match question_misfit || result_misfit {
             true => Type::Fun(param_types, Box::new(Type::Error)),
             false => Type::Fun(param_types, Box::new(lambda_ret)),
         }
+    }
+
+    /// Whether a value the closure `closure` gives as its result, at the
+    /// end of `body` or of an arm of a `match` there, is of a type other
+    /// than `expected`, the result its place takes: each such value is
+    /// reported where it is, with the closure as a label. A result its
+    /// place leaves open (a type variable), or `()` (a callback called
+    /// as a statement), is left to the check of the whole closure. A
+    /// value already reported in the body (an arm unlike the others) is
+    /// not reported again. `in_body` is where the body's errors start.
+    fn closure_result_misfit(
+        &mut self,
+        body: &Expr,
+        expected: &Type,
+        in_body: usize,
+        closure: Span,
+    ) -> bool {
+        let expected = self.apply(expected);
+        if matches!(
+            expected,
+            Type::Var(_) | Type::Unit | Type::Error | Type::Never
+        ) {
+            return false;
+        }
+        let mut sites = Vec::new();
+        result_sites(body, &mut sites);
+        // (A value whose type was not kept is left to the check of the
+        // whole closure, with the others.)
+        let Some(sites) = (sites.into_iter())
+            .map(|(at, ty)| ty.map(|ty| (at, ty)))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let shown = self.show_type(&expected);
+        let mut misfit = false;
+        for (at, ty) in sites {
+            let ty = self.apply(&ty);
+            if matches!(ty, Type::Never | Type::Error)
+                || (self.errors[in_body..].iter()).any(|e| e.span == at)
+            {
+                continue;
+            }
+            let from = self.errors.len();
+            self.unify(&ty, &expected, at);
+            for d in self.errors.iter_mut().skip(from) {
+                d.labels.push((
+                    closure,
+                    format!("the result of this closure is to be {shown}"),
+                ));
+            }
+            misfit |= self.errors.len() > from;
+        }
+        misfit
     }
 
     /// `infer_expr_kind` for `match`.
@@ -491,5 +557,22 @@ impl TypeChecker {
         // `loop(...)` jumps back to the top of the loop and never
         // produces a value here.
         Type::Never
+    }
+}
+
+/// The values `body` ends in, each with its type: the last expression of
+/// a block, each arm's value of a `match` there, or `body` itself.
+fn result_sites(body: &Expr, sites: &mut Vec<(Span, Option<Type>)>) {
+    match &body.kind {
+        ExprKind::Block(stmts) => match stmts.last() {
+            Some(Stmt::Expr(e)) => result_sites(e, sites),
+            _ => sites.push((body.span, body.ty.clone())),
+        },
+        ExprKind::Match { arms, .. } if !arms.is_empty() => {
+            for arm in arms {
+                result_sites(&arm.body, sites);
+            }
+        }
+        _ => sites.push((body.span, body.ty.clone())),
     }
 }

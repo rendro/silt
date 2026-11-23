@@ -1605,7 +1605,7 @@ impl<'a> Compiler<'a> {
             }
 
             ExprKind::Loop { bindings, body } => {
-                self.compile_loop(bindings, body, span)?;
+                self.compile_loop(bindings, body, span, tail)?;
             }
 
             ExprKind::Recur(args) => {
@@ -2078,6 +2078,7 @@ impl<'a> Compiler<'a> {
         bindings: &[(Symbol, Span, Expr)],
         body: &Expr,
         span: Span,
+        tail: bool,
     ) -> Result<(), Diagnostic> {
         self.begin_scope();
 
@@ -2116,7 +2117,11 @@ impl<'a> Compiler<'a> {
             binding_count: bindings.len(),
         });
 
-        // Compile body.
+        // The body is in tail position when the loop is: the value it
+        // falls through with is the loop's, and so the function's, so a
+        // call there is a tail call, which drops the bindings with the
+        // frame.
+        self.in_tail_position = tail;
         self.compile_expr(body)?;
 
         // Pop loop info.
@@ -2125,7 +2130,7 @@ impl<'a> Compiler<'a> {
         // The body either used `recur` (which updates locals and jumps back)
         // or fell through with the final value on the stack, above the
         // bindings.
-        self.end_scope_with_result(false, span)
+        self.end_scope_with_result(tail, span)
     }
 
     // ── Helper: what names resolve to ────────────────────────────

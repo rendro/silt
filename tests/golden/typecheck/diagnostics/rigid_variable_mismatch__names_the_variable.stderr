@@ -46,15 +46,16 @@ error[type]: type mismatch: expected t, got Int
     |               - the type variable `t` is declared here
   = note: `t` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
 
-error[type]: type mismatch: expected e, got Int
+error[type]: type mismatch: expected List(e), got List(Int)
  --> rigid_variable_mismatch__names_the_variable.silt:28:3
     |
  28 |   [1]
-    |   ^^^ type mismatch: expected e, got Int
+    |   ^^^ type mismatch: expected List(e), got List(Int)
  ::: rigid_variable_mismatch__names_the_variable.silt:27:12
     |
  27 | fn wrap(x: e) -> List(e) {
     |            - the type variable `e` is declared here
+  = note: the part that differs: expected e, got Int
   = note: `e` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
 
 error[type]: type mismatch: expected c, got String

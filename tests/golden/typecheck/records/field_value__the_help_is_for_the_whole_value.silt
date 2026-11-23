@@ -1,7 +1,8 @@
 -- cmd: check
 -- exit: 1
--- A field's value of the wrong type keeps the help of the parts that
--- differ: a `Result` where its Ok value is wanted, also inside a list.
+-- A field's value of the wrong type has the help of its whole value: a
+-- `Result` where its Ok value is wanted is told about `?`; a list of
+-- `Result`s, where a `?` on the list does not reach them, is not.
 import string
 
 type Bag { items: List(Int) }

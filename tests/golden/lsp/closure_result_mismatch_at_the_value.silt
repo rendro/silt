@@ -1,0 +1,14 @@
+-- cmd: lsp
+-- verdict: same
+-- A closure whose result is of a type its place does not take: the
+-- editor's diagnostic is at the value the closure gives, where the CLI
+-- puts it, not at the closure.
+import list
+
+fn main() {
+  let total = list.fold([1, 2], 0) { acc, x ->
+    let _y = x
+    "{acc}"
+  }
+  println(total)
+}

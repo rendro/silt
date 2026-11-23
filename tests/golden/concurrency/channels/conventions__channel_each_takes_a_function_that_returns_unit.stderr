@@ -9,4 +9,3 @@ error[type]: type mismatch: expected (), got Result(Int, int.IntError)
     |
  14 |   channel.each(texts) { text -> int.parse(text) }
     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected (), got Result(Int, int.IntError)
-  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
