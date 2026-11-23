@@ -343,7 +343,7 @@ impl Map {
     /// in a tree: given away, the map is changed in place by
     /// [`Map::put`], where a change of a map that is held elsewhere too
     /// copies the path of the tree to the key.
-    pub fn held_alone_in_tree(&self) -> bool {
+    pub(crate) fn held_alone_in_tree(&self) -> bool {
         Arc::strong_count(&self.0) == 1 && matches!(self.entries(), Entries::Tree(_))
     }
 
@@ -354,7 +354,7 @@ impl Map {
     /// `insert`. (`map.update` and `map.set` change so the map a fold
     /// hands from step to step: each change copied the path of the tree
     /// to the key, a hundred entries and more.)
-    pub fn put(mut self, key: Value, value: Value) -> Map {
+    pub(crate) fn put(mut self, key: Value, value: Value) -> Map {
         let Some(entries) = Arc::get_mut(&mut self.0) else {
             if let Entries::Tree(_) = self.entries() {
                 shared_change();
