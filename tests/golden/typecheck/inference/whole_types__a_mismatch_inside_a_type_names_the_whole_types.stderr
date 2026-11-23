@@ -1,0 +1,26 @@
+error[type]: type mismatch: expected Channel(Int), got Channel(Option(Int))
+ --> whole_types__a_mismatch_inside_a_type_names_the_whole_types.silt:16:20
+    |
+ 16 |   list.prepend(ws, reply)
+    |                    ^^^^^ type mismatch: expected Channel(Int), got Channel(Option(Int))
+  = note: the part that differs: expected Int, got Option(Int)
+
+error[type]: field `waiting` expects List(Channel(Int)), got List(Channel(Option(Int)))
+ --> whole_types__a_mismatch_inside_a_type_names_the_whole_types.silt:20:20
+    |
+ 20 |   Table { waiting: [reply] }
+    |                    ^^^^^^^ field `waiting` expects List(Channel(Int)), got List(Channel(Option(Int)))
+
+error[type]: type mismatch: expected List(Int), got List(Option(Int))
+ --> whole_types__a_mismatch_inside_a_type_names_the_whole_types.silt:24:3
+    |
+ 24 |   xs
+    |   ^^ type mismatch: expected List(Int), got List(Option(Int))
+  = note: the part that differs: expected Int, got Option(Int)
+
+error[type]: type mismatch: expected Int, got Option(Int)
+ --> whole_types__a_mismatch_inside_a_type_names_the_whole_types.silt:28:3
+    |
+ 28 |   x
+    |   ^ type mismatch: expected Int, got Option(Int)
+  = help: to chain through an `Option`, use `?` to propagate `None`, or `|> option.flat_map { x -> ... }` to continue the pipeline on the Some value

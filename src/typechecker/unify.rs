@@ -182,6 +182,11 @@ pub(super) struct Fault {
     /// What the report says of the parts (a type constructor variable
     /// against a type that has none, or another first argument).
     note: Option<String>,
+    /// Whether `apart` is a part of the types unified, not the whole of
+    /// them (`Int` and `Option(Int)` of `Channel(Int)` and
+    /// `Channel(Option(Int))`): the report names the whole types, and
+    /// what would change the value (`?`, `Ok(...)`) is no help.
+    nested: bool,
 }
 
 impl Fault {
@@ -192,6 +197,7 @@ impl Fault {
             help: None,
             apart: None,
             note: None,
+            nested: false,
         }
     }
 }
@@ -404,8 +410,88 @@ impl TypeChecker {
     /// at `span` why they do not unify.
     pub(super) fn unify(&mut self, t1: &Type, t2: &Type, span: Span) {
         if let Err(mismatch) = self.unify_types(t1, t2) {
+            let mismatch = self.of_whole_types(mismatch, t1, t2);
             self.report_mismatch(mismatch, span);
         }
+    }
+
+    /// `mismatch` of `got` and `expected` as a report of the whole types:
+    /// the faults of parts of them (`Int` and `Option(Int)` inside
+    /// `Channel(...)`) become one, "expected Channel(Int), got
+    /// Channel(Option(Int))", with a note for each part that differs and
+    /// the help the whole types have. A fault of the whole types, or one
+    /// that is no plain mismatch of two types, stays as it is.
+    fn of_whole_types(&self, Mismatch(faults): Mismatch, got: &Type, expected: &Type) -> Mismatch {
+        let (got, expected) = (self.apply(got), self.apply(expected));
+        // (Of two functions, the part is what is said: the result a
+        // callback is to have, a parameter's type.)
+        let plain = |ty: &Type| match ty {
+            Type::Generic(name, _) => !name.is_builtin(crate::defs::TYPE_OF),
+            Type::Fun(..) => false,
+            _ => true,
+        };
+        let mut whole: Option<Fault> = None;
+        let mut out = Vec::new();
+        for fault in faults {
+            let part = match &fault.apart {
+                Some((part_got, part_expected))
+                    if fault.code == Code::TypeMismatch
+                        && plain(&got)
+                        && plain(&expected)
+                        && (self.apply(part_got), self.apply(part_expected))
+                            != (got.clone(), expected.clone()) =>
+                {
+                    let (part_got, part_expected) = self.show_apart(part_got, part_expected);
+                    format!("the part that differs: expected {part_expected}, got {part_got}")
+                }
+                _ => {
+                    out.push(fault);
+                    continue;
+                }
+            };
+            match &mut whole {
+                Some(first) => {
+                    let notes = first.note.get_or_insert_with(String::new);
+                    notes.push('\n');
+                    notes.push_str(&part);
+                }
+                None => {
+                    let (got_shown, expected_shown) = self.show_apart(&got, &expected);
+                    let help = match self.help_of_part_applies(&fault, &got, &expected) {
+                        true => fault.help.clone(),
+                        false => self.chain_hint(&got, &expected),
+                    };
+                    let note = match fault.note {
+                        Some(note) => format!("{part}\n{note}"),
+                        None => part,
+                    };
+                    whole = Some(Fault {
+                        message: format!(
+                            "type mismatch: expected {expected_shown}, got {got_shown}"
+                        ),
+                        help,
+                        note: Some(note),
+                        nested: true,
+                        ..fault
+                    });
+                }
+            }
+        }
+        out.splice(0..0, whole);
+        Mismatch(out)
+    }
+
+    /// Whether the help of `fault`, of two parts of `got` and
+    /// `expected`, is help for a value of the whole types: only where the
+    /// parts are the whole types. The `Option` of `Channel(Option(Int))`
+    /// is no value a `?` can reach, nor that of a `List(Option(Int))`.
+    fn help_of_part_applies(&self, fault: &Fault, got: &Type, expected: &Type) -> bool {
+        fault
+            .apart
+            .as_ref()
+            .is_some_and(|(part_got, part_expected)| {
+                (self.apply(part_got), self.apply(part_expected)) == (got.clone(), expected.clone())
+            })
     }
 
     /// Unify `t1` (the type got) with `t2` (the type expected). Every
@@ -442,7 +528,14 @@ impl TypeChecker {
                 span,
                 format!("field `{field}` expects {declared_shown}, got {got_shown}"),
             );
-            for help in apart.iter().filter_map(|fault| fault.help.clone()) {
+            // (The help of a part, `?` for the `Option` of a
+            // `Channel(Option(Int))`, is no help for the field's value.)
+            let of_whole = |fault: &&Fault| self.help_of_part_applies(fault, &got, &declared);
+            for help in apart
+                .iter()
+                .filter(of_whole)
+                .filter_map(|fault| fault.help.clone())
+            {
                 if !d.help.contains(&help) {
                     d.help.push(help);
                 }
@@ -498,7 +591,7 @@ impl TypeChecker {
             d = d.with_note(note);
         }
         if let Some((got, expected)) = &fault.apart {
-            if advice {
+            if advice && !fault.nested {
                 Self::add_ok_wrap_fix(&mut d, got, expected);
             }
             d = self.name_annotation_variables(d, expected, got);
@@ -600,6 +693,7 @@ impl TypeChecker {
             help: self.chain_hint(got, expected),
             apart: Some((got.clone(), expected.clone())),
             note: None,
+            nested: false,
         }
     }
 

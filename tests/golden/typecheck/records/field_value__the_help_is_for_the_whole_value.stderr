@@ -1,13 +1,12 @@
 error[type]: field `items` expects List(Int), got List(Result(Int, String))
- --> field_value__the_help_of_the_parts_stays.silt:14:24
+ --> field_value__the_help_is_for_the_whole_value.silt:15:24
     |
- 14 |   let b = Bag { items: [parse("1")] }
+ 15 |   let b = Bag { items: [parse("1")] }
     |                        ^^^^^^^^^^^^ field `items` expects List(Int), got List(Result(Int, String))
-  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
 
 error[type]: field `v` expects Int, got Result(Int, String)
- --> field_value__the_help_of_the_parts_stays.silt:15:18
+ --> field_value__the_help_is_for_the_whole_value.silt:16:18
     |
- 15 |   let w = W { v: parse("1") }
+ 16 |   let w = W { v: parse("1") }
     |                  ^^^^^^^^^^ field `v` expects Int, got Result(Int, String)
   = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value

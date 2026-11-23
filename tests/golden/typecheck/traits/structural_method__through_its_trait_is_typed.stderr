@@ -10,11 +10,12 @@ error[type]: type mismatch: expected String, got Int
  15 |   let n: String = Hash.hash("s")
     |                   ^^^^^^^^^^^^^^ type mismatch: expected String, got Int
 
-error[type]: type mismatch: expected String, got Int
+error[type]: type mismatch: expected List(String), got List(Int)
  --> structural_method__through_its_trait_is_typed.silt:16:30
     |
  16 |   let hashes: List(String) = list.map(["a", "b"], Hash.hash)
-    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected List(String), got List(Int)
+  = note: the part that differs: expected String, got Int
 
 error[type]: type mismatch: expected P, got Int
  --> structural_method__through_its_trait_is_typed.silt:17:39

@@ -44,8 +44,9 @@ error[type]: type mismatch: expected Int, got String
  39 |   let total = list.fold([1, 2], 0) { acc, x ->
     |                                    ----------- the result of this closure is to be Int
 
-error[type]: type mismatch: expected Int, got String
+error[type]: type mismatch: expected List(Int), got List(String)
  --> closure_result__a_wrong_result_is_reported_at_the_value.silt:44:23
     |
  44 |   let xs: List(Int) = list.map([1, 2]) { x -> "s{x}" }
-    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got String
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected List(Int), got List(String)
+  = note: the part that differs: expected Int, got String

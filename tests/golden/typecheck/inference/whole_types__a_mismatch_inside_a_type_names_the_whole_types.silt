@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- A mismatch of a part of two types (`Option(Int)` inside a
+-- `Channel`) names the whole types, with the part as a note, and gives
+-- no help for the part's `Option`: a `?` on the value does not reach
+-- it, in a channel or in a list. A plain `Option(Int)` where an `Int` is
+-- wanted keeps its help. A field's value is told the same way.
+import channel
+import list
+
+type Table {
+  waiting: List(Channel(Int)),
+}
+
+fn keep(ws: List(Channel(Int)), reply: Channel(Option(Int))) -> List(Channel(Int)) {
+  list.prepend(ws, reply)
+}
+
+fn table(reply: Channel(Option(Int))) -> Table {
+  Table { waiting: [reply] }
+}
+
+fn firsts(xs: List(Option(Int))) -> List(Int) {
+  xs
+}
+
+fn first(x: Option(Int)) -> Int {
+  x
+}
+
+fn main() {
+  let reply: Channel(Option(Int)) = channel.new(1)
+  let _ = keep([], reply)
+  let _ = table(reply)
+  println(firsts([]))
+  println(first(None))
+}
