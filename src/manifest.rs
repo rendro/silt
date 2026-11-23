@@ -253,7 +253,9 @@ impl Manifest {
 /// How a package file's path is shown: relative to the working
 /// directory, with `..` when the file is above it (`silt check main.silt`
 /// run in `src/` shows `../silt.toml`), written with `/` as a manifest
-/// entry is; else (only the root in common) as it is. Both sides are
+/// entry is; else (only the root in common, or a file in the cache of
+/// fetched git dependencies, which no `..` from here names well) as it
+/// is, absolute. Both sides are
 /// compared in canonical form, a path that does not exist (a missing
 /// dependency) by its nearest existing ancestor, so two spellings of one
 /// place (on Windows a short 8.3 name, a verbatim prefix) agree.
@@ -263,6 +265,9 @@ pub(crate) fn display_path(path: &Path) -> PathBuf {
     };
     let cwd = crate::source::canonical_path_lenient(&cwd);
     let path = crate::source::canonical_path_lenient(path);
+    if crate::git::is_in_cache(&path) {
+        return path;
+    }
     let same = |a: &std::path::Component, b: &std::path::Component| {
         if cfg!(windows) {
             a.as_os_str().eq_ignore_ascii_case(b.as_os_str())

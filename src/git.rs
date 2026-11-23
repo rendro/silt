@@ -1154,6 +1154,15 @@ pub(crate) trait EscapedDisplay: fmt::Display {}
 
 // ── Cache path resolution ──────────────────────────────────────────────
 
+/// Whether `path`, made canonical, is in the cache of git checkouts
+/// ([`cache_dir`]): a fetched dependency's file.
+pub(crate) fn is_in_cache(path: &Path) -> bool {
+    match compute_cache_root() {
+        Ok(root) => path.starts_with(crate::source::canonical_path_lenient(&root)),
+        Err(_) => false,
+    }
+}
+
 /// Returns the cache root directory: `$XDG_CACHE_HOME/silt/git/` on Unix
 /// when set (else `$HOME/.cache/silt/git/` on Unix; else
 /// `$HOME/.silt/cache/git/` as a final fallback), or
@@ -1335,6 +1344,60 @@ fn ls_remote_resolve(url: &str, refspec: &str) -> Result<Option<String>, GitErro
         }
     }
     Ok(None)
+}
+
+/// The names of the repository's tags (`tags`) or branches, by
+/// `git ls-remote --tags` or `--heads`, in the order of their versions
+/// (`v0.9.0` before `v0.10.0`): for a message that says which there are.
+pub(crate) fn remote_ref_names(url: &str, tags: bool) -> Result<Vec<String>, GitError> {
+    check_url(url)?;
+    let (flag, prefix) = match tags {
+        true => ("--tags", "refs/tags/"),
+        false => ("--heads", "refs/heads/"),
+    };
+    let output = run_git(&["ls-remote", flag, "--", url])?;
+    let mut names: Vec<String> = output
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .filter_map(|name| name.strip_prefix(prefix))
+        // (An annotated tag is listed a second time, as `<tag>^{}`.)
+        .filter(|name| !name.ends_with("^{}"))
+        .map(str::to_string)
+        .collect();
+    names.sort_by(|a, b| version_order(a, b));
+    names.dedup();
+    Ok(names)
+}
+
+/// `a` and `b` in the order of versions: each run of digits compared as
+/// a number, everything else as text (`v0.9.0` before `v0.10.0`).
+fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
+    // The runs of digits and of other characters, in turn.
+    fn runs(s: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        let bytes = s.as_bytes();
+        for i in 1..=bytes.len() {
+            if i == bytes.len() || bytes[i].is_ascii_digit() != bytes[i - 1].is_ascii_digit() {
+                out.push(&s[start..i]);
+                start = i;
+            }
+        }
+        out
+    }
+    let number = |run: &str| run.bytes().all(|b| b.is_ascii_digit()) && !run.is_empty();
+    for (x, y) in runs(a).into_iter().zip(runs(b)) {
+        let order = if number(x) && number(y) {
+            let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
+            x.len().cmp(&y.len()).then_with(|| x.cmp(y))
+        } else {
+            x.cmp(y)
+        };
+        if order != std::cmp::Ordering::Equal {
+            return order;
+        }
+    }
+    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
 }
 
 /// Cheap reachability check: `git ls-remote -- <url> HEAD`. Used by
@@ -2363,6 +2426,22 @@ mod tests {
             assert_eq!(mask_manifest_text(line), masked, "{line}");
             assert_eq!(masked.chars().count(), line.chars().count(), "{line}");
         }
+    }
+
+    /// Tags are listed in the order of their versions, a run of digits
+    /// read as a number.
+    #[test]
+    fn ref_names_are_in_the_order_of_versions() {
+        let mut names = vec![
+            "v0.10.0", "v0.9.0", "v1.0.0", "v0.9.1", "main", "v0.09.2", "v0.9",
+        ];
+        names.sort_by(|a, b| version_order(a, b));
+        assert_eq!(
+            names,
+            [
+                "main", "v0.9", "v0.9.0", "v0.9.1", "v0.09.2", "v0.10.0", "v1.0.0"
+            ]
+        );
     }
 
     /// A refusal is one sentence about what was refused: the subject and

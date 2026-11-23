@@ -154,6 +154,71 @@ pub enum LockChange {
     Rewritten,
 }
 
+/// The checkout of each git package resolved in this process, with the
+/// key of the dependency that reached it first and what the package is
+/// in words: how a terminal names a file in it ([`shown_place`]).
+static FETCHED: std::sync::Mutex<Vec<(PathBuf, String, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Note the checkout `root` (canonical) of a git package, reached as the
+/// dependency `key`, at `locked`.
+fn note_fetched(root: &Path, key: &str, locked: &LockedSource) {
+    let LockedSource::Git {
+        ref_spec,
+        resolved_sha,
+        ..
+    } = locked
+    else {
+        return;
+    };
+    let commit = &resolved_sha[..resolved_sha.len().min(7)];
+    let what = match ref_spec {
+        GitRef::Rev(_) => format!("dependency `{key}` at {commit}"),
+        GitRef::Branch(name) | GitRef::Tag(name) => format!(
+            "dependency `{key}`, {} `{}` at {commit}",
+            ref_spec.kind(),
+            escape_for_display(name)
+        ),
+    };
+    let mut fetched = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
+    fetched.retain(|(r, _, _)| r != root);
+    fetched.push((root.to_path_buf(), key.to_string(), what));
+}
+
+/// How a terminal names the file `name` when it is in the checkout of a
+/// git package resolved in this process: by its path in the package
+/// (`src/lib.silt`), with the dependency, its ref and its commit after
+/// the place. A checkout is in the cache, far from the package that
+/// needs it: its path names neither.
+pub(crate) fn shown_place(
+    name: &crate::source::SourceName,
+) -> Option<crate::diagnostic::ShownPlace> {
+    use crate::source::SourceName;
+    let (SourceName::Path(path) | SourceName::Manifest(path)) = name else {
+        return None;
+    };
+    let fetched = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
+    if fetched.is_empty() {
+        return None;
+    }
+    let canonical = crate::source::canonical_path_lenient(path);
+    fetched.iter().find_map(|(root, key, what)| {
+        let inner = path
+            .strip_prefix(root)
+            .or_else(|_| canonical.strip_prefix(root))
+            .ok()?;
+        let parts: Vec<String> = inner
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        Some(crate::diagnostic::ShownPlace {
+            path: parts.join("/"),
+            what: what.clone(),
+            dependency: Some(key.clone()),
+        })
+    })
+}
+
 /// Resolve the package graph of the project whose `silt.toml` is in
 /// `project_root`, adding every manifest (and the lockfile) to
 /// `sources`.
@@ -439,13 +504,11 @@ impl Resolver<'_> {
                     None => match git::resolve_ref(&url, ref_spec) {
                         Ok(commit) => commit,
                         Err(e) => {
-                            self.diagnostics.push(git_diagnostic(
-                                entry.value,
-                                &key_name,
-                                &url,
-                                ref_spec,
-                                &e,
-                            ));
+                            let mut d = git_diagnostic(entry.value, &key_name, &url, ref_spec, &e);
+                            if let GitError::RefNotFound { .. } = e {
+                                d.notes.extend(known_refs_note(&url, ref_spec));
+                            }
+                            self.diagnostics.push(d);
                             return None;
                         }
                     },
@@ -565,6 +628,7 @@ impl Resolver<'_> {
             self.failed.insert(source);
             return None;
         }
+        note_fetched(&root, key_name, &locked);
         let manifest = match Manifest::load(&root.join("silt.toml"), self.sources) {
             Ok(manifest) => manifest,
             Err(d) => {
@@ -913,6 +977,32 @@ fn git_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef, err: &GitEr
     d.notes
         .extend(lines.map(|line| line.trim_start().to_string()));
     d
+}
+
+/// For a branch or a tag `ref_spec` that `url` does not have: which
+/// it has, the last few in the order of versions. `None` for a rev, or
+/// when git cannot list them.
+fn known_refs_note(url: &str, ref_spec: &GitRef) -> Option<String> {
+    const SHOWN: usize = 5;
+    let (tags, word) = match ref_spec {
+        GitRef::Tag(_) => (true, "tags"),
+        GitRef::Branch(_) => (false, "branches"),
+        GitRef::Rev(_) => return None,
+    };
+    let names = git::remote_ref_names(url, tags).ok()?;
+    if names.is_empty() {
+        return Some(format!("the repository has no {word}"));
+    }
+    let shown = &names[names.len().saturating_sub(SHOWN)..];
+    let list = shown
+        .iter()
+        .map(|name| format!("`{}`", escape_for_display(name)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(match names.len() > SHOWN {
+        true => format!("{word} there: {list} (the last {SHOWN} of {})", names.len()),
+        false => format!("{word} there: {list}"),
+    })
 }
 
 /// The git dependency `key` on `url` at `ref_spec` is not in the cache,

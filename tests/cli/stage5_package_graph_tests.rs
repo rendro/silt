@@ -861,6 +861,112 @@ fn three_packages_of_one_name_are_all_reported() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// A tag or a branch that the repository does not have: the place is
+/// in the text `silt add` would write, which silt.toml no longer holds,
+/// and says so; a note lists the tags or the branches there are. FAILS
+/// on the base: the place was `silt.toml:6:15` of a file of three lines,
+/// and nothing said which tags there are.
+#[test]
+fn silt_add_of_a_missing_ref_says_what_it_would_write_and_what_there_is() {
+    let ws = fresh_workspace("add_missing_ref");
+    if !git_installed() {
+        return;
+    }
+    sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let repo = ws.join("lib");
+    for tag in ["v0.10.0", "v0.2.0", "v0.1.0"] {
+        git(&ws, &repo, &["tag", tag]);
+    }
+    let app = ws.join("app");
+    write_package(&app, "app", &[], "main.silt", "fn main() {}\n");
+    let before = fs::read_to_string(app.join("silt.toml")).unwrap();
+    for (flag, value, note) in [
+        (
+            "--tag",
+            "v9.9.9",
+            Some("= note: tags there: `v0.1.0`, `v0.2.0`, `v0.10.0`\n"),
+        ),
+        (
+            "--branch",
+            "nobranch",
+            Some("= note: branches there: `main`\n"),
+        ),
+        ("--rev", "1234567", None),
+    ] {
+        let out = silt(
+            &ws,
+            &app,
+            &["add", "remote", "--git", "../lib", flag, value],
+        );
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains(" --> silt.toml:6:10 (as silt add would write it)\n")
+                && err.contains("= note: silt add left silt.toml as it was"),
+            "{err}"
+        );
+        match note {
+            Some(note) => assert!(err.contains(note), "{err}"),
+            None => assert!(!err.contains(" there: "), "{err}"),
+        }
+        assert_eq!(fs::read_to_string(app.join("silt.toml")).unwrap(), before);
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// An error in the code of a fetched dependency is shown at its path in
+/// the dependency, with the dependency, its ref and its commit after the
+/// place, and a help that leads out; `--format json` names the file by
+/// its absolute path. FAILS on the base: the place was the file's path in
+/// the cache, from the app (`../cache/silt/git/<hash>/<commit>/src/
+/// lib.silt`), and nothing named the dependency.
+#[test]
+fn an_error_in_a_fetched_dependency_names_the_dependency() {
+    let ws = fresh_workspace("error_in_git_dep");
+    if !git_installed() {
+        return;
+    }
+    let head = sibling_repository(&ws, "pub fn one() { 1 }\n\npub fn two() {\n  one(1)\n}\n");
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &["fm = { git = \"../lib\", branch = \"main\" }"],
+        "main.silt",
+        "import fm\nfn main() { println(fm.two()) }\n",
+    );
+
+    let out = silt(&ws, &app, &["check"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    let place = format!(
+        " --> src/lib.silt:4:3 (dependency `fm`, branch `main` at {})\n",
+        &head[..7]
+    );
+    assert!(err.contains(&place), "{err}");
+    assert!(
+        err.contains(
+            "= help: the error is in the dependency `fm`, not in this package: pin another \
+             branch, tag or rev of it in silt.toml, or have it fixed in its repository"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("cache"), "{err}");
+
+    let out = silt(&ws, &app, &["check", "--format", "json"]);
+    let reported: serde_json::Value = serde_json::from_str(stdout(&out).trim())
+        .unwrap_or_else(|e| panic!("{e}: {}", stdout(&out)));
+    let file = reported[0]["file"]
+        .as_str()
+        .unwrap_or_default()
+        .replace('\\', "/");
+    assert!(
+        Path::new(&file).is_absolute() && file.ends_with(&format!("{head}/src/lib.silt")),
+        "{reported}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── The lockfile's checksum of a git dependency ──────────────────────
 
 /// An app beside the repository `lib` (the package `remote`) that pins
@@ -921,6 +1027,21 @@ fn assert_checksum_error(out: &Output, expected: &str, checkout: &Path) {
             && err.contains("= note: found:     sha256:")
             && err.contains(&checkout_shown)
             && err.contains("so that the commit is fetched again"),
+        "{err}"
+    );
+    // The checkout is named by its path, absolute, as the system has it:
+    // no `../` from the app into the cache. FAILS on the base: shown as
+    // `../cache/silt/git/...`.
+    let canonical = fs::canonicalize(checkout.parent().unwrap())
+        .unwrap()
+        .join(checkout.file_name().unwrap())
+        .display()
+        .to_string();
+    let plain = canonical.strip_prefix(r"\\?\").unwrap_or(&canonical);
+    assert!(
+        err.contains(&format!(
+            "= help: delete {plain} so that the commit is fetched again"
+        )),
         "{err}"
     );
     let found = err

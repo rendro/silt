@@ -794,6 +794,7 @@ impl SourceView for ReplFiles<'_> {
         Some(Located {
             file,
             position: self.sources.position(span),
+            shown: None,
         })
     }
 }
