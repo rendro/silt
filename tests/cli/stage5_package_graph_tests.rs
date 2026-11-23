@@ -967,6 +967,69 @@ fn an_error_in_a_fetched_dependency_names_the_dependency() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// Two keys on one repository at two commits: the package is required at
+/// two commits, each named with the key that requires it; at one commit by
+/// two spellings of its URL, the URL is written in different ways. FAILS
+/// on the base: "two different packages are named `remote`" for both.
+#[test]
+fn one_repository_at_two_commits_is_said_so() {
+    let ws = fresh_workspace("one_repo_two_commits");
+    if !git_installed() {
+        return;
+    }
+    let first = sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let repo = ws.join("lib");
+    git(&ws, &repo, &["tag", "v0.1.0"]);
+    fs::write(repo.join("src").join("lib.silt"), "pub fn v() { 2 }\n").unwrap();
+    let second = commit_all(&ws, &repo, "two");
+    git(&ws, &repo, &["tag", "v0.2.0"]);
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &[
+            "a = { git = \"../lib\", tag = \"v0.2.0\" }",
+            "b = { git = \"./../lib/\", tag = \"v0.1.0\" }",
+        ],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let out = silt(&ws, &app, &["check"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.starts_with(&format!(
+            "error[package]: `remote` is required at two commits: {} (via `a`) and {} (via `b`)\n",
+            &second[..7],
+            &first[..7]
+        )) && err.contains("make every dependency on `remote` point at the same source"),
+        "{err}"
+    );
+
+    // One commit, its URL written two ways (a path and a `file://` URL).
+    if cfg!(unix) {
+        let url = format!("file://{}/", fs::canonicalize(&repo).unwrap().display());
+        let b = format!("b = {{ git = \"{url}\", tag = \"v0.2.0\" }}");
+        write_package(
+            &app,
+            "app",
+            &["a = { git = \"../lib\", tag = \"v0.2.0\" }", &b],
+            "main.silt",
+            "fn main() {}\n",
+        );
+        let out = silt(&ws, &app, &["check"]);
+        let err = stderr(&out);
+        assert!(
+            err.starts_with(
+                "error[package]: `remote` is required from one repository, its URL written in \
+                 different ways\n"
+            ),
+            "{err}"
+        );
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── The lockfile's checksum of a git dependency ──────────────────────
 
 /// An app beside the repository `lib` (the package `remote`) that pins

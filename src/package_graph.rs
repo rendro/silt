@@ -730,10 +730,7 @@ impl Resolver<'_> {
             let mut d = Diagnostic::error(
                 Code::DuplicatePackage,
                 at,
-                format!(
-                    "{} different packages are named `{name}`",
-                    count_word(ids.len())
-                ),
+                self.duplicate_message(&name, &ids),
             );
             for &id in &ids {
                 // The last key of the last chain is the primary span.
@@ -747,6 +744,79 @@ impl Resolver<'_> {
             ));
             self.diagnostics.push(d);
         }
+    }
+
+    /// What `DuplicatePackage` says of the packages `ids`, named `name`:
+    /// that one repository is required at several commits, when they are
+    /// all one repository's (however its URL is written), else that they
+    /// are different packages.
+    fn duplicate_message(&self, name: &str, ids: &[PackageId]) -> String {
+        let count = count_word(ids.len());
+        let different = || format!("{count} different packages are named `{name}`");
+        let Some(found) = ids
+            .iter()
+            .map(|id| self.repository(*id))
+            .collect::<Option<Vec<(String, String)>>>()
+        else {
+            return different();
+        };
+        if found
+            .iter()
+            .any(|(repository, _)| *repository != found[0].0)
+        {
+            return different();
+        }
+        let mut commits: Vec<&String> = found.iter().map(|(_, commit)| commit).collect();
+        commits.sort();
+        commits.dedup();
+        if commits.len() < ids.len() {
+            // (The same commit by two URLs that name one repository.)
+            return format!(
+                "`{name}` is required from one repository, its URL written in different ways"
+            );
+        }
+        let each: Vec<String> = ids
+            .iter()
+            .zip(&found)
+            .map(|(id, (_, commit))| {
+                format!(
+                    "{} (via `{}`)",
+                    &commit[..commit.len().min(7)],
+                    self.via_key(*id)
+                )
+            })
+            .collect();
+        format!(
+            "`{name}` is required at {count} commits: {}",
+            and_list(&each)
+        )
+    }
+
+    /// The repository of the git package `id`, in one form however its
+    /// URL is written ([`repository_form`]), and its commit; `None` for
+    /// a path package.
+    fn repository(&self, id: PackageId) -> Option<(String, String)> {
+        self.by_source
+            .iter()
+            .find_map(|(source, found)| match source {
+                SourceKey::Git(url, commit) if *found == id => {
+                    Some((repository_form(url), commit.clone()))
+                }
+                _ => None,
+            })
+    }
+
+    /// The key of the dependency that first reached `id`; its name for the
+    /// root.
+    fn via_key(&self, id: PackageId) -> String {
+        let key = self.via[id.0 as usize].and_then(|(parent, span)| {
+            self.nodes[parent.0 as usize]
+                .deps
+                .iter()
+                .find(|(_, _, at)| *at == span)
+                .map(|(key, _, _)| *key)
+        });
+        intern::resolve(key.unwrap_or(self.nodes[id.0 as usize].name)).to_string()
     }
 
     /// Each problem reported from `diagnostics[reported..]` while the
@@ -901,6 +971,37 @@ impl Resolver<'_> {
             version: 1,
             packages,
         }
+    }
+}
+
+/// `items` as a message lists them: `a`, `a and b`, `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The git URL `url` (a local one made absolute) in one form for each
+/// repository: a local one by its canonical path, whether written as a
+/// path or a `file://` URL, with or without a `/` at its end; any other
+/// without a `/` at its end.
+fn repository_form(url: &str) -> String {
+    if !git::is_local_git_url(url) {
+        return url.trim_end_matches('/').to_string();
+    }
+    let path = url.strip_prefix("file://").unwrap_or(url);
+    // (`file:///C:/repo` on Windows names `C:/repo`.)
+    let path = match path.strip_prefix('/') {
+        Some(rest) if cfg!(windows) && rest.as_bytes().get(1) == Some(&b':') => rest,
+        _ => path,
+    };
+    let canonical = crate::source::canonical_path_lenient(Path::new(path));
+    let shown = canonical.display().to_string();
+    match shown.trim_end_matches(['/', '\\']) {
+        "" => shown,
+        trimmed => trimmed.to_string(),
     }
 }
 
@@ -1133,6 +1234,27 @@ mod tests {
             &GitRef::Branch("main".into()),
             &GitRef::Tag("main".into())
         ));
+    }
+
+    /// One repository has one form, however its URL is written.
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_has_one_form_however_its_url_is_written() {
+        for url in ["/srv/none/repo", "/srv/none/repo/", "file:///srv/none/repo"] {
+            assert_eq!(repository_form(url), "/srv/none/repo", "{url}");
+        }
+        assert_eq!(
+            repository_form("https://example.com/r.git/"),
+            "https://example.com/r.git"
+        );
+        assert_ne!(
+            repository_form("/srv/none/a"),
+            repository_form("/srv/none/b")
+        );
+        assert_eq!(
+            and_list(&["a".into(), "b".into(), "c".into()]),
+            "a, b and c"
+        );
     }
 
     #[test]
