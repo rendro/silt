@@ -1030,6 +1030,69 @@ fn one_repository_at_two_commits_is_said_so() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// `silt update` says what changed in silt.lock: each dependency added,
+/// moved or removed, with the commits and the version, or that it is up
+/// to date. FAILS on the base: "Locked 2 dependencies." whether or not
+/// anything moved.
+#[test]
+fn silt_update_says_what_moved() {
+    let ws = fresh_workspace("update_says");
+    if !git_installed() {
+        return;
+    }
+    let first = sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let repo = ws.join("lib");
+    git(&ws, &repo, &["tag", "v0.1.0"]);
+    write_package(
+        &ws.join("calc"),
+        "calc",
+        &[],
+        "lib.silt",
+        "pub fn c() { 1 }\n",
+    );
+    let app = ws.join("app");
+    let deps = [
+        "remote = { git = \"../lib\", tag = \"v0.1.0\" }",
+        "calc = { path = \"../calc\" }",
+    ];
+    write_package(&app, "app", &deps, "main.silt", "fn main() {}\n");
+    let update = || {
+        let out = silt(&ws, &app, &["update"]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        stderr(&out)
+    };
+
+    assert_eq!(
+        update(),
+        format!(
+            "calc: added, path ../calc\nremote: added, tag `v0.1.0` at {}\n",
+            &first[..7]
+        )
+    );
+    assert_eq!(update(), "silt.lock is up to date.\n");
+
+    // The tag moves to a commit of another version.
+    fs::write(
+        repo.join("silt.toml"),
+        "[package]\nname = \"remote\"\nversion = \"0.2.0\"\n",
+    )
+    .unwrap();
+    let second = commit_all(&ws, &repo, "two");
+    git(&ws, &repo, &["tag", "-f", "v0.1.0"]);
+    assert_eq!(
+        update(),
+        format!(
+            "remote: {} -> {} (tag `v0.1.0` now names another commit), version 0.1.0 -> 0.2.0\n",
+            &first[..7],
+            &second[..7]
+        )
+    );
+
+    write_package(&app, "app", &deps[1..], "main.silt", "fn main() {}\n");
+    assert_eq!(update(), "remote: removed\n");
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── The lockfile's checksum of a git dependency ──────────────────────
 
 /// An app beside the repository `lib` (the package `remote`) that pins
