@@ -1,0 +1,15 @@
+-- cmd: lsp
+-- lsp: hover 12:18
+-- lsp: hover 13:11
+-- lsp: hover 14:3
+-- lsp: hover 14:14
+-- A file of a project whose silt.toml has errors is not checked: hover
+-- has no type to show there (not `_`), so it shows nothing.
+import helper
+
+fn main() {
+  let n = 2
+  let m = helper.twice(n)
+  let k = m + n
+  println("{k}")
+}

@@ -22,6 +22,11 @@ impl Server {
         let pos = params.text_document_position_params.position;
         let doc = self.documents.get(uri)?;
         let program = doc.program.as_ref()?;
+        // A file that is not checked (its note says so) has no types:
+        // nothing to describe.
+        if self.unchecked(doc) {
+            return None;
+        }
 
         // A position directly behind a name is on the name; one after
         // the end of its line, or past the last line, is on no
@@ -253,6 +258,13 @@ impl Server {
         if let Some(signature) = signature {
             value.push_str(&super::conversions::code_block(&signature));
         } else if let Some(t) = ty {
+            // A name the checker found no type for at all, and that has
+            // no docs, has nothing to describe (not `_`).
+            if doc_text.is_none()
+                && matches!(t, crate::types::Type::Var(_) | crate::types::Type::Error)
+            {
+                return None;
+            }
             // (So does a name the checker has no type for, a function
             // of a feature that is not built: its docs say what it is.)
             let untyped = has_unresolved_vars(&t) || matches!(t, crate::types::Type::Error);

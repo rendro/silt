@@ -374,6 +374,12 @@ impl Session {
         &self.graph
     }
 
+    /// Whether the project's packages were read and could not be
+    /// resolved (see `packages`).
+    pub(crate) fn packages_failed(&self) -> bool {
+        matches!(self.packages, Some(Err(_)))
+    }
+
     /// The packages of the project: its manifests and `silt.lock` are
     /// read on the first call (and registered in the source map, where
     /// their diagnostics point), and the lock is rewritten when the

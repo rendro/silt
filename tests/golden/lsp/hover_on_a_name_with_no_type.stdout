@@ -1,0 +1,5 @@
+8:11 error undefined variable 'nowhere'
+> hover 8:11
+(nothing)
+> hover 9:11
+(nothing)
