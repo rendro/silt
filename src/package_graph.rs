@@ -775,16 +775,16 @@ impl Resolver<'_> {
                 "`{name}` is required from one repository, its URL written in different ways"
             );
         }
-        let each: Vec<String> = ids
+        // By the key that requires each, in the order of the keys.
+        let mut each: Vec<(String, &String)> = ids
             .iter()
             .zip(&found)
-            .map(|(id, (_, commit))| {
-                format!(
-                    "{} (via `{}`)",
-                    &commit[..commit.len().min(7)],
-                    self.via_key(*id)
-                )
-            })
+            .map(|(id, (_, commit))| (self.via_key(*id), commit))
+            .collect();
+        each.sort();
+        let each: Vec<String> = each
+            .into_iter()
+            .map(|(key, commit)| format!("{} (via `{key}`)", &commit[..commit.len().min(7)]))
             .collect();
         format!(
             "`{name}` is required at {count} commits: {}",
