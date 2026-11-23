@@ -436,6 +436,7 @@ pub(crate) fn resolve_module(
         named_closures: Vec::new(),
         bound_now: Vec::new(),
         interpolated_name: false,
+        text: source.text,
         own_aliases: HashMap::new(),
         diagnostics,
         hidden_modules: Vec::new(),
@@ -1489,6 +1490,8 @@ struct Resolver<'a> {
     /// interpolation (`"\p{L}"`): one that resolves to nothing was
     /// most likely meant as text.
     interpolated_name: bool,
+    /// The module's text: whether a string literal is a raw one.
+    text: &'a str,
     /// The type each alias the module declares names by its head (see
     /// `DefTable::through_alias`, which has those of other modules).
     own_aliases: HashMap<DefId, DefId>,
@@ -1524,6 +1527,9 @@ struct Local {
     /// which is warned about when nothing uses it. `None` for a
     /// parameter, which a caller, a trait or a callback fixes.
     rename: Option<Vec<(Span, std::string::String)>>,
+    /// A raw string in its scope with `{name}` in it, as text: what
+    /// may have been meant as a use.
+    in_raw_string: Option<Span>,
 }
 
 /// The names `pattern` binds, each with where it is bound and the edits
@@ -1786,14 +1792,24 @@ impl Resolver<'_> {
             if local.used || name.starts_with('_') {
                 continue;
             }
+            let mut warning = Diagnostic::warning(
+                Code::UnusedName,
+                local.at,
+                format!("'{name}' is never used"),
+            );
+            if let Some(string) = local.in_raw_string {
+                warning = warning
+                    .with_label(string, format!("`{{{name}}}` in this raw string is text"))
+                    .with_help(format!(
+                        "a raw string `\"\"\"...\"\"\"` does not interpolate: to put the value of \
+                         `{name}` in, write the text as a `\"...\"` string, with `\\{{` for a \
+                         literal brace and `\\\"` for a quote"
+                    ));
+            }
             self.diagnostics.push(
-                Diagnostic::warning(
-                    Code::UnusedName,
-                    local.at,
-                    format!("'{name}' is never used"),
-                )
-                .with_help(format!("remove it, or name it `_{name}`"))
-                .with_fix(format!("name it `_{name}`"), rename),
+                warning
+                    .with_help(format!("remove it, or name it `_{name}`"))
+                    .with_fix(format!("name it `_{name}`"), rename),
             );
         }
     }
@@ -1819,6 +1835,7 @@ impl Resolver<'_> {
             at,
             used: false,
             rename,
+            in_raw_string: None,
         });
     }
 
@@ -1895,6 +1912,24 @@ impl Resolver<'_> {
     }
 
     /// The local `name` in scope is used here.
+    /// A raw string (`"""..."""`) at `span` whose text has `{x}` in it,
+    /// for an `x` in scope that nothing has used yet: noted on `x`,
+    /// whose warning says that a raw string does not interpolate.
+    fn raw_string_mentions(&mut self, text: &str, span: Span) {
+        let start = span.start as usize;
+        if !text.contains('{') || self.text.get(start..start + 3) != Some("\"\"\"") {
+            return;
+        }
+        for local in self.locals.iter_mut().flatten() {
+            if !local.used
+                && local.in_raw_string.is_none()
+                && text.contains(&format!("{{{}}}", resolve(local.name)))
+            {
+                local.in_raw_string = Some(span);
+            }
+        }
+    }
+
     fn use_local(&mut self, name: Symbol) {
         if let Some(local) = (self.locals.iter_mut().rev())
             .find_map(|scope| scope.iter_mut().rev().find(|l| l.name == name))
@@ -3129,11 +3164,8 @@ impl Resolver<'_> {
     fn expr(&mut self, expr: &mut Expr) {
         let span = expr.span;
         match &mut expr.kind {
-            ExprKind::Int(_)
-            | ExprKind::Float(_)
-            | ExprKind::Bool(_)
-            | ExprKind::StringLit(..)
-            | ExprKind::Unit => {}
+            ExprKind::StringLit(text) => self.raw_string_mentions(text, span),
+            ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {

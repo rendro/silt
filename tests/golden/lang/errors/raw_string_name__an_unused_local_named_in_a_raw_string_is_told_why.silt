@@ -1,0 +1,8 @@
+-- cmd: check
+-- A local that nothing uses, whose name is in a raw string as `{name}`:
+-- the warning points at the string and says that a raw string does not
+-- interpolate.
+fn main() {
+  let kind = "fail"
+  println("""{"kind": "{kind}"}""")
+}
