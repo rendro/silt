@@ -28,6 +28,8 @@ enum AddError {
     Message(String),
     /// A usage error: the message, then a line pointing at `--help`.
     Usage(String),
+    /// A message of one line, then a line of help.
+    Helped { message: String, help: String },
     /// A failure reported by git: the context, then that error's own
     /// message, which can run over several lines.
     Caused {
@@ -36,6 +38,10 @@ enum AddError {
     },
     /// Diagnostics in the manifests or the lockfile.
     Package(PackageFailure),
+    /// Diagnostics of resolving the package with the new entry: in its
+    /// `silt.toml` they point into the text `silt add` would write,
+    /// which the file no longer holds.
+    Resolve(PackageFailure),
 }
 
 impl AddError {
@@ -59,12 +65,17 @@ impl fmt::Display for AddError {
                 f.line_break()?;
                 write!(f, "Run 'silt add --help' for usage.")
             }
+            AddError::Helped { message, help } => {
+                write!(f, "{message}")?;
+                f.line_break()?;
+                write!(f, "  = help: {help}")
+            }
             AddError::Caused { context, cause } => {
                 write!(f, "{context}: ")?;
                 f.nested(cause.as_ref())
             }
             // Rendered as diagnostics by `dispatch`, never through here.
-            AddError::Package(failure) => {
+            AddError::Package(failure) | AddError::Resolve(failure) => {
                 write!(f, "{} package diagnostics", failure.diagnostics.len())
             }
         }
@@ -131,6 +142,13 @@ pub(crate) fn dispatch(args: &[String]) {
     match run_add_command(&args[2..]) {
         Ok(()) => {}
         Err(AddError::Package(failure)) => die_on_manifest_error(failure),
+        Err(AddError::Resolve(failure)) => {
+            let view = WouldWrite {
+                sources: &failure.sources,
+            };
+            crate::diagnostic::eprint_all(&view, &failure.diagnostics);
+            process::exit(1);
+        }
         Err(e) => {
             eprintln!("error: silt add: {e}");
             process::exit(1);
@@ -364,7 +382,12 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         .keys()
         .any(|sym| intern::resolve(*sym) == name);
     if already_present {
-        return Err(format!("dependency '{name}' is already declared").into());
+        return Err(AddError::Helped {
+            message: format!("dependency '{name}' is already declared"),
+            help: format!(
+                "to change it, edit its line in silt.toml, or run `silt remove {name}` first"
+            ),
+        });
     }
 
     // ── Source validation + the rendered TOML inline-table ────────────
@@ -442,11 +465,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // roundtrip, and option-shaped input (`--upload-pack=...`)
             // before it can reach `git` at all.
             if let Err(e) = crate::git::validate_git_url(&url) {
-                return Err(format!(
-                    "--git URL `{}` doesn't look like a git URL: {}",
-                    e.url, e.reason
-                )
-                .into());
+                return Err(invalid_git_url(&cwd, &url, &e).into());
             }
             // Shape-validate Rev locally so a malformed SHA fails before
             // any network traffic. `verify_reachable` would catch this
@@ -567,7 +586,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             d.notes
                 .push("silt add left silt.toml as it was".to_string());
         }
-        return Err(AddError::Package(PackageFailure {
+        return Err(AddError::Resolve(PackageFailure {
             sources,
             diagnostics,
         }));
@@ -582,6 +601,64 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         crate::git::escape_for_display(&crate::git::hide_git_userinfo(&success_summary))
     );
     Ok(())
+}
+
+/// The places of the diagnostics of resolving the package with the new
+/// entry: a place in the package's `silt.toml` is one in the text that
+/// `silt add` would write, which it did not keep, and says so
+/// (`silt.toml:6:15 (as silt add would write it)`).
+struct WouldWrite<'a> {
+    sources: &'a SourceMap,
+}
+
+impl crate::diagnostic::SourceView for WouldWrite<'_> {
+    fn locate(&self, span: crate::source::Span) -> Option<crate::diagnostic::Located> {
+        let mut located = self.sources.locate(span)?;
+        // The package's own silt.toml is the first file resolving reads.
+        if span.file == crate::source::FileId::default()
+            && matches!(
+                self.sources.get(span.file).map(|f| &f.path),
+                Some(crate::source::SourceName::Manifest(_))
+            )
+        {
+            located.shown = Some(crate::diagnostic::ShownPlace {
+                path: located.file.clone(),
+                what: "as silt add would write it".to_string(),
+                help: None,
+            });
+        }
+        Some(located)
+    }
+}
+
+/// The refusal of the `--git` value `url`, given in the working
+/// directory `cwd`: one sentence about it. A value that names a
+/// directory here, and is a local path once `./` is put in front, is
+/// told that form.
+fn invalid_git_url(cwd: &Path, url: &str, error: &crate::git::InvalidGitUrl) -> String {
+    let subject = format!("--git URL `{}`", error.url);
+    let local = format!("./{url}");
+    // Only for a value refused as no form at all, and with no `@`, which
+    // the refusal hides the text before.
+    let names_a_directory = error
+        .reason
+        .starts_with("is not a recognised git URL form;")
+        && !url.contains('@')
+        && !url.is_empty()
+        && !crate::git::is_local_git_url(url)
+        && !Path::new(url).is_absolute()
+        && cwd.join(url).is_dir()
+        && crate::git::validate_git_url(&local).is_ok()
+        && crate::git::is_local_git_url(&local);
+    if names_a_directory {
+        format!(
+            "{subject} is not a recognised git URL form; a local path starts with `/`, `./` or `../`: \
+             write it `{}`",
+            crate::git::display_url(&local)
+        )
+    } else {
+        error.sentence(&subject)
+    }
 }
 
 /// The local git URL `url` (absolute) as silt.toml stores it: relative

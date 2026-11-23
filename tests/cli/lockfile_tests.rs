@@ -271,10 +271,7 @@ fn test_silt_update_works() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("Locked"),
-        "expected 'Locked N dependencies.' line; got: {stderr}"
-    );
+    assert_eq!(stderr, "dep: added, path ../dep\n");
     assert!(app.join("silt.lock").is_file(), "silt.lock not written");
 }
 

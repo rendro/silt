@@ -291,6 +291,7 @@ impl crate::diagnostic::SourceView for CanonicalFiles<'_> {
         Some(crate::diagnostic::Located {
             file: name,
             position: self.0.position(span),
+            shown: None,
         })
     }
 }
@@ -330,16 +331,14 @@ impl crate::diagnostic::SourceView for ProgramFiles<'_> {
         Some(crate::diagnostic::Located {
             file: self.name(file),
             position: self.sources.position(span),
+            shown: crate::package_graph::shown_place(&file.path),
         })
     }
 
     /// A frame in code silt adds itself is put in the entry file.
     fn frame(&self, span: crate::source::Span) -> String {
         match self.locate(span) {
-            Some(located) => {
-                let p = located.position.expect("a file of the map has positions");
-                format!("{}:{}:{}", located.file, p.line, p.col)
-            }
+            Some(located) => located.place(),
             None => format!(
                 "{}:<unknown location>",
                 crate::manifest::display_path(Path::new(self.path)).display()

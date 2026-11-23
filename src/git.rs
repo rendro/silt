@@ -291,10 +291,77 @@ impl std::error::Error for InvalidGitUrl {}
 pub(crate) fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     match git_url_problem(url) {
         None => Ok(()),
-        Some(problem) => Err(InvalidGitUrl {
-            url: display_url(url),
-            reason: format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
-        }),
+        Some(problem) => {
+            // A URL with its `//` left out has one fix, written out
+            // whole (its user and password hidden, as everywhere).
+            let fixed = (problem == SCHEME_WITHOUT_SLASHES)
+                .then(|| with_scheme_slashes(url))
+                .flatten()
+                .filter(|fixed| git_url_problem(fixed).is_none());
+            let reason = match fixed {
+                Some(fixed) => format!(
+                    "is a URL with its `//` left out: write it `{}`",
+                    shown_like(url, &fixed)
+                ),
+                None => format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
+            };
+            Err(InvalidGitUrl {
+                url: display_url(url),
+                reason,
+            })
+        }
+    }
+}
+
+/// `fixed`, the URL `url` written in another way, shown so that it shows
+/// no more of it than `url` shows ([`display_url`]): when `url` is shown
+/// with a part hidden (all before its last `@`), so is `fixed`, all after
+/// its `://` and before its last `@` (`file://***@host/r.git`), whatever
+/// its form would show of itself (a `file://` URL is shown whole after
+/// its authority).
+fn shown_like(url: &str, fixed: &str) -> String {
+    match (userinfo_place(url), fixed.rfind('@')) {
+        (Some(_), Some(last)) => {
+            let start = fixed.find("://").map_or(0, |at| at + 3).min(last);
+            escape_for_display(&format!("{}***{}", &fixed[..start], &fixed[last..]))
+        }
+        _ => display_url(fixed),
+    }
+}
+
+/// The rule of [`validate_git_url`] that a URL of a known scheme with its
+/// `//` left out breaks ([`is_scheme_without_slashes`]).
+const SCHEME_WITHOUT_SLASHES: &str =
+    "is a URL with its `//` left out: write `://` after the scheme";
+
+/// `url`, a URL of a known scheme with its `//` left out, as it is
+/// written with them: `file:/srv/r.git` is `file:///srv/r.git`,
+/// `https:host/r.git` and `https:/host/r.git` are `https://host/r.git`;
+/// the scheme in lower case. `None` when there is no one way to write
+/// it: nothing after the scheme, or a `file:` URL of a relative path.
+/// (Whether the result is a URL [`validate_git_url`] takes is the
+/// caller's question.)
+fn with_scheme_slashes(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once(':')?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme == "file" {
+        // A file URL names an absolute path: `file://` and the path.
+        return rest.starts_with('/').then(|| format!("file://{rest}"));
+    }
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    (!rest.is_empty() && !rest.starts_with('/')).then(|| format!("{scheme}://{rest}"))
+}
+
+impl InvalidGitUrl {
+    /// The refusal as one sentence about `subject` (`--git URL \`x\``):
+    /// the subject and the rule when the rule is said of it (`must not
+    /// ...`, `is ...`), else the subject, `:` and the rule.
+    pub(crate) fn sentence(&self, subject: &str) -> String {
+        if self.reason.starts_with("must ") || self.reason.starts_with("is ") {
+            format!("{subject} {}", self.reason)
+        } else {
+            format!("{subject}: {}", self.reason)
+        }
     }
 }
 
@@ -355,7 +422,7 @@ fn git_url_problem(url: &str) -> Option<String> {
                 .to_string()
         }
     } else if is_scheme_without_slashes(url) {
-        "is a URL with its `//` left out: write `://` after the scheme".to_string()
+        SCHEME_WITHOUT_SLASHES.to_string()
     } else if has_accepted_url_form(url) && is_scp_form_with_password(url) {
         "the form `user@host:path` holds no password (git would take what stands \
          before the first `:` for the host): leave the password out, and ssh asks \
@@ -1103,6 +1170,15 @@ pub(crate) trait EscapedDisplay: fmt::Display {}
 
 // ── Cache path resolution ──────────────────────────────────────────────
 
+/// Whether `path`, made canonical, is in the cache of git checkouts
+/// ([`cache_dir`]): a fetched dependency's file.
+pub(crate) fn is_in_cache(path: &Path) -> bool {
+    match compute_cache_root() {
+        Ok(root) => path.starts_with(crate::source::canonical_path_lenient(&root)),
+        Err(_) => false,
+    }
+}
+
 /// Returns the cache root directory: `$XDG_CACHE_HOME/silt/git/` on Unix
 /// when set (else `$HOME/.cache/silt/git/` on Unix; else
 /// `$HOME/.silt/cache/git/` as a final fallback), or
@@ -1284,6 +1360,69 @@ fn ls_remote_resolve(url: &str, refspec: &str) -> Result<Option<String>, GitErro
         }
     }
     Ok(None)
+}
+
+/// The names of the repository's tags (`tags`) or branches, by
+/// `git ls-remote --tags` or `--heads`, in the order of their versions
+/// (`v0.9.0` before `v0.10.0`): for a message that says which there are.
+pub(crate) fn remote_ref_names(url: &str, tags: bool) -> Result<Vec<String>, GitError> {
+    check_url(url)?;
+    let (flag, prefix) = match tags {
+        true => ("--tags", "refs/tags/"),
+        false => ("--heads", "refs/heads/"),
+    };
+    let output = run_git(&["ls-remote", flag, "--", url])?;
+    let mut names: Vec<String> = output
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .filter_map(|name| name.strip_prefix(prefix))
+        // (An annotated tag is listed a second time, as `<tag>^{}`.)
+        .filter(|name| !name.ends_with("^{}"))
+        .map(str::to_string)
+        .collect();
+    names.sort_by(|a, b| version_order(a, b));
+    names.dedup();
+    Ok(names)
+}
+
+/// `a` and `b` in the order of versions: each run of digits compared as
+/// a number, everything else as text (`v0.9.0` before `v0.10.0`); a
+/// number before a text where one stands against the other, a name
+/// before a longer one that starts with its runs, and names whose runs
+/// are all equal (`1` and `01`) by their text. A total order, whatever
+/// names a repository has.
+fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    // The runs of digits and of other characters, in turn.
+    fn runs(s: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        let bytes = s.as_bytes();
+        for i in 1..=bytes.len() {
+            if i == bytes.len() || bytes[i].is_ascii_digit() != bytes[i - 1].is_ascii_digit() {
+                out.push(&s[start..i]);
+                start = i;
+            }
+        }
+        out
+    }
+    let number = |run: &str| !run.is_empty() && run.bytes().all(|b| b.is_ascii_digit());
+    let run_order = |x: &str, y: &str| match (number(x), number(y)) {
+        (true, true) => {
+            let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
+            x.len().cmp(&y.len()).then_with(|| x.cmp(y))
+        }
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => x.cmp(y),
+    };
+    let (ra, rb) = (runs(a), runs(b));
+    ra.iter()
+        .zip(&rb)
+        .map(|(x, y)| run_order(x, y))
+        .find(|order| *order != Ordering::Equal)
+        .unwrap_or_else(|| ra.len().cmp(&rb.len()))
+        .then_with(|| a.cmp(b))
 }
 
 /// Cheap reachability check: `git ls-remote -- <url> HEAD`. Used by
@@ -2314,29 +2453,118 @@ mod tests {
         }
     }
 
+    /// Tags are listed in the order of their versions, a run of digits
+    /// read as a number.
+    #[test]
+    fn ref_names_are_in_the_order_of_versions() {
+        let mut names = vec![
+            "v0.10.0", "v0.9.0", "v1.0.0", "v0.9.1", "main", "v0.09.2", "v0.9",
+        ];
+        names.sort_by(|a, b| version_order(a, b));
+        assert_eq!(
+            names,
+            [
+                "main", "v0.9", "v0.9.0", "v0.9.1", "v0.09.2", "v0.10.0", "v1.0.0"
+            ]
+        );
+    }
+
+    /// A refusal is one sentence about what was refused: the subject and
+    /// the rule said of it, or, for the one rule that is not said of the
+    /// value, the subject, `:` and the rule (its words as they are).
+    /// FAIL before: `silt add` put `doesn't look like a git URL:` in
+    /// front of every rule.
+    #[test]
+    fn a_refusal_reads_as_one_sentence_about_its_subject() {
+        for (url, joined) in [
+            ("", "S must not be empty;"),
+            ("-x", "S must not start with `-`;"),
+            ("a b", "S must not contain whitespace"),
+            ("src", "S is not a recognised git URL form;"),
+            (
+                "file:/srv/r.git",
+                "S is a URL with its `//` left out: write it",
+            ),
+            ("https://h:x/r.git", "S is not a valid URL:"),
+            (
+                "user:word@host:p",
+                "S: the form `user@host:path` holds no password (git would take what \
+                 stands before the first `:` for the host)",
+            ),
+        ] {
+            let sentence = validate_git_url(url).unwrap_err().sentence("S");
+            assert!(sentence.starts_with(joined), "{url:?}: {sentence}");
+        }
+    }
+
     /// A URL of any accepted scheme without `//` is mistyped, refused
     /// before git takes it for the host `https`, `ssh` or `file`. FAIL
     /// before: `ssh:`, `git:` and `file:` without `//` were taken for
-    /// hosts.
+    /// hosts. The message writes the URL out with its `//` when that is a
+    /// URL silt takes, its user and password hidden. FAIL before: it said
+    /// only "write `://` after the scheme".
     #[test]
     fn a_url_with_its_slashes_left_out_is_refused() {
-        for url in [
-            "https:/user:word@example.com/pkg.git",
-            "https:example.com/pkg.git",
-            "HTTP:/example.com/pkg.git",
-            "http:example.com:pkg.git",
-            "ssh:/git@example.com/team/pkg.git",
-            "ssh:team/pkg.git",
-            "SSH:team/pkg.git",
-            "git:team/pkg.git",
-            "Git:/example.com/team/pkg.git",
-            "file:/srv/repo.git",
-            "FILE:srv/repo.git",
+        const RULE: &str = "is a URL with its `//` left out: write `://` after the scheme;";
+        for (url, fixed) in [
+            (
+                "https:/user:word@example.com/pkg.git",
+                Some("https://***@example.com/pkg.git"),
+            ),
+            (
+                "https:example.com/pkg.git",
+                Some("https://example.com/pkg.git"),
+            ),
+            (
+                "HTTP:/example.com/pkg.git",
+                Some("http://example.com/pkg.git"),
+            ),
+            // Written with `//` it has no port: no one way to write it.
+            ("http:example.com:pkg.git", None),
+            (
+                "ssh:/git@example.com/team/pkg.git",
+                Some("ssh://***@example.com/team/pkg.git"),
+            ),
+            ("ssh:team/pkg.git", Some("ssh://team/pkg.git")),
+            ("SSH:team/pkg.git", Some("ssh://team/pkg.git")),
+            ("git:team/pkg.git", Some("git://team/pkg.git")),
+            (
+                "Git:/example.com/team/pkg.git",
+                Some("git://example.com/team/pkg.git"),
+            ),
+            ("file:/srv/repo.git", Some("file:///srv/repo.git")),
+            // A file URL of a relative path: no one way to write it.
+            ("FILE:srv/repo.git", None),
+            ("https:", None),
+            // The value is shown hidden before its last `@`: so is the
+            // URL written out, though a `file://` URL shows an `@` after its
+            // authority. FAIL before: the password was shown.
+            (
+                "file:/ann:S3CR3TXYZ@localhost/srv/r.git",
+                Some("file://***@localhost/srv/r.git"),
+            ),
+            (
+                "file:/srv/ann:S3CR3TXYZ@x/r.git",
+                Some("file://***@x/r.git"),
+            ),
+            ("file:/srv/r.git?t=S3CR3TXYZ@x", Some("file://***@x")),
+            ("FILE:/ann:S3CR3TXYZ@h/r.git", Some("file://***@h/r.git")),
+            (
+                "file:/S3CR3TXYZ@localhost/srv/r.git",
+                Some("file://***@localhost/srv/r.git"),
+            ),
         ] {
             let reason = rejection_reason(url);
+            match fixed {
+                Some(fixed) => assert_eq!(
+                    reason,
+                    format!("is a URL with its `//` left out: write it `{fixed}`"),
+                    "{url}"
+                ),
+                None => assert!(reason.starts_with(RULE), "{url}: {reason}"),
+            }
             assert!(
-                reason
-                    .starts_with("is a URL with its `//` left out: write `://` after the scheme;"),
+                !reason.contains("word") && !reason.contains("3TX"),
                 "{url}: {reason}"
             );
         }

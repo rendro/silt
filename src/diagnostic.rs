@@ -489,6 +489,38 @@ pub struct Located {
     /// `None` when the place has a name but no position that can be
     /// shown in the text at hand.
     pub position: Option<Position>,
+    /// How a terminal names the file instead of `file`, when it does.
+    pub shown: Option<ShownPlace>,
+}
+
+/// A file as a terminal names it in other words than by `Located::file`:
+/// by `path`, then `(what)` after the line and column
+/// (src/lib.silt:4:3 (dependency `fm`, branch `main` at 0f1a42a)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShownPlace {
+    pub path: String,
+    /// What the file is, in words that are shown as they are.
+    pub what: String,
+    /// The help for an error found there (not at run time), if there is
+    /// one: the way out of an error in a fetched dependency's code.
+    pub help: Option<String>,
+}
+
+impl Located {
+    /// The place as one string, `file:line:col` or `file`; for a file
+    /// named in other words ([`ShownPlace`]), its path and `(what)`
+    /// after them.
+    pub(crate) fn place(&self) -> String {
+        let file = self.shown.as_ref().map_or(&self.file, |s| &s.path);
+        let mut place = match &self.position {
+            Some(p) => format!("{file}:{}:{}", p.line, p.col),
+            None => file.clone(),
+        };
+        if let Some(shown) = &self.shown {
+            place.push_str(&format!(" ({})", shown.what));
+        }
+        place
+    }
 }
 
 /// How the spans of a front door's diagnostics are shown: which name each
@@ -501,14 +533,7 @@ pub trait SourceView {
     /// The location of a call-stack frame at `span`, as one string.
     fn frame(&self, span: Span) -> String {
         match self.locate(span) {
-            Some(Located {
-                file,
-                position: Some(p),
-            }) => format!("{file}:{}:{}", p.line, p.col),
-            Some(Located {
-                file,
-                position: None,
-            }) => file,
+            Some(located) => located.place(),
             None => "<unknown location>".to_string(),
         }
     }
@@ -581,10 +606,12 @@ impl SourceMap {
 
 impl SourceView for SourceMap {
     fn locate(&self, span: Span) -> Option<Located> {
-        let file = source_name_for_display(&self.get(span.file)?.path)?;
+        let name = &self.get(span.file)?.path;
+        let file = source_name_for_display(name)?;
         Some(Located {
             file,
             position: self.position(span),
+            shown: crate::package_graph::shown_place(name),
         })
     }
 }
@@ -773,12 +800,13 @@ pub(crate) fn render_human_in(view: &dyn SourceView, d: &Diagnostic, c: &Colors)
         phase = d.phase().word(),
         msg = visible_text(&d.message),
     );
-    if let Some(located) = view.locate(d.span) {
+    let located = view.locate(d.span);
+    if let Some(located) = &located {
         write_snippet(
             &mut out,
             c,
             "-->",
-            &located,
+            located,
             '^',
             caret_label(&visible_text(&d.message)),
             color,
@@ -804,6 +832,19 @@ pub(crate) fn render_human_in(view: &dyn SourceView, d: &Diagnostic, c: &Colors)
         write_body(&mut out, c, "= note:", &visible_text(note));
     }
     for help in &d.help_lines(view) {
+        write_body(&mut out, c, "= help:", &visible_text(help));
+    }
+    // An error found in the code of a fetched dependency, not at run
+    // time (where this package's own call can be the cause): the way out
+    // is in a silt.toml or upstream.
+    let place_help = located
+        .as_ref()
+        .and_then(|l| l.shown.as_ref())
+        .and_then(|s| s.help.as_ref());
+    if let Some(help) = place_help
+        && d.is_error()
+        && !runtime
+    {
         write_body(&mut out, c, "= help:", &visible_text(help));
     }
     if runtime {
@@ -851,16 +892,11 @@ fn write_snippet(
     text: &str,
     mark_color: &str,
 ) {
-    let file = crate::source::shown_path(&located.file);
+    let place = crate::source::shown_path(located.place());
+    let _ = write!(out, "\n {}{arrow}{} {place}", c.cyan, c.reset);
     let Some(p) = &located.position else {
-        let _ = write!(out, "\n {}{arrow}{} {file}", c.cyan, c.reset);
         return;
     };
-    let _ = write!(
-        out,
-        "\n {}{arrow}{} {file}:{}:{}",
-        c.cyan, c.reset, p.line, p.col
-    );
     let full_col = p.col.saturating_sub(1);
     let mut excerpt = excerpt_around(&p.line_text, full_col);
     excerpt.text = visible_line(&excerpt.text);

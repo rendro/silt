@@ -154,6 +154,54 @@ pub enum LockChange {
     Rewritten,
 }
 
+/// The checkout of each git package resolved in this process, with what
+/// the package is in words and the help that leads out of an error in
+/// it: how a terminal names a file in it ([`shown_place`]).
+static FETCHED: std::sync::Mutex<Vec<(PathBuf, String, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Note the checkout `root` (canonical) of a git package: what it is
+/// (`what`) and the help for an error in it.
+fn note_fetched(root: &Path, what: String, help: String) {
+    let mut fetched = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
+    fetched.retain(|(r, _, _)| r != root);
+    fetched.push((root.to_path_buf(), what, help));
+}
+
+/// How a terminal names the file `name` when it is in the checkout of a
+/// git package resolved in this process: by its path in the package
+/// (`src/lib.silt`), with the dependency, its ref and its commit after
+/// the place. A checkout is in the cache, far from the package that
+/// needs it: its path names neither.
+pub(crate) fn shown_place(
+    name: &crate::source::SourceName,
+) -> Option<crate::diagnostic::ShownPlace> {
+    use crate::source::SourceName;
+    let (SourceName::Path(path) | SourceName::Manifest(path)) = name else {
+        return None;
+    };
+    let fetched = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
+    if fetched.is_empty() {
+        return None;
+    }
+    let canonical = crate::source::canonical_path_lenient(path);
+    fetched.iter().find_map(|(root, what, help)| {
+        let inner = path
+            .strip_prefix(root)
+            .or_else(|_| canonical.strip_prefix(root))
+            .ok()?;
+        let parts: Vec<String> = inner
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        Some(crate::diagnostic::ShownPlace {
+            path: parts.join("/"),
+            what: what.clone(),
+            help: Some(help.clone()),
+        })
+    })
+}
+
 /// Resolve the package graph of the project whose `silt.toml` is in
 /// `project_root`, adding every manifest (and the lockfile) to
 /// `sources`.
@@ -439,13 +487,11 @@ impl Resolver<'_> {
                     None => match git::resolve_ref(&url, ref_spec) {
                         Ok(commit) => commit,
                         Err(e) => {
-                            self.diagnostics.push(git_diagnostic(
-                                entry.value,
-                                &key_name,
-                                &url,
-                                ref_spec,
-                                &e,
-                            ));
+                            let mut d = git_diagnostic(entry.value, &key_name, &url, ref_spec, &e);
+                            if let GitError::RefNotFound { .. } = e {
+                                d.notes.extend(known_refs_note(&url, ref_spec));
+                            }
+                            self.diagnostics.push(d);
                             return None;
                         }
                     },
@@ -565,6 +611,9 @@ impl Resolver<'_> {
             self.failed.insert(source);
             return None;
         }
+        if let Some((what, help)) = self.fetched_words(from, key_name, &locked) {
+            note_fetched(&root, what, help);
+        }
         let manifest = match Manifest::load(&root.join("silt.toml"), self.sources) {
             Ok(manifest) => manifest,
             Err(d) => {
@@ -666,10 +715,7 @@ impl Resolver<'_> {
             let mut d = Diagnostic::error(
                 Code::DuplicatePackage,
                 at,
-                format!(
-                    "{} different packages are named `{name}`",
-                    count_word(ids.len())
-                ),
+                self.duplicate_message(&name, &ids),
             );
             for &id in &ids {
                 // The last key of the last chain is the primary span.
@@ -683,6 +729,155 @@ impl Resolver<'_> {
             ));
             self.diagnostics.push(d);
         }
+    }
+
+    /// What `DuplicatePackage` says of the packages `ids`, named `name`:
+    /// that one repository is required at several commits, when they are
+    /// all one repository's (however its URL is written), else that they
+    /// are different packages.
+    fn duplicate_message(&self, name: &str, ids: &[PackageId]) -> String {
+        let count = count_word(ids.len());
+        let different = || format!("{count} different packages are named `{name}`");
+        let Some(found) = ids
+            .iter()
+            .map(|id| self.repository(*id))
+            .collect::<Option<Vec<(String, String)>>>()
+        else {
+            return different();
+        };
+        if found
+            .iter()
+            .any(|(repository, _)| *repository != found[0].0)
+        {
+            return different();
+        }
+        let mut commits: Vec<&String> = found.iter().map(|(_, commit)| commit).collect();
+        commits.sort();
+        commits.dedup();
+        if commits.len() < ids.len() {
+            // (The same commit by two URLs that name one repository.)
+            return format!(
+                "`{name}` is required from one repository, its URL written in different ways"
+            );
+        }
+        // By the key that requires each, in the order of the keys.
+        let mut each: Vec<(String, &String)> = ids
+            .iter()
+            .zip(&found)
+            .map(|(id, (_, commit))| (self.via_key(*id), commit))
+            .collect();
+        each.sort();
+        let each: Vec<String> = each
+            .into_iter()
+            .map(|(key, commit)| format!("{} (via `{key}`)", &commit[..commit.len().min(7)]))
+            .collect();
+        format!(
+            "`{name}` is required at {count} commits: {}",
+            and_list(&each)
+        )
+    }
+
+    /// The repository of the git package `id`, in one form however its
+    /// URL is written ([`repository_form`]), and its commit; `None` for
+    /// a path package.
+    fn repository(&self, id: PackageId) -> Option<(String, String)> {
+        self.by_source
+            .iter()
+            .find_map(|(source, found)| match source {
+                SourceKey::Git(url, commit) if *found == id => {
+                    Some((repository_form(url), commit.clone()))
+                }
+                _ => None,
+            })
+    }
+
+    /// What the git package at `locked`, the dependency `key` of `from`,
+    /// is in words, and the help for an error in its code; `None` for
+    /// another package. The help names what this package's own files can
+    /// change: the ref of the dependency in the silt.toml that declares
+    /// it, or, for one that comes with a fetched package, the ref of that
+    /// package in the silt.toml that declares it.
+    fn fetched_words(
+        &self,
+        from: PackageId,
+        key: &str,
+        locked: &LockedSource,
+    ) -> Option<(String, String)> {
+        let LockedSource::Git {
+            ref_spec,
+            resolved_sha,
+            ..
+        } = locked
+        else {
+            return None;
+        };
+        let commit = &resolved_sha[..resolved_sha.len().min(7)];
+        let pin = match ref_spec {
+            GitRef::Rev(_) => format!(" at {commit}"),
+            GitRef::Branch(name) | GitRef::Tag(name) => format!(
+                ", {} `{}` at {commit}",
+                ref_spec.kind(),
+                escape_for_display(name)
+            ),
+        };
+        let root = PackageId(0);
+        if from == root {
+            return Some((
+                format!("dependency `{key}`{pin}"),
+                format!(
+                    "the error is in the dependency `{key}`, not in this package: pin another \
+                     branch, tag or rev of it in silt.toml, or have it fixed in its repository"
+                ),
+            ));
+        }
+        let parent = self.via_key(from);
+        // The first package on the way up that this package's own files
+        // declare: the dependency itself when `from` is local, else the
+        // fetched package it comes with.
+        let (target, declarer) = if self.inside[from.0 as usize].is_none() {
+            (key.to_string(), from)
+        } else {
+            let mut at = from;
+            loop {
+                let (up, _) = self.via[at.0 as usize]?;
+                if self.inside[up.0 as usize].is_none() {
+                    break (self.via_key(at), up);
+                }
+                at = up;
+            }
+        };
+        let manifest = if declarer == root {
+            "silt.toml".to_string()
+        } else {
+            crate::source::shown_path(display_path(
+                &self.nodes[declarer.0 as usize].root.join("silt.toml"),
+            ))
+        };
+        let it = if target == key {
+            "it".to_string()
+        } else {
+            format!("`{target}`")
+        };
+        Some((
+            format!("dependency `{key}` of `{parent}`{pin}"),
+            format!(
+                "the error is in `{key}`, a dependency of `{parent}`, not in this package: pin \
+                 another branch, tag or rev of {it} in {manifest}, or have it fixed in its repository"
+            ),
+        ))
+    }
+
+    /// The key of the dependency that first reached `id`; its name for the
+    /// root.
+    fn via_key(&self, id: PackageId) -> String {
+        let key = self.via[id.0 as usize].and_then(|(parent, span)| {
+            self.nodes[parent.0 as usize]
+                .deps
+                .iter()
+                .find(|(_, _, at)| *at == span)
+                .map(|(key, _, _)| *key)
+        });
+        intern::resolve(key.unwrap_or(self.nodes[id.0 as usize].name)).to_string()
     }
 
     /// Each problem reported from `diagnostics[reported..]` while the
@@ -840,6 +1035,37 @@ impl Resolver<'_> {
     }
 }
 
+/// `items` as a message lists them: `a`, `a and b`, `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The git URL `url` (a local one made absolute) in one form for each
+/// repository: a local one by its canonical path, whether written as a
+/// path or a `file://` URL, with or without a `/` at its end; any other
+/// without a `/` at its end.
+fn repository_form(url: &str) -> String {
+    if !git::is_local_git_url(url) {
+        return url.trim_end_matches('/').to_string();
+    }
+    let path = url.strip_prefix("file://").unwrap_or(url);
+    // (`file:///C:/repo` on Windows names `C:/repo`.)
+    let path = match path.strip_prefix('/') {
+        Some(rest) if cfg!(windows) && rest.as_bytes().get(1) == Some(&b':') => rest,
+        _ => path,
+    };
+    let canonical = crate::source::canonical_path_lenient(Path::new(path));
+    let shown = canonical.display().to_string();
+    match shown.trim_end_matches(['/', '\\']) {
+        "" => shown,
+        trimmed => trimmed.to_string(),
+    }
+}
+
 /// `n` as a word for a message: "two", "three", ... .
 fn count_word(n: usize) -> String {
     match n {
@@ -913,6 +1139,32 @@ fn git_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef, err: &GitEr
     d.notes
         .extend(lines.map(|line| line.trim_start().to_string()));
     d
+}
+
+/// For a branch or a tag `ref_spec` that `url` does not have: which
+/// it has, the last few in the order of versions. `None` for a rev, or
+/// when git cannot list them.
+fn known_refs_note(url: &str, ref_spec: &GitRef) -> Option<String> {
+    const SHOWN: usize = 5;
+    let (tags, word) = match ref_spec {
+        GitRef::Tag(_) => (true, "tags"),
+        GitRef::Branch(_) => (false, "branches"),
+        GitRef::Rev(_) => return None,
+    };
+    let names = git::remote_ref_names(url, tags).ok()?;
+    if names.is_empty() {
+        return Some(format!("the repository has no {word}"));
+    }
+    let shown = &names[names.len().saturating_sub(SHOWN)..];
+    let list = shown
+        .iter()
+        .map(|name| format!("`{}`", escape_for_display(name)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(match names.len() > SHOWN {
+        true => format!("{word} there: {list} (the last {SHOWN} of {})", names.len()),
+        false => format!("{word} there: {list}"),
+    })
 }
 
 /// The git dependency `key` on `url` at `ref_spec` is not in the cache,
@@ -1043,6 +1295,27 @@ mod tests {
             &GitRef::Branch("main".into()),
             &GitRef::Tag("main".into())
         ));
+    }
+
+    /// One repository has one form, however its URL is written.
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_has_one_form_however_its_url_is_written() {
+        for url in ["/srv/none/repo", "/srv/none/repo/", "file:///srv/none/repo"] {
+            assert_eq!(repository_form(url), "/srv/none/repo", "{url}");
+        }
+        assert_eq!(
+            repository_form("https://example.com/r.git/"),
+            "https://example.com/r.git"
+        );
+        assert_ne!(
+            repository_form("/srv/none/a"),
+            repository_form("/srv/none/b")
+        );
+        assert_eq!(
+            and_list(&["a".into(), "b".into(), "c".into()]),
+            "a, b and c"
+        );
     }
 
     #[test]

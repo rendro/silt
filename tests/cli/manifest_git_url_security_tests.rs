@@ -319,8 +319,8 @@ fn silt_add_rejects_option_shaped_git_url() {
         "silt add: expected a clean error exit with code 1; stderr={stderr}"
     );
     assert!(
-        stderr.contains("doesn't look like a git URL")
-            && stderr.contains("must not start with `-`")
+        stderr.contains("error: silt add: --git URL `")
+            && stderr.contains("` must not start with `-`")
             && stderr.contains("`user@host:path`"),
         "silt add: expected the shared URL rule in the diagnostic; stderr={stderr}"
     );
@@ -459,15 +459,29 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
     const RULE_LETTER_SCHEME: &str = "is not a recognised git URL form: the scheme `c://` \
         is not accepted, use `ssh://` or `https://` instead";
     let cases: &[(&str, &str, &str)] = &[
-        ("file:/srv/repo.git", "file:/srv/repo.git", RULE_SLASHES),
+        // With the one way to write it, when there is one, its user
+        // hidden too.
+        (
+            "file:/srv/repo.git",
+            "file:/srv/repo.git",
+            "is a URL with its `//` left out: write it `file:///srv/repo.git`",
+        ),
         ("FILE:srv/repo.git", "FILE:srv/repo.git", RULE_SLASHES),
-        ("ssh:team/pkg.git", "ssh:team/pkg.git", RULE_SLASHES),
+        (
+            "ssh:team/pkg.git",
+            "ssh:team/pkg.git",
+            "is a URL with its `//` left out: write it `ssh://team/pkg.git`",
+        ),
         (
             "ssh:/git@example.com/team/pkg.git",
             "***@example.com/team/pkg.git",
-            RULE_SLASHES,
+            "is a URL with its `//` left out: write it `ssh://***@example.com/team/pkg.git`",
         ),
-        ("git:team/pkg.git", "git:team/pkg.git", RULE_SLASHES),
+        (
+            "git:team/pkg.git",
+            "git:team/pkg.git",
+            "is a URL with its `//` left out: write it `git://team/pkg.git`",
+        ),
         (
             "user:S3CR3TXYZ@example.com:team/pkg.git",
             "***@example.com:team/pkg.git",
@@ -597,9 +611,13 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let context = format!("{args:?} with {url:?}");
             assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
+            // (A rule that writes the URL out lists no forms.)
+            let said = match rule.contains("write it `") {
+                true => format!(" {rule}\n"),
+                false => format!(" {rule}; expected "),
+            };
             assert!(
-                stderr.contains(&format!("`{shown}`"))
-                    && stderr.contains(&format!(": {rule}; expected ")),
+                stderr.contains(&format!("`{shown}`")) && stderr.contains(&said),
                 "{context}: {stderr}"
             );
             assert!(!stderr.contains("3TX"), "{context}: {stderr}");
@@ -672,14 +690,14 @@ fn values_git_reads_otherwise_are_refused_before_git_runs() {
             let context = format!("{args:?} with {url:?}");
             if cfg!(windows) {
                 assert!(
-                    !stderr.contains("invalid git URL") && !stderr.contains("look like a git URL"),
+                    !stderr.contains("invalid git URL") && !stderr.contains("--git URL `"),
                     "{context}: {stderr}"
                 );
             } else {
                 assert_eq!(out.status.code(), Some(1), "{context}: {stderr}");
                 assert!(
                     stderr.contains(&format!("`{shown}`"))
-                        && stderr.contains(&format!(": {rule}; expected ")),
+                        && stderr.contains(&format!(" {rule}; expected ")),
                     "{context}: {stderr}"
                 );
                 assert!(!stderr.contains("3TX"), "{context}: {stderr}");
@@ -1282,7 +1300,7 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
         GitSays(&'static [&'static str]),
     }
     // The values, and what else their output must show (see `Expect`).
-    let urls = [
+    let mut urls = vec![
         (
             "https://user:S3CR 3TXYZ@127.0.0.1:1/pkg.git".to_string(),
             Expect::NoMore,
@@ -1400,7 +1418,37 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
             format!("u:{marker}@127.0.0.1/team/pkg.git"),
             Expect::DriveOnWindows,
         ),
+        // A URL with its `//` left out, written out by the refusal: hidden
+        // as the value is, though a `file://` URL shows an `@` after its
+        // authority. FAIL before the review fix: the written-out URL showed
+        // the password.
+        (
+            format!("file:/ann:{marker}@localhost/srv/r.git"),
+            Expect::Refused,
+        ),
+        (format!("file:/srv/ann:{marker}@x/r.git"), Expect::Refused),
+        (format!("file:/srv/r.git?t={marker}@x"), Expect::Refused),
+        (format!("FILE:/ann:{marker}@h/r.git"), Expect::Refused),
+        (
+            format!("file:/{marker}@localhost/srv/r.git"),
+            Expect::Refused,
+        ),
+        // The name of a directory beside `silt add` (see `directories`):
+        // no "write it `./...`" for a value with an `@`. FAIL before the
+        // review fix: shown whole in that hint.
+        (format!("x/{marker}@d"), Expect::Refused),
+        (format!("sub@{marker}@e"), Expect::Refused),
     ];
+    // Values that `silt add` finds as a directory in its working
+    // directory (`:` names none on Windows).
+    let mut directories = vec![format!("x/{marker}@d"), format!("sub@{marker}@e")];
+    if cfg!(unix) {
+        directories.push(format!("ann:{marker}@dir"));
+    }
+
+    if cfg!(unix) {
+        urls.push((format!("ann:{marker}@dir"), Expect::Refused));
+    }
     let pieces: Vec<&str> = (0..=marker.len() - 3).map(|i| &marker[i..i + 3]).collect();
     // Whether git is there: only then can its output be asked for.
     let git_is_there = Command::new("git")
@@ -1449,6 +1497,9 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                 let adder = ws.join("adder");
                 let _ = fs::remove_dir_all(&adder);
                 write_package(&adder, "adder", &[], "main.silt", "fn main() {}\n");
+                if directories.contains(url) {
+                    fs::create_dir_all(adder.join(url)).unwrap();
+                }
                 let mut cmd = Command::new(env!("CARGO_BIN_EXE_silt"));
                 match command {
                     "add" => cmd
@@ -1485,9 +1536,8 @@ fn no_output_of_a_command_shows_the_password_of_a_git_url() {
                     assert!(!all.contains(piece), "{context}: `{piece}` is shown: {all}");
                 }
                 // `check` and `update` say `invalid git URL`, `add`
-                // `doesn't look like a git URL`.
-                let refused =
-                    all.contains("invalid git URL") || all.contains("look like a git URL");
+                // `--git URL ...`.
+                let refused = all.contains("invalid git URL") || all.contains("--git URL `");
                 match expect {
                     Expect::NoMore => {}
                     Expect::Refused => assert!(refused, "{context}: {all}"),

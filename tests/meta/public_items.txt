@@ -443,15 +443,20 @@ src/diagnostic.rs: pub fn severity
 src/diagnostic.rs: pub fn severity
 src/diagnostic.rs: pub fn span
 src/diagnostic.rs: pub fn word
+src/diagnostic.rs: pub help
 src/diagnostic.rs: pub line
 src/diagnostic.rs: pub line_text
+src/diagnostic.rs: pub path
 src/diagnostic.rs: pub position
+src/diagnostic.rs: pub shown
 src/diagnostic.rs: pub struct Diagnostic
 src/diagnostic.rs: pub struct Fix
 src/diagnostic.rs: pub struct Located
 src/diagnostic.rs: pub struct Position
+src/diagnostic.rs: pub struct ShownPlace
 src/diagnostic.rs: pub title
 src/diagnostic.rs: pub trait SourceView
+src/diagnostic.rs: pub what
 src/disassemble.rs: pub fn disassemble_function
 src/evidence.rs: pub cell
 src/evidence.rs: pub enum Evidence
