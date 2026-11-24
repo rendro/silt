@@ -1,8 +1,8 @@
 -- repeat: 10
--- stderr-not-contains: deadlock on main thread
--- A task is parked in `channel.receive`; a second task wakes it while
--- the main thread cancels it. Without the fix about two of three runs
--- hang inside `task.cancel`.
+-- stderr-not-contains: deadlock
+-- A helper is parked in `channel.receive`; a second helper wakes it
+-- while the body returns, which stops it. Without the fix about two of
+-- three runs hang inside the stop.
 import channel
 import task
 import time
@@ -18,12 +18,17 @@ fn go(i, n) {
   match i < n {
     true -> {
       let ch = channel.new(1)
-      let t = task.spawn({ -> channel.receive(ch) })
-      time.sleep(time.ms(2))
-      let s = task.spawn({ -> channel.try_send(ch, i) })
-      let _ = spin(i % 30)
-      task.cancel(t)
-      let _ = task.join_handle(s)
+      let parked = { ->
+        let _ = channel.receive(ch)
+      }
+      let waker = { ->
+        time.sleep(time.ms(2))
+        let _ = channel.try_send(ch, i)
+      }
+      task.background([parked, waker]) { ->
+        time.sleep(time.ms(2))
+        let _ = spin(i % 30)
+      }
       go(i + 1, n)
     }
     false -> ()

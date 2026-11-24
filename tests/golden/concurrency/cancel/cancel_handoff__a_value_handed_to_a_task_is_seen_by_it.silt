@@ -1,17 +1,17 @@
 -- timeout: 120
 -- A value that a sender handed to a task is not dropped with the task
--- when a cancel arrives before the task has run again: the task goes
--- on with it for a bounded number of steps, enough to pass it on by an
+-- when its deadline passes before it has run again: the task goes on
+-- with it for a bounded number of steps, enough to pass it on by an
 -- operation that does not wait.
 --
--- Each round a sender offers one number and a receiver is cancelled at
--- about that moment. Whenever the sender was told that its number was
--- sent, the number is somewhere: the receiver passed it on (`seen`),
--- or it still lies in the channel. `main` waits for it in one of the
--- two places without a time limit; a number that is in neither would
--- leave `main` waiting for ever, which is a deadlock. The sleeps only
--- bring the cancel close to the send: nothing here depends on how long
--- anything takes.
+-- Each round a sender offers one number and a receiver's deadline
+-- passes at about that moment. Whenever the sender was told that its
+-- number was sent, the number is somewhere: the receiver passed it on
+-- (`seen`), or it still lies in the channel. `round` waits for it in
+-- one of the two places without a time limit; a number that is in
+-- neither would leave it waiting for ever, which is a deadlock. The
+-- sleeps only bring the stop close to the send: nothing here depends
+-- on how long anything takes.
 import channel
 import task
 import time
@@ -21,27 +21,29 @@ import time
 fn round(i, capacity) {
   let ch: Channel(Int) = channel.new(capacity)
   let seen: Channel(Int) = channel.new(1)
-  let sender = task.spawn { ->
+  let was_sent: Channel(Bool) = channel.new(1)
+  let sender = { ->
     time.sleep(time.ms(1))
     match channel.select([channel.Send(ch, i), channel.Recv(channel.timeout(time.ms(3)))]) {
-      channel.Sent(_) -> true
-      _ -> false
+      channel.Sent(_) -> channel.send(was_sent, true)
+      _ -> channel.send(was_sent, false)
     }
   }
-  let receiver = task.spawn { ->
-    match channel.receive(ch) {
-      Some(v) -> channel.send(seen, v)
-      None -> ()
+  let receiver = { ->
+    let _ = task.deadline(time.ms(1)) { ->
+      match channel.receive(ch) {
+        Some(v) -> channel.send(seen, v)
+        None -> ()
+      }
     }
   }
-  time.sleep(time.ms(1))
-  task.cancel(receiver)
-  match task.join_handle(sender) {
-    false -> 0
-    true -> match channel.select([channel.Recv(seen), channel.Recv(ch)]) {
+  task.join([sender, receiver])
+  match channel.receive(was_sent) {
+    Some(true) -> match channel.select([channel.Recv(seen), channel.Recv(ch)]) {
       channel.Received(_, Some(^i)) -> 1
       _ -> panic("round {i}: another value than the one that was sent")
     }
+    _ -> 0
   }
 }
 
