@@ -4876,7 +4876,7 @@ mod abandon {
             .block_thread(wait, crate::scheduler::Blocks::Thread)
             .unwrap();
         let err = handle.try_get().unwrap().unwrap_err();
-        handle.mark_joined();
+        handle.mark_read();
         assert_eq!(err.message, "the probe failed");
         assert_eq!(settled(&abandoned), 1);
         drop(main);

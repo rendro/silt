@@ -3,7 +3,7 @@
 -- stderr-contains: FAIL task_join__in_a_test_test.silt::test_a_failing_piece_fails_the_test
 -- stderr-contains: panic: piece failed
 -- stderr-contains: 2 tests: 1 passed, 1 failed
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- exit: 1
 -- In a test, a join waits for its pieces; a piece that fails fails the
 -- test, once.

@@ -6,9 +6,9 @@
 //!
 //! - `print` and `println` write to its stdout, `io.eprint` and
 //!   `io.eprintln` to its stderr;
-//! - what the runtime prints for the program (the report of a task
-//!   that failed and was never joined, the log of an `http.serve`
-//!   handler that failed) goes to its stderr;
+//! - what the runtime prints for the program (the report of a stream
+//!   stage that failed and whose output was never read, the log of an
+//!   `http.serve` handler that failed) goes to its stderr;
 //! - `time.now`, `time.today`, `time.sleep`, the timeouts of
 //!   `channel.timeout` and `channel.receive_timeout`, and the deadline of
 //!   `task.deadline` read its clock.

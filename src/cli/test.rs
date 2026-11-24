@@ -254,9 +254,6 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     let mut total = 0;
     let mut skipped = 0;
     let mut counts = Counts::default();
-    // The failures of spawned tasks are taken from the scheduler and
-    // charged to the test that spawned the task.
-    crate::scheduler::collect_unjoined_failures();
     let mut owners = TaskOwners::default();
     // The diagnostics shown so far, as rendered: the errors and the
     // warnings of a module that several test files import are shown
@@ -350,6 +347,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index);
 
         let mut vm = Vm::new(crate::HostIo::process());
+        // The failures that nothing read are taken from the VM and
+        // charged to the test whose task (or stage) failed.
+        vm.collect_unread_failures();
         // A `process.exit` fails the file's top-level code, or the test
         // it is in: the other files and tests run.
         vm.set_exit(Exit::FailsTestFile);
@@ -378,9 +378,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             counts.file_errors.setup += 1;
             continue;
         }
-        // A task of the file's top-level code that failed and that
-        // nobody joined fails the file.
-        let setup_failures = owners.take_task_failures(setup_owner, &mut counts);
+        // A failure of the file's top-level code that nothing read (a
+        // stage it holds) fails the file.
+        let setup_failures = owners.take_task_failures(&vm, setup_owner, &mut counts);
         if !setup_failures.is_empty() {
             owners.fail_file(setup_owner, setup_failures, &mut counts);
         }
@@ -415,7 +415,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // The failures of the test's tasks are reported under its
             // result line: the line and what stands under it are one
             // report.
-            let task_failures = owners.take_task_failures(owner, &mut counts);
+            let task_failures = owners.take_task_failures(&vm, owner, &mut counts);
             let mut said = String::new();
             let test_failed = match outcome {
                 // The test ran to its end.
@@ -574,8 +574,8 @@ struct TestFile {
 struct TaskOwner {
     /// Index of the file in `TaskOwners::files`.
     file: usize,
-    /// For a file's top-level code: the reports of its tasks that
-    /// failed and that nobody joined, until the file is reported.
+    /// For a file's top-level code: the reports of its failures that
+    /// nothing read, until the file is reported.
     task_failures: Vec<String>,
 }
 
@@ -615,8 +615,8 @@ impl TaskOwners {
     /// it, so a failure of another owner is one of a task of the
     /// file's top-level code, which was woken by the test: it is kept
     /// for the report of the file.
-    fn take_task_failures(&mut self, current: u64, counts: &mut Counts) -> Vec<String> {
-        let taken = crate::scheduler::take_unjoined_failures();
+    fn take_task_failures(&mut self, vm: &Vm, current: u64, counts: &mut Counts) -> Vec<String> {
+        let taken = vm.take_unread_failures();
         // The reports per owner tag, in the order in which the tasks
         // failed.
         let mut reports: BTreeMap<u64, Vec<String>> = BTreeMap::new();
@@ -667,7 +667,7 @@ impl TaskOwners {
 
     /// The file whose top-level code is tagged `tag` has run its last
     /// test: if tasks of the top-level code failed, at any time, and
-    /// nobody joined them, the file has failed. It is said once, with
+    /// nothing read the failures, the file has failed. It is said once, with
     /// every report.
     fn report_file(&mut self, tag: u64, counts: &mut Counts) {
         let Some(owner) = owner_index(tag).and_then(|index| self.owners.get_mut(index)) else {

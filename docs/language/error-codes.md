@@ -137,7 +137,7 @@ missing belong to codes that are gone.
 |------|---------|
 | `E0701` | A runtime error: a panic, a division by zero, an out-of-range conversion, ... |
 | `E0702` | `main`, or a test function, returned `Err(..)`. |
-| `E0703` | Tasks failed and nobody joined them. |
+| `E0703` | A failure that nothing read: a stream stage failed, and nobody read its output. |
 | `E0704` | An instruction met a value of a kind it cannot work on: the typechecker let through a program it should have rejected. |
 
 ## Formatting (8xx)

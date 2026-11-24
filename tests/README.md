@@ -156,8 +156,8 @@ function again, and runs it twice, each run on a VM of its own with its
 output in a buffer: once in slices of 2000 steps, and once in slices of
 one step, where the program is stopped and resumed after every
 instruction (`Vm::set_time_slice`). The two runs must agree in output,
-in the failures of tasks that nobody joined and in `main`'s value or
-error, and no run, and no task of one, may end in a `type_confusion`
+in the failures that nothing read (a stream stage's) and in `main`'s
+value or error, and no run, and no task of one, may end in a `type_confusion`
 error, an internal error or a panic, or not end
 (`tests/oracle/oracle.rs`). A program that uses tasks, channels,
 streams, the clock or the system's random source is compared only where

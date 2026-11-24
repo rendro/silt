@@ -68,7 +68,7 @@ impl TrialOutcome {
 /// invoke `run_trial` N times.
 ///
 /// Each `run_trial` is independent: a fresh `Vm`, fresh `Scheduler`
-/// (created lazily on first `task.spawn`), fresh stdout buffer. The
+/// (created lazily on its first task), fresh stdout buffer. The
 /// shared `InProcessRunner` only carries the source string and the
 /// per-trial wall-clock budget.
 pub struct InProcessRunner {
@@ -412,14 +412,15 @@ import list
 import task
 fn main() {
   let ch = channel.new(0)
-  let _senders = 1..16
-    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
-  host.give(loop c = 0, acc = 0 {
-    match c >= 16 {
-      true -> acc
-      _ -> match channel.receive(ch) {
-        Some(v) -> loop(c + 1, acc + v)
-        None -> acc
+  let senders = 1..16 |> list.map { i -> { -> channel.send(ch, i) } }
+  host.give(task.background(senders) { ->
+    loop c = 0, acc = 0 {
+      match c >= 16 {
+        true -> acc
+        _ -> match channel.receive(ch) {
+          Some(v) -> loop(c + 1, acc + v)
+          None -> acc
+        }
       }
     }
   })

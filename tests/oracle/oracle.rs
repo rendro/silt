@@ -13,7 +13,7 @@
 //!    one step, where the program is stopped and resumed after every
 //!    instruction and every step of a builtin that calls back into it
 //!    (`Vm::set_time_slice`). The two runs must agree: the same output,
-//!    the same failures of tasks that nobody joined, the same value of
+//!    the same failures that nothing read, the same value of
 //!    `main` or the same error.
 //! 5. No run may end in a `type_confusion` error, in an internal error
 //!    or in a panic, and no task of it either; and every run ends. A
@@ -52,13 +52,13 @@
 //! This file uses `silt` and `std` only: the fuzz target `fuzz_run`
 //! includes it by path.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once};
+use std::sync::{Arc, Mutex, MutexGuard, Once};
 use std::time::{Duration, Instant};
 
 use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
@@ -173,7 +173,7 @@ pub struct Steps {
 #[derive(Default)]
 pub struct Expect {
     /// The program is one that `silt run` runs, and it ends without an
-    /// error and with no task that fails unjoined: a golden case's
+    /// error and with no failure that nothing read: a golden case's
     /// `cmd: run` and `exit: 0`. So it also checks clean and compiles:
     /// an oracle that says otherwise disagrees with the command.
     pub succeeds: bool,
@@ -373,7 +373,8 @@ impl End {
     }
 }
 
-/// The error of a task that failed and that nobody joined.
+/// The error of a task that failed and whose failure nothing read (a
+/// stream stage whose output nobody read).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct TaskFailure {
     message: String,
@@ -470,7 +471,7 @@ struct Run {
     stdout: String,
     /// What the runtime wrote for the program on the host's stderr.
     stderr: String,
-    /// The tasks that failed unjoined, sorted: the order in which they
+    /// The failures that nothing read, sorted: the order in which they
     /// fail is the scheduler's.
     failures: Vec<TaskFailure>,
     /// The panics recorded while it ran ([`Panics::of_run`]).
@@ -478,105 +479,29 @@ struct Run {
     end: End,
 }
 
-/// The failures of tasks are collected for the whole process
-/// (`silt::testing::scheduler::collect_unjoined_failures`), so that the oracle
-/// has each as an error and not as a line of text. They are taken
-/// between runs only ([`Gate`]): a failure that is taken while its
-/// program runs can no longer be joined by it. What is taken is sorted
-/// into `FAILED` by the owner tag each run gives its tasks.
-static FAILED: Mutex<BTreeMap<u64, Vec<TaskFailure>>> = Mutex::new(BTreeMap::new());
-static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
-static GATE: Gate = Gate {
-    state: Mutex::new(GateState {
-        running: 0,
-        waiting: 0,
-        hung: false,
-    }),
-    changed: Condvar::new(),
-};
+/// The count of the runs, for the names of their threads.
+static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
 
-/// What lets runs go on side by side and the failures be taken with no
-/// run in progress.
-struct Gate {
-    state: Mutex<GateState>,
-    changed: Condvar,
-}
-
-struct GateState {
-    /// The runs in progress.
-    running: usize,
-    /// The threads that wait to take the failures: no run starts while
-    /// there is one.
-    waiting: usize,
-    /// A run has not ended and never will: it is not waited for.
-    hung: bool,
-}
-
-impl Gate {
-    fn state(&self) -> MutexGuard<'_, GateState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// A run starts.
-    fn enter(&self) {
-        let mut state = self.state();
-        while state.waiting > 0 {
-            state = self.changed.wait(state).unwrap_or_else(|p| p.into_inner());
-        }
-        state.running += 1;
-    }
-
-    /// A run has ended, its tasks too.
-    fn leave(&self) {
-        self.state().running -= 1;
-        self.changed.notify_all();
-    }
-
-    /// A run was given up.
-    fn hung(&self) {
-        self.state().hung = true;
-        self.changed.notify_all();
-    }
-
-    /// `take`, called while no run is in progress.
-    fn alone<T>(&self, take: impl FnOnce() -> T) -> T {
-        let mut state = self.state();
-        state.waiting += 1;
-        while state.running > 0 && !state.hung {
-            state = self.changed.wait(state).unwrap_or_else(|p| p.into_inner());
-        }
-        let taken = take();
-        state.waiting -= 1;
-        drop(state);
-        self.changed.notify_all();
-        taken
-    }
-}
-
-/// The failures of the tasks of the run with the tag `owner`, which has
-/// ended.
-fn failures_of(owner: u64) -> Vec<TaskFailure> {
-    let taken = GATE.alone(silt::testing::scheduler::take_unjoined_failures);
-    let mut failed = FAILED
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for failure in taken.failures {
-        failed.entry(failure.owner).or_default().push(TaskFailure {
+/// The failures that nothing read of the run on `vm`, which has ended:
+/// the VM keeps them for the oracle
+/// (`VmInside::collect_unread_failures`), so that it has each as an
+/// error and not as a line of text.
+fn failures_of(vm: &Vm) -> Vec<TaskFailure> {
+    let taken = vm.take_unread_failures();
+    let mut failures: Vec<TaskFailure> = (taken.failures.iter())
+        .map(|failure| TaskFailure {
             message: failure.error.message.clone(),
             type_confusion: failure.error.is_type_confusion(),
             out_of_steps: failure.error.out_of_steps,
-        });
-    }
-    for silt::testing::scheduler::NotShown { owner, count, .. } in taken.not_shown {
-        failed.entry(owner).or_default().push(TaskFailure {
-            message: format!("{count} more tasks failed"),
+        })
+        .collect();
+    for not_shown in &taken.not_shown {
+        failures.push(TaskFailure {
+            message: format!("{} more failures", not_shown.count),
             type_confusion: false,
             out_of_steps: false,
         });
     }
-    let mut failures = failed.remove(&owner).unwrap_or_default();
     failures.sort();
     failures
 }
@@ -903,23 +828,17 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
         Time::System => io,
         Time::Leaping => io.clock(Leaping::default()),
     };
-    let tasks = time != Time::Still;
     let program = program.clone();
-    let owner = NEXT_OWNER.fetch_add(1, Ordering::SeqCst);
-    let name = format!("oracle-run-{owner}");
+    let name = format!("oracle-run-{}", NEXT_RUN.fetch_add(1, Ordering::SeqCst));
     let mark = PANICS.mark();
     let (ended, end) = mpsc::sync_channel(1);
     let thread = std::thread::Builder::new()
         .name(name.clone())
         .stack_size(STACK_BYTES)
         .spawn(move || {
-            silt::testing::scheduler::collect_unjoined_failures();
-            if tasks {
-                GATE.enter();
-            }
-            let end = catch_unwind(AssertUnwindSafe(|| {
+            let ran = catch_unwind(AssertUnwindSafe(|| {
                 let mut vm = Vm::new(io);
-                vm.set_task_owner(owner);
+                vm.collect_unread_failures();
                 vm.set_time_slice(slice);
                 vm.set_step_budget(steps);
                 let end = match vm.run_program(&program) {
@@ -935,29 +854,17 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
                     End::Returned => vm.settle(),
                     _ => vm.stop_tasks(),
                 }
-                end
+                (end, failures_of(&vm))
             }));
-            let end = end.unwrap_or_else(|panic| End::Panic(panic_text(&panic)));
-            let failures = match tasks {
-                true => {
-                    GATE.leave();
-                    failures_of(owner)
-                }
-                false => Vec::new(),
-            };
-            let _ = ended.send((end, failures));
+            let ended_with = ran.unwrap_or_else(|panic| (End::Panic(panic_text(&panic)), Vec::new()));
+            let _ = ended.send(ended_with);
         })
         .expect("a thread for the run");
     // The run is waited for in short looks, so that one in which a
     // thread of the runtime has panicked is not waited out.
     let started = Instant::now();
     let mut panicked = None;
-    let given_up = |end: End| {
-        if tasks {
-            GATE.hung();
-        }
-        (end, Vec::new())
-    };
+    let given_up = |end: End| (end, Vec::new());
     let (end, failures) = loop {
         match end.recv_timeout(Duration::from_millis(20)) {
             Ok(ended) => {
@@ -1051,7 +958,7 @@ fn unexpected(expect: &Expect, runs: &[Run], output: bool) -> Option<Finding> {
                 End::Panic(_) | End::Hang => {}
             }
             if let Some(failure) = run.failures.first() {
-                let detail = format!("a task failed and nobody joined it: {}", failure.message);
+                let detail = format!("a failure nothing read: {}", failure.message);
                 return wrong("success", detail);
             }
             if !run.stderr.is_empty() {
@@ -1103,10 +1010,10 @@ fn difference(first: &Run, second: &Run) -> Option<(&'static str, String)> {
     }
     if first.failures != second.failures {
         let detail = format!(
-            "the tasks that failed unjoined differ:\n  {:?}\n  {:?}",
+            "the failures that nothing read differ:\n  {:?}\n  {:?}",
             first.failures, second.failures
         );
-        return Some(("the unjoined failures", detail));
+        return Some(("the unread failures", detail));
     }
     if first.end != second.end {
         let detail = format!(
@@ -1185,7 +1092,7 @@ mod tests {
             out_of_steps: false,
         });
         let (what, _) = difference(&base, &with_failure).unwrap();
-        assert_eq!(what, "the unjoined failures");
+        assert_eq!(what, "the unread failures");
         let mut failed = base.clone();
         failed.end = End::Error {
             message: "division by zero".to_string(),

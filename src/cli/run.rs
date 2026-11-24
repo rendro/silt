@@ -167,13 +167,14 @@ pub(crate) fn vm_run_file(path: &str) {
     }
     let sources = session.into_sources();
 
-    // Run via VM. The failures of tasks that nobody joins are taken and
-    // reported here, against the program's files, instead of by the
-    // scheduler. From here on the program may have threads, and the
-    // process ends through `exit_with_status`: a thread of the runtime
-    // that has panicked may be ending it with the internal error.
-    crate::scheduler::collect_unjoined_failures();
+    // Run via VM. The failures that nothing reads (a stream stage's
+    // whose output nobody reads) are taken and reported here, against
+    // the program's files, instead of by the scheduler. From here on the
+    // program may have threads, and the process ends through
+    // `exit_with_status`: a thread of the runtime that has panicked may
+    // be ending it with the internal error.
     let mut vm = Vm::new(crate::HostIo::process());
+    vm.collect_unread_failures();
     // `process.exit` ends the process where it is called, from `main`
     // or from a task: nothing below runs then.
     vm.set_exit(Exit::EndsProcess);
@@ -190,15 +191,15 @@ pub(crate) fn vm_run_file(path: &str) {
     if run_result.is_ok() {
         vm.settle();
     }
-    // The program has ended. What failed is rendered first: the tasks
-    // that failed and that nobody joined or cancelled, and `main`'s
+    // The program has ended. What failed is rendered first: the
+    // failures that nothing read, and `main`'s
     // error or `Err`. (The `Display` of `main`'s `Err` ran in
     // `run_program`: a `process.exit` there ended the process.) A
     // `process.exit` in a task that still runs ends the process with
     // its code, and nothing is reported. Then the failure claims the end
     // (`claim_program_failure`): from here an exit is ignored, and the
     // report is written whole, and the run fails.
-    let (task_texts, tasks_failed) = task_failure_texts(path, &sources);
+    let (task_texts, tasks_failed) = task_failure_texts(&vm, path, &sources);
     // `main`'s error: raised, with its full diagnostic, or returned as
     // `Err(e)`, which is the program's message to its user: the one line
     // `error: <e>`, with no place of silt's (see `Vm::run_program`).
@@ -276,11 +277,11 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
     }
 }
 
-/// The failures of tasks that nobody joined or cancelled and that have
-/// happened so far, each rendered like any other runtime error of the
-/// program at `path`, and whether there was one.
-fn task_failure_texts(path: &str, sources: &SourceMap) -> (Vec<String>, bool) {
-    let failures = crate::scheduler::take_unjoined_failures();
+/// The failures that nothing read and that have happened so far in
+/// `vm`, each rendered like any other runtime error of the program at
+/// `path`, and whether there was one.
+fn task_failure_texts(vm: &Vm, path: &str, sources: &SourceMap) -> (Vec<String>, bool) {
+    let failures = vm.take_unread_failures();
     let mut texts: Vec<String> = Vec::new();
     for failure in &failures.failures {
         texts.push(render_runtime_error(&failure.report_error(), path, sources));

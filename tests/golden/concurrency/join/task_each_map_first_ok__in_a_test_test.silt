@@ -3,7 +3,7 @@
 -- stderr-contains: FAIL task_each_map_first_ok__in_a_test_test.silt::test_a_failing_call_of_map_fails_the_test
 -- stderr-contains: panic: item failed
 -- stderr-contains: 2 tests: 1 passed, 1 failed
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- exit: 1
 -- In a test, task.each, task.map and task.first_ok work as in main; a
 -- call of map's function that fails fails the test, once.

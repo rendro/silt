@@ -1,7 +1,7 @@
 -- exit: 1
 -- stderr-contains: error[runtime]: panic: boom
 -- stderr-contains: = note: another piece failed too, at task_join__two_failures_give_the_first_and_a_note.silt:15:3: panic: boom
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- Two pieces fail: the first failure is raised, and the one that came
 -- while the pieces were stopped is a note under it.
 -- Both failures are certain: the two pieces meet on a channel with no

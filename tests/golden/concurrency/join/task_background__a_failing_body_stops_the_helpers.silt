@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: panic: the body failed
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- A body that fails stops the helpers, and its failure is the caller's.
 import channel
 import task

@@ -150,11 +150,12 @@ pub(crate) fn run_repl() {
         let _ = rl.load_history(p);
     }
 
-    // The failures of spawned tasks that nobody joins are taken and
-    // shown when the session ends (`report_task_failures`), rendered for
-    // the REPL instead of by the scheduler. Not after each input: the
-    // handle may still be bound, and a later input may join or cancel it.
-    crate::scheduler::collect_unjoined_failures();
+    // The failures that nothing reads (a stream stage's whose output
+    // nobody reads) are taken and shown when the session ends
+    // (`report_task_failures`), rendered for the REPL instead of by the
+    // scheduler. Not after each input: the stage may still be bound, and
+    // a later input may read it.
+    repl.borrow().vm.collect_unread_failures();
 
     println!("Silt REPL (type :quit to exit, :help for commands)");
     let problems = repl.borrow_mut().project_problems();
@@ -282,9 +283,9 @@ pub(crate) fn run_repl() {
         }
     }
 
-    // Tasks that failed and that no input joined or cancelled. A task
-    // that is still running when the session ends is not reported, nor
-    // is any after a `process.exit`.
+    // Failures that no input read. A stage that is still running when
+    // the session ends is not reported, nor is any after a
+    // `process.exit`.
     let exited = repl.borrow().exited();
     if exited.is_none() {
         report_task_failures(&repl.borrow());
@@ -910,12 +911,12 @@ impl SourceView for HeldReplFiles {
     }
 }
 
-/// Report on stderr the spawned tasks that have failed so far and that
-/// nobody joined or cancelled. The REPL calls it when the session ends:
-/// until then a handle may still be bound, and an input may join or
-/// cancel it.
+/// Report on stderr the failures so far that nothing read (a stream
+/// stage's whose output nobody read). The REPL calls it when the
+/// session ends: until then the stage may still be bound, and an input
+/// may read it.
 fn report_task_failures(repl: &Repl) {
-    let taken = crate::scheduler::take_unjoined_failures();
+    let taken = repl.vm.take_unread_failures();
     let mut texts: Vec<String> = Vec::new();
     for failure in &taken.failures {
         texts.push(repl.render(&failure.report_error().to_diagnostic()));

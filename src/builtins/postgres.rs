@@ -2581,7 +2581,7 @@ impl Helper {
                 "a batch of rows was finished as no Result",
             )))),
             Some(Err(failure)) => {
-                handle.mark_joined();
+                handle.mark_read();
                 Some(Err(Some(failure)))
             }
             None => Some(Err(None)),

@@ -1715,24 +1715,27 @@ pub struct StageOf {
     pub(crate) relays: bool,
 }
 
-/// Handle to a spawned task. Thread-safe — shared between spawner and worker.
+/// Handle to a task the runtime started. Thread-safe — shared between the
+/// call that started it and the worker that runs it.
 pub struct TaskHandle {
     pub id: usize,
     /// The task's result, set once: what it returned, the error it
-    /// failed with, or that it was cancelled. A join waits for it.
+    /// failed with, or that it was cancelled. Its call waits for it.
     result: Arc<Cell<Ended>>,
-    /// Set by `task.cancel`. The scheduler reads it before each slice
+    /// Set by a cancel (`Scheduler::cancel`, a stop of the tasks of a
+    /// call, a stream stage that nobody reads any more). The scheduler reads it before each slice
     /// of the task and before each park, and the task's VM before each
     /// operation that takes (`Vm::takes_nothing_new`): a cancelled
     /// task begins no wait, has none completed for it and takes
     /// nothing new, and runs on only for the steps that
     /// [`TaskHandle::count_late`] counts.
     cancelled: Arc<AtomicBool>,
-    /// True while the task has failed and nobody has handled the
-    /// failure: no join has received it and no cancel has dismissed
-    /// it. Read when the program ends, for the report of failures that
-    /// nobody joined.
-    unjoined_failure: AtomicBool,
+    /// True while the task has failed and nothing has read the failure:
+    /// no reader of a stage's output has received it, no call that
+    /// waits for the task has taken it, and no cancel has dismissed it.
+    /// Read when the program ends, for the report of failures that
+    /// nothing read.
+    unread_failure: AtomicBool,
     /// Set when the code of the task's owner has ended with the failure
     /// unhandled ([`TaskHandle::keep_failure`]): a cancel no longer
     /// dismisses it.
@@ -1768,14 +1771,13 @@ pub struct TaskHandle {
     /// The stage failed after its output had been closed: the function
     /// of `stream.from_fn`, which closed its channel itself.
     failed_after_close: AtomicBool,
-    /// Where the task was spawned (the call of `task.spawn`), when that
-    /// is a place in the program, and the cancel flag of the task that
-    /// spawned it, if a task did: the report of a failure that nobody
-    /// joined names them, since nobody holds the handle's id.
-    spawned: Option<(Span, Option<Arc<AtomicBool>>)>,
+    /// Where the task was started (the call of `task.join`, of
+    /// `task.background`, ...), when that is a place in the program:
+    /// the deadlock report names it.
+    started: Option<Span>,
     /// Completed when the task has ended: its last step has run and its
     /// frames are gone (`Scheduler::end_task`). Later than its result
-    /// when the task was cancelled: `task.cancel` waits for it.
+    /// when the task was cancelled: a stop waits for it.
     stopped: Arc<Cell<()>>,
     /// The task's place among the tasks that spawned it and that it
     /// spawned, for a cancel to reach them (`runtime::family`).
@@ -1796,7 +1798,7 @@ impl TaskHandle {
             id,
             result: Cell::labelled(format!("task <handle:{id}>")),
             cancelled: Arc::new(AtomicBool::new(false)),
-            unjoined_failure: AtomicBool::new(false),
+            unread_failure: AtomicBool::new(false),
             kept: AtomicBool::new(false),
             owner,
             deadline: None,
@@ -1806,7 +1808,7 @@ impl TaskHandle {
             stage: None,
             failed_with_input: AtomicBool::new(false),
             failed_after_close: AtomicBool::new(false),
-            spawned: None,
+            started: None,
             stopped: Cell::new(),
             family: Default::default(),
             together: None,
@@ -1835,23 +1837,28 @@ impl TaskHandle {
             .map(|(together, role)| (together, *role))
     }
 
-    /// The handle, for a task spawned at `at` by the task whose cancel
-    /// flag is `by` (none: by the program's `main`, or a front end).
-    pub fn spawned_at(self, at: Option<Span>, by: Option<Arc<AtomicBool>>) -> Self {
+    /// The handle, for a task that the call `call` (`task.deadline`)
+    /// waits for: a wait for its end names the call (the deadlock
+    /// report of the program's thread).
+    pub(crate) fn for_call(self, call: &'static str) -> Self {
         Self {
-            spawned: at.map(|at| (at, by)),
+            result: Cell::of_call(format!("task <handle:{}>", self.id), call),
             ..self
         }
     }
 
-    /// Where the task was spawned, if that is a place in the program,
-    /// and whether the task that spawned it has been cancelled.
-    pub fn spawn_site(&self) -> Option<(Span, bool)> {
-        let (at, by) = self.spawned.as_ref()?;
-        let cancelled = by
-            .as_ref()
-            .is_some_and(|flag| flag.load(AtomicOrdering::SeqCst));
-        Some((*at, cancelled))
+    /// The handle, for a task started by the call at `at` (none: by
+    /// the runtime, or a front end).
+    pub fn started_at(self, at: Option<Span>) -> Self {
+        Self {
+            started: at,
+            ..self
+        }
+    }
+
+    /// Where the task was started, if that is a place in the program.
+    pub fn start_site(&self) -> Option<Span> {
+        self.started
     }
 
     /// The handle, for the task of the stream stage `name`, started by
@@ -1984,38 +1991,28 @@ impl TaskHandle {
     }
 
     /// The task failed with `error`. `true` when that is the handle's
-    /// result now: the failure is then unhandled until a join receives
+    /// result now: the failure is then unread until a reader receives
     /// it or a cancel dismisses it.
     pub fn fail(&self, error: VmError, wake: &dyn Wake) -> bool {
         if self.result.get().is_some() {
             return false;
         }
-        // Before the joiners are woken: one of them handles it.
-        self.unjoined_failure.store(true, AtomicOrdering::Release);
+        // Before the readers are woken: one of them reads it.
+        self.unread_failure.store(true, AtomicOrdering::Release);
         self.result.complete(Ended(Err(error)), wake).is_ok()
     }
 
-    /// `task.cancel`: the task's result is the cancellation unless it
+    /// A cancel: the task's result is the cancellation unless it
     /// had one, at once, whatever the task still does (what it returns
     /// or fails with later changes nothing). A failure it had is
     /// dismissed, unless the code of its owner has ended with it
     /// (`TaskHandle::keep_failure`). The caller ends the task's
     /// wait, if it waits (`Scheduler::cancel`).
-    ///
-    /// A failure the task had taken from a task it joined is not its
-    /// own: that task is returned, for the caller to hand the failure
-    /// back to ([`TaskHandle::hand_back`]).
-    pub fn cancel(&self, wake: &dyn Wake) -> Option<Arc<TaskHandle>> {
+    pub fn cancel(&self, wake: &dyn Wake) {
         self.cancelled.store(true, AtomicOrdering::SeqCst);
         self.end_by_cancel(wake);
-        if self.kept.load(AtomicOrdering::SeqCst)
-            || !self.unjoined_failure.swap(false, AtomicOrdering::SeqCst)
-        {
-            return None;
-        }
-        match self.result.get() {
-            Some(Ended(Err(error))) => error.taken_from.as_ref().map(|from| from.0.clone()),
-            _ => None,
+        if !self.kept.load(AtomicOrdering::SeqCst) {
+            self.unread_failure.store(false, AtomicOrdering::SeqCst);
         }
     }
 
@@ -2028,33 +2025,6 @@ impl TaskHandle {
     /// its code still runs).
     pub(crate) fn keep_failure(&self) {
         self.kept.store(true, AtomicOrdering::SeqCst);
-    }
-
-    /// A join took the failure of this task, and the task that joined
-    /// was cancelled before it could fail with it, or had its failure
-    /// dismissed: the failure is unhandled again, and is reported as
-    /// never joined unless a join receives it. A task that has been
-    /// cancelled has none to take back: its cancellation is no failure,
-    /// and a cancel of it dismissed a failure it had, whenever that
-    /// cancel came.
-    pub fn hand_back(&self) {
-        if !self.can_be_handed_back() {
-            return;
-        }
-        self.unjoined_failure.store(true, AtomicOrdering::SeqCst);
-        // (A cancel that comes meanwhile clears the mark itself, or is
-        // seen here.)
-        if self.is_cancelled() {
-            self.unjoined_failure.store(false, AtomicOrdering::SeqCst);
-        }
-    }
-
-    /// Whether this task's result is a failure that a join can hand back:
-    /// it failed, and was neither cancelled nor ended by its deadline.
-    pub(crate) fn can_be_handed_back(&self) -> bool {
-        matches!(self.result.get(), Some(Ended(Err(_))))
-            && !self.is_cancelled()
-            && !self.is_expired()
     }
 
     /// Whether the task has its result.
@@ -2083,7 +2053,7 @@ impl TaskHandle {
     }
 
     /// A cancel of a task that spawned this one, or of one of their
-    /// spawners, reaches it while it runs: as `task.cancel`, except that
+    /// spawners, reaches it while it runs: as a cancel of it, except that
     /// a failure that comes first stands and is not dismissed (a task
     /// that has ended is not cancelled so: `runtime::family`).
     pub fn cancel_spawned(&self, wake: &dyn Wake) {
@@ -2132,20 +2102,20 @@ impl TaskHandle {
         self.result.get().map(|ended| ended.0.clone())
     }
 
-    /// The failure of the task is handled: a join received it, or a
-    /// cancel dismissed it.
-    pub fn mark_joined(&self) {
-        self.unjoined_failure.store(false, AtomicOrdering::Release);
+    /// The failure of the task is read: the call that waited for the
+    /// task took it, or the code that reads the task's output did.
+    pub fn mark_read(&self) {
+        self.unread_failure.store(false, AtomicOrdering::Release);
     }
 
-    pub fn has_unjoined_failure(&self) -> bool {
-        self.unjoined_failure.load(AtomicOrdering::Acquire)
+    pub fn has_unread_failure(&self) -> bool {
+        self.unread_failure.load(AtomicOrdering::Acquire)
     }
 
-    /// The failure of the task, if nobody has handled it; it counts as
-    /// handled from now on.
-    pub fn take_unjoined_failure(&self) -> Option<VmError> {
-        if !self.unjoined_failure.swap(false, AtomicOrdering::AcqRel) {
+    /// The failure of the task, if nothing has read it; it counts as
+    /// read from now on.
+    pub fn take_unread_failure(&self) -> Option<VmError> {
+        if !self.unread_failure.swap(false, AtomicOrdering::AcqRel) {
             return None;
         }
         match self.result.get() {

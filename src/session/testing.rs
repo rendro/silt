@@ -274,6 +274,10 @@ impl ProgramInside for Program {
 pub trait VmInside {
     /// Tag the tasks spawned from now on with `owner`.
     fn set_task_owner(&mut self, owner: u64);
+    /// Keep the failures that nothing read for `take_unread_failures`.
+    fn collect_unread_failures(&self);
+    /// The failures that nothing read since the last take.
+    fn take_unread_failures(&self) -> crate::scheduler::UnreadFailures;
     /// Whether `val` shows itself with `Display`.
     fn value_implements_display(val: &Value) -> bool;
     /// The name of the type of `val`, as a message gives it.
@@ -283,6 +287,14 @@ pub trait VmInside {
 impl VmInside for Vm {
     fn set_task_owner(&mut self, owner: u64) {
         Vm::set_task_owner(self, owner)
+    }
+
+    fn collect_unread_failures(&self) {
+        Vm::collect_unread_failures(self)
+    }
+
+    fn take_unread_failures(&self) -> crate::scheduler::UnreadFailures {
+        Vm::take_unread_failures(self)
     }
 
     fn value_implements_display(val: &Value) -> bool {

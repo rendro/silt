@@ -3,17 +3,6 @@
 use crate::diagnostic::{Code, Diagnostic, Line};
 use crate::source::Span;
 
-/// The handle of the task a join took a failure from
-/// ([`VmError::taken_from`]).
-#[derive(Clone)]
-pub(crate) struct TakenFrom(pub(crate) std::sync::Arc<crate::runtime::handle::TaskHandle>);
-
-impl std::fmt::Debug for TakenFrom {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<handle:{}>", self.0.id)
-    }
-}
-
 /// The failure that an error is a copy of ([`VmError::same_failure`]):
 /// the failure of a stream stage, as the close of its channel keeps it,
 /// which every read of the channel's end raises.
@@ -78,17 +67,6 @@ pub struct VmError {
     /// failed, for the note a front door writes after the text
     /// (`DisplayFailure::note`).
     pub display_failure: Option<Box<DisplayFailure>>,
-    /// The task whose failure this is, when a `task.join_handle` took it from
-    /// that task: a cancel that dismisses it hands it back to the task,
-    /// whose failure is then reported as never joined
-    /// (`Scheduler::cancel`).
-    pub(crate) taken_from: Option<TakenFrom>,
-    /// If true, the failure came through a `task.join_handle`, and its message
-    /// says so: `joined task failed: <msg>`. A join of a task that
-    /// failed this way keeps the message as it is, so the words are
-    /// there once however many joins the failure went through; the call
-    /// stack shows the tasks.
-    pub(crate) through_a_join: bool,
     /// If true, this is the result a cancel gave a task that had not
     /// returned or failed by then (`TaskHandle::was_ended_by_cancel`).
     pub(crate) by_a_cancel: bool,
@@ -110,8 +88,6 @@ impl VmError {
             exit_in_a_test: false,
             returned: None,
             display_failure: None,
-            taken_from: None,
-            through_a_join: false,
             by_a_cancel: false,
             more: None,
             span: None,
@@ -160,8 +136,8 @@ impl VmError {
     /// each control character (a carriage return, a tab, ESC), unusual
     /// space or invisible character as an escape (`\r`, `\u{1b}`). So it
     /// cannot move the cursor, colour or clear the terminal, in every report
-    /// of it (`silt run`, `silt test`, the REPL, a joined task, a task
-    /// nobody joined). Its line ends stay: a panic's text may go on for
+    /// of it (`silt run`, `silt test`, the REPL, a task of a call, a
+    /// stage that nobody read). Its line ends stay: a panic's text may go on for
     /// several lines, the first the headline and the others a note under it
     /// (`VmError::to_diagnostic`). `main`'s `Err` is the program's own
     /// message and keeps its text (`VmError::of_a_returned_err`).

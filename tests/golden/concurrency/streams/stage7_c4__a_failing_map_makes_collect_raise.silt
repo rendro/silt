@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[runtime]: division by zero
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- A stage whose function fails closes its output with the failure,
 -- and the sink at the end of the pipeline raises it: the program does
 -- not go on with the values that came before.

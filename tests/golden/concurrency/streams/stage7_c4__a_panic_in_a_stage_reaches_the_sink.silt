@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[runtime]: panic: three is too many
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- The same for a panic, through a second stage and into `fold`.
 import stream
 

@@ -3,7 +3,7 @@
 -- stderr-contains: --> task_join__a_failing_piece_stops_the_others.silt:15:3
 -- stderr-contains: closure in main  at task_join__a_failing_piece_stops_the_others.silt:33:17
 -- stderr-contains: main  at task_join__a_failing_piece_stops_the_others.silt:24:3
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- stderr-not-contains: failed too
 -- A piece that fails stops the others (one that waits, one that only
 -- computes) and its failure is the caller's: one report, with the

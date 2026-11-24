@@ -274,8 +274,9 @@ codes! {
     RuntimeError = "E0701", Runtime;
     /// `main` returned `Err(..)`.
     MainReturnedErr = "E0702", Runtime;
-    /// Tasks failed and nobody joined them.
-    UnjoinedTaskFailure = "E0703", Runtime;
+    /// A failure that nothing read: a stream stage failed, and nobody
+    /// read its output.
+    UnreadFailure = "E0703", Runtime;
     /// An instruction met a value of a kind it cannot work on: the
     /// typechecker let through a program it should have rejected.
     TypeConfusion = "E0704", Runtime;

@@ -760,9 +760,8 @@ src/runtime/handle.rs: pub fn end_writes
 src/runtime/handle.rs: pub fn expire
 src/runtime/handle.rs: pub fn fail
 src/runtime/handle.rs: pub fn fails_with_its_input
-src/runtime/handle.rs: pub fn hand_back
 src/runtime/handle.rs: pub fn hand_over
-src/runtime/handle.rs: pub fn has_unjoined_failure
+src/runtime/handle.rs: pub fn has_unread_failure
 src/runtime/handle.rs: pub fn is_cancelled
 src/runtime/handle.rs: pub fn is_closed
 src/runtime/handle.rs: pub fn is_closed
@@ -775,7 +774,7 @@ src/runtime/handle.rs: pub fn keep
 src/runtime/handle.rs: pub fn late
 src/runtime/handle.rs: pub fn local_addr
 src/runtime/handle.rs: pub fn local_addr
-src/runtime/handle.rs: pub fn mark_joined
+src/runtime/handle.rs: pub fn mark_read
 src/runtime/handle.rs: pub fn new
 src/runtime/handle.rs: pub fn new
 src/runtime/handle.rs: pub fn new
@@ -797,14 +796,14 @@ src/runtime/handle.rs: pub fn set_over
 src/runtime/handle.rs: pub fn shut
 src/runtime/handle.rs: pub fn shut_down
 src/runtime/handle.rs: pub fn socket
-src/runtime/handle.rs: pub fn spawn_site
-src/runtime/handle.rs: pub fn spawned_at
 src/runtime/handle.rs: pub fn stage
 src/runtime/handle.rs: pub fn stage_call_of_a_failed_input
 src/runtime/handle.rs: pub fn stage_of
+src/runtime/handle.rs: pub fn start_site
+src/runtime/handle.rs: pub fn started_at
 src/runtime/handle.rs: pub fn stop
 src/runtime/handle.rs: pub fn take_kept
-src/runtime/handle.rs: pub fn take_unjoined_failure
+src/runtime/handle.rs: pub fn take_unread_failure
 src/runtime/handle.rs: pub fn try_get
 src/runtime/handle.rs: pub fn wake
 src/runtime/handle.rs: pub fn watch_writes
@@ -890,20 +889,16 @@ src/scheduler.rs: pub count
 src/scheduler.rs: pub enum PanicAt
 src/scheduler.rs: pub error
 src/scheduler.rs: pub failures
-src/scheduler.rs: pub first_spawned
-src/scheduler.rs: pub fn collect_unjoined_failures
-src/scheduler.rs: pub fn take_unjoined_failures
+src/scheduler.rs: pub first_at
 src/scheduler.rs: pub mod test_support
 src/scheduler.rs: pub not_shown
 src/scheduler.rs: pub owner
 src/scheduler.rs: pub owner
-src/scheduler.rs: pub spawned
 src/scheduler.rs: pub stage
 src/scheduler.rs: pub stage_call
 src/scheduler.rs: pub struct NotShown
-src/scheduler.rs: pub struct UnjoinedFailure
-src/scheduler.rs: pub struct UnjoinedFailures
-src/scheduler.rs: pub task_id
+src/scheduler.rs: pub struct UnreadFailure
+src/scheduler.rs: pub struct UnreadFailures
 src/scheduler/test_support.rs: pub deadlock_count
 src/scheduler/test_support.rs: pub elapsed
 src/scheduler/test_support.rs: pub error_message

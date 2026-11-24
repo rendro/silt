@@ -438,7 +438,8 @@ fn start_in(
 ) -> Result<Arc<TaskHandle>, VmError> {
     let task_id = vm.next_task_id();
     let mut handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner())
-        .spawned_at(vm.place_here(), vm.cancelled.clone());
+        .started_at(vm.place_here())
+        .for_call(call);
     if let Some((together, role)) = together {
         handle = handle.in_together(together.clone(), role);
     }
@@ -544,7 +545,7 @@ impl Native for InPlace {
 /// the call ends it.)
 ///
 /// The frame owns the task: if the frame is dropped while it waits
-/// (the caller was cancelled by `task.cancel`, or the program ended),
+/// (the caller was stopped by a call around it, or the program ended),
 /// the task is cancelled too. That is the rule of a cancel, and the
 /// only cancel there is here.
 struct Deadline {
@@ -647,7 +648,7 @@ impl Native for Deadline {
         // called the function itself: where it happened, and below the
         // function's own calls the calls that led to this
         // `task.deadline`. It is raised whatever the clock says.
-        self.task.mark_joined();
+        self.task.mark_read();
         match result {
             Ok(value) => Ok(Step::Done(Value::variant(bv::SOME, [value]))),
             Err(mut failure) => {
@@ -675,7 +676,7 @@ impl Native for Deadline {
 ///   below the function's own calls the calls that led to the call.
 ///   Failures that come while the others are stopped are notes under
 ///   it (`Together::take_failure`). No task of the call is ever
-///   reported as a failure that nobody joined.
+///   reported as a failure that nothing read.
 /// - The end of the body of a `task.background` stops the helpers
 ///   that still run; its value is the call's. The first `Ok` of a
 ///   piece of `task.first_ok` stops the other pieces in the same way.

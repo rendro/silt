@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: panic: the outer piece failed
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- stderr-not-contains: failed too
 -- A join that stops its pieces stops the pieces of a join inside one of
 -- them too: the outer join returns, with the failure, and does not wait

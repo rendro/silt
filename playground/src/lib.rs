@@ -116,7 +116,7 @@ pub struct Run {
     /// an error among them the program did not run.
     pub diagnostics: String,
     /// What the program printed, and what the runtime reported for it
-    /// (a task that failed and that nobody joined).
+    /// (a stream stage that failed and whose output nobody read).
     pub output: String,
     /// The runtime error that ended the program, or `main`'s `Err`, as
     /// `silt run` prints it; empty for a program that ended well.
@@ -176,8 +176,8 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
         }
         Err(e) => Some(silt::playground::error_diagnostic(&e)),
     };
-    // The tasks that have failed and that nobody joined are reported
-    // into `out` here at the latest.
+    // The stages that have failed and whose output nobody read are
+    // reported into `out` here at the latest.
     drop(vm);
     let (ok, error) = match (exited, failure, main_err) {
         (Some(0), ..) | (None, None, None) => (true, String::new()),

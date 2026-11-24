@@ -48,7 +48,7 @@ impl Close {
     /// stage that fed it, if it failed, which counts as read from now on.
     pub fn raise(self) -> Result<(), VmError> {
         if let Some(stage) = &self.stage {
-            stage.mark_joined();
+            stage.mark_read();
         }
         match self.failure {
             Some(failure) => Err(VmError::raised_from(&failure)),
