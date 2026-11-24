@@ -1,2 +1,2 @@
 sent 100 (sum 4950), received 100 (sum 4950)
-the inner Err(Timeout) as the outer function's value: 0
+the inner None as the outer function's value: 0

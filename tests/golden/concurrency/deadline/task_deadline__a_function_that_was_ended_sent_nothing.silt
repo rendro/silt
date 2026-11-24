@@ -1,8 +1,8 @@
 -- timeout: 120
 -- The function sleeps until just before its deadline, then sends and
--- returns. Either it returned (`Ok`, and the value is sent), or it was
--- ended (`Err(Timeout)`, and nothing was sent): the caller never has
--- `Err` for a function that ran on.
+-- returns. Either it returned (`Some`, and the value is sent), or it was
+-- ended (`None`, and nothing was sent): the caller never has
+-- `None` for a function that ran on.
 import channel
 import task
 import time
@@ -23,12 +23,12 @@ fn main() {
           _ -> false
         }
         match (out, was_sent) {
-          (Ok(_), true) -> loop(i + 1, wrong)
-          (Err(_), false) -> loop(i + 1, wrong)
+          (Some(_), true) -> loop(i + 1, wrong)
+          (None, false) -> loop(i + 1, wrong)
           _ -> loop(i + 1, wrong + 1)
         }
       }
     }
   }
-  println("Ok without the value, or Err with it: {wrong}")
+  println("Some without the value, or None with it: {wrong}")
 }

@@ -78,8 +78,8 @@ fn main() {
           let late = task.deadline(time.ms(200)) { -> postgres.execute(tx, locked(), ()) }
           println(
             match late {
-              Ok(answer) -> "the statement: {said(answer)}"
-              Err(e) -> "task.deadline: {e}"
+              Some(answer) -> "the statement: {said(answer)}"
+              None -> "task.deadline: None"
             },
           )
           println("the next statement: {said(postgres.execute(tx, "SELECT 1", ()))}")

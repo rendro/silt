@@ -49,7 +49,7 @@ fn a_deadline_ends_a_print_in_pieces() {
     let program = format!(
         "import process\nimport string\nimport task\nimport time\nfn main() {{\n{BIG}  \
          let r = task.deadline(time.seconds(1)) {{ -> println(a) }}\n  match r {{\n    \
-         Ok(_) -> process.exit(2)\n    Err(_) -> process.exit(3)\n  }}\n}}\n"
+         Some(_) -> process.exit(2)\n    None -> process.exit(3)\n  }}\n}}\n"
     );
     assert_eq!(exit_code_unread("deadline", &program), Some(3));
 }

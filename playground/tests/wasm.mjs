@@ -117,7 +117,7 @@ fn main() {
 `);
   assert.deepEqual(
     [ran.output, ran.error],
-    ['Empty\nErr(the function was ended by its deadline)\nOk(7)\n', ''],
+    ['Empty\nNone\nSome(7)\n', ''],
   );
 });
 
@@ -282,8 +282,8 @@ fn main() {
     held
   }
   match r {
-    Ok(_) -> println("ran out")
-    Err(e) -> println("ended: {e}")
+    Some(_) -> println("ran out")
+    None -> println("ended: None")
   }
   -- A deadline that ends a function of a task lets go of the stream it
   -- held, whose stop wakes main.
@@ -304,7 +304,7 @@ fn main() {
 }
 `);
   assert.equal(ran.error, '');
-  assert.equal(ran.output, 'left: stopped 20 times\nclosed: the input still holds 3 of 3\n[7, 7, 7]\nSome(8)\nended: the function was ended by its deadline\nNone\ndone\n');
+  assert.equal(ran.output, 'left: stopped 20 times\nclosed: the input still holds 3 of 3\n[7, 7, 7]\nSome(8)\nended: None\nNone\ndone\n');
   assert.equal(ran.ok, true);
 });
 

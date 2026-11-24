@@ -2,8 +2,8 @@
 -- timeout: 10
 -- A deadline around a deadline: the one that passes first ends its own
 -- function. When it is the outer one, the inner function is ended with
--- it (the outer `Err(Timeout)`); when it is the inner one, the outer
--- function goes on with the inner `Err(Timeout)` as a value.
+-- it (the outer `None`); when it is the inner one, the outer
+-- function goes on with the inner `None` as a value.
 import channel
 import task
 import time

@@ -476,8 +476,9 @@ pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
-/// `task.deadline(dur, f)`: `Ok(f())`, or `Err(Timeout)` if `f` was
-/// ended because `dur` had passed.
+/// `task.deadline(limit, work)`: `Some(work())`, or `None` if `work`
+/// was ended because `limit` had passed. A failure of `work` is the
+/// caller's.
 ///
 /// The deadline is the function's task's, and it is decided in one
 /// place. `f` runs as a task of its own that is over at a set reading
@@ -503,14 +504,14 @@ pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 /// the time that is (a slice and those steps at most), and reports how
 /// it did: it returned, it was ended by its deadline, or it failed. A
 /// function that took a value in time has the steps to return it, and
-/// its `Ok` is never thrown away for the clock's sake.
+/// its `Some` is never thrown away for the clock's sake.
 ///
 /// The task's time is no later than the caller's own, if the caller
 /// has one (a deadline inside a deadline): the outer time ends the
 /// inner function by the same rule, with no cancel. A task that has
 /// its caller's time goes on with its caller's count of steps
 /// (`TaskHandle::late`), so that the work past a deadline is bounded
-/// in total: a caller that gets its function's `Ok` when the time of
+/// in total: a caller that gets its function's `Some` when the time of
 /// both is over has what the function left of the steps. (A caller
 /// whose time is over when it comes to the call starts no function:
 /// the call ends it.)
@@ -540,17 +541,14 @@ impl Native for Deadline {
     }
 
     fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
-        let timeout = || {
-            let timeout = Value::variant(bv::TASK_TIMEOUT, []);
-            Ok(Step::Done(Value::variant(bv::ERR, [timeout])))
-        };
+        let timeout = || Ok(Step::Done(Value::variant(bv::NONE, [])));
         match self.state {
             DeadlineState::Started => {
                 self.state = DeadlineState::Waiting;
                 // Not ended by the caller's own deadline: the task's
                 // time is no later, and it ends by itself. Were this
                 // wait ended first, a value the function took in time
-                // would be lost with its `Ok`.
+                // would be lost with its `Some`.
                 let wait = Wait::new(vec![Arm::Cell(self.task.done())]).unbounded();
                 return Ok(Step::Park(wait));
             }
@@ -584,7 +582,7 @@ impl Native for Deadline {
         // `task.deadline`. It is raised whatever the clock says.
         self.task.mark_joined();
         match result {
-            Ok(value) => Ok(Step::Done(Value::variant(bv::OK, [value]))),
+            Ok(value) => Ok(Step::Done(Value::variant(bv::SOME, [value]))),
             Err(mut failure) => {
                 let here = vm.enrich_error(VmError::new(String::new()));
                 failure.call_stack.extend(here.call_stack);
@@ -668,7 +666,7 @@ pub(crate) mod task {
     use super::*;
 
     builtins! {
-        fn deadline(vm, dur: time::Duration, f: &Value) -> Result<Step, VmError> {
+        fn deadline(vm, limit: time::Duration, work: &Value) -> Result<Step, VmError> {
             // The call is a wait for the function, and a task that
             // was cancelled or whose time is over begins none: it is
             // ended here, before a task is started that would take in
@@ -679,14 +677,14 @@ pub(crate) mod task {
             // A duration of zero or less is a time that is over now:
             // the function runs to its first wait that has to wait,
             // or until the steps of a late task are used up.
-            let after = Duration::from_nanos(u64::try_from(dur.0).unwrap_or(0));
+            let after = Duration::from_nanos(u64::try_from(limit.0).unwrap_or(0));
             let until = vm.runtime.io.deadline_after(after).ok_or_else(no_timer)?;
             if let Some(failure) = vm.runtime.io.clock_failure() {
                 return Err(VmError::new(failure));
             }
             // No later than the caller's own time.
             let until = vm.deadline.map_or(until, |own| own.min(until));
-            let task = start(vm, f, Some(until))?;
+            let task = start(vm, work, Some(until))?;
             Ok(Step::Run(Box::new(Deadline { task, state: DeadlineState::Started })))
         }
 

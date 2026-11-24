@@ -16,7 +16,7 @@ fn main() {
     when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
     task.spawn { ->
       match task.deadline(time.ms(30), { -> tcp.accept(listener) }) {
-        Err(task.Timeout) -> "timed out"
+        None -> "timed out"
         _ -> "something else"
       }
     }

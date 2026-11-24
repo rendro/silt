@@ -21,7 +21,7 @@ fn main() {
     task.join(other)
   }
   match outcome {
-    Err(task.Timeout) -> println("timed out")
+    None -> println("timed out")
     _ -> println("not timed out")
   }
   channel.close(cmds)

@@ -370,7 +370,7 @@ fixed thread pool and run in parallel. They communicate through channels.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `cancel` | `(Handle(a)) -> ()` | Cancel a task, and wait until it has ended (see details below) |
-| `deadline` | `(Duration, Fn() -> a) -> Result(a, TaskError)` | Run a function, and end it where it waits when the duration has passed |
+| `deadline` | `(Duration, Fn() -> a) -> Option(a)` | Run a function, and end it when the duration has passed: Some of its value, or None |
 | `join` | `(Handle(a)) -> a` | Wait for a task to complete |
 | `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
 
@@ -567,18 +567,19 @@ fn main() {
 ## `task.deadline`
 
 ```
-task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, TaskError)
+task.deadline(limit: Duration, work: Fn() -> a) -> Option(a)
 ```
 
-Runs `f` and gives `Ok` of what it returns, or
-`Err(Timeout)` if `f` was ended because `dur` had passed.
+Runs `work` and gives `Some` of what it returns, or `None` if `work`
+was ended because `limit` had passed.
 
 The function runs as a task of its own, and the deadline is that task's:
-when `dur` has passed, its time is over. From then on the function
+when `limit` has passed, its time is over. From then on the function
 **takes nothing new; it may still give what it holds**, for a small,
 fixed amount of further work. It is ended where it would take something
-or would have to wait, and a function that does neither is ended after
-that work. That is one rule for everything `f` does, whatever it waits
+or would have to wait, and a function that does neither, one that only
+computes, is ended after that work. That is one rule for everything
+`work` does, whatever it waits
 for: I/O (see [Blocking operations](../concurrency.md#blocking-operations)), a
 `time.sleep`, a `channel.receive` or `channel.send`, a `channel.select`,
 a `task.join`, a wait deep inside the callback of a `list.fold`, or the
@@ -592,23 +593,23 @@ the rule of a task that was cancelled (see
   operation gave its result), and the function goes on with it; or the
   deadline ended the wait, nothing was received and nothing was sent, and
   the function is ended there: no further instruction of it runs. So a
-  receive under a deadline that answers `Err(Timeout)` took no value, and
-  a send that answers `Err(Timeout)` sent none: a loop that tries again
-  after a timeout loses nothing and sends nothing twice.
+  receive under a deadline that gives `None` took no value, and
+  a send under one that gives `None` sent none: a loop that tries again
+  after a `None` loses nothing and sends nothing twice.
 - **`task.deadline` answers when the function has ended**, and says how:
-  it returned (`Ok`), it was ended by its deadline (`Err(Timeout)`), or
+  it returned (`Some`), it was ended by its deadline (`None`), or
   it failed. A function that got its value just in time and returns it is
-  `Ok`, even though the clock has moved past the deadline meanwhile: the
+  `Some`, even though the clock has moved past the deadline meanwhile: the
   answer never contradicts what the function did. It comes at most two
   time slices of the function after the deadline.
 - **When the time is over the function takes nothing new.** An
-  operation that would take something ends it there, `Err(Timeout)`,
+  operation that would take something ends it there, `None`,
   whether or not the thing is there: a `channel.receive`,
   `channel.try_receive` or `channel.receive_timeout`, the next message of
   a `channel.each`, the next element of a stream, `tcp.accept`, a
   `channel.select` of which no `Send` arm can be done at once (its `Recv`
-  arms are not tried). So a receive begun when the time is over is a
-  timeout, every time, and the value stays in its channel. (The
+  arms are not tried). So a receive begun when the time is over ends the
+  function, every time, and the value stays in its channel. (The
   function's time is over from the first time slice that begins after
   it; in the slice in which it passes, a receive of a value that is
   there may still complete.) Nor does the
@@ -625,8 +626,8 @@ the rule of a task that was cancelled (see
   just in time has to hand it on.
 - **A duration of zero or less is a time that is over from the start**,
   and the rule is the same: `task.deadline(time.ms(0), { -> 1 })` is
-  `Ok(1)`, a function that sends into a channel with room is `Ok`, and a
-  function that receives is `Err(Timeout)` whether the channel is empty
+  `Some(1)`, a function that sends into a channel with room is `Some`, and a
+  function that receives is `None` whether the channel is empty
   or not.
 - **The work past the time is bounded in all.** A function whose time is
   over runs on for at most 2,000 steps: about 2,000 instructions, a few
@@ -645,7 +646,7 @@ the rule of a task that was cancelled (see
   the item it holds, or has to wait to send it, loses that item, as
   after a cancel.
 - **A failure of the function is the caller's**: a runtime error inside
-  `f` is raised by `task.deadline` as it is, at the place in `f` where it
+  `work` is raised by `task.deadline` as it is, at the place in `work` where it
   happened, whatever the clock says. A function that fails is never
   reported as timed out.
 - **I/O that was given up may have happened.** An I/O operation in flight
@@ -655,15 +656,15 @@ the rule of a task that was cancelled (see
   read had taken off the wire is gone with it; a file write, an HTTP
   request or a database statement that had started may complete all the
   same, and a line that an `io.read_line` reads after it was given up is
-  nobody's. `Err(Timeout)` says that the function did not finish, not
+  nobody's. `None` says that the function did not finish, not
   that nothing of it reached the outside. A connection that reaches a
   `tcp.accept` which was given up is not lost: the listener keeps it for
   the next accept.
 - **Deadlines nest**: the function of an inner `task.deadline` has the
   outer time too, if that is earlier, and is ended by the same rule. When
   the inner time passes first, the outer function goes on with the inner
-  `Err(Timeout)` as a value; when the outer time does, both functions are
-  over and the outer `task.deadline` gives `Err(Timeout)`. The steps
+  `None` as a value; when the outer time does, both functions are
+  over and the outer `task.deadline` gives `None`. The steps
   past that time are one count for the two. (A function whose time is
   already over cannot begin an inner deadline: the call ends it.)
 - **A deadline ends its function and what it spawned.** The tasks that
@@ -675,19 +676,13 @@ the rule of a task that was cancelled (see
   task is not. A task that goes on and fails later, with nobody left to
   join it, is a failure that nobody joined (see
   [Failures that nobody joins](../concurrency.md#failures-that-nobody-joins)).
-- The value of `f` is inside the `Ok`, so a function that returns a
-  `Result` gives two layers: `Ok(Err(io.NotFound(path)))` is a read that
-  failed in time, `Err(task.Timeout)` one that did not finish.
+- The value of `work` is inside the `Some`, so a function that returns a
+  `Result` gives two layers: `Some(Err(io.NotFound(path)))` is a read that
+  failed in time, `None` one that did not finish.
 
 
-See [Deadlines](../concurrency.md#deadlines-taskdeadlinedur-fn) for an
+See [Deadlines](../concurrency.md#deadlines-taskdeadlinelimit-work) for an
 example and how a deadline fits a program.
-
-`TaskError` is the module's error enum:
-
-| Variant | Fields | Meaning |
-|---------|--------|---------|
-| `Timeout` | — | the function was ended because its time was over |
 
 ```silt
 -- noexec
@@ -698,15 +693,13 @@ import time
 fn main() {
   let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
   match outcome {
-    Ok(Ok(contents)) -> println(contents)
-    Ok(Err(e)) -> println("the read failed: {e}")
-    Err(task.Timeout) -> println("the read took too long")
-    Err(e) -> println("{e}")
+    Some(Ok(contents)) -> println(contents)
+    Some(Err(e)) -> println("the read failed: {e}")
+    None -> println("the read took too long")
   }
 }
 ```
 
-A task with a deadline is `task.spawn { -> task.deadline(dur, f) }`: its
-handle joins to the same `Result`.
-
+A task with a deadline is `task.spawn { -> task.deadline(limit, work) }`: its
+handle joins to the same `Option`.
 

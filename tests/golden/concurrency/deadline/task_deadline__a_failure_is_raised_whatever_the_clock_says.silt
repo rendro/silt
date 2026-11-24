@@ -2,7 +2,7 @@
 -- stderr-contains: error[runtime]: division by zero
 -- A function that fails in the time slice in which its time passes
 -- (here the time is over from the start) has failed: `task.deadline`
--- raises the failure, and never answers `Err(Timeout)` for it.
+-- raises the failure, and never answers `None` for it.
 import task
 import time
 

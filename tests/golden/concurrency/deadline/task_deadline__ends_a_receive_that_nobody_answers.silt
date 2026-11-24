@@ -16,7 +16,7 @@ fn main() {
   println(task.join(waits))
   println(task.deadline(time.ms(20), { -> channel.send(never, 1) }))
   match task.deadline(time.ms(20), { -> channel.select([channel.Recv(never), channel.Send(never, 2)]) }) {
-    Err(e) -> println("Err({e})")
-    Ok(_) -> println("an arm of the select was ready")
+    None -> println("None")
+    Some(_) -> println("an arm of the select was ready")
   }
 }

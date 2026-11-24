@@ -1,7 +1,7 @@
 -- timeout: 120
 -- requires-feature: tcp
 -- An accept under a deadline: a connection is given to the function,
--- and `task.deadline` gives `Ok` of it, or it stays with the listener
+-- and `task.deadline` gives `Some` of it, or it stays with the listener
 -- for the next accept. A client connects 100 times, about every 3 ms;
 -- the server gives its accept up every 3 ms and accepts again. When
 -- the client has stopped, the server accepts until nothing has come
@@ -34,12 +34,12 @@ fn main() {
   }
   let given = loop given = 0, idle = 0 {
     match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
-      Ok(Ok(c)) -> {
+      Some(Ok(c)) -> {
         tcp.close(c)
         loop(given + 1, 0)
       }
-      Ok(Err(e)) -> panic("accept failed: {e}")
-      Err(_) -> match channel.try_receive(done) {
+      Some(Err(e)) -> panic("accept failed: {e}")
+      None -> match channel.try_receive(done) {
         channel.Closed -> match idle >= 20 {
           true -> given
           false -> loop(given, idle + 1)

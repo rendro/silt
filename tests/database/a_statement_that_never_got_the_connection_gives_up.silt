@@ -30,8 +30,8 @@ fn main() {
         time.sleep(time.ms(300))
         let late = task.deadline(time.ms(200)) { -> postgres.query(tx, "SELECT 1::int8 AS n", (), N) }
         match late {
-          Ok(answer) -> println("the waiting statement answered: {answer}")
-          Err(e) -> println("the waiting statement: {e}")
+          Some(answer) -> println("the waiting statement answered: {answer}")
+          None -> println("the waiting statement: None")
         }
         match task.join(sleeper) {
           Ok(_) -> println("the running statement: Ok")

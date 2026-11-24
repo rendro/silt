@@ -3,7 +3,7 @@
 -- still run, as a cancel of the function would. A task the function
 -- was joining, and did not spawn, goes on, and its result is there for
 -- a later join. Each of the two waits for a message that is sent only
--- after the deadline has given `Err(Timeout)`, so the order does not
+-- after the deadline has given `None`, so the order does not
 -- depend on the clock.
 import channel
 import task

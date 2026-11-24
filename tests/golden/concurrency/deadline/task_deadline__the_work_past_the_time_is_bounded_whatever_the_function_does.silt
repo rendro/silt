@@ -73,9 +73,8 @@ fn fate(label, dur, few, round) {
   let out = task.deadline(dur, { -> rounds(marks, round) })
   let n = drained(marks)
   let ended = match out {
-    Err(task.Timeout) -> "ended"
-    Err(_) -> "another error"
-    Ok(_) -> "ran to its last round"
+    None -> "ended"
+    Some(_) -> "ran to its last round"
   }
   let how_many = match (few, n) {
     (false, _) -> ""

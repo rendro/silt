@@ -1,5 +1,5 @@
 -- A function is ended by its `task.deadline` while the server works
--- on its statement. `task.deadline` answers `Err(Timeout)`. The
+-- on its statement. `task.deadline` answers `None`. The
 -- statement is not interrupted: it goes on in the server, and
 -- meanwhile the pool answers other statements.
 --
@@ -81,8 +81,8 @@ fn main() {
         }
         println(
           match late {
-            Ok(said) -> "the function ended with {said}"
-            Err(e) -> "task.deadline: {e}"
+            Some(said) -> "the function ended with {said}"
+            None -> "task.deadline: None"
           },
         )
         println("statements that wait for the lock in the server: {until(pool, waiting(), 1)}")

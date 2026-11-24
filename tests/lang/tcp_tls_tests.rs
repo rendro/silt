@@ -225,10 +225,9 @@ fn main() {{
   }}
   when let Ok(conn) = tcp.accept(listener) else {{ panic("cannot accept") }}
   match task.deadline(time.ms(100), {{ -> tcp.tls_server(conn, cert, key) }}) {{
-    Ok(Ok(_)) -> println("a handshake with a silent client")
-    Err(task.Timeout) -> println("given up")
-    Ok(Err(e)) -> println("another error: {{e}}")
-    Err(e) -> println("another error: {{e}}")
+    Some(Ok(_)) -> println("a handshake with a silent client")
+    None -> println("given up")
+    Some(Err(e)) -> println("another error: {{e}}")
   }}
   -- The connection of the handshake was closed from the server's side.
   match tcp.read(silent, 1) {{
