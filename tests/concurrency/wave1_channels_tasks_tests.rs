@@ -15,7 +15,7 @@
 //!     the cleanup took the lock of the parked task, which the workers
 //!     and the wakers take first.
 //!   * H3. Scheduler workers had the default stack of 2 MiB, so
-//!     recursion through a callback inside `task.spawn` overflowed the
+//!     recursion through a callback inside a task overflowed the
 //!     native stack at a small depth and aborted the process.
 //!   * H4. A task that waits for a timer was counted as stuck, so a
 //!     main thread that waited for that task's send was told
@@ -180,27 +180,28 @@ fn assert_completes_with_unjoined_failure(
 /// The documented multiplexing example, in the documented
 /// `loop _ = () { ... loop(()) }` form, on the main thread. Which
 /// messages it prints before a channel reports `Closed` depends on the
-/// order in which the two tasks run, so only the end is pinned. Passes
-/// with and without the fix.
+/// order in which the two tasks (the functions of two `stream.from_fn`,
+/// which run beside the main thread) run, so only the end is pinned.
+/// Passes with and without the fix.
 #[test]
 fn guard_documented_select_loop_ends_when_a_channel_closes() {
     let src = r#"
 import channel
-import task
+import stream
 fn main() {
   let alerts = channel.new(5)
   let logs = channel.new(5)
 
-  let _ = task.spawn({ ->
+  let _logger = stream.from_fn { _ ->
     channel.send(logs, "background task done")
     channel.send(logs, "log rotation complete")
     channel.close(logs)
-  })
+  }
 
-  let _ = task.spawn({ ->
+  let _alerter = stream.from_fn { _ ->
     channel.send(alerts, "disk full!")
     channel.close(alerts)
-  })
+  }
 
   loop _ = () {
     match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
@@ -316,11 +317,9 @@ fn collect(ch, n, acc) {
 }
 fn main() {
   let ch = channel.new(0)
-  let ps = 1..50 |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
-  let r = task.spawn({ -> collect(ch, 25, 0) })
-  let m = collect(ch, 25, 0)
-  let t = task.join_handle(r)
-  println("total {m + t}")
+  let ps = 1..50 |> list.map { i -> { -> channel.send(ch, i) } }
+  let totals = task.background(ps) { -> task.map([25, 25], 2) { n -> collect(ch, n, 0) } }
+  println("total {list.fold(totals, 0) { acc, t -> acc + t }}")
 }
 "#;
     let dir = fresh_dir("rlimit_as");

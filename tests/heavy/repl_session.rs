@@ -16,7 +16,8 @@
 /// The entries of a session of `rounds` rounds, and the number of
 /// entries entered when each round's marker line is printed. With
 /// `waiting`, the task of each round waits for as long as the session
-/// lasts; without, it is joined in its entry.
+/// lasts (with task.spawn: no call of the new API leaves a task behind);
+/// without, it is a piece of a `task.join` in its entry.
 fn session(rounds: usize, waiting: bool) -> (Vec<String>, Vec<usize>) {
     let mut entries = vec![
         "import task".to_string(),
@@ -41,7 +42,7 @@ fn session(rounds: usize, waiting: bool) -> (Vec<String>, Vec<usize>) {
         entries.push(format!("let bad{i}: Int = \"s\""));
         entries.push(match waiting {
             true => format!("let h{i} = task.spawn {{ -> channel.receive(never) }}"),
-            false => format!("task.join_handle(task.spawn {{ -> f{i}(2) }})"),
+            false => format!("task.join([{{ -> let _ = f{i}(2) }}])"),
         });
     }
     (entries, markers)
@@ -162,7 +163,7 @@ fn the_last_thousand_entries_copy_what_the_first_thousand_do() {
     use silt::session::ProjectSetup;
     use silt::testing::repl::Repl;
 
-    let (entries, _) = session(430, true);
+    let (entries, _) = session(430, false);
     let mut repl = Repl::new(ProjectSetup::None);
     let mut copied = vec![silt::testing::layers::rows_copied()];
     for (n, entry) in entries.iter().enumerate() {

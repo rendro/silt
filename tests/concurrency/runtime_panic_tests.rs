@@ -39,11 +39,11 @@ fn panic_of(call: impl FnOnce()) -> String {
 /// so the task must certainly have one. A receive alone does not make
 /// it so: it may find its value there and go on in the same slice. A
 /// sleep does: it always ends the slice. So the task is let through
-/// the gate by `main`, when `main` has started every task and printed
-/// its line (nothing is spawned or printed while the runtime may be
-/// broken), and then sleeps; it is lost as that sleep ends. That the
-/// joiner, the receiver and `main` wait by then is likely and not
-/// certain: the program ends either way.
+/// the gate by the last piece of the join, when every piece has started
+/// and `main` has printed its line (nothing is started or printed while
+/// the runtime may be broken), and then sleeps; it is lost as that
+/// sleep ends. That the receiver and `main` wait by then is likely and
+/// not certain: the program ends either way.
 const LOST_WHILE_ALL_WAIT: &str = r#"
 import channel
 import task
@@ -52,24 +52,23 @@ import time
 fn main() {
   let gate = channel.new(0)
   let only = channel.new(0)
-  let lost = task.spawn { ->
+  let lost = { ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(5))
     channel.send(only, 1)
   }
-  let joiner = task.spawn { -> task.join_handle(lost) }
-  let receiver = task.spawn { -> channel.receive(only) }
+  let receiver = { ->
+    let _ = channel.receive(only)
+  }
   println("main waits")
-  channel.send(gate, 1)
-  task.join_handle(joiner)
-  let _ = task.join_handle(receiver)
+  task.join([lost, receiver, { -> channel.send(gate, 1) }])
   println("main went on")
 }
 "#;
 
-/// A worker panics as it is about to run a task that a joiner, a
-/// receiver and the program's thread all wait on. The program's
-/// thread, in its `task.join_handle`, gets the panic; the VM gives it again
+/// A worker panics as it is about to run a task that a receiver and
+/// the program's thread wait on. The program's thread, in its
+/// `task.join`, gets the panic; the VM gives it again
 /// at every later call, and is dropped like any other. The process
 /// (the embedder's) lives: another VM runs a program in it.
 #[test]
@@ -176,14 +175,14 @@ fn main() {
 fn a_panic_of_the_timer_thread_reaches_the_thread_that_sleeps() {
     let program = compiled(
         r#"
-import task
+import stream
 import time
 
 fn main() {
-  let sleeper = task.spawn { -> time.sleep(time.ms(30)) }
+  let sleeper = stream.from_fn { _ -> time.sleep(time.ms(30)) }
   println("main sleeps")
   time.sleep(time.ms(5))
-  task.join_handle(sleeper)
+  let _ = stream.collect(sleeper)
   println("main went on")
 }
 "#,
@@ -208,9 +207,8 @@ import task
 import time
 
 fn main() {
-  let sleeper = task.spawn { -> time.sleep(time.nanos(1)) }
   println("main waits")
-  task.join_handle(sleeper)
+  task.join([{ -> time.sleep(time.nanos(1)) }])
   println("main went on")
 }
 "#,
@@ -238,9 +236,8 @@ import io
 import task
 
 fn main() {
-  let reader = task.spawn { -> io.read_file("no such file of the runtime panic tests") }
   println("main waits")
-  let _ = task.join_handle(reader)
+  let _ = task.map(["no such file of the runtime panic tests"], 1) { path -> io.read_file(path) }
   println("main went on")
 }
 "#,
@@ -262,12 +259,14 @@ fn a_panic_on_the_program_thread_comes_out_of_the_call() {
     let program = compiled(
         r#"
 import channel
-import task
+import stream
 import time
 
 fn main() {
   let never = channel.new(0)
-  let waits = task.spawn { -> channel.receive(never) }
+  let _waits = stream.from_fn { _ ->
+    let _ = channel.receive(never)
+  }
   println("main waits")
   let _ = channel.receive_timeout(never, time.ms(1))
   println("main went on")

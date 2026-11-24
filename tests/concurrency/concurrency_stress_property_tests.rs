@@ -22,15 +22,14 @@
 //!   closed fails its task with `send on closed channel`, which is one
 //!   of the endings the invariants accept), `yield`
 //!   (`time.sleep(time.ms(0))`), short `time.sleep`.
-//! - A supervisor task runs random `task.cancel(h_i)` and
-//!   `task.join_handle(h_i)` ops on worker handles (captured after the worker
-//!   spawns). The supervisor itself is spawned LAST so it sees every
-//!   worker handle.
-//! - Main spawns everyone then WAITS via `channel.select` on a
-//!   counting `done` channel and a `channel.timeout(time.ms(3500))` bound —
-//!   main never calls `task.join_handle` on a worker. This keeps per-task
-//!   errors (cancel, send-on-closed) from surfacing as the process
-//!   exit; the test then asserts main still exits cleanly.
+//! - A supervisor task yields and sleeps beside the workers. Each
+//!   worker's ops run inside a `task.guard`, so a `send on closed
+//!   channel` ends that worker's ops and nothing else.
+//! - The workers and the supervisor are the helpers of a
+//!   `task.background` whose body WAITS via `channel.select` on a
+//!   counting `done` channel and a `channel.timeout` bound, and then
+//!   returns, which stops every helper still running; the test then
+//!   asserts the program exits cleanly.
 //!
 //! See `hand_crafted` module for targeted scenarios prior audits missed.
 //! The hand-crafted scenarios whose output does not depend on timing
@@ -215,24 +214,19 @@ fn check_invariants(src: &str, out: &RunOutcome) -> Result<(), String> {
     // forward-compatibility — if a future change re-introduces a
     // worker-side fire path, this check still recognises it.
     //
-    // Exit 1 with the unjoined-failure report is acceptable too: the
-    // generator's supervisor can join a peer it cancelled, which raises
-    // `cancelled` in the supervisor, and nobody joins the supervisor;
-    // and a worker's `try_send` on a channel that another worker has
-    // closed fails that worker (`send on closed channel`).
-    // `silt run` exits 1 for such a failure (owner decision of
-    // 2026-09-28).
+    // (A worker's `try_send` on a channel that another worker has
+    // closed fails that worker's ops with `send on closed channel`;
+    // its `task.guard` catches it.) A deadlock of the main thread in
+    // the `task.background` reads `task.background with no progress
+    // possible`.
     match out.exit {
         Some(0) => Ok(()),
         Some(1) => {
-            if out.stderr.contains("deadlock on main thread")
-                || out.stderr.contains("deadlock:")
-                || out.stderr.contains("failed and was never joined")
-            {
+            if out.stderr.contains("deadlock on main thread") || out.stderr.contains("deadlock:") {
                 Ok(())
             } else {
                 Err(format!(
-                    "EXIT 1 with no deadlock diagnostic or unjoined-failure report; src was:\n---\n{src}\n---\n\
+                    "EXIT 1 with no deadlock diagnostic; src was:\n---\n{src}\n---\n\
                      stdout={:?}\nstderr={:?}",
                     out.stdout, out.stderr
                 ))
@@ -276,11 +270,6 @@ mod genp {
         Select { chs: Vec<usize> },
         /// `channel.close(ch_i)` — only on closeable channels.
         Close { ch: usize },
-        /// `task.cancel(h_i)` — peer cancel; only emitted inside the
-        /// supervisor task.
-        CancelPeer { peer: usize },
-        /// `task.join_handle(h_i)` — peer join; only emitted inside supervisor.
-        JoinPeer { peer: usize },
         /// `time.sleep(time.ms(0))` — cooperative yield.
         Yield,
         /// `time.sleep(time.ms(N))` — short sleep.
@@ -305,7 +294,7 @@ mod genp {
         pub closeable: Vec<bool>,
         /// Worker task op sequences.
         pub workers: Vec<Vec<Op>>,
-        /// Supervisor ops (cancel/join/sleep/yield only).
+        /// Supervisor ops (sleep/yield only).
         pub supervisor: Vec<Op>,
     }
 
@@ -393,19 +382,13 @@ mod genp {
         proptest::strategy::Union::new_weighted(variants)
     }
 
-    /// Generate a supervisor op. `num_workers` = number of worker
-    /// handles the supervisor can reference.
-    fn arb_supervisor_op(num_workers: usize) -> impl Strategy<Value = Op> {
-        let peer_strat = 0usize..num_workers;
+    /// Generate a supervisor op: a yield or a short sleep.
+    fn arb_supervisor_op() -> impl Strategy<Value = Op> {
         prop_oneof![
-            // cancel a peer (10% of ops per the spec)
-            1 => peer_strat.clone().prop_map(|peer| Op::CancelPeer { peer }),
-            // join a peer
-            2 => peer_strat.clone().prop_map(|peer| Op::JoinPeer { peer }),
             // yield
-            3 => Just(Op::Yield),
+            1 => Just(Op::Yield),
             // short sleep
-            3 => (1u32..=10).prop_map(|ms| Op::Sleep { ms }),
+            1 => (1u32..=10).prop_map(|ms| Op::Sleep { ms }),
         ]
     }
 
@@ -437,7 +420,7 @@ mod genp {
                     );
                     // Supervisor has 1..=ops_per_task ops.
                     let supervisor_strat =
-                        prop::collection::vec(arb_supervisor_op(num_workers), 1..=ops_per_task);
+                        prop::collection::vec(arb_supervisor_op(), 1..=ops_per_task);
                     (
                         Just(capacities),
                         Just(closeable),
@@ -475,7 +458,7 @@ fn emit_match_channel_result(indent: &str) -> String {
 }
 
 /// Emit a single op as indented silt. `indent` is the prefix (spaces).
-fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
+fn emit_op(op: &genp::Op, indent: &str) -> String {
     match op {
         genp::Op::Send { ch, value } => {
             format!("{indent}channel.send(ch{ch}, {value})\n")
@@ -518,22 +501,6 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
         genp::Op::Close { ch } => {
             format!("{indent}channel.close(ch{ch})\n")
         }
-        genp::Op::CancelPeer { peer } => {
-            // Don't cancel self (supervisor is not in the worker list).
-            let _ = worker_idx;
-            format!("{indent}task.cancel(h{peer})\n")
-        }
-        genp::Op::JoinPeer { peer } => {
-            // `task.join_handle` propagates VmError if the peer errored. To
-            // prevent the supervisor from inheriting that error (which
-            // would cascade if main ever joined the supervisor), we
-            // wrap the join in its own task.spawn + don't propagate.
-            // Actually: main never joins the supervisor directly, so
-            // the supervisor's failure is contained. We still use a
-            // straight join here — if the supervisor dies partway, it
-            // just stops running.
-            format!("{indent}let _jr{peer} = task.join_handle(h{peer})\n")
-        }
         genp::Op::Yield => {
             format!("{indent}time.sleep(time.ms(0))\n")
         }
@@ -563,33 +530,43 @@ fn emit_program(p: &genp::Program) -> String {
         total_tasks.max(1)
     ));
 
-    // Worker tasks.
+    // Worker tasks: their ops in a guard, so that a failure (a send on
+    // a channel another worker closed) ends the worker's ops only.
+    let mut helpers = Vec::new();
     for (wi, ops) in p.workers.iter().enumerate() {
-        src.push_str(&format!("  let h{wi} = task.spawn({{ ->\n"));
+        src.push_str(&format!("  let h{wi} = {{ ->\n"));
+        src.push_str("    let _ = task.guard { ->\n");
         for op in ops {
-            src.push_str(&emit_op(op, "    ", Some(wi)));
+            src.push_str(&emit_op(op, "      "));
         }
+        src.push_str("      ()\n");
+        src.push_str("    }\n");
         // Trailing done-send. Use try_send so we never block.
         src.push_str(&format!("    let _tsdone = channel.try_send(done, {wi})\n"));
-        src.push_str("  })\n");
+        src.push_str("  }\n");
+        helpers.push(format!("h{wi}"));
     }
 
     // Supervisor task.
-    src.push_str("  let hsup = task.spawn({ ->\n");
+    src.push_str("  let hsup = { ->\n");
     for op in &p.supervisor {
-        src.push_str(&emit_op(op, "    ", None));
+        src.push_str(&emit_op(op, "    "));
     }
     src.push_str("    let _tsdone = channel.try_send(done, 999)\n");
-    src.push_str("  })\n");
+    src.push_str("  }\n");
+    helpers.push("hsup".to_string());
 
-    // Main waits for up to 800ms for as many dones as possible. This
-    // keeps main cleanly exiting even if tasks deadlock or get
-    // cancelled, while giving each property-test case a short wall
-    // time. Generated programs use sleeps <= 10ms, so 800ms is ample
-    // for every task that's not cancelled/deadlocked to finish.
+    // The body waits for up to 800ms for as many dones as possible,
+    // and returns: the helpers still running (deadlocked ones too) are
+    // stopped. Generated programs use sleeps <= 10ms, so 800ms is ample
+    // for every task that's not deadlocked to finish.
+    src.push_str(&format!(
+        "  let collected = task.background([{}]) {{ ->\n",
+        helpers.join(", ")
+    ));
     src.push_str("  let timer = channel.timeout(time.ms(800))\n");
     src.push_str(&format!(
-        "  let collected = loop c = 0 {{\n\
+        "  loop c = 0 {{\n\
          \x20   match c >= {} {{\n\
          \x20     true -> c\n\
          \x20     _ -> {{\n\
@@ -603,6 +580,7 @@ fn emit_program(p: &genp::Program) -> String {
          \x20 }}\n",
         total_tasks
     ));
+    src.push_str("  }\n");
     // Print a stable success marker.
     src.push_str("  println(\"collected={collected}\")\n");
     src.push_str("}\n");
@@ -655,7 +633,7 @@ proptest! {
     /// Default budget is 5s; raised to 10s on Windows CI to absorb
     /// the documented 3–5× slowness of GitHub windows-latest runners
     /// at process spawning + file I/O. A randomly-generated program
-    /// with a few `time.sleep(time.ms(N))` + `task.join_handle` chains can
+    /// with a few `time.sleep(time.ms(N))` + `task.join` chains can
     /// trip the 5s ceiling under Windows runner contention even when
     /// the program is well-behaved (round 79 follow-up: observed
     /// `TIMEOUT after 5.12s (max 5s)` on a chain of two send + two
@@ -703,12 +681,12 @@ import time
 
 fn main() {
   let done = channel.new(100)
-  let handles = 1..100
-    |> list.map { i -> task.spawn({ ->
+  let sleepers = 1..100
+    |> list.map { i -> { ->
       time.sleep(time.ms(10))
       let _ = channel.try_send(done, i)
-    }) }
-  handles |> list.each { h -> task.join_handle(h) }
+    } }
+  task.join(sleepers)
   println("finished")
 }
 "#;
