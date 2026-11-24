@@ -237,7 +237,9 @@ impl<T: Send + Counted> Parking<T> {
         // A cancel, or a stop, that came before the entry was there
         // did not find it, and its flag is set by now. The token is
         // not committed, so this cancel wakes nobody.
-        if refused() || token.is_cancelled() {
+        if refused() {
+            token.end(self);
+        } else if token.is_cancelled() {
             token.cancel(self);
         }
         let mut tasks = self.shard(id);
@@ -266,6 +268,16 @@ impl<T: Send + Counted> Parking<T> {
             tasks.get(&id).map(|entry| entry.parked.token().clone())
         };
         token.is_some_and(|token| token.cancel(self))
+    }
+
+    /// End the wait of the parked task `id` as [`Parking::cancel`]
+    /// does, also a wait that stays ([`Token::end`]).
+    pub(crate) fn end(&self, id: TaskId) -> bool {
+        let token = {
+            let tasks = self.shard(id);
+            tasks.get(&id).map(|entry| entry.parked.token().clone())
+        };
+        token.is_some_and(|token| token.end(self))
     }
 
     /// How many tasks wait.

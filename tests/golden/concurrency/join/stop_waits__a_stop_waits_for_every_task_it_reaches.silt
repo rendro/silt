@@ -1,0 +1,55 @@
+-- A stop waits for every task it reaches, however deep. The stopped
+-- helper waits in a task.join, one of whose pieces waits in a
+-- task.background, whose helper waits in a task.deadline, whose function
+-- has taken an item: when the outer task.background returns, that work
+-- is in the output. (The nested part of
+-- cancel/cancel_waits__task_cancel_returns_when_the_task_has_ended, in
+-- the new calls.)
+-- It holds by construction: the body's send has no room, so it ends only
+-- when the child has taken the item; then the body returns and the stop
+-- comes. A stopped task takes nothing new but has the steps to finish
+-- what it holds, and every frame that owns tasks (a join's, a
+-- background's, a deadline's) waits, when the stop reaches its caller,
+-- until those tasks have ended: the stop waits for every task it
+-- reaches, however deep.
+import channel
+import list
+import task
+import time
+
+-- A few hundred steps of work: fewer than a stopped task has.
+fn work(n: Int) -> Int {
+  list.fold(1..100, n) { acc, i -> acc + i % 3 }
+}
+
+-- How many values a closed channel still holds.
+fn count(ch: Channel(Int)) -> Int {
+  loop n = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+fn forever() {
+  let _ = channel.receive(channel.new(0))
+}
+
+-- Takes items, and puts the work of each into `out`, which has room.
+fn serve(handed: Channel(Int), out: Channel(Int)) -> () {
+  channel.each(handed) { item -> channel.send(out, work(item)) }
+}
+
+fn main() {
+  let handed = channel.new(0)
+  let out = channel.new(10)
+  let deepest = { ->
+    let _ = task.deadline(time.hours(1)) { -> serve(handed, out) }
+  }
+  let middle = { -> task.background([deepest]) { -> forever() } }
+  let parent = { -> task.join([middle, { -> forever() }]) }
+  task.background([parent]) { -> channel.send(handed, 2) }
+  channel.close(out)
+  println("results after the stop: {count(out)}")
+}

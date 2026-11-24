@@ -980,7 +980,7 @@ impl Scheduler {
             waiting.iter().filter(of_owner).map(|w| w.task).collect()
         });
         for task in left {
-            inner.parking.cancel(task);
+            inner.parking.end(task);
         }
     }
 
@@ -1132,7 +1132,7 @@ impl Scheduler {
         let waiting: Vec<TaskId> =
             (inner.parking).inspect(|waiting| waiting.iter().map(|w| w.task).collect());
         for task in waiting {
-            inner.parking.cancel(task);
+            inner.parking.end(task);
         }
         inner.poke_threads();
     }
@@ -2602,7 +2602,7 @@ impl Inner {
                         *self.verdict_given_at.lock() = GivenAt::now();
                     }
                     *self.deadlock.lock() = Some(verdict);
-                    self.parking.cancel(id);
+                    self.parking.end(id);
                 }
             }
         }

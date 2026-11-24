@@ -2007,9 +2007,7 @@ impl TaskHandle {
     /// back to ([`TaskHandle::hand_back`]).
     pub fn cancel(&self, wake: &dyn Wake) -> Option<Arc<TaskHandle>> {
         self.cancelled.store(true, AtomicOrdering::SeqCst);
-        let _ = self
-            .result
-            .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
+        self.end_by_cancel(wake);
         if self.kept.load(AtomicOrdering::SeqCst)
             || !self.unjoined_failure.swap(false, AtomicOrdering::SeqCst)
         {
@@ -2090,9 +2088,22 @@ impl TaskHandle {
     /// that has ended is not cancelled so: `runtime::family`).
     pub fn cancel_spawned(&self, wake: &dyn Wake) {
         self.mark_cancelled();
-        let _ = self
-            .result
-            .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
+        self.end_by_cancel(wake);
+    }
+
+    /// The cancellation is the task's result, unless it had one.
+    fn end_by_cancel(&self, wake: &dyn Wake) {
+        let cancelled = VmError {
+            by_a_cancel: true,
+            ..VmError::new("cancelled".to_string())
+        };
+        let _ = self.result.complete(Ended(Err(cancelled)), wake);
+    }
+
+    /// Whether a cancel gave the task its result
+    /// ([`TaskHandle::cancel`]): it neither returned nor failed before.
+    pub(crate) fn was_ended_by_cancel(&self) -> bool {
+        matches!(self.result.get(), Some(Ended(Err(error))) if error.by_a_cancel)
     }
 
     /// The flag of [`TaskHandle::cancel`], set alone: the rest of the
