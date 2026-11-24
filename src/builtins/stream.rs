@@ -215,6 +215,10 @@ struct Pipe {
 struct Armed {
     stop: Stop,
     armed: AtomicBool,
+    /// The stop outlives the stage's own end: the stage ending by itself
+    /// does not disarm it (`stream.from_fn`, whose function may run on
+    /// after the stage has ended: its stop disarms itself).
+    lasts: bool,
 }
 
 impl Armed {
@@ -222,6 +226,15 @@ impl Armed {
         Armed {
             stop,
             armed: AtomicBool::new(true),
+            lasts: false,
+        }
+    }
+
+    /// A stop that the stage's own end leaves armed.
+    fn lasting(stop: Stop) -> Armed {
+        Armed {
+            lasts: true,
+            ..Armed::new(stop)
         }
     }
 
@@ -232,7 +245,9 @@ impl Armed {
     }
 
     fn disarm(&self) {
-        self.armed.store(false, Ordering::SeqCst);
+        if !self.lasts {
+            self.armed.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -295,7 +310,16 @@ impl Pipe {
         let wake = vm.scheduler().wake();
         if let Some(out) = self.output() {
             let stage = failure.as_ref().and(self.handle.clone());
-            out.close(Close { failure, stage }, wake);
+            let failed = failure.is_some();
+            // A failure that comes after the output was closed reaches no
+            // reader: the function of `stream.from_fn` closed its channel
+            // itself and failed after that.
+            if !out.close(Close { failure, stage }, wake)
+                && failed
+                && let Some(handle) = &self.handle
+            {
+                handle.fails_after_its_output_closed();
+            }
         }
         for (input, open) in self.inputs.iter().zip(&self.open) {
             if *open {
@@ -543,18 +567,21 @@ fn stage(
     output: Output,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
-    stage_on(vm, name, inputs, output, None, logic)
+    stage_on(vm, name, inputs, output, None, false, logic)
 }
 
 /// Start a stage, as [`stage`] does, that works on a connection: `stop`
 /// is run when the stage is stopped, whenever that is: in a read,
-/// between two, or before the stage has run at all.
+/// between two, or before the stage has run at all. A stage that
+/// `relays` only passes on what another task of the same call sends,
+/// which the deadlock report names instead (`stream.from_fn`).
 fn stage_on(
     vm: &mut Vm,
     name: &'static str,
     inputs: Vec<Arc<Channel>>,
     output: Output,
-    stop: Option<Stop>,
+    stop: Option<Arc<Armed>>,
+    relays: bool,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
     if vm.takes_nothing_new() {
@@ -575,12 +602,13 @@ fn stage_on(
         at: vm.place_here(),
         inputs: inputs.iter().map(|input| input.id()).collect(),
         output: out.id(),
+        relays,
     };
     let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(stage));
     // Whoever reads the output and stops reading stops the stage.
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = handle.clone();
-    let armed = stop.map(|stop| Arc::new(Armed::new(stop)));
+    let armed = stop;
     let shut = armed.clone();
     // (Weakly: the output does not keep the stage's inputs.)
     let feeds: Vec<Weak<Channel>> = inputs.iter().map(Arc::downgrade).collect();
@@ -816,8 +844,8 @@ fn reading(
     let read = Arc::new(Mutex::new(read));
     let mut failed = false;
     let mut items = std::collections::VecDeque::new();
-    let stop = on.stop.clone();
-    stage_on(vm, name, vec![], SOURCE, stop, move |got| {
+    let stop = on.stop.clone().map(|stop| Arc::new(Armed::new(stop)));
+    stage_on(vm, name, vec![], SOURCE, stop, false, move |got| {
         // The next item read, which ends the source if it is an error.
         fn emit(item: Value, failed: &mut bool) -> Next {
             *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
@@ -1331,6 +1359,8 @@ fn writing(
 /// anything closes the channel `feed` sends into: a stop is never a send
 /// on a closed channel in `feed`. When `feed` returns, the feeder closes
 /// that channel, and the source closes the output after what is in it.
+/// A `feed` that closes the channel itself ends the stream so too, and
+/// runs on: the source's stop stays armed until the feeder has ended.
 /// When `feed` fails, the feeder closes it with the failure, as a stage
 /// that fails closes its output, and the source fails with it in turn.
 fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
@@ -1348,16 +1378,25 @@ fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
         at: vm.place_here(),
         inputs: Vec::new().into(),
         output: into.id(),
+        relays: false,
     }));
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = feeder.clone();
+    // Armed until the feeder has ended, not until the source has: a
+    // `feed` that closed its channel ends the stream, and runs on until
+    // it returns or nobody reads the stream any more. (A feeder that has
+    // ended is not cancelled: that would stop what it spawned and left
+    // running.)
     let stop: Stop = Arc::new(move || {
-        if let Some(scheduler) = scheduler.upgrade() {
+        if let Some(scheduler) = scheduler.upgrade()
+            && !stopped.has_result()
+        {
             scheduler.cancel(&stopped);
         }
         true
     });
-    let source = stage_on(vm, NAME, vec![into.clone()], STOPS, Some(stop), |got| {
+    let stop = Some(Arc::new(Armed::lasting(stop)));
+    let source = stage_on(vm, NAME, vec![into.clone()], STOPS, stop, true, |got| {
         Ok(match got {
             Got::Start | Got::Emitted => Next::Take(0),
             Got::Value(_, value) => Next::Emit(value),

@@ -1,0 +1,6 @@
+error[runtime]: deadlock on main thread: channel receive with no counterparty
+ --> from_fn__a_deadlock_names_the_feed_that_waits_once.silt:15:11
+    |
+ 15 |   println(stream.collect(s))
+    |           ^^^^^^^^^^^^^^^^^ deadlock on main thread: channel receive with no counterparty
+  = help: the `stream.from_fn` source at from_fn__a_deadlock_names_the_feed_that_waits_once.silt:10:11 waits to receive from <channel:0>

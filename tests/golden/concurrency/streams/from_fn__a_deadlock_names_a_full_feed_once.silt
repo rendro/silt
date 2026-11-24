@@ -1,0 +1,23 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread: channel receive with no counterparty
+-- stderr-not-contains: stage at
+-- A deadlock while a feed waits for its reader names the feed's call once.
+import channel
+import stream
+
+fn counting() {
+  stream.from_fn { ch ->
+    loop i = 0 {
+      channel.send(ch, i)
+      loop(i + 1)
+    }
+  }
+}
+
+fn main() {
+  let other = channel.new(0)
+  let s = counting()
+  println(channel.receive(s))
+  let _ = channel.receive(other)
+  println(channel.receive(s))
+}
