@@ -30,7 +30,7 @@ answer was almost always yes.
 - `try`/`catch` does not exist because errors are values.
 
 Concurrency primitives live in modules (`channel.new`, `channel.send`,
-`task.spawn`, etc.) rather than as keywords — this keeps the global
+`task.join`, etc.) rather than as keywords — this keeps the global
 namespace clean and avoids the PHP problem of too many bare globals.
 
 The following names are always available without an import: `print`,
@@ -77,9 +77,10 @@ error, and `let _ = ...` is how a value is discarded on purpose:
 ```silt
 import io
 import task
+import time
 
 fn main() {
-  let _ = task.spawn { -> println("in the background") }
+  let _ = task.deadline(time.ms(100)) { -> println("in time") }
   match io.write_file("out.txt", "data") {
     Ok(_) -> println("saved")
     Err(e) -> println("not saved: {e}")
@@ -87,7 +88,7 @@ fn main() {
 }
 ```
 
-Without the `let _ =`, the first line is rejected: ``this `Handle(())` value
+Without the `let _ =`, the first line is rejected: ``this `Option(())` value
 is unused; write `let _ = ...` to discard it``. A `Result` left unused is how
 an error goes unseen, so its message asks for more: handle it, return it with
 `?`, or discard it with `let _ = ...`. A call whose type nothing else decides

@@ -33,7 +33,7 @@ need no import:
 | `Bytes` | Byte strings |
 
 A type of a builtin module is a value through its module, as its other
-members are (`time.Weekday`, `task.Handle`, `json.Value`), and a type of
+members are (`time.Weekday`, `task.RuntimeError`, `json.Value`), and a type of
 the program by its name.
 
 ## Variants of builtin modules
@@ -107,7 +107,7 @@ A value of any length is printed, all of it. A text longer than 1,000,000
 bytes is written out in pieces as it is made, so it takes no more memory than
 a few pieces; it still reaches stdout whole, with no other print's text in it.
 Such a print waits for the reader as any print does: a `task.deadline` around
-it, or a cancel of its task, ends it between two pieces, and what was written
+it, or another stop of its task, ends it between two pieces, and what was written
 until then stays written. (In the playground a run keeps at most 1,000,000
 bytes of output: a print past them is a runtime error. A host program's own
 output gets each print as one write, of at most 10,000,000 bytes.)

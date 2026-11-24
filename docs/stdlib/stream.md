@@ -172,10 +172,12 @@ fn main() {
 
 `stream.write_to_file` takes a channel of `Bytes`. A source that can fail
 on the way, such as `postgres.stream` (a channel of `Result(Row,
-PostgresError)`), is written by a relay task: it receives the rows, sends
-the text of each `Ok` row on as bytes, and stops at the first `Err`,
-which it returns; the file is written while the relay runs, so the rows
-are never all held. Closing the source at the `Err` stops what feeds it.
+PostgresError)`), is written through a relay, a `stream.from_fn` whose
+`feed` receives the rows, sends the text of each `Ok` row on as bytes,
+and stops at the first `Err`; it leaves its count, or the `Err`, in a
+channel of its own. The file is written while the relay runs, so the
+rows are never all held. Closing the source at the `Err` stops what feeds
+it.
 
 ```silt
 import bytes
@@ -184,7 +186,6 @@ import io
 import result
 import stream
 import string
-import task
 
 type ExportError {
   BadRow(String),
@@ -194,8 +195,8 @@ type ExportError {
 -- Writes each Ok row to `path` as a line, as the rows come, and stops at
 -- the first Err: Ok of the number of rows written, or the Err.
 fn write_rows(rows: Channel(Result(String, String)), path: String) -> Result(Int, ExportError) {
-  let lines = channel.new(64)
-  let relay = task.spawn { ->
+  let outcome = channel.new(1)
+  let lines = stream.from_fn { out ->
     let sent = loop n = 0 {
       match channel.receive(rows) {
         None -> Ok(n)
@@ -204,20 +205,20 @@ fn write_rows(rows: Channel(Result(String, String)), path: String) -> Result(Int
           Err(BadRow(e))
         }
         Some(Ok(row)) -> {
-          channel.send(lines, bytes.from_string("{row}\n"))
+          channel.send(out, bytes.from_string("{row}\n"))
           loop(n + 1)
         }
       }
     }
-    channel.close(lines)
-    sent
+    channel.send(outcome, sent)
   }
+  -- A write that fails reads no further, and the relay is stopped.
   match stream.write_to_file(lines, path) {
-    Ok(()) -> task.join_handle(relay)
-    Err(e) -> {
-      task.cancel(relay)
-      Err(Write(e))
+    Ok(()) -> match channel.receive(outcome) {
+      Some(sent) -> sent
+      None -> Ok(0)
     }
+    Err(e) -> Err(Write(e))
   }
 }
 
@@ -321,8 +322,7 @@ fn main() {
   too: `channel.each`, `channel.receive`, `channel.try_receive`,
   `channel.receive_timeout` and a `Recv` arm of `channel.select`. A stage
   that took a value and failed on it, where nobody reads its output any
-  more, is an error when the program ends, as a task that failed and was
-  never joined is: "a `stream.map` stage failed and its output was never
+  more, is an error when the program ends: "a `stream.map` stage failed and its output was never
   read". That is a stage that read ahead for `stream.buffered`, or one
   that a read which did not wait asked for a value. A failure that a read
   has raised is not reported again, a stage that nobody asked for a value
@@ -334,10 +334,7 @@ fn main() {
   channel itself). A runtime error
   in `feed` fails the stream as a failing stage does, and when nobody
   reads the stream any more (it is cut short, closed or left), `feed` is
-  stopped where it is. A task that you spawn to feed a `channel.new` does
-  none of this: its channel closes only when it closes it, a failure in it
-  is the task's own and leaves its reader waiting, and it runs on after
-  its reader has gone.
+  stopped where it is.
 - **A pipeline that is cut short stops.** When a stage or a sink reads no
   further (`take`, `take_while`, `first`, a failure downstream), the stage
   that feeds it is stopped, and so on up to the source. So
@@ -350,8 +347,8 @@ fn main() {
   more.
   `stream.buffered(n)` took up to `n` values ahead, which are gone when
   the pipeline is cut short. A sink that reads to the end but is stopped
-  first (its task is cancelled, or its time under `task.deadline` runs
-  out) loses up to 16 values for each stage before it. And a `merge`, a
+  first (its task is stopped, for example when its time under
+  `task.deadline` runs out) loses up to 16 values for each stage before it. And a `merge`, a
   `zip` or a `channel.select` over several streams asks each of them, so
   each stage that feeds it may hold one value for a later read; when
   nothing reads it any more, that value is gone: at most one per input.
@@ -379,7 +376,7 @@ fn main() {
   process that has none left gets a stream whose one item is the
   error.)
 - **A TCP sink that is stopped closes its connection.** When the task in
-  `stream.write_to_tcp` is cancelled, the connection is shut down, as by
+  `stream.write_to_tcp` is stopped, the connection is shut down, as by
   `tcp.close`: a write that may be in flight has to end, and the peer
   must not take a part of a write for the whole.
 - **A read or a write of a source or a sink waits for I/O**, and
@@ -528,7 +525,7 @@ fn main() {
 stream.from_fn(feed: Fn(Channel(a)) -> ()) -> Channel(a)
 ```
 
-A stream of what `feed` sends on the channel it is given. `feed` runs in a task of its own as the stream's source, and works ahead of its reader: a send of `feed` waits while 16 of its values wait to be read, or 32 under a sink that reads to the end (`collect`, `fold`, `channel.each`, ...). The stream closes when `feed` returns. A `feed` that closes its channel itself ends the stream there as returning does, and runs on until it returns or nobody reads the stream any more; a send after that close is a runtime error of `feed`'s own ("send on closed channel"), reported as such. A task that `feed` spawned and that still sends when `feed` returns fails the same way: wait for it in `feed` with `task.join_handle` before `feed` returns. A runtime error in `feed` fails the stream as a failing stage does: the sink or the read that reads it raises the error. When nobody reads the stream any more (it is cut short, closed, or its last name is gone), `feed` is stopped, in a send or wherever it waits.
+A stream of what `feed` sends on the channel it is given. `feed` runs in a task of its own as the stream's source, and works ahead of its reader: a send of `feed` waits while 16 of its values wait to be read, or 32 under a sink that reads to the end (`collect`, `fold`, `channel.each`, ...). The stream closes when `feed` returns. A `feed` that closes its channel itself ends the stream there as returning does, and runs on until it returns or nobody reads the stream any more; a send after that close is a runtime error of `feed`'s own ("send on closed channel"), reported as such. A runtime error in `feed` fails the stream as a failing stage does: the sink or the read that reads it raises the error. When nobody reads the stream any more (it is cut short, closed, or its last name is gone), `feed` is stopped, in a send or wherever it waits.
 
 ```silt
 import channel

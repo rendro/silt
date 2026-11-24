@@ -41,7 +41,7 @@ fn area(s: Shape) -> Int {
 
 ## Parallelism
 
-Spawn lightweight tasks that run in parallel on a fixed thread pool. Communicate through channels. Every value is immutable, so there are no data races to debug. I/O operations transparently yield to the scheduler — no async/await needed.
+Run work in lightweight tasks, in parallel on a fixed thread pool, and communicate through channels. A call such as `task.join` returns when its tasks have ended, and a failure in one of them is a failure of the call. Every value is immutable, so there are no data races to debug. I/O operations transparently yield to the scheduler — no async/await needed.
 
 ```silt
 import channel
@@ -51,20 +51,22 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let w1 = task.spawn { -> channel.each(ch) { msg -> println("w1: {msg}") } }
-  let w2 = task.spawn { -> channel.each(ch) { msg -> println("w2: {msg}") } }
-
-  list.each(1..100) { n -> channel.send(ch, n) }
-  channel.close(ch)
-
-  task.join_handle(w1)
-  task.join_handle(w2)
+  task.join(
+    [
+      { -> channel.each(ch) { msg -> println("w1: {msg}") } },
+      { -> channel.each(ch) { msg -> println("w2: {msg}") } },
+      { ->
+        list.each(1..100) { n -> channel.send(ch, n) }
+        channel.close(ch)
+      },
+    ],
+  )
 }
 ```
 
 ## Errors as values
 
-Every function that can fail returns a Result. The `?` operator propagates errors without nesting. Nothing is thrown or caught.
+Every function that can fail returns a Result. The `?` operator propagates errors without nesting. A failure is either such a value or a runtime error (a bug: a `panic`, a division by zero), which ends the call it happens in; `task.guard` turns a runtime error into a Result.
 
 ```silt
 import io

@@ -150,19 +150,16 @@ fn a_program_that_loops_for_ever_is_ended_by_the_step_budget() {
 }
 
 /// `process.exit` ends the run with its code: 0 is a program that
-/// ended well, another code one that failed, and either way a task that
-/// failed and that nobody joined is not reported.
+/// ended well, another code one that failed, also when a task calls it.
 #[test]
 fn process_exit_ends_the_run_with_its_code() {
-    let ran = run_it(
-        "import process\nimport task\nfn main() {\n  let _ = task.spawn { -> panic(\"lost\") }\n  print(\"before\")\n  process.exit(0)\n}\n",
-    );
+    let ran = run_it("import process\nfn main() {\n  print(\"before\")\n  process.exit(0)\n}\n");
     assert_eq!(
         (ran.output.as_str(), ran.error.as_str(), ran.ok),
         ("before", "", true)
     );
     let ran = run_it(
-        "import process\nimport task\nfn main() {\n  task.join_handle(task.spawn { -> process.exit(3) })\n}\n",
+        "import process\nimport task\nfn main() {\n  task.join([{ -> process.exit(3) }])\n}\n",
     );
     assert_eq!(
         (ran.output.as_str(), ran.error.as_str(), ran.ok),
@@ -171,12 +168,13 @@ fn process_exit_ends_the_run_with_its_code() {
 }
 
 #[test]
-fn a_task_that_failed_and_that_nobody_joined_is_reported_in_the_output() {
+fn a_task_that_fails_is_the_failure_of_its_call() {
     let ran = run_it(
-        "import task\nfn main() {\n  let unjoined = task.spawn { -> panic(\"in the task\") }\n  println(\"main is done\")\n}\n",
+        "import task\nfn main() {\n  println(\"main runs\")\n  task.join([{ -> panic(\"in the task\") }])\n  println(\"not reached\")\n}\n",
     );
-    assert!(ran.output.starts_with("main is done\n"), "{ran:?}");
-    assert!(ran.output.contains("in the task"), "{ran:?}");
+    assert!(!ran.ok, "{ran:?}");
+    assert_eq!(ran.output, "main runs\n", "{ran:?}");
+    assert!(ran.error.contains("panic: in the task"), "{ran:?}");
 }
 
 /// A fixed time of day: 2026-10-05T12:00:00Z.

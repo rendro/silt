@@ -212,7 +212,7 @@ import list
 
 ## 8. Concurrency
 
-Spawn lightweight tasks that run in parallel. Communicate through channels. I/O inside tasks transparently yields — no async/await.
+Run work in lightweight tasks that run in parallel, and communicate through channels. A call such as `task.join` returns when its tasks have ended, and a failure in one of them is a failure of the call. I/O inside tasks transparently yields — no async/await.
 
 ```silt
 import channel
@@ -221,12 +221,16 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let worker = task.spawn { -> channel.each(ch) { msg -> println("got: {msg}") } }
-
-  channel.send(ch, "hello")
-  channel.send(ch, "world")
-  channel.close(ch)
-  task.join_handle(worker)
+  task.join(
+    [
+      { -> channel.each(ch) { msg -> println("got: {msg}") } },
+      { ->
+        channel.send(ch, "hello")
+        channel.send(ch, "world")
+        channel.close(ch)
+      },
+    ],
+  )
 }
 ```
 
