@@ -15,17 +15,10 @@ fn main() {
   channel.send(jobs, 60)
   channel.close(jobs)
 
-  -- Spawn three workers
-  let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn(fn() {
-      channel.each(jobs) { n ->
-        channel.send(results, n * 2)
-      }
-    })
-  }
-
-  -- Wait for all workers to finish, then close results
-  workers |> list.each { w -> task.join_handle(w) }
+  -- Three workers; task.each returns when all of them are done
+  task.each(jobs, 3, fn(n) {
+    channel.send(results, n * 2)
+  })
   channel.close(results)
 
   -- Collect

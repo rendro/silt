@@ -5,7 +5,7 @@ import task
 import time
 fn main() {
   -- make a scheduler exist (one finished task)
-  task.join_handle(task.spawn(fn() { 1 }))
+  task.join([fn() { () }])
   let s = stream.unfold(0) { n ->
     time.sleep(time.ms(500))
     match n < 3 {

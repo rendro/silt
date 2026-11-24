@@ -1,5 +1,6 @@
 -- verdict: same
 import channel
+import option
 import task
 
 fn spin(n) {
@@ -27,12 +28,17 @@ fn go(i, lost_rounds, lost_values) {
   match i < 400 {
     true -> {
       let ch = channel.new(8)
-      let c = task.spawn(fn() { consume(ch, 0) })
-      let s = task.spawn(fn() { produce(ch, 0) })
-      let _ = spin(200 + i % 97)
-      channel.close(ch)
-      let sent = task.join_handle(s)
-      let received = task.join_handle(c)
+      let received_count = channel.new(1)
+      let sent_count = channel.new(1)
+      let c = fn() { channel.send(received_count, consume(ch, 0)) }
+      let s = fn() { channel.send(sent_count, produce(ch, 0)) }
+      let closer = fn() {
+        let _ = spin(200 + i % 97)
+        channel.close(ch)
+      }
+      task.join([c, s, closer])
+      let sent = channel.receive(sent_count) |> option.unwrap_or(0)
+      let received = channel.receive(received_count) |> option.unwrap_or(0)
       match sent > received {
         true -> go(i + 1, lost_rounds + 1, lost_values + sent - received)
         false -> go(i + 1, lost_rounds, lost_values)

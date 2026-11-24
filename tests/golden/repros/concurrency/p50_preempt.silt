@@ -1,5 +1,7 @@
 -- verdict: same
+import channel
 import list
+import option
 import task
 import time
 
@@ -14,22 +16,26 @@ fn main() {
   let t0 = time.now()
   -- 4 CPU-bound tasks (= number of workers on this 4-core box).
   -- Variant A: plain recursion (top-level opcodes, preemptible every 2000 ops)
+  let quick_at = channel.new(1)
   let hogs = [1, 2, 3, 4] |> list.map { i ->
-    task.spawn(fn() { spin_loop(300000, 0) })
+    fn() {
+      let _ = spin_loop(300000, 0)
+    }
   }
-  let quick = task.spawn(fn() { time.now() })
-  let tq = task.join_handle(quick)
+  task.join(list.concat(hogs, [fn() { channel.send(quick_at, time.now()) }]))
+  let tq = channel.receive(quick_at) |> option.unwrap_or(t0)
   println("A (recursion hogs): quick task ran after {time.since(t0, tq)}")
-  let _ = hogs |> list.map { h -> task.join_handle(h) }
 
   let t1 = time.now()
   -- Variant B: same work inside a higher-order builtin callback
+  let quick2_at = channel.new(1)
   let hogs2 = [1, 2, 3, 4] |> list.map { i ->
-    task.spawn(fn() { 1..300000 |> list.fold(0) { acc, n -> acc + n } })
+    fn() {
+      let _ = 1..300000 |> list.fold(0) { acc, n -> acc + n }
+    }
   }
-  let quick2 = task.spawn(fn() { time.now() })
-  let tq2 = task.join_handle(quick2)
+  task.join(list.concat(hogs2, [fn() { channel.send(quick2_at, time.now()) }]))
+  let tq2 = channel.receive(quick2_at) |> option.unwrap_or(t1)
   println("B (list.fold hogs): quick task ran after {time.since(t1, tq2)}")
-  let _ = hogs2 |> list.map { h -> task.join_handle(h) }
   println("total {time.since(t0, time.now())}")
 }

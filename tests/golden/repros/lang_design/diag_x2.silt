@@ -1,7 +1,6 @@
 -- verdict: same
 import task
 fn main() {
-  let h = task.spawn(fn() { 1 / 0 })
-  let r = task.join_handle(h)
-  println("after join: {r}")
+  let r = task.map([0], 1, fn(_) { 1 / 0 })
+  println("after the task: {r}")
 }

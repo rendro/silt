@@ -13,12 +13,12 @@ fn go(i, n) {
   match i < n {
     true -> {
       let ch = channel.new(1)
-      println("A{i} before spawn")
-      let h = task.spawn(fn() { channel.receive(ch) })
-      let _ = spin(i % 40)
-      println("B{i} before cancel")
-      task.cancel(h)
-      println("C{i} after cancel")
+      println("A{i} before start")
+      task.background([fn() { let _ = channel.receive(ch) }], fn() {
+        let _ = spin(i % 40)
+        println("B{i} before stop")
+      })
+      println("C{i} after stop")
       go(i + 1, n)
     }
     false -> ()
@@ -27,5 +27,5 @@ fn go(i, n) {
 
 fn main() {
   go(0, 3000)
-  println("completed 3000 spawn+cancel rounds")
+  println("completed 3000 start+stop rounds")
 }

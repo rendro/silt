@@ -6,12 +6,12 @@ fn main() {
   let results = channel.new(10)
 
   let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn(fn() {
+    fn() {
       channel.send(results, id * 10)
-    })
+    }
   }
 
-  workers |> list.each { w -> task.join_handle(w) }
+  task.join(workers)
   channel.close(results)
 
   when let Some(r1) = channel.receive(results) else { return }
@@ -19,5 +19,5 @@ fn main() {
   when let Some(r3) = channel.receive(results) else { return }
   println("results: {r1}, {r2}, {r3}")
   -- output: results: 10, 20, 30 (in some order — the receive order is
-  -- a permutation of the spawn order, since the workers race to send)
+  -- a permutation of the start order, since the workers race to send)
 }
