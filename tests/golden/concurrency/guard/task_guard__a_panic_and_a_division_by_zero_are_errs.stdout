@@ -1,0 +1,4 @@
+Ok(25)
+division by zero at task_guard__a_panic_and_a_division_by_zero_are_errs.silt:7:3
+panic: the work broke at task_guard__a_panic_and_a_division_by_zero_are_errs.silt:16:25
+main goes on

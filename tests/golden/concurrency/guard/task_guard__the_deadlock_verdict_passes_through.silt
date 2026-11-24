@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: deadlock on main thread: channel receive with no counterparty
+-- The deadlock verdict of the program's thread ends the program inside
+-- a guard too.
+import channel
+import task
+
+fn main() {
+  let ch: Channel(Int) = channel.new(0)
+  let caught = task.guard({ -> channel.receive(ch) })
+  println("the guard returned {caught}")
+}

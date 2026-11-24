@@ -141,7 +141,7 @@ and it is how a tool fails: the `Err` is the program's message to its user.
 |---|---|
 | it returns `()` or `Ok(())` | exit status 0 |
 | it returns `Err(e)` | the one line `error: e` on stderr, exit status 1 |
-| a runtime error or a `panic` | the error with its place and calls on stderr, exit status 1 |
+| a runtime error or a `panic` that no `task.guard` catches | the error with its place and calls on stderr, exit status 1 |
 
 The `error: e` line is the program's own text, written exactly as the
 program made it, colours and other control characters included. A
@@ -216,6 +216,42 @@ fn main() {
   }
 }
 ```
+
+## Catching a Runtime Error: `task.guard`
+
+A runtime error (a `panic`, a division by zero, a failed join) is not a
+value: it ends the work it is raised in. `task.guard(work)` makes it one.
+It runs `work` and gives `Ok` of its value, or `Err(e)` for a runtime
+error raised inside it, `e` a `task.RuntimeError` with the error's
+`message`, its `location` and the `trace` of calls that led there.
+Shown, `e` is the report the program would have printed:
+
+```silt
+import task
+
+fn ratio(a: Int, b: Int) -> Int {
+  a / b
+}
+
+fn shown(r: Result(Int, task.RuntimeError)) -> String {
+  match r {
+    Ok(v) -> "{v}"
+    Err(e) -> "skipped: {e.message}"
+  }
+}
+
+fn main() {
+  println(shown(task.guard({ -> ratio(6, 3) }))) -- 2
+  println(shown(task.guard({ -> ratio(1, 0) }))) -- skipped: division by zero
+}
+```
+
+The function runs in place, on the caller's task, so a guard costs about
+what a call costs. What ends the program on purpose, or by a fault of
+silt or its host, passes through a guard: `process.exit`, a deadlock of
+the program's thread, a stop of the task (`task.cancel`, a
+`task.deadline` whose time passed), an embedder's step budget used up.
+See [`task.guard`](../stdlib/channel-task.md#taskguard).
 
 ## Cross-Module Error Composition
 

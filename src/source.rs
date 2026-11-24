@@ -95,6 +95,7 @@ pub enum SourceName {
 }
 
 /// The text of one file and the start of each of its lines.
+#[derive(Clone)]
 pub struct SourceFile {
     pub path: SourceName,
     pub text: Arc<str>,
@@ -291,7 +292,7 @@ fn lsp_line_starts(text: &str) -> Option<Vec<u32>> {
 }
 
 /// Every file of a compilation, by [`FileId`].
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SourceMap {
     files: Vec<SourceFile>,
 }

@@ -70,7 +70,7 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
         }),
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
-            Err(VmError::new(format!(
+            Err(VmError::ending(format!(
                 "host function '{}' panicked: {msg}",
                 host.name
             )))
@@ -111,7 +111,7 @@ where
         Ok(result) => result,
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
-            Err(VmError::new(format!(
+            Err(VmError::ending(format!(
                 "builtin module '{module}' panicked: {msg}"
             )))
         }
@@ -134,7 +134,7 @@ pub(super) fn resume_native(
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
             let module = native.name().split('.').next().unwrap_or_default();
-            Err(VmError::new(format!(
+            Err(VmError::ending(format!(
                 "builtin module '{module}' panicked: {msg}"
             )))
         }

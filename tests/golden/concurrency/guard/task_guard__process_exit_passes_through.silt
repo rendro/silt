@@ -1,0 +1,10 @@
+-- exit: 3
+-- process.exit inside a guard ends the program with its code: the
+-- guard does not catch it.
+import process
+import task
+
+fn main() {
+  let caught = task.guard({ -> process.exit(3) })
+  println("the guard returned {caught}")
+}

@@ -7989,3 +7989,118 @@ mod applicative {
         assert!(registry.impl_row("Channel", "pure").is_none());
     }
 }
+
+/// `task.guard` (src/builtins/guard.rs): what it catches, what passes
+/// through it, and what it leaves of the VM.
+mod guard {
+    use super::*;
+    use crate::session::HostModule;
+    use crate::session::testing::{compile_given, compile_given_with};
+    use crate::value::HostCall;
+
+    /// The value `source` gave through `host.give`, run by `vm`, whose
+    /// guards are all done afterwards.
+    fn given_by(vm: &mut Vm, source: &str) -> Result<Option<Value>, VmError> {
+        let (program, given) = compile_given(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let ran = vm.run_program(&program);
+        assert_eq!(vm.guards, 0, "a guard is left counted");
+        ran.map(|()| given.last())
+    }
+
+    /// Errors caught in the program's thread and in a task, in a loop:
+    /// each catch leaves the frames below the guard as they were, so the
+    /// loop counts on; at every time slice the same.
+    #[test]
+    fn a_loop_of_caught_errors_goes_on_at_every_slice() {
+        let source = "\
+import host
+import list
+import task
+fn part(n: Int) -> Int {
+  match n % 3 == 0 {
+    true -> panic(\"third {n}\")
+    false -> n
+  }
+}
+fn count(xs: List(Int)) -> Int {
+  list.fold(xs, 0, { acc, n ->
+    match task.guard({ -> part(n) }) {
+      Ok(v) -> acc + v
+      Err(_) -> acc + 1000
+    }
+  })
+}
+fn main() {
+  let xs = 1..30
+  let here = count(xs)
+  let there = task.join(task.spawn({ -> count(xs) }))
+  host.give((here, there))
+}
+";
+        let expected: i64 = (1..=30).map(|n| if n % 3 == 0 { 1000 } else { n }).sum();
+        let pair = Value::Tuple(crate::value::Tuple::from(vec![
+            Value::Int(expected),
+            Value::Int(expected),
+        ]));
+        for slice in [None, Some(1), Some(3), Some(7)] {
+            let mut vm = Vm::new(HostIo::process());
+            if let Some(steps) = slice {
+                vm.set_time_slice(steps);
+            }
+            let given = given_by(&mut vm, source).expect("the program runs");
+            assert_eq!(given, Some(pair.clone()), "slice {slice:?}");
+        }
+    }
+
+    /// The step budget used up inside a guard ends the program: the
+    /// guard does not turn it into an `Err`.
+    #[test]
+    fn the_step_budget_passes_through_a_guard() {
+        let source = "\
+import host
+import task
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+fn main() {
+  let caught = task.guard({ -> spin(0) })
+  host.give(caught)
+}
+";
+        let mut vm = Vm::new(HostIo::process());
+        vm.set_step_budget(10_000);
+        let error = given_by(&mut vm, source).expect_err("the budget ends the program");
+        assert!(error.out_of_steps, "{}", error.message);
+    }
+
+    /// A host function that panics fails the program through a guard:
+    /// that is a fault of the host, not of the program.
+    #[test]
+    fn a_panic_of_a_host_function_passes_through_a_guard() {
+        let broken = HostModule::new("broken").function(
+            "fn call() -> Int",
+            |_: &HostCall<'_>| -> Result<Value, VmError> { panic!("the host broke") },
+        );
+        let source = "\
+import broken
+import host
+import task
+fn main() {
+  host.give(task.guard({ -> broken.call() }))
+}
+";
+        let (program, given) =
+            compile_given_with(source, vec![broken]).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut vm = Vm::new(HostIo::process());
+        let error = vm
+            .run_program(&program)
+            .expect_err("the panic ends the program");
+        assert!(
+            error.message.contains("the host broke"),
+            "{}",
+            error.message
+        );
+        assert!(given.last().is_none());
+        assert_eq!(vm.guards, 0);
+    }
+}

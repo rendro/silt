@@ -12,8 +12,8 @@ use crate::vm::{Exit, Vm};
 
 use crate::cli::help::test_usage_banner;
 use crate::cli::paths::{
-    FILE_OR_DIRECTORY, PathArg, ProgramFiles, door_diagnostics, open_entry, package_test_files,
-    path_arg, refuse_path,
+    FILE_OR_DIRECTORY, HeldProgramFiles, PathArg, ProgramFiles, door_diagnostics, open_entry,
+    package_test_files, path_arg, refuse_path,
 };
 use crate::cli::run::render_runtime_error;
 
@@ -353,6 +353,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // A `process.exit` fails the file's top-level code, or the test
         // it is in: the other files and tests run.
         vm.set_exit(Exit::FailsTestFile);
+        vm.name_files(HeldProgramFiles::of(shown, &program));
         #[cfg(feature = "test-hooks")]
         crate::cli::run::panic_where_a_test_says(&vm);
         vm.set_task_owner(setup_owner);

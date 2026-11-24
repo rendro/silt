@@ -1,0 +1,5 @@
+Err(division by zero)
+Err(division by zero)
+Err(panic: a name with no text)
+2092
+["Ok(1)", "Err(division by zero)", "Ok(3)"]

@@ -1146,6 +1146,7 @@ impl Session {
                     globals,
                     settled,
                     entry,
+                    files: Arc::new(self.sources.clone()),
                 })
             }
             Err(e) => {

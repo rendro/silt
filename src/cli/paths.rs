@@ -346,3 +346,53 @@ impl crate::diagnostic::SourceView for ProgramFiles<'_> {
         }
     }
 }
+
+/// [`ProgramFiles`] that holds what it names the files by: how the VM
+/// that runs the program names them in the report of a runtime error
+/// that `task.guard` caught (`Vm::name_files`).
+pub(crate) struct HeldProgramFiles {
+    path: String,
+    sources: std::sync::Arc<crate::source::SourceMap>,
+    /// The name of each file named so far, and how a terminal names it:
+    /// a name is read off the file system (`display_path`), and a loop
+    /// that catches an error each round names the same files again.
+    names: parking_lot::Mutex<
+        std::collections::HashMap<
+            crate::source::FileId,
+            (String, Option<crate::diagnostic::ShownPlace>),
+        >,
+    >,
+}
+
+impl HeldProgramFiles {
+    /// The files of `program`, its entry file named as the user typed
+    /// it: `path`.
+    pub(crate) fn of(path: &str, program: &crate::program::Program) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(HeldProgramFiles {
+            path: path.to_string(),
+            sources: program.files.clone(),
+            names: Default::default(),
+        })
+    }
+}
+
+impl crate::diagnostic::SourceView for HeldProgramFiles {
+    fn locate(&self, span: crate::source::Span) -> Option<crate::diagnostic::Located> {
+        let file = self.sources.get(span.file)?;
+        let (name, shown) = (self.names.lock().entry(span.file))
+            .or_insert_with(|| {
+                let name = ProgramFiles::new(&self.path, &self.sources).name(file);
+                (name, crate::package_graph::shown_place(&file.path))
+            })
+            .clone();
+        Some(crate::diagnostic::Located {
+            file: name,
+            position: self.sources.position(span),
+            shown,
+        })
+    }
+
+    fn frame(&self, span: crate::source::Span) -> String {
+        ProgramFiles::new(&self.path, &self.sources).frame(span)
+    }
+}

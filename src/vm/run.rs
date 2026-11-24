@@ -1798,7 +1798,8 @@ impl Vm {
         // No slice starts once the step budget is used up, as for a
         // task (`execute_slice`).
         self.runtime.charge(0)?;
-        let mut run = start(self)?;
+        let ran = start(self);
+        let mut run = self.caught(floor, ran)?;
         loop {
             crate::scheduler::run_deferred();
             if program {
@@ -1848,8 +1849,71 @@ impl Vm {
                 self.woken = None;
                 return Err(e);
             }
-            run = self.run_frames(floor, self.own_slice())?;
+            let ran = self.run_frames(floor, self.own_slice());
+            run = self.caught(floor, ran)?;
         }
+    }
+
+    /// What a run of the frames above `floor` came to, with a runtime
+    /// error caught by the innermost `task.guard` among them
+    /// ([`Vm::catch`]). An error that ends what it is raised in
+    /// (`VmError::catchable`), and one that no guard of this run is
+    /// above, stays the run's.
+    #[inline(always)]
+    fn caught(&mut self, floor: usize, run: Result<Slice, VmError>) -> Result<Slice, VmError> {
+        match run {
+            Err(error) if self.guards > 0 && error.catchable() => self.catch(floor, error),
+            run => run,
+        }
+    }
+
+    /// Catch `error`, a runtime error of a run of the frames above
+    /// `floor`, at the innermost frame of a `task.guard` above the
+    /// floor, if there is one. The error gets its place and call stack
+    /// from the frames, which are those of the program at the error
+    /// (`Vm::enrich_error`); the frames above the guard's are dropped as
+    /// an error drops them (each builtin's frame is told:
+    /// [`Vm::unwind`]), and the guard's call is finished with
+    /// `Err(e)`, `e` the error as a `task.RuntimeError`. The frames go
+    /// on with the next slice (`Slice::Yielded`), or the run is done with
+    /// `Err(e)` if the guard's was the first frame above the floor.
+    ///
+    /// The search stops at the floor: a run with a floor of its own
+    /// (`Vm::show_text`) catches what no guard of its own does at its
+    /// floor, and nothing passes a floor.
+    #[cold]
+    #[inline(never)]
+    fn catch(&mut self, floor: usize, error: VmError) -> Result<Slice, VmError> {
+        let guard =
+            (self.frames.iter().enumerate().skip(floor).rev()).find_map(
+                |(at, frame)| match frame {
+                    Frame::Native(native) => native.guard().map(|stack| (at, stack)),
+                    Frame::Code(_) => None,
+                },
+            );
+        let Some((at, stack)) = guard else {
+            return Err(error);
+        };
+        let error = self.enrich_error(error);
+        let value = crate::builtins::guard::runtime_error(self, error);
+        self.unwind(at + 1, stack);
+        // The guard's frame is done.
+        if let Some(Frame::Native(_)) = self.frames.pop() {
+            self.native_frames -= 1;
+            self.guards -= 1;
+        }
+        self.tco_elided.prune(at);
+        // (What the frames left that were dropped is not the run's: the
+        // type of a `Display` impl that failed, how a wait ended.)
+        self.display_failed = None;
+        self.woken = None;
+        let value = Value::variant(bv::ERR, [value]);
+        match self.frames.last() {
+            _ if self.frames.len() == floor => return Ok(Slice::Done(value)),
+            Some(Frame::Code(_)) => self.push(value),
+            _ => self.pending_input = Some(value),
+        }
+        Ok(Slice::Yielded)
     }
 
     /// The value of a run to the end, or its error with the call stack
@@ -1863,7 +1927,7 @@ impl Vm {
         let error = match run {
             Ok(Slice::Done(value)) => return Ok(value),
             Ok(Slice::OutOfBudget | Slice::Yielded | Slice::Parked(_)) => {
-                VmError::new("internal VM error: a run to the end stopped before it".into())
+                VmError::internal("a run to the end stopped before it")
             }
             Err(e) => e,
         };
@@ -1885,7 +1949,8 @@ impl Vm {
         if let Err(e) = self.runtime.charge(0) {
             return SliceResult::Failed(e);
         }
-        match self.run_frames(0, max_steps) {
+        let ran = self.run_frames(0, max_steps);
+        match self.caught(0, ran) {
             Ok(Slice::Done(value)) => SliceResult::Completed(value),
             Ok(Slice::OutOfBudget) => match self.runtime.charge(max_steps) {
                 Ok(()) => SliceResult::Yielded,
@@ -1931,8 +1996,8 @@ impl Vm {
                 self.push_native_frame(native);
                 Ok(DispatchResult::Native)
             }
-            Step::Call { .. } | Step::Park(_) | Step::Yield => Err(VmError::new(
-                "internal VM error: a shown value calls or waits without a frame".into(),
+            Step::Call { .. } | Step::Park(_) | Step::Yield => Err(VmError::internal(
+                "a shown value calls or waits without a frame",
             )),
         }
     }

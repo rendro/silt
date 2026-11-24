@@ -2138,9 +2138,8 @@ impl Conn {
                 Conn::END
             }
             ConnState::Ended => {
-                return Err(VmError::new(
-                    "internal VM error: the task of an HTTP connection was resumed after its end"
-                        .into(),
+                return Err(VmError::internal(
+                    "the task of an HTTP connection was resumed after its end",
                 ));
             }
         })

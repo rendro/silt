@@ -727,7 +727,7 @@ impl Scheduler {
         id: usize,
         mut vm: Vm,
         handle: Arc<TaskHandle>,
-    ) -> Result<(), String> {
+    ) -> Result<(), VmError> {
         self.begin();
         // The stages that were stopped first: their slots count.
         run_deferred();
@@ -736,21 +736,25 @@ impl Scheduler {
         vm.late = handle.deadline().map(|_| handle.late());
         vm.over = handle.deadline().map(|_| handle.over_flag());
         if self.inner.shutdown.load(Ordering::SeqCst) {
-            return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
+            return Err(VmError::ending(
+                "cannot spawn a task: the VM that ran the program has been dropped".into(),
+            ));
         }
         if self.inner.broken.load(Ordering::SeqCst) {
-            return Err("cannot spawn a task: a thread of the runtime has panicked".into());
+            return Err(VmError::ending(
+                "cannot spawn a task: a thread of the runtime has panicked".into(),
+            ));
         }
         // A target without threads runs the tasks on the threads that
         // wait ([`Scheduler::block_thread`]).
         #[cfg(not(target_arch = "wasm32"))]
-        self.ensure_workers()?;
+        self.ensure_workers().map_err(VmError::new)?;
         let current = self.inner.spawned.load(Ordering::SeqCst);
         if current >= MAX_TASKS {
-            return Err(format!(
+            return Err(VmError::new(format!(
                 "task limit exceeded: {} tasks running (max {MAX_TASKS})",
                 current
-            ));
+            )));
         }
         // The thread that spawns the first task is the one that runs
         // the program. When it ends, the program has ended: see
@@ -1093,7 +1097,7 @@ impl Scheduler {
                     let _ = report_unjoined_failures(inner);
                     verdict
                 }
-                None => VmError::new("the VM that ran the program has been dropped".into()),
+                None => VmError::ending("the VM that ran the program has been dropped".into()),
             }),
         }
     }
@@ -2650,7 +2654,7 @@ fn verdict(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Option<VmError> {
         [Source::Cell(_)] => "task.join with no progress possible",
         _ => "channel select with no counterparty",
     };
-    let mut verdict = VmError::new(format!("deadlock on main thread: {what}"));
+    let mut verdict = VmError::ending(format!("deadlock on main thread: {what}"));
     for (line, at) in waits_of_the_others(own, main) {
         verdict = match at {
             Some(at) => verdict.with_help_at(line, at),

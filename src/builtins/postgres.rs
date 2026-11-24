@@ -2561,9 +2561,7 @@ impl Helper {
             next: None,
             state: Finishing::Ready,
         }));
-        scheduler
-            .submit(id, child, handle.clone())
-            .map_err(VmError::new)?;
+        scheduler.submit(id, child, handle.clone())?;
         Ok(handle)
     }
 

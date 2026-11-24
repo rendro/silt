@@ -1,0 +1,7 @@
+panic: too big: 3
+task_guard__an_error_deep_in_nested_calls_has_its_place_and_trace.silt:9:13
+check  at task_guard__an_error_deep_in_nested_calls_has_its_place_and_trace.silt:9:13
+step  at task_guard__an_error_deep_in_nested_calls_has_its_place_and_trace.silt:15:3
+walk  at task_guard__an_error_deep_in_nested_calls_has_its_place_and_trace.silt:19:3
+closure in main  at task_guard__an_error_deep_in_nested_calls_has_its_place_and_trace.silt:23:35
+main  at task_guard__an_error_deep_in_nested_calls_has_its_place_and_trace.silt:23:9

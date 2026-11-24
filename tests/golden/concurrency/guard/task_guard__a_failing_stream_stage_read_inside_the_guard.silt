@@ -1,0 +1,25 @@
+-- A stream stage that fails passes its failure down to the reader: read
+-- inside a guard, it is the guard's Err.
+import stream
+import task
+
+fn tenfold(n: Int) -> Int {
+  match n == 3 {
+    true -> panic("cannot take {n}")
+    false -> n * 10
+  }
+}
+
+fn main() {
+  let read = task.guard({ ->
+    stream.from_list([1, 2, 3, 4]) |> stream.map(tenfold) |> stream.collect
+  })
+  match read {
+    Ok(xs) -> println("read {xs}")
+    Err(e) -> println("the guard caught: {e.message}")
+  }
+  let fine = task.guard({ ->
+    stream.from_list([1, 2]) |> stream.map(tenfold) |> stream.collect
+  })
+  println(fine)
+}

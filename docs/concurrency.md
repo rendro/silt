@@ -249,8 +249,9 @@ let result = task.join(h) -- result = 42
 `task.join` parks until the task has ended and gives what its function
 returned. A task that failed or was cancelled makes the join fail in turn,
 with the runtime error `joined task failed: <msg>`: it is not an `Err`
-value, and silt has no `try`/`catch`. Where a task may be cancelled as a
-matter of course, let it signal its end over a channel instead.
+value, unless a `task.guard` around the join makes it one. Where a task
+may be cancelled as a matter of course, let it signal its end over a
+channel instead.
 ([`task.join`](stdlib/channel-task.md#taskjoin))
 
 ### Cancelling: `task.cancel(handle)`

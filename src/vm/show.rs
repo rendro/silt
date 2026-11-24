@@ -316,9 +316,10 @@ impl Native for Showing {
         let texts = std::mem::take(&mut self.texts);
         let table = self.table.clone();
         let value = self.value.clone();
-        let deliver = self.deliver.take().ok_or_else(|| {
-            VmError::new("internal VM error: a shown value was finished twice".into())
-        })?;
+        let deliver = self
+            .deliver
+            .take()
+            .ok_or_else(|| VmError::internal("a shown value was finished twice"))?;
         // (Written again from the start each time: a print may write it
         // twice, the second time on a thread of its own.)
         deliver.deliver(

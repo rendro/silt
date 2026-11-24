@@ -267,7 +267,9 @@ module, named by its file (see [Modules](language/modules.md)).
 `channel.new(n)`, `channel.send`, `channel.receive` (`None` once closed
 and empty), `channel.close`, `channel.select`. I/O inside a task does not
 block the others. A failed task that nobody joins ends the program with
-status 1.
+status 1. `task.guard { -> ... }` runs a function and gives `Ok` of its
+value, or `Err(e)` for a runtime error raised in it (a
+`task.RuntimeError`: `message`, `location`, `trace`).
 
 ## Tests
 
@@ -554,9 +556,11 @@ channel.try_send(ch: Channel(a), value: a) -> Bool
 
 ```
 type TaskError { Timeout }
+type RuntimeError { message: String, location: String, trace: List(String) }
 type Handle(a)  -- opaque
 task.cancel(handle: Handle(a)) -> ()
 task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, TaskError)
+task.guard(work: Fn() -> a) -> Result(a, RuntimeError)
 task.join(handle: Handle(a)) -> a
 task.spawn(f: Fn() -> a) -> Handle(a)
 ```

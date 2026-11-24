@@ -1,0 +1,2 @@
+the guard caught: panic: cannot take 3
+Ok([10, 20])

@@ -1,0 +1,18 @@
+-- A task.RuntimeError is shown as the report the program would print
+-- for its error. One the program changed is shown from its fields.
+import task
+
+fn half(n: Int) -> Int {
+  100 / n
+}
+
+fn main() {
+  match task.guard({ -> half(0) }) {
+    Ok(_) -> println("no error")
+    Err(e) -> {
+      println("{e}")
+      println("--")
+      println(e.{ message: "changed" })
+    }
+  }
+}

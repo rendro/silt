@@ -615,6 +615,7 @@ pub(crate) mod ty {
     pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(34));
     pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(35));
     pub(crate) const URL_ERROR: TypeId = TypeId(DefId(36));
+    pub(crate) const RUNTIME_ERROR: TypeId = TypeId(DefId(37));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -781,6 +782,7 @@ pub(crate) const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "Value",
     "CsvError",
     "UrlError",
+    "RuntimeError",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -939,6 +941,7 @@ mod tests {
             ["method", "url", "headers", "body", "peer"]
         );
         assert_eq!(fields(ty::NOTIFICATION), ["channel", "payload", "pid"]);
+        assert_eq!(fields(ty::RUNTIME_ERROR), ["message", "location", "trace"]);
         assert_eq!(fields(ty::FILE_STAT).len(), 9);
         assert_eq!(fields(ty::FILE_STAT)[0], "size");
         // Every record type the registry declares, and no enum.

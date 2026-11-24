@@ -14,8 +14,8 @@ use crate::cli::package::{
     EntryPointKind, find_project_root, resolve_package_entry_point, resolve_package_entry_point_in,
 };
 use crate::cli::paths::{
-    FILE_OR_PACKAGE, PathArg, ProgramFiles, door_diagnostics, open_entry_or_exit, path_arg,
-    refuse_path,
+    FILE_OR_PACKAGE, HeldProgramFiles, PathArg, ProgramFiles, door_diagnostics, open_entry_or_exit,
+    path_arg, refuse_path,
 };
 
 /// Dispatch `silt run [<file>] [-- <program-args>...]`.
@@ -177,6 +177,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // `process.exit` ends the process where it is called, from `main`
     // or from a task: nothing below runs then.
     vm.set_exit(Exit::EndsProcess);
+    vm.name_files(HeldProgramFiles::of(path, &program));
     #[cfg(feature = "test-hooks")]
     panic_where_a_test_says(&vm);
     // (A build with `test-hooks`: tests/cli/end_race_tests.rs.)

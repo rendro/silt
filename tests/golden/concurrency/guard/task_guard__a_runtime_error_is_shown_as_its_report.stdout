@@ -1,0 +1,18 @@
+error[runtime]: division by zero
+ --> task_guard__a_runtime_error_is_shown_as_its_report.silt:6:3
+   |
+ 6 |   100 / n
+   |   ^^^^^^^ division by zero
+
+call stack:
+  -> half  at task_guard__a_runtime_error_is_shown_as_its_report.silt:6:3
+  -> closure in main  at task_guard__a_runtime_error_is_shown_as_its_report.silt:10:25
+  -> main  at task_guard__a_runtime_error_is_shown_as_its_report.silt:10:9
+--
+error[runtime]: changed
+ --> task_guard__a_runtime_error_is_shown_as_its_report.silt:6:3
+
+call stack:
+  -> half  at task_guard__a_runtime_error_is_shown_as_its_report.silt:6:3
+  -> closure in main  at task_guard__a_runtime_error_is_shown_as_its_report.silt:10:25
+  -> main  at task_guard__a_runtime_error_is_shown_as_its_report.silt:10:9

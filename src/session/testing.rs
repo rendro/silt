@@ -147,6 +147,18 @@ pub fn compile_decls_str(source: &str) -> Result<Program, Vec<Diagnostic>> {
     compile_in(&mut session, entry, Entry::Tests { filter: None })
 }
 
+/// [`compile_given`] with the host modules `host` besides `host.give`.
+#[cfg(test)]
+pub(crate) fn compile_given_with(
+    source: &str,
+    host: Vec<HostModule>,
+) -> Result<(Program, Given), Vec<Diagnostic>> {
+    let (give, given) = give_module();
+    let modules = std::iter::once(give).chain(host).collect();
+    let (mut session, entry) = session(&[("main.silt", source)], modules);
+    compile_in(&mut session, entry, Entry::Main).map(|program| (program, given))
+}
+
 /// The entry `entry` of `session`, analysed and compiled for `target`.
 fn compile_in(
     session: &mut Session,

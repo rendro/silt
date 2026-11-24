@@ -306,7 +306,8 @@ fn begin<'a>(
             (Parts::Members(members.iter()), "]")
         }
         Value::Record(record) => {
-            if shown && write_time(record, f)? {
+            if shown && (write_time(record, f)? || crate::builtins::guard::write_report(record, f)?)
+            {
                 return Ok(None);
             }
             f.write_str(&record.ty().name)?;

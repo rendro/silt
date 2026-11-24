@@ -76,9 +76,10 @@ impl Native for Encoding {
             &self.parts,
             &self.encoded,
         );
-        let then = self.then.take().ok_or_else(|| {
-            VmError::new("internal VM error: a written value was finished twice".into())
-        })?;
+        let then = self
+            .then
+            .take()
+            .ok_or_else(|| VmError::internal("a written value was finished twice"))?;
         then(vm, filled.map(|()| data))
     }
 }

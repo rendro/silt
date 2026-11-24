@@ -1,0 +1,2 @@
+Ok("the inner guard caught panic: inner")
+the outer guard caught panic: after panic: first

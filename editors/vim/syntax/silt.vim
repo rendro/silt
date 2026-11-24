@@ -43,9 +43,10 @@ syntax keyword siltConstructor Bind
 syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Handle Bytes TcpListener
 syntax keyword siltType TcpStream Regex Url
 syntax keyword siltType IoError IntError FloatError Step ChannelResult ChannelOp Selected TaskError
-syntax keyword siltType RegexError JsonError Value TomlError Instant Date Time DateTime Duration
-syntax keyword siltType Weekday TimeError Method Response Request HttpError FileStat PostgresError
-syntax keyword siltType Notification BytesError CryptoError UrlError TcpError UuidError CsvError
+syntax keyword siltType RuntimeError RegexError JsonError Value TomlError Instant Date Time DateTime
+syntax keyword siltType Duration Weekday TimeError Method Response Request HttpError FileStat
+syntax keyword siltType PostgresError Notification BytesError CryptoError UrlError TcpError
+syntax keyword siltType UuidError CsvError
 " The free functions of the prelude.
 syntax keyword siltBuiltin panic print println
 " A builtin module's name before a dot.

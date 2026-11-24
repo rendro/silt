@@ -1074,7 +1074,7 @@ builtins! {
                 VmError::new("cannot start a timer: the duration is out of range".into())
             })?;
         if let Some(failure) = vm.runtime.io.clock_failure() {
-            return Err(VmError::new(failure));
+            return Err(VmError::ending(failure));
         }
         let wait = Wait::new(Vec::new()).deadline(Some(end));
         Ok(vm.park("time.sleep", wait, |_, _| Ok(Step::Done(Value::Unit))))

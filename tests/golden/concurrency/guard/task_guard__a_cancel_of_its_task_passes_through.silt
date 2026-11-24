@@ -1,0 +1,20 @@
+-- A cancel of the task that runs a guard ends the task where it is:
+-- the guard does not return, and what follows it does not run.
+import channel
+import task
+import time
+
+fn main() {
+  let said: Channel(String) = channel.new(4)
+  let started: Channel(Int) = channel.new(1)
+  let h = task.spawn({ ->
+    let caught = task.guard({ ->
+      channel.send(started, 1)
+      time.sleep(time.hours(1))
+    })
+    channel.send(said, "the guard returned {caught}")
+  })
+  let _ = channel.receive(started)
+  task.cancel(h)
+  println(channel.try_receive(said))
+}
