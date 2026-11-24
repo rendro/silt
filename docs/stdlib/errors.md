@@ -149,6 +149,12 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `InvalidBase64(String)` | message | bad base64 string |
 | `ByteOutOfRange(Int)` | value | list element outside 0..=255 |
 
+### `TaskError` (requires `import task`)
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Timeout` | — | the function was ended because its time was over |
+
 ### `CryptoError` (requires `import crypto`)
 
 Returned by `crypto.random_bytes`.
