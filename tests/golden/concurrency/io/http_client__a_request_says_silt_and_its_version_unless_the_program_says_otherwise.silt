@@ -45,14 +45,19 @@ fn shown(got: Result(http.Response, http.HttpError)) -> String {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-  let link = "http://127.0.0.1:{port}/"
-  println("get: {shown(http.get(url_of(link)))}")
-  println("post: {shown(http.request(http.POST, url_of(link), bytes.from_string("x"), #{}))}")
-  println("own: {shown(http.request(http.GET, url_of(link), bytes.empty(), #{ "user-agent": "probe/1" }))}")
-  task.cancel(server)
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    let link = "http://127.0.0.1:{port}/"
+    println("get: {shown(http.get(url_of(link)))}")
+    println("post: {shown(http.request(http.POST, url_of(link), bytes.from_string("x"), #{}))}")
+    println(
+      "own: {shown(http.request(http.GET, url_of(link), bytes.empty(), #{ "user-agent": "probe/1" }))}",
+    )
+  }
 }
 
 fn url_of(text: String) -> url.Url {

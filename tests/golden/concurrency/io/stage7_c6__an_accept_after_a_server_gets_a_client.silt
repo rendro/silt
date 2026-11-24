@@ -1,6 +1,7 @@
 -- timeout: 120
 -- requires-feature: http
--- A server is cancelled, and the program accepts on the listener
+-- A server is stopped (the body it served returned), and the program
+-- accepts on the listener
 -- itself: the listener is the program's again at once, and the first
 -- connection the accept gets is the client's, 200 times. (A server
 -- with an accept of its own left the connection that woke its accept
@@ -14,41 +15,49 @@ import tcp
 import url
 
 fn main() {
-  let bad = 1..200 |> list.fold(0) { bad, round ->
-    when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-    let port = tcp.local_port(listener)
-    let server = task.spawn { ->
-      http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} } }
-    }
-    let _ = http.get(url_of("http://127.0.0.1:{port}/"))
-    task.cancel(server)
-    let client = task.spawn { ->
-      when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
-      let _ = tcp.write(conn, bytes.from_string("hello"))
-      let echoed = tcp.read_exact(conn, 5)
-      tcp.close(conn)
-      echoed
-    }
-    let got = match tcp.accept(listener) {
-      Ok(conn) -> match tcp.read_exact(conn, 5) {
-        Ok(hello) -> {
-          let _ = tcp.write(conn, hello)
-          tcp.close(conn)
-          "a client"
+  let bad = 1..200
+    |> list.fold(0) { bad, round ->
+      when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+        panic("cannot listen")
+      }
+      let port = tcp.local_port(listener)
+      let server = { ->
+        http.serve(listener) { _req ->
+          http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
         }
-        Err(e) -> "a connection that says nothing: {e}"
       }
-      Err(e) -> "no connection: {e}"
-    }
-    let _ = task.join_handle(client)
-    match got {
-      "a client" -> bad
-      _ -> {
-        println("round {round}: the accept got {got}")
-        bad + 1
+      task.background([server]) { ->
+        let _ = http.get(url_of("http://127.0.0.1:{port}/"))
+      }
+      let client = { ->
+        when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+          panic("cannot connect")
+        }
+        let _ = tcp.write(conn, bytes.from_string("hello"))
+        let _ = tcp.read_exact(conn, 5)
+        tcp.close(conn)
+      }
+      let got = task.background([client]) { ->
+        match tcp.accept(listener) {
+          Ok(conn) -> match tcp.read_exact(conn, 5) {
+            Ok(hello) -> {
+              let _ = tcp.write(conn, hello)
+              tcp.close(conn)
+              "a client"
+            }
+            Err(e) -> "a connection that says nothing: {e}"
+          }
+          Err(e) -> "no connection: {e}"
+        }
+      }
+      match got {
+        "a client" -> bad
+        _ -> {
+          println("round {round}: the accept got {got}")
+          bad + 1
+        }
       }
     }
-  }
   println("{bad} of 200 accepts got something else than the client")
 }
 

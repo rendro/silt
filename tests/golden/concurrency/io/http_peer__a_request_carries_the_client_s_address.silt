@@ -18,14 +18,17 @@ fn answer(req: http.Request) -> http.Response {
 -- The peer the server saw: the address, and whether what follows its
 -- last colon is a port other than the server's.
 fn ask(host: String, bind: String) -> String {
-  when let Ok(listener) = tcp.listen(bind) else { return "cannot listen on {bind}" }
-  let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-  let said = match http.get(url_of("http://{host}:{port}/")) {
-    Ok(r) -> bytes.to_string(r.body) |> result.unwrap_or("(no text)")
-    Err(e) -> "{e}"
+  when let Ok(listener) = tcp.listen(bind) else {
+    return "cannot listen on {bind}"
   }
-  task.cancel(server)
+  let port = tcp.local_port(listener)
+  let server = { -> http.serve(listener, answer) }
+  let said = task.background([server]) { ->
+    match http.get(url_of("http://{host}:{port}/")) {
+      Ok(r) -> bytes.to_string(r.body) |> result.unwrap_or("(no text)")
+      Err(e) -> "{e}"
+    }
+  }
   match string.last_index_of(said, ":") {
     Some(at) -> {
       let ip = string.slice(said, 0, at)

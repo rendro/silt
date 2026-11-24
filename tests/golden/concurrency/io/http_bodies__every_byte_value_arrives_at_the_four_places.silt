@@ -8,6 +8,7 @@
 -- gets (`resp.body`). The request carries the values upwards and the
 -- answer carries them downwards, so neither can stand in for the other.
 import bytes
+import channel
 import http
 import list
 import option
@@ -79,36 +80,51 @@ fn main() {
   show("downwards", downwards())
 
   println("http.request to http.serve")
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-  match http.request(http.POST, url_of("http://127.0.0.1:{port}/"), upwards(), #{}) {
-    Ok(resp) -> show("  http.request gets", resp.body)
-    Err(e) -> println("  http.request: {e}")
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    match http.request(http.POST, url_of("http://127.0.0.1:{port}/"), upwards(), #{}) {
+      Ok(resp) -> show("  http.request gets", resp.body)
+      Err(e) -> println("  http.request: {e}")
+    }
+
+    -- The client says that it closes, so the answer ends where the
+    -- server closes: all of it is read.
+    println("a client written by hand to http.serve")
+    when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+      panic("cannot connect")
+    }
+    let head = "POST / HTTP/1.1{nl}Host: x{nl}Content-Length: 256{nl}Connection: close{nl}{nl}"
+    let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), upwards()))
+    show("  the answer on the wire", read_body(conn, None))
+    tcp.close(conn)
   }
 
-  -- The client says that it closes, so the answer ends where the
-  -- server closes: all of it is read.
-  println("a client written by hand to http.serve")
-  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
-  let head = "POST / HTTP/1.1{nl}Host: x{nl}Content-Length: 256{nl}Connection: close{nl}{nl}"
-  let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), upwards()))
-  show("  the answer on the wire", read_body(conn, None))
-  tcp.close(conn)
-  task.cancel(server)
-
   println("http.request to a server written by hand")
-  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let reader = task.spawn { ->
-    when let Ok(conn) = tcp.accept(by_hand) else { panic("cannot accept") }
+  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let on_wire = channel.new(1)
+  let reader = { ->
+    when let Ok(conn) = tcp.accept(by_hand) else {
+      panic("cannot accept")
+    }
     let sent = read_body(conn, Some(256))
+    channel.send(on_wire, sent)
     let head = "HTTP/1.1 200 OK{nl}Content-Length: 256{nl}Connection: close{nl}{nl}"
     let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), downwards()))
     tcp.close(conn)
-    sent
   }
-  let got = http.request(http.POST, url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"), upwards(), #{})
-  show("  the request on the wire", task.join_handle(reader))
+  let got = task.background([reader]) { ->
+    http.request(http.POST, url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"), upwards(), #{})
+  }
+  when let Some(sent) = channel.receive(on_wire) else {
+    panic("the reader saw no request")
+  }
+  show("  the request on the wire", sent)
   match got {
     Ok(resp) -> show("  http.request gets", resp.body)
     Err(e) -> println("  http.request: {e}")

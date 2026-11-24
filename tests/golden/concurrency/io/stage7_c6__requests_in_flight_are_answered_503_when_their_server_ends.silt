@@ -1,7 +1,8 @@
 -- timeout: 30
 -- requires-feature: http
--- The task of a server is cancelled while five requests wait in their
--- handlers. Each of them is answered 503 at the cancel and its
+-- The helper that runs a server is stopped (its body returned) while
+-- five requests wait in their handlers. Each of them is answered 503 at
+-- the stop and its
 -- connection closed: no client waits for a server that is gone. A
 -- request that was answered before is not touched, and the program
 -- ends.
@@ -20,11 +21,13 @@ fn text(body: Bytes) -> String {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
   let never = channel.new(0)
   let entered = channel.new(0)
-  let server = task.spawn { ->
+  let server = { ->
     http.serve(listener) { req ->
       match url.path(req.url) {
         "/quick" -> http.Response { status: 200, body: bytes.from_string("quick"), headers: #{} }
@@ -42,14 +45,23 @@ fn main() {
       Err(e) -> "error: {e}"
     }
   }
-  let clients = 1..5 |> list.map { _ -> task.spawn { -> get("/wait") } }
-  1..5 |> list.each { _ ->
-    let _ = channel.receive(entered)
+  let answered = channel.new(1)
+  let clients = { -> channel.send(answered, task.map(1..5, 5) { _ -> get("/wait") }) }
+  let serves = { ->
+    task.background([server]) { ->
+      1..5
+        |> list.each { _ ->
+          let _ = channel.receive(entered)
+        }
+      println(get("/quick"))
+    }
+    println("server stopped")
   }
-  println(get("/quick"))
-  task.cancel(server)
-  println("server cancelled")
-  clients |> list.each { client -> println(task.join_handle(client)) }
+  task.join([clients, serves])
+  when let Some(answers) = channel.receive(answered) else {
+    panic("no answers")
+  }
+  answers |> list.each { answer -> println(answer) }
   println("main returns")
 }
 

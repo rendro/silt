@@ -9,6 +9,7 @@
 import bytes
 import channel
 import http
+import list
 import map
 import option
 import result
@@ -48,23 +49,27 @@ fn main() {
   }
   let port = tcp.local_port(l)
   let called = channel.new(1)
-  let server = task.spawn { ->
+  let server = { ->
     http.serve(l) { req ->
       channel.send(called, ())
       slow(req)
     }
     "serve returned"
   }
-  let client = task.spawn { ->
+  let client = { ->
     match http.get(url_of("http://127.0.0.1:{port}/")) {
-      Ok(r) -> "{r.status} {bytes.to_string(r.body) |> result.unwrap_or("")}, connection {map.get(r.headers, "connection") |> option.unwrap_or("(none)")}"
+      Ok(
+        r,
+      ) -> "{r.status} {bytes.to_string(r.body) |> result.unwrap_or("")}, connection {map.get(r.headers, "connection") |> option.unwrap_or("(none)")}"
       Err(e) -> "{e}"
     }
   }
-  let _ = channel.receive(called)
-  tcp.close_listener(l)
-  println(task.join_handle(client))
-  println(task.join_handle(server))
+  let closer = { ->
+    let _ = channel.receive(called)
+    tcp.close_listener(l)
+  }
+  let said = task.background([closer]) { -> task.map([client, server], 2) { f -> f() } }
+  list.each(said) { line -> println(line) }
   match tcp.connect("127.0.0.1:{port}") {
     Ok(_) -> println("connected after the close")
     Err(_) -> println("refused after the close")
@@ -74,48 +79,60 @@ fn main() {
     panic("cannot listen")
   }
   let kport = tcp.local_port(k)
-  let kserver = task.spawn { ->
+  let kdone = channel.new(1)
+  let kserver = { ->
     http.serve(k, quick)
-    "serve returned"
+    channel.send(kdone, "serve returned")
   }
-  when let Ok(conn) = tcp.connect("127.0.0.1:{kport}") else {
-    panic("cannot connect")
+  task.background([kserver]) { ->
+    when let Ok(conn) = tcp.connect("127.0.0.1:{kport}") else {
+      panic("cannot connect")
+    }
+    let cr = string.from_char_code(13) |> option.unwrap_or("")
+    let _ = tcp.write(conn, bytes.from_string("GET / HTTP/1.1{cr}\nHost: x{cr}\n{cr}\n"))
+    let first = tcp.read(conn, 4096)
+      |> result.map { b -> bytes.to_string(b) |> result.unwrap_or("") }
+    println(
+      "kept alive, answered: {first |> result.map { t -> string.contains(t, "quick") } |> result.unwrap_or(false)}",
+    )
+    let started = time.now()
+    tcp.close_listener(k)
+    let rest = read_all(conn)
+    println("then closed by the server, nothing more: {rest == ""}")
+    when let Some(kserved) = channel.receive(kdone) else {
+      panic("serve did not return")
+    }
+    println(kserved)
+    println("at once: {time.since(started, time.now()).ns < 5_000_000_000}")
   }
-  let cr = string.from_char_code(13) |> option.unwrap_or("")
-  let _ = tcp.write(conn, bytes.from_string("GET / HTTP/1.1{cr}\nHost: x{cr}\n{cr}\n"))
-  let first = tcp.read(conn, 4096) |> result.map { b -> bytes.to_string(b) |> result.unwrap_or("") }
-  println("kept alive, answered: {first |> result.map { t -> string.contains(t, "quick") } |> result.unwrap_or(false)}")
-  let started = time.now()
-  tcp.close_listener(k)
-  let rest = read_all(conn)
-  println("then closed by the server, nothing more: {rest == ""}")
-  println(task.join_handle(kserver))
-  println("at once: {time.since(started, time.now()).ns < 5_000_000_000}")
   -- A deadline around serve cuts a request in flight: 503.
   when let Ok(d) = tcp.listen("127.0.0.1:0") else {
     panic("cannot listen")
   }
   let dport = tcp.local_port(d)
   let dcalled = channel.new(1)
-  let cut = task.spawn { ->
-    task.deadline(time.ms(1000)) { ->
+  let cut = { ->
+    let out = task.deadline(time.ms(1000)) { ->
       http.serve(d) { _req ->
         channel.send(dcalled, ())
         time.sleep(time.ms(10_000))
         http.Response { status: 200, body: bytes.from_string("not cut"), headers: #{} }
       }
     }
+    "{out}"
   }
-  let dclient = task.spawn { ->
+  let dclient = { ->
     match http.get(url_of("http://127.0.0.1:{dport}/")) {
       Ok(r) -> "{r.status}"
       Err(e) -> "{e}"
     }
   }
-  let _ = channel.receive(dcalled)
-  tcp.close_listener(d)
-  println(task.join_handle(dclient))
-  println(task.join_handle(cut))
+  let dcloser = { ->
+    let _ = channel.receive(dcalled)
+    tcp.close_listener(d)
+  }
+  let dsaid = task.background([dcloser]) { -> task.map([dclient, cut], 2) { f -> f() } }
+  list.each(dsaid) { line -> println(line) }
 }
 
 fn url_of(text: String) -> url.Url {

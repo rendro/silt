@@ -4,6 +4,7 @@
 -- `http.request` sends, what a handler gets, what a handler answers and
 -- what `http.request` gets. On the wire its length is said, and it is 0.
 import bytes
+import channel
 import http
 import list
 import option
@@ -68,44 +69,76 @@ fn length_line(message: Bytes) -> String {
 }
 
 fn answer(req: http.Request) -> http.Response {
-  println("  the handler gets: {bytes.length(req.body)} bytes, equal to bytes.empty(): {req.body == bytes.empty()}")
+  println(
+    "  the handler gets: {bytes.length(req.body)} bytes, equal to bytes.empty(): {req.body == bytes.empty()}",
+  )
   http.Response { status: 200, body: bytes.empty(), headers: #{} }
 }
 
 fn main() {
   let nl = line_end()
   println("http.request to http.serve")
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-  match http.request(http.POST, url_of("http://127.0.0.1:{port}/"), bytes.empty(), #{}) {
-    Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
-    Err(e) -> println("  http.request: {e}")
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
   }
+  let port = tcp.local_port(listener)
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    match http.request(http.POST, url_of("http://127.0.0.1:{port}/"), bytes.empty(), #{}) {
+      Ok(resp) -> println(
+        "  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}",
+      )
+      Err(e) -> println("  http.request: {e}")
+    }
 
-  println("a client written by hand to http.serve")
-  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
-  let head = "POST / HTTP/1.1{nl}Host: x{nl}Content-Length: 0{nl}Connection: close{nl}{nl}"
-  let _ = tcp.write(conn, bytes.from_string(head))
-  let answered = read_message(conn, None)
-  println("  the answer on the wire: {length_line(answered)}, {bytes.length(body_of(answered) |> option.unwrap_or(bytes.empty()))} bytes after the head")
-  tcp.close(conn)
-  task.cancel(server)
+    println("a client written by hand to http.serve")
+    when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+      panic("cannot connect")
+    }
+    let head = "POST / HTTP/1.1{nl}Host: x{nl}Content-Length: 0{nl}Connection: close{nl}{nl}"
+    let _ = tcp.write(conn, bytes.from_string(head))
+    let answered = read_message(conn, None)
+    println(
+      "  the answer on the wire: {length_line(answered)}, {bytes.length(body_of(answered) |> option.unwrap_or(bytes.empty()))} bytes after the head",
+    )
+    tcp.close(conn)
+  }
 
   println("http.request to a server written by hand")
-  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let reader = task.spawn { ->
-    when let Ok(conn) = tcp.accept(by_hand) else { panic("cannot accept") }
-    let sent = read_message(conn, Some(0))
-    let _ = tcp.write(conn, bytes.from_string("HTTP/1.1 200 OK{nl}Content-Length: 0{nl}Connection: close{nl}{nl}"))
-    tcp.close(conn)
-    sent
+  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
   }
-  let got = http.request(http.POST, url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"), bytes.empty(), #{})
-  let sent = task.join_handle(reader)
-  println("  the request on the wire: {length_line(sent)}, {bytes.length(body_of(sent) |> option.unwrap_or(bytes.empty()))} bytes after the head")
+  let on_wire = channel.new(1)
+  let reader = { ->
+    when let Ok(conn) = tcp.accept(by_hand) else {
+      panic("cannot accept")
+    }
+    let sent = read_message(conn, Some(0))
+    channel.send(on_wire, sent)
+    let _ = tcp.write(
+      conn,
+      bytes.from_string("HTTP/1.1 200 OK{nl}Content-Length: 0{nl}Connection: close{nl}{nl}"),
+    )
+    tcp.close(conn)
+  }
+  let got = task.background([reader]) { ->
+    http.request(
+      http.POST,
+      url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"),
+      bytes.empty(),
+      #{},
+    )
+  }
+  when let Some(sent) = channel.receive(on_wire) else {
+    panic("the reader saw no request")
+  }
+  println(
+    "  the request on the wire: {length_line(sent)}, {bytes.length(body_of(sent) |> option.unwrap_or(bytes.empty()))} bytes after the head",
+  )
   match got {
-    Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
+    Ok(resp) -> println(
+      "  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}",
+    )
     Err(e) -> println("  http.request: {e}")
   }
 }
