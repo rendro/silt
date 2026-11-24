@@ -731,6 +731,33 @@ fn main() {
 Each stage only knows about its input and output channels. Adding a stage in
 the middle means inserting a new channel and a new task -- nothing else changes.
 
+A stage written this way is a task of yours: its output closes only when it
+closes it, a failure in it is the task's own (its reader waits on a channel
+that nothing will close), and it runs on after its reader has stopped
+reading. `stream.from_fn` runs a function as the source of a stream
+instead: the stream closes when the function returns, a runtime error in it
+reaches the reader as a failing stage's does, and the function is stopped
+when nobody reads the stream any more (see
+[stream](stdlib/stream.md#streamfrom_fn)).
+
+```silt
+import channel
+import stream
+
+fn main() {
+  let raw = stream.from_fn { ch ->
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.send(ch, 3)
+  }
+  channel.each(stream.map(raw) { n -> n * 2 }) { n -> println("got: {n}") }
+}
+-- prints:
+--   got: 2
+--   got: 4
+--   got: 6
+```
+
 ### Multiplexing with select
 
 Use `channel.select` to merge multiple input streams. When more than one

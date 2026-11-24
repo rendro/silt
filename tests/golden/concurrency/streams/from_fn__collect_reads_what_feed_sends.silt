@@ -1,0 +1,13 @@
+-- `stream.from_fn` makes a stream of what its function sends on the
+-- channel it is given; the stream ends when the function returns.
+import channel
+import stream
+
+fn main() {
+  let s = stream.from_fn { ch ->
+    channel.send(ch, "one")
+    channel.send(ch, "two")
+    channel.send(ch, "three")
+  }
+  println(stream.collect(s))
+}

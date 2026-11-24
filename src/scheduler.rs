@@ -4009,6 +4009,54 @@ import host
         assert_eq!(vm.scheduler().inner.parking.waiting(), 0);
     }
 
+    /// The function of a `stream.from_fn` that sends without end is
+    /// stopped when nobody reads its stream any more: its reader reads no
+    /// further (`take`, `first`), closes it, or lets it go (a function
+    /// that read one value and returned). No task is left.
+    #[test]
+    fn a_from_fn_stream_that_nobody_reads_leaves_no_task() {
+        let (program, given) = crate::session::testing::compile_given(
+            r#"
+import channel
+import list
+import stream
+fn counting() {
+  stream.from_fn { ch ->
+    loop i = 0 {
+      channel.send(ch, i)
+      loop(i + 1)
+    }
+  }
+}
+fn first_of(s) {
+  channel.receive(s)
+}
+fn main() {
+  let taken = counting() |> stream.take(2) |> stream.collect
+  let _ = counting() |> stream.first
+  let closed = counting()
+  let _ = channel.receive(closed)
+  channel.close(closed)
+  let _ = first_of(counting())
+  host.give(list.length(taken))
+}
+import host
+"#,
+        )
+        .expect("the program compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert!(result.is_ok(), "got {result:?}");
+        assert_eq!(given.last(), Some(Value::Int(2)));
+        let limit = Instant::now() + Duration::from_secs(10);
+        let spawned = || vm.scheduler().inner.spawned.load(Ordering::SeqCst);
+        while spawned() > 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(spawned(), 0, "feeds or stages are left");
+        assert_eq!(vm.scheduler().inner.parking.waiting(), 0);
+    }
+
     #[test]
     fn a_wait_that_a_task_can_end_is_no_deadlock() {
         // The task is busy for many slices while the program waits.

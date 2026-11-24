@@ -1,0 +1,34 @@
+-- exit: 1
+-- stderr-not-contains: deadlock
+-- stderr-not-contains: never joined
+-- A feed that fails after two lines fails the sink that reads it, with
+-- the feed's own error, once: here the feed reads a directory named like
+-- a day's log file.
+import channel
+import fs
+import io
+import list
+import stream
+import string
+
+fn lines_of(paths) {
+  stream.from_fn { ch ->
+    list.each(paths) { path ->
+      match io.read_file(path) {
+        Ok(text) -> list.each(string.lines(text)) { line -> channel.send(ch, line) }
+        Err(_) -> panic("cannot read {path}")
+      }
+    }
+  }
+}
+
+fn main() {
+  let _ = io.write_file("events-2026-11-08.log", "first\nsecond\n")
+  let _ = fs.mkdir("events-2026-11-09.log")
+  let read = lines_of(["events-2026-11-08.log", "events-2026-11-09.log"])
+    |> stream.fold(0) { n, line ->
+      println(line)
+      n + 1
+    }
+  println("read {read} lines")
+}

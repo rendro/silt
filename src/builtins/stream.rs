@@ -1315,6 +1315,76 @@ fn writing(
     })
 }
 
+/// `stream.from_fn(feed)`: a source whose values are those `feed` sends
+/// on the channel it is given. Two tasks make it, one stage to the
+/// program. `feed` runs in a task of its own, the feeder, and sends into
+/// a channel of [`AHEAD`] values: it works ahead of its reader as far as
+/// every source does. The source takes from that channel when its reader
+/// asks for a value, as a transform does ([`STOPS`]), and emits it on the
+/// output. (A channel of capacity 0 between them, with the source
+/// working ahead instead, cost three times the time a value: the two
+/// tasks met at every send.)
+///
+/// The program never has the output in `feed`'s hands: the source holds
+/// it weakly as every stage does, so a reader that lets it go stops the
+/// source. The source's stop stops the feeder first (`Armed`), before
+/// anything closes the channel `feed` sends into: a stop is never a send
+/// on a closed channel in `feed`. When `feed` returns, the feeder closes
+/// that channel, and the source closes the output after what is in it.
+/// When `feed` fails, the feeder closes it with the failure, as a stage
+/// that fails closes its output, and the source fails with it in turn.
+fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
+    const NAME: &str = "stream.from_fn";
+    if vm.takes_nothing_new() {
+        return Ok(vm.end_here(NAME));
+    }
+    // `feed` sends into it: it is the program's, and no stream's.
+    let into = Channel::new(vm.next_channel_id(), AHEAD);
+    let id = vm.next_task_id();
+    let owner = vm.scheduler().current_owner();
+    let feeder = Arc::new(TaskHandle::with_owner(id, owner).of_stage(StageOf {
+        name: NAME,
+        source: true,
+        at: vm.place_here(),
+        inputs: Vec::new().into(),
+        output: into.id(),
+    }));
+    let scheduler = Arc::downgrade(vm.scheduler());
+    let stopped = feeder.clone();
+    let stop: Stop = Arc::new(move || {
+        if let Some(scheduler) = scheduler.upgrade() {
+            scheduler.cancel(&stopped);
+        }
+        true
+    });
+    let source = stage_on(vm, NAME, vec![into.clone()], STOPS, Some(stop), |got| {
+        Ok(match got {
+            Got::Start | Got::Emitted => Next::Take(0),
+            Got::Value(_, value) => Next::Emit(value),
+            Got::End => Next::Done(Value::Unit),
+            _ => return unexpected(),
+        })
+    })?;
+    let mut given = Some(into.clone());
+    let mut pipe = Pipe::new(NAME, vec![], move |got| {
+        Ok(match (got, given.take()) {
+            (Got::Start, Some(into)) => Next::Call(feed.clone(), vec![Value::Channel(into)]),
+            (Got::Returned(_), None) => Next::Done(Value::Unit),
+            _ => return unexpected(),
+        })
+    });
+    pipe.out = Some(Arc::downgrade(&into));
+    pipe.handle = Some(feeder.clone());
+    std::mem::drop(into);
+    let mut child = vm.spawn_child();
+    child.spawned = true;
+    child.push_native_frame(Box::new(pipe));
+    vm.scheduler()
+        .submit(id, child, feeder)
+        .map_err(VmError::new)?;
+    Ok(source)
+}
+
 // ── The functions ──────────────────────────────────────────────────────
 
 builtins! {
@@ -1377,6 +1447,10 @@ builtins! {
                 _ => Next::Done(Value::Unit),
             })
         })
+    }
+
+    fn from_fn(vm, feed: &Value) -> Result<Step, VmError> {
+        fed_by_a_function(vm, feed.clone())
     }
 
     fn file_chunks(vm, path: &str, size: i64) -> Result<Step, VmError> {

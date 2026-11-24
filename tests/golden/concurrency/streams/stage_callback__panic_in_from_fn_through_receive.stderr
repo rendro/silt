@@ -1,0 +1,5 @@
+error[runtime]: panic: from_fn failed
+ --> stage_callback__panic_in_from_fn_through_receive.silt:16:31
+    |
+ 16 |   read(stream.from_fn { ch -> panic("from_fn failed") })
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^ panic: from_fn failed
