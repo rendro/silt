@@ -47,7 +47,7 @@ fn run_silt(src: &str) -> (String, String, i32, Duration) {
 
 #[test]
 fn test_time_sleep_parks_cooperatively_n_tasks_run_in_parallel() {
-    // Spawn 16 tasks each sleeping 500ms. If `time.sleep` parks
+    // Start 16 tasks each sleeping 500ms. If `time.sleep` parks
     // cooperatively via the shared timer thread, wall time ≈ 500ms. If
     // it still blocks the worker thread, wall time ≈
     // ceil(16 / n_workers) * 500ms (on the default 4-worker pool, ~2s;
@@ -59,9 +59,7 @@ import task
 import time
 
 fn main() {
-  let handles = 1..16
-    |> list.map { _ -> task.spawn({ -> time.sleep(time.ms(500)) }) }
-  handles |> list.each { h -> task.join_handle(h) }
+  task.join(1..16 |> list.map { _ -> { -> time.sleep(time.ms(500)) } })
   println("done")
 }
 "#;

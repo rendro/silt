@@ -50,24 +50,24 @@ fn print_and_println_write_to_the_buffer() {
 }
 
 #[test]
-fn output_of_spawned_tasks_goes_to_the_buffer() {
+fn output_of_tasks_goes_to_the_buffer() {
     let out = Buffer::new();
     let source = r#"
 import list
 import task
 fn main() {
-  let handles = [1, 2, 3, 4] |> list.map({ n -> task.spawn({ ->
+  let values = task.map([1, 2, 3, 4], 4, { n ->
     println("task {n}")
     n
-  }) })
-  let total = handles |> list.fold(0, { acc, h -> acc + task.join_handle(h) })
+  })
+  let total = values |> list.fold(0, { acc, v -> acc + v })
   println("total {total}")
 }
 "#;
     assert_eq!(run(source, HostIo::buffer(&out)), Ok(()));
     let text = out.contents();
     let mut lines: Vec<&str> = text.lines().collect();
-    // The tasks run in any order; main's line comes after their joins.
+    // The tasks run in any order; main's line comes after them.
     assert_eq!(lines.pop(), Some("total 10"), "{text:?}");
     lines.sort();
     assert_eq!(lines, ["task 1", "task 2", "task 3", "task 4"], "{text:?}");
@@ -306,7 +306,7 @@ impl Output for Panics {
 
 /// A panic of the output is a runtime error of the `print` that hit
 /// it, on the main thread and in a task: the scheduler's worker lives
-/// on and the join returns.
+/// on and the `task.join` returns with it.
 #[test]
 fn a_panicking_stdout_is_a_runtime_error() {
     let source = "fn main() {\n  println(\"x\")\n}";
@@ -318,19 +318,15 @@ fn a_panicking_stdout_is_a_runtime_error() {
     let source = r#"
 import task
 fn main() {
-  let h = task.spawn({ -> println("x") })
-  task.join_handle(h)
-  let _ = task.join_handle(task.spawn({ -> 2 }))
+  task.join([{ -> println("x") }])
+  let _ = task.map([2], 1, { n -> n })
 }
 "#;
     let ran = run_on_thread(source, HostIo::new(Panics, Buffer::new()));
     wait_until("the program ends", || ran.is_finished());
     assert_eq!(
         ran.join().unwrap(),
-        Err(
-            "joined task failed: cannot write to stdout: the output panicked: the sink panicked"
-                .to_string()
-        )
+        Err("cannot write to stdout: the output panicked: the sink panicked".to_string())
     );
 }
 
@@ -380,7 +376,7 @@ fn main() {
   print("a")
   io.eprint("b")
   io.eprintln([1, 2])
-  task.join_handle(task.spawn({ -> io.eprintln("from a task") }))
+  task.join([{ -> io.eprintln("from a task") }])
   println("c")
 }
 "#;
@@ -454,21 +450,20 @@ fn an_exit_code_out_of_range_is_a_runtime_error() {
 
 /// An exit from a task ends the whole run: the program's own thread,
 /// which waits for a value that never comes, ends at once with the
-/// exit's code, and the tasks that sleep are not waited for. A task
-/// that failed and that nobody joined is not reported.
+/// exit's code, and the task that sleeps is not waited for. (The tasks
+/// are the feeds of `stream.from_fn`s, which run beside main.)
 #[test]
 fn an_exit_from_a_task_ends_the_run_where_the_program_waits() {
     let out = Buffer::new();
     let source = r#"
 import channel
 import process
-import task
+import stream
 import time
 fn main() {
   let never = channel.new(0)
-  let _ = task.spawn({ -> 1 / 0 })
-  let _ = task.spawn({ -> time.sleep(time.seconds(600)) })
-  let _ = task.spawn({ ->
+  let _sleeps: Channel(Int) = stream.from_fn({ _ -> time.sleep(time.seconds(600)) })
+  let _exits: Channel(Int) = stream.from_fn({ _ ->
     time.sleep(time.ms(20))
     process.exit(4)
   })
@@ -482,13 +477,14 @@ fn main() {
 }
 
 /// The program's own thread that computes and never waits learns of a
-/// task's exit between two of its slices.
+/// task's exit (the feed of a `stream.from_fn`) between two of its
+/// slices.
 #[test]
 fn an_exit_from_a_task_ends_the_run_where_the_program_computes() {
     let out = Buffer::new();
     let source = r#"
 import process
-import task
+import stream
 fn spin(n: Int) -> Int {
   match n {
     0 -> 0
@@ -496,7 +492,7 @@ fn spin(n: Int) -> Int {
   }
 }
 fn main() {
-  let _ = task.spawn({ -> process.exit(5) })
+  let _exits: Channel(Int) = stream.from_fn({ _ -> process.exit(5) })
   println(spin(1))
 }
 "#;
@@ -512,10 +508,10 @@ fn after_an_exit_every_run_of_the_vm_is_the_exit() {
     let out = Buffer::new();
     let source = r#"
 import process
-import task
+import stream
 import time
 fn main() {
-  let _ = task.spawn({ -> time.sleep(time.seconds(600)) })
+  let _sleeps: Channel(Int) = stream.from_fn({ _ -> time.sleep(time.seconds(600)) })
   println("ran")
   process.exit(7)
 }
@@ -537,12 +533,10 @@ fn main() {
 fn the_first_exit_is_the_runs() {
     let out = Buffer::new();
     let source = r#"
-import list
 import process
 import task
 fn main() {
-  let _ = [1, 2] |> list.map({ n -> task.spawn({ -> process.exit(n) }) })
-  let _ = task.join_handle(task.spawn({ -> process.exit(3) }))
+  task.join([{ -> process.exit(1) }, { -> process.exit(2) }, { -> process.exit(3) }])
 }
 "#;
     let error = run_to_error(source, &out);
@@ -704,15 +698,16 @@ fn sleep_in_a_task_follows_the_clock() {
     let out = Buffer::new();
     let clock = FakeClock::default();
     let source = r#"
+import list
 import task
 import time
 fn main() {
   let before = time.now()
-  let h = task.spawn({ ->
+  let slept = task.map([0], 1, { _ ->
     time.sleep(time.hours(1))
     time.since(before, time.now()) >= time.hours(1)
   })
-  println(task.join_handle(h))
+  list.each(slept, { v -> println(v) })
 }
 "#;
     let _ticking = keep_advancing(&clock);
@@ -729,6 +724,7 @@ fn channel_timeouts_follow_the_clock() {
     let clock = FakeClock::default();
     let source = r#"
 import channel
+import list
 import task
 import time
 fn main() {
@@ -737,8 +733,8 @@ fn main() {
   let _ = channel.receive(quiet)
   println(channel.receive(channel.timeout(time.ms(3600000))))
   println(channel.receive_timeout(quiet, time.hours(1)))
-  let h = task.spawn({ -> channel.receive_timeout(quiet, time.hours(1)) })
-  println(task.join_handle(h))
+  let in_a_task = task.map([0], 1, { _ -> channel.receive_timeout(quiet, time.hours(1)) })
+  list.each(in_a_task, { v -> println(v) })
 }
 "#;
     let _ticking = keep_advancing(&clock);
@@ -813,11 +809,12 @@ fn a_parked_tasks_deadline_follows_the_clock() {
     let clock = FakeClock::default();
     // Nobody connects: the accept waits until the deadline cancels it.
     let source = r#"
+import list
 import task
 import tcp
 import time
 fn main() {
-  let h = task.spawn({ ->
+  let in_a_task = task.map([0], 1, { _ ->
     task.deadline(time.hours(1), { ->
       match tcp.listen("127.0.0.1:0") {
         Ok(listener) -> match tcp.accept(listener) {
@@ -828,7 +825,7 @@ fn main() {
       }
     })
   })
-  println(task.join_handle(h))
+  list.each(in_a_task, { v -> println(v) })
 }
 "#;
     let _ticking = keep_advancing(&clock);
@@ -901,7 +898,7 @@ fn a_clock_that_panics_in_a_builtin_is_a_runtime_error() {
 
 /// A clock that starts to panic while the timer thread is reading it:
 /// the task asleep on it is woken and fails with the clock's failure,
-/// and the join of it returns.
+/// and the `task.join` it is a piece of returns with it.
 #[test]
 fn a_clock_that_panics_on_the_timer_thread_ends_the_waits() {
     let clock = BreakingClock::default();
@@ -909,8 +906,7 @@ fn a_clock_that_panics_on_the_timer_thread_ends_the_waits() {
 import task
 import time
 fn main() {
-  let h = task.spawn({ -> time.sleep(time.hours(1)) })
-  task.join_handle(h)
+  task.join([{ -> time.sleep(time.hours(1)) }])
 }
 "#;
     let ran = run_on_thread(source, HostIo::buffer(&Buffer::new()).clock(clock.clone()));
@@ -923,7 +919,7 @@ fn main() {
     wait_until("the program ends", || ran.is_finished());
     assert_eq!(
         ran.join().unwrap(),
-        Err("joined task failed: the clock panicked: the clock broke".to_string())
+        Err("the clock panicked: the clock broke".to_string())
     );
 }
 

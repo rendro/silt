@@ -32,8 +32,9 @@ fn run(path: &PathBuf) -> Output {
         .expect("spawn silt")
 }
 
-/// A failure of `main` and a task's `process.exit` race: whichever
-/// comes first is the run's end, with its own report and code. A run
+/// A failure of `main` and a task's `process.exit` race (the task is the
+/// feed of a `stream.from_fn`, which runs beside main): whichever comes
+/// first is the run's end, with its own report and code. A run
 /// never reports the failure and exits with the exit's code, nor exits
 /// with 1 and says nothing. Each program is run many times, so both
 /// orders come up.
@@ -42,13 +43,13 @@ fn a_failure_and_an_exit_that_race_end_the_run_one_way() {
     let cases = [
         (
             "panic",
-            "import process\nimport task\nfn main() {\n  let _ = task.spawn { -> process.exit(0) }\n  panic(\"main boom\")\n}\n",
+            "import process\nimport stream\nfn main() {\n  let _exits: Channel(Int) = stream.from_fn { _ -> process.exit(0) }\n  panic(\"main boom\")\n}\n",
             "error[runtime]: panic: main boom",
             0,
         ),
         (
             "err",
-            "import process\nimport task\nfn main() -> Result((), String) {\n  let _ = task.spawn { -> process.exit(3) }\n  Err(\"bad input\")\n}\n",
+            "import process\nimport stream\nfn main() -> Result((), String) {\n  let _exits: Channel(Int) = stream.from_fn { _ -> process.exit(3) }\n  Err(\"bad input\")\n}\n",
             "error: bad input\n",
             3,
         ),
@@ -80,7 +81,7 @@ fn an_exit_writes_out_what_was_printed_to_a_slow_reader() {
         ("main", "process.exit(3)"),
         (
             "task",
-            "let _ = task.join_handle(task.spawn { -> process.exit(3) })",
+            "task.join([{ -> process.exit(3) }])",
         ),
     ] {
         let src = format!(

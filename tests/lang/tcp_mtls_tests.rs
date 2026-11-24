@@ -376,17 +376,18 @@ fn main() {{
   when let Ok(cert) = bytes.from_hex("{cert_hex}") else {{ panic("no cert") }}
   when let Ok(key) = bytes.from_hex("{key_hex}") else {{ panic("no key") }}
   let done = channel.new(2)
-  -- The silent client first, then the real one: each gets a task.
+  -- The silent client first, then the real one: each gets a task. The
+  -- silent one's is a helper, stopped when the real one has been served.
   when let Ok(silent) = tcp.accept(listener) else {{ panic("no first client") }}
-  let first = task.spawn {{ -> serve(silent, cert, key, done) }}
-  when let Ok(real) = tcp.accept(listener) else {{ panic("no second client") }}
-  let _ = task.spawn {{ -> serve(real, cert, key, done) }}
-  -- The real client's handshake ends while the silent one's waits.
-  let outcome = match channel.receive(done) {{
-    Some(what) -> what
-    None -> "closed"
+  let outcome = task.background([{{ -> serve(silent, cert, key, done) }}]) {{ ->
+    when let Ok(real) = tcp.accept(listener) else {{ panic("no second client") }}
+    task.join([{{ -> serve(real, cert, key, done) }}])
+    -- The real client's handshake ends while the silent one's waits.
+    match channel.receive(done) {{
+      Some(what) -> what
+      None -> "closed"
+    }}
   }}
-  task.cancel(first)
   host.give(outcome)
 }}
 import host
@@ -502,8 +503,9 @@ fn main() {{
 
 /// The TLS server of the tests below: it writes its port to
 /// `port_path`, accepts `n` clients, makes each a TLS connection, and
-/// runs `handle(conn, i)` for each in a task of its own; it gives
-/// `after` once every handler has returned.
+/// runs `handle(conn, i)` for each in a task of its own (a piece of a
+/// `task.join`, beside the piece that accepts the next client); it
+/// gives `after` once every handler has returned.
 fn tls_handlers_src(port_path: &str, pki: &MtlsPki, n: usize, handle: &str, after: &str) -> String {
     format!(
         r#"
@@ -530,6 +532,22 @@ fn head(conn: tcp.TcpStream) -> List(String) {{
 
 {handle}
 
+fn serve_from(listener: tcp.TcpListener, cert: Bytes, key: Bytes, i: Int, n: Int) -> () {{
+  match i > n {{
+    true -> ()
+    false -> {{
+      when let Ok(raw) = tcp.accept(listener) else {{ panic("no client") }}
+      task.join([
+        {{ ->
+          when let Ok(conn) = tcp.tls_server(raw, cert, key) else {{ panic("no handshake") }}
+          handle(conn, i)
+        }},
+        {{ -> serve_from(listener, cert, key, i + 1, n) }},
+      ])
+    }}
+  }}
+}}
+
 fn main() {{
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
   when let Ok(_) = io.write_file("{port_path}", "{{tcp.local_port(listener)}}\n") else {{
@@ -537,14 +555,7 @@ fn main() {{
   }}
   when let Ok(cert) = bytes.from_hex("{cert_hex}") else {{ panic("no cert") }}
   when let Ok(key) = bytes.from_hex("{key_hex}") else {{ panic("no key") }}
-  let handlers = list.map(1..{n}) {{ i ->
-    when let Ok(raw) = tcp.accept(listener) else {{ panic("no client") }}
-    task.spawn {{ ->
-      when let Ok(conn) = tcp.tls_server(raw, cert, key) else {{ panic("no handshake") }}
-      handle(conn, i)
-    }}
-  }}
-  list.each(handlers) {{ h -> task.join_handle(h) }}
+  serve_from(listener, cert, key, 1, {n})
   host.give({after})
 }}
 import host

@@ -1,7 +1,8 @@
 //! `SILT_IO_TIMEOUT` and the end of a program: a task that waits for
-//! I/O is waited for, and the global timeout is what ends that wait
-//! when nothing else does. The program ends then, by the rule, with
-//! what the task did after its timeout.
+//! I/O is waited for (main waits in the `task.join` it is a piece of),
+//! and the global timeout is what ends that wait when nothing else
+//! does. The program ends then, with what the task did after its
+//! timeout.
 
 #![cfg(feature = "tcp")]
 
@@ -58,23 +59,22 @@ import tcp
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  println("main returns")
-  let _waits = task.spawn { ->
+  println("main waits")
+  task.join([{ ->
     match tcp.accept(listener) {
       Err(tcp.Timeout) -> println("timed out")
       Ok(_) -> println("a connection")
       Err(e) -> println("another error: {e}")
     }
-  }
+  }])
 }
 "#;
     let (code, out, err) = run_with_io_timeout("accept", source, "200ms");
-    assert_eq!(out, "main returns\ntimed out\n", "stderr: {err}");
+    assert_eq!(out, "main waits\ntimed out\n", "stderr: {err}");
     assert_eq!(code, Some(0), "stderr: {err}");
 }
 
-/// A task that fails after its I/O timed out, after `main` returned,
-/// still fails the run.
+/// A task that fails after its I/O timed out fails the run.
 #[test]
 fn a_failure_after_the_global_io_timeout_fails_the_run() {
     let source = r#"import task
@@ -82,16 +82,16 @@ import tcp
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let _waits = task.spawn { ->
+  task.join([{ ->
     let _ = tcp.accept(listener)
     panic("after the timeout")
-  }
+  }])
 }
 "#;
     let (code, out, err) = run_with_io_timeout("failure", source, "200ms");
     assert_eq!(out, "");
     assert!(
-        err.contains("failed and was never joined: panic: after the timeout"),
+        err.contains("error[runtime]: panic: after the timeout"),
         "stderr: {err}"
     );
     assert_eq!(code, Some(1), "stderr: {err}");

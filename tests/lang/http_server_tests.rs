@@ -153,15 +153,16 @@ fn path_of(req: http.Request) -> String {{
 fn main() {{
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
   when let Ok(control) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
-  let server = task.spawn {{ ->
+  let server = {{ ->
     http.serve(listener) {{ req ->
       {handler}
     }}
   }}
-  println("{{tcp.local_port(listener)}} {{tcp.local_port(control)}} {{string.length("")}}")
-  -- The test connects here when it is done.
-  let _ = tcp.accept(control)
-  task.cancel(server)
+  task.background([server]) {{ ->
+    println("{{tcp.local_port(listener)}} {{tcp.local_port(control)}} {{string.length("")}}")
+    -- The test connects here when it is done.
+    let _ = tcp.accept(control)
+  }}
 }}
 "#
         );
@@ -597,7 +598,7 @@ fn main() {{
   let gate = channel.new(0)
   let at_the_gate = channel.new({CONNECTIONS})
   let log = channel.new(100000)
-  let server = task.spawn {{ ->
+  let server = {{ ->
     http.serve(listener) {{ req ->
       match url.path(req.url) {{
         "/gate" -> {{
@@ -609,29 +610,31 @@ fn main() {{
       http.Response {{ status: 200, body: bytes.from_string("ok"), headers: #{{}} }}
     }}
   }}
-  println("{{tcp.local_port(listener)}} {{tcp.local_port(control)}}")
-  -- Every connection waits at the gate, its other requests behind it.
-  1..{CONNECTIONS} |> list.each {{ _ ->
-    let _ = channel.receive(at_the_gate)
-  }}
-  channel.close(gate)
-  -- What is served from here on counts, however long this thread
-  -- took to get here.
-  channel.send(log, "queued")
-  let _ = task.spawn {{ -> channel.send(log, "the other task") }}
-  let before = loop served = 0, counting = false {{
-    match channel.receive(log) {{
-      Some("queued") -> loop(served, true)
-      Some("served") -> match counting {{
-        true -> loop(served + 1, counting)
-        false -> loop(served, counting)
+  task.background([server]) {{ ->
+    println("{{tcp.local_port(listener)}} {{tcp.local_port(control)}}")
+    -- Every connection waits at the gate, its other requests behind it.
+    1..{CONNECTIONS} |> list.each {{ _ ->
+      let _ = channel.receive(at_the_gate)
+    }}
+    channel.close(gate)
+    -- What is served from here on counts, however long this thread
+    -- took to get here.
+    channel.send(log, "queued")
+    task.background([{{ -> channel.send(log, "the other task") }}]) {{ ->
+      let before = loop served = 0, counting = false {{
+        match channel.receive(log) {{
+          Some("queued") -> loop(served, true)
+          Some("served") -> match counting {{
+            true -> loop(served + 1, counting)
+            false -> loop(served, counting)
+          }}
+          _ -> served
+        }}
       }}
-      _ -> served
+      println("{{before}}")
+      let _ = tcp.accept(control)
     }}
   }}
-  println("{{before}}")
-  let _ = tcp.accept(control)
-  task.cancel(server)
 }}
 "#
     );

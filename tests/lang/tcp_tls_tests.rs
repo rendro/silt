@@ -32,6 +32,8 @@ fn generate_self_signed_cert() -> (String, String) {
 fn test_tls_server_rejects_invalid_cert_pem() {
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -39,21 +41,25 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let answer = channel.new(1)
+      let server = { ->
         let bad_cert = bytes.from_string("not a real cert")
         let bad_key = bytes.from_string("not a real key")
-        match tcp.accept(listener) {
+        channel.send(answer, match tcp.accept(listener) {
           Ok(conn) -> match tcp.tls_server(conn, bad_cert, bad_key) {
             Ok(_) -> "wrong: should error"
             Err(_) -> "errored"
           }
           Err(e) -> "accept-err:{e}"
-        }
-      })
-      time.sleep(time.ms(50))
-      -- Trigger the accept with a connect; the handshake then fails.
-      let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
-      task.join_handle(server)
+        })
+      }
+      let client = { ->
+        time.sleep(time.ms(50))
+        -- Trigger the accept with a connect; the handshake then fails.
+        let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
+      }
+      task.join([server, client])
+      channel.receive(answer) |> option.unwrap_or("no answer")
     }
     Err(e) -> "{e}"
   })
@@ -86,6 +92,8 @@ fn test_tls_handshake_succeeds_with_valid_cert() {
     let src = format!(
         r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -93,8 +101,9 @@ import time
 fn main() {{
   host.give(match tcp.listen("127.0.0.1:0") {{
     Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match bytes.from_hex("{cert_hex}") {{
+      let answer = channel.new(1)
+      let server = {{ ->
+        channel.send(answer, match bytes.from_hex("{cert_hex}") {{
           Ok(cert) -> match bytes.from_hex("{key_hex}") {{
             Ok(key) -> match tcp.accept(listener) {{
               Ok(conn) -> match tcp.tls_server(conn, cert, key) {{
@@ -106,18 +115,21 @@ fn main() {{
             Err(e) -> "key-parse:{{e}}"
           }}
           Err(e) -> "cert-parse:{{e}}"
-        }}
-      }})
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{{tcp.local_port(listener)}}") {{
-        Ok(conn) -> {{
-          -- Send garbage so the TLS handshake fails cleanly.
-          let _ = tcp.write(conn, bytes.from_string("definitely not a TLS ClientHello"))
-          tcp.close(conn)
-        }}
-        Err(_) -> ()
+        }})
       }}
-      task.join_handle(server)
+      let client = {{ ->
+        time.sleep(time.ms(50))
+        match tcp.connect("127.0.0.1:{{tcp.local_port(listener)}}") {{
+          Ok(conn) -> {{
+            -- Send garbage so the TLS handshake fails cleanly.
+            let _ = tcp.write(conn, bytes.from_string("definitely not a TLS ClientHello"))
+            tcp.close(conn)
+          }}
+          Err(_) -> ()
+        }}
+      }}
+      task.join([server, client])
+      channel.receive(answer) |> option.unwrap_or("no answer")
     }}
     Err(e) -> "{{e}}"
   }})
