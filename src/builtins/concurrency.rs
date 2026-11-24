@@ -639,7 +639,8 @@ impl Native for Deadline {
 /// - The end of the body of a `task.background` stops the helpers
 ///   that still run; its value is the call's.
 /// - The call returns, or raises, only when every task of it has
-///   ended: nothing it started runs on.
+///   ended: no task of the call runs on. (A task one of them started
+///   with `task.spawn` is not one of them.)
 /// - The tasks have the caller's time, if it has one (a deadline
 ///   around the call), and its count of late steps: that time ends
 ///   them by the rule that ends the caller, and then the caller, in

@@ -401,8 +401,8 @@ failure of a piece is never reported as a failure that nobody joined.
 A piece is stopped as a cancelled task is (see
 [`task.cancel`](#taskcancel)): it takes nothing new, a wait it is in
 ends, and a piece that only computes ends within about 2,000 steps.
-`task.join` returns, or raises, only when every piece has ended: nothing
-it started runs on after it.
+`task.join` returns, or raises, only when every piece has ended: no piece
+runs on after it.
 
 A stop from outside reaches every piece: when the time of a
 `task.deadline` around the join is over, the pieces end with its
@@ -474,7 +474,9 @@ closes the channel when it is done.
 
 If a helper or the body fails, the others are stopped and the failure is
 raised in the caller, as in `task.join`; a failure during that stop is a
-note under it. A stop from outside reaches the body and every helper, and
+note under it. A helper that fails while it is being stopped, after the
+body has returned, fails the call too: the caller gets the failure, not
+the body's value. A stop from outside reaches the body and every helper, and
 a deadlock reads `task.background with no progress possible`, with a
 line for the body and each helper that waits. With no helpers,
 `task.background([], body)` is `body()`.

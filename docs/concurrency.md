@@ -503,9 +503,9 @@ its own run time, such as racing replicas and dropping the stragglers.
 `task.join(pieces)` runs each function of the list as a task and returns
 when all of them have returned. `task.background(helpers, body)` runs the
 helpers as tasks while `body` runs, stops the helpers that still run when
-`body` returns, and gives its value. Neither gives a handle: what the call
-started has ended when it returns, so there is nothing to join or cancel
-afterwards.
+`body` returns, and gives its value. Neither gives a handle: every function
+the call ran as a task has ended when it returns, so there is nothing to
+join or cancel afterwards.
 
 A failure of any of them stops the others and is raised in the caller,
 with the place where it happened; failures that come while the others are

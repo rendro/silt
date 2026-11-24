@@ -496,7 +496,9 @@ fn placed(
     let mut lines = lines.to_vec();
     for (index, span) in at {
         if let Some(line) = lines.get_mut(index) {
-            *line = line.replace("{at}", &view.frame(span));
+            // The first `{at}` is the line's own; one after it is in a
+            // text the line quotes (a failure's message), and stays.
+            *line = line.replacen("{at}", &view.frame(span), 1);
         }
     }
     lines
