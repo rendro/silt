@@ -1,9 +1,0 @@
--- exit: 0
--- repeat: 3
-import task
-fn main() {
-  let h = task.spawn({ ->
-    42
-  })
-  task.cancel(h)
-}

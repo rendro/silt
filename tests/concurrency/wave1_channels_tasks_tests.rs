@@ -1,7 +1,7 @@
-//! Channels and tasks: lost wake-ups, `task.cancel`, worker stacks,
-//! timers in the deadlock detection, failures that nobody joins.
+//! Channels and tasks: lost wake-ups, stopping a task, worker stacks,
+//! timers in the deadlock detection.
 //!
-//! Five defects are locked here.
+//! Four defects are locked here.
 //!
 //!   * H1. A buffered channel woke a parked sender only when a receive
 //!     found the buffer full. Several receives in a row woke one
@@ -10,7 +10,7 @@
 //!     was woken for one arm and completed another one used up the
 //!     wake-up, and a send that raced a close could be accepted after
 //!     the receiver had seen `Closed`.
-//!   * H2. `task.cancel` could hang the runtime: the task handle ran
+//!   * H2. Stopping a task could hang the runtime: the task handle ran
 //!     the cancel cleanup while it held the lock on the cleanup, and
 //!     the cleanup took the lock of the parked task, which the workers
 //!     and the wakers take first.
@@ -20,20 +20,17 @@
 //!   * H4. A task that waits for a timer was counted as stuck, so a
 //!     main thread that waited for that task's send was told
 //!     "deadlock".
-//!   * H5. A task that failed and was never joined left no trace.
 //!
 //! Most scenarios are golden cases:
 //! `tests/golden/concurrency/*/wave1_channels_tasks__*`. What stays here
 //! needs more than the golden format expresses: output whose order
-//! depends on scheduling (checked line by line), a count of reports on
-//! stderr whose order varies, and a run under `RLIMIT_AS`.
+//! depends on scheduling (checked line by line) and a run under
+//! `RLIMIT_AS`.
 //!
 //! Every test runs the built `silt` binary on a program in a fresh
 //! temporary directory and asserts on exit status, stdout and stderr.
 //! Every run has a kill timeout, so a hang fails the test instead of
-//! hanging the suite. The defects are races, so every scenario runs
-//! several times: ten times where the defect is a hang, three times
-//! otherwise. The assertions are on results, never on elapsed time.
+//! hanging the suite. A scenario that can hang runs ten times. The assertions are on results, never on elapsed time.
 //!
 //! Tests named `guard_*` pin behaviour that must not change; they pass
 //! with and without the fixes. All other tests fail without them. Where
@@ -54,15 +51,8 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often a scenario runs whose defect is a hang.
 const HANG_REPEATS: usize = 10;
 
-/// How often every other scenario runs.
-const REPEATS: usize = 3;
-
 /// Every main-thread deadlock diagnostic starts with this.
 const DEADLOCK: &str = "deadlock on main thread";
-
-/// The first line of such a report, once per report. (The report shows
-/// the source line of the failure, and repeats its message under it.)
-const REPORT_HEADER: &str = "error[runtime]: a task failed and was never joined";
 
 #[derive(Debug)]
 struct Outcome {
@@ -139,42 +129,6 @@ fn run_program(label: &str, src: &str) -> Outcome {
     outcome
 }
 
-/// In each of `repeats` runs the program must run to its end, report
-/// no deadlock, print exactly `expected`, and exit with status 1
-/// because a task failed and nobody joined it. Returns the outcomes,
-/// for further assertions.
-fn assert_completes_with_unjoined_failure(
-    label: &str,
-    src: &str,
-    expected: &str,
-    repeats: usize,
-) -> Vec<Outcome> {
-    let mut outcomes = Vec::with_capacity(repeats);
-    for run in 1..=repeats {
-        let out = run_program(label, src);
-        let ctx = format!("{label}, run {run} of {repeats}");
-        assert!(
-            !out.timed_out,
-            "{ctx}: the program hung and was killed after {RUN_TIMEOUT:?}\n{out:#?}"
-        );
-        assert!(
-            !out.stderr.contains(DEADLOCK),
-            "{ctx}: the program was told `{DEADLOCK}`, but it can complete\n{out:#?}"
-        );
-        assert_eq!(
-            out.code,
-            Some(1),
-            "{ctx}: a task failed unjoined, so the program must exit with status 1\n{out:#?}"
-        );
-        assert_eq!(
-            out.stdout, expected,
-            "{ctx}: the program printed something else than expected\n{out:#?}"
-        );
-        outcomes.push(out);
-    }
-    outcomes
-}
-
 // ── H1 ──────────────────────────────────────────────────────────────
 
 /// The documented multiplexing example, in the documented
@@ -244,51 +198,6 @@ fn main() {
                 "{ctx}: unexpected line {line:?}\n{out:#?}"
             );
         }
-    }
-}
-
-// ── H5 ──────────────────────────────────────────────────────────────
-
-/// Every task that failed and was not joined gets its report.
-#[test]
-fn h5_every_unjoined_failure_is_reported() {
-    let src = r#"
-import channel
-import task
-import time
-fn main() {
-  let about_to_fail = channel.new(2)
-  let _ = task.spawn({ ->
-    channel.send(about_to_fail, 1)
-    panic("first worker failed")
-  })
-  let _ = task.spawn({ ->
-    channel.send(about_to_fail, 2)
-    panic("second worker failed")
-  })
-  let fine = task.spawn({ -> 42 })
-  let _ = channel.receive(about_to_fail)
-  let _ = channel.receive(about_to_fail)
-  time.sleep(time.ms(300))
-  println("main done {task.join_handle(fine)}")
-}
-"#;
-    let outcomes =
-        assert_completes_with_unjoined_failure("h5_two_failures", src, "main done 42\n", REPEATS);
-    for out in outcomes {
-        assert!(
-            out.stderr.contains("first worker failed"),
-            "the first failure must be reported\n{out:#?}"
-        );
-        assert!(
-            out.stderr.contains("second worker failed"),
-            "the second failure must be reported\n{out:#?}"
-        );
-        assert_eq!(
-            out.stderr.matches(REPORT_HEADER).count(),
-            2,
-            "two failed tasks, two reports\n{out:#?}"
-        );
     }
 }
 

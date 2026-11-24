@@ -342,7 +342,6 @@ repros/typechecker_arch/t_anno_weekday.silt	holds	accept	TCA-8: `time.Weekday` i
 repros/typechecker_arch/t_chain1.silt	holds	reject E0301	control for t_chain2: depth one
 repros/typechecker_arch/t_chain2.silt	holds	reject E0301	TCA-2: `g("hello")` over `g(x) { h(x) }`, `h(x) { x + 1 }`
 repros/typechecker_arch/t_chain3.silt	holds	reject E0301	TCA-2: as t_chain2, depth three
-repros/typechecker_arch/t_handle.silt	-	obsolete	fn lambda; a bare `Handle` names nothing (t_anno_handle)
 repros/typechecker_arch/t_key1.silt	holds	reject E0301	TCA-2: `fn bump(x: a) -> a { x + 1 }` violates its signature (t_rigid1)
 repros/typechecker_arch/t_key2.silt	holds	reject E0301	TCA-1: as t_key1, beside an impl method of the same name
 repros/typechecker_arch/t_nonlocal1.silt	-	obsolete	anonymous records and open rows (removed)

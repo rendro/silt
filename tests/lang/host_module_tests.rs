@@ -1003,7 +1003,6 @@ fn correct_host_results_of_every_shape_pass() {
         "h.second(1..3, [5, 6])",
         "h.second((), ())",
         "h.second(1.5, 2.5)",
-        "h.second(task.spawn({ -> 1 }), task.spawn({ -> 2 }))",
         "h.second(json.parse(\"1\", json.Value), json.parse(\"[1]\", json.Value))",
         "h.cast(5, Int)",
         "h.tcast(5, Int)",

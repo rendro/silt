@@ -1,6 +1,0 @@
-error[runtime]: a task failed and was never joined: division by zero
- --> wave2_tasks__run_exits_1_when_a_task_failed_and_was_never_joined.silt:17:5
-    |
- 17 |     10 / zero
-    |     ^^^^^^^^^ a task failed and was never joined: division by zero
-  = help: the task was spawned at wave2_tasks__run_exits_1_when_a_task_failed_and_was_never_joined.silt:14:11: join it with task.join_handle to stop where you wait for it, or cancel it with task.cancel if you don't need its result

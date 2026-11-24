@@ -1340,20 +1340,20 @@ fn by_itself(worker, items, steps) {
     }
 }
 
-/// A worker that is cancelled while it holds an item passes that item
-/// on and takes no further one, at every time slice: it cancels itself
-/// in its callback with item 3 of 700, after which the output holds
-/// the items 0 to 3 and the input the other 696. (This part keeps
-/// task.cancel: the new calls have no stop at a chosen point inside a
-/// callback.) And a pipeline over a rendezvous channel loses nothing
-/// when its worker's deadline passes: every number whose send returned
-/// (the producer notes each) is put out by the worker, which `main`
-/// waits for without a time limit.
+/// A worker whose time is over while it holds an item passes that item
+/// on and takes no further one, at every time slice: with item 3 of 700
+/// in hand it goes on in a deadline of zero, which puts the item out
+/// and calls `channel.each` of the input, after which the output holds
+/// the items 0 to 3 and the input the other 696. And a pipeline over a
+/// rendezvous channel loses nothing when its worker's deadline passes:
+/// every number whose send returned (the producer notes each) is put
+/// out by the worker, which `main` waits for without a time limit.
 #[test]
 fn a_cancelled_worker_passes_on_the_item_it_holds_at_every_slice() {
     let holds = r#"
 import channel
 import task
+import time
 
 fn count(ch) {
   loop n = 0 {
@@ -1365,7 +1365,6 @@ fn count(ch) {
 }
 
 fn main() {
-  let own: Channel(task.Handle(())) = channel.new(1)
   let input: Channel(Int) = channel.new(700)
   let out: Channel(Int) = channel.new(700)
   loop i = 0 {
@@ -1377,17 +1376,21 @@ fn main() {
       }
     }
   }
-  let t = task.spawn { ->
-    when let Some(me) = channel.receive(own) else { panic("no handle") }
-    channel.each(input) { v ->
-      match v == 3 {
-        true -> task.cancel(me)
-        false -> ()
+  loop {
+    match channel.receive(input) {
+      Some(3) -> {
+        let _ = task.deadline(time.ms(0), { ->
+          channel.send(out, 3)
+          channel.each(input) { v -> channel.send(out, v) }
+        })
       }
-      channel.send(out, v)
+      Some(v) -> {
+        channel.send(out, v)
+        loop()
+      }
+      None -> ()
     }
   }
-  channel.send(own, t)
   -- The four items come, however long that takes.
   let put_out = loop got = [] {
     match channel.receive(out) {

@@ -928,7 +928,6 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         // Concurrency — can block forever on unbounded
         // send/receive, and task scheduling is non-deterministic
         // under subprocess timing. Blocks using these are doc-only.
-        "task.spawn",
         "task.deadline",
         "task.sleep",
         "channel.new",

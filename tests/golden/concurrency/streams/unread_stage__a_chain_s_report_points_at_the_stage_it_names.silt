@@ -2,22 +2,16 @@
 -- repeat: 3
 -- The map fails on its second value; the filter reads the failure and
 -- fails with it, and so does `stream.buffered`, which reads ahead
--- without being asked. Nobody reads buffered (a task holds it to the
--- end, so it is not left): the report names it, and points at its call,
--- not at the map's function where the failure was.
-import channel
+-- without being asked. Nobody reads buffered (a top-level binding holds
+-- it to the end, so it is not left): the report names it, and points at
+-- its call, not at the map's function where the failure was.
 import stream
-import task
+
+let s = stream.from_list([1, 2, 3])
+  |> stream.map { x -> 10 / (x - 2) }
+  |> stream.filter { x -> x > 0 }
+  |> stream.buffered(4)
 
 fn main() {
-  let s = stream.from_list([1, 2, 3])
-    |> stream.map { x -> 10 / (x - 2) }
-    |> stream.filter { x -> x > 0 }
-    |> stream.buffered(4)
-  let never: Channel(Int) = channel.new(0)
-  let _holds = task.spawn { ->
-    let _ = channel.receive(never)
-    s
-  }
   println("done")
 }
