@@ -1,13 +1,15 @@
 -- `<ErrorEnum>.message` is a qualified-method BuiltinFn reached through
--- Op::CallMethod; calling it from inside a spawned task and interleaving
+-- Op::CallMethod; calling it from inside a task and interleaving
 -- with a channel hand-off must leave the task's stack intact.
 import channel
 import int
 import io
+import option
 import task
 fn main() {
   let ch = channel.new(1)
-  let h = task.spawn({ ->
+  let out = channel.new(1)
+  let worker = { ->
     let a = match int.parse("x") {
       Ok(_) -> "ok"
       Err(e) -> "{e}"
@@ -17,11 +19,14 @@ fn main() {
       Ok(_) -> "ok"
       Err(e) -> "{e}"
     }
-    "{a} | {b}"
-  })
-  match channel.receive(ch) {
-    Some(m) -> println(m)
-    None -> println("no message")
+    channel.send(out, "{a} | {b}")
   }
-  println(task.join_handle(h))
+  let reader = { ->
+    match channel.receive(ch) {
+      Some(m) -> println(m)
+      None -> println("no message")
+    }
+  }
+  task.join([worker, reader])
+  println(channel.receive(out) |> option.unwrap_or("no result"))
 }

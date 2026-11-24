@@ -6,14 +6,8 @@
 //! and the `outcomes` channel was never closed. After both workers
 //! delivered their `Finished` outcomes, `supervise` blocked on the next
 //! receive — at which point the runtime had no other progress to make,
-//! so `task.join_handle(sup)` in `main` tripped the deadlock detector:
-//!
-//! ```text
-//! worker 2 handled a
-//! worker 1 handled b
-//! error[runtime]: joined task failed: deadlock on main thread:
-//!   task.join_handle with no progress possible
-//! ```
+//! so the wait for the supervisor in `main` tripped the deadlock
+//! detector (`deadlock on main thread: ... with no progress possible`).
 //!
 //! The fix threads an `outstanding` count through `supervise` so it
 //! returns once every spawned worker has reported. The pedagogical
@@ -119,9 +113,9 @@ fn supervision_snippet_runs_to_completion_without_deadlock() {
          stdout:\n{stdout}\n\nstderr:\n{stderr}"
     );
     assert!(
-        !stderr.contains("task.join_handle with no progress possible"),
-        "the supervision snippet tripped `task.join_handle with no progress \
-         possible`. The supervisor task is blocked on outcomes after \
+        !stderr.contains("with no progress possible"),
+        "the supervision snippet tripped a `... with no progress \
+         possible` deadlock. The supervisor task is blocked on outcomes after \
          every worker has already finished — the supervise loop must \
          exit when the outstanding-worker count reaches zero.\n\
          stdout:\n{stdout}\n\nstderr:\n{stderr}"

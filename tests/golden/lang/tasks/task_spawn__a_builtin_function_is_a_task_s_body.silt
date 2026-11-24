@@ -1,6 +1,7 @@
--- `task.spawn` and `task.deadline` take any function of no
+-- `task.background` and `task.deadline` take any function of no
 -- parameters, as their signatures say: a builtin function is one, and
--- the task's value is what it returns.
+-- the task's value is what it returns. (The body of a background with a
+-- helper is a task of its own.)
 import io
 import math
 import task
@@ -8,11 +9,11 @@ import time
 import uuid
 
 fn main() {
-  println(task.join_handle(task.spawn(uuid.nil)))
+  println(task.background([{ -> () }], uuid.nil))
   println(task.deadline(time.ms(5000), uuid.nil))
   -- A builtin that waits for I/O is a task's body like any other (the
   -- input is empty here: the end of it is the task's value).
-  println(io.inspect(task.join_handle(task.spawn(io.read_line))))
-  let random = task.join_handle(task.spawn(math.random))
+  println(io.inspect(task.background([{ -> () }], io.read_line)))
+  let random = task.background([{ -> () }], math.random)
   println(random >= 0.0 && random < 1.0)
 }

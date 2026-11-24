@@ -8,8 +8,8 @@ order: 25
 
 The running process. `process.exit` ends a program with an exit code of its
 own choosing. A program that ends any other way exits with 0, or with 1 when
-it failed: a runtime error, a `main` that returns `Err`, or a task that failed
-and that nobody joined.
+it failed: a runtime error (also one in a task, which the call that ran
+the task raises) or a `main` that returns `Err`.
 
 ## Summary
 

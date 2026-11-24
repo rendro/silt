@@ -5,12 +5,12 @@ import time
 fn outer(g, y) { "outer called" }
 fn inner(c, y) { "INNER called instead" }
 fn main() {
-  let worker = task.spawn { ->
-    let hs = channel.new(4)
-    channel.send(hs, task.spawn { -> time.sleep(time.ms(30)) })
-    channel.send(hs, task.spawn { -> time.sleep(time.ms(30)) })
-    channel.close(hs)
-    outer(inner, channel.each(hs, task.join_handle))
+  let worker = { ->
+    let groups = channel.new(4)
+    channel.send(groups, [{ -> time.sleep(time.ms(30)) }])
+    channel.send(groups, [{ -> time.sleep(time.ms(30)) }])
+    channel.close(groups)
+    println(outer(inner, channel.each(groups, task.join)))
   }
-  println(task.join_handle(worker))
+  task.join([worker])
 }

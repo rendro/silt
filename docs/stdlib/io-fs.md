@@ -183,7 +183,7 @@ io.read_file(path: String) -> Result(String, IoError)
 ```
 
 Reads the entire contents of a file. Returns `Ok(contents)` on success or
-`Err(IoError)` on failure. When called from a spawned task, the operation
+`Err(IoError)` on failure. When called from a task, the operation
 transparently yields to the scheduler while the file is being read.
 
 ```silt
@@ -210,7 +210,7 @@ spaces and tabs at the end of the line are kept. Returns
 `Ok(Some(line))` for a line, `Ok(None)` at the end of stdin (and on every read
 after it), as the end of a channel or of a stream is a value, and
 `Err(IoError)` on failure: a line that is not UTF-8 is `Err(InvalidInput(...))`,
-as for `io.read_stdin` and `stream.stdin_lines`. When called from a spawned
+as for `io.read_stdin` and `stream.stdin_lines`. When called from a
 task, the operation transparently yields to the scheduler. To read all of stdin at once, use
 `io.read_stdin`; to read it a line at a time as a stream, `stream.stdin_lines`.
 
@@ -284,7 +284,7 @@ io.write_file(path: String, contents: String) -> Result((), IoError)
 ```
 
 Writes a string to a file, creating or overwriting it. Returns `Ok(())` on
-success or `Err(IoError)` on failure. When called from a spawned task, the
+success or `Err(IoError)` on failure. When called from a task, the
 operation transparently yields to the scheduler while the file is being
 written.
 
@@ -353,12 +353,13 @@ synchronized with a thread that reads it at the same moment: a task, or
 an I/O operation (a name lookup reads it, so may a TLS library). Until
 the program starts its first task or I/O operation, its own thread is
 the only one that runs; from then on, `env.set` is a runtime error, also
-once those tasks have ended. A task (`task.spawn`, `task.deadline`, the
-stages of a stream, a server's handlers) counts, and so does every I/O
+once those tasks have ended. A task (a piece of `task.join` and the other
+calls of `task`, the function of `task.deadline`, the stages of a
+stream, a server's handlers) counts, and so does every I/O
 operation that runs on silt's I/O threads, the ones a program can wait
 for (reading or writing a file, reading stdin, accepting, connecting, a
 request); printing does not, nor do `env.get`, `fs.exists` and
-`tcp.listen`. A spawned task can never change the environment. In
+`tcp.listen`. A task can never change the environment. In
 `silt test` the rule holds for the whole run. Set the environment at the
 start of `main`:
 

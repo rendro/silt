@@ -23,16 +23,10 @@ fn worker(ch, n) {
 
 fn main() {
   let ch = channel.new(8)
-  let h = task.spawn(fn() { worker(ch, 0) })
-  time.sleep(time.ms(20))
-  task.cancel(h)
-  println("main: cancel #1 (worker running)")
+  -- the stop comes while the worker runs; it must end at its next receive
+  task.background([fn() { worker(ch, 0) }], fn() { time.sleep(time.ms(20)) })
+  println("main: stop (worker running)")
   time.sleep(time.ms(1500))
-  -- worker is now PARKED in channel.receive; docs: a parked task that is
-  -- cancelled "will not be resumed"
-  task.cancel(h)
-  println("main: cancel #2 (worker parked)")
-  time.sleep(time.ms(100))
   channel.send(ch, 1)
   time.sleep(time.ms(1000))
   println("main: done")

@@ -19,7 +19,5 @@ fn main() {
   let blocker = channel.new(0)
   channel.send(c, 1)
   channel.close(c)
-  let t1 = task.spawn({ -> consumer(c, blocker) })
-  let _ = task.spawn({ -> producer(blocker) })
-  task.join_handle(t1)
+  task.join([{ -> consumer(c, blocker) }, { -> producer(blocker) }])
 }

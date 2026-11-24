@@ -15,7 +15,7 @@ fn slow(x) {
 }
 
 fn main() {
-  let worker = task.spawn { ->
+  let worker = task.map([0], 1) { _ ->
     let a = list.map([1, 2, 3]) { x ->
       let pre = list.map([10, 20]) { y -> y + x }
       let inner = list.map(pre) { y -> slow(y) }
@@ -40,5 +40,5 @@ fn main() {
     let k = map.update(#{"a": 1}, "a", 0) { v -> slow(v) + 1 }
     (a, b, c, d, e, f, g, h, i, j, k)
   }
-  println(task.join_handle(worker))
+  println(worker)
 }

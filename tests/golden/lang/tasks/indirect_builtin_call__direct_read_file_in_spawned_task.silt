@@ -1,13 +1,16 @@
--- A direct io.read_file call (Op::CallBuiltin) inside a spawned task.
+-- A direct io.read_file call (Op::CallBuiltin) inside a task.
 -- direct call
 import io
+import list
 import string
 import task
 
 fn main() {
-  let h = task.spawn({ -> io.read_file("indirect_builtin_call__direct_read_file_in_spawned_task.silt") })
-  match task.join_handle(h) {
-    Ok(s) -> println(string.contains(s, "-- direct call"))
-    Err(e) -> println("{e}")
+  let results = task.map([0], 1) { _ -> io.read_file("indirect_builtin_call__direct_read_file_in_spawned_task.silt") }
+  list.each(results) { r ->
+    match r {
+      Ok(s) -> println(string.contains(s, "-- direct call"))
+      Err(e) -> println("{e}")
+    }
   }
 }

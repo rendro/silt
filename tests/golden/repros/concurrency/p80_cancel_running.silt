@@ -11,7 +11,7 @@ fn spin_loop(n, acc) {
 }
 
 fn worker(ch, n) {
-  -- busy for a while (so cancel arrives while RUNNING), then park on receive
+  -- busy for a while (so the stop arrives while RUNNING), then park on receive
   let _ = spin_loop(30000, 0)
   match channel.receive(ch) {
     Some(v) -> {
@@ -24,10 +24,8 @@ fn worker(ch, n) {
 
 fn main() {
   let ch = channel.new(8)
-  let h = task.spawn(fn() { worker(ch, 0) })
-  time.sleep(time.ms(20))
-  task.cancel(h)
-  println("main: cancelled worker while it was running")
+  task.background([fn() { worker(ch, 0) }], fn() { time.sleep(time.ms(20)) })
+  println("main: stopped worker while it was running")
   channel.send(ch, 1)
   channel.send(ch, 2)
   channel.send(ch, 3)

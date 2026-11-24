@@ -4,12 +4,11 @@ import io
 import stream
 import channel
 fn main() {
-  let h = task.spawn({ ->
+  task.join([{ ->
     let s = stream.from_list([10, 20, 30])
     channel.each(s, { x ->
       let _ = io.read_file("vm_higher_order_yield__channel_each_callback_yield.silt")
       println(x)
     })
-  })
-  let _ = task.join_handle(h)
+  }])
 }

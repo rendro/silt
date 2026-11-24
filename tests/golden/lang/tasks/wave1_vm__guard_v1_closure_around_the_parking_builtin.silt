@@ -10,16 +10,16 @@ fn main() {
   let a = channel.new(1)
   let b = channel.new(1)
   let c = channel.new(1)
-  let sender = task.spawn { ->
+  let sender = { ->
     time.sleep(time.ms(50))
     channel.send(a, 1)
     time.sleep(time.ms(20))
     channel.send(b, 2)
     channel.send(c, 3)
   }
-  let first = task.spawn { -> outer(inner, list.map([a]) { ch -> channel.receive(ch) }) }
-  println(task.join_handle(first))
-  let second = task.spawn { -> pair("x", list.map([b, c]) { ch -> channel.receive(ch) }) }
-  println(task.join_handle(second))
-  task.join_handle(sender)
+  let worker = { ->
+    println(outer(inner, list.map([a]) { ch -> channel.receive(ch) }))
+    println(pair("x", list.map([b, c]) { ch -> channel.receive(ch) }))
+  }
+  task.join([sender, worker])
 }

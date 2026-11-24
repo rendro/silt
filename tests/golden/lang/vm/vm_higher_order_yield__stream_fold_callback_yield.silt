@@ -1,15 +1,15 @@
 -- the callback's io.read_file suspends the task mid-iteration
 import task
 import io
+import list
 import stream
 fn main() {
-  let h = task.spawn({ ->
+  let h = task.map([0], 1) { _ ->
     let s = stream.from_list([1, 2, 3])
     stream.fold(s, 0, { acc, x ->
       let _ = io.read_file("vm_higher_order_yield__stream_fold_callback_yield.silt")
       acc + x
     })
-  })
-  let v = task.join_handle(h)
-  println(v)
+  }
+  list.each(h) { v -> println(v) }
 }

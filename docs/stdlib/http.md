@@ -111,7 +111,7 @@ only what `Connect`, `Tls`, `InvalidResponse` and `Other` carry.
 
 To bound a request by a time of your own, put a `task.deadline` around
 it. A request that nobody waits for any more (its deadline passed, its
-task was cancelled) is ended at once, wherever it waits: for the
+task was stopped) is ended at once, wherever it waits: for the
 server's answer, in its body, in a TLS handshake, and holds no thread.
 So is a connect that waits for a host that does not answer: on Linux it
 ends at once; elsewhere it may run on to its connect time, at most 10 s,
@@ -158,7 +158,7 @@ the server sent, with one exception:
 Every request says who sends it, `user-agent: silt/<version>` (the
 version of `silt` that runs the program).
 
-When called from a spawned task, `http.get` transparently yields to the
+When called from a task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
 call site looks the same.
 
@@ -268,7 +268,7 @@ none, `mailto:a@b`), or that resolves to one of a scheme other than
 `Err(InvalidUrl(location))`, a user and password in it hidden.
 
 Like `http.get`, this transparently yields to the scheduler when called from
-a spawned task.
+a task.
 
 ```silt
 -- `api` is a Url, `https://api.example.com/`.
@@ -316,13 +316,15 @@ The listener is bound when `tcp.listen` returns, so a client may connect
 before `http.serve` runs: its request is queued and answered when the
 server starts.
 
-`http.serve` serves until its listener is closed or its task ends. To
-run a server beside other work, call it in a task. There are two ways to
-stop it (see [Stopping a server](#stopping-a-server)):
+`http.serve` serves until its listener is closed or its task is stopped.
+To run a server beside other work, make it a helper of
+`task.background` or a piece of `task.join`. There are two ways to stop
+it (see [Stopping a server](#stopping-a-server)):
 `tcp.close_listener(listener)` frees the port and lets the server finish
-what it has begun, then `http.serve` returns `()`; `task.cancel` of its
-task ends the server at once and leaves the listener bound, to be served
-again (see [When a program ends](../concurrency.md#when-a-program-ends)).
+what it has begun, then `http.serve` returns `()`; a stop of its task
+(the body of the `task.background` returned, a `task.deadline` around it
+passed) ends the server at once and leaves the listener bound, to be
+served again (see [When a program ends](../concurrency.md#when-a-program-ends)).
 
 ```silt
 import bytes
@@ -400,10 +402,9 @@ fn text(body: String) -> http.Response {
 fn main() -> Result((), tcp.TcpError) {
   let api = tcp.listen("127.0.0.1:8080")?
   let health = tcp.listen("127.0.0.1:8081")?
-  let checks = task.spawn { -> http.serve(health) { _ -> text("up") } }
+  let checks = { -> http.serve(health) { _ -> text("up") } }
   -- the long polls, and every other request, are served on 8080
-  http.serve(api) { _ -> text("done") }
-  task.cancel(checks)
+  task.background([checks]) { -> http.serve(api) { _ -> text("done") } }
   Ok(())
 }
 ```
@@ -512,7 +513,6 @@ An `Expect` header that asks for anything but `100-continue` is answered
   the proxy's; the client's own address is then in a header the proxy
   sets (such as `x-forwarded-for`). An access log line:
   `io.eprintln("{req.peer} {req.method} {url.path(req.url)}")`.
-- A handler that cancels its own server still has its response sent.
 - If the program fails while requests are in flight, it ends as a
   process: their connections are closed without an answer.
 
@@ -521,8 +521,8 @@ connection's wait for a request, a body or a client: `SILT_IO_TIMEOUT`
 does not. Inside a handler it works as in any task: the handler's own
 I/O ends at `SILT_IO_TIMEOUT`, and a `task.deadline` that the handler
 sets ends what it runs. A `task.deadline` around `http.serve` itself
-ends the server when its time is up, as `task.cancel` of the server's
-task does: the listener stays bound and can be served again.
+ends the server when its time is up, as any stop of the task that
+serves does: the listener stays bound and can be served again.
 
 Every connection that waits for a request has one I/O operation in
 flight, of the 4,096 a program can have (see
@@ -554,7 +554,8 @@ finish what it has begun (a graceful shutdown):
 - A kept-alive connection that waits for its next request is closed.
 - `http.serve` returns `()` when the last connection has ended.
 
-`task.cancel` of the serving task stops the server at once and keeps the
+A stop of the task that serves (the body of the `task.background` it is
+a helper of returned, say) ends the server at once and keeps the
 listener: what is in flight ends as below, and clients that connect wait
 in the listener for another `http.serve` or a `tcp.accept`. A
 `task.deadline` around `http.serve` does the same when its time is up,
@@ -580,13 +581,19 @@ fn main() {
   when let Ok(home) = url.parse("http://127.0.0.1:{port}/") else {
     panic("no URL")
   }
-  let server = task.spawn { -> http.serve(listener, hello) }
-  match http.get(home) {
-    Ok(r) -> println(r.status) -- 200
-    Err(e) -> println("{e}")
-  }
-  tcp.close_listener(listener)
-  task.join_handle(server)
+  task.join(
+    [
+      { -> http.serve(listener, hello) },
+      { ->
+        match http.get(home) {
+          Ok(r) -> println(r.status) -- 200
+          Err(e) -> println("{e}")
+        }
+        -- the server answers what is in flight, and http.serve returns
+        tcp.close_listener(listener)
+      },
+    ],
+  )
   match http.get(home) {
     Ok(_) -> println("still served")
     Err(_) -> println("refused") -- refused
@@ -594,7 +601,7 @@ fn main() {
 }
 ```
 
-When the task that serves is cancelled (or its deadline passes):
+When the task that serves is stopped (or its deadline passes):
 
 - Its accept is given up. A client that connects afterwards waits in the
   listener for whoever accepts next (or is refused, if the listener was
@@ -603,8 +610,8 @@ When the task that serves is cancelled (or its deadline passes):
   connection is closed. A connection between two requests is closed. A
   response that is being sent at that moment is cut off: the client
   gets less than its `Content-Length` says.
-- After `task.cancel`, the listener is the program's again as soon as
-  `task.cancel` has returned: `tcp.accept` on it gets the next client,
+- After a stop, the listener is the program's again as soon as the call
+  that stopped the server has returned: `tcp.accept` on it gets the next client,
   and another `http.serve` serves it. A closed listener serves nothing:
   `http.serve` on it returns `()` at once.
 

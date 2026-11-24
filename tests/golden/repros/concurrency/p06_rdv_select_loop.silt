@@ -15,31 +15,32 @@ fn one_round() {
   let b = channel.new(0)
   let gate = channel.new(0)
   let done = channel.new(4)
-  let r = task.spawn(fn() {
-    match channel.select([channel.Recv(a), channel.Recv(b)]) {
+  let got = channel.new(1)
+  let r = fn() {
+    channel.send(got, match channel.select([channel.Recv(a), channel.Recv(b)]) {
       channel.Received(_, Some(v)) -> v
       _ -> 0
-    }
-  })
-  let s1 = task.spawn(fn() {
-    channel.receive(gate)
+    })
+  }
+  let s1 = fn() {
+    let _ = channel.receive(gate)
     channel.send(a, 1)
     channel.send(done, 1)
-  })
-  let s2 = task.spawn(fn() {
-    channel.receive(gate)
+  }
+  let s2 = fn() {
+    let _ = channel.receive(gate)
     channel.send(b, 2)
     channel.send(done, 2)
+  }
+  task.background([r, s1, s2], fn() {
+    time.sleep(time.ms(5))
+    channel.close(gate)
+    let _ = channel.receive(got)
+    time.sleep(time.ms(5))
+    let n1 = flag(done)
+    let n2 = flag(done)
+    n1 + n2
   })
-  time.sleep(time.ms(5))
-  channel.close(gate)
-  let got = task.join_handle(r)
-  time.sleep(time.ms(5))
-  let n1 = flag(done)
-  let n2 = flag(done)
-  task.cancel(s1)
-  task.cancel(s2)
-  n1 + n2
 }
 
 fn go(i, both) {

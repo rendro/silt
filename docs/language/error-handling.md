@@ -145,8 +145,8 @@ and it is how a tool fails: the `Err` is the program's message to its user.
 
 The `error: e` line is the program's own text, written exactly as the
 program made it, colours and other control characters included. A
-`panic`'s text, and the report of a task that failed (joined or never
-joined), are silt's reports of a fault: the program's text in them shows
+`panic`'s text, and the report of a runtime error in a task, are silt's
+reports of a fault: the program's text in them shows
 each control character (a carriage return, a tab, an escape sequence) or
 invisible character as an escape (`\r`, `\t`, `\u{1b}`), as silt's other
 messages show a value, so it cannot move the cursor, colour or clear the
@@ -154,7 +154,7 @@ terminal. Its line ends stay: the lines after the first are a note.
 
 The payload is shown as `println` shows it, so a tool's own error type
 with a `Display` impl reads as the tool writes it. Where that impl itself
-fails (a `panic` in it, a division by zero, a failed `task.join_handle`), the
+fails (a `panic` in it, a division by zero, a failed `task.join`), the
 payload is shown by its structure, and one line under it says which
 impl failed, what its failure said and where:
 
@@ -249,8 +249,8 @@ fn main() {
 The function runs in place, on the caller's task, so a guard costs about
 what a call costs. What ends the program on purpose, or by a fault of
 silt or its host, passes through a guard: `process.exit`, a deadlock of
-the program's thread, a stop of the task (`task.cancel`, a
-`task.deadline` whose time passed), an embedder's step budget used up.
+the program's thread, a stop of the task (a `task.deadline` whose time
+passed, a helper whose body returned), an embedder's step budget used up.
 See [`task.guard`](../stdlib/channel-task.md#taskguard).
 
 ## Cross-Module Error Composition

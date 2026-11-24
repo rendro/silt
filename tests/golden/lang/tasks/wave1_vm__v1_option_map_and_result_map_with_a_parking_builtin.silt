@@ -8,15 +8,15 @@ fn pair(x, y) { (x, y) }
 fn main() {
   let a = channel.new(1)
   let b = channel.new(1)
-  let sender = task.spawn { ->
+  let sender = { ->
     time.sleep(time.ms(50))
     channel.send(a, 1)
     time.sleep(time.ms(20))
     channel.send(b, 2)
   }
-  let first = task.spawn { -> pair("option", option.map(Some(a), channel.receive)) }
-  println(task.join_handle(first))
-  let second = task.spawn { -> pair("result", result.map(Ok(b), channel.receive)) }
-  println(task.join_handle(second))
-  task.join_handle(sender)
+  let worker = { ->
+    println(pair("option", option.map(Some(a), channel.receive)))
+    println(pair("result", result.map(Ok(b), channel.receive)))
+  }
+  task.join([sender, worker])
 }

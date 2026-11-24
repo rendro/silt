@@ -2,10 +2,10 @@
 import env
 import task
 fn main() {
-  let h = task.spawn { ->
+  let h = task.map([0], 1) { _ ->
     env.set("", "x")
     1
   }
-  println(task.join_handle(h))
+  println(h)
   println("after")
 }

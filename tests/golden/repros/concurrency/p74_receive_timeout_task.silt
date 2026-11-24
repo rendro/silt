@@ -5,12 +5,12 @@ import time
 
 fn main() {
   let ch = channel.new(1)
-  let h = task.spawn(fn() {
+  let got = task.map([0], 1, fn(_) {
     match channel.receive_timeout(ch, time.ms(80)) {
       channel.Message(_) -> "value"
       channel.Empty -> "timed out"
       channel.Closed -> "closed"
     }
   })
-  println(task.join_handle(h))
+  println(got)
 }

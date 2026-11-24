@@ -158,57 +158,32 @@ example; an editor shows the same text when you hover a `test.*` name.
 | `test.assert_ne(left, right)` | Fails if `left == right` |
 | `test.assert_approx(a, b, tolerance)` | Fails if `a` and `b` differ by more than `tolerance` |
 
-## Spawned Tasks
+## Tasks in Tests
 
-A test that spawns tasks is responsible for them. If a task fails and the
-test never joins it (`task.join_handle`) or cancels it (`task.cancel`), the failure
-fails **the test that spawned the task** -- also when the task was spawned by
-another task of that test. The failure is reported under the test's result
-line, rendered like any runtime error:
+A test runs concurrent work as a program does. A call such as
+`task.join` returns when its tasks have ended, and a failure in one of
+them is a failure of that call: it fails the test, and is reported under
+the test's result line like any runtime error.
 
 ```text
-  FAIL spawn_test.silt::test_worker
-    error[runtime]: a task failed and was never joined: division by zero
-     --> spawn_test.silt:5:13
+  FAIL worker_test.silt::test_workers
+    error[runtime]: division by zero
+     --> worker_test.silt:5:3
     ...
-      = help: the task was spawned at spawn_test.silt:4:11: join it with task.join_handle to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
-A test has ended when its test function has returned **and the tasks it
-spawned can do no more**: each has ended or waits, with no timer and no I/O
-of theirs pending (the rule of
-[When a program ends](../concurrency.md#when-a-program-ends), applied to
-the test's own tasks). The runner waits for that before it gives the
-test's result, so:
-
-- a task that fails after the test function has returned fails that test,
-  not a later one;
-- a task that never stops keeps its test, and the run, from ending: cancel
-  it before the test returns;
-- a task left waiting for something nobody will give is dropped with its
-  test, and is neither waited for nor reported by a later test.
-
-A test whose function fails (a failed assertion, a `panic`, a returned
-`Err`) is not waited for: its tasks are stopped where they are, as a program's are when `main`
-fails. A ticker that the test would have cancelled on its last line does
-not keep the run going.
-
-The tasks that a file's top-level code spawns are the file's. The runner
-waits for them in the same way before the first test, and those that wait
-then stay for the tests: a top-level task that answers requests on a channel
-serves every test of the file, and a test that waits for its answer is not
-deadlocked. A test has ended when neither its own tasks nor the file's can
-do more. If a task of the top-level code fails and nobody joins it, the file
-has failed: `FAIL <file> (a task spawned by the file's top-level code
-failed)`, once, after the file's last test, with the reports under it.
+When a test function returns, nothing it started runs on, so no task of
+one test can fail a later one. A test whose function fails (a failed
+assertion, a `panic`, a returned `Err`) stops the tasks of the calls it
+was in, as a program's are when `main` fails. A test whose thread is
+deadlocked fails with the deadlock report.
 
 ## Exit Code
 
-`silt test` exits with code 0 if all tests pass and code 1 if any test fails,
-including a test that failed because a task it spawned failed.
+`silt test` exits with code 0 if all tests pass and code 1 if any test fails.
 
 A test does not end the run. A call of `process.exit` in a test, or in a task
-it spawned, fails that test, whatever the code, and the run goes on with the
+of a call it made, fails that test, whatever the code, and the run goes on with the
 next test:
 
 ```text

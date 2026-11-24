@@ -63,9 +63,10 @@ import time
 
 fn main() {
   let line = string.repeat("x", 1000)
-  let _printer = task.spawn { -> list.each(1..2000) { _ -> println(line) } }
-  time.sleep(time.ms(300))
-  panic("boom")
+  task.background([{ -> list.each(1..2000) { _ -> println(line) } }]) { ->
+    time.sleep(time.ms(300))
+    panic("boom")
+  }
 }
 "#,
     );
@@ -97,8 +98,7 @@ fn long_prints_that_wait_their_turn_hold_no_thread() {
     std::fs::write(
         &file,
         "import list\nimport string\nimport task\n\nfn main() {\n  let text = string.repeat(\"x\", 2000000)\n  \
-         let tasks = 1..40 |> list.map { _ -> task.spawn { -> println(text) } }\n  \
-         tasks |> list.each { t -> task.join_handle(t) }\n}\n",
+         task.join(1..40 |> list.map { _ -> { -> println(text) } })\n}\n",
     )
     .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))

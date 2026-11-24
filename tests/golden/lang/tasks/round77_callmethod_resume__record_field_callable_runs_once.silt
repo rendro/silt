@@ -1,6 +1,7 @@
 -- Same as the qualified-global case, through a function stored in a
 -- record field and called as `r.bump()`.
 import io
+import list
 import task
 
 fn make_bump() -> Fn() -> Int {
@@ -15,9 +16,9 @@ fn make_bump() -> Fn() -> Int {
 type Holder { bump: Fn() -> Int }
 
 fn main() {
-  let h = task.spawn({ ->
+  let values = task.map([0], 1) { _ ->
     let r = Holder { bump: make_bump() }
     r.bump()
-  })
-  println(task.join_handle(h))
+  }
+  list.each(values) { v -> println(v) }
 }

@@ -6,11 +6,11 @@
 -- Once a task was started the environment stays as it is, also when
 -- the task has ended: the rule does not depend on what runs when.
 import env
+import list
 import task
 
 fn main() {
-  let worker = task.spawn { -> 1 + 1 }
-  println("joined: {task.join_handle(worker)}")
+  list.each(task.map([0], 1) { _ -> 1 + 1 }) { v -> println("joined: {v}") }
   env.set("SILT_ENV_CHANGE_B", "1")
   println("not reached")
 }

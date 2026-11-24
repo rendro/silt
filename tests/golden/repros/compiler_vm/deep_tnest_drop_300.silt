@@ -22,7 +22,6 @@ fn work() {
   1
 }
 fn main() {
-  let h = task.spawn(fn() { work() })
-  println(task.join_handle(h))
+  println(task.map([0], 1, fn(_) { work() }))
   println("done")
 }

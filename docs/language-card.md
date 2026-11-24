@@ -271,14 +271,17 @@ while the body runs, stops them when it returns, and gives its value.
 ... }` does the same for each value of a channel until it is closed and
 empty; `task.first_ok([f, g])` gives the first `Ok` and stops the rest,
 or `Err` of every error in order.
-`task.spawn { -> ... }` starts a task and gives its `Handle(a)`;
-`task.join_handle(h)` waits for its value. Tasks talk over channels:
+These calls return only when the tasks they started have ended, and
+none gives a handle.
+`task.deadline(d) { -> ... }` gives `Some` of the value, or `None` when
+the time passed and the work was stopped. Tasks talk over channels:
 `channel.new(n)`, `channel.send`, `channel.receive` (`None` once closed
 and empty), `channel.close`, `channel.select`. I/O inside a task does not
-block the others. A failed task that nobody joins ends the program with
-status 1. `task.guard { -> ... }` runs a function and gives `Ok` of its
-value, or `Err(e)` for a runtime error raised in it (a
-`task.RuntimeError`: `message`, `location`, `trace`).
+block the others. `stream.from_fn { ch -> ... }` runs a function as the
+source of a stream, which closes when it returns. `task.guard { -> ... }`
+runs a function and gives `Ok` of its value, or `Err(e)` for a runtime
+error raised in it (a `task.RuntimeError`: `message`, `location`,
+`trace`).
 
 ## Tests
 
@@ -311,7 +314,7 @@ m`: `list.map(xs, f)`, `io.NotFound(path)`, `time.Weekday`. The prelude's
 types need no module: `Int`, `Float`, `Bool`, `String`, `()`, `Bytes`,
 `List(a)`, `Map(k, v)`, `Set(a)`, `Channel(a)`, `Fn(a) -> b`, `Option(a)`
 and `Result(a, e)`; a type of a module is written with it,
-`task.Handle(a)`, `time.Duration`. Each module
+`task.RuntimeError`, `time.Duration`. Each module
 lists its types, traits and opaque types first, then its functions and
 constants. A function of a cargo feature is in builds with that feature.
 

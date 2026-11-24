@@ -44,7 +44,7 @@ fn run_with_timeout(src: String, budget: Duration) -> Option<Value> {
 
 #[test]
 fn test_close_unblocks_concurrent_reader_on_same_stream() {
-    // Layout:
+    // Layout (the server and the client are pieces of a task.join):
     //   Server task: listens, accepts, then sits in `tcp.read` expecting
     //       data that never arrives. Holds the connection handle.
     //   Client task: connects to establish the pair, then (after a
@@ -59,6 +59,8 @@ fn test_close_unblocks_concurrent_reader_on_same_stream() {
     // doesn't affect the parked read at all.
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -66,41 +68,50 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
-        match tcp.accept(listener) {
+      let answer = channel.new(1)
+      let result = channel.new(1)
+      let server = { ->
+        channel.send(answer, match tcp.accept(listener) {
           Ok(conn) -> {
-            -- Spawn a sibling that closes `conn` after a brief delay.
+            -- A sibling closes `conn` after a brief delay.
             -- Before the fix: this close is a no-op on the fd, so the
             -- read below hangs forever. After the fix: shutdown(Both)
             -- on the shared fd wakes the read with EOF (0 bytes).
-            let closer = task.spawn({ ->
+            let read = channel.new(1)
+            let closer = { ->
               time.sleep(time.ms(50))
               tcp.close(conn)
-            })
-            let r = match tcp.read(conn, 1024) {
-              Ok(buf) -> match bytes.length(buf) {
-                0 -> "eof"
-                _ -> "unexpected-data"
-              }
-              Err(e) -> "read-err:{e}"
             }
-            task.join_handle(closer)
-            r
+            let reader = { ->
+              channel.send(read, match tcp.read(conn, 1024) {
+                Ok(buf) -> match bytes.length(buf) {
+                  0 -> "eof"
+                  _ -> "unexpected-data"
+                }
+                Err(e) -> "read-err:{e}"
+              })
+            }
+            task.join([closer, reader])
+            channel.receive(read) |> option.unwrap_or("no read")
           }
           Err(e) -> "accept-err:{e}"
-        }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(client) -> {
-          -- Do NOT send data: we want the server's read to be pending
-          -- when the sibling calls tcp.close(conn) on it.
-          let r = task.join_handle(server)
-          tcp.close(client)
-          r
-        }
-        Err(e) -> "connect-err:{e}"
+        })
       }
+      let client = { ->
+        time.sleep(time.ms(50))
+        channel.send(result, match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(client) -> {
+            -- Do NOT send data: we want the server's read to be pending
+            -- when the sibling calls tcp.close(conn) on it.
+            let r = channel.receive(answer) |> option.unwrap_or("no answer")
+            tcp.close(client)
+            r
+          }
+          Err(e) -> "connect-err:{e}"
+        })
+      }
+      task.join([server, client])
+      channel.receive(result) |> option.unwrap_or("no result")
     }
     Err(e) -> "listen-err:{e}"
   })
@@ -141,6 +152,8 @@ import host
 fn test_close_then_write_same_task_errors() {
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -148,25 +161,28 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let result = channel.new(1)
+      let server = { ->
         match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
         }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(conn) -> {
-          tcp.close(conn)
-          let r = match tcp.write(conn, bytes.from_string("hi")) {
-            Ok(_) -> "wrong: write-after-close should error"
-            Err(_) -> "errored"
-          }
-          task.join_handle(server)
-          r
-        }
-        Err(e) -> "connect-err:{e}"
       }
+      let client = { ->
+        time.sleep(time.ms(50))
+        channel.send(result, match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(conn) -> {
+            tcp.close(conn)
+            match tcp.write(conn, bytes.from_string("hi")) {
+              Ok(_) -> "wrong: write-after-close should error"
+              Err(_) -> "errored"
+            }
+          }
+          Err(e) -> "connect-err:{e}"
+        })
+      }
+      task.join([server, client])
+      channel.receive(result) |> option.unwrap_or("no result")
     }
     Err(e) -> "listen-err:{e}"
   })
@@ -185,6 +201,8 @@ import host
 #[test]
 fn test_double_close_is_idempotent() {
     let src = r#"
+import channel
+import option
 import tcp
 import task
 import time
@@ -192,22 +210,26 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let result = channel.new(1)
+      let server = { ->
         match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
         }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(conn) -> {
-          tcp.close(conn)
-          tcp.close(conn)
-          task.join_handle(server)
-          "ok"
-        }
-        Err(e) -> "connect-err:{e}"
       }
+      let client = { ->
+        time.sleep(time.ms(50))
+        channel.send(result, match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(conn) -> {
+            tcp.close(conn)
+            tcp.close(conn)
+            "ok"
+          }
+          Err(e) -> "connect-err:{e}"
+        })
+      }
+      task.join([server, client])
+      channel.receive(result) |> option.unwrap_or("no result")
     }
     Err(e) -> "listen-err:{e}"
   })
@@ -242,6 +264,8 @@ fn test_tls_close_shutdown_does_not_hang() {
     // in-process TLS test we can get without a matching trust anchor.
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -249,25 +273,27 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let answer = channel.new(1)
+      let server = { ->
         let bad_cert = bytes.from_string("-----BEGIN CERTIFICATE-----\nnotacert\n-----END CERTIFICATE-----\n")
         let bad_key = bytes.from_string("-----BEGIN PRIVATE KEY-----\nnotakey\n-----END PRIVATE KEY-----\n")
-        match tcp.accept(listener) {
+        channel.send(answer, match tcp.accept(listener) {
           Ok(conn) -> match tcp.tls_server(conn, bad_cert, bad_key) {
             Ok(_) -> "unexpected: should error"
             Err(_) -> "errored"
           }
           Err(e) -> "accept-err:{e}"
-        }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(conn) -> {
-          tcp.close(conn)
-          task.join_handle(server)
-        }
-        Err(e) -> "connect-err:{e}"
+        })
       }
+      let client = { ->
+        time.sleep(time.ms(50))
+        match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(conn) -> tcp.close(conn)
+          Err(e) -> channel.send(answer, "connect-err:{e}")
+        }
+      }
+      task.join([server, client])
+      channel.receive(answer) |> option.unwrap_or("no answer")
     }
     Err(e) -> "listen-err:{e}"
   })

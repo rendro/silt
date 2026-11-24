@@ -58,6 +58,8 @@ import host
 fn test_echo_roundtrip() {
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -65,7 +67,8 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let outcome = channel.new(1)
+      let server = { ->
         match tcp.accept(listener) {
           Ok(conn) -> {
             match tcp.read(conn, 1024) {
@@ -78,24 +81,27 @@ fn main() {
           }
           Err(e) -> println("accept err: {e}")
         }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(conn) -> {
-          let _ = tcp.write(conn, bytes.from_string("hello"))
-          let result = match tcp.read(conn, 1024) {
-            Ok(buf) -> match bytes.to_string(buf) {
-              Ok(s) -> s
+      }
+      let client = { ->
+        time.sleep(time.ms(50))
+        channel.send(outcome, match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(conn) -> {
+            let _ = tcp.write(conn, bytes.from_string("hello"))
+            let result = match tcp.read(conn, 1024) {
+              Ok(buf) -> match bytes.to_string(buf) {
+                Ok(s) -> s
+                Err(e) -> "{e}"
+              }
               Err(e) -> "{e}"
             }
-            Err(e) -> "{e}"
+            tcp.close(conn)
+            result
           }
-          tcp.close(conn)
-          task.join_handle(server)
-          result
-        }
-        Err(e) -> "{e}"
+          Err(e) -> "{e}"
+        })
       }
+      task.join([server, client])
+      channel.receive(outcome) |> option.unwrap_or("no result")
     }
     Err(e) -> "{e}"
   })
@@ -111,6 +117,8 @@ import host
 fn test_read_exact_returns_full_payload() {
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -118,7 +126,8 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let outcome = channel.new(1)
+      let server = { ->
         match tcp.accept(listener) {
           Ok(conn) -> {
             -- Send 8 bytes in two writes so read_exact has to assemble.
@@ -129,23 +138,26 @@ fn main() {
           }
           Err(_) -> ()
         }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(conn) -> {
-          let result = match tcp.read_exact(conn, 8) {
-            Ok(buf) -> match bytes.to_string(buf) {
-              Ok(s) -> s
+      }
+      let client = { ->
+        time.sleep(time.ms(50))
+        channel.send(outcome, match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(conn) -> {
+            let result = match tcp.read_exact(conn, 8) {
+              Ok(buf) -> match bytes.to_string(buf) {
+                Ok(s) -> s
+                Err(e) -> "{e}"
+              }
               Err(e) -> "{e}"
             }
-            Err(e) -> "{e}"
+            tcp.close(conn)
+            result
           }
-          tcp.close(conn)
-          task.join_handle(server)
-          result
-        }
-        Err(e) -> "{e}"
+          Err(e) -> "{e}"
+        })
       }
+      task.join([server, client])
+      channel.receive(outcome) |> option.unwrap_or("no result")
     }
     Err(e) -> "{e}"
   })
@@ -161,6 +173,8 @@ import host
 fn test_read_after_close_errors() {
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -168,25 +182,29 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let outcome = channel.new(1)
+      let server = { ->
         match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
         }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(conn) -> {
-          tcp.close(conn)
-          let result = match tcp.read(conn, 16) {
-            Ok(_) -> "wrong: should error"
-            Err(_) -> "errored"
-          }
-          task.join_handle(server)
-          result
-        }
-        Err(e) -> "{e}"
       }
+      let client = { ->
+        time.sleep(time.ms(50))
+        channel.send(outcome, match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(conn) -> {
+            tcp.close(conn)
+            let result = match tcp.read(conn, 16) {
+              Ok(_) -> "wrong: should error"
+              Err(_) -> "errored"
+            }
+            result
+          }
+          Err(e) -> "{e}"
+        })
+      }
+      task.join([server, client])
+      channel.receive(outcome) |> option.unwrap_or("no result")
     }
     Err(e) -> "{e}"
   })
@@ -207,6 +225,8 @@ import host
 fn test_write_after_close_errors() {
     let src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -214,25 +234,29 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let outcome = channel.new(1)
+      let server = { ->
         match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
         }
-      })
-      time.sleep(time.ms(50))
-      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
-        Ok(conn) -> {
-          tcp.close(conn)
-          let result = match tcp.write(conn, bytes.from_string("hi")) {
-            Ok(_) -> "wrong: should error"
-            Err(_) -> "errored"
-          }
-          task.join_handle(server)
-          result
-        }
-        Err(e) -> "{e}"
       }
+      let client = { ->
+        time.sleep(time.ms(50))
+        channel.send(outcome, match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+          Ok(conn) -> {
+            tcp.close(conn)
+            let result = match tcp.write(conn, bytes.from_string("hi")) {
+              Ok(_) -> "wrong: should error"
+              Err(_) -> "errored"
+            }
+            result
+          }
+          Err(e) -> "{e}"
+        })
+      }
+      task.join([server, client])
+      channel.receive(outcome) |> option.unwrap_or("no result")
     }
     Err(e) -> "{e}"
   })

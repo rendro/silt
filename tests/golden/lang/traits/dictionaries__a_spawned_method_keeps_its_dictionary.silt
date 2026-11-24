@@ -2,6 +2,7 @@
 -- the function of a task; a closure that calls a method through a
 -- bound does too.
 import task
+import time
 trait Name { fn name(self) -> String }
 type K { K }
 trait Name for K { fn name(self) -> String { "k" } }
@@ -12,11 +13,15 @@ trait Name for Bx(a) where a: Name {
 trait Zero { fn zero() -> Self }
 trait Zero for Int { fn zero() -> Int { 41 } }
 fn later(x: a) -> String where a: Name {
-  let h = task.spawn({ -> Name.name(x) })
-  task.join_handle(h)
+  match task.deadline(time.seconds(60), { -> Name.name(x) }) {
+    Some(name) -> name
+    None -> "late"
+  }
 }
 fn main() {
   println(later(Bx(Bx(K))))
-  let h = task.spawn(Int.zero)
-  println(task.join_handle(h) + 1)
+  match task.deadline(time.seconds(60), Int.zero) {
+    Some(n) -> println(n + 1)
+    None -> println("late")
+  }
 }

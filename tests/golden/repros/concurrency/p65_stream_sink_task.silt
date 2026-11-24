@@ -7,19 +7,16 @@ import time
 
 -- streams are channels: a user channel fed by a task is a legal stream.
 -- 4 consumer tasks (= worker count) each run a stream sink on their own
--- channel; the 4 producers are spawned afterwards.
+-- channel; the 4 producers start them 200 ms later.
 fn main() {
   let chans = [1, 2, 3, 4] |> list.map { i -> channel.new(4) }
-  let consumers = chans |> list.map { ch ->
-    task.spawn(fn() { stream.collect(ch) })
-  }
-  time.sleep(time.ms(200))
   let producers = chans |> list.map { ch ->
-    task.spawn(fn() {
+    fn() {
+      time.sleep(time.ms(200))
       channel.send(ch, 1)
       channel.close(ch)
-    })
+    }
   }
-  let outs = consumers |> list.map { h -> task.join_handle(h) }
+  let outs = task.background(producers, fn() { task.map(chans, 4, fn(ch) { stream.collect(ch) }) })
   println(outs)
 }

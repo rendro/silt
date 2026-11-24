@@ -1,11 +1,11 @@
-error[runtime]: joined task failed: division by zero
+error[runtime]: division by zero
  --> nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:10:13
     |
  10 |     true -> 1 / 0
-    |             ^^^^^ joined task failed: division by zero
+    |             ^^^^^ division by zero
 
 call stack:
   -> helper  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:10:13
   -> wrapper  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:14:17
-  -> closure in main  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:17:5
-  -> main  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:19:11
+  -> closure in main  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:17:13
+  -> main  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:16:3

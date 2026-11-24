@@ -4,7 +4,7 @@ import io
 import list
 
 fn main() {
-  let h = task.spawn({ ->
+  task.join([{ ->
     let outer = [10, 20]
     let inner = [1, 2, 3]
     let _ = list.map(outer, { o ->
@@ -15,6 +15,5 @@ fn main() {
       })
     })
     println("done")
-  })
-  task.join_handle(h)
+  }])
 }

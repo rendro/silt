@@ -1,14 +1,19 @@
 -- repeat: 5
+import channel
 import list
+import option
 import task
 import time
 fn main() {
-  let worker = task.spawn { ->
-    let hs = [1, 2, 3] |> list.map { n -> task.spawn { ->
+  let worker = task.map([0], 1) { _ ->
+    let out = channel.new(3)
+    let groups = [1, 2, 3] |> list.map { n -> [{ ->
       time.sleep(time.ms(30))
-      n * 10
-    } }
-    [0] |> list.concat(list.map(hs, task.join_handle))
+      channel.send(out, n * 10)
+    }] }
+    let _ = list.map(groups, task.join)
+    channel.close(out)
+    [0] |> list.concat(list.map([1, 2, 3]) { _ -> channel.receive(out) |> option.unwrap_or(0) })
   }
-  println(task.join_handle(worker))
+  list.each(worker) { v -> println(v) }
 }

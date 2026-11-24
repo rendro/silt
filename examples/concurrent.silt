@@ -1,46 +1,40 @@
 import channel
-import list
 import task
 
 fn main() {
   let ch = channel.new(10)
-  -- Producer sends messages then closes the channel
-  let producer = task.spawn { ->
-    channel.send(ch, "hello")
-    channel.send(ch, "from")
-    channel.send(ch, "silt")
-    channel.close(ch)
-  }
-  -- Consumer receives until the channel is closed
-  let consumer = task.spawn { ->
-    when let Some(msg1) = channel.receive(ch) else {
-      return
-    }
-    when let Some(msg2) = channel.receive(ch) else {
-      return
-    }
-    when let Some(msg3) = channel.receive(ch) else {
-      return
-    }
-    println("{msg1} {msg2} {msg3}")
-  }
-  task.join_handle(producer)
-  task.join_handle(consumer)
-  -- Fan-out: spawn multiple workers
-  let results = channel.new(10)
-  let workers = [1, 2, 3] |> list.map { id -> task.spawn { -> channel.send(results, id * 10) } }
-  workers |> list.each { w -> task.join_handle(w) }
-  channel.close(results)
-  when let Some(r1) = channel.receive(results) else {
-    return
-  }
-  when let Some(r2) = channel.receive(results) else {
-    return
-  }
-  when let Some(r3) = channel.receive(results) else {
-    return
-  }
-  println("Worker results: {r1}, {r2}, {r3}")
+  -- Two pieces run together: a producer that sends messages and then
+  -- closes the channel, and a consumer that receives them.
+  -- task.join returns when both have returned.
+  task.join(
+    [
+      { ->
+        channel.send(ch, "hello")
+        channel.send(ch, "from")
+        channel.send(ch, "silt")
+        channel.close(ch)
+      },
+      { ->
+        when let Some(msg1) = channel.receive(ch) else {
+          return
+        }
+        when let Some(msg2) = channel.receive(ch) else {
+          return
+        }
+        when let Some(msg3) = channel.receive(ch) else {
+          return
+        }
+        println("{msg1} {msg2} {msg3}")
+      },
+    ],
+  )
+  -- Fan-out and fan-in: task.map runs the workers together and gives
+  -- their values in the order of the list
+  let results = task.map([1, 2, 3], 3) { id -> id * 10 }
+  println("Worker results: {results}")
+  -- First answer wins: task.first_ok gives the first Ok and stops the rest
+  let found = task.first_ok([{ -> Err("mirror a is down") }, { -> Ok("mirror b") }])
+  println("Fetched from: {found}")
   -- Select: wait on multiple channels, match which one fired with ^pin
   let urgent = channel.new(5)
   let normal = channel.new(5)

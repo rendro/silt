@@ -4,19 +4,20 @@ import task
 
 fn main() {
   let ch = channel.new(2)
-  let producer = task.spawn({ ->
+  let producer = { ->
     list.each([1, 2, 3, 4, 5]) { n -> channel.send(ch, n * n) }
     channel.close(ch)
-    "produced"
-  })
-  let total = loop acc = 0 {
-    match channel.receive(ch) {
-      Some(n) -> loop(acc + n)
-      None -> acc
+  }
+  let total = task.background([producer]) { ->
+    loop acc = 0 {
+      match channel.receive(ch) {
+        Some(n) -> loop(acc + n)
+        None -> acc
+      }
     }
   }
   println(total)
-  println(task.join_handle(producer))
-  let workers = list.map([1, 2, 3]) { n -> task.spawn({ -> n * 10 }) }
-  let _ = list.fold(workers, 0) { acc, h -> acc + task.join_handle(h) }
+  println("produced")
+  let values = task.map([1, 2, 3], 3) { n -> n * 10 }
+  let _ = list.fold(values, 0) { acc, v -> acc + v }
 }

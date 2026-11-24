@@ -138,19 +138,19 @@ fn internal_error_line(message: &str) -> String {
     )
 }
 
-/// `<handle:0>` would send on a channel that nobody else sends on; a
-/// task joins it, a task receives on that channel, and `main` joins
-/// both.
+/// The first piece of a `task.join` (task 0) would send on a channel
+/// that nobody else sends on; another piece receives on that channel,
+/// and `main` waits in the join.
 ///
 /// The hook loses a task before a slice of it that is not its first,
 /// so the task must certainly have one. A receive alone does not make
 /// it so: it may find its value there and go on in the same slice. A
 /// sleep does: it always ends the slice. So the task is let through
-/// the gate by `main`, when `main` has started every task and printed
-/// its line (nothing is spawned or printed while the runtime may be
-/// broken), and then sleeps; it is lost as that sleep ends. That the
-/// joiner, the receiver and `main` wait by then is likely and not
-/// certain: the program ends either way.
+/// the gate by the third piece, when the join has started every task
+/// and that piece has printed its line (nothing is started or printed
+/// while the runtime may be broken), and then sleeps; it is lost as
+/// that sleep ends. That the receiver and `main` wait by then is likely
+/// and not certain: the program ends either way.
 const LOST_WHILE_ALL_WAIT: &str = r#"import channel
 import task
 import time
@@ -158,17 +158,19 @@ import time
 fn main() {
   let gate = channel.new(0)
   let only = channel.new(0)
-  let lost = task.spawn { ->
+  let lost = { ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(5))
     channel.send(only, 1)
   }
-  let joiner = task.spawn { -> task.join_handle(lost) }
-  let receiver = task.spawn { -> channel.receive(only) }
-  println("main waits")
-  channel.send(gate, 1)
-  task.join_handle(joiner)
-  let _ = task.join_handle(receiver)
+  let receiver = { ->
+    let _ = channel.receive(only)
+  }
+  let opener = { ->
+    println("main waits")
+    channel.send(gate, 1)
+  }
+  task.join([lost, receiver, opener])
   println("main went on")
 }
 "#;
@@ -209,8 +211,8 @@ fn a_panic_of_a_worker_ends_the_program() {
 }
 
 /// The timer's thread panics when the first deadline is due, while a
-/// task sleeps and `main` joins it. The task is let through a gate when
-/// `main` has printed its line, which the process could otherwise end
+/// task sleeps and `main` waits in the `task.join` of it. The task is
+/// let through a gate when the other piece has printed its line, which the process could otherwise end
 /// before (as it did on a busy machine with the sleep below, which is
 /// over at once): see `LOST_WHILE_ALL_WAIT`. The same for the I/O pool.
 #[test]
@@ -222,13 +224,15 @@ import time
 
 fn main() {
   let gate = channel.new(0)
-  let sleeper = task.spawn { ->
+  let sleeper = { ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(5))
   }
-  println("main waits")
-  channel.send(gate, 1)
-  task.join_handle(sleeper)
+  let opener = { ->
+    println("main waits")
+    channel.send(gate, 1)
+  }
+  task.join([sleeper, opener])
   println("main went on")
 }
 "#;
@@ -250,13 +254,15 @@ import time
 
 fn main() {
   let gate = channel.new(0)
-  let sleeper = task.spawn { ->
+  let sleeper = { ->
     let _ = channel.receive(gate)
     time.sleep(time.nanos(1))
   }
-  println("main waits")
-  channel.send(gate, 1)
-  task.join_handle(sleeper)
+  let opener = { ->
+    println("main waits")
+    channel.send(gate, 1)
+  }
+  task.join([sleeper, opener])
   println("main went on")
 }
 "#;
@@ -265,8 +271,8 @@ fn main() {
 }
 
 /// A thread of the I/O pool panics when its operation has returned,
-/// before it hands the value to the task that waits for it, which
-/// `main` joins.
+/// before it hands the value to the task that waits for it, a piece
+/// of the `task.join` that `main` waits in.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_of_an_io_thread_ends_the_program() {
@@ -276,13 +282,15 @@ import task
 
 fn main() {
   let gate = channel.new(0)
-  let reader = task.spawn { ->
+  let reader = { ->
     let _ = channel.receive(gate)
-    io.read_file("main.silt")
+    let _ = io.read_file("main.silt")
   }
-  println("main waits")
-  channel.send(gate, 1)
-  let _ = task.join_handle(reader)
+  let opener = { ->
+    println("main waits")
+    channel.send(gate, 1)
+  }
+  task.join([reader, opener])
   println("main went on")
 }
 "#;
@@ -291,18 +299,21 @@ fn main() {
 }
 
 /// The thread that runs `main` panics in the VM's code while a task
-/// waits on a channel: the process ended before this step too, and now
-/// says what it is.
+/// (the feed of a `stream.from_fn`, which runs beside main) waits on a
+/// channel: the process ended before this step too, and now says what
+/// it is.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_of_the_program_thread_ends_the_program() {
     let source = r#"import channel
-import task
+import stream
 import time
 
 fn main() {
   let never = channel.new(0)
-  let waits = task.spawn { -> channel.receive(never) }
+  let _waits: Channel(Int) = stream.from_fn { _ ->
+    let _ = channel.receive(never)
+  }
   println("main waits")
   let _ = channel.receive_timeout(never, time.ms(1))
   println("main went on")
@@ -317,13 +328,14 @@ fn main() {
 /// it polls for what the lost task would have sent. The process ends
 /// all the same, at once: the thread that caught the panic ends it.
 /// And what `main` had printed without a line end is not lost. (The
-/// task is let through the gate when `main` has printed, and sleeps
-/// before it is lost: see `LOST_WHILE_ALL_WAIT`.)
+/// task, the feed of a `stream.from_fn` that runs beside main, is let
+/// through the gate when `main` has printed, and sleeps before it is
+/// lost: see `LOST_WHILE_ALL_WAIT`.)
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_of_a_worker_ends_a_program_whose_main_thread_is_busy() {
     let lost = r#"import channel
-import task
+import stream
 import time
 
 fn forever(n) {
@@ -340,7 +352,7 @@ fn poll(only) {
 fn main() {
   let gate = channel.new(0)
   let only = channel.new(0)
-  let _lost = task.spawn { ->
+  let _lost: Channel(Int) = stream.from_fn { _ ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(1))
     channel.send(only, 1)
@@ -372,13 +384,16 @@ fn main() {
 /// that nobody reads, and holds stdout's lock when a thread of the
 /// runtime panics. The process ends all the same: the thread that ends
 /// it waits for the flush of stdout for a moment and no longer. The
-/// writer is `main` when the timer's thread panics; a task, with
-/// `main` asleep, when a worker does; a task when `main`'s own thread
-/// does.
+/// writer is `main` when the timer's thread panics (the sleeper is the
+/// feed of a `stream.from_fn`, held past the flood: `()` after it keeps
+/// the call from being a tail call, which would let go of the stream); a piece of a `task.join`, with
+/// `main` waiting in it, when a worker does; the feed of a
+/// `stream.from_fn` when `main`'s own thread does.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_writer_blocked_in_stdout_does_not_keep_the_process_alive() {
     let flood = r#"import channel
+import stream
 import task
 import time
 
@@ -391,12 +406,12 @@ fn main() {
   MAIN
 }
 "#;
-    let writer_is_main = "let sleeper = task.spawn { -> time.sleep(time.ms(300)) }\n  flood(0)";
-    let writer_is_a_task = "let sleeper = task.spawn { -> time.sleep(time.ms(300)) }\n  \
-                            let writer = task.spawn { -> flood(0) }\n  \
-                            time.sleep(time.seconds(3600))";
+    let writer_is_main = "let _sleeper: Channel(Int) = stream.from_fn { _ -> time.sleep(time.ms(300)) }\n  \
+                          flood(0)\n  \
+                          ()";
+    let writer_is_a_task = "task.join([{ -> time.sleep(time.ms(300)) }, { -> flood(0) }])";
     let main_panics = "let never = channel.new(0)\n  \
-                       let writer = task.spawn { -> flood(0) }\n  \
+                       let _writer: Channel(Int) = stream.from_fn { _ -> flood(0) }\n  \
                        let _ = channel.receive_timeout(never, time.ms(300))";
     let cases = [
         ("flood_main", writer_is_main, "timer", "silt-timer", "Timer"),
@@ -444,7 +459,8 @@ fn main() {
 /// decided at the top of the panicking thread, after they were
 /// written and the thread had unwound, and `main` could end the
 /// process in between.) Half of the runs are made with a backtrace,
-/// which takes Rust a while to write.
+/// which takes Rust a while to write. The task that is lost is a
+/// ticker, the feed of a `stream.from_fn` that runs beside `main`.
 ///
 /// And the line is the last of stderr: `main`'s own report stands
 /// whole before Rust's lines or is not written. (The command looked
@@ -453,20 +469,45 @@ fn main() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn the_internal_error_line_and_the_status_101_go_together() {
-    let tasks = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/golden/concurrency/tasks"
-    );
-    for program in [
-        "stage7_c5__a_program_whose_main_fails_does_not_wait",
-        "stage7_c5__a_main_that_returns_err_does_not_wait",
-    ] {
-        let source = fs::read_to_string(format!("{tasks}/{program}.silt")).expect("the golden");
+    let fails = r#"import stream
+import time
+
+fn main() {
+  let _ticker: Channel(Int) = stream.from_fn { _ ->
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  }
+  println("before")
+  panic("main gives up")
+}
+"#;
+    let returns_err = r#"import stream
+import time
+
+fn step() -> Result(Int, String) {
+  Err("no luck")
+}
+
+fn main() -> Result((), String) {
+  let _ticker: Channel(Int) = stream.from_fn { _ ->
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  }
+  println("before")
+  let _ = step()?
+  Ok(())
+}
+"#;
+    for (program, source) in [("main_fails", fails), ("main_returns_err", returns_err)] {
         for round in 0..20 {
             let backtrace = ["0", "1"][round % 2];
             let (status, _, stderr) = Run {
                 name: "status",
-                files: &[("main.silt", &source)],
+                files: &[("main.silt", source)],
                 args: &["run", "main.silt"],
                 env: &[
                     ("SILT_TEST_PANIC", "task:0"),
@@ -500,10 +541,10 @@ fn the_internal_error_line_and_the_status_101_go_together() {
     }
 }
 
-/// Nothing of the command's follows the internal-error line. `main`
-/// is spawning twenty tasks when a worker panics: a spawn that comes
-/// after it is refused by the broken runtime, and `main` ends with
-/// that refusal. It is not the program's error and is not printed as
+/// Nothing of the command's follows the internal-error line. `main`'s
+/// `task.join` is starting twenty-two tasks when a worker panics: a
+/// start that comes after it is refused by the broken runtime, and
+/// `main` ends with that refusal. It is not the program's error and is not printed as
 /// one: the line is the last on stderr, in every one of forty runs at
 /// a slice of one step, where the two meet most often. (Before, the
 /// runtime was marked as broken before the process's end was decided,
@@ -519,18 +560,20 @@ import list
 
 fn main() {
   let gate = channel.new(0)
-  let only = channel.new(0)
-  let lost = task.spawn { ->
+  let only = channel.new(20)
+  let lost = { ->
     let _ = channel.receive(gate)
-    channel.send(only, 1)
+    list.each(1..20) { i -> channel.send(only, i) }
   }
-  let waker = task.spawn { ->
+  let waker = { ->
     time.sleep(time.ms(10))
     channel.send(gate, 1)
   }
   print("main waits")
-  let js = list.map([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) { _ -> task.spawn { -> task.join_handle(lost) } }
-  list.each(js) { j -> task.join_handle(j) }
+  let waiters = list.map([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) { _ -> { ->
+    let _ = channel.receive(only)
+  } }
+  task.join(list.concat([lost, waker], waiters))
   println("main went on")
 }
 "#;
@@ -563,8 +606,9 @@ fn main() {
 
 /// Two workers panic close together: Rust's lines and the
 /// internal-error line of the panic that came first, and status 101.
-/// (Each task is let through the gate by `main` and then sleeps, so
-/// each is certainly lost if it is still to run when its sleep ends;
+/// (Each task is let through the gate by the third piece of the
+/// `task.join` and then sleeps, so each is certainly lost if it is
+/// still to run when its sleep ends;
 /// the two sleeps end within microseconds of each other. Whether both
 /// workers panic or the second finds the process ended is the
 /// machine's to say.)
@@ -587,13 +631,12 @@ fn nap(gate) {
 
 fn main() {
   let gate = channel.new(0)
-  let first = task.spawn { -> nap(gate) }
-  let second = task.spawn { -> nap(gate) }
-  println("main waits")
-  channel.send(gate, 1)
-  channel.send(gate, 2)
-  task.join_handle(first)
-  task.join_handle(second)
+  let opener = { ->
+    println("main waits")
+    channel.send(gate, 1)
+    channel.send(gate, 2)
+  }
+  task.join([{ -> nap(gate) }, { -> nap(gate) }, opener])
   println("main went on")
 }
 "#;
@@ -679,7 +722,8 @@ fn a_stderr_that_is_held_up_does_not_keep_the_process_alive() {
 
 /// Stdout and stderr are both held up, each a full pipe that nobody
 /// reads, and `main` has printed a text without a line end, which
-/// waits in stdout's buffer, when a worker panics. The process ends
+/// waits in stdout's buffer, when a worker panics (it runs the feed of
+/// a `stream.from_fn`, beside main). The process ends
 /// with status 101: neither Rust's lines nor the line nor the flush
 /// of that text is waited for without a bound, and the exit does not
 /// flush stdout itself. (The exit did, when the thread that had
@@ -689,13 +733,13 @@ fn a_stderr_that_is_held_up_does_not_keep_the_process_alive() {
 #[cfg(all(unix, feature = "test-hooks"))]
 fn a_stdout_and_a_stderr_that_are_held_up_do_not_keep_the_process_alive() {
     let source = r#"import channel
-import task
+import stream
 import time
 
 fn main() {
   let gate = channel.new(0)
   let only = channel.new(0)
-  let _lost = task.spawn { ->
+  let _lost: Channel(Int) = stream.from_fn { _ ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(5))
     channel.send(only, 1)
@@ -728,7 +772,8 @@ fn main() {
 
 /// The reader of stdout takes one line, and closes only once the process
 /// has decided to end with the internal error: a worker has panicked and
-/// Rust's lines for it are in stderr, while `main` prints without end.
+/// Rust's lines for it are in stderr, while `main` prints without end
+/// beside the ticker (the feed of a `stream.from_fn`) it lost.
 /// From that moment the closed stdout is an error of the write, not a
 /// signal that kills the process: it ends with Rust's lines, the line and
 /// status 101, every time. (Before, the signal could kill the process
@@ -746,7 +791,7 @@ fn main() {
 #[cfg(all(unix, feature = "test-hooks"))]
 fn a_closed_stdout_does_not_kill_a_process_that_ends_with_the_internal_error() {
     use std::io::{BufRead, BufReader};
-    let source = r#"import task
+    let source = r#"import stream
 import time
 
 fn flood(n) {
@@ -760,8 +805,11 @@ fn tick() {
 }
 
 fn main() {
-  let _ticker = task.spawn { -> tick() }
+  -- `()` keeps flood(0) from being a tail call, which would let go of
+  -- the ticker's stream and stop it.
+  let _ticker: Channel(Int) = stream.from_fn { _ -> tick() }
   flood(0)
+  ()
 }
 "#;
     for round in 0..10 {
@@ -836,8 +884,8 @@ fn a_panic_inside_a_builtin_is_the_error_of_the_call() {
 }
 
 /// The same on a worker: a task's call of a builtin panics. The task
-/// fails with the call's error, `main` gets it from the join, and
-/// the program ends with it and status 1.
+/// fails with the call's error, `main` gets it from the `task.map` the
+/// task is a worker of, and the program ends with it and status 1.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_inside_a_builtin_of_a_task_is_the_error_of_the_task() {
@@ -845,9 +893,8 @@ fn a_panic_inside_a_builtin_of_a_task_is_the_error_of_the_task() {
 import task
 
 fn main() {
-  let worker = task.spawn { -> int.abs(-1) }
   println("main waits")
-  println(task.join_handle(worker))
+  println(task.map([-1], 1) { n -> int.abs(n) })
   println("main went on")
 }
 "#;
@@ -866,8 +913,8 @@ fn main() {
     );
     assert!(
         stderr.contains(
-            "error[runtime]: joined task failed: builtin module 'int' panicked: a panic made \
-             for a test: BuiltinOfATask"
+            "error[runtime]: builtin module 'int' panicked: a panic made for a test: \
+             BuiltinOfATask"
         ),
         "{stderr}"
     );
@@ -898,17 +945,19 @@ fn test_b_passes() {
 fn test_c_loses_a_worker() {
   let gate = channel.new(0)
   let only = channel.new(0)
-  let lost = task.spawn { ->
+  let lost = { ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(2))
     channel.send(only, 1)
   }
-  let joiner = task.spawn { -> task.join_handle(lost) }
-  let receiver = task.spawn { -> channel.receive(only) }
-  println("waits")
-  channel.send(gate, 1)
-  task.join_handle(joiner)
-  let _ = task.join_handle(receiver)
+  let receiver = { ->
+    let _ = channel.receive(only)
+  }
+  let opener = { ->
+    println("waits")
+    channel.send(gate, 1)
+  }
+  task.join([lost, receiver, opener])
   println("went on")
 }
 "#;
@@ -981,7 +1030,7 @@ fn a_panic_of_a_worker_ends_a_test_run() {
 /// The order is certain, with no sleep to make it so: the FIFO can be
 /// opened for writing only when the read has it open, so the read is
 /// under way when this test makes the file `go`, which the first
-/// file's test waits for before it cancels its reader.
+/// file's test waits for before it stops its reader.
 #[test]
 #[cfg(all(unix, feature = "test-hooks"))]
 fn a_panic_after_its_vm_is_gone_ends_the_process() {
@@ -1004,9 +1053,10 @@ fn until_there(path) {
 }
 
 fn test_a_leaves_a_read_behind() {
-  let reader = task.spawn { -> io.read_file("pipe") }
-  until_there("go")
-  task.cancel(reader)
+  let reader = { ->
+    let _ = io.read_file("pipe")
+  }
+  task.background([reader]) { -> until_there("go") }
 }
 "#;
     let second = r#"import time
@@ -1047,7 +1097,7 @@ fn test_b_goes_on() {
             Err(e) => panic!("nobody reads the FIFO: {e}"),
         }
     };
-    // The test may cancel its reader now, and end.
+    // The test may stop its reader now, and end.
     fs::write(run.dir().join("go"), "").expect("the file is made");
     // The first file's VM is gone when the second file's test runs.
     let mut stdout = BufReader::new(child.stdout.take().expect("the child's stdout"));

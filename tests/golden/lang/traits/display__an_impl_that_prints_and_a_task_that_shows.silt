@@ -17,9 +17,8 @@ trait Display for Loud {
 fn main() {
   println([Loud { n: 1 }, Loud { n: 2 }])
   let ch = channel.new(1)
-  let h = task.spawn({ ->
+  task.join([{ ->
     channel.send(ch, "{Some(Loud { n: 3 })}")
-  })
-  task.join_handle(h)
+  }])
   println(channel.receive(ch))
 }

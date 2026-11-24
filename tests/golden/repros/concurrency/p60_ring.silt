@@ -7,10 +7,10 @@ import task
 fn main() {
   let n = 2000
   let chans = 0..n |> list.map { i -> channel.new(0) }
-  let hs = 0..(n - 1) |> list.map { i ->
+  let ring = 0..(n - 1) |> list.map { i ->
     let inp = list.get(chans, i)
     let out = list.get(chans, i + 1)
-    task.spawn(fn() {
+    fn() {
       match (inp, out) {
         (Some(a), Some(b)) -> {
           match channel.receive(a) {
@@ -20,15 +20,18 @@ fn main() {
         }
         _ -> ()
       }
-    })
+    }
   }
   match (list.get(chans, 0), list.get(chans, n)) {
     (Some(first), Some(last)) -> {
-      let feeder = task.spawn(fn() { channel.send(first, 0) })
-      match channel.receive(last) {
-        Some(v) -> println("token after ring: {v}")
-        None -> println("other")
+      let feeder = fn() { channel.send(first, 0) }
+      let reader = fn() {
+        match channel.receive(last) {
+          Some(v) -> println("token after ring: {v}")
+          None -> println("other")
+        }
       }
+      task.join(list.concat(ring, [feeder, reader]))
     }
     _ -> println("bad")
   }

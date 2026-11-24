@@ -1,10 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- verdict: same
--- A value that holds a Result (in a list, an option, a tuple, a task's
--- handle) hides its error like the Result itself would: the message
--- says so. A function that returns a Result holds none.
-import task
+-- A value that holds a Result (in a list, an option, a tuple) hides its
+-- error like the Result itself would: the message says so. A function
+-- that returns a Result holds none.
 
 fn risky() -> Result(Int, String) {
   Err("lost")
@@ -14,7 +13,6 @@ fn main() {
   [risky()]
   Some(risky())
   (risky(), 1)
-  task.spawn { -> risky() }
   risky
   println("done")
 }

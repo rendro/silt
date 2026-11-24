@@ -1,3 +1,4 @@
+import list
 import task
 import option
 
@@ -17,8 +18,8 @@ fn worker() -> Int {
 }
 
 fn main() {
-  let h = task.spawn(worker)
+  let values = task.map([0], 1) { _ -> worker() }
   -- 111 + 222 + 333; any other value means the task's stack was
   -- truncated to the wrong offset after the `?` early return
-  println(task.join_handle(h))
+  list.each(values) { v -> println(v) }
 }

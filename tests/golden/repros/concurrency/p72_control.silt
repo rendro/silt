@@ -1,11 +1,12 @@
 -- verdict: same
 import channel
 import list
+import option
 import task
 import time
 
 -- A correct program: task A selects over N channels; task S sends one
--- value on the last channel; main joins A. Expected output: "A got 1".
+-- value on the last channel; main waits, then reads what A got. Expected output: "A got 1".
 fn main() {
   let n = 200000
   let chans = 1..n |> list.map { i -> channel.new(1) }
@@ -13,18 +14,19 @@ fn main() {
   match list.last(chans) {
     None -> println("no channels")
     Some(last_ch) -> {
-      let a = task.spawn(fn() {
-        match channel.select(ops) {
+      let got = channel.new(1)
+      let a = fn() {
+        channel.send(got, match channel.select(ops) {
           channel.Received(_, Some(v)) -> "A got {v}"
           _ -> "A other"
-        }
-      })
-      let s = task.spawn(fn() {
+        })
+      }
+      let s = fn() {
         time.sleep(time.ms(150))
         channel.send(last_ch, 1)
-      })
-      time.sleep(time.ms(6000))
-      println(task.join_handle(a))
+      }
+      task.join([a, s, fn() { time.sleep(time.ms(6000)) }])
+      println(channel.receive(got) |> option.unwrap_or("none"))
     }
   }
 }
