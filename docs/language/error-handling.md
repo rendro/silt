@@ -241,8 +241,8 @@ fn shown(r: Result(Int, task.RuntimeError)) -> String {
 }
 
 fn main() {
-  println(shown(task.guard({ -> ratio(6, 3) }))) -- 2
-  println(shown(task.guard({ -> ratio(1, 0) }))) -- skipped: division by zero
+  println(shown(task.guard { -> ratio(6, 3) })) -- 2
+  println(shown(task.guard { -> ratio(1, 0) })) -- skipped: division by zero
 }
 ```
 

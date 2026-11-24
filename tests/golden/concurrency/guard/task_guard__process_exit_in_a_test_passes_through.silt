@@ -7,6 +7,6 @@ import process
 import task
 
 fn test_exit_in_a_guard() {
-  let caught = task.guard({ -> process.exit(2) })
+  let caught = task.guard { -> process.exit(2) }
   println("the guard returned {caught}")
 }

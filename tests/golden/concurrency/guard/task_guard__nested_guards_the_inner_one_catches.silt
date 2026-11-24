@@ -8,20 +8,20 @@ fn fail(what: String) -> Int {
 }
 
 fn main() {
-  let outer = task.guard({ ->
-    let inner = task.guard({ -> fail("inner") })
+  let outer = task.guard { ->
+    let inner = task.guard { -> fail("inner") }
     match inner {
       Ok(_) -> "the inner guard caught nothing"
       Err(e) -> "the inner guard caught {e.message}"
     }
-  })
+  }
   println(outer)
-  let again = task.guard({ ->
+  let again = task.guard { ->
     match task.guard({ -> fail("first") }) {
       Ok(v) -> v
       Err(e) -> fail("after {e.message}")
     }
-  })
+  }
   match again {
     Ok(_) -> println("no error")
     Err(e) -> println("the outer guard caught {e.message}")

@@ -8052,6 +8052,27 @@ fn main() {
         }
     }
 
+    /// Where no front door names the files, a location names the file
+    /// as a user who runs the entry file by its name sees it: from its
+    /// directory (the test's files are under `/silt-test`).
+    #[test]
+    fn a_location_names_the_file_from_the_entry_files_directory() {
+        let source = "\
+import host
+import task
+fn main() {
+  let zero = 0
+  match task.guard { -> 1 / zero } {
+    Ok(_) -> ()
+    Err(e) -> host.give(e.location)
+  }
+}
+";
+        let mut vm = Vm::new(HostIo::process());
+        let given = given_by(&mut vm, source).expect("the program runs");
+        assert_eq!(given, Some(Value::string("main.silt:5:25")));
+    }
+
     /// The step budget used up inside a guard ends the program: the
     /// guard does not turn it into an `Err`.
     #[test]

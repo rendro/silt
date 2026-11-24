@@ -8,7 +8,7 @@ fn half(n: Int) -> Int {
 }
 
 fn main() {
-  println(task.guard({ -> half(4) }))
+  println(task.guard { -> half(4) })
   match task.guard({ -> half(0) }) {
     Ok(v) -> println("no error: {v}")
     Err(e) -> println("{e.message} at {e.location}")

@@ -610,8 +610,61 @@ pub(crate) type FileView = Arc<dyn crate::diagnostic::SourceView + Send + Sync>;
 pub(crate) struct Files {
     /// The front door's ([`Vm::name_files`]).
     pub(crate) named: Option<FileView>,
-    /// The newest program's own ([`Vm::load`](super::Vm::load)).
+    /// The newest program's own ([`Vm::load`](super::Vm::load)):
+    /// [`EntryFiles`].
     pub(crate) program: Option<FileView>,
+}
+
+/// The files of a program named as a user who runs its entry file by its
+/// name, in the file's directory, sees them: a file of that directory
+/// or below it by its path from there (`main.silt`, `lib/util.silt`),
+/// any other by its whole path. What names the places of a runtime
+/// error that `task.guard` catches where no front door names them
+/// (`Vm::name_files`): an embedder's, the playground's.
+pub(crate) struct EntryFiles {
+    sources: Arc<crate::source::SourceMap>,
+    /// The directory of the entry file, if it has one.
+    dir: Option<std::path::PathBuf>,
+}
+
+impl EntryFiles {
+    /// The files of `program`.
+    pub(crate) fn of(program: &crate::program::Program) -> EntryFiles {
+        use crate::source::SourceName;
+        let dir = match program.files.get(program.entry_file).map(|file| &file.path) {
+            Some(SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p)) => {
+                p.parent().map(std::path::Path::to_path_buf)
+            }
+            _ => None,
+        };
+        EntryFiles {
+            sources: program.files.clone(),
+            dir,
+        }
+    }
+}
+
+impl crate::diagnostic::SourceView for EntryFiles {
+    fn locate(&self, span: crate::source::Span) -> Option<crate::diagnostic::Located> {
+        use crate::source::SourceName;
+        let name = &self.sources.get(span.file)?.path;
+        let file = match name {
+            SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p) => {
+                let inside = self.dir.as_deref().and_then(|dir| p.strip_prefix(dir).ok());
+                let parts = inside.map(|rel| {
+                    let parts = rel.components().map(|c| c.as_os_str().to_string_lossy());
+                    parts.collect::<Vec<_>>().join("/")
+                });
+                parts.unwrap_or_else(|| p.display().to_string())
+            }
+            other => crate::diagnostic::source_name_for_display(other)?,
+        };
+        Some(crate::diagnostic::Located {
+            file,
+            position: self.sources.position(span),
+            shown: crate::package_graph::shown_place(name),
+        })
+    }
 }
 
 impl Vm {

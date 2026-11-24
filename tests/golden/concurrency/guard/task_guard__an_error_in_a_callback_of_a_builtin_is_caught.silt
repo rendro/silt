@@ -6,7 +6,7 @@ import list
 import task
 
 type Name {
-  Name(String)
+  Name(String),
 }
 
 trait Display for Name {
@@ -27,15 +27,15 @@ fn shown(r: Result(a, task.RuntimeError)) -> String where a: Display {
 
 fn main() {
   let zero = 0
-  println(shown(task.guard({ -> list.map([1, 2, 0], { x -> 6 / x }) })))
-  println(shown(task.guard({ -> list.sort_by([3, 1, 2], { x -> 6 / (x - 2) }) })))
-  println(shown(task.guard({ -> println(Name("")) })))
-  let total = list.fold([1, 0, 3, 0, 5], 0, { acc, x ->
+  println(shown(task.guard { -> list.map([1, 2, 0]) { x -> 6 / x } }))
+  println(shown(task.guard { -> list.sort_by([3, 1, 2]) { x -> 6 / (x - 2) } }))
+  println(shown(task.guard { -> println(Name("")) }))
+  let total = list.fold([1, 0, 3, 0, 5], 0) { acc, x ->
     match task.guard({ -> 60 / x }) {
       Ok(v) -> acc + v
       Err(_) -> acc + 1000
     }
-  })
+  }
   println(total)
   let each = list.map([{ -> 1 }, { -> 6 / zero }, { -> 3 }], task.guard)
   println(list.map(each, shown))

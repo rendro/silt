@@ -596,7 +596,7 @@ impl Vm {
     /// the entries before it too, whose values stay.
     pub(crate) fn load(&mut self, program: &crate::program::Program) {
         self.runtime.types.lock().extend(&program.types);
-        self.runtime.files.lock().program = Some(program.files.clone());
+        self.runtime.files.lock().program = Some(Arc::new(runtime::EntryFiles::of(program)));
         // (A description taken in anew may differ from the one a decoder
         // was decided by.)
         self.runtime.refusals.write().clear();

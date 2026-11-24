@@ -1014,6 +1014,7 @@ impl Session {
     /// Otherwise the entry point is checked by its inferred type, then the
     /// modules are compiled; the `Err` holds what that found.
     pub fn compile(&mut self, entry: FileId, target: Entry) -> Result<Program, Vec<Diagnostic>> {
+        let entry_file = entry;
         let analysis = self.analyze(entry);
         if analysis.has_errors() {
             return Err(analysis
@@ -1147,6 +1148,7 @@ impl Session {
                     settled,
                     entry,
                     files: Arc::new(self.sources.clone()),
+                    entry_file,
                 })
             }
             Err(e) => {

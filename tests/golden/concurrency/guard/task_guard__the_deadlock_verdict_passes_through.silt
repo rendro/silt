@@ -7,6 +7,6 @@ import task
 
 fn main() {
   let ch: Channel(Int) = channel.new(0)
-  let caught = task.guard({ -> channel.receive(ch) })
+  let caught = task.guard { -> channel.receive(ch) }
   println("the guard returned {caught}")
 }

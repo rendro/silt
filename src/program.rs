@@ -59,6 +59,8 @@ pub struct Program {
     /// the front door that runs it names them no other way
     /// (`Vm::name_files`).
     pub(crate) files: Arc<crate::source::SourceMap>,
+    /// Its entry file among `files`.
+    pub(crate) entry_file: crate::source::FileId,
 }
 
 /// What a [`Program`] was compiled for.

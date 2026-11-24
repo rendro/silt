@@ -8,9 +8,9 @@ fn work(n: Int) -> Int {
 }
 
 fn main() {
-  match task.guard({ -> task.deadline(time.hours(1), { -> work(0) }) }) {
+  match task.guard({ -> task.deadline(time.hours(1)) { -> work(0) } }) {
     Ok(_) -> println("no error")
     Err(e) -> println("{e.message} at {e.location}")
   }
-  println(task.guard({ -> task.deadline(time.hours(1), { -> work(5) }) }))
+  println(task.guard { -> task.deadline(time.hours(1)) { -> work(5) } })
 }

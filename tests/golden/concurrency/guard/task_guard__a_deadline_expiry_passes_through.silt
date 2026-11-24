@@ -11,10 +11,10 @@ fn spin(n: Int) -> Int {
 
 fn main() {
   let said: Channel(String) = channel.new(4)
-  let ended = task.deadline(time.ms(20), { ->
-    let caught = task.guard({ -> spin(0) })
+  let ended = task.deadline(time.ms(20)) { ->
+    let caught = task.guard { -> spin(0) }
     channel.send(said, "the guard returned {caught}")
-  })
+  }
   println(ended)
   println(channel.try_receive(said))
 }

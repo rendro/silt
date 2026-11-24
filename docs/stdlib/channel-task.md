@@ -770,6 +770,6 @@ fn main() {
     Ok(v) -> println("half: {v}")
     Err(e) -> println(e.message) -- division by zero
   }
-  println(task.guard({ -> half(4) })) -- Ok(25)
+  println(task.guard { -> half(4) }) -- Ok(25)
 }
 ```
