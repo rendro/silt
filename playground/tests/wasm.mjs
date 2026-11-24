@@ -262,16 +262,14 @@ fn main() {
   1..20 |> list.each { _ ->
     let never: Channel(Int) = channel.new(0)
     let ends = stream.map(never) { x -> x }
-    task.join(
-      [
-        { ->
-          let s = stream.map(ends) { x -> x }
-          let _ = s
-          ()
-        },
-      ],
-    )
-    let _ = channel.receive(ends)
+    let leaver = { ->
+      let s = stream.map(ends) { x -> x }
+      let _ = s
+      ()
+    }
+    task.background([leaver]) { ->
+      let _ = channel.receive(ends)
+    }
   }
   println("left: stopped 20 times")
   -- Closed at once.

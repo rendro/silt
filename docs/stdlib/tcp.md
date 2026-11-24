@@ -70,16 +70,22 @@ fn main() {
     Ok(listener) -> {
       println("listening on 127.0.0.1:8080")
       -- One piece accepts the clients and hands each connection to the
-      -- other, whose 64 workers serve them: 64 at a time at most.
+      -- other, whose 64 workers serve them: 64 at a time at most. When
+      -- an accept fails (the listener was closed), the first piece
+      -- closes the channel: the workers serve what they have, and
+      -- task.join returns.
       let conns = channel.new(0)
       let accept = { ->
         loop {
           match tcp.accept(listener) {
-            Ok(conn) -> channel.send(conns, conn)
+            Ok(conn) -> {
+              channel.send(conns, conn)
+              loop()
+            }
             Err(e) -> println("accept error: {e}")
           }
-          loop()
         }
+        channel.close(conns)
       }
       task.join([accept, { -> task.each(conns, 64) { conn -> echo(conn) } }])
     }
@@ -309,6 +315,8 @@ fn main() {
   }
   let cert = bytes.from_string(cert_text)
   let key = bytes.from_string(key_text)
+  -- As in the echo server: one piece accepts, 64 workers serve, and a
+  -- failed accept closes the channel, which ends the workers and the join.
   let conns = channel.new(0)
   let accept = { ->
     loop {
@@ -320,6 +328,7 @@ fn main() {
         Err(e) -> println("accept failed: {e}")
       }
     }
+    channel.close(conns)
   }
   task.join([accept, { -> task.each(conns, 64) { conn -> serve(conn, cert, key) } }])
 }

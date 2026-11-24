@@ -66,7 +66,7 @@ fn main() {
 
 ## Errors as values
 
-Every function that can fail returns a Result. The `?` operator propagates errors without nesting. Nothing is thrown or caught.
+Every function that can fail returns a Result. The `?` operator propagates errors without nesting. A failure is either such a value or a runtime error (a bug: a `panic`, a division by zero), which ends the call it happens in; `task.guard` turns a runtime error into a Result.
 
 ```silt
 import io
