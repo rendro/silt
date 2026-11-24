@@ -536,9 +536,7 @@ import list
 import stream
 
 fn main() {
-  let squares = stream.from_fn { ch ->
-    list.each([1, 2, 3]) { n -> channel.send(ch, n * n) }
-  }
+  let squares = stream.from_fn { ch -> list.each([1, 2, 3]) { n -> channel.send(ch, n * n) } }
   println(stream.collect(squares)) -- [1, 4, 9]
   -- A feed without end, of which a reader takes two values.
   let naturals = stream.from_fn { ch ->

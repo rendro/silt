@@ -5,9 +5,7 @@ import list
 import stream
 
 fn numbers(from, to) {
-  stream.from_fn { ch ->
-    list.each(from..to) { i -> channel.send(ch, i) }
-  }
+  stream.from_fn { ch -> list.each(from..to) { i -> channel.send(ch, i) } }
 }
 
 fn main() {
