@@ -1420,9 +1420,7 @@ fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
     let mut child = vm.spawn_child();
     child.spawned = true;
     child.push_native_frame(Box::new(pipe));
-    vm.scheduler()
-        .submit(id, child, feeder)
-        .map_err(VmError::new)?;
+    vm.scheduler().submit(id, child, feeder)?;
     Ok(source)
 }
 
