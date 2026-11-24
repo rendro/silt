@@ -79,10 +79,7 @@ fn a_failure_and_an_exit_that_race_end_the_run_one_way() {
 fn an_exit_writes_out_what_was_printed_to_a_slow_reader() {
     for (label, call) in [
         ("main", "process.exit(3)"),
-        (
-            "task",
-            "task.join([{ -> process.exit(3) }])",
-        ),
+        ("task", "task.join([{ -> process.exit(3) }])"),
     ] {
         let src = format!(
             "import process\nimport string\nimport task\nfn main() {{\n  println(string.repeat(\"x\", 65535))\n  print(\"TAIL\")\n  {call}\n}}\n"
