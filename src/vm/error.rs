@@ -18,9 +18,9 @@ impl std::fmt::Debug for TakenFrom {
 /// the failure of a stream stage, as the close of its channel keeps it,
 /// which every read of the channel's end raises.
 #[derive(Clone)]
-pub(crate) struct Origin(pub(crate) std::sync::Arc<VmError>);
+pub(crate) struct CopyOf(pub(crate) std::sync::Arc<VmError>);
 
-impl std::fmt::Debug for Origin {
+impl std::fmt::Debug for CopyOf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<failure: {}>", self.0.message)
     }
@@ -266,21 +266,21 @@ impl VmError {
     /// earlier stage keeps that stage's failure as the one it is.)
     pub(crate) fn raised_from(failure: &std::sync::Arc<VmError>) -> VmError {
         let mut error = (**failure).clone();
-        if error.origin().is_none() {
-            error.more.get_or_insert_default().origin = Some(Origin(failure.clone()));
+        if error.copy_of().is_none() {
+            error.more.get_or_insert_default().copy_of = Some(CopyOf(failure.clone()));
         }
         error
     }
 
-    fn origin(&self) -> Option<&std::sync::Arc<VmError>> {
-        Some(&self.more.as_ref()?.origin.as_ref()?.0)
+    fn copy_of(&self) -> Option<&std::sync::Arc<VmError>> {
+        Some(&self.more.as_ref()?.copy_of.as_ref()?.0)
     }
 
     /// Whether `self` and `other` are copies of one failure: the failure
     /// of a stream stage that two readers of its channel raised.
     pub(crate) fn same_failure(&self, other: &VmError) -> bool {
-        self.origin()
-            .zip(other.origin())
+        self.copy_of()
+            .zip(other.copy_of())
             .is_some_and(|(one, two)| std::sync::Arc::ptr_eq(one, two))
     }
 
@@ -394,7 +394,7 @@ pub(crate) struct More {
     pub(crate) notes: Vec<(String, Option<Span>)>,
     /// The failure the error is a copy of, if it is one
     /// ([`VmError::raised_from`]).
-    pub(crate) origin: Option<Origin>,
+    pub(crate) copy_of: Option<CopyOf>,
 }
 
 /// A `Display` impl that failed while a value was shown where its
