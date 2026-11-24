@@ -380,12 +380,15 @@ run in parallel, and communicate through channels. See
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `background` | `(List(Fn() -> ()), Fn() -> a) -> a` | Run helper functions while the body runs, stop them when it returns, and give its value |
+| `cancel` | `(Handle(a)) -> ()` | Cancel a task, and wait until it has ended (see details below) |
 | `deadline` | `(Duration, Fn() -> a) -> Option(a)` | Run a function, and end it when the duration has passed: Some of its value, or None |
 | `each` | `(Channel(a), Int, Fn(a) -> ()) -> ()` | Call a function on each value of a channel, at most at_once calls at a time, until the channel is closed and empty |
 | `first_ok` | `(List(Fn() -> Result(a, e))) -> Result(a, List(e))` | Run functions at the same time, give the first Ok and stop the others, or every Err in order |
 | `guard` | `(Fn() -> a) -> Result(a, RuntimeError)` | Run a function, and give a runtime error it raises as an `Err` |
 | `join` | `(List(Fn() -> ())) -> ()` | Run functions at the same time, and return when all of them have returned |
+| `join_handle` | `(Handle(a)) -> a` | Wait for a task to complete |
 | `map` | `(List(a), Int, Fn(a) -> b) -> List(b)` | Call a function on each item of a list, at most at_once calls at a time, and give the values in the list's order |
+| `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
 
 
 ## `task.join`
@@ -916,5 +919,50 @@ fn main() {
     Err(e) -> println(e.message) -- division by zero
   }
   println(task.guard { -> half(4) }) -- Ok(25)
+}
+```
+
+## `task.cancel`
+
+```
+task.cancel(handle: Handle(a)) -> ()
+```
+
+```silt
+import task
+
+fn main() {
+  let h = task.spawn { -> 1 }
+  task.cancel(h)
+}
+```
+
+## `task.join_handle`
+
+```
+task.join_handle(handle: Handle(a)) -> a
+```
+
+```silt
+import task
+
+fn main() {
+  let h = task.spawn { -> 1 + 2 }
+  println(task.join_handle(h)) -- 3
+}
+```
+
+## `task.spawn`
+
+```
+task.spawn(f: Fn() -> a) -> Handle(a)
+```
+
+```silt
+import task
+
+fn main() {
+  let h = task.spawn { -> 42 }
+  println(task.join_handle(h)) -- 42
 }
 ```
