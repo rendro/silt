@@ -2,25 +2,23 @@
 -- After the main thread's rendezvous receive returns (having waited
 -- through at least one watchdog tick), no receiver is parked, so a
 -- try_send on the same channel must fail rather than phantom-succeed.
+-- (The sender is the function of a `stream.from_fn`, which runs beside
+-- the program's own thread.)
 import channel
-import task
+import stream
 import time
 
 fn main() {
   let ch = channel.new(0)
-  let sender = task.spawn { ->
+  let sender = stream.from_fn { _ ->
     time.sleep(time.ms(150))
     channel.send(ch, 42)
   }
 
   match channel.receive(ch) {
     Some(v) -> {
-      task.join_handle(sender)
-      let probe = task.spawn { ->
-        channel.try_send(ch, 999)
-      }
-      let ok = task.join_handle(probe)
-      match ok {
+      let _ = stream.collect(sender)
+      match channel.try_send(ch, 999) {
         true -> println("BUG:leaked_waker_phantom_send v={v}")
         false -> println("ok:{v}")
       }

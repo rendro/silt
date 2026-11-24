@@ -18,16 +18,24 @@ fn text(body: Bytes) -> String {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let _first = task.spawn { ->
-    http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("first"), headers: #{} } }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
   }
-  -- The server serves when it has answered.
-  match http.get(url_of("http://127.0.0.1:{tcp.local_port(listener)}/")) {
-    Ok(r) -> println("{r.status} {text(r.body)}")
-    Err(e) -> println("error: {e}")
+  let first = { ->
+    http.serve(listener) { _req ->
+      http.Response { status: 200, body: bytes.from_string("first"), headers: #{} }
+    }
   }
-  http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("second"), headers: #{} } }
+  task.background([first]) { ->
+    -- The server serves when it has answered.
+    match http.get(url_of("http://127.0.0.1:{tcp.local_port(listener)}/")) {
+      Ok(r) -> println("{r.status} {text(r.body)}")
+      Err(e) -> println("error: {e}")
+    }
+    http.serve(listener) { _req ->
+      http.Response { status: 200, body: bytes.from_string("second"), headers: #{} }
+    }
+  }
 }
 
 fn url_of(text: String) -> url.Url {

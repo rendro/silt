@@ -1,22 +1,15 @@
 -- repeat: 3
 -- stderr-not-contains: deadlock
 -- stderr-not-contains: panicked
--- Spawn 500 long-sleeping tasks and cancel every one: the scheduler
--- stays clean, main exits promptly, no deadlock diagnostic.
-import channel
+-- 500 long-sleeping helpers, stopped together when the body returns:
+-- the scheduler stays clean, main exits promptly, no deadlock
+-- diagnostic.
 import list
 import task
 import time
 
 fn main() {
-  -- Spawn 500 long-sleeping tasks.
-  let handles = 1..500
-    |> list.map { _ -> task.spawn({ ->
-      time.sleep(time.ms(5000))
-    }) }
-  -- Cancel every one of them.
-  handles |> list.each { h -> task.cancel(h) }
-  -- Give the scheduler a moment to reap them.
-  time.sleep(time.ms(50))
-  println("cancelled=500")
+  let sleepers = 1..500 |> list.map { _ -> { -> time.sleep(time.ms(5000)) } }
+  task.background(sleepers) { -> () }
+  println("stopped=500")
 }

@@ -1,12 +1,12 @@
 -- repeat: 100
 -- timeout: 30
--- A task that is cancelled while it runs takes nothing new: it is
--- ended where it next looks for `go`, never reaches its receives, and
--- the two values in the buffer stay.
+-- A helper that is stopped while it runs (its body returned) takes
+-- nothing new: it is ended where it next looks for `go`, never reaches
+-- its receives, and the two values in the buffer stay.
 --
--- The cancel comes before the work, whatever the machine does: the
--- task looks for `go` without waiting, `main` cancels it and only
--- then sends `go`. (And between `go` and the first receive lies far
+-- The stop comes before the work, whatever the machine does: the
+-- helper looks for `go` without waiting, the body returns when it has
+-- started, and `main` only then sends `go`. (And between `go` and the first receive lies far
 -- more work than the steps a cancelled task has.)
 import channel
 import task
@@ -33,7 +33,7 @@ fn main() {
   let started = channel.new(1)
   let go = channel.new(1)
   let taken = channel.new(2)
-  let h = task.spawn { ->
+  let helper = { ->
     channel.send(started, ())
     until_go(go)
     spin(100000)
@@ -47,8 +47,9 @@ fn main() {
       }
     }
   }
-  let _ = channel.receive(started)
-  task.cancel(h)
+  task.background([helper]) { ->
+    let _ = channel.receive(started)
+  }
   channel.send(go, ())
   time.sleep(time.ms(250))
   println("taken: {channel.try_receive(taken)}")

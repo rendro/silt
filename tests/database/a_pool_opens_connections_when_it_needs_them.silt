@@ -10,9 +10,13 @@ import string
 import task
 import time
 
-type N { n: Int }
+type N {
+  n: Int,
+}
 
-type Slept { slept: String }
+type Slept {
+  slept: String,
+}
 
 fn url() -> String {
   let url = match env.get("SILT_TEST_POSTGRES_URL") {
@@ -37,22 +41,23 @@ fn sessions(db: postgres.PgPool) -> String {
 }
 
 fn main() {
-  match postgres.connect_with(url(), #{"max_pool_size": 5}) {
+  match postgres.connect_with(url(), #{ "max_pool_size": 5 }) {
     Ok(db) -> {
       -- (Time for connections the pool would open at once.)
       time.sleep(time.ms(300))
       println("after the connect: {sessions(db)}")
       println("again: {sessions(db)}")
       println("and again: {sessions(db)}")
-      let sleepers = [1, 2] |> list.map { _ ->
-        task.spawn { -> postgres.query(db, "SELECT pg_sleep(0.3)::text AS slept", (), Slept) }
+      let slept = task.map([1, 2], 2) { _ ->
+        postgres.query(db, "SELECT pg_sleep(0.3)::text AS slept", (), Slept)
       }
-      sleepers |> list.each { t ->
-        match task.join_handle(t) {
-          Ok(_) -> ()
-          Err(e) -> println("a statement at once: {e}")
+      slept
+        |> list.each { answer ->
+          match answer {
+            Ok(_) -> ()
+            Err(e) -> println("a statement at once: {e}")
+          }
         }
-      }
       println("after two statements at once: {sessions(db)}")
       postgres.close(db)
     }

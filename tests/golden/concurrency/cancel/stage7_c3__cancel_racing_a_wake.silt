@@ -1,8 +1,8 @@
 -- repeat: 100
 -- stderr-not-contains: deadlock
--- A send and a cancel race for a task that receives. Whichever wins,
--- the task is gone when the cancel has returned: a second send finds
--- no receiver, 300 times.
+-- A send and a stop race for a helper that receives. Whichever wins,
+-- the helper is gone when `task.background` has returned: a second
+-- send finds no receiver, 300 times.
 import channel
 import task
 
@@ -12,9 +12,12 @@ fn main() {
       0 -> stale
       _ -> {
         let ch = channel.new(0)
-        let h = task.spawn({ -> channel.receive(ch) })
-        let _ = channel.try_send(ch, left)
-        task.cancel(h)
+        let receiver = { ->
+          let _ = channel.receive(ch)
+        }
+        task.background([receiver]) { ->
+          let _ = channel.try_send(ch, left)
+        }
         match channel.try_send(ch, left) {
           true -> loop(left - 1, stale + 1)
           false -> loop(left - 1, stale)
@@ -22,5 +25,5 @@ fn main() {
       }
     }
   }
-  println("receivers left after a cancel: {stale}")
+  println("receivers left after a stop: {stale}")
 }

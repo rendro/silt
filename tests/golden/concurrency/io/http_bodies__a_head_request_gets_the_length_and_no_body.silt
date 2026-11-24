@@ -78,23 +78,34 @@ fn answer(req: http.Request) -> http.Response {
 
 fn main() {
   let nl = line_end()
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-
-  println("http.request")
-  match http.request(http.HEAD, url_of("http://127.0.0.1:{port}/"), bytes.empty(), #{}) {
-    Ok(resp) -> println("  gets {resp.status}, content-length {map.get(resp.headers, "content-length")}, {bytes.length(resp.body)} bytes")
-    Err(e) -> println("  {e}")
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
   }
+  let port = tcp.local_port(listener)
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    println("http.request")
+    match http.request(http.HEAD, url_of("http://127.0.0.1:{port}/"), bytes.empty(), #{}) {
+      Ok(resp) -> println(
+        "  gets {resp.status}, content-length {map.get(resp.headers, "content-length")}, {bytes.length(resp.body)} bytes",
+      )
+      Err(e) -> println("  {e}")
+    }
 
-  println("a client written by hand")
-  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
-  let _ = tcp.write(conn, bytes.from_string("HEAD / HTTP/1.1{nl}Host: x{nl}Connection: close{nl}{nl}"))
-  let answered = read_message(conn, None)
-  println("  on the wire: {length_line(answered)}, {bytes.length(body_of(answered) |> option.unwrap_or(bytes.empty()))} bytes after the head")
-  tcp.close(conn)
-  task.cancel(server)
+    println("a client written by hand")
+    when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+      panic("cannot connect")
+    }
+    let _ = tcp.write(
+      conn,
+      bytes.from_string("HEAD / HTTP/1.1{nl}Host: x{nl}Connection: close{nl}{nl}"),
+    )
+    let answered = read_message(conn, None)
+    println(
+      "  on the wire: {length_line(answered)}, {bytes.length(body_of(answered) |> option.unwrap_or(bytes.empty()))} bytes after the head",
+    )
+    tcp.close(conn)
+  }
 }
 
 fn url_of(text: String) -> url.Url {

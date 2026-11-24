@@ -1,23 +1,28 @@
 -- repeat: 3
 -- A select with a timeout channel should NOT deadlock — the timeout breaks it.
-import io
+
 import channel
+import io
 import task
 import time
+
 fn program() {
   let ch = channel.new(0)
   let timer = channel.timeout(time.ms(50))
 
   -- Nobody sends to ch, but timer will fire
-  let consumer = task.spawn({ ->
+  let consumer = { ->
     match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
       channel.Received(_, None) -> "timeout_broke_deadlock"
       channel.Received(_, Some(v)) -> "got_message"
       _ -> "other"
     }
-  })
+  }
 
-  task.join_handle(consumer)
+  when let [said] = task.map([consumer], 1) { f -> f() } else {
+    panic("one value")
+  }
+  said
 }
 
 fn main() {

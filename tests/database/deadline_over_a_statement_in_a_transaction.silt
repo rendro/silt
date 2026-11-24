@@ -72,7 +72,8 @@ fn main() {
       let done = postgres.transact(pool) { tx ->
         let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7304)", (), json.Value)?
         println("main holds the lock")
-        let t = task.spawn { ->
+        let ended = channel.new(1)
+        let t = { ->
           let late = task.deadline(time.ms(1000)) { ->
             postgres.transact(pool) { its ->
               let _ = postgres.execute(
@@ -88,14 +89,21 @@ fn main() {
               Ok("the statement's answer")
             }
           }
-          match late {
+          let said = match late {
             Some(Ok(said)) -> "the function ended with {said}"
             Some(Err(e)) -> "the function ended with {e}"
             None -> "task.deadline: None"
           }
+          channel.send(ended, said)
         }
-        println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
-        println(task.join_handle(t))
+        let watch = { ->
+          println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
+        }
+        task.join([t, watch])
+        when let Some(said) = channel.receive(ended) else {
+          panic("the task said nothing")
+        }
+        println(said)
         println("statements that wait for it after the deadline: {until(pool, waiting(), 0)}")
         Ok(())
       }

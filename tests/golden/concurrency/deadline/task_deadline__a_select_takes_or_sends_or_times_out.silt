@@ -11,12 +11,12 @@ import task
 import time
 
 fn pass(out, never, v) {
-  let sent = task.deadline(time.ms(3), { ->
+  let sent = task.deadline(time.ms(3)) { ->
     match channel.select([channel.Send(out, v), channel.Recv(never)]) {
       channel.Sent(_) -> true
       _ -> false
     }
-  })
+  }
   match sent {
     Some(true) -> ()
     _ -> pass(out, never, v)
@@ -28,7 +28,7 @@ fn main() {
   let b: Channel(Int) = channel.new(0)
   let out: Channel(Int) = channel.new(0)
   let never: Channel(Int) = channel.new(0)
-  let producer = task.spawn { ->
+  let producer = { ->
     loop i = 0 {
       match i >= 100 {
         true -> {
@@ -46,33 +46,35 @@ fn main() {
       }
     }
   }
-  let consumer = task.spawn { ->
-    loop n = 0, sum = 0 {
+  let consumer = { ->
+    let r = loop n = 0, sum = 0 {
       time.sleep(time.ms(3))
       match channel.receive(out) {
         Some(v) -> loop(n + 1, sum + v)
         None -> (n, sum)
       }
     }
-  }
-  loop {
-    let got = task.deadline(time.ms(3), { ->
-      match channel.select([channel.Recv(a), channel.Recv(b)]) {
-        channel.Received(_, value) -> value
-        channel.Sent(_) -> None
-      }
-    })
-    match got {
-      Some(Some(v)) -> {
-        pass(out, never, v)
-        loop()
-      }
-      Some(None) -> channel.close(out)
-      None -> loop()
+    match r {
+      (got, sum) -> println("sent 100 (sum 4950), arrived {got} (sum {sum})")
     }
   }
-  task.join_handle(producer)
-  match task.join_handle(consumer) {
-    (got, sum) -> println("sent 100 (sum 4950), arrived {got} (sum {sum})")
+  let middle = { ->
+    loop {
+      let got = task.deadline(time.ms(3)) { ->
+        match channel.select([channel.Recv(a), channel.Recv(b)]) {
+          channel.Received(_, value) -> value
+          channel.Sent(_) -> None
+        }
+      }
+      match got {
+        Some(Some(v)) -> {
+          pass(out, never, v)
+          loop()
+        }
+        Some(None) -> channel.close(out)
+        None -> loop()
+      }
+    }
   }
+  task.join([producer, middle, consumer])
 }

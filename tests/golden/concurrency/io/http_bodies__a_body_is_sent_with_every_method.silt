@@ -28,20 +28,23 @@ fn answer(req: http.Request) -> http.Response {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let link = "http://127.0.0.1:{tcp.local_port(listener)}/"
-  let server = task.spawn { -> http.serve(listener, answer) }
-  let methods = [http.GET, http.DELETE, http.HEAD, http.OPTIONS, http.POST, http.PUT, http.PATCH]
-  list.each(methods) { method ->
-    list.each(["abc", ""]) { body ->
-      println("{method} [{body}]")
-      match http.request(method, url_of(link), bytes.from_string(body), #{}) {
-        Ok(resp) -> println("  the client:  {resp.status} [{text(resp.body)}]")
-        Err(e) -> println("  the client: {e}")
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    let methods = [http.GET, http.DELETE, http.HEAD, http.OPTIONS, http.POST, http.PUT, http.PATCH]
+    list.each(methods) { method ->
+      list.each(["abc", ""]) { body ->
+        println("{method} [{body}]")
+        match http.request(method, url_of(link), bytes.from_string(body), #{}) {
+          Ok(resp) -> println("  the client:  {resp.status} [{text(resp.body)}]")
+          Err(e) -> println("  the client: {e}")
+        }
       }
     }
   }
-  task.cancel(server)
 }
 
 fn url_of(text: String) -> url.Url {

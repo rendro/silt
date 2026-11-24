@@ -12,16 +12,20 @@ import tcp
 import time
 
 fn main() {
-  let outcomes = 1..8 |> list.map { _ ->
-    when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-    task.spawn { ->
-      match task.deadline(time.ms(30), { -> tcp.accept(listener) }) {
-        None -> "timed out"
-        _ -> "something else"
+  let listeners = 1..8
+    |> list.map { _ ->
+      when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+        panic("cannot listen")
       }
+      listener
+    }
+  let outcomes = task.map(listeners, 8) { listener ->
+    match task.deadline(time.ms(30), { -> tcp.accept(listener) }) {
+      None -> "timed out"
+      _ -> "something else"
     }
   }
-  outcomes |> list.each { h -> println(task.join_handle(h)) }
+  outcomes |> list.each { o -> println(o) }
   when let Ok(text) = io.read_file("stage7_c6__timed_out_operations_free_their_threads.silt") else {
     panic("cannot read the file")
   }

@@ -105,7 +105,7 @@ fn test_watchdog_env_var_fires_pending_io_surfaces_timeout_err() {
     // Err instead of hanging forever.
     //
     // Setup: stdin is piped open (never closed, never written) so
-    // io.read_line inside the spawned task parks in the I/O pool's
+    // io.read_line inside the task of the task.map parks in the I/O pool's
     // blocking read until the watchdog fires.
     //
     // The real watchdog thread runs because SILT_IO_TIMEOUT is set via
@@ -118,16 +118,17 @@ fn test_watchdog_env_var_fires_pending_io_surfaces_timeout_err() {
     // regression lock for the watchdog-writes-Err-to-completion path.
     let src = r#"
 import io
+import list
 import task
 
 fn main() {
-  let handle = task.spawn({ ->
+  let outcome = task.map([()], 1) { _ ->
     match io.read_line() {
       Ok(_) -> "unexpected_ok"
       Err(e) -> "{e}"
     }
-  })
-  println(task.join_handle(handle))
+  }
+  list.each(outcome) { o -> println(o) }
 }
 "#;
     let (stdout, stderr, code) =
@@ -209,6 +210,7 @@ fn test_watchdog_fires_tcp_read_surfaces_tcp_timeout() {
     let src = format!(
         r#"
 import bytes
+import list
 import tcp
 import task
 import time
@@ -216,14 +218,14 @@ import time
 fn main() {{
   match tcp.connect("{addr}") {{
     Ok(s) -> {{
-      let outcome = task.spawn({{ ->
-        match tcp.read(s, 1024) {{
+      let outcome = task.map([s], 1) {{ conn ->
+        match tcp.read(conn, 1024) {{
           Ok(_) -> "unexpected-ok"
           Err(tcp.Timeout) -> "tcp-timeout"
           Err(other) -> "other:{{other}}"
         }}
-      }})
-      println(task.join_handle(outcome))
+      }}
+      list.each(outcome) {{ o -> println(o) }}
     }}
     Err(e) -> println("connect-err:{{e}}")
   }}

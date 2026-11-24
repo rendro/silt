@@ -1,10 +1,10 @@
 -- A stream whose rows the program's `json.Decode` impls finish, read by
 -- a function that `task.deadline` ends after one row: the deadline's
--- `None`, and the pool answers the next statement. Then a task reads
--- one row of such a stream and is cancelled, and `main` returns. Nobody
--- closed either channel; the streams' senders wait for room in them
--- and are dropped as the program ends, as a task that waits to send
--- is, and the program ends. With a sender that went on waiting the
+-- `None`, and the pool answers the next statement. Then a helper reads
+-- one row of such a stream and is stopped (its body returned), and
+-- `main` returns. Nobody closed either channel; the streams' senders
+-- wait for room in them and stop when their channels are let go, and
+-- the program ends. With a sender that went on waiting the
 -- program would never exit, and the suite would report that it did not
 -- exit within its 60 seconds.
 import channel
@@ -14,7 +14,9 @@ import postgres
 import task
 import time
 
-type Code { digits: String }
+type Code {
+  digits: String,
+}
 
 trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
@@ -25,7 +27,10 @@ trait json.Decode for Code {
   }
 }
 
-type R { n: Int, code: Code }
+type R {
+  n: Int,
+  code: Code,
+}
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -67,23 +72,24 @@ fn main() {
         Err(e) -> println("{e}")
       }
       let got: Channel(String) = channel.new(1)
-      let reader = task.spawn { ->
+      let reader = { ->
         match postgres.stream(pool, sql, (), R) {
           Ok(rows) -> {
             channel.send(got, first(rows))
-            -- Waits until it is cancelled.
+            -- Waits until it is stopped.
             let _ = channel.receive(never)
             ()
           }
           Err(e) -> channel.send(got, "{e}")
         }
       }
-      match channel.receive(got) {
-        Some(said) -> println(said)
-        None -> println("the reader said nothing")
+      task.background([reader]) { ->
+        match channel.receive(got) {
+          Some(said) -> println(said)
+          None -> println("the reader said nothing")
+        }
       }
-      task.cancel(reader)
-      println("the reader is cancelled, main returns")
+      println("the reader is stopped, main returns")
     }
     Err(e) -> println("{e}")
   }

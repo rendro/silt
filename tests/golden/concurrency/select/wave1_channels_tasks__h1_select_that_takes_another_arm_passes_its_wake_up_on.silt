@@ -1,11 +1,11 @@
 -- repeat: 10
--- stderr-not-contains: deadlock on main thread
+-- stderr-not-contains: deadlock
 -- r1 waits for `a` or `b`, r2 waits for `a` behind r1. One value goes
 -- to each channel. The value in `a` wakes r1. If r1 then takes the
 -- value of `b`, the value in `a` is r2's, but r2's wake-up was used up
 -- by r1: without the fix r2 stays parked next to its value and the
 -- join is told "deadlock" (about half of the runs). If r1 takes the
--- value of `a`, the program sends another one, so that r2 can finish
+-- value of `a`, the sender sends another one, so that r2 can finish
 -- in both cases.
 import channel
 import task
@@ -14,28 +14,35 @@ import time
 fn main() {
   let a = channel.new(4)
   let b = channel.new(4)
-  let r1 = task.spawn({ ->
-    match channel.select([channel.Recv(a), channel.Recv(b)]) {
+  let took = channel.new(1)
+  let got = channel.new(1)
+  let r1 = { ->
+    let arm = match channel.select([channel.Recv(a), channel.Recv(b)]) {
       channel.Received(^a, Some(_)) -> "a"
       channel.Received(^b, Some(_)) -> "b"
       _ -> "other"
     }
-  })
-  time.sleep(time.ms(50))
-  let r2 = task.spawn({ ->
-    match channel.receive(a) {
-      Some(v) -> v
-      None -> 0 - 1
-    }
-  })
-  time.sleep(time.ms(50))
-  channel.send(a, 1)
-  channel.send(b, 2)
-  let took = task.join_handle(r1)
-  match took {
-    "a" -> channel.send(a, 1)
-    _ -> ()
+    channel.send(took, arm)
   }
-  let got = task.join_handle(r2)
-  println("r2 got {got}")
+  let r2 = { ->
+    time.sleep(time.ms(50))
+    match channel.receive(a) {
+      Some(v) -> channel.send(got, v)
+      None -> channel.send(got, 0 - 1)
+    }
+  }
+  let sender = { ->
+    time.sleep(time.ms(100))
+    channel.send(a, 1)
+    channel.send(b, 2)
+    match channel.receive(took) {
+      Some("a") -> channel.send(a, 1)
+      _ -> ()
+    }
+  }
+  task.join([r1, r2, sender])
+  match channel.receive(got) {
+    Some(v) -> println("r2 got {v}")
+    None -> println("r2 got nothing")
+  }
 }

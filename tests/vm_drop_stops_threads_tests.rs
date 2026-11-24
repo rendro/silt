@@ -41,18 +41,18 @@ impl Clock for Frozen {
     fn sleep(&self, _duration: Duration) {}
 }
 
-/// A program that ends with a task asleep for an hour, a channel
-/// timeout an hour away, and I/O workers that have run an operation.
+/// A program that ends with a channel timeout an hour away, a helper
+/// that was stopped asleep for an hour, and I/O workers that have run
+/// an operation in a task.
 const SOURCE: &str = r#"
 import channel
 import io
 import task
 import time
 fn main() {
-  let _ = task.spawn({ -> time.sleep(time.hours(1)) })
   let _ = channel.timeout(time.ms(3600000))
-  let reader = task.spawn({ -> io.read_file("/no/such/file") })
-  let _ = task.join_handle(reader)
+  let sleeper = { -> time.sleep(time.hours(1)) }
+  let _ = task.background([sleeper]) { -> io.read_file("/no/such/file") }
   println("done")
 }
 "#;

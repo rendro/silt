@@ -5,14 +5,19 @@
 -- that runs is not cancelled, the transaction is not aborted, and it
 -- commits. (A statement the deadline ends while it runs is cancelled,
 -- and aborts the transaction: deadline_over_a_statement_in_a_transaction.)
+import channel
 import env
 import postgres
 import task
 import time
 
-type N { n: Int }
+type N {
+  n: Int,
+}
 
-type Slept { slept: String }
+type Slept {
+  slept: String,
+}
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -25,17 +30,26 @@ fn main() {
   match postgres.connect(url()) {
     Ok(db) -> {
       let done = postgres.transact(db) { tx ->
-        let sleeper = task.spawn { -> postgres.query(tx, "SELECT pg_sleep(1)::text AS slept", (), Slept) }
-        -- (Time for the sleeper to take the connection.)
-        time.sleep(time.ms(300))
-        let late = task.deadline(time.ms(200)) { -> postgres.query(tx, "SELECT 1::int8 AS n", (), N) }
-        match late {
-          Some(answer) -> println("the waiting statement answered: {answer}")
-          None -> println("the waiting statement: None")
+        let slept = channel.new(1)
+        let sleeper = { ->
+          channel.send(slept, postgres.query(tx, "SELECT pg_sleep(1)::text AS slept", (), Slept))
         }
-        match task.join_handle(sleeper) {
-          Ok(_) -> println("the running statement: Ok")
-          Err(e) -> println("the running statement: {e}")
+        let waiter = { ->
+          -- (Time for the sleeper to take the connection.)
+          time.sleep(time.ms(300))
+          let late = task.deadline(time.ms(200)) { ->
+            postgres.query(tx, "SELECT 1::int8 AS n", (), N)
+          }
+          match late {
+            Some(answer) -> println("the waiting statement answered: {answer}")
+            None -> println("the waiting statement: None")
+          }
+        }
+        task.join([sleeper, waiter])
+        match channel.receive(slept) {
+          Some(Ok(_)) -> println("the running statement: Ok")
+          Some(Err(e)) -> println("the running statement: {e}")
+          None -> println("the running statement: no answer")
         }
         postgres.query(tx, "SELECT 2::int8 AS n", (), N)
       }

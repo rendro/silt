@@ -23,19 +23,22 @@ fn answer(req: http.Request) -> http.Response {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let link = "http://127.0.0.1:{tcp.local_port(listener)}/"
-  let server = task.spawn { -> http.serve(listener, answer) }
-  let sent = #{ "X-A": "1", "x-a": "2", "X-B": "3" }
-  match http.request(http.GET, url_of(link), bytes.empty(), sent) {
-    Ok(response) -> {
-      println(bytes.to_string(response.body) |> result_text)
-      println("set-cookie: {map.get(response.headers, "set-cookie") |> option.unwrap_or("none")}")
-      println("x-one: {map.get(response.headers, "x-one") |> option.unwrap_or("none")}")
-    }
-    Err(e) -> println("error: {e}")
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
   }
-  task.cancel(server)
+  let link = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    let sent = #{ "X-A": "1", "x-a": "2", "X-B": "3" }
+    match http.request(http.GET, url_of(link), bytes.empty(), sent) {
+      Ok(response) -> {
+        println(bytes.to_string(response.body) |> result_text)
+        println("set-cookie: {map.get(response.headers, "set-cookie") |> option.unwrap_or("none")}")
+        println("x-one: {map.get(response.headers, "x-one") |> option.unwrap_or("none")}")
+      }
+      Err(e) -> println("error: {e}")
+    }
+  }
 }
 
 fn result_text(r: Result(String, bytes.BytesError)) -> String {

@@ -1,22 +1,22 @@
 -- repeat: 3
 -- stderr-not-contains: deadlock
--- Cancelling a task parked on a long timer sleep (an Io park) leaves
--- the scheduler clean.
+-- Stopping a task parked on a long timer sleep (an Io park) (its deadline passed) leaves
+-- the scheduler clean. (The feeder is the function of a
+-- `stream.from_fn`, which runs beside the program's own thread.)
 import channel
+import stream
 import task
 import time
 
 fn main() {
-  let victim = task.spawn({ -> time.sleep(time.ms(600000)) })
-  time.sleep(time.ms(50))
-  task.cancel(victim)
+  let _ = task.deadline(time.ms(50)) { -> time.sleep(time.ms(600000)) }
   time.sleep(time.ms(50))
   let ch = channel.new(0)
-  let feeder = task.spawn({ -> channel.send(ch, 42) })
+  let feeder = stream.from_fn { _ -> channel.send(ch, 42) }
   let got = match channel.receive(ch) {
     Some(v) -> v
     None -> 0
   }
-  let _ = task.join_handle(feeder)
+  let _ = stream.collect(feeder)
   println("{got}")
 }

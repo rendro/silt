@@ -12,7 +12,7 @@ import time
 
 fn main() {
   let ch: Channel(Int) = channel.new(0)
-  let producer = task.spawn { ->
+  let producer = { ->
     loop i = 0 {
       match i >= 100 {
         true -> channel.close(ch)
@@ -24,22 +24,24 @@ fn main() {
       }
     }
   }
-  let r = loop got = 0, sum = 0, inner_timeouts = 0 {
-    let out = task.deadline(time.ms(3), { ->
-      task.deadline(time.hours(1), { -> channel.receive(ch) })
-    })
-    match out {
-      Some(Some(Some(v))) -> loop(got + 1, sum + v, inner_timeouts)
-      Some(Some(None)) -> (got, sum, inner_timeouts)
-      Some(None) -> loop(got, sum, inner_timeouts + 1)
-      None -> loop(got, sum, inner_timeouts)
+  let consumer = { ->
+    let r = loop got = 0, sum = 0, inner_timeouts = 0 {
+      let out = task.deadline(time.ms(3)) { ->
+        task.deadline(time.hours(1)) { -> channel.receive(ch) }
+      }
+      match out {
+        Some(Some(Some(v))) -> loop(got + 1, sum + v, inner_timeouts)
+        Some(Some(None)) -> (got, sum, inner_timeouts)
+        Some(None) -> loop(got, sum, inner_timeouts + 1)
+        None -> loop(got, sum, inner_timeouts)
+      }
+    }
+    match r {
+      (got, sum, inner_timeouts) -> {
+        println("sent 100 (sum 4950), received {got} (sum {sum})")
+        println("the inner None as the outer function's value: {inner_timeouts}")
+      }
     }
   }
-  task.join_handle(producer)
-  match r {
-    (got, sum, inner_timeouts) -> {
-      println("sent 100 (sum 4950), received {got} (sum {sum})")
-      println("the inner None as the outer function's value: {inner_timeouts}")
-    }
-  }
+  task.join([producer, consumer])
 }

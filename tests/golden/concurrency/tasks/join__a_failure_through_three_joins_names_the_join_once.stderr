@@ -1,12 +1,14 @@
-error[runtime]: joined task failed: division by zero
- --> join__a_failure_through_three_joins_names_the_join_once.silt:7:3
+error[runtime]: division by zero
+ --> join__a_failure_through_three_joins_names_the_join_once.silt:7:11
    |
- 7 |   100 / n
-   |   ^^^^^^^ joined task failed: division by zero
+ 7 |   let _ = 100 / n
+   |           ^^^^^^^ division by zero
 
 call stack:
-  -> work  at join__a_failure_through_three_joins_names_the_join_once.silt:7:3
-  -> closure in main  at join__a_failure_through_three_joins_names_the_join_once.silt:13:35
-  -> closure in main  at join__a_failure_through_three_joins_names_the_join_once.silt:14:7
-  -> closure in main  at join__a_failure_through_three_joins_names_the_join_once.silt:16:5
-  -> main  at join__a_failure_through_three_joins_names_the_join_once.silt:18:11
+  -> work  at join__a_failure_through_three_joins_names_the_join_once.silt:7:11
+  -> closure in inner  at join__a_failure_through_three_joins_names_the_join_once.silt:11:19
+  -> inner  at join__a_failure_through_three_joins_names_the_join_once.silt:11:3
+  -> closure in middle  at join__a_failure_through_three_joins_names_the_join_once.silt:15:19
+  -> middle  at join__a_failure_through_three_joins_names_the_join_once.silt:15:3
+  -> closure in main  at join__a_failure_through_three_joins_names_the_join_once.silt:19:19
+  -> main  at join__a_failure_through_three_joins_names_the_join_once.silt:19:3

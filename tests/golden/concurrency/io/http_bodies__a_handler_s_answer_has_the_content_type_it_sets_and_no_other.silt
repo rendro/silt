@@ -33,37 +33,50 @@ fn answer(req: http.Request) -> http.Response {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-  ["/text", "/set", "/empty", "/bytes"] |> list.each { path ->
-    match http.get(url_of("http://127.0.0.1:{port}{path}")) {
-      Ok(resp) -> println("{path}: {bytes.to_hex(resp.body)}, content-type {map.get(resp.headers, "content-type")}")
-      Err(e) -> println("{path}: {e}")
-    }
-  }
-
-  -- The server's own answer, to a request written by hand.
-  let cr = string.from_char_code(13) |> option.unwrap_or("")
-  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
-  let _ = tcp.write(conn, bytes.from_string("TRACE / HTTP/1.1{cr}\nHost: x{cr}\nConnection: close{cr}\n{cr}\n"))
-  let answered = loop got = bytes.empty() {
-    match tcp.read(conn, 4096) {
-      Ok(more) -> match bytes.length(more) {
-        0 -> got
-        _ -> loop(bytes.concat(got, more))
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    ["/text", "/set", "/empty", "/bytes"]
+      |> list.each { path ->
+        match http.get(url_of("http://127.0.0.1:{port}{path}")) {
+          Ok(resp) -> println(
+            "{path}: {bytes.to_hex(resp.body)}, content-type {map.get(resp.headers, "content-type")}",
+          )
+          Err(e) -> println("{path}: {e}")
+        }
       }
-      Err(_) -> got
+
+    -- The server's own answer, to a request written by hand.
+    let cr = string.from_char_code(13) |> option.unwrap_or("")
+    when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+      panic("cannot connect")
     }
+    let _ = tcp.write(
+      conn,
+      bytes.from_string("TRACE / HTTP/1.1{cr}\nHost: x{cr}\nConnection: close{cr}\n{cr}\n"),
+    )
+    let answered = loop got = bytes.empty() {
+      match tcp.read(conn, 4096) {
+        Ok(more) -> match bytes.length(more) {
+          0 -> got
+          _ -> loop(bytes.concat(got, more))
+        }
+        Err(_) -> got
+      }
+    }
+    tcp.close(conn)
+    bytes.to_string(answered)
+      |> result.unwrap_or("")
+      |> string.lines
+      |> list.map { line -> string.trim(line) }
+      |> list.filter { line ->
+        string.starts_with(line, "HTTP/") || string.starts_with(line, "Content-Type")
+      }
+      |> list.each { line -> println("TRACE: {line}") }
   }
-  tcp.close(conn)
-  bytes.to_string(answered)
-    |> result.unwrap_or("")
-    |> string.lines
-    |> list.map { line -> string.trim(line) }
-    |> list.filter { line -> string.starts_with(line, "HTTP/") || string.starts_with(line, "Content-Type") }
-    |> list.each { line -> println("TRACE: {line}") }
-  task.cancel(server)
 }
 
 fn url_of(text: String) -> url.Url {

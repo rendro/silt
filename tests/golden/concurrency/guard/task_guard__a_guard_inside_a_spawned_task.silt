@@ -1,6 +1,7 @@
--- A guard runs on the task that calls it: inside a spawned task it
--- catches there, and the task goes on and returns. A failure of a
--- joined task, raised at the join, is caught by a guard around the join.
+-- A guard runs on the task that calls it: inside a task it catches
+-- there, and the task goes on and returns. A failure of a piece of a
+-- join, raised at the join, is caught by a guard around the join.
+import list
 import task
 
 fn fail(n: Int) -> Int {
@@ -8,15 +9,17 @@ fn fail(n: Int) -> Int {
 }
 
 fn main() {
-  let h = task.spawn { ->
-    match task.guard({ -> fail(1) }) {
+  let caught = task.map([1], 1) { n ->
+    match task.guard({ -> fail(n) }) {
       Ok(_) -> "no error"
       Err(e) -> "the task caught {e.message}"
     }
   }
-  println(task.join_handle(h))
-  let failing = task.spawn { -> fail(2) }
-  match task.guard({ -> task.join_handle(failing) }) {
+  list.each(caught) { line -> println(line) }
+  let failing = { ->
+    let _ = fail(2)
+  }
+  match task.guard({ -> task.join([failing]) }) {
     Ok(_) -> println("no error")
     Err(e) -> println("main caught {e.message}")
   }

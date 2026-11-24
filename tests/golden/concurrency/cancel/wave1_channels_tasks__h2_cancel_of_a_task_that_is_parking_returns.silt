@@ -1,8 +1,8 @@
 -- repeat: 10
--- stderr-not-contains: deadlock on main thread
--- Cancel a task while it is about to park, or has just parked, in
--- `channel.receive`. Without the fix about half of the runs hang
--- inside `task.cancel`.
+-- stderr-not-contains: deadlock
+-- Stop a helper (its body returns) while it is about to park, or has
+-- just parked, in `channel.receive`. Without the fix about half of the
+-- runs hang inside the stop.
 import channel
 import task
 
@@ -17,9 +17,12 @@ fn go(i, n) {
   match i < n {
     true -> {
       let ch = channel.new(1)
-      let h = task.spawn({ -> channel.receive(ch) })
-      let _ = spin(i % 40)
-      task.cancel(h)
+      let parked = { ->
+        let _ = channel.receive(ch)
+      }
+      task.background([parked]) { ->
+        let _ = spin(i % 40)
+      }
       go(i + 1, n)
     }
     false -> ()

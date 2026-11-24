@@ -6,16 +6,21 @@
 -- deadline, on the program's own thread or in a task. It ends when the
 -- deadline has passed.
 import channel
+import list
 import task
 import time
 
 fn main() {
   let never: Channel(Int) = channel.new(0)
-  println(task.deadline(time.ms(20), { -> channel.receive(never) }))
-  let waits = task.spawn { -> task.deadline(time.ms(20), { -> channel.receive(never) }) }
-  println(task.join_handle(waits))
-  println(task.deadline(time.ms(20), { -> channel.send(never, 1) }))
-  match task.deadline(time.ms(20), { -> channel.select([channel.Recv(never), channel.Send(never, 2)]) }) {
+  println(task.deadline(time.ms(20)) { -> channel.receive(never) })
+  list.each(
+    task.map([never], 1) { ch -> task.deadline(time.ms(20)) { -> channel.receive(ch) } },
+  ) { r -> println(r) }
+  println(task.deadline(time.ms(20)) { -> channel.send(never, 1) })
+  match task.deadline(
+    time.ms(20),
+    { -> channel.select([channel.Recv(never), channel.Send(never, 2)]) },
+  ) {
     None -> println("None")
     Some(_) -> println("an arm of the select was ready")
   }

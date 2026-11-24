@@ -23,23 +23,33 @@ fn answer(req: http.Request) -> http.Response {
     "/head" -> bytes.from_string("what a GET would get")
     _ -> bytes.empty()
   }
-  http.Response { status: status, body: body, headers: #{ "content-encoding": "gzip", "etag": "x" } }
+  http.Response {
+    status: status,
+    body: body,
+    headers: #{ "content-encoding": "gzip", "etag": "x" },
+  }
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-  list.each([(http.HEAD, "/head"), (http.GET, "/204"), (http.GET, "/304")]) { (method, path) ->
-    match http.request(method, url_of("http://127.0.0.1:{port}{path}"), bytes.empty(), #{}) {
-      Ok(resp) -> {
-        let named = ["content-encoding", "content-length", "etag"] |> list.filter { name -> map.contains(resp.headers, name) }
-        println("{method} {path}: {resp.status}, {bytes.length(resp.body)} bytes, of the three headers: {named}")
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    list.each([(http.HEAD, "/head"), (http.GET, "/204"), (http.GET, "/304")]) { (method, path) ->
+      match http.request(method, url_of("http://127.0.0.1:{port}{path}"), bytes.empty(), #{}) {
+        Ok(resp) -> {
+          let named = ["content-encoding", "content-length", "etag"]
+            |> list.filter { name -> map.contains(resp.headers, name) }
+          println(
+            "{method} {path}: {resp.status}, {bytes.length(resp.body)} bytes, of the three headers: {named}",
+          )
+        }
+        Err(e) -> println("{method} {path}: Err {e}")
       }
-      Err(e) -> println("{method} {path}: Err {e}")
     }
   }
-  task.cancel(server)
 }
 
 fn url_of(text: String) -> url.Url {

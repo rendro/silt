@@ -311,11 +311,8 @@ fn at_depth(n, asks, answers) {{
 fn round(n) {{
   let asks = channel.new(0)
   let answers = channel.new(0)
-  let server = task.spawn({{ -> echo(asks, answers) }})
-  let parked = task.join_handle(task.spawn({{ -> at_depth(n, asks, answers) }}))
-  channel.close(asks)
-  task.join_handle(server)
-  parked
+  let server = {{ -> echo(asks, answers) }}
+  task.background([server]) {{ -> at_depth(n, asks, answers) }}
 }}
 
 fn main() {{
@@ -354,20 +351,20 @@ import task
 
 fn fan_in(senders) {{
   let ch = channel.new(16)
-  let hs = 1..senders |> list.map {{ i -> task.spawn({{ ->
+  let hs = 1..senders |> list.map {{ i -> {{ ->
     1..3 |> list.each {{ j -> channel.send(ch, i + j) }}
-  }}) }}
-  let sum = loop left = senders * 3, acc = 0 {{
-    match left {{
-      0 -> acc
-      _ -> match channel.receive(ch) {{
-        Some(v) -> loop(left - 1, acc + v)
-        None -> acc
+  }} }}
+  task.background(hs) {{ ->
+    loop left = senders * 3, acc = 0 {{
+      match left {{
+        0 -> acc
+        _ -> match channel.receive(ch) {{
+          Some(v) -> loop(left - 1, acc + v)
+          None -> acc
+        }}
       }}
     }}
   }}
-  hs |> list.each {{ h -> task.join_handle(h) }}
-  sum
 }}
 
 fn main() {{
@@ -511,20 +508,22 @@ import task
 {functions}fn main() {{
   let never = channel.new(0)
   let running = channel.new({tasks})
-  let handles = list.map(1..{tasks}) {{ i ->
-    task.spawn({{ ->
+  let waiters = list.map(1..{tasks}) {{ i ->
+    {{ ->
       let _ = channel.send(running, i)
-      match channel.receive(never) {{
+      let _ = match channel.receive(never) {{
         Some(n) -> n + g0(i)
         None -> 0
       }}
-    }})
+    }}
   }}
-  list.each(handles) {{ _ ->
-    let _ = channel.receive(running)
+  task.background(waiters) {{ ->
+    list.each(waiters) {{ _ ->
+      let _ = channel.receive(running)
+    }}
+    println(list.length(waiters))
+    let _ = io.read_line()
   }}
-  println(list.length(handles))
-  let _ = io.read_line()
 }}
 "
     )

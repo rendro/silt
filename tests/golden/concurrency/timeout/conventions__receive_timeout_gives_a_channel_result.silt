@@ -2,6 +2,8 @@
 -- `Message(v)` for a value that is there or comes in time, `Empty` when
 -- the duration passes with none, `Closed` for a closed and empty channel.
 import channel
+import list
+import stream
 import task
 import time
 
@@ -19,17 +21,18 @@ fn main() {
   println(outcome(channel.receive_timeout(ch, time.ms(0))))
   println(outcome(channel.receive_timeout(ch, time.ms(0))))
   println(outcome(channel.receive_timeout(ch, time.ms(20))))
-  let sender = task.spawn { ->
+  let sender = stream.from_fn { _ ->
     time.sleep(time.ms(5))
     channel.send(ch, 8)
   }
   println(outcome(channel.receive_timeout(ch, time.seconds(30))))
-  task.join_handle(sender)
+  let _ = stream.collect(sender)
   channel.close(ch)
   println(outcome(channel.receive_timeout(ch, time.seconds(30))))
   -- In a task, where the wait parks instead of blocking a thread.
   let quiet = channel.new(0)
-  let waiter = task.spawn { -> outcome(channel.receive_timeout(quiet, time.ms(20))) }
-  println(task.join_handle(waiter))
+  list.each(task.map([quiet], 1) { q -> outcome(channel.receive_timeout(q, time.ms(20))) }) { o ->
+    println(o)
+  }
   println(channel.receive_timeout(quiet, time.ms(1)) == channel.try_receive(quiet))
 }

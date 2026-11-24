@@ -8,7 +8,6 @@ import task
 
 fn main() {
   let ch = channel.new(0)
-  let h = task.spawn({ -> 1 })
-  let _ = task.join_handle(h)
+  task.join([{ -> () }])
   channel.each(ch) { msg -> println("{msg}") }
 }

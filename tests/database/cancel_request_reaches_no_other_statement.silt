@@ -1,7 +1,7 @@
--- A task is cancelled about when a statement of its transaction ends,
--- 300 times over, on a pool of one connection; after each cancel
--- `main` runs a statement on the pool. The cancel request that is sent
--- for the task's statement can reach the server after that statement
+-- A function's deadline passes about when a statement of its
+-- transaction ends, 300 times over, on a pool of one connection; after
+-- each stop `main` runs a statement on the pool. The cancel request
+-- that is sent for the function's statement can reach the server after that statement
 -- has ended, and the server then cancels the next statement of the
 -- connection, whoever runs it. So a connection for which a cancel
 -- request was sent is closed, not given back to the pool: `main`'s
@@ -29,15 +29,18 @@ fn main() {
       let failed = loop i = 0, failed = 0 {
         match i < 300 {
           true -> {
-            let t = task.spawn { ->
+            let _ = task.deadline(time.ms(1 + i % 5)) { ->
               postgres.transact(pool) { tx ->
-                let _ = postgres.query(tx, "SELECT pg_sleep({i % 4}::float8 / 1000)", (), json.Value)?
+                let _ = postgres.query(
+                  tx,
+                  "SELECT pg_sleep({i % 4}::float8 / 1000)",
+                  (),
+                  json.Value,
+                )?
                 time.sleep(time.ms(i / 4 % 3))
                 postgres.query(tx, "SELECT pg_sleep({i / 2 % 3}::float8 / 1000)", (), json.Value)
               }
             }
-            time.sleep(time.ms(1 + i % 5))
-            task.cancel(t)
             match postgres.query(pool, "SELECT 1", (), json.Value) {
               Ok(_) -> loop(i + 1, failed)
               Err(_) -> loop(i + 1, failed + 1)

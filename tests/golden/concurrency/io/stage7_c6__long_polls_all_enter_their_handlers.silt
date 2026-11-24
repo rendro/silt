@@ -21,32 +21,44 @@ fn text(body: Bytes) -> String {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
   let release = channel.new(0)
   let entered = channel.new(0)
-  let server = task.spawn { ->
+  let server = { ->
     http.serve(listener) { _req ->
       channel.send(entered, ())
       let _ = channel.receive(release)
       http.Response { status: 200, body: bytes.from_string("released"), headers: #{} }
     }
   }
-  let clients = 1..12 |> list.map { _ ->
-    task.spawn { ->
-      match http.get(url_of("http://127.0.0.1:{port}/wait")) {
-        Ok(r) -> "{r.status} {text(r.body)}"
-        Err(e) -> "error: {e}"
+  task.background([server]) { ->
+    let answered = channel.new(1)
+    let clients = { ->
+      let answers = task.map(1..12, 12) { _ ->
+        match http.get(url_of("http://127.0.0.1:{port}/wait")) {
+          Ok(r) -> "{r.status} {text(r.body)}"
+          Err(e) -> "error: {e}"
+        }
       }
+      channel.send(answered, answers)
     }
+    let release_all = { ->
+      1..12
+        |> list.each { _ ->
+          let _ = channel.receive(entered)
+        }
+      println("12 handlers wait")
+      channel.close(release)
+    }
+    task.join([clients, release_all])
+    when let Some(answers) = channel.receive(answered) else {
+      panic("no answers")
+    }
+    println(list.unique(answers))
   }
-  1..12 |> list.each { _ ->
-    let _ = channel.receive(entered)
-  }
-  println("12 handlers wait")
-  channel.close(release)
-  println(clients |> list.map { client -> task.join_handle(client) } |> list.unique)
-  task.cancel(server)
 }
 
 fn url_of(text: String) -> url.Url {

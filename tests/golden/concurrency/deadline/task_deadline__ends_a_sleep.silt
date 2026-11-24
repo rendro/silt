@@ -3,13 +3,15 @@
 -- A function that has not returned when its deadline has passed is
 -- ended, and `task.deadline` gives `None`: on the program's own
 -- thread and in a task. This sleep would last an hour.
+import list
 import task
 import time
 
 fn main() {
-  println(task.deadline(time.ms(30), { -> time.sleep(time.hours(1)) }))
-  let inside = task.spawn { -> task.deadline(time.ms(30), { -> time.sleep(time.hours(1)) }) }
-  println(task.join_handle(inside))
+  println(task.deadline(time.ms(30)) { -> time.sleep(time.hours(1)) })
+  list.each(
+    task.map([time.ms(30)], 1) { limit -> task.deadline(limit) { -> time.sleep(time.hours(1)) } },
+  ) { r -> println(r) }
   match task.deadline(time.ms(0), { -> time.sleep(time.hours(1)) }) {
     None -> println("no time at all: None")
     other -> println(other)

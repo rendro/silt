@@ -37,19 +37,23 @@ fn get(port: Int) -> () {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
   let answers = [["gzip, gzip"], ["gzip", "gzip"], ["gzip", "identity"]]
-  let peer = task.spawn { ->
-    answers |> list.each { codings ->
-      when let Ok(c) = tcp.accept(listener) else { return () }
-      let _ = tcp.read(c, 65536)
-      let _ = tcp.write(c, answer(codings))
-      tcp.close(c)
-    }
+  let peer = { ->
+    answers
+      |> list.each { codings ->
+        when let Ok(c) = tcp.accept(listener) else {
+          return ()
+        }
+        let _ = tcp.read(c, 65536)
+        let _ = tcp.write(c, answer(codings))
+        tcp.close(c)
+      }
   }
-  answers |> list.each { _ -> get(port) }
-  task.join_handle(peer)
+  task.background([peer]) { -> answers |> list.each { _ -> get(port) } }
 }
 
 fn url_of(text: String) -> url.Url {

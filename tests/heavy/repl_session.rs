@@ -15,8 +15,9 @@
 
 /// The entries of a session of `rounds` rounds, and the number of
 /// entries entered when each round's marker line is printed. With
-/// `waiting`, the task of each round waits for as long as the session
-/// lasts; without, it is joined in its entry.
+/// `waiting`, the task of each round (the function of a `stream.from_fn`
+/// that a binding holds) waits for as long as the session lasts;
+/// without, it is a piece of a `task.join` in its entry.
 fn session(rounds: usize, waiting: bool) -> (Vec<String>, Vec<usize>) {
     let mut entries = vec![
         "import task".to_string(),
@@ -24,6 +25,7 @@ fn session(rounds: usize, waiting: bool) -> (Vec<String>, Vec<usize>) {
     ];
     if waiting {
         entries.push("import channel".to_string());
+        entries.push("import stream".to_string());
         entries.push("let never = channel.new(0)".to_string());
     }
     let mut markers = Vec::new();
@@ -40,8 +42,8 @@ fn session(rounds: usize, waiting: bool) -> (Vec<String>, Vec<usize>) {
         markers.push(entries.len());
         entries.push(format!("let bad{i}: Int = \"s\""));
         entries.push(match waiting {
-            true => format!("let h{i} = task.spawn {{ -> channel.receive(never) }}"),
-            false => format!("task.join_handle(task.spawn {{ -> f{i}(2) }})"),
+            true => format!("let h{i} = stream.from_fn {{ _ -> let _ = channel.receive(never) }}"),
+            false => format!("task.join([{{ -> let _ = f{i}(2) }}])"),
         });
     }
     (entries, markers)

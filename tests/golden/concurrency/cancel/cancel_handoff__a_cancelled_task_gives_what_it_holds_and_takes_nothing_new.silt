@@ -1,32 +1,26 @@
--- After a cancel a task takes nothing new; it may still give what it
--- holds. In the steps it has left, a send that can be done at once is
--- done (`channel.send`, `channel.try_send`, a `Send` arm of a
--- `channel.select`). The first operation that would take something
--- ends the task, whether or not the thing is there: the value on the
--- `Recv` arm of its last select is still in its channel afterwards, and
--- the `Send` arm beside it, which had no room, sent nothing. (A join is
--- such a take: see cancel_handoff__a_cancelled_task_joins_nothing.)
+-- After its time is over a function takes nothing new; it may still
+-- give what it holds. In the steps it has left, a send that can be done
+-- at once is done (`channel.send`, `channel.try_send`, a `Send` arm of
+-- a `channel.select`). The first operation that would take something
+-- ends the function, whether or not the thing is there: the value on
+-- the `Recv` arm of its last select is still in its channel afterwards,
+-- and the `Send` arm beside it, which had no room, sent nothing. This
+-- is the rule of every stopped task.
 --
--- The task cancels itself, so the cancel comes at a known place,
--- whatever the machine does. It gives a last value before the select
--- that ends it; `main` waits for that one and looks then.
+-- The deadline is zero, a time that is over from the start, so the
+-- stop comes at a known place, whatever the machine does. The function
+-- gives a last value before the select that ends it; `main` looks when
+-- the deadline has given `None`.
 import channel
 import task
 import time
 
 fn main() {
-  let own: Channel(task.Handle(())) = channel.new(1)
   let given: Channel(Int) = channel.new(8)
   let full: Channel(Int) = channel.new(1)
   channel.send(full, 1)
-  let t = task.spawn { ->
-    let helper = task.spawn { -> 7 }
-    let _ = task.join_handle(helper)
-    match channel.receive(own) {
-      Some(me) -> task.cancel(me)
-      None -> ()
-    }
-    println("cancelled, and still running")
+  let out = task.deadline(time.ms(0)) { ->
+    println("past its time, and still running")
     channel.send(given, 1)
     println("a send into room: done")
     println("a try_send into room: {channel.try_send(given, 2)}")
@@ -40,7 +34,7 @@ fn main() {
     let _ = channel.select([channel.Recv(full), channel.Send(full, 9)])
     println("not reached")
   }
-  channel.send(own, t)
+  println("the deadline gave {out}")
   let got = loop got = [] {
     match channel.receive(given) {
       Some(4) -> got
@@ -48,9 +42,7 @@ fn main() {
       None -> got
     }
   }
-  -- A task that took the value after all would have done so by now.
-  time.sleep(time.ms(5))
-  println("what the task gave before its last select: {got}")
+  println("what the function gave before its last select: {got}")
   println("the value to receive is still there: {channel.receive(full)}")
   println("and nothing was sent after it: {channel.try_receive(full)}")
 }

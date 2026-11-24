@@ -1,7 +1,7 @@
 -- timeout: 20
 -- requires-feature: tcp
--- One task waits in a read on a connection while another writes on
--- it: the write is not held up by the read. The peer answers only
+-- One piece of a join waits in a read on a connection while another
+-- writes on it: the write is not held up by the read. The peer answers only
 -- when it has got the write, so with one lock for both directions
 -- the program could not end. (The sleep only lets the read start
 -- first, which is what made one lock fail; nothing depends on it.)
@@ -13,32 +13,49 @@ import tcp
 import time
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let peer = task.spawn { ->
-    when let Ok(conn) = tcp.accept(listener) else { panic("cannot accept") }
-    when let Ok(ping) = tcp.read_exact(conn, 4) else { panic("the peer cannot read") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let peer = { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
+    when let Ok(ping) = tcp.read_exact(conn, 4) else {
+      panic("the peer cannot read")
+    }
     when let Ok(_) = tcp.write(conn, bytes.from_string(string.to_upper(text(ping)))) else {
       panic("the peer cannot write")
     }
   }
-  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
-    panic("cannot connect")
+  task.background([peer]) { ->
+    when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+      panic("cannot connect")
+    }
+    let reading = channel.new(0)
+    let answered = channel.new(1)
+    let reader = { ->
+      channel.send(reading, ())
+      channel.send(answered, tcp.read_exact(conn, 4))
+    }
+    let writer = { ->
+      let _ = channel.receive(reading)
+      time.sleep(time.ms(200))
+      when let Ok(_) = tcp.write(conn, bytes.from_string("ping")) else {
+        panic("cannot write")
+      }
+    }
+    task.join([reader, writer])
+    when let Some(Ok(answer)) = channel.receive(answered) else {
+      panic("cannot read")
+    }
+    println(text(answer))
+    tcp.close(conn)
   }
-  let reading = channel.new(0)
-  let reader = task.spawn { ->
-    channel.send(reading, ())
-    tcp.read_exact(conn, 4)
-  }
-  let _ = channel.receive(reading)
-  time.sleep(time.ms(200))
-  when let Ok(_) = tcp.write(conn, bytes.from_string("ping")) else { panic("cannot write") }
-  when let Ok(answer) = task.join_handle(reader) else { panic("cannot read") }
-  println(text(answer))
-  task.join_handle(peer)
-  tcp.close(conn)
 }
 
 fn text(b) {
-  when let Ok(s) = bytes.to_string(b) else { panic("not text") }
+  when let Ok(s) = bytes.to_string(b) else {
+    panic("not text")
+  }
   s
 }

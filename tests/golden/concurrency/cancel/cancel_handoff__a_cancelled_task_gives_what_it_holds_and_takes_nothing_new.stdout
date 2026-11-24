@@ -1,8 +1,9 @@
-cancelled, and still running
+past its time, and still running
 a send into room: done
 a try_send into room: true
 a select with a value to receive and room to send: sent
 the next select has a value to receive and no room to send
-what the task gave before its last select: [1, 2, 3]
+the deadline gave None
+what the function gave before its last select: [1, 2, 3]
 the value to receive is still there: Some(1)
 and nothing was sent after it: Empty

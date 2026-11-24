@@ -13,24 +13,25 @@ fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
     panic("cannot listen")
   }
-  let peer = task.spawn { ->
+  let peer = { ->
     when let Ok(conn) = tcp.accept(listener) else {
       panic("cannot accept")
     }
     let _ = tcp.write(conn, bytes.from_string("hi"))
     let _ = tcp.read(conn, 16)
   }
-  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
-    panic("cannot connect")
+  task.background([peer]) { ->
+    when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+      panic("cannot connect")
+    }
+    match tcp.read_exact(conn, 10000001) {
+      Err(tcp.Other(why)) -> println(why)
+      _ -> println("something else")
+    }
+    match tcp.read_exact(conn, 2) {
+      Ok(read) -> println(bytes.to_string(read))
+      Err(_) -> println("the connection was lost")
+    }
+    tcp.close(conn)
   }
-  match tcp.read_exact(conn, 10000001) {
-    Err(tcp.Other(why)) -> println(why)
-    _ -> println("something else")
-  }
-  match tcp.read_exact(conn, 2) {
-    Ok(read) -> println(bytes.to_string(read))
-    Err(_) -> println("the connection was lost")
-  }
-  tcp.close(conn)
-  task.join_handle(peer)
 }

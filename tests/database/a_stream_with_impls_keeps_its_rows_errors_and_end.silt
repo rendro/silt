@@ -17,7 +17,9 @@ import string
 import task
 import time
 
-type Code { digits: String }
+type Code {
+  digits: String,
+}
 
 trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
@@ -29,24 +31,33 @@ trait json.Decode for Code {
   }
 }
 
-type R { n: Int, code: Option(Code) }
+type R {
+  n: Int,
+  code: Option(Code),
+}
 
-type Slow { n: Int }
+type Slow {
+  n: Int,
+}
 
 trait json.Decode for Slow {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.Int(n) -> {
         time.sleep(time.ms(1))
-        let t = task.spawn { -> n * 2 }
-        Ok(Slow { n: task.join_handle(t) })
+        when let [doubled] = task.map([n], 1) { m -> m * 2 } else {
+          panic("one value")
+        }
+        Ok(Slow { n: doubled })
       }
       _ -> Err(json.Other("no number here"))
     }
   }
 }
 
-type S { slow: Slow }
+type S {
+  slow: Slow,
+}
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -105,7 +116,12 @@ fn main() {
       println("the decoder's error at row 600:")
       stream(db, "NULL", "NULL")
       println("closed after 300 rows:")
-      match postgres.stream(db, "SELECT g AS n, to_jsonb(g::text) AS code FROM generate_series(1, 300000) g", (), R) {
+      match postgres.stream(
+        db,
+        "SELECT g AS n, to_jsonb(g::text) AS code FROM generate_series(1, 300000) g",
+        (),
+        R,
+      ) {
         Ok(rows) -> {
           let n = loop n = 0 {
             match n {
@@ -127,7 +143,12 @@ fn main() {
       }
       println("in a transaction:")
       let done = postgres.transact(db) { tx ->
-        match postgres.stream(tx, "SELECT g AS n, CASE WHEN g % 3 = 0 THEN NULL ELSE to_jsonb(g::text) END AS code FROM generate_series(1, 2000) g", (), R) {
+        match postgres.stream(
+          tx,
+          "SELECT g AS n, CASE WHEN g % 3 = 0 THEN NULL ELSE to_jsonb(g::text) END AS code FROM generate_series(1, 2000) g",
+          (),
+          R,
+        ) {
           Ok(rows) -> drain(rows)
           Err(e) -> println("{e}")
         }
@@ -135,7 +156,12 @@ fn main() {
       }
       println("  {done}")
       println("an impl that waits:")
-      match postgres.stream(db, "SELECT to_jsonb(g) AS slow FROM generate_series(1, 300) g", (), S) {
+      match postgres.stream(
+        db,
+        "SELECT to_jsonb(g) AS slow FROM generate_series(1, 300) g",
+        (),
+        S,
+      ) {
         Ok(rows) -> {
           let (n, sum) = loop n = 0, sum = 0 {
             match channel.receive(rows) {

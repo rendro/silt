@@ -1,32 +1,39 @@
 -- repeat: 3
 -- Two tasks alternate send/receive on two rendezvous channels.
 -- 1 -> +1 = 2 -> +1 = 3 -> +1 = 4
-import io
+
 import channel
+import io
 import task
+
 fn program() {
   let ping = channel.new(0)
   let pong = channel.new(0)
 
-  let t1 = task.spawn({ ->
+  let t2 = { ->
+    -- Receive ping, send pong, repeat
+    when let Some(v1) = channel.receive(ping) else {
+      panic("pattern did not match")
+    }
+    channel.send(pong, v1 + 1)
+    when let Some(v2) = channel.receive(ping) else {
+      panic("pattern did not match")
+    }
+    channel.send(pong, v2 + 1)
+  }
+
+  task.background([t2]) { ->
     -- Send ping, wait for pong, repeat
     channel.send(ping, 1)
-    when let Some(v1) = channel.receive(pong) else { panic("pattern did not match") }
+    when let Some(v1) = channel.receive(pong) else {
+      panic("pattern did not match")
+    }
     channel.send(ping, v1 + 1)
-    when let Some(v2) = channel.receive(pong) else { panic("pattern did not match") }
+    when let Some(v2) = channel.receive(pong) else {
+      panic("pattern did not match")
+    }
     v2
-  })
-
-  let t2 = task.spawn({ ->
-    -- Receive ping, send pong, repeat
-    when let Some(v1) = channel.receive(ping) else { panic("pattern did not match") }
-    channel.send(pong, v1 + 1)
-    when let Some(v2) = channel.receive(ping) else { panic("pattern did not match") }
-    channel.send(pong, v2 + 1)
-  })
-
-  task.join_handle(t2)
-  task.join_handle(t1)
+  }
 }
 
 fn main() {

@@ -24,12 +24,15 @@ fn said(r: Result(tcp.TcpStream, tcp.TcpError)) -> String {
 
 fn main() {
   -- A waiting accept ends with Err(Closed).
-  when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("listen") }
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else {
+    panic("listen")
+  }
   let port = tcp.local_port(l)
-  let acceptor = task.spawn { -> tcp.accept(l) }
-  time.sleep(time.ms(100))
-  tcp.close_listener(l)
-  println(said(task.join_handle(acceptor)))
+  let closer = { ->
+    time.sleep(time.ms(100))
+    tcp.close_listener(l)
+  }
+  println(said(task.background([closer]) { -> tcp.accept(l) }))
   println(said(tcp.accept(l)))
   println(tcp.local_port(l) == port)
   tcp.close_listener(l)
@@ -39,18 +42,22 @@ fn main() {
     Err(e) -> println("not refused: {e}")
   }
   -- http.serve on it ends.
-  when let Ok(s) = tcp.listen("127.0.0.1:0") else { panic("listen") }
+  when let Ok(s) = tcp.listen("127.0.0.1:0") else {
+    panic("listen")
+  }
   let sport = tcp.local_port(s)
-  let server = task.spawn { ->
+  let client = { ->
+    match http.get(url_of("http://127.0.0.1:{sport}/")) {
+      Ok(r) -> println(r.status)
+      Err(e) -> println(e)
+    }
+    tcp.close_listener(s)
+  }
+  let served = task.background([client]) { ->
     http.serve(s, answer)
     "serve returned"
   }
-  match http.get(url_of("http://127.0.0.1:{sport}/")) {
-    Ok(r) -> println(r.status)
-    Err(e) -> println(e)
-  }
-  tcp.close_listener(s)
-  println(task.join_handle(server))
+  println(served)
   match tcp.connect("127.0.0.1:{sport}") {
     Ok(_) -> println("connected to a closed listener")
     Err(tcp.Connect(_)) -> println("refused")

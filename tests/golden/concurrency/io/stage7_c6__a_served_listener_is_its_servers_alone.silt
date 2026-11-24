@@ -2,7 +2,7 @@
 -- requires-feature: http
 -- While `http.serve` serves a listener, the listener is the server's
 -- alone: a `tcp.accept` on it is an error at once, and takes no
--- connection from the server. When the server has been cancelled the
+-- connection from the server. When the server has been stopped the
 -- listener is the program's again, for an accept or for another
 -- server.
 import bytes
@@ -26,45 +26,55 @@ fn get(link) {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
   let link = "http://127.0.0.1:{port}/"
-  let first = task.spawn { ->
-    http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("first"), headers: #{} } }
-  }
-  -- The server serves when it has answered.
-  println(get(link))
-  let refused = 1..100 |> list.map { _ ->
-    match tcp.accept(listener) {
-      Ok(_) -> "a connection"
-      Err(e) -> "{e}"
+  let first = { ->
+    http.serve(listener) { _req ->
+      http.Response { status: 200, body: bytes.from_string("first"), headers: #{} }
     }
   }
-  println(refused |> list.unique)
-  println(1..20 |> list.map { _ -> get(link) } |> list.unique)
-  task.cancel(first)
+  task.background([first]) { ->
+    -- The server serves when it has answered.
+    println(get(link))
+    let refused = 1..100
+      |> list.map { _ ->
+        match tcp.accept(listener) {
+          Ok(_) -> "a connection"
+          Err(e) -> "{e}"
+        }
+      }
+    println(refused |> list.unique)
+    println(1..20 |> list.map { _ -> get(link) } |> list.unique)
+  }
 
   -- An accept of the program's own.
-  let client = task.spawn { ->
-    when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  let client = { ->
+    when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+      panic("cannot connect")
+    }
     let _ = tcp.write(conn, bytes.from_string("hello"))
     tcp.close(conn)
   }
-  match tcp.accept(listener) {
-    Ok(conn) -> match tcp.read_exact(conn, 5) {
-      Ok(hello) -> println("accepted a client that sent {bytes.length(hello)} bytes")
-      Err(e) -> println("accepted a connection that says nothing: {e}")
+  task.background([client]) { ->
+    match tcp.accept(listener) {
+      Ok(conn) -> match tcp.read_exact(conn, 5) {
+        Ok(hello) -> println("accepted a client that sent {bytes.length(hello)} bytes")
+        Err(e) -> println("accepted a connection that says nothing: {e}")
+      }
+      Err(e) -> println("accept: {e}")
     }
-    Err(e) -> println("accept: {e}")
   }
-  let _ = task.join_handle(client)
 
   -- And another server.
-  let second = task.spawn { ->
-    http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("second"), headers: #{} } }
+  let second = { ->
+    http.serve(listener) { _req ->
+      http.Response { status: 200, body: bytes.from_string("second"), headers: #{} }
+    }
   }
-  println(get(link))
-  task.cancel(second)
+  task.background([second]) { -> println(get(link)) }
 }
 
 fn url_of(text: String) -> url.Url {

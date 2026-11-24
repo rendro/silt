@@ -1,10 +1,10 @@
 -- A transaction's function sets a `task.deadline` around a statement
--- of the transaction, and in a second transaction it cancels a task
--- that runs one. The statement is cancelled in the server, as a
--- statement that failed: the transaction is aborted, its next
--- statement is `Err(TxnAborted)` at once, `postgres.transact` answers
--- `Err(TxnAborted)` though the function returns `Ok`, and none of its
--- rows is in the table.
+-- of the transaction, and in a second transaction it stops a helper
+-- that runs one (the helper's body returns). The statement is
+-- cancelled in the server, as a statement that failed: the transaction
+-- is aborted, its next statement is `Err(TxnAborted)` at once,
+-- `postgres.transact` answers `Err(TxnAborted)` though the function
+-- returns `Ok`, and none of its rows is in the table.
 --
 -- The statements wait for an advisory lock that `main` holds in a
 -- transaction of its own; `main` sees that none waits any more while
@@ -92,22 +92,25 @@ fn main() {
             "INSERT INTO silt_database_callback_deadline VALUES ('second')",
             (),
           )?
-          let t = task.spawn { -> postgres.execute(tx, locked(), ()) }
-          -- Until the server shows the task's statement waiting.
-          loop seen = count(pool, waiting()) {
-            match seen == 1 {
-              true -> ()
-              false -> {
-                time.sleep(time.ms(5))
-                loop(count(pool, waiting()))
+          let t = { ->
+            let _ = postgres.execute(tx, locked(), ())
+          }
+          -- Until the server shows the helper's statement waiting.
+          task.background([t]) { ->
+            loop seen = count(pool, waiting()) {
+              match seen == 1 {
+                true -> ()
+                false -> {
+                  time.sleep(time.ms(5))
+                  loop(count(pool, waiting()))
+                }
               }
             }
           }
-          task.cancel(t)
-          println("the task is cancelled")
+          println("the helper is stopped")
           Ok(())
         }
-        println("the transaction of the cancel: {said(cancelled)}")
+        println("the transaction of the stop: {said(cancelled)}")
         println("statements that wait for the lock: {count(pool, waiting())}")
         Ok(())
       }

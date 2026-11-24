@@ -1,15 +1,15 @@
 -- repeat: 3
-import io
+
 import channel
+import io
 import task
+
 fn program() {
   let ch1 = channel.new(10)
   let ch2 = channel.new(10)
 
-  let p = task.spawn({ ->
-    channel.send(ch1, "first")
-  })
-  task.join_handle(p)
+  let p = { -> channel.send(ch1, "first") }
+  task.join([p])
 
   match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
     channel.Received(^ch1, Some(msg)) -> msg

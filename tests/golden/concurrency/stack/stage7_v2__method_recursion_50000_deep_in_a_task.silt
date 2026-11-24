@@ -1,5 +1,6 @@
 -- A method that calls itself 50,000 deep, in a task: a method call takes
 -- a frame of the VM like any call, and no native stack.
+import list
 import task
 
 trait Countdown {
@@ -16,7 +17,6 @@ trait Countdown for Int {
 }
 
 fn main() {
-  let h = task.spawn({ -> Countdown.down(50000) })
-  println(task.join_handle(h))
+  list.each(task.map([50000], 1) { n -> Countdown.down(n) }) { v -> println(v) }
   println(Countdown.down(50000))
 }

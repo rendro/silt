@@ -1,6 +1,6 @@
 -- exit: 1
 -- repeat: 20
--- stderr-contains: error[runtime]: joined task failed: send on closed channel 0
+-- stderr-contains: error[runtime]: send on closed channel 0
 -- A task that waits in a select to send (nobody receives) is woken when
 -- the channel is closed, and fails as a `channel.send` that waited does.
 -- (Whether the task waits already when the channel is closed or comes
@@ -10,9 +10,10 @@ import task
 
 fn main() {
   let quiet = channel.new(0)
-  let sender = task.spawn { -> channel.select([channel.Send(quiet, 1)]) }
-  channel.close(quiet)
+  let sender = { ->
+    let _ = channel.select([channel.Send(quiet, 1)])
+  }
   println("joining")
-  let _ = task.join_handle(sender)
+  task.join([sender, { -> channel.close(quiet) }])
   println("not reached")
 }
