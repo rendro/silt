@@ -1,17 +1,21 @@
 -- repeat: 3
 -- Sender on rendezvous channel must block until receiver is ready.
-import io
+
 import channel
+import io
 import task
+
 fn program() {
   let ch = channel.new(0)
 
-  let _ = task.spawn({ ->
-    channel.send(ch, 42)
-  })
+  let sender = { -> channel.send(ch, 42) }
 
-  when let Some(val) = channel.receive(ch) else { panic("pattern did not match") }
-  val
+  task.background([sender]) { ->
+    when let Some(val) = channel.receive(ch) else {
+      panic("pattern did not match")
+    }
+    val
+  }
 }
 
 fn main() {

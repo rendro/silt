@@ -1,1 +1,5 @@
+tcp.read: max must be positive
+tcp.read: max must be positive
+tcp.read_exact: n must be positive
+tcp.read_exact: n must be positive
 Ok(bytes(61 62 63, length: 3))

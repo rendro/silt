@@ -139,7 +139,7 @@ import host
 #[cfg(feature = "http")]
 #[test]
 fn test_http_serve_non_blocking_in_task() {
-    // Spawn http.serve in a task; verify other tasks can still run.
+    // Run http.serve in a helper task; verify other tasks can still run.
     // The server's task waits for its accept, an operation of the I/O
     // pool, so scheduler workers stay free.
     //
@@ -154,15 +154,15 @@ import tcp
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let done = channel.new(1)
-  let server = task.spawn({ ->
+  let server = { ->
     http.serve(listener, { req ->
       http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
     })
-  })
-  let worker = task.spawn({ ->
-    channel.send(done, "ready")
-  })
-  let result = channel.receive(done)
+  }
+  let result = task.background([server]) { ->
+    task.join([{ -> channel.send(done, "ready") }])
+    channel.receive(done)
+  }
   host.give(match result {
     Some(v) -> v
     None -> "failed"
@@ -813,15 +813,15 @@ fn main() {
   when let Ok(target) = url.parse("http://127.0.0.1:{port}/test") else { panic("no URL") }
   let result_ch = channel.new(1)
 
-  -- Start the server in a task
-  let server = task.spawn({ ->
+  -- Run the server in a helper task
+  let server = { ->
     http.serve(listener, { req ->
       http.Response { status: 200, body: bytes.from_string("silt-response"), headers: #{} }
     })
-  })
+  }
 
   -- Make a request from another task
-  let client = task.spawn({ ->
+  let client = { ->
     let body = match http.get(target) {
       Ok(resp) -> match bytes.to_string(resp.body) {
         Ok(text) -> text
@@ -830,8 +830,9 @@ fn main() {
       Err(e) -> "the request failed: {e}"
     }
     channel.send(result_ch, body)
-  })
+  }
 
+  task.background([server]) { -> task.join([client]) }
   host.give(match channel.receive(result_ch) {
     Some(body) -> body
     None -> "the channel closed"

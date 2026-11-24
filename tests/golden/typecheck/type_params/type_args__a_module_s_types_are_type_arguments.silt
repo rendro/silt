@@ -1,8 +1,8 @@
 -- A type of a builtin module given to a `type a` parameter is its
 -- descriptor, as a program's type is: an enum (`time.Weekday`), an
--- opaque type (`task.Handle`), a type imported by its name.
+-- opaque type (`regex.Regex`), a type imported by its name.
 import json
-import task
+import regex
 import time
 import time.{ Weekday }
 
@@ -16,9 +16,9 @@ trait Name for time.Weekday {
   }
 }
 
-trait Name for task.Handle(a) {
+trait Name for regex.Regex {
   fn name() -> String {
-    "handle"
+    "regex"
   }
 }
 
@@ -29,6 +29,6 @@ fn n(type a) -> String where a: Name {
 fn main() {
   println(n(time.Weekday))
   println(n(Weekday))
-  println(n(task.Handle))
+  println(n(regex.Regex))
   println(json.parse("1", json.Value))
 }

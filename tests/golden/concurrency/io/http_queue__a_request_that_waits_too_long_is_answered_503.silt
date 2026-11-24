@@ -12,34 +12,47 @@ import time
 import url
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
   let gate = channel.new(0)
   let entered = channel.new(200)
-  let server = task.spawn { ->
+  let server = { ->
     http.serve(listener) { _req ->
       channel.send(entered, ())
       let _ = channel.receive(gate)
       http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
     }
   }
-  let get = { -> match http.get(url_of("http://127.0.0.1:{port}/")) {
-    Ok(r) -> r.status
-    Err(_) -> 0
-  } }
-  -- Every handler is taken, and waits at the gate.
-  let held = list.map(1..128) { _ -> task.spawn(get) }
-  list.each(1..128) { _ -> let _ = channel.receive(entered) }
-  -- One more request waits for a handler, and gets 503 after about 5 s.
-  let started = time.now()
-  let late = get()
-  let waited = time.since(started, time.now())
-  println("the 129th: {late}, after at least 4 s: {waited.ns >= 4_000_000_000}")
-  channel.close(gate)
-  let statuses = list.map(held) { c -> task.join_handle(c) }
-  println("{list.length(list.filter(statuses) { s -> s == 200 })} of 128 answered 200")
-  tcp.close_listener(listener)
-  task.join_handle(server)
+  task.background([server]) { ->
+    let get = { ->
+      match http.get(url_of("http://127.0.0.1:{port}/")) {
+        Ok(r) -> r.status
+        Err(_) -> 0
+      }
+    }
+    -- Every handler is taken, and waits at the gate.
+    let answered = channel.new(1)
+    let held = { -> channel.send(answered, task.map(1..128, 128) { _ -> get() }) }
+    let late = { ->
+      list.each(1..128) { _ ->
+        let _ = channel.receive(entered)
+      }
+      -- One more request waits for a handler, and gets 503 after about 5 s.
+      let started = time.now()
+      let late = get()
+      let waited = time.since(started, time.now())
+      println("the 129th: {late}, after at least 4 s: {waited.ns >= 4_000_000_000}")
+      channel.close(gate)
+    }
+    task.join([held, late])
+    when let Some(statuses) = channel.receive(answered) else {
+      panic("no statuses")
+    }
+    println("{list.length(list.filter(statuses) { s -> s == 200 })} of 128 answered 200")
+    tcp.close_listener(listener)
+  }
 }
 
 fn url_of(text: String) -> url.Url {

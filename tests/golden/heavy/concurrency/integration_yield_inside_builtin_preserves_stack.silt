@@ -4,30 +4,34 @@
 -- onto the stack before the yield so that re-execution finds them intact.
 -- Without the fix, the args are consumed (popped) but never restored, causing
 -- a stack underflow or corruption when the opcode re-executes after unblocking.
-import io
+
 import channel
+import io
 import task
+
 fn program() {
   let ch = channel.new(1)
 
   -- Fill the channel so the next send will block.
   channel.send(ch, 100)
 
-  -- The spawned task's send will block because the buffer is full.
+  -- The worker's send will block because the buffer is full.
   -- On yield, CallBuiltin must re-push [ch, 42] so the retry works.
-  let worker = task.spawn({ ->
-    channel.send(ch, 42)
-    "done"
-  })
+  let worker = { -> channel.send(ch, 42) }
 
-  -- Drain the first value to unblock the worker's send.
-  when let Some(first) = channel.receive(ch) else { panic("pattern did not match") }
-
-  -- Now the worker can complete its send.
-  let _ = task.join_handle(worker)
+  -- Drain the first value to unblock the worker's send; the join
+  -- returns when the worker has completed its send.
+  let drained = channel.new(1)
+  let drain = { -> channel.send(drained, channel.receive(ch)) }
+  task.join([worker, drain])
+  when let Some(Some(first)) = channel.receive(drained) else {
+    panic("pattern did not match")
+  }
 
   -- Read the worker's value.
-  when let Some(second) = channel.receive(ch) else { panic("pattern did not match") }
+  when let Some(second) = channel.receive(ch) else {
+    panic("pattern did not match")
+  }
   first + second
 }
 

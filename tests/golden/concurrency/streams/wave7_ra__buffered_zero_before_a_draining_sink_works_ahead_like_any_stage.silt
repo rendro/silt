@@ -34,7 +34,15 @@ fn main() {
   fill(ch, 1, 100)
   let seen = channel.new(100)
   let gate = channel.new(0)
-  let h = task.spawn { ->
+  let collected = task.background(
+    [
+      { ->
+        wait_for(seen, 25)
+        println("the map ran 25 values ahead of the gate")
+        channel.close(gate)
+      },
+    ],
+  ) { ->
     ch
       |> stream.map { x ->
         channel.send(seen, x)
@@ -47,8 +55,5 @@ fn main() {
       }
       |> stream.collect
   }
-  wait_for(seen, 25)
-  println("the map ran 25 values ahead of the gate")
-  channel.close(gate)
-  println("collected {list.length(task.join_handle(h))} values")
+  println("collected {list.length(collected)} values")
 }

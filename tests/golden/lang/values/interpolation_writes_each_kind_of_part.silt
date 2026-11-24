@@ -2,6 +2,7 @@
 -- value: an Int, a Float, a Bool and a String as they are, any other
 -- value by its Display, a written impl as a call between the parts. A
 -- lone `"{s}"` of a String is that String. The same in a task.
+import list
 import task
 
 type Celsius { degrees: Float }
@@ -27,6 +28,5 @@ fn main() {
   println("{s}")
   println("[{s}]{s}")
   println("{(1, "two")} {Some(3)} {[1, 2]} {()}")
-  let h = task.spawn({ -> "{line(7, 2.25, true, "in a task")} {s}" })
-  println(task.join_handle(h))
+  list.each(task.map([0], 1) { _ -> "{line(7, 2.25, true, "in a task")} {s}" }) { text -> println(text) }
 }

@@ -157,7 +157,7 @@ fn the_builtins_of_those_modules_that_stay_inside_are_run() {
 /// The output of a program with tasks is compared where it is known.
 #[test]
 fn a_program_with_tasks_is_compared_when_its_output_is_given() {
-    let text = "import task\nfn main() {\n  let h = task.spawn({ -> 41 + 1 })\n  println(task.join_handle(h))\n}\n";
+    let text = "import list\nimport task\nfn main() {\n  list.each(task.map([41], 1) { n -> n + 1 }) { v -> println(v) }\n}\n";
     let free = verdict(text);
     assert!(
         matches!(free, Verdict::Passed(Compared::Invariants)),
@@ -233,11 +233,12 @@ fn a_program_that_does_not_end_is_cut_short() {
         matches!(endless, Verdict::Cut(Cut::OutOfSteps)),
         "{endless:?}"
     );
-    // So is one whose task does not end, joined or not.
+    // So is one whose task does not end: a piece of a join, or a
+    // helper beside a body that does not end either.
     let spin = "import task\nfn spin() {\n  loop {\n    loop()\n  }\n}\n";
     for main in [
-        "fn main() {\n  let _ = task.join_handle(task.spawn(spin))\n}\n",
-        "fn main() {\n  let h = task.spawn(spin)\n  let _ = 1\n}\n",
+        "fn main() {\n  task.join([spin])\n}\n",
+        "fn main() {\n  task.background([spin], spin)\n}\n",
     ] {
         let cut = verdict(&format!("{spin}{main}"));
         assert!(

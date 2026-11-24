@@ -1,16 +1,16 @@
--- A task is cancelled while the server works on its statement. The
--- task ends there. The statement is not interrupted: it goes on in the
+-- A helper is stopped (its body returned) while the server works on
+-- its statement. The helper ends there. The statement is not interrupted: it goes on in the
 -- server, and meanwhile the pool answers other statements.
 --
 -- The statement waits for an advisory lock that `main` holds in a
 -- transaction, so it is in flight for as long as the case needs, and
 -- `main` reads in `pg_locks` that it still waits. It writes a row when
 -- it gets the lock. After its commit `main` waits for that row: a
--- statement that the cancel had interrupted would never write it, and
--- the case would not end. The task would print a line once it had the
--- statement's answer, and a program does not end while a task waits
--- for a statement: the line is not in the output because the task has
--- ended, not because the case looked too early.
+-- statement that the stop had interrupted would never write it, and
+-- the case would not end. The helper would print a line once it had
+-- the statement's answer, and `task.background` returns only when its
+-- helper has ended: the line is not in the output because the helper
+-- has ended, not because the case looked too early.
 import channel
 import env
 import json
@@ -71,17 +71,18 @@ fn main() {
       let done = postgres.transact(pool) { tx ->
         let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7301)", (), json.Value)?
         println("main holds the lock")
-        let t = task.spawn { ->
+        let t = { ->
           let _ = postgres.execute(
             pool,
             "INSERT INTO silt_database_cancel SELECT 'the statement got the lock' FROM pg_advisory_xact_lock(7301)",
             (),
           )
-          println("the task went on with the statement's answer")
+          println("the helper went on with the statement's answer")
         }
-        println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
-        task.cancel(t)
-        println("after the cancel: {count(pool, waiting())}")
+        task.background([t]) { ->
+          println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
+        }
+        println("after the stop: {count(pool, waiting())}")
         let one = count(pool, "SELECT 1")
         println("the pool answers meanwhile: {one} row")
         Ok(())

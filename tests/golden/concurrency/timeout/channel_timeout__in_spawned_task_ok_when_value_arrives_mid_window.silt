@@ -4,16 +4,18 @@
 import channel
 import task
 import time
+
 fn main() {
   let ch = channel.new(0)
-  let h = task.spawn({ ->
+  let sender = { ->
+    time.sleep(time.ms(50))
+    channel.send(ch, 42)
+  }
+  let r = task.background([sender]) { ->
     match channel.receive_timeout(ch, time.ms(5000)) {
       channel.Message(v) -> v
       _ -> -1
     }
-  })
-  time.sleep(time.ms(50))
-  channel.send(ch, 42)
-  let r = task.join_handle(h)
+  }
   println("{r}")
 }

@@ -3,7 +3,7 @@ import channel
 import stream
 import time
 
--- no task.spawn anywhere: no scheduler is ever created
+-- no task anywhere: no scheduler is ever created
 fn main() {
   let out = stream.from_list([1, 2, 3]) |> stream.map { x ->
     time.sleep(time.ms(300))

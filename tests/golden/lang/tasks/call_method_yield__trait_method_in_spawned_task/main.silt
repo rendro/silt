@@ -1,6 +1,7 @@
 -- A user trait method that yields inside io.read_file, called from a
--- spawned task, survives the yield/resume cycle.
+-- task, survives the yield/resume cycle.
 import io
+import list
 import task
 
 type Greeter { path: String }
@@ -18,9 +19,9 @@ trait Greet for Greeter {
 
 fn main() {
   let g = Greeter { path: "greeting.txt" }
-  let handle = task.spawn({ ->
+  let msgs = task.map([g], 1) { g ->
     let msg = Greet.greet(g)
     msg
-  })
-  println(task.join_handle(handle))
+  }
+  list.each(msgs) { msg -> println(msg) }
 }

@@ -70,23 +70,25 @@ fn show(place: String, body: Bytes) {
 -- them.
 fn in_chunks(body: Bytes) -> Bytes {
   let nl = bytes.from_string(line_end())
-  bytes.concat_all([
-    bytes.from_string("1"),
-    nl,
-    bytes.slice(body, 0, 1),
-    nl,
-    bytes.from_string("7f"),
-    nl,
-    bytes.slice(body, 1, 128),
-    nl,
-    bytes.from_string("80"),
-    nl,
-    bytes.slice(body, 128, 256),
-    nl,
-    bytes.from_string("0"),
-    nl,
-    nl,
-  ])
+  bytes.concat_all(
+    [
+      bytes.from_string("1"),
+      nl,
+      bytes.slice(body, 0, 1),
+      nl,
+      bytes.from_string("7f"),
+      nl,
+      bytes.slice(body, 1, 128),
+      nl,
+      bytes.from_string("80"),
+      nl,
+      bytes.slice(body, 128, 256),
+      nl,
+      bytes.from_string("0"),
+      nl,
+      nl,
+    ],
+  )
 }
 
 fn answer(req: http.Request) -> http.Response {
@@ -97,26 +99,36 @@ fn answer(req: http.Request) -> http.Response {
 fn main() {
   let nl = line_end()
   println("a client written by hand to http.serve")
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let server = task.spawn { -> http.serve(listener, answer) }
-  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else { panic("cannot connect") }
-  let head = "POST / HTTP/1.1{nl}Host: x{nl}Transfer-Encoding: chunked{nl}Connection: close{nl}{nl}"
-  let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), in_chunks(upwards())))
-  let _ = read_message(conn, None)
-  tcp.close(conn)
-  task.cancel(server)
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+      panic("cannot connect")
+    }
+    let head = "POST / HTTP/1.1{nl}Host: x{nl}Transfer-Encoding: chunked{nl}Connection: close{nl}{nl}"
+    let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), in_chunks(upwards())))
+    let _ = read_message(conn, None)
+    tcp.close(conn)
+  }
 
   println("http.get to a server written by hand")
-  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let writer = task.spawn { ->
-    when let Ok(conn) = tcp.accept(by_hand) else { panic("cannot accept") }
+  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let writer = { ->
+    when let Ok(conn) = tcp.accept(by_hand) else {
+      panic("cannot accept")
+    }
     let _ = read_message(conn, Some(0))
     let head = "HTTP/1.1 200 OK{nl}Transfer-Encoding: chunked{nl}Connection: close{nl}{nl}"
     let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), in_chunks(downwards())))
     tcp.close(conn)
   }
-  let got = http.get(url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"))
-  task.join_handle(writer)
+  let got = task.background([writer]) { ->
+    http.get(url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"))
+  }
   match got {
     Ok(resp) -> show("  http.get gets", resp.body)
     Err(e) -> println("  http.get: {e}")

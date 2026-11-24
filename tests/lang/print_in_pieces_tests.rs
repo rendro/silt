@@ -1,7 +1,8 @@
 //! A print whose text goes in pieces (one longer than 1,000,000 bytes, to
 //! the command's stdout) is a wait of its task, as any print into a full
 //! pipe is: into a pipe nobody reads, a `task.deadline` around it ends
-//! it, a cancel of its task returns, and other tasks run meanwhile
+//! it, a stop of its task (the end of the `task.background` it is a
+//! helper of) returns, and other tasks run meanwhile
 //! (review of #336, L1: it held its scheduler thread). Each program ends
 //! by `process.exit`, whose code says what happened, while the test never
 //! reads the pipe.
@@ -55,22 +56,23 @@ fn a_deadline_ends_a_print_in_pieces() {
 }
 
 #[test]
-fn a_cancel_of_a_task_in_a_print_in_pieces_returns() {
+fn a_stop_of_a_task_in_a_print_in_pieces_returns() {
     let program = format!(
         "import process\nimport string\nimport task\nimport time\nfn main() {{\n{BIG}  \
-         let t = task.spawn {{ -> println(a) }}\n  time.sleep(time.seconds(1))\n  \
-         task.cancel(t)\n  process.exit(4)\n}}\n"
+         task.background([{{ -> println(a) }}]) {{ -> time.sleep(time.seconds(1)) }}\n  \
+         process.exit(4)\n}}\n"
     );
-    assert_eq!(exit_code_unread("cancel", &program), Some(4));
+    assert_eq!(exit_code_unread("stop", &program), Some(4));
 }
 
 #[test]
 fn other_tasks_run_while_eight_print_in_pieces() {
     let program = format!(
         "import list\nimport process\nimport string\nimport task\nimport time\nfn main() {{\n{BIG}  \
-         let ts = list.map([1, 2, 3, 4, 5, 6, 7, 8]) {{ _ -> task.spawn {{ -> println(a) }} }}\n  \
-         time.sleep(time.seconds(1))\n  let n = task.join_handle(task.spawn {{ -> 40 + 2 }})\n  \
-         let _ = ts\n  process.exit(n)\n}}\n"
+         let printers = list.map([1, 2, 3, 4, 5, 6, 7, 8]) {{ _ -> {{ -> println(a) }} }}\n  \
+         let n = task.background(printers) {{ ->\n    time.sleep(time.seconds(1))\n    \
+         list.fold(task.map([40], 1) {{ x -> x + 2 }}, 0) {{ acc, v -> acc + v }}\n  }}\n  \
+         process.exit(n)\n}}\n"
     );
     assert_eq!(exit_code_unread("ninth", &program), Some(42));
 }

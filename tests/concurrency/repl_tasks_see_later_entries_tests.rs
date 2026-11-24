@@ -1,7 +1,10 @@
 //! A task of a REPL session sees what later entries define.
 //!
 //! A task that an entry starts goes on while the next entries are
-//! typed. When a later entry hands it a closure, or a value, of its own
+//! typed: the function of a `stream.from_fn` that a binding of the
+//! session holds (`let w = stream.from_fn { _ -> work() }`), which runs
+//! until it returns or nobody holds its stream; collecting the stream
+//! waits for its end. When a later entry hands it a closure, or a value, of its own
 //! (through a channel), the task runs it as the session's own code
 //! would: it finds the functions, `let`s, impls and traits that were
 //! defined after it was started. It used to keep the view of the entry
@@ -157,15 +160,15 @@ fn session(workers: Workers, earlier: &str, later: &str, job: &str) -> String {
             .join("\n")
     };
     [
-        "import task\nimport channel".to_string(),
+        "import stream\nimport task\nimport channel".to_string(),
         "let jobs = channel.new(8)\nlet outs = channel.new(8)".to_string(),
         earlier.to_string(),
         work.to_string(),
-        each(&|n| format!("let w{n} = task.spawn {{ -> work() }}")),
+        each(&|n| format!("let w{n} = stream.from_fn {{ _ -> work() }}")),
         later.to_string(),
         each(&|_| format!("channel.send(jobs, {{ -> {job} }})")),
         each(&|_| "channel.receive(outs)".to_string()),
-        each(&|n| format!("task.join_handle(w{n})")),
+        each(&|n| format!("let _ = stream.collect(w{n})")),
     ]
     .join("\n")
         + "\n"
@@ -329,7 +332,8 @@ fn the_function_of_a_deadline_sees_later_entries_in_a_task_of_an_earlier_one() {
 fn a_deadline_ends_its_function_around_its_look_for_later_entries() {
     let rounds = 190..=235;
     let mut input = format!(
-        "import task
+        "import stream
+import task
 import channel
 import time
 let jobs = channel.new(64)
@@ -354,7 +358,7 @@ fn work(left) {{
     }}
   }}
 }}
-let worker = task.spawn {{ -> work({}) }}
+let worker = stream.from_fn {{ _ -> work({}) }}
 fn later() -> String {{ \"fn\" }}
 trait N for Int {{ fn n(self) -> String {{ \"int\" }} }}
 ",
@@ -373,7 +377,7 @@ channel.receive(outs)
     input +=
         "channel.send(jobs, { -> task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" }) })
 channel.receive(outs)
-task.join_handle(worker)
+let _ = stream.collect(worker)
 task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
 ";
     for slice in [Slice::Whole, Slice::OneStep] {
@@ -403,7 +407,8 @@ task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
 #[test]
 fn a_task_shows_a_value_of_a_later_entry_in_its_own_code() {
     let (output, errors) = repl(
-        "import task
+        "import stream
+import task
 import channel
 let values = channel.new(8)
 let outs = channel.new(8)
@@ -413,12 +418,12 @@ fn show() {
     None -> ()
   }
 }
-let shower = task.spawn { -> show() }
+let shower = stream.from_fn { _ -> show() }
 type Q { q: Int }
 trait Display for Q { fn display(self) -> String { \"Q!\" } }
 channel.send(values, [Q { q: 3 }])
 channel.receive(outs)
-task.join_handle(shower)
+let _ = stream.collect(shower)
 ",
     );
     assert_eq!(
@@ -434,7 +439,8 @@ task.join_handle(shower)
 #[test]
 fn an_entry_that_fails_adds_nothing_a_task_sees() {
     let (output, errors) = repl(
-        "import task
+        "import stream
+import task
 import channel
 let jobs = channel.new(8)
 let outs = channel.new(8)
@@ -451,7 +457,7 @@ fn work(left) {
     }
   }
 }
-let worker = task.spawn { -> work(3) }
+let worker = stream.from_fn { _ -> work(3) }
 fn f() -> Int { \"not an Int\" }
 channel.send(jobs, { -> f() })
 channel.receive(outs)
@@ -461,7 +467,7 @@ channel.receive(outs)
 fn f() -> Int { 2 }
 channel.send(jobs, { -> f() + 20 })
 channel.receive(outs)
-task.join_handle(worker)
+let _ = stream.collect(worker)
 ",
     );
     assert_eq!(output, "Some(1)\nSome(11)\nSome(22)\n", "{errors}");
@@ -484,7 +490,8 @@ task.join_handle(worker)
 #[test]
 fn a_task_calls_a_function_defined_again_after_it_copied_the_old_one() {
     let (output, errors) = repl(
-        "import task
+        "import stream
+import task
 import channel
 let jobs = channel.new(8)
 let outs = channel.new(8)
@@ -501,7 +508,7 @@ fn work(left) {
     }
   }
 }
-let worker = task.spawn { -> work(4) }
+let worker = stream.from_fn { _ -> work(4) }
 channel.send(jobs, { -> f() })
 channel.receive(outs)
 fn f() -> Int { 2 }
@@ -512,7 +519,7 @@ channel.receive(outs)
 fn f() -> Int { 3 }
 channel.send(jobs, { -> f() * 10 })
 channel.receive(outs)
-task.join_handle(worker)
+let _ = stream.collect(worker)
 ",
     );
     assert_eq!(output, "Some(1)\nSome(2)\nSome(2)\nSome(30)\n", "{errors}");
@@ -527,7 +534,8 @@ task.join_handle(worker)
 #[test]
 fn a_second_impl_in_a_later_entry_is_refused() {
     let (output, errors) = repl(
-        "import task
+        "import stream
+import task
 import channel
 let jobs = channel.new(8)
 let outs = channel.new(8)
@@ -545,14 +553,14 @@ fn work(left) {
     }
   }
 }
-let worker = task.spawn { -> work(2) }
+let worker = stream.from_fn { _ -> work(2) }
 channel.send(jobs, { -> N.n(5) })
 channel.receive(outs)
 trait N for Int { fn n(self) -> String { \"second\" } }
 N.n(5)
 channel.send(jobs, { -> N.n(5) })
 channel.receive(outs)
-task.join_handle(worker)
+let _ = stream.collect(worker)
 ",
     );
     assert_eq!(
@@ -574,7 +582,8 @@ task.join_handle(worker)
 #[test]
 fn the_session_ends_while_a_task_runs_code_of_a_later_entry() {
     let (output, errors) = repl(
-        "import task
+        "import stream
+import task
 import channel
 let jobs = channel.new(8)
 fn spin(n) {
@@ -583,8 +592,10 @@ fn spin(n) {
     _ -> spin(n)
   }
 }
-let spinning = task.spawn { -> spin(0) }
-let waiting = task.spawn { -> channel.receive(channel.new(0)) }
+let spinning = stream.from_fn { _ -> spin(0) }
+let waiting = stream.from_fn { _ ->
+  let _ = channel.receive(channel.new(0))
+}
 fn later() -> Int { 7 }
 channel.send(jobs, { -> later() })
 channel.send(jobs, { -> later() + 1 })
@@ -619,13 +630,14 @@ pub let ready = match io.read_file(\"X2_READY\") {
 /// asked what the module defines, as the session's own code is.
 fn import_twice(work: &str) -> String {
     format!(
-        "import task
+        "import stream
+import task
 import channel
 import io
 let jobs = channel.new(8)
 let outs = channel.new(8)
 {work}
-let worker = task.spawn {{ -> work(2) }}
+let worker = stream.from_fn {{ _ -> work(2) }}
 let _ = io.write_file(\"X2_STAMP\", \"one\")
 import late
 fn poke() -> String {{ \"poke\" }}
@@ -637,8 +649,11 @@ import late
 \"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\"
 channel.send(jobs, {{ -> \"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\" }})
 channel.receive(outs)
-task.join_handle(worker)
-task.join_handle(task.spawn {{ -> \"{{late.stamp}} {{late.tag()}}\" }})
+let _ = stream.collect(worker)
+match task.map([1], 1) {{ _ -> \"{{late.stamp}} {{late.tag()}}\" }} {{
+  [v] -> v
+  _ -> \"none\"
+}}
 "
     )
 }
@@ -756,12 +771,12 @@ fn a_session_sets_no_slot_twice() {
     let ok = |shown: &str| Ok(shown.to_string());
     let failed = |error: &str| Err(error.to_string());
     for entry in [
-        "import task\nimport channel\nimport io",
+        "import stream\nimport task\nimport channel\nimport io",
         "let jobs = channel.new(8)\nlet outs = channel.new(8)",
         "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { N.n(v) }",
         "fn work() {\n  match channel.receive(jobs) {\n    Some(job) -> {\n      \
          channel.send(outs, job())\n      work()\n    }\n    None -> ()\n  }\n}",
-        "let worker = task.spawn { -> work() }",
+        "let worker = stream.from_fn { _ -> work() }",
     ] {
         assert_eq!(run(entry), ok("()"), "{entry}");
     }

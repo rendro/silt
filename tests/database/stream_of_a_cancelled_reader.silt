@@ -1,7 +1,7 @@
--- A task reads one row of a `postgres.stream` of 3,000 and is
--- cancelled; `main` returns. Nobody closed the channel, and the
--- stream's sender waits for room in it (it holds 256 rows): it is
--- dropped as the program ends, as a task that waits to send is, and
+-- A helper reads one row of a `postgres.stream` of 3,000 and is
+-- stopped (its body returned); `main` returns. Nobody closed the
+-- channel, and the stream's sender waits for room in it (it holds 256
+-- rows): the channel is let go with the helper, the sender stops, and
 -- the program ends. With a sender that went on waiting the program
 -- would print the same two lines and never exit, and the suite would
 -- report that it did not exit within its 60 seconds.
@@ -22,7 +22,7 @@ fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
       let got: Channel(String) = channel.new(1)
-      let reader = task.spawn { ->
+      let reader = { ->
         match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", (), json.Value) {
           Ok(rows) -> {
             let first = match channel.receive(rows) {
@@ -31,7 +31,7 @@ fn main() {
               _ -> "no row"
             }
             channel.send(got, first)
-            -- Waits until it is cancelled.
+            -- Waits until it is stopped.
             let _ = channel.receive(got)
             let _ = channel.receive(got)
             ()
@@ -39,12 +39,13 @@ fn main() {
           Err(e) -> channel.send(got, "postgres.stream: {e}")
         }
       }
-      match channel.receive(got) {
-        Some(said) -> println(said)
-        None -> println("the reader said nothing")
+      task.background([reader]) { ->
+        match channel.receive(got) {
+          Some(said) -> println(said)
+          None -> println("the reader said nothing")
+        }
       }
-      task.cancel(reader)
-      println("the reader is cancelled, main returns")
+      println("the reader is stopped, main returns")
     }
     Err(e) -> println("connect: {e}")
   }

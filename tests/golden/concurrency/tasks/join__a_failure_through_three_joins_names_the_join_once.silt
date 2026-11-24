@@ -1,19 +1,21 @@
 -- exit: 1
--- A failure that goes through several joins says "joined task failed"
--- once: the call stack shows the tasks it went through and their joins.
+-- A failure that goes through several joins is one report: the call
+-- stack shows the pieces it went through and their joins.
 import task
 
 fn work(n) {
-  100 / n
+  let _ = 100 / n
+}
+
+fn inner() {
+  task.join([{ -> work(0) }])
+}
+
+fn middle() {
+  task.join([{ -> inner() }])
 }
 
 fn main() {
-  let outer = task.spawn { ->
-    let middle = task.spawn { ->
-      let inner = task.spawn { -> work(0) }
-      task.join_handle(inner)
-    }
-    task.join_handle(middle)
-  }
-  println(task.join_handle(outer))
+  task.join([{ -> middle() }])
+  println("not reached")
 }

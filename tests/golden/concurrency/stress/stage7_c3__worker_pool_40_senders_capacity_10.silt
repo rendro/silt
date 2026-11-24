@@ -10,23 +10,24 @@ import task
 fn main() {
   let jobs = channel.new(10)
   let results = channel.new(10)
-  let senders = 0..39 |> list.map { s -> task.spawn({ ->
-    1..25 |> list.each { j -> channel.send(jobs, s * 25 + j) }
-  }) }
-  let workers = 1..4 |> list.map { _ -> task.spawn({ ->
-    channel.each(jobs) { n -> channel.send(results, n * 2) }
-  }) }
-  let sum = loop left = 1000, acc = 0 {
-    match left {
-      0 -> acc
-      _ -> match channel.receive(results) {
-        Some(v) -> loop(left - 1, acc + v)
-        None -> acc
+  let senders = 0..39
+    |> list.map { s -> { -> 1..25 |> list.each { j -> channel.send(jobs, s * 25 + j) } } }
+  let send_all = { ->
+    task.join(senders)
+    channel.close(jobs)
+  }
+  let work = { -> task.each(jobs, 4) { n -> channel.send(results, n * 2) } }
+  let collect = { ->
+    let sum = loop left = 1000, acc = 0 {
+      match left {
+        0 -> acc
+        _ -> match channel.receive(results) {
+          Some(v) -> loop(left - 1, acc + v)
+          None -> acc
+        }
       }
     }
+    println("sum={sum}")
   }
-  senders |> list.each { h -> task.join_handle(h) }
-  channel.close(jobs)
-  workers |> list.each { h -> task.join_handle(h) }
-  println("sum={sum}")
+  task.join([send_all, work, collect])
 }

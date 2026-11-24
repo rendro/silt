@@ -4,21 +4,22 @@
 -- A real deadlock is still reported when a timer was involved: the
 -- task waits for a timer, and afterwards for a channel that nobody
 -- sends on. The report comes after the timer has fired. Passes with
--- and without the fix.
+-- and without the fix. (The task is the function of a
+-- `stream.from_fn`, which runs beside the program's own thread.)
 import channel
-import task
+import stream
 import time
 
 fn main() {
   let x = channel.new(0)
   let dead = channel.new(0)
-  let h = task.spawn({ ->
+  let _feed = stream.from_fn { _ ->
     let t = channel.timeout(time.ms(100))
     let _ = channel.receive(t)
     println("timer fired")
     let _ = channel.receive(dead)
     channel.send(x, 1)
-  })
+  }
   match channel.receive(x) {
     Some(v) -> println("main got: {v}")
     None -> println("main got no message")

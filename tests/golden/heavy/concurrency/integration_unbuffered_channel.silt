@@ -1,19 +1,22 @@
 -- repeat: 3
 -- Rendezvous: sender blocks until receiver is ready.
--- Receive before join to avoid deadlock.
-import io
+-- The body receives while the helper sends.
+
 import channel
+import io
 import task
+
 fn program() {
   let ch = channel.new(0)
 
-  let producer = task.spawn({ ->
-    channel.send(ch, 99)
-  })
+  let producer = { -> channel.send(ch, 99) }
 
-  when let Some(val) = channel.receive(ch) else { panic("pattern did not match") }
-  task.join_handle(producer)
-  val
+  task.background([producer]) { ->
+    when let Some(val) = channel.receive(ch) else {
+      panic("pattern did not match")
+    }
+    val
+  }
 }
 
 fn main() {

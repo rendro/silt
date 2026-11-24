@@ -25,7 +25,9 @@ fn answer(req: http.Request) -> http.Response {
   }
   http.Response {
     status: 200,
-    body: bytes.from_string("id {wrote}; mixed-case key {mixed}; all lower {lower}; {bytes.length(req.body)} bytes {bytes.to_hex(req.body)}; {text}"),
+    body: bytes.from_string(
+      "id {wrote}; mixed-case key {mixed}; all lower {lower}; {bytes.length(req.body)} bytes {bytes.to_hex(req.body)}; {text}",
+    ),
     headers: #{ "X-Answered-By": "silt" },
   }
 }
@@ -33,7 +35,9 @@ fn answer(req: http.Request) -> http.Response {
 -- One request, written by hand: the header's name in mixed case, and a
 -- body of the given bytes.
 fn ask(port: Int, body: Bytes) -> String {
-  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { return "cannot connect" }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+    return "cannot connect"
+  }
   let cr = string.from_char_code(13) |> option.unwrap_or("")
   let head = "POST /upload HTTP/1.1{cr}\nHost: x{cr}\nX-ReQuEsT-Id: 42{cr}\nContent-Length: {bytes.length(body)}{cr}\nConnection: close{cr}\n{cr}\n"
   let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), body))
@@ -56,16 +60,20 @@ fn ask(port: Int, body: Bytes) -> String {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let port = tcp.local_port(listener)
-  let server = task.spawn { -> http.serve(listener, answer) }
-  println(ask(port, bytes.from_string("héllo")))
-  println(ask(port, bytes.from_list([0, 255, 254, 104]) |> result.unwrap_or(bytes.empty())))
-  match http.get(url_of("http://127.0.0.1:{port}/")) {
-    Ok(r) -> println("{map.get(r.headers, "x-answered-by")} {map.contains(r.headers, "X-Answered-By")}")
-    Err(e) -> println("{e}")
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
   }
-  task.cancel(server)
+  let port = tcp.local_port(listener)
+  let server = { -> http.serve(listener, answer) }
+  task.background([server]) { ->
+    println(ask(port, bytes.from_string("héllo")))
+    println(ask(port, bytes.from_list([0, 255, 254, 104]) |> result.unwrap_or(bytes.empty())))
+    match http.get(url_of("http://127.0.0.1:{port}/")) {
+      Ok(r) ->
+        println("{map.get(r.headers, "x-answered-by")} {map.contains(r.headers, "X-Answered-By")}")
+      Err(e) -> println("{e}")
+    }
+  }
 }
 
 fn url_of(text: String) -> url.Url {

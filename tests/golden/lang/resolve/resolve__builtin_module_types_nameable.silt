@@ -1,12 +1,17 @@
 -- verdict: same
 -- Every builtin type can be named, through the module that offers it:
--- `task.Handle(a)`, `int.IntError` and `float.FloatError` (two types
+-- `task.RuntimeError`, `int.IntError` and `float.FloatError` (two types
 -- with variants of the same names, each reached through its module),
 -- and the prelude's `TypeOf(a)`, the type of a type used as a value.
 import task
 import float
 import int
-fn wait(h: task.Handle(Int)) -> Int { task.join_handle(h) }
+fn value(r: Result(Int, task.RuntimeError)) -> Int {
+  match r {
+    Ok(n) -> n
+    Err(_) -> 0
+  }
+}
 fn pf(s: String) -> Result(Float, float.FloatError) { float.parse(s) }
 fn pi(s: String) -> Result(Int, int.IntError) { int.parse(s) }
 fn kind(e: float.FloatError) -> String {
@@ -25,7 +30,7 @@ fn int_kind(e: int.IntError) -> String {
 }
 fn desc(t: TypeOf(Int)) -> Int { 1 }
 fn main() {
-  println(wait(task.spawn({ -> 41 + 1 })))
+  println(value(task.guard({ -> 41 + 1 })))
   match pf("") {
     Ok(_) -> println("ok")
     Err(e) -> println(kind(e))

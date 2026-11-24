@@ -11,28 +11,29 @@ fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
   let returned = channel.new(2)
-  let ha = task.spawn({ ->
+  let send_a = { ->
     channel.send(a, 1)
     channel.send(returned, 1)
-  })
-  let hb = task.spawn({ ->
+  }
+  let send_b = { ->
     channel.send(b, 2)
     channel.send(returned, 2)
-  })
-  let (first, other) = match channel.select([channel.Recv(a), channel.Recv(b)]) {
-    channel.Received(_, Some(1)) -> (1, b)
-    channel.Received(_, Some(2)) -> (2, a)
-    _ -> panic("the select received nothing")
   }
-  let one = channel.receive(returned)
-  time.sleep(time.ms(20))
-  let none = channel.try_receive(returned)
-  let second = channel.receive(other)
-  let two = channel.receive(returned)
-  task.join_handle(ha)
-  task.join_handle(hb)
-  println(one == Some(first))
-  println(none)
-  println(second == Some(3 - first))
-  println(two == Some(3 - first))
+  let select = { ->
+    let (first, other) = match channel.select([channel.Recv(a), channel.Recv(b)]) {
+      channel.Received(_, Some(1)) -> (1, b)
+      channel.Received(_, Some(2)) -> (2, a)
+      _ -> panic("the select received nothing")
+    }
+    let one = channel.receive(returned)
+    time.sleep(time.ms(20))
+    let none = channel.try_receive(returned)
+    let second = channel.receive(other)
+    let two = channel.receive(returned)
+    println(one == Some(first))
+    println(none)
+    println(second == Some(3 - first))
+    println(two == Some(3 - first))
+  }
+  task.join([send_a, send_b, select])
 }

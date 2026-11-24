@@ -215,13 +215,16 @@ fn host_function_returning_nan_raises() {
 }
 
 #[test]
-fn host_function_runs_in_a_spawned_task() {
+fn host_function_runs_in_a_task() {
     let source = r#"
 import mylib
 import task
+import time
 fn main() {
-  let t = task.spawn { -> mylib.double(21) }
-  host.give(task.join_handle(t))
+  match task.deadline(time.seconds(60), { -> mylib.double(21) }) {
+    Some(n) -> host.give(n)
+    None -> host.give(0)
+  }
 }
 import host
 "#;

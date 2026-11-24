@@ -1,30 +1,35 @@
 -- cmd: test
 -- timeout: 10
 -- requires-feature: tcp
--- stderr-contains: PASS stage7_c5__a_cancelled_accept_does_not_keep_its_test_test.silt::test_a_cancels_its_acceptor
--- stderr-contains: PASS stage7_c5__a_cancelled_accept_does_not_keep_its_test_test.silt::test_b_leaves_its_acceptor
+-- stderr-contains: PASS stage7_c5__a_cancelled_accept_does_not_keep_its_test_test.silt::test_a_stops_its_acceptor
+-- stderr-contains: PASS stage7_c5__a_cancelled_accept_does_not_keep_its_test_test.silt::test_b_bounds_its_accept
 -- stderr-contains: PASS stage7_c5__a_cancelled_accept_does_not_keep_its_test_test.silt::test_c_runs
 -- stderr-contains: 3 tests: 3 passed, 0 failed
--- The first test cancels a task that waits in `tcp.accept`; the
--- second leaves one. The first ends at once. The second lasts for
--- as long as its accept is in flight, which a `task.deadline` bounds:
--- a wait for I/O is waited for.
+-- The first test stops a helper that waits in `tcp.accept` (its body
+-- returns); the second waits in an accept that a `task.deadline`
+-- bounds. The first ends at once, the second when its deadline has
+-- passed: neither keeps its test.
 import task
 import tcp
 import test
 import time
 
-fn test_a_cancels_its_acceptor() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let acceptor = task.spawn { -> tcp.accept(listener) }
-  time.sleep(time.ms(20))
-  task.cancel(acceptor)
+fn test_a_stops_its_acceptor() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let acceptor = { ->
+    let _ = tcp.accept(listener)
+  }
+  task.background([acceptor]) { -> time.sleep(time.ms(20)) }
   test.assert_eq(1, 1)
 }
 
-fn test_b_leaves_its_acceptor() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let _acceptor = task.spawn { -> task.deadline(time.ms(50), { -> tcp.accept(listener) }) }
+fn test_b_bounds_its_accept() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let _ = task.deadline(time.ms(50)) { -> tcp.accept(listener) }
   test.assert_eq(1, 1)
 }
 

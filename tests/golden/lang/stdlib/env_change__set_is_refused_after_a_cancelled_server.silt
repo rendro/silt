@@ -1,10 +1,10 @@
 -- exit: 1
 -- requires-feature: http
--- stdout-contains: cancelled
+-- stdout-contains: stopped
 -- stderr-contains: error[runtime]
 -- stderr-contains: 
 -- stderr-not-contains: not reached
--- A server that was started and cancelled leaves the program as one
+-- A server that was started and stopped leaves the program as one
 -- that has started tasks and I/O.
 import bytes
 import env
@@ -14,11 +14,11 @@ import tcp
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let server = task.spawn { ->
+  let server = { ->
     http.serve(listener) { _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} } }
   }
-  task.cancel(server)
-  println("cancelled")
+  task.background([server]) { -> () }
+  println("stopped")
   env.set("SILT_ENV_CHANGE_G", "1")
   println("not reached")
 }

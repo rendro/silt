@@ -18,7 +18,7 @@ fn main() {
     panic("cannot listen")
   }
   let seen = channel.new(1)
-  let _peer = task.spawn { ->
+  let peer = { ->
     when let Ok(conn) = tcp.accept(listener) else {
       panic("cannot accept")
     }
@@ -38,17 +38,19 @@ fn main() {
       Err(_) -> channel.send(seen, "the peer saw the connection end")
     }
   }
-  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
-    panic("cannot connect")
-  }
-  let lines = stream.tcp_lines(conn) |> stream.collect
-  println(lines)
-  when let Some(said) = channel.receive(seen) else {
-    panic("the peer said nothing")
-  }
-  println(said)
-  match tcp.write(conn, bytes.from_string("x")) {
-    Err(tcp.Closed) -> println("closed")
-    _ -> println("something else")
+  task.background([peer]) { ->
+    when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+      panic("cannot connect")
+    }
+    let lines = stream.tcp_lines(conn) |> stream.collect
+    println(lines)
+    when let Some(said) = channel.receive(seen) else {
+      panic("the peer said nothing")
+    }
+    println(said)
+    match tcp.write(conn, bytes.from_string("x")) {
+      Err(tcp.Closed) -> println("closed")
+      _ -> println("something else")
+    }
   }
 }

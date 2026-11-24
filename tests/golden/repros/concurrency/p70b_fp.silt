@@ -1,17 +1,20 @@
 -- verdict: same
 import channel
+import option
 import task
 
 fn one_round(i) {
   let ch = channel.new(1)
-  let a = task.spawn(fn() {
-    match channel.receive(ch) {
+  let got = channel.new(1)
+  let a = fn() {
+    channel.send(got, match channel.receive(ch) {
       Some(v) -> v
       None -> 0 - 1
-    }
-  })
-  let b = task.spawn(fn() { channel.send(ch, i) })
-  task.join_handle(a)
+    })
+  }
+  let b = fn() { channel.send(ch, i) }
+  task.join([a, b])
+  channel.receive(got) |> option.unwrap_or(0 - 1)
 }
 
 fn go(i, acc) {

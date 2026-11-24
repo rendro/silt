@@ -116,16 +116,16 @@ warning[type]: 'b' is never used
       -> closure in test_callback  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:105:49
       -> test_callback  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:105:11
   FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_task
-    error[runtime]: joined task failed: division by zero
+    error[runtime]: division by zero
      --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
         |
      46 |   10 / (n - n)
-        |   ^^^^^^^^^^^^ joined task failed: division by zero
+        |   ^^^^^^^^^^^^ division by zero
 
     call stack:
       -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
       -> wrap  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:58:7
-      -> closure in test_task  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:109:58
+      -> closure in test_task  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:109:49
       -> test_task  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:109:11
   FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_twice
     error[runtime]: division by zero

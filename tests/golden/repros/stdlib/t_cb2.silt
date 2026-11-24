@@ -4,26 +4,23 @@ import list
 import task
 import time
 
--- same but inside a spawned task
+-- same but inside a task
 fn main() {
   let a = channel.new(1)
   let b = channel.new(1)
-  let sender = task.spawn { ->
+  let sender = { ->
     time.sleep(time.ms(50))
     channel.send(a, 1)
     time.sleep(time.ms(50))
     channel.send(b, 2)
   }
-  let worker = task.spawn { ->
+  let worker = { ->
     let marker = "marker"
     let r = list.map([a, b], channel.receive)
     let after = "after"
     println(marker)
     println(r)
     println(after)
-    r
   }
-  let out = task.join_handle(worker)
-  println(out)
-  task.join_handle(sender)
+  task.join([sender, worker])
 }

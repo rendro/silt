@@ -1,13 +1,13 @@
 -- repeat: 10
--- stderr-not-contains: deadlock on main thread
+-- stderr-not-contains: deadlock
 -- A producer notes each send that the channel accepted, a consumer
--- counts the values it received until `None`, and the main thread
+-- counts the values it received until `None`, and a third task
 -- closes the channel in the middle. Every accepted value must arrive.
 -- Without the fix a send can be accepted after the consumer has seen
 -- `None`; that is rare (about one run in ten loses a value).
 --
 -- The close ends the producer: its next send is a runtime error, which
--- the cancel dismisses. What it sent before is what it noted in `acks`
+-- its guard catches. What it sent before is what it noted in `acks`
 -- (a note is written after its send, so the notes never count a send
 -- that was not accepted).
 import channel
@@ -45,12 +45,20 @@ fn go(i, rounds, lost) {
     true -> {
       let ch = channel.new(8)
       let acks = channel.new(65536)
-      let c = task.spawn({ -> consume(ch, 0) })
-      let s = task.spawn({ -> produce(ch, acks, 0) })
-      let _ = spin(200 + i % 97)
-      channel.close(ch)
-      let received = task.join_handle(c)
-      task.cancel(s)
+      let counted = channel.new(1)
+      let consumer = { -> channel.send(counted, consume(ch, 0)) }
+      let producer = { ->
+        let _ = task.guard { -> produce(ch, acks, 0) }
+      }
+      let closer = { ->
+        let _ = spin(200 + i % 97)
+        channel.close(ch)
+      }
+      task.join([consumer, producer, closer])
+      let received = match channel.receive(counted) {
+        Some(n) -> n
+        None -> 0
+      }
       let sent = noted(acks, 0)
       match sent > received {
         true -> go(i + 1, rounds, lost + sent - received)

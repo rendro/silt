@@ -3,14 +3,18 @@
 -- 16 senders wait on a channel without a buffer while the program is
 -- busy between its receives. Every sender waits, and the program does
 -- not: that is no deadlock, and every value arrives (1+..+16 = 136).
+-- (The senders are the pieces of a `task.join` in the function of a
+-- `stream.from_fn`, which runs beside the program's own thread.)
 import channel
 import list
+import stream
 import task
 
 fn main() {
   let ch = channel.new(0)
-  let _senders = 1..16
-    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
+  let senders = stream.from_fn { _ ->
+    task.join(list.map(1..16) { i -> { -> channel.send(ch, i) } })
+  }
   let sum = loop c = 0, acc = 0 {
     let _busy = loop k = 0 {
       match k >= 5000 {
@@ -26,5 +30,6 @@ fn main() {
       }
     }
   }
+  let _ = stream.collect(senders)
   println(sum)
 }

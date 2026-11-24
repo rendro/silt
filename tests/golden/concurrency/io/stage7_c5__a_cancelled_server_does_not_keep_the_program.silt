@@ -1,8 +1,8 @@
 -- timeout: 10
 -- requires-feature: http
--- A server that runs in a task is cancelled before `main` returns,
--- as the docs tell a program with a server loop to do. The server
--- ends with the task that served: the program ends. (The listener is
+-- A server that runs as a helper of `task.background` is stopped when
+-- the body returns, before `main` returns. The server ends with the
+-- helper that served: the program ends. (The listener is
 -- bound before the server starts, so the first request needs no
 -- waiting: it is queued until the server accepts it.)
 import bytes
@@ -19,9 +19,11 @@ fn get(link) {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let link = "http://127.0.0.1:{tcp.local_port(listener)}"
-  let server = task.spawn { ->
+  let server = { ->
     http.serve(listener) { req ->
       match url.path(req.url) {
         "/boom" -> panic("handler fails")
@@ -29,10 +31,11 @@ fn main() {
       }
     }
   }
-  println(get("{link}/"))
-  println(get("{link}/boom"))
-  task.cancel(server)
-  println("server cancelled")
+  task.background([server]) { ->
+    println(get("{link}/"))
+    println(get("{link}/boom"))
+  }
+  println("server stopped")
 }
 
 fn url_of(text: String) -> url.Url {

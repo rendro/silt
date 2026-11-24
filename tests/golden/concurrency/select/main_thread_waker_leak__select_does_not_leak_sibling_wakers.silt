@@ -1,26 +1,24 @@
 -- repeat: 3
 -- After a main-thread select is resolved by one channel, the losing
--- channel has no parked receiver left: try_send on it must fail.
+-- channel has no parked receiver left: try_send on it must fail. (The
+-- feeder is the function of a `stream.from_fn`, a task that runs while
+-- the main thread selects; reading its stream waits for its end.)
 import channel
-import task
+import stream
 import time
 
 fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
-  let feeder = task.spawn { ->
+  let feeder = stream.from_fn { _ ->
     time.sleep(time.ms(50))
     channel.send(a, 1)
   }
 
   match channel.select([channel.Recv(a), channel.Recv(b)]) {
     channel.Received(_, Some(_)) -> {
-      task.join_handle(feeder)
-      let probe = task.spawn { ->
-        channel.try_send(b, 999)
-      }
-      let ok = task.join_handle(probe)
-      match ok {
+      let _ = stream.collect(feeder)
+      match channel.try_send(b, 999) {
         true -> println("BUG:leaked_select_sibling_phantom_send")
         false -> println("ok:select")
       }

@@ -13,28 +13,37 @@ import tcp
 import url
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
-  when let Ok(bad) = bytes.from_list([255]) else { panic("no byte") }
-  let answer = bytes.concat_all([
-    bytes.from_string("HTTP/1.1 200 OK\r\nX-Name: Ren\u{e9}\r\nX-Name: o"),
-    bad,
-    bytes.from_string("k\r\nX-Plain: yes\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
-  ])
-  let peer = task.spawn { ->
-    when let Ok(c) = tcp.accept(listener) else { return () }
+  when let Ok(bad) = bytes.from_list([255]) else {
+    panic("no byte")
+  }
+  let answer = bytes.concat_all(
+    [
+      bytes.from_string("HTTP/1.1 200 OK\r\nX-Name: Ren\u{e9}\r\nX-Name: o"),
+      bad,
+      bytes.from_string("k\r\nX-Plain: yes\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+    ],
+  )
+  let peer = { ->
+    when let Ok(c) = tcp.accept(listener) else {
+      return ()
+    }
     let _ = tcp.read(c, 65536)
     let _ = tcp.write(c, answer)
     tcp.close(c)
   }
-  match http.get(url_of("http://127.0.0.1:{port}/")) {
-    Ok(response) -> {
-      println("x-name: {map.get(response.headers, "x-name") |> option.unwrap_or("none")}")
-      println("x-plain: {map.get(response.headers, "x-plain") |> option.unwrap_or("none")}")
+  task.background([peer]) { ->
+    match http.get(url_of("http://127.0.0.1:{port}/")) {
+      Ok(response) -> {
+        println("x-name: {map.get(response.headers, "x-name") |> option.unwrap_or("none")}")
+        println("x-plain: {map.get(response.headers, "x-plain") |> option.unwrap_or("none")}")
+      }
+      Err(e) -> println("error: {e}")
     }
-    Err(e) -> println("error: {e}")
   }
-  task.join_handle(peer)
 }
 
 fn url_of(text: String) -> url.Url {

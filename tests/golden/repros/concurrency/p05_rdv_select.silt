@@ -1,5 +1,6 @@
 -- verdict: same
 import channel
+import option
 import task
 import time
 
@@ -7,24 +8,34 @@ fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
   let done = channel.new(4)
+  let took = channel.new(1)
   -- one receiver, takes exactly ONE message from either a or b, then exits
-  let r = task.spawn(fn() {
-    match channel.select([channel.Recv(a), channel.Recv(b)]) {
+  let r = fn() {
+    channel.send(took, match channel.select([channel.Recv(a), channel.Recv(b)]) {
       channel.Received(^a, Some(v)) -> "r took a:{v}"
       channel.Received(^b, Some(v)) -> "r took b:{v}"
       _ -> "r other"
+    })
+  }
+  let s1 = fn() {
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+    channel.send(done, "s1 send returned")
+  }
+  let s2 = fn() {
+    time.sleep(time.ms(50))
+    channel.send(b, 2)
+    channel.send(done, "s2 send returned")
+  }
+  task.background([r, s1, s2], fn() {
+    println(channel.receive(took) |> option.unwrap_or(""))
+    time.sleep(time.ms(200))
+    -- rendezvous: exactly one sender can have completed
+    loop _ = () {
+      match channel.try_receive(done) {
+        channel.Message(m) -> { println(m)  loop(()) }
+        _ -> ()
+      }
     }
   })
-  time.sleep(time.ms(50))
-  let s1 = task.spawn(fn() { channel.send(a, 1)  channel.send(done, "s1 send returned") })
-  let s2 = task.spawn(fn() { channel.send(b, 2)  channel.send(done, "s2 send returned") })
-  println(task.join_handle(r))
-  time.sleep(time.ms(200))
-  -- rendezvous: exactly one sender can have completed
-  loop _ = () {
-    match channel.try_receive(done) {
-      channel.Message(m) -> { println(m)  loop(()) }
-      _ -> ()
-    }
-  }
 }

@@ -18,7 +18,7 @@ fn main() {
   }
   let gone = channel.new(0)
   let seen = channel.new(1)
-  let _peer = task.spawn { ->
+  let peer = { ->
     when let Ok(conn) = tcp.accept(listener) else {
       panic("cannot accept")
     }
@@ -35,20 +35,22 @@ fn main() {
       Err(_) -> channel.send(seen, "the peer saw the connection end")
     }
   }
-  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
-    panic("cannot connect")
+  task.background([peer]) { ->
+    when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+      panic("cannot connect")
+    }
+    let none = stream.tcp_lines(conn) |> stream.take(0) |> stream.collect
+    println("took {none}")
+    channel.send(gone, ())
+    -- `conn` still holds the connection: it is open both ways.
+    match tcp.write(conn, bytes.from_string("x")) {
+      Ok(_) -> println("the connection is still open")
+      Err(e) -> println("the write: {e}")
+    }
+    when let Some(said) = channel.receive(seen) else {
+      panic("the peer said nothing")
+    }
+    println(said)
+    tcp.close(conn)
   }
-  let none = stream.tcp_lines(conn) |> stream.take(0) |> stream.collect
-  println("took {none}")
-  channel.send(gone, ())
-  -- `conn` still holds the connection: it is open both ways.
-  match tcp.write(conn, bytes.from_string("x")) {
-    Ok(_) -> println("the connection is still open")
-    Err(e) -> println("the write: {e}")
-  }
-  when let Some(said) = channel.receive(seen) else {
-    panic("the peer said nothing")
-  }
-  println(said)
-  tcp.close(conn)
 }

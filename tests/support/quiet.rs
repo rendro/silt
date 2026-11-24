@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// A task waits in `tcp.accept`, and the program itself in another.
+/// A helper task waits in `tcp.accept`, and the body in another.
 pub const ACCEPTS: &str = r#"
 import task
 import tcp
@@ -26,13 +26,16 @@ import tcp
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   when let Ok(other) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let _ = task.spawn { -> tcp.accept(listener) }
-  println("waiting")
-  let _ = tcp.accept(other)
+  task.background([{ ->
+    let _ = tcp.accept(listener)
+  }]) { ->
+    println("waiting")
+    let _ = tcp.accept(other)
+  }
 }
 "#;
 
-/// A task serves HTTP, and the program itself waits in `tcp.accept`.
+/// A helper task serves HTTP, and the body waits in `tcp.accept`.
 #[cfg(feature = "http")]
 pub const SERVER: &str = r#"
 import bytes
@@ -43,11 +46,12 @@ import tcp
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   when let Ok(other) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let _ = task.spawn { ->
+  task.background([{ ->
     http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} } }
+  }]) { ->
+    println("waiting")
+    let _ = tcp.accept(other)
   }
-  println("waiting")
-  let _ = tcp.accept(other)
 }
 "#;
 

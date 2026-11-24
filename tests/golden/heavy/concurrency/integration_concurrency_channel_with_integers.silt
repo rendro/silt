@@ -1,21 +1,29 @@
 -- repeat: 3
-import io
+
 import channel
+import io
 import task
+
 fn program() {
   let ch = channel.new(5)
 
-  let producer = task.spawn({ ->
+  let producer = { ->
     channel.send(ch, 10)
     channel.send(ch, 20)
     channel.send(ch, 30)
-  })
+  }
 
-  task.join_handle(producer)
+  task.join([producer])
 
-  when let Some(a) = channel.receive(ch) else { panic("pattern did not match") }
-  when let Some(b) = channel.receive(ch) else { panic("pattern did not match") }
-  when let Some(c) = channel.receive(ch) else { panic("pattern did not match") }
+  when let Some(a) = channel.receive(ch) else {
+    panic("pattern did not match")
+  }
+  when let Some(b) = channel.receive(ch) else {
+    panic("pattern did not match")
+  }
+  when let Some(c) = channel.receive(ch) else {
+    panic("pattern did not match")
+  }
   a + b + c
 }
 

@@ -59,6 +59,8 @@ import host
     // body that produced this error lived in `ServerStreamWrapper`.
     let server_src = r#"
 import bytes
+import channel
+import option
 import tcp
 import task
 import time
@@ -66,20 +68,24 @@ import time
 fn main() {
   host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
-      let server = task.spawn({ ->
+      let answer = channel.new(1)
+      let server = { ->
         let bad_cert = bytes.from_string("not a real cert")
         let bad_key = bytes.from_string("not a real key")
-        match tcp.accept(listener) {
+        channel.send(answer, match tcp.accept(listener) {
           Ok(conn) -> match tcp.tls_server(conn, bad_cert, bad_key) {
             Ok(_) -> "wrong: server expected to fail"
             Err(e) -> "{e}"
           }
           Err(e) -> "{e}"
-        }
-      })
-      time.sleep(time.ms(50))
-      let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
-      task.join_handle(server)
+        })
+      }
+      let client = { ->
+        time.sleep(time.ms(50))
+        let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
+      }
+      task.join([server, client])
+      channel.receive(answer) |> option.unwrap_or("no answer")
     }
     Err(e) -> "{e}"
   })

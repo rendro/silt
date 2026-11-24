@@ -2,7 +2,7 @@
 import task
 import list
 fn main() {
-  let hs = list.map(1..1000) { i -> task.spawn(fn() { i }) }
-  let total = list.fold(hs, 0) { acc, h -> acc + task.join_handle(h) }
+  let values = task.map(1..1000, 1000, fn(i) { i })
+  let total = list.fold(values, 0) { acc, v -> acc + v }
   println(total)
 }

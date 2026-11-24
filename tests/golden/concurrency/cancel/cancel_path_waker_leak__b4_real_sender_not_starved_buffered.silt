@@ -7,24 +7,30 @@ import time
 
 fn main() {
   let ch = channel.new(1)
-  channel.send(ch, 100)              -- fill the buffer
-  let dead = task.spawn({ -> channel.send(ch, 999) })   -- blocks
-  time.sleep(time.ms(50))
-  let real = task.spawn({ -> channel.send(ch, 7) })     -- queued behind
-  time.sleep(time.ms(50))
-  task.cancel(dead)
-  time.sleep(time.ms(50))
-  -- Drain the initial value. With the bug, wake_send pops the dead
-  -- waker (no-op) and `real` never wakes. With the fix, `real`
+  channel.send(ch, 100) -- fill the buffer
+  -- blocks until its deadline stops it
+  let dead = { ->
+    let _ = task.deadline(time.ms(100)) { -> channel.send(ch, 999) }
+  }
+  -- queued behind
+  let real = { ->
+    time.sleep(time.ms(50))
+    channel.send(ch, 7)
+  }
+  -- Drain the initial value after the stop. With the bug, wake_send pops
+  -- the dead waker (no-op) and `real` never wakes. With the fix, `real`
   -- wakes and its value lands in the buffer.
-  match channel.receive(ch) {
-    Some(_) -> ()
-    None -> ()
+  let drain = { ->
+    time.sleep(time.ms(150))
+    match channel.receive(ch) {
+      Some(_) -> ()
+      None -> ()
+    }
+    -- After `real` sent, its 7 must be in the buffer.
+    match channel.receive(ch) {
+      Some(v) -> println(v)
+      None -> println("CLOSED_OR_EMPTY")
+    }
   }
-  let _ = task.join_handle(real)
-  -- After `real` sent, its 7 must be in the buffer.
-  match channel.receive(ch) {
-    Some(v) -> println(v)
-    None -> println("CLOSED_OR_EMPTY")
-  }
+  task.join([dead, real, drain])
 }

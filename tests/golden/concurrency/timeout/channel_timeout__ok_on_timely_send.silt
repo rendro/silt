@@ -1,17 +1,21 @@
 -- repeat: 3
 -- A sibling sends well within the timeout: receive_timeout gives Message(v).
+-- (The sibling is the function of a `stream.from_fn`, which runs while
+-- the program's own thread waits.)
 import channel
-import task
+import stream
 import time
+
 fn main() {
   let ch = channel.new(0)
-  let _h = task.spawn({ ->
+  let sibling = stream.from_fn { _ ->
     time.sleep(time.ms(20))
     channel.send(ch, 42)
-  })
+  }
   let r = match channel.receive_timeout(ch, time.ms(1000)) {
     channel.Message(v) -> v
     _ -> -1
   }
+  let _ = stream.collect(sibling)
   println("{r}")
 }

@@ -6,16 +6,16 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let w1 = task.spawn(fn() {
+  let w1 = fn() {
     channel.each(ch) { msg -> println("w1: {msg}") }
-  })
-  let w2 = task.spawn(fn() {
+  }
+  let w2 = fn() {
     channel.each(ch) { msg -> println("w2: {msg}") }
-  })
+  }
+  let sender = fn() {
+    list.each(1..100) { n -> channel.send(ch, n) }
+    channel.close(ch)
+  }
 
-  list.each(1..100) { n -> channel.send(ch, n) }
-  channel.close(ch)
-
-  task.join_handle(w1)
-  task.join_handle(w2)
+  task.join([w1, w2, sender])
 }

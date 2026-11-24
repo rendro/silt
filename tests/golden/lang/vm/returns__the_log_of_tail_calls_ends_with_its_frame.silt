@@ -106,7 +106,7 @@ fn test_callback() {
 }
 
 fn test_task() {
-  println(task.join_handle(task.spawn { -> count(9, 0) + wrap(3) }))
+  println(task.map([3], 1) { n -> count(9, 0) + wrap(n) })
 }
 
 fn test_twice() {

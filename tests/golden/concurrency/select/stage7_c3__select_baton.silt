@@ -25,15 +25,24 @@ fn main() {
   let stop = channel.new(0)
   let goal = channel.new(1)
   let pairs = [(0, 1), (1, 2), (2, 3), (3, 0)]
-  let hs = pairs |> list.map { (a, b) ->
-    when let Some(inbox) = list.get(ring, a) else { panic("no inbox") }
-    when let Some(outbox) = list.get(ring, b) else { panic("no outbox") }
-    task.spawn({ -> runner(inbox, outbox, stop, goal) })
+  let runners = pairs
+    |> list.map { (a, b) ->
+      when let Some(inbox) = list.get(ring, a) else {
+        panic("no inbox")
+      }
+      when let Some(outbox) = list.get(ring, b) else {
+        panic("no outbox")
+      }
+      { -> runner(inbox, outbox, stop, goal) }
+    }
+  let start = { ->
+    when let Some(first) = list.get(ring, 0) else {
+      panic("no first")
+    }
+    channel.send(first, 1)
+    println(channel.receive(goal))
+    channel.close(stop)
   }
-  when let Some(first) = list.get(ring, 0) else { panic("no first") }
-  channel.send(first, 1)
-  println(channel.receive(goal))
-  channel.close(stop)
-  hs |> list.each { h -> task.join_handle(h) }
+  task.join(list.append(runners, start))
   println("done")
 }

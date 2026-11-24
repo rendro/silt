@@ -5,6 +5,7 @@
 -- or for a source that never ends. The deadline ends the function; the
 -- stream it read is cut short like any stream nobody reads any more.
 import channel
+import list
 import stream
 import task
 import time
@@ -18,12 +19,14 @@ fn recv(ch) {
 
 fn main() {
   let never = channel.new(0)
-  println(task.deadline(time.ms(20), { ->
-    stream.from_list([1, 2, 3]) |> stream.map { x -> x + recv(never) } |> stream.collect
-  }))
-  println(task.deadline(time.ms(20), { -> stream.repeat(1) |> stream.length }))
-  let inside = task.spawn { ->
-    task.deadline(time.ms(20), { -> channel.each(stream.repeat(1)) { x -> time.sleep(time.ms(1)) } })
+  println(
+    task.deadline(time.ms(20)) { ->
+      stream.from_list([1, 2, 3]) |> stream.map { x -> x + recv(never) } |> stream.collect
+    },
+  )
+  println(task.deadline(time.ms(20)) { -> stream.repeat(1) |> stream.length })
+  let inside = task.map([1], 1) { x ->
+    task.deadline(time.ms(20)) { -> channel.each(stream.repeat(x)) { _ -> time.sleep(time.ms(1)) } }
   }
-  println(task.join_handle(inside))
+  list.each(inside) { r -> println(r) }
 }

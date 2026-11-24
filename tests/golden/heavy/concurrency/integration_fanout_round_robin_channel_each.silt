@@ -7,59 +7,73 @@
 -- go to three different workers, whatever the scheduling. The other
 -- three are sent once the gate is open.
 -- Count messages per worker (100-series = w1, 200-series = w2, 300-series = w3)
-import io
+
 import channel
+import io
 import list
 import set
 import task
+
 fn program() {
   let jobs = channel.new(1)
   let results = channel.new(32)
   let gate = channel.new(0)
 
-  let w1 = task.spawn({ ->
+  let w1 = { ->
     channel.each(jobs) { n ->
       let _ = channel.receive(gate)
       channel.send(results, 100 + n)
     }
-  })
+  }
 
-  let w2 = task.spawn({ ->
+  let w2 = { ->
     channel.each(jobs) { n ->
       let _ = channel.receive(gate)
       channel.send(results, 200 + n)
     }
-  })
+  }
 
-  let w3 = task.spawn({ ->
+  let w3 = { ->
     channel.each(jobs) { n ->
       let _ = channel.receive(gate)
       channel.send(results, 300 + n)
     }
-  })
+  }
 
-  channel.send(jobs, 1)
-  channel.send(jobs, 2)
-  channel.send(jobs, 3)
-  -- The buffer holds one job; a fourth send returns only when a worker
-  -- has taken the third. Then every worker has a job.
-  channel.send(jobs, 4)
-  channel.close(gate)
-  channel.send(jobs, 5)
-  channel.send(jobs, 6)
-  channel.close(jobs)
+  let sender = { ->
+    channel.send(jobs, 1)
+    channel.send(jobs, 2)
+    channel.send(jobs, 3)
+    -- The buffer holds one job; a fourth send returns only when a worker
+    -- has taken the third. Then every worker has a job.
+    channel.send(jobs, 4)
+    channel.close(gate)
+    channel.send(jobs, 5)
+    channel.send(jobs, 6)
+    channel.close(jobs)
+  }
 
-  task.join_handle(w1)
-  task.join_handle(w2)
-  task.join_handle(w3)
+  task.join([w1, w2, w3, sender])
 
   -- Collect all results into a list
-  when let Some(a) = channel.receive(results) else { panic("expected a result") }
-  when let Some(b) = channel.receive(results) else { panic("expected a result") }
-  when let Some(c) = channel.receive(results) else { panic("expected a result") }
-  when let Some(d) = channel.receive(results) else { panic("expected a result") }
-  when let Some(e) = channel.receive(results) else { panic("expected a result") }
-  when let Some(f) = channel.receive(results) else { panic("expected a result") }
+  when let Some(a) = channel.receive(results) else {
+    panic("expected a result")
+  }
+  when let Some(b) = channel.receive(results) else {
+    panic("expected a result")
+  }
+  when let Some(c) = channel.receive(results) else {
+    panic("expected a result")
+  }
+  when let Some(d) = channel.receive(results) else {
+    panic("expected a result")
+  }
+  when let Some(e) = channel.receive(results) else {
+    panic("expected a result")
+  }
+  when let Some(f) = channel.receive(results) else {
+    panic("expected a result")
+  }
 
   let values = [a, b, c, d, e, f]
   -- Results are tagged by worker: 1xx from w1, 2xx from w2, 3xx from w3.

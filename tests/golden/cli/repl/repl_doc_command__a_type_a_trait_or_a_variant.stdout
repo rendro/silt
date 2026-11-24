@@ -54,5 +54,4 @@ Signals continuation in `list.fold_until`.
 type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
 type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
 file or directory missing
-type Handle(a)  -- opaque
 type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }

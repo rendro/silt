@@ -1,6 +1,6 @@
 -- repeat: 3
 -- stderr-not-contains: deadlock
--- B2: a cancelled receiver at the head of the waker queue must not
+-- B2: a stopped receiver at the head of the waker queue must not
 -- starve a real receiver queued behind it.
 import channel
 import task
@@ -8,33 +8,30 @@ import time
 
 fn main() {
   let ch = channel.new(0)
-  -- First receiver: gets cancelled. Its waker stays at HEAD of FIFO.
-  let dead = task.spawn({ ->
-    match channel.receive(ch) {
-      Some(_v) -> 1
-      None -> -1
-    }
-  })
-  time.sleep(time.ms(50))
+  let got = channel.new(1)
+  -- First receiver: its deadline stops it. Its waker stays at HEAD of FIFO.
+  let dead = { ->
+    let _ = task.deadline(time.ms(100)) { -> channel.receive(ch) }
+  }
   -- Second receiver: real, behind `dead` in FIFO.
-  let real = task.spawn({ ->
+  let real = { ->
+    time.sleep(time.ms(50))
     match channel.receive(ch) {
-      Some(v) -> v
-      None -> -1
+      Some(v) -> channel.send(got, v)
+      None -> channel.send(got, -1)
     }
-  })
-  time.sleep(time.ms(50))
-  task.cancel(dead)
-  time.sleep(time.ms(50))
-  -- Send a value. With the bug, wake_recv pops the dead waker (no-op)
-  -- and `real` never wakes. With the fix, the dead waker was
-  -- deregistered on cancel, so `real` is at the head and wakes
+  }
+  -- Send a value after the stop. With the bug, wake_recv pops the dead
+  -- waker (no-op) and `real` never wakes. With the fix, the dead waker
+  -- was deregistered on the stop, so `real` is at the head and wakes
   -- normally.
-  let snd = task.spawn({ ->
+  let snd = { ->
+    time.sleep(time.ms(150))
     channel.send(ch, 7)
-  })
-  time.sleep(time.ms(50))
-  let r = task.join_handle(real)
-  let _ = task.join_handle(snd)
-  println(r)
+  }
+  task.join([dead, real, snd])
+  match channel.receive(got) {
+    Some(r) -> println(r)
+    None -> println("nothing")
+  }
 }

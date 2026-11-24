@@ -176,7 +176,7 @@ fn completion_offers_primitive_types_in_type_annotation_position() {
 fn repl_builtin_names_includes_primitive_types() {
     // `repl::builtin_names` must surface every prelude type of
     // BUILTIN_TYPES so <Tab> completion in the REPL offers them; the
-    // builtin modules' (`tcp.TcpStream`, `task.Handle`, `regex.Regex`)
+    // builtin modules' (`tcp.TcpStream`, `task.RuntimeError`, `regex.Regex`)
     // come through their module once it is imported.
     let names = silt::testing::repl::builtin_names();
 

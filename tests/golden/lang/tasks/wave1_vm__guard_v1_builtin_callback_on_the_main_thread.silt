@@ -1,16 +1,14 @@
 -- repeat: 5
 import channel
 import list
-import task
+import stream
 import time
 fn outer(g, ys) { "outer called with a function and {list.length(ys)} results" }
 fn inner(c, ys) { "INNER called instead: second arg has {list.length(ys)} results" }
 fn main() {
-  let a = channel.new(1)
-  let sender = task.spawn { ->
+  let a = stream.from_fn { ch ->
     time.sleep(time.ms(50))
-    channel.send(a, 1)
+    channel.send(ch, 1)
   }
   println(outer(inner, list.map([a], channel.receive)))
-  task.join_handle(sender)
 }

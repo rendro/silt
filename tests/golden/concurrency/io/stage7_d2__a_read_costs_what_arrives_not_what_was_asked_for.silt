@@ -28,26 +28,39 @@ fn text(read) {
 
 fn main() {
   let huge = 9223372036854775807
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("no listener") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("no listener")
+  }
   let addr = "127.0.0.1:{tcp.local_port(listener)}"
   -- The peer: to each of three connections it sends three bytes and
   -- closes.
-  let peer = task.spawn { ->
+  let peer = { ->
     list.each(1..3) { _ ->
-      when let Ok(conn) = tcp.accept(listener) else { panic("no connection") }
+      when let Ok(conn) = tcp.accept(listener) else {
+        panic("no connection")
+      }
       let _ = tcp.write(conn, bytes.from_string("abc"))
       tcp.close(conn)
     }
   }
-  when let Ok(a) = tcp.connect(addr) else { panic("no connection") }
-  println("read: {text(tcp.read(a, huge))}")
-  when let Ok(b) = tcp.connect(addr) else { panic("no connection") }
-  println("read_exact: {text(tcp.read_exact(b, 10000000))}")
-  when let Ok(c) = tcp.connect(addr) else { panic("no connection") }
-  let chunks = stream.collect(stream.tcp_chunks(c, huge))
-  println("tcp_chunks: {list.map(chunks) { chunk -> text(chunk) }}")
-  task.join_handle(peer)
-  when let Ok(_) = io.write_file("five.txt", "hello") else { panic("no file") }
+  task.background([peer]) { ->
+    when let Ok(a) = tcp.connect(addr) else {
+      panic("no connection")
+    }
+    println("read: {text(tcp.read(a, huge))}")
+    when let Ok(b) = tcp.connect(addr) else {
+      panic("no connection")
+    }
+    println("read_exact: {text(tcp.read_exact(b, 10000000))}")
+    when let Ok(c) = tcp.connect(addr) else {
+      panic("no connection")
+    }
+    let chunks = stream.collect(stream.tcp_chunks(c, huge))
+    println("tcp_chunks: {list.map(chunks) { chunk -> text(chunk) }}")
+  }
+  when let Ok(_) = io.write_file("five.txt", "hello") else {
+    panic("no file")
+  }
   let chunks = stream.collect(stream.file_chunks("five.txt", huge))
   println("file_chunks: {list.map(chunks) { chunk -> text(chunk) }}")
   -- (The file goes again: run by hand, the program leaves nothing.)

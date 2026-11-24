@@ -2,24 +2,26 @@
 -- stderr-not-contains: deadlock on main thread
 -- The same with `channel.receive_timeout`, which parks the task on a
 -- select with a timer arm.
+-- (The task is the function of a `stream.from_fn`, which runs while the
+-- program's own thread waits.)
 import channel
-import task
+import stream
 import time
 
 fn main() {
   let quiet = channel.new(1)
   let x = channel.new(0)
-  let h = task.spawn({ ->
+  let h = stream.from_fn { _ ->
     let waited = match channel.receive_timeout(quiet, time.ms(600)) {
       channel.Message(_) -> "value"
       channel.Empty -> "timed out"
       channel.Closed -> "closed"
     }
     channel.send(x, waited)
-  })
+  }
   match channel.receive(x) {
     Some(v) -> println("main got: {v}")
     None -> println("main got no message")
   }
-  task.join_handle(h)
+  let _ = stream.collect(h)
 }

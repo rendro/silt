@@ -11,29 +11,32 @@ import tcp
 import url
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let locations = channel.new(2)
   channel.send(locations, "")
   channel.send(locations, "#top")
-  let server = task.spawn { ->
+  let server = { ->
     http.serve(listener) { req ->
       println("  the server: {req.method} {url.path(req.url)} ?{url.query_text(req.url)}")
       match channel.try_receive(locations) {
         channel.Message(location) -> {
           println("  the server: 302 to \"{location}\"")
-          http.Response { status: 302, body: bytes.empty(), headers: #{"location": location} }
+          http.Response { status: 302, body: bytes.empty(), headers: #{ "location": location } }
         }
         _ -> http.Response { status: 200, body: bytes.empty(), headers: #{} }
       }
     }
   }
-  let link = "http://127.0.0.1:{tcp.local_port(listener)}/a/b?x=1"
-  println("GET /a/b?x=1")
-  match http.request(http.GET, url_of(link), bytes.empty(), #{}) {
-    Ok(resp) -> println("  the client: {resp.status}")
-    Err(e) -> println("  the client: {e}")
+  task.background([server]) { ->
+    let link = "http://127.0.0.1:{tcp.local_port(listener)}/a/b?x=1"
+    println("GET /a/b?x=1")
+    match http.request(http.GET, url_of(link), bytes.empty(), #{}) {
+      Ok(resp) -> println("  the client: {resp.status}")
+      Err(e) -> println("  the client: {e}")
+    }
   }
-  task.cancel(server)
 }
 
 fn url_of(text: String) -> url.Url {

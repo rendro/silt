@@ -1,16 +1,16 @@
 -- timeout: 120
 -- A task that waited to send, in a `select` with a `Send` arm, and
--- whose value a receiver took is not dropped when a cancel arrives
+-- whose value a receiver took is not dropped when its deadline passes
 -- before it has run again: it goes on, knowing that it sent, for a
 -- bounded number of steps, enough to say so by an operation that does
 -- not wait.
 --
 -- Each round a sender waits to send one number, a receiver takes it
--- or gives up, and the sender is cancelled at about that moment.
+-- or gives up, and the sender's deadline passes at about that moment.
 -- Whenever the receiver has the number, the sender's own record of the
--- send (`sent`) comes: `main` waits for it without a time limit, and a
--- record that never came would leave `main` waiting for ever, which is
--- a deadlock. And when the receiver gave up, the sender was cancelled
+-- send (`sent`) comes: `round` waits for it without a time limit, and
+-- a record that never came would leave it waiting for ever, which is a
+-- deadlock. And when the receiver gave up, the sender was stopped
 -- while it waited, or before it ran: it sent nothing and recorded
 -- nothing.
 import channel
@@ -22,30 +22,33 @@ import time
 fn round(i) {
   let ch: Channel(Int) = channel.new(0)
   let sent: Channel(Int) = channel.new(1)
-  let sender = task.spawn { ->
-    match channel.select([channel.Send(ch, i)]) {
-      channel.Sent(_) -> channel.send(sent, i)
-      _ -> ()
+  let received: Channel(Int) = channel.new(1)
+  let sender = { ->
+    let _ = task.deadline(time.ms(1)) { ->
+      match channel.select([channel.Send(ch, i)]) {
+        channel.Sent(_) -> channel.send(sent, i)
+        _ -> ()
+      }
     }
   }
-  let receiver = task.spawn { ->
+  let receiver = { ->
     time.sleep(time.ms(1))
     match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(3)))]) {
-      channel.Received(_, Some(v)) -> v
-      _ -> -1
+      channel.Received(_, Some(v)) -> channel.send(received, v)
+      _ -> channel.send(received, -1)
     }
   }
-  time.sleep(time.ms(1))
-  task.cancel(sender)
-  match task.join_handle(receiver) {
-    -1 -> match channel.try_receive(sent) {
+  task.join([sender, receiver])
+  match channel.receive(received) {
+    Some(-1) -> match channel.try_receive(sent) {
       channel.Empty -> 0
       _ -> panic("round {i}: a record of a number that nobody received")
     }
-    v -> match channel.receive(sent) {
+    Some(v) -> match channel.receive(sent) {
       Some(^v) -> 1
       _ -> panic("round {i}: another record than of the number that was received")
     }
+    None -> panic("round {i}: no answer of the receiver")
   }
 }
 

@@ -14,7 +14,7 @@ import tcp
 import url
 
 fn moved(location: String) -> http.Response {
-  http.Response { status: 302, body: bytes.empty(), headers: #{"location": location} }
+  http.Response { status: 302, body: bytes.empty(), headers: #{ "location": location } }
 }
 
 fn echo(server: String, req: http.Request) -> http.Response {
@@ -23,13 +23,17 @@ fn echo(server: String, req: http.Request) -> http.Response {
 }
 
 fn main() {
-  when let Ok(first) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  when let Ok(second) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(first) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  when let Ok(second) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let other = "//127.0.0.1:{tcp.local_port(second)}"
   let locations = channel.new(2)
   channel.send(locations, "")
   channel.send(locations, "#top")
-  let one = task.spawn { ->
+  let one = { ->
     http.serve(first) { req ->
       match url.path(req.url) {
         "/q" when url.query_text(req.url) == "x=1" -> moved("?y=2")
@@ -48,17 +52,17 @@ fn main() {
       }
     }
   }
-  let two = task.spawn { -> http.serve(second) { req -> echo("second", req) } }
-  let link = "http://127.0.0.1:{tcp.local_port(first)}"
-  list.each(["/q?x=1", "/far", "/a/b?x=1"]) { path ->
-    println("GET {path}")
-    match http.get(url_of("{link}{path}")) {
-      Ok(resp) -> println("  the client: {resp.status}")
-      Err(e) -> println("  the client: {e}")
+  let two = { -> http.serve(second) { req -> echo("second", req) } }
+  task.background([one, two]) { ->
+    let link = "http://127.0.0.1:{tcp.local_port(first)}"
+    list.each(["/q?x=1", "/far", "/a/b?x=1"]) { path ->
+      println("GET {path}")
+      match http.get(url_of("{link}{path}")) {
+        Ok(resp) -> println("  the client: {resp.status}")
+        Err(e) -> println("  the client: {e}")
+      }
     }
   }
-  task.cancel(one)
-  task.cancel(two)
 }
 
 fn url_of(text: String) -> url.Url {

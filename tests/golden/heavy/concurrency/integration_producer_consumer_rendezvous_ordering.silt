@@ -2,35 +2,36 @@
 -- Messages through a rendezvous channel maintain FIFO order
 -- when there is exactly one sender and one receiver.
 -- We receive a known count to avoid close/receive race.
-import io
+
 import channel
+import io
 import list
 import task
+
 fn program() {
   let ch = channel.new(0)
 
-  let producer = task.spawn({ ->
+  let producer = { ->
     channel.send(ch, 1)
     channel.send(ch, 2)
     channel.send(ch, 3)
     channel.send(ch, 4)
     channel.send(ch, 5)
-  })
+  }
 
-  let consumer = task.spawn({ ->
+  task.background([producer]) { ->
     loop i = 0, acc = [] {
       match i >= 5 {
         true -> acc
         _ -> {
-          when let Some(val) = channel.receive(ch) else { panic("pattern did not match") }
+          when let Some(val) = channel.receive(ch) else {
+            panic("pattern did not match")
+          }
           loop(i + 1, list.append(acc, val))
         }
       }
     }
-  })
-
-  task.join_handle(producer)
-  task.join_handle(consumer)
+  }
 }
 
 fn main() {

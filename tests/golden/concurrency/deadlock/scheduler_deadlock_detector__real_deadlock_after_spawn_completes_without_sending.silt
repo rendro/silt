@@ -2,14 +2,16 @@
 -- repeat: 3
 -- stderr-contains: deadlock on main thread
 -- stderr-contains: no counterparty
--- A spawned task that returns without sending does not permanently
--- suppress detection: once it completes, main's receive is a deadlock.
+-- A task that returns without sending (the function of a
+-- `stream.from_fn`, which runs beside the program's own thread) does
+-- not permanently suppress detection: once it completes, main's receive
+-- is a deadlock.
 import channel
-import task
+import stream
 
 fn main() {
   let ch = channel.new(0)
-  let _h = task.spawn({ -> 1 })
+  let _feed = stream.from_fn { _ -> () }
   match channel.receive(ch) {
     Some(_) -> println("unreachable")
     None -> println("unreachable")

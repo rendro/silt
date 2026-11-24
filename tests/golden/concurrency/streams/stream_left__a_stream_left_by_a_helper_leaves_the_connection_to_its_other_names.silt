@@ -24,18 +24,29 @@ fn head(conn: tcp.TcpStream) -> List(String) {
   }
 }
 
-fn main() {
-  when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let port = tcp.local_port(l)
-  let server = task.spawn { ->
-    when let Ok(conn) = tcp.accept(l) else { panic("no accept") }
-    let got = head(conn)
-    let w = tcp.write(conn, bytes.from_string("got {list.length(got)} lines\n"))
-    "server wrote: {w}"
+fn serve(l: tcp.TcpListener) -> String {
+  when let Ok(conn) = tcp.accept(l) else {
+    panic("no accept")
   }
-  when let Ok(c) = tcp.connect("127.0.0.1:{port}") else { panic("no connect") }
+  let got = head(conn)
+  let w = tcp.write(conn, bytes.from_string("got {list.length(got)} lines\n"))
+  "server wrote: {w}"
+}
+
+fn ask(port: Int) -> String {
+  when let Ok(c) = tcp.connect("127.0.0.1:{port}") else {
+    panic("no connect")
+  }
   let _ = tcp.write(c, bytes.from_string("a\nb\n\n"))
   let answer = tcp.read(c, 100) |> result.map { b -> bytes.to_string(b) |> result.unwrap_or("") }
-  println("client read: {answer}")
-  println(task.join_handle(server))
+  "client read: {answer}"
+}
+
+fn main() {
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let port = tcp.local_port(l)
+  let lines = task.map([{ -> ask(port) }, { -> serve(l) }], 2) { f -> f() }
+  list.each(lines) { line -> println(line) }
 }

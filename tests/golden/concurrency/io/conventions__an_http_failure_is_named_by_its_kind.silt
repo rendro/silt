@@ -30,16 +30,19 @@ fn kind(r) {
 -- A server that takes one connection, reads the request, writes
 -- `answer` (nothing if it is empty) and goes away.
 fn against(answer) {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
-  let server = task.spawn { ->
-    when let Ok(conn) = tcp.accept(listener) else { panic("cannot accept") }
+  let server = { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
     let _ = tcp.read(conn, 1024)
     let _ = tcp.write(conn, bytes.from_string(answer))
     tcp.close(conn)
   }
-  let out = http.get(url_of("http://127.0.0.1:{port}/"))
-  task.join_handle(server)
+  let out = task.background([server]) { -> http.get(url_of("http://127.0.0.1:{port}/")) }
   out
 }
 
@@ -47,7 +50,9 @@ fn main() {
   let cr = string.from_char_code(13) |> option.unwrap_or("")
   let nl = "{cr}\n"
   println("another scheme: {kind(http.get(url_of("ftp://127.0.0.1/file")))}")
-  println("a posted one: {kind(http.request(http.POST, url_of("file:///etc/hosts"), bytes.from_string("body"), #{}))}")
+  println(
+    "a posted one: {kind(http.request(http.POST, url_of("file:///etc/hosts"), bytes.from_string("body"), #{}))}",
+  )
   println("nobody listens: {kind(http.get(url_of("http://127.0.0.1:1/")))}")
   println("the server goes away: {kind(against(""))}")
   println("in the head: {kind(against("HTTP/1.1 200 OK{nl}Content-Le"))}")

@@ -21,8 +21,8 @@ fn deep(n) {
 }
 
 fn main() {
-  let a = task.spawn { -> Deep.go(6) }
-  let b = task.spawn { -> deep(6) }
-  println("method {task.join_handle(a)}")
-  println("fold {task.join_handle(b)}")
+  let a = task.map([6], 1) { n -> Deep.go(n) }
+  let b = task.map([6], 1) { n -> deep(n) }
+  list.each(a) { v -> println("method {v}") }
+  list.each(b) { v -> println("fold {v}") }
 }

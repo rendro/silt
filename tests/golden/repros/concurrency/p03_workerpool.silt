@@ -18,10 +18,7 @@ fn collect(ch, n, acc) {
 fn main() {
   let results = channel.new(10)
   let ids = 1..40
-  ids |> list.each { i ->
-    let _ = task.spawn(fn() { channel.send(results, i * i) })
-    ()
-  }
-  let total = collect(results, 40, 0)
+  let senders = ids |> list.map { i -> fn() { channel.send(results, i * i) } }
+  let total = task.background(senders, fn() { collect(results, 40, 0) })
   println("total {total}")
 }

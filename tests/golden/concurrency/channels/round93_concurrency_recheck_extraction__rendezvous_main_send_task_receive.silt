@@ -1,22 +1,28 @@
 -- repeat: 3
--- Main-thread send to a spawned receiver over a rendezvous channel
--- completes, 20 times in a row (the send wait loop's re-check path).
+-- Main-thread send to a receiver in a task (the function of a
+-- `stream.from_fn`, which hands on what it received) over a rendezvous
+-- channel completes, 20 times in a row (the send wait loop's re-check
+-- path).
 import channel
-import task
+import stream
+
 fn main() {
   loop i = 0 {
     match i >= 20 {
       true -> println("done")
       _ -> {
         let ch = channel.new(0)
-        let consumer = task.spawn({ ->
+        let consumer = stream.from_fn { out ->
           match channel.receive(ch) {
-            Some(v) -> v
-            None -> -1
+            Some(v) -> channel.send(out, v)
+            None -> channel.send(out, -1)
           }
-        })
+        }
         channel.send(ch, 42)
-        let r = task.join_handle(consumer)
+        let r = match channel.receive(consumer) {
+          Some(v) -> v
+          None -> -1
+        }
         match r == 42 {
           true -> loop(i + 1)
           _ -> println("iteration {i}: rendezvous send lost, got {r}")

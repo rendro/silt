@@ -1,9 +1,8 @@
 import task
 import time
 fn main() {
-  let h = task.spawn({ ->
+  task.join([{ ->
     time.sleep(time.ms(0))
     println("zero-ok")
-  })
-  task.join_handle(h)
+  }])
 }

@@ -594,15 +594,17 @@ fn main() {{
   let mailbox = channel.new(0)
   -- A second server, with handlers of its own, to end the wait: the
   -- first one is at its cap and would turn the request away.
-  let _control = task.spawn {{ ->
+  let control = {{ ->
     http.serve(bound("{control_path}")) {{ _req ->
       channel.close(mailbox)
       http.Response {{ status: 200, body: bytes.from_string("closed"), headers: #{{}} }}
     }}
   }}
-  http.serve(bound("{port_path}")) {{ _req ->
-    let _ = channel.receive(mailbox)
-    http.Response {{ status: 200, body: bytes.from_string("released"), headers: #{{}} }}
+  task.background([control]) {{ ->
+    http.serve(bound("{port_path}")) {{ _req ->
+      let _ = channel.receive(mailbox)
+      http.Response {{ status: 200, body: bytes.from_string("released"), headers: #{{}} }}
+    }}
   }}
 }}
 "#

@@ -5,7 +5,7 @@ import time
 
 fn main() {
   let t0 = time.now()
-  let hs = 1..3000 |> list.map { i -> task.spawn(fn() { i * 2 }) }
-  let total = hs |> list.fold(0) { acc, h -> acc + task.join_handle(h) }
-  println("total {total} spawn+join of 3000 tasks took {time.since(t0, time.now())}")
+  let values = task.map(1..3000, 3000, fn(i) { i * 2 })
+  let total = values |> list.fold(0) { acc, v -> acc + v }
+  println("total {total} 3000 tasks took {time.since(t0, time.now())}")
 }

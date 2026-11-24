@@ -1,18 +1,24 @@
 -- repeat: 3
--- Task that spawns tasks that spawn tasks.
+-- Task that runs tasks that run tasks.
 import io
 import task
+
+-- The value of `f`, called in a task of its own.
+fn in_a_task(f: Fn() -> Int) -> Int {
+  when let [v] = task.map([f], 1) { g -> g() } else {
+    panic("one value")
+  }
+  v
+}
+
 fn program() {
-  let h = task.spawn({ ->
-    let inner = task.spawn({ ->
-      let innermost = task.spawn({ ->
-        42
-      })
-      task.join_handle(innermost) + 1
-    })
-    task.join_handle(inner) + 1
-  })
-  task.join_handle(h)
+  in_a_task { ->
+    let inner = in_a_task { ->
+      let innermost = in_a_task { -> 42 }
+      innermost + 1
+    }
+    inner + 1
+  }
 }
 
 fn main() {

@@ -27,13 +27,13 @@
 -- lsp: hover 81:18
 -- lsp: hover 82:20
 -- lsp: hover 83:16
--- lsp: hover 84:16
+-- lsp: hover 84:17
 -- Hover on the type of a builtin module after the dot shows its
 -- declaration as the registry has it, written as a program names it
 -- (`json.Value` inside `json.Value`), one variant or field a line, and
 -- below it the section of a reference page on it: its own (`json.Value`)
--- or, for the module's error enum, the errors page's. An opaque handle
--- shows its name and type arguments.
+-- or, for the module's error enum, the errors page's. An opaque type
+-- shows its name.
 -- The types of a module behind a cargo feature are in cases of their own
 -- (`hover_on_a_tcp_type`, `hover_on_a_postgres_type`).
 import bytes
@@ -60,7 +60,7 @@ fn f3(x: list.Step(Int)) -> Int { 0 }
 fn f4(x: channel.ChannelResult(Int)) -> Int { 0 }
 fn f5(x: channel.ChannelOp(Int)) -> Int { 0 }
 fn f6(x: channel.Selected(Int)) -> Int { 0 }
-fn f7(x: task.TaskError) -> Int { 0 }
+fn f7(x: task.RuntimeError) -> Int { 0 }
 fn f8(x: regex.RegexError) -> Int { 0 }
 fn f9(x: json.JsonError) -> Int { 0 }
 fn f10(x: json.Value) -> Int { 0 }
@@ -81,7 +81,7 @@ fn f24(x: bytes.BytesError) -> Int { 0 }
 fn f25(x: crypto.CryptoError) -> Int { 0 }
 fn f26(x: url.UrlError) -> Int { 0 }
 fn f27(x: uuid.UuidError) -> Int { 0 }
-fn f28(x: task.Handle(Int)) -> Int { 0 }
+fn f28(x: regex.Regex) -> Int { 0 }
 
 fn main() {
   println(1)

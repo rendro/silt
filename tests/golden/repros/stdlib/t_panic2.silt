@@ -3,8 +3,8 @@ import list
 import task
 import channel
 fn main() {
-  let h = task.spawn { ->
+  let h = task.map([0], 1) { _ ->
     list.map([1, 2, 3]) { x -> 10 / (x - 2) }
   }
-  println(task.join_handle(h))
+  println(h)
 }

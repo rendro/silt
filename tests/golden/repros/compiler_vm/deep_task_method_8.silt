@@ -12,6 +12,5 @@ trait Deep for Int {
   }
 }
 fn main() {
-  let h = task.spawn(fn() { 8.go() })
-  println(task.join_handle(h))
+  println(task.map([8], 1, fn(n) { Deep.go(n) }))
 }

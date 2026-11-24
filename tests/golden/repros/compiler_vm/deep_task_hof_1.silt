@@ -8,6 +8,5 @@ fn go(n) {
   }
 }
 fn main() {
-  let h = task.spawn(fn() { go(1) })
-  println(task.join_handle(h))
+  println(task.map([1], 1, fn(n) { go(n) }))
 }

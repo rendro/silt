@@ -1,25 +1,31 @@
 -- repeat: 20
 -- stderr-not-contains: deadlock
--- The function of a stage waits on a channel that the program sends
--- on later. The stage is a task like any other: while it can still be
--- answered there is no deadlock. (The stage runs its function when
--- its reader asks for a value: the reader is a task that asks before
--- the program sends.)
+-- The function of a stage waits on a channel that a helper sends on.
+-- The stage is a task like any other: while it can still be answered
+-- there is no deadlock. (The stage runs its function when its reader
+-- asks for a value: the reader is the body, which asks while the
+-- helper sends.)
 import channel
 import stream
 import task
 
 fn main() {
   let gate = channel.new(0)
-  let opened = stream.from_list([1, 2, 3]) |> stream.map({ x ->
-    match channel.receive(gate) {
-      Some(key) -> x * key
-      None -> 0
+  let opened = stream.from_list([1, 2, 3])
+    |> stream.map { x ->
+      match channel.receive(gate) {
+        Some(key) -> x * key
+        None -> 0
+      }
     }
-  })
-  let reader = task.spawn { -> stream.collect(opened) }
-  channel.send(gate, 10)
-  channel.send(gate, 100)
-  channel.send(gate, 1000)
-  println(task.join_handle(reader))
+  let got = task.background(
+    [
+      { ->
+        channel.send(gate, 10)
+        channel.send(gate, 100)
+        channel.send(gate, 1000)
+      },
+    ],
+  ) { -> stream.collect(opened) }
+  println(got)
 }
