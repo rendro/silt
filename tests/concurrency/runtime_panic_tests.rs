@@ -141,13 +141,16 @@ fn main() {
 
 /// The program's thread computes and never waits: it gets the panic
 /// where it looks for one, every million steps or so of its loop,
-/// which would never end otherwise. (The task sleeps, which always
-/// ends its first slice: it is certainly lost when the sleep ends.)
+/// which would never end otherwise. (The task, the function of a
+/// `stream.from_fn`, sleeps, which always ends its first slice: it is
+/// certainly lost when the sleep ends. `main` holds the stream past
+/// its loop: a tail call would let go of it, and its function would be
+/// stopped.)
 #[test]
 fn a_panic_of_a_worker_reaches_the_thread_that_computes() {
     let program = compiled(
         r#"
-import task
+import stream
 import time
 
 fn forever(n) {
@@ -155,8 +158,9 @@ fn forever(n) {
 }
 
 fn main() {
-  let lost = task.spawn { -> time.sleep(time.ms(1)) }
+  let lost = stream.from_fn { _ -> time.sleep(time.ms(1)) }
   forever(0)
+  let _ = lost
 }
 "#,
     );
