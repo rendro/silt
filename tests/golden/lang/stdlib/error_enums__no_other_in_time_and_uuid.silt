@@ -25,4 +25,5 @@ fn main() {
   match uuid.parse("not-a-uuid") {
     Ok(_) -> ()
     Err(e) -> println(uuid_text(e))
-  }}
+  }
+}
