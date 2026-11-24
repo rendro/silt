@@ -12,6 +12,6 @@ fn main() {
     channel.send(a, 1)
   }
   let worker = task.spawn { -> outer(inner, list.map([a], channel.receive)) }
-  println(task.join(worker))
-  task.join(sender)
+  println(task.join_handle(worker))
+  task.join_handle(sender)
 }

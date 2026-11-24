@@ -50,5 +50,5 @@ fn main() {
   wait_for(seen, 25)
   println("the map ran 25 values ahead of the gate")
   channel.close(gate)
-  println("collected {list.length(task.join(h))} values")
+  println("collected {list.length(task.join_handle(h))} values")
 }

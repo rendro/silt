@@ -6,7 +6,7 @@ import task
 import time
 fn main() {
   let c = task.spawn { -> panic("c failed") }
-  let j = task.spawn { -> task.join(c) }
+  let j = task.spawn { -> task.join_handle(c) }
   time.sleep(time.ms(30))
   task.cancel(c)
   task.cancel(j)

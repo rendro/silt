@@ -36,5 +36,5 @@ trait Display for Asked {
 fn main() {
   println([Asked { n: 1 }, Asked { n: 2 }])
   let h = task.spawn({ -> "in a task: {Some(Asked { n: 3 })}" })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

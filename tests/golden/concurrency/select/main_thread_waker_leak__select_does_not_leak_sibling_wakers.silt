@@ -15,11 +15,11 @@ fn main() {
 
   match channel.select([channel.Recv(a), channel.Recv(b)]) {
     channel.Received(_, Some(_)) -> {
-      task.join(feeder)
+      task.join_handle(feeder)
       let probe = task.spawn { ->
         channel.try_send(b, 999)
       }
-      let ok = task.join(probe)
+      let ok = task.join_handle(probe)
       match ok {
         true -> println("BUG:leaked_select_sibling_phantom_send")
         false -> println("ok:select")

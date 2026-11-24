@@ -21,7 +21,7 @@ fn main() {
       }
     }
   }
-  outcomes |> list.each { h -> println(task.join(h)) }
+  outcomes |> list.each { h -> println(task.join_handle(h)) }
   when let Ok(text) = io.read_file("stage7_c6__timed_out_operations_free_their_threads.silt") else {
     panic("cannot read the file")
   }

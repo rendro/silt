@@ -22,5 +22,5 @@ fn nest(n) {
 
 fn main() {
   let h = task.spawn({ -> nest(100) })
-  println("depth {task.join(h)}")
+  println("depth {task.join_handle(h)}")
 }

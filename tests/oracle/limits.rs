@@ -73,7 +73,7 @@ fn main() {
     sum_to(100)
   })
   channel.each(ch, { text -> println(string.to_upper(text)) })
-  println(task.join(worker))
+  println(task.join_handle(worker))
   host.give(match sorted {
     [first, ..rest] -> first.x + list.length(rest)
     [] -> 0
@@ -161,7 +161,7 @@ fn a_program_within_its_budget_runs_as_without_one() {
 fn the_budget_ends_the_tasks_of_a_program_too() {
     let spin = "fn spin() {\n  loop {\n    loop()\n  }\n}\n";
     let joined = format!(
-        "import task\n{spin}fn main() {{\n  let h = task.spawn(spin)\n  task.join(h)\n}}\n"
+        "import task\n{spin}fn main() {{\n  let h = task.spawn(spin)\n  task.join_handle(h)\n}}\n"
     );
     let (result, _) = run_whole(&joined, |vm| vm.set_step_budget(100_000));
     let error = result.unwrap_err();
@@ -203,7 +203,7 @@ fn main() {
   let left = task.spawn({ -> relay(a, b) })
   let right = task.spawn({ -> relay(b, a) })
   channel.send(a, 0)
-  task.join(left)
+  task.join_handle(left)
 }
 "#;
     // Whichever task the budget ends first, `main` ends for it: with
@@ -234,7 +234,7 @@ fn a_deadline_ends_its_function_at_every_slice() {
         ("a send", "channel.send(never, 1)"),
         (
             "a join",
-            "task.join(task.spawn({ -> channel.receive(never) }))",
+            "task.join_handle(task.spawn({ -> channel.receive(never) }))",
         ),
         (
             "inside a callback",
@@ -331,7 +331,7 @@ fn main() {
       None -> loop(got, sum)
     }
   }
-  task.join(producer)
+  task.join_handle(producer)
   host.give(match r {
     (got, sum) -> "received {got}, sum {sum}"
   })
@@ -361,7 +361,7 @@ fn main() {
     }
   }
   channel.close(ch)
-  host.give(match task.join(consumer) {
+  host.give(match task.join_handle(consumer) {
     (got, sum) -> "received {got}, sum {sum}"
   })
 }
@@ -483,8 +483,8 @@ fn main() {
       None -> loop()
     }
   }
-  task.join(producer)
-  host.give(match task.join(consumer) {
+  task.join_handle(producer)
+  host.give(match task.join_handle(consumer) {
     (got, sum) -> "arrived {got}, sum {sum}"
   })
 }
@@ -517,7 +517,7 @@ fn main() {
       None -> loop(got, sum, inner)
     }
   }
-  task.join(producer)
+  task.join_handle(producer)
   host.give(match r {
     (got, sum, inner) -> "received {got}, sum {sum}, inner timeouts {inner}"
   })
@@ -858,7 +858,7 @@ fn main() {
       }
     }
   }
-  host.give(task.join(client) - given)
+  host.give(task.join_handle(client) - given)
 }
 import host
 "#;
@@ -911,7 +911,7 @@ fn round(i, capacity) {
   }
   time.sleep(time.ms(1))
   task.cancel(receiver)
-  match task.join(sender) {
+  match task.join_handle(sender) {
     false -> true
     true -> match channel.select([channel.Recv(seen), channel.Recv(ch)]) {
       channel.Received(_, Some(^i)) -> true
@@ -952,7 +952,7 @@ fn round(i) {
   }
   time.sleep(time.ms(1))
   task.cancel(sender)
-  match task.join(receiver) {
+  match task.join_handle(receiver) {
     -1 -> match channel.try_receive(sent) {
       channel.Empty -> true
       _ -> false
@@ -1642,7 +1642,7 @@ fn main() {
         }
         time.sleep(time.ms(2))
         task.cancel(acceptor)
-        loop(i + 1, made + task.join(client))
+        loop(i + 1, made + task.join_handle(client))
       }
     }
   }
@@ -1771,7 +1771,7 @@ fn main() {{
 "#
         )
     };
-    let joined = program("let _ = task.join(around)");
+    let joined = program("let _ = task.join_handle(around)");
     let cancelled = program("task.cancel(around)");
     let mut first: Option<usize> = None;
     for slice in [None, Some(2000), Some(7), Some(1)] {
@@ -1808,7 +1808,7 @@ fn a_send_on_a_closed_channel_is_the_same_error_at_every_slice() {
         ),
         (
             "in a task",
-            "task.join(task.spawn({ -> channel.try_send(closed, 1) }))",
+            "task.join_handle(task.spawn({ -> channel.try_send(closed, 1) }))",
         ),
         (
             "in a callback",
@@ -1962,10 +1962,10 @@ fn a_fault_of_the_program_is_not_the_budgets() {
 fn a_slice_given_away_costs_one_step_at_any_slice() {
     let feed = "fn feed(ch) {\n  loop i = 0 {\n    match i >= 3000 {\n      true -> channel.close(ch)\n      false -> {\n        channel.send(ch, i)\n        loop(i + 1)\n      }\n    }\n  }\n}\n";
     let on_main = format!(
-        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  channel.each(ch) {{ n -> let _ = n + 1 }}\n  task.join(feeder)\n  println(\"done\")\n}}\n"
+        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  channel.each(ch) {{ n -> let _ = n + 1 }}\n  task.join_handle(feeder)\n  println(\"done\")\n}}\n"
     );
     let in_a_task = format!(
-        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  task.join(task.spawn({{ -> channel.each(ch) {{ n -> let _ = n + 1 }} }}))\n  task.join(feeder)\n  println(\"done\")\n}}\n"
+        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  task.join_handle(task.spawn({{ -> channel.each(ch) {{ n -> let _ = n + 1 }} }}))\n  task.join_handle(feeder)\n  println(\"done\")\n}}\n"
     );
     let stages = "import stream\n\nfn main() {\n  let total = stream.from_range(1, 3000)\n    |> stream.map { n -> n + 1 }\n    |> stream.filter { n -> n % 2 == 0 }\n    |> stream.fold(0) { acc, n -> acc + n }\n  println(total)\n  println(\"done\")\n}\n";
     for (what, source) in [

@@ -8,5 +8,5 @@ fn main() {
   let h = task.spawn({ ->
     io.read_file("async.txt")
   })
-  println(io.inspect(task.join(h)))
+  println(io.inspect(task.join_handle(h)))
 }

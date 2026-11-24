@@ -12,5 +12,5 @@ fn main() {
     channel.send(a, 1)
   }
   println(outer(inner, list.map([a], channel.receive)))
-  task.join(sender)
+  task.join_handle(sender)
 }

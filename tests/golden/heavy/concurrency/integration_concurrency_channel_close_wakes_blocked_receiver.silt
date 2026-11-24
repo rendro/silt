@@ -15,7 +15,7 @@ fn program() {
 
   -- Close the channel to wake the blocked receiver
   channel.close(ch)
-  task.join(receiver)
+  task.join_handle(receiver)
 }
 
 fn main() {

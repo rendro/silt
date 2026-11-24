@@ -19,5 +19,5 @@ fn main() {
   -- drain what is there
   match channel.receive(ch) { Some(v) -> println("drain {v}")  None -> println("closed")  _ -> () }
   match channel.receive(ch) { Some(v) -> println("drain {v}")  None -> println("closed")  _ -> () }
-  println(task.join(list.get(senders, 0) |> option.unwrap_or(task.spawn(fn() { "x" }))))
+  println(task.join_handle(list.get(senders, 0) |> option.unwrap_or(task.spawn(fn() { "x" }))))
 }

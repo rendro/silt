@@ -33,7 +33,7 @@ fn one_round() {
   })
   time.sleep(time.ms(5))
   channel.close(gate)
-  let got = task.join(r)
+  let got = task.join_handle(r)
   time.sleep(time.ms(5))
   let n1 = flag(done)
   let n2 = flag(done)

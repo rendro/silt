@@ -10,7 +10,7 @@ fn main() {
     channel.send(hs, task.spawn { -> time.sleep(time.ms(30)) })
     channel.send(hs, task.spawn { -> time.sleep(time.ms(30)) })
     channel.close(hs)
-    outer(inner, channel.each(hs, task.join))
+    outer(inner, channel.each(hs, task.join_handle))
   }
-  println(task.join(worker))
+  println(task.join_handle(worker))
 }

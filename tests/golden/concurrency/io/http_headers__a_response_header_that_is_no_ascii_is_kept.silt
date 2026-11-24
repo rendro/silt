@@ -34,7 +34,7 @@ fn main() {
     }
     Err(e) -> println("error: {e}")
   }
-  task.join(peer)
+  task.join_handle(peer)
 }
 
 fn url_of(text: String) -> url.Url {

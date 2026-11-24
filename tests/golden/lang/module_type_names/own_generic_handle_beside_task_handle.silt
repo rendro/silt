@@ -29,7 +29,7 @@ fn total(mine: Handle(Int), running: task.Handle(Int)) -> Int {
     Done(x) -> x
     Pending -> 0
   }
-  n + task.join(running)
+  n + task.join_handle(running)
 }
 
 fn main() {

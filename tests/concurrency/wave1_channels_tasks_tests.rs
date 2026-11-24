@@ -269,7 +269,7 @@ fn main() {
   let _ = channel.receive(about_to_fail)
   let _ = channel.receive(about_to_fail)
   time.sleep(time.ms(300))
-  println("main done {task.join(fine)}")
+  println("main done {task.join_handle(fine)}")
 }
 "#;
     let outcomes =
@@ -319,7 +319,7 @@ fn main() {
   let ps = 1..50 |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
   let r = task.spawn({ -> collect(ch, 25, 0) })
   let m = collect(ch, 25, 0)
-  let t = task.join(r)
+  let t = task.join_handle(r)
   println("total {m + t}")
 }
 "#;

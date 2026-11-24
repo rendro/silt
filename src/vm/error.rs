@@ -66,12 +66,12 @@ pub struct VmError {
     /// failed, for the note a front door writes after the text
     /// (`DisplayFailure::note`).
     pub display_failure: Option<Box<DisplayFailure>>,
-    /// The task whose failure this is, when a `task.join` took it from
+    /// The task whose failure this is, when a `task.join_handle` took it from
     /// that task: a cancel that dismisses it hands it back to the task,
     /// whose failure is then reported as never joined
     /// (`Scheduler::cancel`).
     pub(crate) taken_from: Option<TakenFrom>,
-    /// If true, the failure came through a `task.join`, and its message
+    /// If true, the failure came through a `task.join_handle`, and its message
     /// says so: `joined task failed: <msg>`. A join of a task that
     /// failed this way keeps the message as it is, so the words are
     /// there once however many joins the failure went through; the call

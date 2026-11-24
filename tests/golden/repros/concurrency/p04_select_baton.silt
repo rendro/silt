@@ -26,6 +26,6 @@ fn main() {
   -- one value for each channel: enough for both receivers
   channel.send(a, 1)
   channel.send(b, 2)
-  println(task.join(r1))
-  println(task.join(r2))
+  println(task.join_handle(r1))
+  println(task.join_handle(r2))
 }

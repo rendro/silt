@@ -126,9 +126,9 @@ fn main() {
   }
   -- Use chaTrait simpornnel.select to wait on both result channels
   -- Wait for all workers to finish
-  task.join(w1)
-  task.join(w2)
-  task.join(w3)
+  task.join_handle(w1)
+  task.join_handle(w2)
+  task.join_handle(w3)
   -- Close result channels for graceful shutdown
   channel.close(results_1)
   channel.close(results_2)

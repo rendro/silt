@@ -57,7 +57,7 @@ fn main() {
     }
     Err(e) -> println("accept: {e}")
   }
-  let _ = task.join(client)
+  let _ = task.join_handle(client)
 
   -- And another server.
   let second = task.spawn { ->

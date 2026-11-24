@@ -10,7 +10,7 @@ type Joined {
 trait Display for Joined {
   fn display(self) -> String {
     let h = task.spawn({ -> panic("in a task") })
-    task.join(h)
+    task.join_handle(h)
   }
 }
 

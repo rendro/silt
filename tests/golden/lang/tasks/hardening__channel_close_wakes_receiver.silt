@@ -6,7 +6,7 @@ fn main() {
     channel.close(ch)
   })
   let r = channel.receive(ch)
-  task.join(sender)
+  task.join_handle(sender)
   println(match r {
     None -> "closed"
     Some(_) -> "unexpected"

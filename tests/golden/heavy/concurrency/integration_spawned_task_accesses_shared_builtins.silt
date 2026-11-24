@@ -6,7 +6,7 @@ fn program() {
   let h = task.spawn({ ->
     string.length("hello")
   })
-  task.join(h)
+  task.join_handle(h)
 }
 
 fn main() {

@@ -40,7 +40,7 @@ fn main() {
     Err(postgres.Timeout) -> println("connect: Timeout")
     Err(e) -> println("connect: {e}")
   }
-  when let Ok(conn) = task.join(server) else {
+  when let Ok(conn) = task.join_handle(server) else {
     panic("cannot accept")
   }
   match task.deadline(time.seconds(5), { -> until_closed(conn) }) {

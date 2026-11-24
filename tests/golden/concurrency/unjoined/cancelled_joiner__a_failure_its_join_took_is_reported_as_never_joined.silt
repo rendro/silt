@@ -15,7 +15,7 @@ fn main() {
     let _ = channel.receive(go)
     panic("the child failed")
   }
-  let joiner = task.spawn { -> task.join(child) }
+  let joiner = task.spawn { -> task.join_handle(child) }
   time.sleep(time.ms(10))
   channel.send(go, ())
   time.sleep(time.ms(30))

@@ -20,5 +20,5 @@ fn main() {
   println(marker)
   println(r)
   println(after)
-  task.join(sender)
+  task.join_handle(sender)
 }

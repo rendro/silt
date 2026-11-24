@@ -165,7 +165,7 @@ fn session(workers: Workers, earlier: &str, later: &str, job: &str) -> String {
         later.to_string(),
         each(&|_| format!("channel.send(jobs, {{ -> {job} }})")),
         each(&|_| "channel.receive(outs)".to_string()),
-        each(&|n| format!("task.join(w{n})")),
+        each(&|n| format!("task.join_handle(w{n})")),
     ]
     .join("\n")
         + "\n"
@@ -373,7 +373,7 @@ channel.receive(outs)
     input +=
         "channel.send(jobs, { -> task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" }) })
 channel.receive(outs)
-task.join(worker)
+task.join_handle(worker)
 task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
 ";
     for slice in [Slice::Whole, Slice::OneStep] {
@@ -418,7 +418,7 @@ type Q { q: Int }
 trait Display for Q { fn display(self) -> String { \"Q!\" } }
 channel.send(values, [Q { q: 3 }])
 channel.receive(outs)
-task.join(shower)
+task.join_handle(shower)
 ",
     );
     assert_eq!(
@@ -461,7 +461,7 @@ channel.receive(outs)
 fn f() -> Int { 2 }
 channel.send(jobs, { -> f() + 20 })
 channel.receive(outs)
-task.join(worker)
+task.join_handle(worker)
 ",
     );
     assert_eq!(output, "Some(1)\nSome(11)\nSome(22)\n", "{errors}");
@@ -512,7 +512,7 @@ channel.receive(outs)
 fn f() -> Int { 3 }
 channel.send(jobs, { -> f() * 10 })
 channel.receive(outs)
-task.join(worker)
+task.join_handle(worker)
 ",
     );
     assert_eq!(output, "Some(1)\nSome(2)\nSome(2)\nSome(30)\n", "{errors}");
@@ -552,7 +552,7 @@ trait N for Int { fn n(self) -> String { \"second\" } }
 N.n(5)
 channel.send(jobs, { -> N.n(5) })
 channel.receive(outs)
-task.join(worker)
+task.join_handle(worker)
 ",
     );
     assert_eq!(
@@ -637,8 +637,8 @@ import late
 \"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\"
 channel.send(jobs, {{ -> \"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\" }})
 channel.receive(outs)
-task.join(worker)
-task.join(task.spawn {{ -> \"{{late.stamp}} {{late.tag()}}\" }})
+task.join_handle(worker)
+task.join_handle(task.spawn {{ -> \"{{late.stamp}} {{late.tag()}}\" }})
 "
     )
 }

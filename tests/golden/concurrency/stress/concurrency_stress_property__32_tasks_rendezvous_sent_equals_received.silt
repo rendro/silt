@@ -28,7 +28,7 @@ fn main() {
       }
     }
   }
-  senders |> list.each { h -> task.join(h) }
+  senders |> list.each { h -> task.join_handle(h) }
   -- 1+2+...+32 == 32*33/2 == 528
   println("sum={sum}")
 }

@@ -6,6 +6,6 @@ fn main() {
     env.set("", "x")
     1
   }
-  println(task.join(h))
+  println(task.join_handle(h))
   println("after")
 }

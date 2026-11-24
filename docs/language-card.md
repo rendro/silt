@@ -263,7 +263,7 @@ module, named by its file (see [Modules](language/modules.md)).
 ## Concurrency
 
 `task.spawn { -> ... }` starts a task and gives its `Handle(a)`;
-`task.join(h)` waits for its value. Tasks talk over channels:
+`task.join_handle(h)` waits for its value. Tasks talk over channels:
 `channel.new(n)`, `channel.send`, `channel.receive` (`None` once closed
 and empty), `channel.close`, `channel.select`. I/O inside a task does not
 block the others. A failed task that nobody joins ends the program with
@@ -561,7 +561,7 @@ type Handle(a)  -- opaque
 task.cancel(handle: Handle(a)) -> ()
 task.deadline(limit: Duration, work: Fn() -> a) -> Option(a)
 task.guard(work: Fn() -> a) -> Result(a, RuntimeError)
-task.join(handle: Handle(a)) -> a
+task.join_handle(handle: Handle(a)) -> a
 task.spawn(f: Fn() -> a) -> Handle(a)
 ```
 

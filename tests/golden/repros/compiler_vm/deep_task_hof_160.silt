@@ -9,5 +9,5 @@ fn go(n) {
 }
 fn main() {
   let h = task.spawn(fn() { go(160) })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

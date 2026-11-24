@@ -49,9 +49,9 @@ fn program() {
   channel.send(jobs, 6)
   channel.close(jobs)
 
-  task.join(w1)
-  task.join(w2)
-  task.join(w3)
+  task.join_handle(w1)
+  task.join_handle(w2)
+  task.join_handle(w3)
 
   -- Collect all results into a list
   when let Some(a) = channel.receive(results) else { panic("expected a result") }

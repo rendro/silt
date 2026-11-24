@@ -25,5 +25,5 @@ fn main() {
   let inside = task.spawn { ->
     task.deadline(time.ms(20), { -> channel.each(stream.repeat(1)) { x -> time.sleep(time.ms(1)) } })
   }
-  println(task.join(inside))
+  println(task.join_handle(inside))
 }

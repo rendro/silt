@@ -14,5 +14,5 @@ fn deep(n) {
 
 fn main() {
   let t = task.spawn { -> deep(200000) }
-  println(task.join(t))
+  println(task.join_handle(t))
 }

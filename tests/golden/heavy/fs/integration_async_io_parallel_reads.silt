@@ -7,7 +7,7 @@ fn main() {
   let _ = io.write_file("b.txt", "bbb")
   let h1 = task.spawn({ -> io.read_file("a.txt") })
   let h2 = task.spawn({ -> io.read_file("b.txt") })
-  let a = task.join(h1)
-  let b = task.join(h2)
+  let a = task.join_handle(h1)
+  let b = task.join_handle(h2)
   println(io.inspect((a, b)))
 }

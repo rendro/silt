@@ -5,7 +5,7 @@ import io
 
 fn spawn_reader() !{} {
   let t = task.spawn(fn() { io.read_file("/etc/hostname") })
-  task.join(t)
+  task.join_handle(t)
 }
 
 fn main() !{} {

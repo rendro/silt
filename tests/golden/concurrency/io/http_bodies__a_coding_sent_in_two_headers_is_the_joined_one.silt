@@ -49,7 +49,7 @@ fn main() {
     }
   }
   answers |> list.each { _ -> get(port) }
-  task.join(peer)
+  task.join_handle(peer)
 }
 
 fn url_of(text: String) -> url.Url {

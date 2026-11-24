@@ -17,6 +17,6 @@ trait Countdown for Int {
 
 fn main() {
   let h = task.spawn({ -> Countdown.down(50000) })
-  println(task.join(h))
+  println(task.join_handle(h))
   println(Countdown.down(50000))
 }

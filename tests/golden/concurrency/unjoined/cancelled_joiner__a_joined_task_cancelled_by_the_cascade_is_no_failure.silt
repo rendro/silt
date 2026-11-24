@@ -12,7 +12,7 @@ fn main() {
     time.sleep(time.ms(1000))
   }
   when let Some(c) = channel.receive(hs) else { panic("no child") }
-  let j = task.spawn { -> task.join(c) }
+  let j = task.spawn { -> task.join_handle(c) }
   time.sleep(time.ms(10))
   task.cancel(w)
   time.sleep(time.ms(30))

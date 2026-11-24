@@ -22,6 +22,6 @@ fn main() {
     let chans = list.fold([drain], [a, b], list.map)
     pair("x", list.length(chans))
   }
-  println(task.join(worker))
-  task.join(sender)
+  println(task.join_handle(worker))
+  task.join_handle(sender)
 }

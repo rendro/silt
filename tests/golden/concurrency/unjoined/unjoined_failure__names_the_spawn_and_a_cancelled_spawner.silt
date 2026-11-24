@@ -34,7 +34,7 @@ fn main() {
     let kids = children(stream.map(ends) { x -> x }, gate, cmds)
     channel.send(ready, ())
     let _ = channel.receive(never)
-    list.each(kids, task.join)
+    list.each(kids, task.join_handle)
   }
   let _ = channel.receive(ready)
   channel.close(cmds)

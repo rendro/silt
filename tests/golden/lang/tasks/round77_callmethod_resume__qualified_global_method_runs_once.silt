@@ -19,5 +19,5 @@ fn main() {
     let n = 7
     Counter.bump(n)
   })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

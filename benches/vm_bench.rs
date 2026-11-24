@@ -492,7 +492,7 @@ fn main() {
   let tasks = list.map(1..11) { n ->
     task.spawn({ -> n * n })
   }
-  list.map(tasks) { t -> task.join(t) }
+  list.map(tasks) { t -> task.join_handle(t) }
   |> list.fold(0) { acc, x -> acc + x }
 }
         "#;

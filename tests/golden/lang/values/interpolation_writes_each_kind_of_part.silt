@@ -28,5 +28,5 @@ fn main() {
   println("[{s}]{s}")
   println("{(1, "two")} {Some(3)} {[1, 2]} {()}")
   let h = task.spawn({ -> "{line(7, 2.25, true, "in a task")} {s}" })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

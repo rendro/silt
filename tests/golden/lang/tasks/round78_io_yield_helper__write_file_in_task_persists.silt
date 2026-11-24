@@ -10,7 +10,7 @@ fn worker() -> () {
 
 fn main() {
   let h = task.spawn(worker)
-  task.join(h)
+  task.join_handle(h)
   match io.read_file("round78_write.txt") {
     Ok(s) -> println(s)
     Err(e) -> println("{e}")

@@ -36,10 +36,10 @@ fn main() {
   let waited = time.since(started, time.now())
   println("the 129th: {late}, after at least 4 s: {waited.ns >= 4_000_000_000}")
   channel.close(gate)
-  let statuses = list.map(held) { c -> task.join(c) }
+  let statuses = list.map(held) { c -> task.join_handle(c) }
   println("{list.length(list.filter(statuses) { s -> s == 200 })} of 128 answered 200")
   tcp.close_listener(listener)
-  task.join(server)
+  task.join_handle(server)
 }
 
 fn url_of(text: String) -> url.Url {

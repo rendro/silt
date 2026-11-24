@@ -21,7 +21,7 @@ fn main() {
     Some(_) -> ()
     None -> ()
   }
-  let _ = task.join(real)
+  let _ = task.join_handle(real)
   -- After `real` sent, its 7 must be in the buffer.
   match channel.receive(ch) {
     Some(v) -> println(v)

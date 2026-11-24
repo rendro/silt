@@ -8,6 +8,6 @@ fn main() {
     let elapsed = time.since(before, time.now())
     test.assert(elapsed.ns >= 100000000)
   })
-  task.join(h)
+  task.join_handle(h)
   println("ok")
 }

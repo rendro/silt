@@ -23,6 +23,6 @@ fn work() {
 }
 fn main() {
   let h = task.spawn(fn() { work() })
-  println(task.join(h))
+  println(task.join_handle(h))
   println("done")
 }

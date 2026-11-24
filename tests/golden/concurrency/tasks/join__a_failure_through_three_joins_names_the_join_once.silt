@@ -11,9 +11,9 @@ fn main() {
   let outer = task.spawn { ->
     let middle = task.spawn { ->
       let inner = task.spawn { -> work(0) }
-      task.join(inner)
+      task.join_handle(inner)
     }
-    task.join(middle)
+    task.join_handle(middle)
   }
-  println(task.join(outer))
+  println(task.join_handle(outer))
 }

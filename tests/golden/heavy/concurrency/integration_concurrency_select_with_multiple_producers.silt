@@ -12,9 +12,9 @@ fn program() {
   let p2 = task.spawn({ -> channel.send(ch2, 2) })
   let p3 = task.spawn({ -> channel.send(ch3, 3) })
 
-  task.join(p1)
-  task.join(p2)
-  task.join(p3)
+  task.join_handle(p1)
+  task.join_handle(p2)
+  task.join_handle(p3)
 
   -- Select three times to collect all messages
   loop i = 0, total = 0 {

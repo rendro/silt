@@ -170,7 +170,7 @@ fn main() {{
       "{{first}}, then {{second}}"
     }}
   }}
-  readers |> list.each {{ h -> println(task.join(h)) }}
+  readers |> list.each {{ h -> println(task.join_handle(h)) }}
   when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}
   println(text)
 }}
@@ -224,7 +224,7 @@ fn main() {{
   let _ = channel.receive(reading)
   time.sleep(time.ms(100))
   when let Ok(_) = tcp.write(conn, bytes.from_string("ping")) else {{ panic("cannot write") }}
-  when let Ok(answer) = task.join(reader) else {{ panic("cannot read") }}
+  when let Ok(answer) = task.join_handle(reader) else {{ panic("cannot read") }}
   println(bytes.length(answer))
   tcp.close(conn)
 }}
@@ -350,7 +350,7 @@ fn main() {
   task.cancel(first)
   when let Ok(client) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else { panic("cannot connect") }
   when let Ok(_) = tcp.write(client, bytes.from_string("hello")) else { panic("cannot write") }
-  println(task.join(second))
+  println(task.join_handle(second))
 }
 "#;
     let (_vm, out) = run(source).expect("the program ended");
@@ -401,7 +401,7 @@ fn round(listener, port, started, n, served) {
       when let Some(conn) = channel.receive(accepted) else { panic("no connection") }
       when let Ok(byte) = tcp.read_exact(conn, 1) else { panic("the server cannot read") }
       when let Ok(_) = tcp.write(conn, byte) else { panic("the server cannot write") }
-      let got = task.join(client)
+      let got = task.join_handle(client)
       tcp.close(conn)
       task.cancel(next)
       round(listener, port, started, n - 1, served + got)

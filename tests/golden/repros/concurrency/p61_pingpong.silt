@@ -34,6 +34,6 @@ fn main() {
     })
     p2
   }
-  let total = pairs |> list.fold(0) { acc, h -> acc + task.join(h) }
+  let total = pairs |> list.fold(0) { acc, h -> acc + task.join_handle(h) }
   println("sum of final tokens: {total} (expected {1000 * 39})")
 }

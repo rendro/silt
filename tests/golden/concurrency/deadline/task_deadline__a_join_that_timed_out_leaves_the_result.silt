@@ -8,7 +8,7 @@ import task
 import time
 
 fn joined(h) {
-  match task.deadline(time.micros(500), { -> task.join(h) }) {
+  match task.deadline(time.micros(500), { -> task.join_handle(h) }) {
     Some(v) -> v
     None -> joined(h)
   }

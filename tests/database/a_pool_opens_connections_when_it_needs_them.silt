@@ -48,7 +48,7 @@ fn main() {
         task.spawn { -> postgres.query(db, "SELECT pg_sleep(0.3)::text AS slept", (), Slept) }
       }
       sleepers |> list.each { t ->
-        match task.join(t) {
+        match task.join_handle(t) {
           Ok(_) -> ()
           Err(e) -> println("a statement at once: {e}")
         }

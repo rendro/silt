@@ -21,12 +21,12 @@ fn main() {
       let _ = channel.receive(go)
       channel.send(done, "the task that the function spawned went on")
     }
-    task.join(joined)
+    task.join_handle(joined)
   })
   println(out)
   channel.send(go, 1)
   channel.send(go, 2)
-  println(task.join(joined))
+  println(task.join_handle(joined))
   -- A task the function spawned that went on would have sent by now.
   time.sleep(time.ms(20))
   println(channel.try_receive(done))

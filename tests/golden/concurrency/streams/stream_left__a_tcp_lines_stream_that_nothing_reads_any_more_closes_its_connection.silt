@@ -31,7 +31,7 @@ fn main() {
   }
   when let Ok(c) = tcp.connect("127.0.0.1:{tcp.local_port(l)}") else { panic("cannot connect") }
   let _ = tcp.write(c, bytes.from_string("a\nb\n\n"))
-  println("the handler read {task.join(server)} lines and returned")
+  println("the handler read {task.join_handle(server)} lines and returned")
   match tcp.read(c, 10) {
     Ok(b) -> println("the client read {bytes.length(b)} bytes: the end of the connection")
     Err(e) -> println("the client: {e}")

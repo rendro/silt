@@ -108,7 +108,7 @@ fn main() {
     sent
   }
   let got = http.request(http.POST, url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"), upwards(), #{})
-  show("  the request on the wire", task.join(reader))
+  show("  the request on the wire", task.join_handle(reader))
   match got {
     Ok(resp) -> show("  http.request gets", resp.body)
     Err(e) -> println("  http.request: {e}")

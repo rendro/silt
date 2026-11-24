@@ -20,12 +20,12 @@ fn main() {
       }
     }
     channel.send(ready, ())
-    list.each(kids, task.join)
+    list.each(kids, task.join_handle)
   }
   let _ = channel.receive(ready)
   task.cancel(worker)
   channel.close(cmds)
   channel.close(gate)
-  task.join(store)
+  task.join_handle(store)
   println("stopped")
 }

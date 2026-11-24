@@ -48,5 +48,5 @@ fn main() {
       }
     }
   }
-  println("connections made and not given to the server: {task.join(client) - given}")
+  println("connections made and not given to the server: {task.join_handle(client) - given}")
 }

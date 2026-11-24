@@ -52,8 +52,8 @@ fn round(size: Int) {
       let lookers = 1..25 |> list.map { _ ->
         task.spawn { -> 1..4 |> list.map { _ -> one(pool, look) } }
       }
-      let seen = lookers |> list.flat_map { t -> task.join(t) }
-      dirty |> list.each { t -> task.join(t) }
+      let seen = lookers |> list.flat_map { t -> task.join_handle(t) }
+      dirty |> list.each { t -> task.join_handle(t) }
       let bad = seen |> list.filter { s -> s != clean }
       println("pool of {size}: {list.length(seen)} statements, {list.length(bad)} saw another caller's state")
       bad |> list.unique |> list.take(3) |> list.each { s -> println("   {s}") }

@@ -14,5 +14,5 @@ fn main() {
   channel.send(a, 1)
   channel.send(b, 2)
   channel.send(c, 3)
-  println(task.join(reader))
+  println(task.join_handle(reader))
 }

@@ -23,7 +23,7 @@ fn go(i, n) {
       let s = task.spawn({ -> channel.try_send(ch, i) })
       let _ = spin(i % 30)
       task.cancel(t)
-      let _ = task.join(s)
+      let _ = task.join_handle(s)
       go(i + 1, n)
     }
     false -> ()

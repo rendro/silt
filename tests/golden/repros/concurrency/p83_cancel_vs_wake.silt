@@ -23,7 +23,7 @@ fn go(i, n) {
       println("B{i} before cancel")
       task.cancel(t)
       println("C{i} after cancel")
-      let _ = task.join(s)
+      let _ = task.join_handle(s)
       go(i + 1, n)
     }
     false -> ()

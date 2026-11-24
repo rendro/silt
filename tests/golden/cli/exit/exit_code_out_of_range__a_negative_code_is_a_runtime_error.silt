@@ -6,5 +6,5 @@ import process
 import task
 
 fn main() {
-  task.join(task.spawn { -> process.exit(-1) })
+  task.join_handle(task.spawn { -> process.exit(-1) })
 }

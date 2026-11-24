@@ -34,7 +34,7 @@ fn test_exit_zero() {
 
 fn test_in_a_joined_task() {
   let h = task.spawn { -> decide(0) }
-  test.assert_eq(task.join(h), 1)
+  test.assert_eq(task.join_handle(h), 1)
 }
 
 fn test_in_an_unjoined_task() {

@@ -116,7 +116,7 @@ fn main() {
     tcp.close(conn)
   }
   let got = http.get(url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"))
-  task.join(writer)
+  task.join_handle(writer)
   match got {
     Ok(resp) -> show("  http.get gets", resp.body)
     Err(e) -> println("  http.get: {e}")

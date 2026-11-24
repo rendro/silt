@@ -29,7 +29,7 @@ fn main() {
   }
   -- Whichever of the two ran first, the accept ends when the server has
   -- the listener: no client has connected yet.
-  println("the accept: {task.join(waiting)}")
+  println("the accept: {task.join_handle(waiting)}")
   match http.get(url_of("http://127.0.0.1:{tcp.local_port(listener)}/")) {
     Ok(r) -> println("the client: {r.status} {text(r.body)}")
     Err(e) -> println("the client: {e}")

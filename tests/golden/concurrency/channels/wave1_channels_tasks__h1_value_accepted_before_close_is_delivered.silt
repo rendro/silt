@@ -49,7 +49,7 @@ fn go(i, rounds, lost) {
       let s = task.spawn({ -> produce(ch, acks, 0) })
       let _ = spin(200 + i % 97)
       channel.close(ch)
-      let received = task.join(c)
+      let received = task.join_handle(c)
       task.cancel(s)
       let sent = noted(acks, 0)
       match sent > received {

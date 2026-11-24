@@ -2560,7 +2560,7 @@ fn test_spawn_join() {
 
             fn main() {
                 let t = task.spawn({ -> 42 })
-                host.give(task.join(t))
+                host.give(task.join_handle(t))
             }
             import host
         "#,
@@ -2570,7 +2570,7 @@ fn test_spawn_join() {
 
 #[test]
 fn test_spawn_join_already_completed() {
-    // Ensure task.join works when the fiber has already completed
+    // Ensure task.join_handle works when the fiber has already completed
     // before join is called (the original deadlock scenario).
     let result = run_vm(
         r#"
@@ -2586,7 +2586,7 @@ fn test_spawn_join_already_completed() {
                 -- Wait for the message, ensuring the fiber runs to completion
                 let _ = channel.receive(ch)
                 -- Now the fiber should already be completed
-                host.give(task.join(t))
+                host.give(task.join_handle(t))
             }
             import host
         "#,
@@ -2621,9 +2621,9 @@ fn test_spawn_join_multiple_completed() {
                 let _ = channel.receive(ch)
                 let _ = channel.receive(ch)
                 -- All fibers should be done; join should not deadlock
-                let a = task.join(t1)
-                let b = task.join(t2)
-                let c = task.join(t3)
+                let a = task.join_handle(t1)
+                let b = task.join_handle(t2)
+                let c = task.join_handle(t3)
                 host.give(a + b + c)
             }
             import host
@@ -2636,13 +2636,13 @@ fn test_spawn_join_multiple_completed() {
 
 #[test]
 fn test_scheduler_task_completes() {
-    // task.join returns the value directly on success
+    // task.join_handle returns the value directly on success
     let result = run_vm(
         r#"
             import task
             fn main() {
                 let t = task.spawn({ -> 42 })
-                host.give(task.join(t))
+                host.give(task.join_handle(t))
             }
             import host
             "#,
@@ -2658,7 +2658,7 @@ fn test_scheduler_multiple_tasks() {
             import list
             fn main() {
                 let tasks = [1, 2, 3] |> list.map({ n -> task.spawn({ -> n * 10 }) })
-                host.give(tasks |> list.map({ t -> task.join(t) }))
+                host.give(tasks |> list.map({ t -> task.join_handle(t) }))
             }
             import host
             "#,
@@ -2700,7 +2700,7 @@ fn test_scheduler_channel_communication() {
 
 #[test]
 fn test_scheduler_deadlock_detection() {
-    // Deadlock: task.join propagates as a VmError
+    // Deadlock: task.join_handle propagates as a VmError
     let err = run_vm_result(
         r#"
             import task
@@ -2708,7 +2708,7 @@ fn test_scheduler_deadlock_detection() {
             fn main() {
                 let ch = channel.new(0)
                 let t = task.spawn({ -> channel.receive(ch) })
-                host.give(task.join(t))
+                host.give(task.join_handle(t))
             }
             import host
             "#,
@@ -2723,13 +2723,13 @@ fn test_scheduler_deadlock_detection() {
 
 #[test]
 fn test_scheduler_task_failure_propagates() {
-    // task.join on a failed task propagates as a VmError
+    // task.join_handle on a failed task propagates as a VmError
     let err = run_vm_result(
         r#"
             import task
             fn main() {
                 let t = task.spawn({ -> 1 / 0 })
-                host.give(task.join(t))
+                host.give(task.join_handle(t))
             }
             import host
             "#,
@@ -2748,7 +2748,7 @@ fn test_scheduler_task_failure_propagates() {
 //
 // These tests exercise the iteration frame of the higher-order builtins
 // (`vm::iterate`) when the task parks inside the user callback (via
-// `task.join(task.spawn(...))`). They verify that the frame's state —
+// `task.join_handle(task.spawn(...))`). They verify that the frame's state —
 // especially a fold's running value — is the same when the task goes
 // on.
 
@@ -2762,7 +2762,7 @@ fn test_scheduler_list_fold_with_yielding_callback() {
             import list
             fn main() {
                 host.give([1, 2, 3, 4, 5] |> list.fold(0, { acc, n ->
-                    task.join(task.spawn({ -> acc + n }))
+                    task.join_handle(task.spawn({ -> acc + n }))
                 }))
             }
             import host
@@ -2782,7 +2782,7 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
             import list
             fn main() {
                 host.give(["a", "b", "c"] |> list.fold("", { acc, s ->
-                    task.join(task.spawn({ -> "{acc}{s}" }))
+                    task.join_handle(task.spawn({ -> "{acc}{s}" }))
                 }))
             }
             import host
@@ -2802,7 +2802,7 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
             import list
             fn main() {
                 host.give([1, 2, 3, 4, 5, 6] |> list.filter({ n ->
-                    task.join(task.spawn({ -> n % 2 == 0 }))
+                    task.join_handle(task.spawn({ -> n % 2 == 0 }))
                 }))
             }
             import host
@@ -3926,7 +3926,7 @@ fn work(n: Int) -> Int {
 }
 fn main() {
   let h = task.spawn({ -> work(0) })
-  let v = task.join(h)
+  let v = task.join_handle(h)
   println(v)
 }
 ";
@@ -3949,11 +3949,11 @@ fn main() {
   let outer = task.spawn({ ->
     let middle = task.spawn({ ->
       let inner = task.spawn({ -> work(0) })
-      task.join(inner)
+      task.join_handle(inner)
     })
-    task.join(middle)
+    task.join_handle(middle)
   })
-  println(task.join(outer))
+  println(task.join_handle(outer))
 }
 ";
         assert_eq!(
@@ -3977,7 +3977,7 @@ fn main() {
   let ch = channel.new(0)
   let h = task.spawn({ -> wait(ch) })
   task.cancel(h)
-  let v = task.join(h)
+  let v = task.join_handle(h)
   println(v)
 }
 ";
@@ -4018,7 +4018,7 @@ fn slow(n: Int) -> Int {
 }
 fn main() {
   let h = task.spawn({ -> task.deadline(time.ms(60000), { -> slow(0) }) })
-  println(task.join(h))
+  println(task.join_handle(h))
 }
 ";
         assert_eq!(
@@ -7186,7 +7186,7 @@ mod interpolation {
                             list.fold(1..50, "") { acc, k -> "{acc}v{k * i};" }
                         })
                     }
-                    let results = list.map(tasks) { t -> task.join(t) }
+                    let results = list.map(tasks) { t -> task.join_handle(t) }
                     host.give(list.fold(results, "") { acc, r -> "{acc}[{r}]" })
                 }
                 import host
@@ -8033,7 +8033,7 @@ fn count(xs: List(Int)) -> Int {
 fn main() {
   let xs = 1..30
   let here = count(xs)
-  let there = task.join(task.spawn({ -> count(xs) }))
+  let there = task.join_handle(task.spawn({ -> count(xs) }))
   host.give((here, there))
 }
 ";

@@ -49,7 +49,7 @@ fn main() {
   println(get("/quick"))
   task.cancel(server)
   println("server cancelled")
-  clients |> list.each { client -> println(task.join(client)) }
+  clients |> list.each { client -> println(task.join_handle(client)) }
   println("main returns")
 }
 

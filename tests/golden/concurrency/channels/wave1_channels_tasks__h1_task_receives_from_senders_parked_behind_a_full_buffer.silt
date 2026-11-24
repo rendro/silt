@@ -27,6 +27,6 @@ fn main() {
   }
   time.sleep(time.ms(200))
   let receiver = task.spawn({ -> recv_n(ch, 8, 0) })
-  let total = task.join(receiver)
+  let total = task.join_handle(receiver)
   println("total {total}")
 }

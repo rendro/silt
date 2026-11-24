@@ -79,7 +79,7 @@ fn main() {
       })
       time.sleep(time.ms(50))
       let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
-      task.join(server)
+      task.join_handle(server)
     }
     Err(e) -> "{e}"
   })

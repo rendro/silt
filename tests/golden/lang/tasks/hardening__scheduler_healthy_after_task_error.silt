@@ -12,5 +12,5 @@ fn main() {
   let h2 = task.spawn({ ->
     42
   })
-  println(task.join(h2))
+  println(task.join_handle(h2))
 }

@@ -69,7 +69,7 @@ fn other_tasks_run_while_eight_print_in_pieces() {
     let program = format!(
         "import list\nimport process\nimport string\nimport task\nimport time\nfn main() {{\n{BIG}  \
          let ts = list.map([1, 2, 3, 4, 5, 6, 7, 8]) {{ _ -> task.spawn {{ -> println(a) }} }}\n  \
-         time.sleep(time.seconds(1))\n  let n = task.join(task.spawn {{ -> 40 + 2 }})\n  \
+         time.sleep(time.seconds(1))\n  let n = task.join_handle(task.spawn {{ -> 40 + 2 }})\n  \
          let _ = ts\n  process.exit(n)\n}}\n"
     );
     assert_eq!(exit_code_unread("ninth", &program), Some(42));

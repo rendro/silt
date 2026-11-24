@@ -34,8 +34,8 @@ fn main() {
   -- tasks
   let t1 = task.spawn({ -> nums.addl(10, 20) })
   let t2 = task.spawn({ -> n.suml([1.5, 1.5]) })
-  println(task.join(t1))
-  println(task.join(t2))
+  println(task.join_handle(t1))
+  println(task.join_handle(t2))
   -- record fields
   let o = nums.ops()
   println(o.add(4, 5))

@@ -163,12 +163,12 @@ fn main() {
     time.sleep(time.ms(5))
     channel.send(only, 1)
   }
-  let joiner = task.spawn { -> task.join(lost) }
+  let joiner = task.spawn { -> task.join_handle(lost) }
   let receiver = task.spawn { -> channel.receive(only) }
   println("main waits")
   channel.send(gate, 1)
-  task.join(joiner)
-  let _ = task.join(receiver)
+  task.join_handle(joiner)
+  let _ = task.join_handle(receiver)
   println("main went on")
 }
 "#;
@@ -228,7 +228,7 @@ fn main() {
   }
   println("main waits")
   channel.send(gate, 1)
-  task.join(sleeper)
+  task.join_handle(sleeper)
   println("main went on")
 }
 "#;
@@ -256,7 +256,7 @@ fn main() {
   }
   println("main waits")
   channel.send(gate, 1)
-  task.join(sleeper)
+  task.join_handle(sleeper)
   println("main went on")
 }
 "#;
@@ -282,7 +282,7 @@ fn main() {
   }
   println("main waits")
   channel.send(gate, 1)
-  let _ = task.join(reader)
+  let _ = task.join_handle(reader)
   println("main went on")
 }
 "#;
@@ -529,8 +529,8 @@ fn main() {
     channel.send(gate, 1)
   }
   print("main waits")
-  let js = list.map([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) { _ -> task.spawn { -> task.join(lost) } }
-  list.each(js) { j -> task.join(j) }
+  let js = list.map([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) { _ -> task.spawn { -> task.join_handle(lost) } }
+  list.each(js) { j -> task.join_handle(j) }
   println("main went on")
 }
 "#;
@@ -592,8 +592,8 @@ fn main() {
   println("main waits")
   channel.send(gate, 1)
   channel.send(gate, 2)
-  task.join(first)
-  task.join(second)
+  task.join_handle(first)
+  task.join_handle(second)
   println("main went on")
 }
 "#;
@@ -847,7 +847,7 @@ import task
 fn main() {
   let worker = task.spawn { -> int.abs(-1) }
   println("main waits")
-  println(task.join(worker))
+  println(task.join_handle(worker))
   println("main went on")
 }
 "#;
@@ -903,12 +903,12 @@ fn test_c_loses_a_worker() {
     time.sleep(time.ms(2))
     channel.send(only, 1)
   }
-  let joiner = task.spawn { -> task.join(lost) }
+  let joiner = task.spawn { -> task.join_handle(lost) }
   let receiver = task.spawn { -> channel.receive(only) }
   println("waits")
   channel.send(gate, 1)
-  task.join(joiner)
-  let _ = task.join(receiver)
+  task.join_handle(joiner)
+  let _ = task.join_handle(receiver)
   println("went on")
 }
 "#;

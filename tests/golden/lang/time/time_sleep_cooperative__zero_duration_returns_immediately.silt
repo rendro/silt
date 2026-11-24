@@ -5,5 +5,5 @@ fn main() {
     time.sleep(time.ms(0))
     println("zero-ok")
   })
-  task.join(h)
+  task.join_handle(h)
 }

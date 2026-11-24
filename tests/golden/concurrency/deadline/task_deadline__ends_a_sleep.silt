@@ -9,7 +9,7 @@ import time
 fn main() {
   println(task.deadline(time.ms(30), { -> time.sleep(time.hours(1)) }))
   let inside = task.spawn { -> task.deadline(time.ms(30), { -> time.sleep(time.hours(1)) }) }
-  println(task.join(inside))
+  println(task.join_handle(inside))
   match task.deadline(time.ms(0), { -> time.sleep(time.hours(1)) }) {
     None -> println("no time at all: None")
     other -> println(other)

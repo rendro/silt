@@ -13,7 +13,7 @@ import task
 fn main() {
   let ch = channel.new(2)
   let senders = 1..8 |> list.map { i -> task.spawn { -> channel.try_send(ch, i) } }
-  let sent = senders |> list.map { h -> task.join(h) } |> list.filter { ok -> ok } |> list.length
+  let sent = senders |> list.map { h -> task.join_handle(h) } |> list.filter { ok -> ok } |> list.length
   channel.close(ch)
   let drained = loop c = 0 {
     match channel.try_receive(ch) {

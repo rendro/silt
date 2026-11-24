@@ -23,7 +23,7 @@ fn main() {
         time.sleep(time.ms(150))
         channel.send(last_ch, 1)
       })
-      println(task.join(a))
+      println(task.join_handle(a))
     }
   }
 }

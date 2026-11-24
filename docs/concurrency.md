@@ -233,26 +233,26 @@ let h = task.spawn { ->
   channel.send(ch, multiplier * 2)
 }
 
-task.join(h)
+task.join_handle(h)
 when let Some(val) = channel.receive(ch) else {
   return
 } -- val = 20
 ```
 
-### Joining: `task.join(handle)`
+### Joining: `task.join_handle(handle)`
 
 ```silt
 let h = task.spawn { -> 42 }
-let result = task.join(h) -- result = 42
+let result = task.join_handle(h) -- result = 42
 ```
 
-`task.join` parks until the task has ended and gives what its function
+`task.join_handle` parks until the task has ended and gives what its function
 returned. A task that failed or was cancelled makes the join fail in turn,
 with the runtime error `joined task failed: <msg>`: it is not an `Err`
 value, unless a `task.guard` around the join makes it one. Where a task
 may be cancelled as a matter of course, let it signal its end over a
 channel instead.
-([`task.join`](stdlib/channel-task.md#taskjoin))
+([`task.join_handle`](stdlib/channel-task.md#taskjoin_handle))
 
 ### Cancelling: `task.cancel(handle)`
 
@@ -264,7 +264,7 @@ let h = task.spawn { ->
 }
 task.cancel(h)
 -- The task has ended: closing its channel loses nothing it sent.
--- task.join(h) would raise `joined task failed: cancelled` here.
+-- task.join_handle(h) would raise `joined task failed: cancelled` here.
 channel.close(results)
 ```
 
@@ -304,7 +304,7 @@ fn main() {
 ```
 
 What a cancel does to the task depends on where the task is. A task that
-waits (in a receive, a send, a `channel.select`, a `task.join`, a sleep or
+waits (in a receive, a send, a `channel.select`, a `task.join_handle`, a sleep or
 I/O) is ended there, without taking or sending anything; a task that has
 not run yet never runs. A task that is running, or whose wait has just
 ended, goes on for a bounded amount of further work: **after a cancel a
@@ -317,7 +317,7 @@ or the close of its input), let it finish what it has, and join it.
 
 `task.cancel` returns when the task, and every task below it that the
 cancel reached, has ended, so what comes after it sees everything they did.
-A `task.join` of a cancelled handle raises `joined task failed: cancelled`,
+A `task.join_handle` of a cancelled handle raises `joined task failed: cancelled`,
 unless the task had already ended with another result, which the handle
 keeps; a failure of a cancelled task is not reported. The whole rule, step
 by step, is in the reference:
@@ -414,7 +414,7 @@ error[runtime]: a task failed and was never joined: division by zero
    |
  4 |   let _ = task.spawn { -> 1 / 0 }
    |                           ^^^^^ a task failed and was never joined: division by zero
-  = help: the task was spawned at main.silt:4:11: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+  = help: the task was spawned at main.silt:4:11: join it with task.join_handle to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
 The report is rendered like every other runtime error: the file and line
@@ -422,7 +422,7 @@ where the task failed, the source line, and the call stack when there is
 more than one frame. Its help names where the task was spawned, and says
 so when the task that spawned it was cancelled. The rules:
 
-- **A join handles the failure.** `task.join(h)` raises the task's error in
+- **A join handles the failure.** `task.join_handle(h)` raises the task's error in
   the joiner (`joined task failed: <msg>`), and the failure is not reported
   a second time. A join in a task that has been cancelled takes nothing,
   so the failure stays unhandled.
@@ -621,8 +621,8 @@ fn main() {
 
   let consumer = task.spawn { -> channel.each(ch) { msg -> println(msg) } }
 
-  task.join(producer)
-  task.join(consumer)
+  task.join_handle(producer)
+  task.join_handle(consumer)
 }
 -- prints:
 --   hello
@@ -668,7 +668,7 @@ fn main() {
     |> list.map { id -> task.spawn { -> channel.each(jobs) { n -> channel.send(results, n * 2) } } }
 
   -- Wait for all workers to finish, then close results
-  workers |> list.each { w -> task.join(w) }
+  workers |> list.each { w -> task.join_handle(w) }
   channel.close(results)
 
   -- Collect
@@ -721,9 +721,9 @@ fn main() {
   -- Stage 3: consume the doubled values
   let s3 = task.spawn { -> channel.each(doubled) { n -> println("stage 3 got: {n}") } }
 
-  task.join(s1)
-  task.join(s2)
-  task.join(s3)
+  task.join_handle(s1)
+  task.join_handle(s2)
+  task.join_handle(s3)
 }
 -- prints:
 --   stage 3 got: 2
@@ -892,7 +892,7 @@ fn main() {
   channel.close(work)
 
   -- Wait for the worker to finish
-  task.join(worker)
+  task.join_handle(worker)
   when let Some(status) = channel.receive(done) else {
     return
   }
@@ -922,7 +922,7 @@ fn main() {
 
   let workers = [1, 2, 3] |> list.map { id -> task.spawn { -> channel.send(results, id * 10) } }
 
-  workers |> list.each { w -> task.join(w) }
+  workers |> list.each { w -> task.join_handle(w) }
   channel.close(results)
 
   when let Some(r1) = channel.receive(results) else {
@@ -1053,7 +1053,7 @@ fn main() {
   channel.send(jobs, "a")
   channel.send(jobs, "b")
   channel.close(jobs)
-  task.join(sup)
+  task.join_handle(sup)
 }
 ```
 
@@ -1068,10 +1068,10 @@ Key points:
 - **A cancel of the supervisor stops its children.** `task.cancel` of
   the supervisor also cancels the workers it spawned that still run, and
   theirs: nothing is left behind.
-- **`task.join` re-raises runtime errors.** If a spawned task's body
-  panics with an unhandled runtime error, `task.join` on its handle
+- **`task.join_handle` re-raises runtime errors.** If a spawned task's body
+  panics with an unhandled runtime error, `task.join_handle` on its handle
   re-raises that error in the joining task. That is the "safety net"
-  path — design for outcomes-as-values instead, and keep `task.join`
+  path — design for outcomes-as-values instead, and keep `task.join_handle`
   for awaiting clean completion.
 
 ### Workers that fail
@@ -1184,7 +1184,7 @@ parked task is woken and rescheduled.
 Silt uses a **cooperative** scheduler -- there is no wall-clock preemption.
 A task holds its worker thread until one of two things happens:
 
-1. It blocks on an I/O operation, channel send/receive/select, `task.join`,
+1. It blocks on an I/O operation, channel send/receive/select, `task.join_handle`,
    or `time.sleep`. The task is parked and the worker moves on to the next
    ready task.
 2. It exhausts its **opcode time slice**. The scheduler runs each task for a
@@ -1333,7 +1333,7 @@ Linux.
 |---|---|
 | `channel.send(ch, val)` | Buffer is full -- resumes when space opens |
 | `channel.receive(ch)` | Buffer is empty -- resumes when a value arrives or the channel closes |
-| `task.join(handle)` | Task not yet complete -- resumes when the task finishes |
+| `task.join_handle(handle)` | Task not yet complete -- resumes when the task finishes |
 | `channel.select([...ops])` | No `Recv`/`Send` op is ready -- resumes when any becomes ready |
 | `time.sleep(duration)` | Always -- parks the task for the given duration, then resumes |
 | `io.read_file(path)` | Always (file I/O) |
@@ -1380,7 +1380,7 @@ its I/O and its `time.sleep` are waits too.
 ### Deadlock detection
 
 A program is deadlocked when `main` waits (a `channel.send`,
-`channel.receive`, `channel.each`, `channel.select` or `task.join`), every
+`channel.receive`, `channel.each`, `channel.select` or `task.join_handle`), every
 other task waits too, and nothing is pending that could end one of the
 waits: no timer and no I/O operation. silt sees that at the moment it
 becomes true -- when the last task parks or ends, or the last timer has
@@ -1443,6 +1443,6 @@ Every function of `channel` and `task`, with its signature and what it
 returns, is in the tables of the reference: [channel / task](stdlib/channel-task.md).
 
 The mental model: tasks are independent workers, channels are the pipes between
-them, `channel.select` is a multiplexer, and `task.join` is a synchronization
+them, `channel.select` is a multiplexer, and `task.join_handle` is a synchronization
 barrier. Tasks are lightweight and multiplexed onto a fixed thread pool, giving
 you true parallelism without the cost of one OS thread per task.

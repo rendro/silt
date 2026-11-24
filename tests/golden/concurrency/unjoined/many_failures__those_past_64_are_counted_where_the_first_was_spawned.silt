@@ -2,7 +2,7 @@
 -- stderr-contains: error[runtime]: a task failed and was never joined: panic: task
 -- stderr-contains: error[runtime]: 26 more tasks failed and were never joined (at most 64 failures are shown)
 -- stderr-contains:  --> many_failures__those_past_64_are_counted_where_the_first_was_spawned.silt:17:11
--- stderr-contains: = help: the first of them was spawned here: join each task with task.join, or cancel it with task.cancel if you don't need its result
+-- stderr-contains: = help: the first of them was spawned here: join each task with task.join_handle, or cancel it with task.cancel if you don't need its result
 -- stderr-not-contains: :1:1
 -- stderr-not-contains: panic: task 10.
 -- A hundred tasks fail, ten are cancelled: 64 of the other 90 are shown,

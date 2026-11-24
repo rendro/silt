@@ -10,6 +10,6 @@ fn main() {
       x
     })
   })
-  let v = task.join(h)
+  let v = task.join_handle(h)
   println(v)
 }

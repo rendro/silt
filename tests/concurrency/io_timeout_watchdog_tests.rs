@@ -127,7 +127,7 @@ fn main() {
       Err(e) -> "{e}"
     }
   })
-  println(task.join(handle))
+  println(task.join_handle(handle))
 }
 "#;
     let (stdout, stderr, code) =
@@ -223,7 +223,7 @@ fn main() {{
           Err(other) -> "other:{{other}}"
         }}
       }})
-      println(task.join(outcome))
+      println(task.join_handle(outcome))
     }}
     Err(e) -> println("connect-err:{{e}}")
   }}

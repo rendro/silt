@@ -39,7 +39,7 @@ trait json.Decode for Slow {
       json.Int(n) -> {
         time.sleep(time.ms(1))
         let t = task.spawn { -> n * 2 }
-        Ok(Slow { n: task.join(t) })
+        Ok(Slow { n: task.join_handle(t) })
       }
       _ -> Err(json.Other("no number here"))
     }

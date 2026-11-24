@@ -12,7 +12,7 @@ fn program() {
   })
 
   when let Some(val) = channel.receive(ch) else { panic("pattern did not match") }
-  task.join(producer)
+  task.join_handle(producer)
   val
 }
 

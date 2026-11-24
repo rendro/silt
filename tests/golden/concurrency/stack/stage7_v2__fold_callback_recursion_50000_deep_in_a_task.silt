@@ -13,6 +13,6 @@ fn down(acc, n) {
 
 fn main() {
   let h = task.spawn({ -> down(0, 50000) })
-  println(task.join(h))
+  println(task.join_handle(h))
   println(down(0, 50000))
 }

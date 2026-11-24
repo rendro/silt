@@ -53,7 +53,7 @@ fn main() {
 
   -- A task that has ended: the cancel returns at once.
   let ended = task.spawn { -> 7 }
-  println("joined: {task.join(ended)}")
+  println("joined: {task.join_handle(ended)}")
   task.cancel(ended)
   println("cancelled a task that had ended")
 

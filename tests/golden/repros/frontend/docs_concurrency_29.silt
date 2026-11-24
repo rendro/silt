@@ -21,7 +21,7 @@ fn main() {
   channel.close(work)
 
   -- Wait for the worker to finish
-  task.join(worker)
+  task.join_handle(worker)
   when let Some(status) = channel.receive(done) else { return }
   println(status)
 }

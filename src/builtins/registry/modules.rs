@@ -338,7 +338,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn cancel(handle: Handle(a)) -> ()", "Cancel a task, and wait until it has ended (see details below)", concurrency::task::cancel),
                 f("fn deadline(limit: Duration, work: Fn() -> a) -> Option(a)", "Run a function, and end it when the duration has passed: Some of its value, or None", concurrency::task::deadline),
                 f("fn guard(work: Fn() -> a) -> Result(a, RuntimeError)", "Run a function, and give a runtime error it raises as an `Err`", concurrency::task::guard),
-                f("fn join(handle: Handle(a)) -> a", "Wait for a task to complete", concurrency::task::join),
+                f("fn join_handle(handle: Handle(a)) -> a", "Wait for a task to complete", concurrency::task::join_handle),
                 f("fn spawn(f: Fn() -> a) -> Handle(a)", "Spawn a new lightweight task", concurrency::task::spawn),
             ],
         },

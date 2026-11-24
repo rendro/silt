@@ -2,7 +2,7 @@
 -- repeat: 100
 -- stderr-contains: error[runtime]: joined task failed: panic: code 50
 -- A task that panics with a value fails with the value as it is shown,
--- in the error of the `task.join` that meets it.
+-- in the error of the `task.join_handle` that meets it.
 import task
 type Code {
   n: Int,
@@ -16,5 +16,5 @@ trait Display for Code {
 
 fn main() {
   let h = task.spawn({ -> panic(Code { n: 2 }) })
-  task.join(h)
+  task.join_handle(h)
 }

@@ -12,8 +12,8 @@ fn main() {
   let bad = task.spawn({ -> 1 / 0 })
   let good2 = task.spawn({ -> channel.send(ch, 2) })
 
-  task.join(good1)
-  task.join(good2)
+  task.join_handle(good1)
+  task.join_handle(good2)
 
   let a = match channel.receive(ch) {
     Some(v) -> v

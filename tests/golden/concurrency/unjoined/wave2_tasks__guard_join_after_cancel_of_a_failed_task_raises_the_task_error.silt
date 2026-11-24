@@ -18,6 +18,6 @@ fn main() {
   let _ = channel.receive(about_to_fail)
   time.sleep(time.ms(300))
   task.cancel(h)
-  let v = task.join(h)
+  let v = task.join_handle(h)
   println("not reached {v}")
 }

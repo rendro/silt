@@ -8,6 +8,6 @@ import time
 
 fn main() {
   let slow = task.spawn { -> time.sleep(time.hours(1)) }
-  println(task.deadline(time.ms(30), { -> task.join(slow) }))
+  println(task.deadline(time.ms(30), { -> task.join_handle(slow) }))
   task.cancel(slow)
 }

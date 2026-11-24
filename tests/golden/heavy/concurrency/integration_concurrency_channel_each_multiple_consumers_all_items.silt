@@ -25,8 +25,8 @@ fn program() {
     }
   })
 
-  task.join(w1)
-  task.join(w2)
+  task.join_handle(w1)
+  task.join_handle(w2)
 
   -- Collect 4 results
   when let Some(a) = channel.receive(results) else { panic("pattern did not match") }

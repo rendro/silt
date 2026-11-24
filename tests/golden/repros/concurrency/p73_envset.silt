@@ -16,5 +16,5 @@ fn main() {
     |> stream.collect
   println(out)
   println(env.get("SILT_PROBE_B"))
-  task.join(h)
+  task.join_handle(h)
 }

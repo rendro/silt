@@ -18,7 +18,7 @@ fn main() {
   println(tcp.set_nodelay(conn, true))
   println(tcp.set_nodelay(conn, false))
   when let Ok(_) = tcp.write(conn, bytes.from_string("hi")) else { panic("cannot write") }
-  println(task.join(server))
+  println(task.join_handle(server))
   tcp.close(conn)
   println(tcp.peer_addr(conn))
   println(tcp.set_nodelay(conn, true))

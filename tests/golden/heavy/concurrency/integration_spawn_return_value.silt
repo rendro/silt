@@ -5,7 +5,7 @@ fn program() {
   let h = task.spawn({ ->
     42
   })
-  task.join(h)
+  task.join_handle(h)
 }
 
 fn main() {

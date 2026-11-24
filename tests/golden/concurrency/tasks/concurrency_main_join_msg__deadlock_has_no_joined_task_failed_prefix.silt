@@ -1,7 +1,7 @@
 -- exit: 1
 -- repeat: 3
 -- stderr-contains: deadlock on main thread
--- stderr-contains: task.join with no progress possible
+-- stderr-contains: task.join_handle with no progress possible
 -- stderr-not-contains: joined task failed
 -- A main-thread join on a task that can never progress reports the
 -- deadlock on its own, not as "joined task failed: ...".
@@ -16,5 +16,5 @@ fn main() {
       None -> 2
     }
   })
-  let _ = task.join(h)
+  let _ = task.join_handle(h)
 }

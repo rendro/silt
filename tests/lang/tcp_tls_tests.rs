@@ -53,7 +53,7 @@ fn main() {
       time.sleep(time.ms(50))
       -- Trigger the accept with a connect; the handshake then fails.
       let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
-      task.join(server)
+      task.join_handle(server)
     }
     Err(e) -> "{e}"
   })
@@ -117,7 +117,7 @@ fn main() {{
         }}
         Err(_) -> ()
       }}
-      task.join(server)
+      task.join_handle(server)
     }}
     Err(e) -> "{{e}}"
   }})

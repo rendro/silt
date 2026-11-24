@@ -28,7 +28,7 @@ fn main() {
       None -> -1
     }
   })
-  let r = task.join(recv)
-  let _ = task.join(real)
+  let r = task.join_handle(recv)
+  let _ = task.join_handle(real)
   println(r)
 }

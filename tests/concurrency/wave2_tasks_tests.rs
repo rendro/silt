@@ -194,7 +194,7 @@ fn repl_task_joined_by_a_later_input_is_not_reported() {
                  import time\n\
                  let h = task.spawn({ -> 1 / 0 })\n\
                  time.sleep(time.ms(300))\n\
-                 task.join(h)\n\
+                 task.join_handle(h)\n\
                  :quit\n";
     for run in 1..=REPEATS {
         let out = run_silt("repl", "unused.silt", "", &["repl"], Some(input));

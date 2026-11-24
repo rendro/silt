@@ -31,8 +31,8 @@ fn go(i, lost_rounds, lost_values) {
       let s = task.spawn(fn() { produce(ch, 0) })
       let _ = spin(200 + i % 97)
       channel.close(ch)
-      let sent = task.join(s)
-      let received = task.join(c)
+      let sent = task.join_handle(s)
+      let received = task.join_handle(c)
       match sent > received {
         true -> go(i + 1, lost_rounds + 1, lost_values + sent - received)
         false -> go(i + 1, lost_rounds, lost_values)

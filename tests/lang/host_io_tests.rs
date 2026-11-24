@@ -60,7 +60,7 @@ fn main() {
     println("task {n}")
     n
   }) })
-  let total = handles |> list.fold(0, { acc, h -> acc + task.join(h) })
+  let total = handles |> list.fold(0, { acc, h -> acc + task.join_handle(h) })
   println("total {total}")
 }
 "#;
@@ -120,7 +120,7 @@ fn main() {{
             report.contains("task <handle:0> failed and was never joined: panic: boom"),
             "{report:?}"
         );
-        assert!(report.contains("task.join"), "{report:?}");
+        assert!(report.contains("task.join_handle"), "{report:?}");
         if !at_return.is_empty() {
             return;
         }
@@ -319,8 +319,8 @@ fn a_panicking_stdout_is_a_runtime_error() {
 import task
 fn main() {
   let h = task.spawn({ -> println("x") })
-  task.join(h)
-  let _ = task.join(task.spawn({ -> 2 }))
+  task.join_handle(h)
+  let _ = task.join_handle(task.spawn({ -> 2 }))
 }
 "#;
     let ran = run_on_thread(source, HostIo::new(Panics, Buffer::new()));
@@ -380,7 +380,7 @@ fn main() {
   print("a")
   io.eprint("b")
   io.eprintln([1, 2])
-  task.join(task.spawn({ -> io.eprintln("from a task") }))
+  task.join_handle(task.spawn({ -> io.eprintln("from a task") }))
   println("c")
 }
 "#;
@@ -542,7 +542,7 @@ import process
 import task
 fn main() {
   let _ = [1, 2] |> list.map({ n -> task.spawn({ -> process.exit(n) }) })
-  let _ = task.join(task.spawn({ -> process.exit(3) }))
+  let _ = task.join_handle(task.spawn({ -> process.exit(3) }))
 }
 "#;
     let error = run_to_error(source, &out);
@@ -712,7 +712,7 @@ fn main() {
     time.sleep(time.hours(1))
     time.since(before, time.now()) >= time.hours(1)
   })
-  println(task.join(h))
+  println(task.join_handle(h))
 }
 "#;
     let _ticking = keep_advancing(&clock);
@@ -738,7 +738,7 @@ fn main() {
   println(channel.receive(channel.timeout(time.ms(3600000))))
   println(channel.receive_timeout(quiet, time.hours(1)))
   let h = task.spawn({ -> channel.receive_timeout(quiet, time.hours(1)) })
-  println(task.join(h))
+  println(task.join_handle(h))
 }
 "#;
     let _ticking = keep_advancing(&clock);
@@ -828,7 +828,7 @@ fn main() {
       }
     })
   })
-  println(task.join(h))
+  println(task.join_handle(h))
 }
 "#;
     let _ticking = keep_advancing(&clock);
@@ -910,7 +910,7 @@ import task
 import time
 fn main() {
   let h = task.spawn({ -> time.sleep(time.hours(1)) })
-  task.join(h)
+  task.join_handle(h)
 }
 "#;
     let ran = run_on_thread(source, HostIo::buffer(&Buffer::new()).clock(clock.clone()));

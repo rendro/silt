@@ -32,9 +32,9 @@ fn main() {
   let _ = channel.receive(reading)
   time.sleep(time.ms(200))
   when let Ok(_) = tcp.write(conn, bytes.from_string("ping")) else { panic("cannot write") }
-  when let Ok(answer) = task.join(reader) else { panic("cannot read") }
+  when let Ok(answer) = task.join_handle(reader) else { panic("cannot read") }
   println(text(answer))
-  task.join(peer)
+  task.join_handle(peer)
   tcp.close(conn)
 }
 

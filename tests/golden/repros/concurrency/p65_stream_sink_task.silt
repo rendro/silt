@@ -20,6 +20,6 @@ fn main() {
       channel.close(ch)
     })
   }
-  let outs = consumers |> list.map { h -> task.join(h) }
+  let outs = consumers |> list.map { h -> task.join_handle(h) }
   println(outs)
 }

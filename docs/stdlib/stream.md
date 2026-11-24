@@ -213,7 +213,7 @@ fn write_rows(rows: Channel(Result(String, String)), path: String) -> Result(Int
     sent
   }
   match stream.write_to_file(lines, path) {
-    Ok(()) -> task.join(relay)
+    Ok(()) -> task.join_handle(relay)
     Err(e) -> {
       task.cancel(relay)
       Err(Write(e))
@@ -528,7 +528,7 @@ fn main() {
 stream.from_fn(feed: Fn(Channel(a)) -> ()) -> Channel(a)
 ```
 
-A stream of what `feed` sends on the channel it is given. `feed` runs in a task of its own as the stream's source, and works ahead of its reader: a send of `feed` waits while 16 of its values wait to be read, or 32 under a sink that reads to the end (`collect`, `fold`, `channel.each`, ...). The stream closes when `feed` returns. A `feed` that closes its channel itself ends the stream there as returning does, and runs on until it returns or nobody reads the stream any more; a send after that close is a runtime error of `feed`'s own ("send on closed channel"), reported as such. A task that `feed` spawned and that still sends when `feed` returns fails the same way: wait for it in `feed` with `task.join` before `feed` returns. A runtime error in `feed` fails the stream as a failing stage does: the sink or the read that reads it raises the error. When nobody reads the stream any more (it is cut short, closed, or its last name is gone), `feed` is stopped, in a send or wherever it waits.
+A stream of what `feed` sends on the channel it is given. `feed` runs in a task of its own as the stream's source, and works ahead of its reader: a send of `feed` waits while 16 of its values wait to be read, or 32 under a sink that reads to the end (`collect`, `fold`, `channel.each`, ...). The stream closes when `feed` returns. A `feed` that closes its channel itself ends the stream there as returning does, and runs on until it returns or nobody reads the stream any more; a send after that close is a runtime error of `feed`'s own ("send on closed channel"), reported as such. A task that `feed` spawned and that still sends when `feed` returns fails the same way: wait for it in `feed` with `task.join_handle` before `feed` returns. A runtime error in `feed` fails the stream as a failing stage does: the sink or the read that reads it raises the error. When nobody reads the stream any more (it is cut short, closed, or its last name is gone), `feed` is stopped, in a send or wherever it waits.
 
 ```silt
 import channel

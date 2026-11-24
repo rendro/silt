@@ -19,7 +19,7 @@ fn main() {
       None -> 0 - 1
     }
   })
-  let got = task.join(relay)
-  task.join(waiter)
+  let got = task.join_handle(relay)
+  task.join_handle(waiter)
   println("main got: {got}")
 }

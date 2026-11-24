@@ -15,5 +15,5 @@ fn main() {
   let t = task.spawn { ->
     list.fold(1..40, 0) { total, round -> total + nest(5, round) }
   }
-  println(task.join(t))
+  println(task.join_handle(t))
 }

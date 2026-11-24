@@ -105,7 +105,7 @@ fn in_a_closure_and_a_task() -> Int {
   let v = boom()
   let c = { -> v.x.k }
   let h = task.spawn({ -> v.x.y + 1 })
-  c() + task.join(h)
+  c() + task.join_handle(h)
 }
 
 fn main() {

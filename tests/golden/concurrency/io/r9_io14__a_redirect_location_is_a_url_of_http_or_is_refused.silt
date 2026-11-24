@@ -60,7 +60,7 @@ fn main() {
       Err(e) -> println("  the client: {e}")
     }
   }
-  task.join(peer)
+  task.join_handle(peer)
 }
 
 fn url_of(text: String) -> url.Url {

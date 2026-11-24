@@ -45,7 +45,7 @@ fn main() {
   })
 
   let total = collect(results, 30, 0)
-  task.join(producer)
-  workers |> list.each { w -> task.join(w) }
+  task.join_handle(producer)
+  workers |> list.each { w -> task.join_handle(w) }
   println("total {total}")
 }

@@ -16,6 +16,6 @@ fn main() {
   list.each(1..100) { n -> channel.send(ch, n) }
   channel.close(ch)
 
-  task.join(w1)
-  task.join(w2)
+  task.join_handle(w1)
+  task.join_handle(w2)
 }

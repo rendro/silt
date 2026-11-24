@@ -16,7 +16,7 @@ fn main() {
           }
         })
         channel.send(ch, 42)
-        let r = task.join(consumer)
+        let r = task.join_handle(consumer)
         match r == 42 {
           true -> loop(i + 1)
           _ -> println("iteration {i}: rendezvous send lost, got {r}")

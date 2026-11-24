@@ -71,8 +71,8 @@ fn main() {
       None -> loop()
     }
   }
-  task.join(producer)
-  match task.join(consumer) {
+  task.join_handle(producer)
+  match task.join_handle(consumer) {
     (got, sum) -> println("sent 100 (sum 4950), arrived {got} (sum {sum})")
   }
 }

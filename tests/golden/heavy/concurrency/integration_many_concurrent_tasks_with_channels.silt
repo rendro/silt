@@ -21,7 +21,7 @@ fn program() {
   }
 
   -- Join all handles
-  handles |> list.each { h -> task.join(h) }
+  handles |> list.each { h -> task.join_handle(h) }
 
   -- Drain all messages and sum them
   loop i = 0, total = 0 {

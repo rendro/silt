@@ -45,7 +45,7 @@ fn main() {
   }
   println("12 handlers wait")
   channel.close(release)
-  println(clients |> list.map { client -> task.join(client) } |> list.unique)
+  println(clients |> list.map { client -> task.join_handle(client) } |> list.unique)
   task.cancel(server)
 }
 

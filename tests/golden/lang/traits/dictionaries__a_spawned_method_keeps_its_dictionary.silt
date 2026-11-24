@@ -13,10 +13,10 @@ trait Zero { fn zero() -> Self }
 trait Zero for Int { fn zero() -> Int { 41 } }
 fn later(x: a) -> String where a: Name {
   let h = task.spawn({ -> Name.name(x) })
-  task.join(h)
+  task.join_handle(h)
 }
 fn main() {
   println(later(Bx(Bx(K))))
   let h = task.spawn(Int.zero)
-  println(task.join(h) + 1)
+  println(task.join_handle(h) + 1)
 }

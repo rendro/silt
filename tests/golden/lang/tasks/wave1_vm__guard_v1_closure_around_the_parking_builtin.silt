@@ -18,8 +18,8 @@ fn main() {
     channel.send(c, 3)
   }
   let first = task.spawn { -> outer(inner, list.map([a]) { ch -> channel.receive(ch) }) }
-  println(task.join(first))
+  println(task.join_handle(first))
   let second = task.spawn { -> pair("x", list.map([b, c]) { ch -> channel.receive(ch) }) }
-  println(task.join(second))
-  task.join(sender)
+  println(task.join_handle(second))
+  task.join_handle(sender)
 }

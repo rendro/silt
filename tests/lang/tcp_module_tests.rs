@@ -91,7 +91,7 @@ fn main() {
             Err(e) -> "{e}"
           }
           tcp.close(conn)
-          task.join(server)
+          task.join_handle(server)
           result
         }
         Err(e) -> "{e}"
@@ -141,7 +141,7 @@ fn main() {
             Err(e) -> "{e}"
           }
           tcp.close(conn)
-          task.join(server)
+          task.join_handle(server)
           result
         }
         Err(e) -> "{e}"
@@ -182,7 +182,7 @@ fn main() {
             Ok(_) -> "wrong: should error"
             Err(_) -> "errored"
           }
-          task.join(server)
+          task.join_handle(server)
           result
         }
         Err(e) -> "{e}"
@@ -228,7 +228,7 @@ fn main() {
             Ok(_) -> "wrong: should error"
             Err(_) -> "errored"
           }
-          task.join(server)
+          task.join_handle(server)
           result
         }
         Err(e) -> "{e}"

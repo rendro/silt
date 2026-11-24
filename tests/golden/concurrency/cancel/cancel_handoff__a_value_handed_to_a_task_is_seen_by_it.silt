@@ -36,7 +36,7 @@ fn round(i, capacity) {
   }
   time.sleep(time.ms(1))
   task.cancel(receiver)
-  match task.join(sender) {
+  match task.join_handle(sender) {
     false -> 0
     true -> match channel.select([channel.Recv(seen), channel.Recv(ch)]) {
       channel.Received(_, Some(^i)) -> 1

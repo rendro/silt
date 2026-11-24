@@ -18,8 +18,8 @@ fn main() {
   match channel.try_receive(ch) { channel.Message(v) -> println("got {v}")  _ -> println("none (cancelled send did not deliver)") }
   -- is the channel still usable? a fresh sender/receiver pair
   let h2 = task.spawn(fn() { channel.send(ch, 7) })
-  task.join(h2)
+  task.join_handle(h2)
   match channel.receive(ch) { Some(v) -> println("fresh got {v}")  _ -> println("other") }
   -- join cancelled
-  task.join(h)
+  task.join_handle(h)
 }

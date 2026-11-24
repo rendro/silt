@@ -34,6 +34,6 @@ fn main() {
   channel.send(first, 1)
   println(channel.receive(goal))
   channel.close(stop)
-  hs |> list.each { h -> task.join(h) }
+  hs |> list.each { h -> task.join_handle(h) }
   println("done")
 }

@@ -10,7 +10,7 @@ import task
 
 fn main() {
   let worker = task.spawn { -> 1 + 1 }
-  println("joined: {task.join(worker)}")
+  println("joined: {task.join_handle(worker)}")
   env.set("SILT_ENV_CHANGE_B", "1")
   println("not reached")
 }

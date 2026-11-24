@@ -10,5 +10,5 @@ fn main() {
     let r = Ok("t/f1.txt") |> result.flat_map(io.read_file)
     ("tag", r)
   }
-  println(task.join(worker))
+  println(task.join_handle(worker))
 }

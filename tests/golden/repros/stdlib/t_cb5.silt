@@ -8,5 +8,5 @@ fn main() {
   let worker = task.spawn { ->
     list.length(list.map(["t/f1.txt", "t/f2.txt"], io.read_file)) + 100
   }
-  println(task.join(worker))
+  println(task.join_handle(worker))
 }

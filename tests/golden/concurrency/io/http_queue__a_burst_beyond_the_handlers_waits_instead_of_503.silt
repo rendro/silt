@@ -28,11 +28,11 @@ fn main() {
       }
     }
   }
-  let statuses = list.map(clients) { c -> task.join(c) }
+  let statuses = list.map(clients) { c -> task.join_handle(c) }
   let ok = list.filter(statuses) { s -> s == 200 } |> list.length
   println("{ok} of {list.length(statuses)} answered 200")
   tcp.close_listener(listener)
-  task.join(server)
+  task.join_handle(server)
 }
 
 fn url_of(text: String) -> url.Url {

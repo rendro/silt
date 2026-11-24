@@ -13,5 +13,5 @@ trait Deep for Int {
 }
 fn main() {
   let h = task.spawn(fn() { 80.go() })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

@@ -24,12 +24,12 @@ fn main() {
     channel.send(ch, 8)
   }
   println(outcome(channel.receive_timeout(ch, time.seconds(30))))
-  task.join(sender)
+  task.join_handle(sender)
   channel.close(ch)
   println(outcome(channel.receive_timeout(ch, time.seconds(30))))
   -- In a task, where the wait parks instead of blocking a thread.
   let quiet = channel.new(0)
   let waiter = task.spawn { -> outcome(channel.receive_timeout(quiet, time.ms(20))) }
-  println(task.join(waiter))
+  println(task.join_handle(waiter))
   println(channel.receive_timeout(quiet, time.ms(1)) == channel.try_receive(quiet))
 }

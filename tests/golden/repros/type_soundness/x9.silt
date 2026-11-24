@@ -3,7 +3,7 @@ import task
 import io
 fn sneaky() -> Int !{} {
   let h = task.spawn(fn() { println("spawned io") 1 })
-  task.join(h)
+  task.join_handle(h)
 }
 fn main() !{} {
   let _ = sneaky()

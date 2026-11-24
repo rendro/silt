@@ -9,7 +9,7 @@ fn program() {
       None -> 0
     }
   })
-  task.join(h)
+  task.join_handle(h)
 }
 
 fn main() {

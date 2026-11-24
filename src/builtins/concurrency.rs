@@ -608,7 +608,7 @@ fn joined(
         .as_ref()
         .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
     {
-        return Ok(vm.end_here("task.join"));
+        return Ok(vm.end_here("task.join_handle"));
     }
     // The joiner has the result now. If the task failed, the error is
     // the joiner's to handle and is not reported as an unjoined
@@ -618,7 +618,7 @@ fn joined(
         Ok(value) => Ok(Step::Done(value)),
         // As for `task.deadline`: where the task failed, and below
         // the task's own calls the calls that led to this
-        // `task.join`. A failure that has no place (a cancelled task)
+        // `task.join_handle`. A failure that has no place (a cancelled task)
         // is placed at the join. The failure remembers the task it was
         // taken from: a cancel that comes after the take hands it back
         // (`Scheduler::cancel`).
@@ -693,13 +693,13 @@ pub(crate) mod task {
             Ok(Value::Handle(start(vm, f, None)?))
         }
 
-        fn join(vm, handle: Handle) -> Result<Step, VmError> {
+        fn join_handle(vm, handle: Handle) -> Result<Step, VmError> {
             if let Some(result) = handle.try_get() {
                 return joined(vm, handle, result);
             }
             let handle = handle.clone();
             let wait = Wait::new(vec![Arm::Cell(handle.done())]);
-            Ok(vm.park("task.join", wait, move |vm, _| {
+            Ok(vm.park("task.join_handle", wait, move |vm, _| {
                 let result = handle.try_get().ok_or_else(|| {
                     VmError::internal("a join ended before its task")
                 })?;

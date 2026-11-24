@@ -23,12 +23,12 @@
 //!   of the endings the invariants accept), `yield`
 //!   (`time.sleep(time.ms(0))`), short `time.sleep`.
 //! - A supervisor task runs random `task.cancel(h_i)` and
-//!   `task.join(h_i)` ops on worker handles (captured after the worker
+//!   `task.join_handle(h_i)` ops on worker handles (captured after the worker
 //!   spawns). The supervisor itself is spawned LAST so it sees every
 //!   worker handle.
 //! - Main spawns everyone then WAITS via `channel.select` on a
 //!   counting `done` channel and a `channel.timeout(time.ms(3500))` bound —
-//!   main never calls `task.join` on a worker. This keeps per-task
+//!   main never calls `task.join_handle` on a worker. This keeps per-task
 //!   errors (cancel, send-on-closed) from surfacing as the process
 //!   exit; the test then asserts main still exits cleanly.
 //!
@@ -279,7 +279,7 @@ mod genp {
         /// `task.cancel(h_i)` — peer cancel; only emitted inside the
         /// supervisor task.
         CancelPeer { peer: usize },
-        /// `task.join(h_i)` — peer join; only emitted inside supervisor.
+        /// `task.join_handle(h_i)` — peer join; only emitted inside supervisor.
         JoinPeer { peer: usize },
         /// `time.sleep(time.ms(0))` — cooperative yield.
         Yield,
@@ -524,7 +524,7 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
             format!("{indent}task.cancel(h{peer})\n")
         }
         genp::Op::JoinPeer { peer } => {
-            // `task.join` propagates VmError if the peer errored. To
+            // `task.join_handle` propagates VmError if the peer errored. To
             // prevent the supervisor from inheriting that error (which
             // would cascade if main ever joined the supervisor), we
             // wrap the join in its own task.spawn + don't propagate.
@@ -532,7 +532,7 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
             // the supervisor's failure is contained. We still use a
             // straight join here — if the supervisor dies partway, it
             // just stops running.
-            format!("{indent}let _jr{peer} = task.join(h{peer})\n")
+            format!("{indent}let _jr{peer} = task.join_handle(h{peer})\n")
         }
         genp::Op::Yield => {
             format!("{indent}time.sleep(time.ms(0))\n")
@@ -655,7 +655,7 @@ proptest! {
     /// Default budget is 5s; raised to 10s on Windows CI to absorb
     /// the documented 3–5× slowness of GitHub windows-latest runners
     /// at process spawning + file I/O. A randomly-generated program
-    /// with a few `time.sleep(time.ms(N))` + `task.join` chains can
+    /// with a few `time.sleep(time.ms(N))` + `task.join_handle` chains can
     /// trip the 5s ceiling under Windows runner contention even when
     /// the program is well-behaved (round 79 follow-up: observed
     /// `TIMEOUT after 5.12s (max 5s)` on a chain of two send + two
@@ -708,7 +708,7 @@ fn main() {
       time.sleep(time.ms(10))
       let _ = channel.try_send(done, i)
     }) }
-  handles |> list.each { h -> task.join(h) }
+  handles |> list.each { h -> task.join_handle(h) }
   println("finished")
 }
 "#;
@@ -754,10 +754,10 @@ fn main() {
     let _ = channel.try_send(tick, 3)
   })
   let b = task.spawn({ ->
-    let _ = task.join(c)
+    let _ = task.join_handle(c)
   })
   let a = task.spawn({ ->
-    let _ = task.join(b)
+    let _ = task.join_handle(b)
   })
   -- Cancel A before any of the joins complete.
   task.cancel(a)
