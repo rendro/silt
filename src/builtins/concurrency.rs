@@ -557,6 +557,9 @@ enum DeadlineState {
     Started,
     /// The frame waits for the task to end.
     Waiting,
+    /// The caller was cancelled, and the cancel reached the task: the
+    /// frame waits until the task's last step has run.
+    Stopping,
     /// The task was ended at a time that is the caller's own too: the
     /// caller's task is over, and ends in the wait it has entered.
     Over,
@@ -576,13 +579,49 @@ impl Native for Deadline {
                 // time is no later, and it ends by itself. Were this
                 // wait ended first, a value the function took in time
                 // would be lost with its `Some`.
-                let wait = Wait::new(vec![Arm::Cell(self.task.done())]).unbounded();
+                // Nor by a cancel of the caller, which reaches the task.
+                // And it ends when the task has ended without a result
+                // too: one dropped with its owner's tasks (a test that
+                // ended).
+                let wait = Wait::new(vec![
+                    Arm::Cell(self.task.done()),
+                    Arm::Cell(self.task.stopped()),
+                ])
+                .unbounded()
+                .stays();
                 return Ok(Step::Park(wait));
             }
-            DeadlineState::Waiting => {}
+            DeadlineState::Waiting => {
+                vm.woken()?;
+                if !self.task.has_result() {
+                    self.state = DeadlineState::Over;
+                    return Ok(Step::Park(Wait::new(vec![])));
+                }
+                // A cancel of the caller gave the task its result at
+                // once; the caller ends after the task's last step.
+                let cancelled = vm
+                    .cancelled
+                    .as_ref()
+                    .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst));
+                if cancelled && !self.task.has_stopped() {
+                    self.state = DeadlineState::Stopping;
+                    let wait = Wait::new(vec![Arm::Cell(self.task.stopped())])
+                        .unbounded()
+                        .stays();
+                    return Ok(Step::Park(wait));
+                }
+            }
+            DeadlineState::Stopping => {
+                vm.woken()?;
+            }
             DeadlineState::Over => return timeout(),
         }
-        vm.woken()?;
+        // The task was stopped by the cancel that stopped the caller:
+        // the caller ends here.
+        if self.task.was_ended_by_cancel() && self.task.has_stopped() && vm.takes_nothing_new() {
+            self.state = DeadlineState::Over;
+            return Ok(Step::Park(Wait::new(vec![])));
+        }
         if self.task.is_expired() {
             // A clock that has panicked ended every wait that was
             // pending on it: that is the clock's failure, not a time
@@ -776,6 +815,9 @@ impl Joined {
             gives => match gives.value() {
                 Some(value) => return Ok(Step::Done(value)),
                 None if expired => {}
+                // The caller was stopped (a cancel reached it and its
+                // tasks): it ends here, now that they have ended.
+                None if vm.takes_nothing_new() => {}
                 None => {
                     return Err(VmError::internal(format!(
                         "the tasks of a {} ended without its value",
@@ -784,8 +826,9 @@ impl Joined {
                 }
             },
         }
-        // The tasks had the caller's time, and it is over: so is the
-        // caller, and a wait that begins now ends its task.
+        // The tasks had the caller's time, and it is over, or the
+        // caller was stopped with them: a wait that begins now ends
+        // its task.
         self.state = JoinedState::Over;
         Ok(Step::Park(Wait::new(vec![])))
     }
@@ -797,19 +840,26 @@ impl Native for Joined {
     }
 
     fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
-        // The waits are not ended by the caller's own deadline: the
-        // tasks have that time, and end by it themselves.
+        // The waits are not ended by the caller's own deadline, nor by
+        // a cancel of the caller: the tasks have that time, and a
+        // cancel that reaches the caller reaches them (they are tasks
+        // it spawned), so they end by it themselves. The caller ends
+        // after them: a stop waits for every task it reaches.
         match self.state {
             JoinedState::Started => {
                 self.state = JoinedState::Settling;
-                let wait = Wait::new(vec![Arm::Cell(self.together.settled())]).unbounded();
+                let wait = Wait::new(vec![Arm::Cell(self.together.settled())])
+                    .unbounded()
+                    .stays();
                 Ok(Step::Park(wait))
             }
             JoinedState::Settling => {
                 vm.woken()?;
                 self.stop_the_rest(vm);
                 self.state = JoinedState::Ending;
-                let wait = Wait::new(vec![Arm::Cell(self.together.ended())]).unbounded();
+                let wait = Wait::new(vec![Arm::Cell(self.together.ended())])
+                    .unbounded()
+                    .stays();
                 Ok(Step::Park(wait))
             }
             JoinedState::Ending => {

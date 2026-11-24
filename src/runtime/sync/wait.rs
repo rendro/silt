@@ -76,6 +76,9 @@ pub(crate) struct Wait {
     /// `false` for the one wait that the deadline of its task does not
     /// end ([`Wait::unbounded`]).
     pub bounded: bool,
+    /// `true` for a wait that a cancel of its task does not end
+    /// ([`Wait::stays`]).
+    pub(crate) stays: bool,
 }
 
 impl Wait {
@@ -87,6 +90,22 @@ impl Wait {
             cancel: None,
             task_deadline: None,
             bounded: true,
+            stays: false,
+        }
+    }
+
+    /// A wait that a cancel of its task does not end, neither when it
+    /// begins nor while it is open, and whose arms are completed for a
+    /// cancelled task as for any: what it waits for is the end of tasks
+    /// that the same cancel reaches, which end by it themselves. The
+    /// frames that own tasks wait so (`task.join` and the calls like
+    /// it, `task.deadline`): a stop that reaches the caller waits for
+    /// every task it reaches below it, however deep, before the caller
+    /// ends.
+    pub(crate) fn stays(self) -> Wait {
+        Wait {
+            stays: true,
+            ..self
         }
     }
 
@@ -121,8 +140,13 @@ impl Wait {
         Wait { first, ..self }
     }
 
+    /// The wait of a task whose cancel flag is `cancel`, unless the
+    /// wait [stays](Wait::stays).
     pub(crate) fn cancel(self, cancel: Option<Arc<AtomicBool>>) -> Wait {
-        Wait { cancel, ..self }
+        match self.stays {
+            false => Wait { cancel, ..self },
+            true => self,
+        }
     }
 }
 
@@ -201,6 +225,7 @@ pub(crate) fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake
         cancel,
         task_deadline,
         bounded: _,
+        stays,
     } = wait;
     // The clock is an embedder's code: it is not called under a lock.
     let now = (deadline.is_some() || task_deadline.is_some()).then(|| timer.now());
@@ -298,7 +323,7 @@ pub(crate) fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake
         return Park::Ready(fired);
     }
 
-    let token = Token::new(task, cancel);
+    let token = Token::new(task, cancel, stays);
     for (arm, source) in sources.iter().enumerate() {
         let waiter = Waiter {
             token: token.clone(),
@@ -427,7 +452,7 @@ fn park_one(
                 wakes.send(wake);
                 return Park::Ready(fired);
             }
-            let token = Token::new(task, cancel);
+            let token = Token::new(task, cancel, false);
             let queue = match source {
                 Source::Demand(_) => &mut state.demandq,
                 _ => &mut state.recvq,
@@ -459,7 +484,7 @@ fn park_one(
                 wakes.send(wake);
                 return Park::Ready(fired);
             }
-            let token = Token::new(task, cancel);
+            let token = Token::new(task, cancel, false);
             state.sendq.push_back(Waiter {
                 token: token.clone(),
                 arm: 0,

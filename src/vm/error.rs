@@ -89,6 +89,9 @@ pub struct VmError {
     /// there once however many joins the failure went through; the call
     /// stack shows the tasks.
     pub(crate) through_a_join: bool,
+    /// If true, this is the result a cancel gave a task that had not
+    /// returned or failed by then (`TaskHandle::was_ended_by_cancel`).
+    pub(crate) by_a_cancel: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
@@ -109,6 +112,7 @@ impl VmError {
             display_failure: None,
             taken_from: None,
             through_a_join: false,
+            by_a_cancel: false,
             more: None,
             span: None,
             call_stack: Vec::new(),
