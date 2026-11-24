@@ -1,2 +1,2 @@
 the task caught panic: task 1 failed
-main caught joined task failed: panic: task 2 failed
+main caught panic: task 2 failed

@@ -11,7 +11,7 @@ import time
 
 fn main() {
   let ch: Channel(Int) = channel.new(0)
-  let producer = task.spawn { ->
+  let producer = { ->
     loop i = 0 {
       match i >= 150 {
         true -> channel.close(ch)
@@ -23,15 +23,17 @@ fn main() {
       }
     }
   }
-  let r = loop got = 0, sum = 0 {
-    match task.deadline(time.ms(3), { -> channel.receive(ch) }) {
-      Some(Some(v)) -> loop(got + 1, sum + v)
-      Some(None) -> (got, sum)
-      None -> loop(got, sum)
+  let consumer = { ->
+    let r = loop got = 0, sum = 0 {
+      match task.deadline(time.ms(3), { -> channel.receive(ch) }) {
+        Some(Some(v)) -> loop(got + 1, sum + v)
+        Some(None) -> (got, sum)
+        None -> loop(got, sum)
+      }
+    }
+    match r {
+      (got, sum) -> println("sent 150 (sum 11175), received {got} (sum {sum}), lost {150 - got}")
     }
   }
-  task.join_handle(producer)
-  match r {
-    (got, sum) -> println("sent 150 (sum 11175), received {got} (sum {sum}), lost {150 - got}")
-  }
+  task.join([producer, consumer])
 }

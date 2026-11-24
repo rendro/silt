@@ -10,26 +10,30 @@ import time
 
 fn main() {
   let ch: Channel(Int) = channel.new(0)
-  let consumer = task.spawn { ->
-    loop n = 0, sum = 0 {
+  let consumer = { ->
+    let r = loop n = 0, sum = 0 {
       time.sleep(time.ms(3))
       match channel.receive(ch) {
         Some(v) -> loop(n + 1, sum + v)
         None -> (n, sum)
       }
     }
-  }
-  loop i = 0 {
-    match i >= 150 {
-      true -> ()
-      false -> match task.deadline(time.ms(3), { -> channel.send(ch, i) }) {
-        Some(_) -> loop(i + 1)
-        None -> loop(i)
-      }
+    match r {
+      (got, sum) ->
+        println("150 sends were Ok (sum 11175); the consumer received {got} (sum {sum})")
     }
   }
-  channel.close(ch)
-  match task.join_handle(consumer) {
-    (got, sum) -> println("150 sends were Ok (sum 11175); the consumer received {got} (sum {sum})")
+  let sender = { ->
+    loop i = 0 {
+      match i >= 150 {
+        true -> ()
+        false -> match task.deadline(time.ms(3), { -> channel.send(ch, i) }) {
+          Some(_) -> loop(i + 1)
+          None -> loop(i)
+        }
+      }
+    }
+    channel.close(ch)
   }
+  task.join([consumer, sender])
 }

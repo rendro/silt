@@ -5,10 +5,9 @@
 -- receive goes through the wait loop and still reports the deadlock.
 import channel
 import task
+
 fn main() {
   let ch = channel.new(0)
-  let h = task.spawn({ -> 1 })
-  let _ = task.join_handle(h)
+  task.join([{ -> () }])
   let _ = channel.receive(ch)
-  ()
 }

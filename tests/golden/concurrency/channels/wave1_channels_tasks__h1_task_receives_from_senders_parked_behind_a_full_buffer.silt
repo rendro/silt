@@ -1,32 +1,29 @@
 -- repeat: 10
--- stderr-not-contains: deadlock on main thread
+-- stderr-not-contains: deadlock
 -- The same with a task as the receiver. Without the fix this hangs
 -- without a deadlock report, because the parked senders count as
 -- counterparties of the receiver.
 import channel
+import list
 import task
 import time
-import list
 
 fn recv_n(ch, n, acc) {
   match n {
     0 -> acc
-    _ -> {
-      match channel.receive(ch) {
-        Some(v) -> recv_n(ch, n - 1, acc + v)
-        None -> acc
-      }
+    _ -> match channel.receive(ch) {
+      Some(v) -> recv_n(ch, n - 1, acc + v)
+      None -> acc
     }
   }
 }
 
 fn main() {
   let ch = channel.new(3)
-  let senders = [1, 2, 3, 4, 5, 6, 7, 8] |> list.map { i ->
-    task.spawn({ -> channel.send(ch, i) })
+  let senders = [1, 2, 3, 4, 5, 6, 7, 8] |> list.map { i -> { -> channel.send(ch, i) } }
+  let receiver = { ->
+    time.sleep(time.ms(200))
+    println("total {recv_n(ch, 8, 0)}")
   }
-  time.sleep(time.ms(200))
-  let receiver = task.spawn({ -> recv_n(ch, 8, 0) })
-  let total = task.join_handle(receiver)
-  println("total {total}")
+  task.join(list.append(senders, receiver))
 }

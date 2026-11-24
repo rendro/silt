@@ -2,7 +2,7 @@
 -- repeat: 3
 -- stderr-contains: deadlock on main thread
 -- No streams at all: a receive on a fresh channel with no producer and
--- no `task.spawn` is reported as before.
+-- no task is reported as before.
 import channel
 
 fn main() {

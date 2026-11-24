@@ -2,15 +2,18 @@
 -- stderr-not-contains: deadlock on main thread
 -- Probabilistic: under contention the main-thread detector must not act
 -- on a transiently starved snapshot. Main receives from 16
--- rendezvous senders.
+-- rendezvous senders (the pieces of a `task.join` in the function of a
+-- `stream.from_fn`, which runs beside the program's own thread).
 import channel
 import list
+import stream
 import task
 
 fn main() {
   let ch = channel.new(0)
-  let _senders = 1..16
-    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
+  let senders = stream.from_fn { _ ->
+    task.join(list.map(1..16) { i -> { -> channel.send(ch, i) } })
+  }
   let sum = loop c = 0, acc = 0 {
     match c >= 16 {
       true -> acc
@@ -20,5 +23,6 @@ fn main() {
       }
     }
   }
+  let _ = stream.collect(senders)
   println("sum={sum}")
 }

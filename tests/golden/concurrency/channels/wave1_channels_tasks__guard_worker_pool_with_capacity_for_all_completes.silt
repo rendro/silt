@@ -1,28 +1,31 @@
 -- repeat: 10
 -- stderr-not-contains: deadlock on main thread
 -- Control for the test above: with room for all 40 results no sender
--- ever parks. Passes with and without the fix.
+-- ever parks. Passes with and without the fix. (The senders are the
+-- pieces of a `task.join` in the function of a `stream.from_fn`, which
+-- runs beside the program's own thread.)
 import channel
-import task
 import list
+import stream
+import task
+
 fn collect(ch, n, acc) {
   match n {
     0 -> acc
-    _ -> {
-      match channel.receive(ch) {
-        Some(v) -> collect(ch, n - 1, acc + v)
-        None -> acc
-      }
+    _ -> match channel.receive(ch) {
+      Some(v) -> collect(ch, n - 1, acc + v)
+      None -> acc
     }
   }
 }
+
 fn main() {
   let results = channel.new(40)
   let ids = 1..40
-  ids |> list.each { i ->
-    let _ = task.spawn({ -> channel.send(results, i * i) })
-    ()
+  let senders = stream.from_fn { _ ->
+    task.join(list.map(ids) { i -> { -> channel.send(results, i * i) } })
   }
   let total = collect(results, 40, 0)
+  let _ = stream.collect(senders)
   println("total {total}")
 }

@@ -1,10 +1,10 @@
 -- repeat: 10
--- stderr-not-contains: deadlock on main thread
+-- stderr-not-contains: deadlock
 -- A worker pool in the documented `loop _ = () { ... loop(()) }`
 -- form: three workers take jobs and send results, both channels are
 -- smaller than the number of jobs. Without the fix two of the three
 -- workers stay parked on the results channel with their results, and
--- the main thread waits for results that never arrive.
+-- the collector waits for results that never arrive.
 import channel
 import list
 import task
@@ -12,11 +12,9 @@ import task
 fn collect(ch, n, acc) {
   match n {
     0 -> acc
-    _ -> {
-      match channel.receive(ch) {
-        Some(v) -> collect(ch, n - 1, acc + v)
-        None -> acc
-      }
+    _ -> match channel.receive(ch) {
+      Some(v) -> collect(ch, n - 1, acc + v)
+      None -> acc
     }
   }
 }
@@ -25,27 +23,26 @@ fn main() {
   let jobs = channel.new(4)
   let results = channel.new(4)
 
-  let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn({ ->
-      loop _ = () {
-        match channel.receive(jobs) {
-          Some(n) -> {
-            channel.send(results, n * 2)
-            loop(())
+  let workers = [1, 2, 3]
+    |> list.map { id ->
+      { ->
+        loop _ = () {
+          match channel.receive(jobs) {
+            Some(n) -> {
+              channel.send(results, n * 2)
+              loop(())
+            }
+            None -> ()
           }
-          None -> ()
         }
       }
-    })
-  }
+    }
 
-  let producer = task.spawn({ ->
+  let producer = { ->
     1..30 |> list.each { n -> channel.send(jobs, n) }
     channel.close(jobs)
-  })
+  }
 
-  let total = collect(results, 30, 0)
-  task.join_handle(producer)
-  workers |> list.each { w -> task.join_handle(w) }
-  println("total {total}")
+  let collector = { -> println("total {collect(results, 30, 0)}") }
+  task.join(list.append(workers, producer) |> list.append(collector))
 }

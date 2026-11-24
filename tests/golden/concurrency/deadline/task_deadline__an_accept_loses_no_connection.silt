@@ -13,10 +13,12 @@ import tcp
 import time
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
   let done: Channel(Int) = channel.new(1)
-  let client = task.spawn { ->
+  let client = { ->
     let made = loop i = 0, made = 0 {
       match i >= 100 {
         true -> made
@@ -32,21 +34,26 @@ fn main() {
     channel.close(done)
     made
   }
-  let given = loop given = 0, idle = 0 {
-    match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
-      Some(Ok(c)) -> {
-        tcp.close(c)
-        loop(given + 1, 0)
-      }
-      Some(Err(e)) -> panic("accept failed: {e}")
-      None -> match channel.try_receive(done) {
-        channel.Closed -> match idle >= 20 {
-          true -> given
-          false -> loop(given, idle + 1)
+  let server = { ->
+    loop given = 0, idle = 0 {
+      match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
+        Some(Ok(c)) -> {
+          tcp.close(c)
+          loop(given + 1, 0)
         }
-        _ -> loop(given, idle)
+        Some(Err(e)) -> panic("accept failed: {e}")
+        None -> match channel.try_receive(done) {
+          channel.Closed -> match idle >= 20 {
+            true -> given
+            false -> loop(given, idle + 1)
+          }
+          _ -> loop(given, idle)
+        }
       }
     }
   }
-  println("connections made and not given to the server: {task.join_handle(client) - given}")
+  match task.map([client, server], 2, { f -> f() }) {
+    [made, given] -> println("connections made and not given to the server: {made - given}")
+    _ -> panic("two counts")
+  }
 }
