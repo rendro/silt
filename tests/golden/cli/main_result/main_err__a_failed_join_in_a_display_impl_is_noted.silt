@@ -1,6 +1,6 @@
 -- exit: 1
--- A failure an impl gets from elsewhere is its failure too: the join of
--- a task that panicked.
+-- A failure an impl gets from elsewhere is its failure too: a task.join
+-- whose piece panicked.
 import task
 
 type Joined {
@@ -9,8 +9,8 @@ type Joined {
 
 trait Display for Joined {
   fn display(self) -> String {
-    let h = task.spawn({ -> panic("in a task") })
-    task.join_handle(h)
+    task.join([{ -> panic("in a task") }])
+    "joined"
   }
 }
 

@@ -22,11 +22,11 @@ error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
  13 | trait X for Map { fn x(self) -> Int { 4 } }
     |             ^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
 
-error[type]: `task.Handle` takes 1 type argument here: write `task.Handle(a)`
- --> bare_generic__refused_as_an_impl_target.silt:14:18
+error[type]: `channel.ChannelResult` takes 1 type argument here: write `channel.ChannelResult(a)`
+ --> bare_generic__refused_as_an_impl_target.silt:14:21
     |
- 14 | trait X for task.Handle { fn x(self) -> Int { 5 } }
-    |                  ^^^^^^ `task.Handle` takes 1 type argument here: write `task.Handle(a)`
+ 14 | trait X for channel.ChannelResult { fn x(self) -> Int { 5 } }
+    |                     ^^^^^^^^^^^^^ `channel.ChannelResult` takes 1 type argument here: write `channel.ChannelResult(a)`
 
 error[type]: `Al` takes 1 type argument here: write `Al(a)`
  --> bare_generic__refused_as_an_impl_target.silt:15:13

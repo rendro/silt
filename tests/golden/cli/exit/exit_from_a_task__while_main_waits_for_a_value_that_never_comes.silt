@@ -1,15 +1,16 @@
 -- exit: 5
 -- repeat: 3
 -- main waits on a channel nobody sends on; a task's exit ends the program
--- with its code, not with a deadlock.
+-- with its code, not with a deadlock. The task is the feed of a stream,
+-- which runs while main waits.
 import channel
 import process
-import task
+import stream
 import time
 
 fn main() {
   let never = channel.new(0)
-  let _ = task.spawn { ->
+  let _exits = stream.from_fn { _ ->
     time.sleep(time.ms(20))
     process.exit(5)
   }

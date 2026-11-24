@@ -4,14 +4,12 @@
 -- stderr-contains: error[runtime]: process.exit(2) was called in a test: a test ends by returning, or by failing an assertion
 -- stderr-contains:   FAIL exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_exit_zero
 -- stderr-contains: error[runtime]: process.exit(0) was called in a test: a test ends by returning, or by failing an assertion
--- stderr-contains:   FAIL exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_in_a_joined_task
--- stderr-contains: error[runtime]: joined task failed: process.exit(2) was called in a test
--- stderr-contains:   FAIL exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_in_an_unjoined_task
--- stderr-contains: error[runtime]: a task failed and was never joined: process.exit(2) was called in a test
+-- stderr-contains:   FAIL exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_in_a_task
+-- stderr-contains: error[runtime]: process.exit(2) was called in a test
 -- stderr-contains:   PASS exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_after
--- stderr-contains: 5 tests: 1 passed, 4 failed, 0 skipped
+-- stderr-contains: 4 tests: 1 passed, 3 failed, 0 skipped
 -- Under silt test a process.exit fails the test it is in, whatever the
--- code, from the test function or from a task it spawned; the run goes on
+-- code, from the test function or from a task it started; the run goes on
 -- with the next test.
 import process
 import task
@@ -32,13 +30,8 @@ fn test_exit_zero() {
   process.exit(0)
 }
 
-fn test_in_a_joined_task() {
-  let h = task.spawn { -> decide(0) }
-  test.assert_eq(task.join_handle(h), 1)
-}
-
-fn test_in_an_unjoined_task() {
-  let _ = task.spawn { -> decide(0) }
+fn test_in_a_task() {
+  test.assert_eq(task.map([0], 1) { n -> decide(n) }, [1])
 }
 
 fn test_after() {

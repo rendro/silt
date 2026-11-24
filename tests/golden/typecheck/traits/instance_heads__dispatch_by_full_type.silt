@@ -23,6 +23,5 @@ fn main() {
   let xs = [Box(1), Box(2)]
   println(list.map(xs) { b -> Sum.sum(b) })
   println(list.map(xs, total))
-  let h = task.spawn { -> total(Box("u")) }
-  println(task.join_handle(h))
+  list.each(task.map([Box("u")], 1, total)) { v -> println(v) }
 }
