@@ -1,4 +1,4 @@
--- io.write_file inside a spawned task commits the write before the task
+-- io.write_file inside a task commits the write before the task
 -- resumes; the main thread reads it back.
 import io
 import task
@@ -9,8 +9,7 @@ fn worker() -> () {
 }
 
 fn main() {
-  let h = task.spawn(worker)
-  task.join_handle(h)
+  task.join([worker])
   match io.read_file("round78_write.txt") {
     Ok(s) -> println(s)
     Err(e) -> println("{e}")

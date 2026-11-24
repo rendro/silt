@@ -3,12 +3,11 @@ import io
 import time
 
 fn main() {
-  let h = task.spawn({ ->
-    task.deadline(time.seconds(10), { ->
+  task.join([{ ->
+    let _ = task.deadline(time.seconds(10), { ->
       println("enter")
       let _ = io.read_file("data.txt")
       println("exit")
     })
-  })
-  let _ = task.join_handle(h)
+  }])
 }

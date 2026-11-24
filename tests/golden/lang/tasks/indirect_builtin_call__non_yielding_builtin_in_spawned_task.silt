@@ -3,6 +3,5 @@ import task
 
 fn main() {
   let len = list.length
-  let h = task.spawn({ -> len([10, 20, 30]) })
-  println(task.join_handle(h))
+  list.each(task.map([0], 1) { _ -> len([10, 20, 30]) }) { v -> println(v) }
 }

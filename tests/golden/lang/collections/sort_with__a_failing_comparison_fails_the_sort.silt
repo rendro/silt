@@ -5,20 +5,18 @@
 -- resumed where it waited.
 import channel
 import list
-import task
+import stream
 
 fn main() {
-  let ch = channel.new(10)
-  let h = task.spawn({ ->
-    0..9 |> list.each { i -> channel.send(ch, i) }
-  })
+  let ch = stream.from_fn { out ->
+    0..9 |> list.each { i -> channel.send(out, i) }
+  }
   let sorted = list.sort_with([4, 2, 3, 1]) { a, b ->
     match channel.receive(ch) {
       Some(_) -> Compare.compare(a, b)
       None -> 0
     }
   }
-  task.join_handle(h)
   println(sorted)
   let _ = list.sort_with([1, 3, 2]) { a, b ->
     match a == 3 || b == 3 {

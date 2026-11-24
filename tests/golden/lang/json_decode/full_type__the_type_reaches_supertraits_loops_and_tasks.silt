@@ -40,7 +40,7 @@ fn main() {
   println(Dec.again(Box { v: 1 }, "\{\"v\": 6}"))
   println(Shout.shout(Box { v: 1 }, "\{\"v\": 7}"))
   println(Shout.shout(Box { v: "a" }, "\{\"v\": 7}"))
-  let t = task.spawn({ -> Dec.again(Box { v: 1.5 }, "\{\"v\": 2.5}") })
-  println(task.join_handle(t))
+  let in_a_task = task.map([0], 1) { _ -> Dec.again(Box { v: 1.5 }, "\{\"v\": 2.5}") }
+  list.each(in_a_task) { v -> println(v) }
   println(by_type(Box { v: 1 }, "\{\"v\": 8}", Int))
 }

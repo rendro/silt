@@ -1,7 +1,8 @@
 -- io.read_file gives the same result on the main thread (sync path) and
--- inside a spawned task (yield path). The case reads its own source.
+-- inside a task (yield path). The case reads its own source.
 -- round78-payload
 import io
+import list
 import string
 import task
 
@@ -14,8 +15,8 @@ fn read_self() -> String {
 
 fn main() {
   let sync = read_self()
-  let h = task.spawn(read_self)
-  let async = task.join_handle(h)
-  println(sync == async)
-  println(string.contains(async, "-- round78-payload"))
+  list.each(task.map([0], 1) { _ -> read_self() }) { async ->
+    println(sync == async)
+    println(string.contains(async, "-- round78-payload"))
+  }
 }

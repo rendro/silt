@@ -3,7 +3,7 @@ import task
 import io
 import list
 fn main() {
-  let h = task.spawn({ ->
+  let h = task.map([0], 1) { _ ->
     list.unfold(0, { s ->
       let _ = io.read_file("vm_higher_order_yield__list_unfold_callback_yield.silt")
       match s < 3 {
@@ -11,7 +11,6 @@ fn main() {
         false -> None
       }
     })
-  })
-  let v = task.join_handle(h)
-  println(v)
+  }
+  list.each(h) { v -> println(v) }
 }

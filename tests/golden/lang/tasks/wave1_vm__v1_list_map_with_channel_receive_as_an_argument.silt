@@ -7,13 +7,11 @@ fn pair(x, ys) { (x, ys) }
 fn main() {
   let a = channel.new(1)
   let b = channel.new(1)
-  let sender = task.spawn { ->
+  let sender = { ->
     time.sleep(time.ms(50))
     channel.send(a, 1)
     time.sleep(time.ms(20))
     channel.send(b, 2)
   }
-  let worker = task.spawn { -> pair("x", list.map([a, b], channel.receive)) }
-  println(task.join_handle(worker))
-  task.join_handle(sender)
+  task.join([sender, { -> println(pair("x", list.map([a, b], channel.receive))) }])
 }

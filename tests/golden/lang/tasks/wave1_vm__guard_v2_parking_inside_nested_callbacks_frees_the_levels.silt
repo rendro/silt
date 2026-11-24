@@ -12,8 +12,8 @@ fn nest(level, round) {
   }
 }
 fn main() {
-  let t = task.spawn { ->
+  let t = task.map([0], 1) { _ ->
     list.fold(1..40, 0) { total, round -> total + nest(5, round) }
   }
-  println(task.join_handle(t))
+  list.each(t) { v -> println(v) }
 }

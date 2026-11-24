@@ -1,6 +1,7 @@
 -- A Display impl that interpolates its fields shows each field as the
 -- field's own impl says; an impl may show a field with `string.from`, and
 -- may be called through a bounded type variable and in a task.
+import list
 import string
 import task
 
@@ -44,6 +45,5 @@ fn main() {
   println(s)
   println(Forecast { days: [s, s] })
   println(both(s, [Forecast { days: [] }]))
-  let h = task.spawn({ -> "in a task: {Some(s)}" })
-  println(task.join_handle(h))
+  list.each(task.map([s], 1) { s -> "in a task: {Some(s)}" }) { text -> println(text) }
 }

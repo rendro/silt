@@ -5,14 +5,14 @@ warning[type]: 'v' is never used
    |         ^ 'v' is never used
   = help: remove it, or name it `_v`
 
-error[runtime]: joined task failed: division by zero
+error[runtime]: division by zero
  --> callback_frame_capture__resume_suspended_invoke.silt:9:13
    |
  9 |     println(1 / 0)
-   |             ^^^^^ joined task failed: division by zero
+   |             ^^^^^ division by zero
 
 call stack:
   -> closure in consumer  at callback_frame_capture__resume_suspended_invoke.silt:9:13
   -> consumer  at callback_frame_capture__resume_suspended_invoke.silt:7:3
-  -> closure in main  at callback_frame_capture__resume_suspended_invoke.silt:22:28
-  -> main  at callback_frame_capture__resume_suspended_invoke.silt:24:3
+  -> closure in main  at callback_frame_capture__resume_suspended_invoke.silt:22:19
+  -> main  at callback_frame_capture__resume_suspended_invoke.silt:22:3

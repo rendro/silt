@@ -15,6 +15,5 @@ fn main() {
   println(mathx.mean([1.0, 2.0, 6.0]))
   println(list.fold([1, 2, 3], 0, mathx.add))
   println(list.map([1.5, 2.5], mathx.inc))
-  let t = task.spawn({ -> mathx.add(mathx.inc(1), 10) })
-  println(task.join_handle(t))
+  list.each(task.map([0], 1) { _ -> mathx.add(mathx.inc(1), 10) }) { v -> println(v) }
 }

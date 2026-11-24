@@ -1,3 +1,4 @@
+import list
 import task
 import time
 
@@ -7,8 +8,8 @@ fn worker() -> () {
 
 fn main() {
   let sync = time.sleep(time.ms(1))
-  let h = task.spawn(worker)
-  let async = task.join_handle(h)
-  println(sync)
-  println(async)
+  list.each(task.map([0], 1) { _ -> worker() }) { async ->
+    println(sync)
+    println(async)
+  }
 }
