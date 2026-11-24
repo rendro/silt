@@ -1,0 +1,17 @@
+-- A thousand pieces: each runs, and the join returns when all have.
+import channel
+import list
+import task
+
+fn main() {
+  let done: Channel(Int) = channel.new(1000)
+  task.join(list.map(1..1000) { i -> { -> channel.send(done, i) } })
+  channel.close(done)
+  let total = list.fold(list.map(1..1000) { _ -> channel.receive(done) }, 0) { acc, got ->
+    match got {
+      Some(i) -> acc + i
+      None -> acc
+    }
+  }
+  println(total)
+}

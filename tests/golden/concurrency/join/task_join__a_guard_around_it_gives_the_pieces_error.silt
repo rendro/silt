@@ -1,0 +1,19 @@
+-- A guard around a join catches the failure of a piece: the Err has
+-- the piece's message, the place where it failed, and its trace.
+import task
+
+fn fail(n: Int) -> () {
+  panic("piece {n} failed")
+}
+
+fn main() {
+  match task.guard({ -> task.join([{ -> () }, { -> fail(2) }]) }) {
+    Ok(_) -> println("no error")
+    Err(e) -> {
+      println(e.message)
+      println(e.location)
+      println(e.trace)
+    }
+  }
+  println("main goes on")
+}

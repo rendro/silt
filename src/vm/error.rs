@@ -1,6 +1,6 @@
 //! VM error type.
 
-use crate::diagnostic::{Code, Diagnostic};
+use crate::diagnostic::{Code, Diagnostic, Line};
 use crate::source::Span;
 
 /// The handle of the task a join took a failure from
@@ -19,10 +19,10 @@ pub struct VmError {
     pub message: String,
     /// What to do about it, one line each: the diagnostic's help.
     pub(crate) help: Vec<String>,
-    /// The help lines that name a place of the program: the line at the
-    /// index has `{at}` where the place of the span is shown (see
-    /// `Diagnostic::help_at`).
-    pub(crate) help_at: Box<[(usize, Span)]>,
+    /// The lines of the report that name a place, and its notes, if it
+    /// has any (boxed: an error is returned by value, and most have
+    /// neither).
+    pub(crate) more: Option<Box<More>>,
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub(crate) type_confusion: bool,
@@ -88,7 +88,6 @@ impl VmError {
         VmError {
             message,
             help: Vec::new(),
-            help_at: Box::default(),
             type_confusion: false,
             ends: false,
             out_of_steps: false,
@@ -98,6 +97,7 @@ impl VmError {
             display_failure: None,
             taken_from: None,
             through_a_join: false,
+            more: None,
             span: None,
             call_stack: Vec::new(),
         }
@@ -224,10 +224,26 @@ impl VmError {
     /// The error with `help` as a help line that names the place `at`:
     /// its `{at}` shows where that is.
     pub(crate) fn with_help_at(mut self, help: impl Into<String>, at: Span) -> Self {
-        let mut help_at = std::mem::take(&mut self.help_at).into_vec();
-        help_at.push((self.help.len(), at));
-        self.help_at = help_at.into_boxed_slice();
+        let index = self.help.len();
+        self.more.get_or_insert_default().help_at.push((index, at));
         self.help.push(help.into());
+        self
+    }
+
+    /// The error with `note` as a note under its message.
+    pub(crate) fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.more
+            .get_or_insert_default()
+            .notes
+            .push((note.into(), None));
+        self
+    }
+
+    /// The error with `note` as a note that names the place `at`: its
+    /// `{at}` shows where that is.
+    pub(crate) fn with_note_at(mut self, note: impl Into<String>, at: Span) -> Self {
+        let more = self.more.get_or_insert_default();
+        more.notes.push((note.into(), Some(at)));
         self
     }
 
@@ -306,7 +322,18 @@ impl VmError {
         let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));
         d.help = self.help.clone();
-        d.help_at = self.help_at.clone();
+        if let Some(more) = &self.more {
+            let mut places = Vec::new();
+            for (note, at) in &more.notes {
+                if let Some(at) = at {
+                    places.push((Line::Note(d.notes.len()), *at));
+                }
+                d.notes.push(note.clone());
+            }
+            let help_at = more.help_at.iter();
+            places.extend(help_at.map(|(index, at)| (Line::Help(*index), *at)));
+            d.places = places.into_boxed_slice();
+        }
         d.labels = self
             .call_stack
             .iter()
@@ -314,6 +341,20 @@ impl VmError {
             .collect();
         d
     }
+}
+
+/// What the report of a [`VmError`] says besides its message and help.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct More {
+    /// The help lines that name a place of the program: the line at the
+    /// index has `{at}` where the place of the span is shown (see
+    /// `Diagnostic::places`).
+    pub(crate) help_at: Vec<(usize, Span)>,
+    /// Notes under the message, one line each, and the place a note
+    /// names, if it names one: its `{at}` shows where that is. The
+    /// failures of the other pieces of a `task.join` that failed while
+    /// they were stopped are notes of the first.
+    pub(crate) notes: Vec<(String, Option<Span>)>,
 }
 
 /// A `Display` impl that failed while a value was shown where its

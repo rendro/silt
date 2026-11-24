@@ -1,0 +1,20 @@
+-- task.join runs each piece as a task and returns when all have
+-- returned: what each piece did is there after it. An empty list
+-- returns at once.
+import channel
+import list
+import task
+
+fn main() {
+  let done: Channel(Int) = channel.new(3)
+  task.join([
+    { -> channel.send(done, 1) },
+    { -> channel.send(done, 2) },
+    { -> channel.send(done, 3) },
+  ])
+  channel.close(done)
+  let got = list.sort(list.map([1, 2, 3]) { _ -> channel.receive(done) })
+  println(got)
+  task.join([])
+  println("an empty join returned")
+}

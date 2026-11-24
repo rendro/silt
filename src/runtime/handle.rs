@@ -1780,6 +1780,9 @@ pub struct TaskHandle {
     /// The task's place among the tasks that spawned it and that it
     /// spawned, for a cancel to reach them (`runtime::family`).
     family: super::family::Member,
+    /// The `task.join` or `task.background` the task is one of, and
+    /// what it is there: its failure and its end are told to it.
+    together: Option<(Arc<super::together::Together>, super::together::Role)>,
 }
 
 impl TaskHandle {
@@ -1806,7 +1809,30 @@ impl TaskHandle {
             spawned: None,
             stopped: Cell::new(),
             family: Default::default(),
+            together: None,
         }
+    }
+
+    /// The handle, for a task that is `role` in the call of `together`.
+    pub(crate) fn in_together(
+        self,
+        together: Arc<super::together::Together>,
+        role: super::together::Role,
+    ) -> Self {
+        Self {
+            together: Some((together, role)),
+            ..self
+        }
+    }
+
+    /// The `task.join` or `task.background` the task is one of, and
+    /// what it is there.
+    pub(crate) fn together(
+        &self,
+    ) -> Option<(&Arc<super::together::Together>, super::together::Role)> {
+        self.together
+            .as_ref()
+            .map(|(together, role)| (together, *role))
     }
 
     /// The handle, for a task spawned at `at` by the task whose cancel
@@ -2051,7 +2077,11 @@ impl TaskHandle {
     /// The task has ended: its last step has run and its frames are
     /// gone. Whoever waits for that is woken.
     pub(crate) fn stop(&self, wake: &dyn Wake) {
-        let _ = self.stopped.complete((), wake);
+        if self.stopped.complete((), wake).is_ok()
+            && let Some((together, role)) = &self.together
+        {
+            together.stopped(*role, wake);
+        }
     }
 
     /// A cancel of a task that spawned this one, or of one of their

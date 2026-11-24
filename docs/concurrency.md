@@ -498,6 +498,45 @@ same `Option`. That is the shape for fan-out where each child must bound
 its own run time, such as racing replicas and dropping the stragglers.
 
 
+### Work that ends with the call: `task.join` and `task.background`
+
+`task.join(pieces)` runs each function of the list as a task and returns
+when all of them have returned. `task.background(helpers, body)` runs the
+helpers as tasks while `body` runs, stops the helpers that still run when
+`body` returns, and gives its value. Neither gives a handle: what the call
+started has ended when it returns, so there is nothing to join or cancel
+afterwards.
+
+A failure of any of them stops the others and is raised in the caller,
+with the place where it happened; failures that come while the others are
+stopped are notes under it, and none is reported as a failure that nobody
+joined. A `task.guard` around the call turns it into an `Err`. A stop
+from outside (the time of a `task.deadline` around the call, a cancel of
+the task that waits in it) stops every task of the call.
+
+```silt
+import channel
+import task
+
+fn main() {
+  let jobs = channel.new(0)
+  let done = channel.new(10)
+  let count = task.background(
+    [{ -> channel.each(jobs) { n -> channel.send(done, n * 2) } }],
+    { ->
+      task.join([{ -> channel.send(jobs, 1) }, { -> channel.send(jobs, 2) }])
+      2
+    },
+  )
+  println(count) -- 2
+}
+```
+
+A stopped helper takes nothing new, not even what is already in its
+channel: work that must be finished belongs in a `task.join`. The
+reference has the rules: [`task.join`](stdlib/channel-task.md#taskjoin),
+[`task.background`](stdlib/channel-task.md#taskbackground).
+
 ## 4. Select
 
 ### `channel.select(ops)`

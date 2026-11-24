@@ -1,0 +1,23 @@
+-- cmd: test
+-- stderr-contains: PASS task_join__in_a_test_test.silt::test_a_join_waits_for_its_pieces
+-- stderr-contains: FAIL task_join__in_a_test_test.silt::test_a_failing_piece_fails_the_test
+-- stderr-contains: panic: piece failed
+-- stderr-contains: 2 tests: 1 passed, 1 failed
+-- stderr-not-contains: never joined
+-- exit: 1
+-- In a test, a join waits for its pieces; a piece that fails fails the
+-- test, once.
+import channel
+import channel.{ Message }
+import task
+import test
+
+fn test_a_join_waits_for_its_pieces() {
+  let done: Channel(Int) = channel.new(2)
+  task.join([{ -> channel.send(done, 1) }, { -> channel.send(done, 2) }])
+  test.assert_eq(channel.try_receive(done), Message(1))
+}
+
+fn test_a_failing_piece_fails_the_test() {
+  task.join([{ -> () }, { -> panic("piece failed") }])
+}

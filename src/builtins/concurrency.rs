@@ -12,6 +12,7 @@ use super::time;
 use super::typed::{Arg, Chan, Handle, List, builtins, unsound};
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
+use crate::runtime::together::{Role, Together};
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::error::TakenFrom;
@@ -417,9 +418,23 @@ impl Native for Each {
 /// (`TaskHandle::deadline`). The handle of the task; an error of
 /// `scheduler.submit` as it is.
 fn start(vm: &mut Vm, f: &Value, deadline: Option<Duration>) -> Result<Arc<TaskHandle>, VmError> {
+    start_in(vm, f, deadline, None)
+}
+
+/// [`start`], for a task that is `role` in the call of `together`, if
+/// it is one.
+fn start_in(
+    vm: &mut Vm,
+    f: &Value,
+    deadline: Option<Duration>,
+    together: Option<(&Arc<Together>, Role)>,
+) -> Result<Arc<TaskHandle>, VmError> {
     let task_id = vm.next_task_id();
-    let handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner())
+    let mut handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner())
         .spawned_at(vm.place_here(), vm.cancelled.clone());
+    if let Some((together, role)) = together {
+        handle = handle.in_together(together.clone(), role);
+    }
     let handle = Arc::new(match deadline {
         // A task whose time is its caller's goes on with the caller's
         // count of the steps run past that time: the work past a
@@ -458,6 +473,23 @@ impl Native for Body {
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         match self.0.take() {
             Some(callee) => Ok(vm.call(callee, [])),
+            None => Ok(Step::Done(input)),
+        }
+    }
+}
+
+/// The body of a `task.background` with no helpers, called in place:
+/// the function, until it is called. Its value is the call's.
+struct InPlace(Option<Value>);
+
+impl Native for InPlace {
+    fn name(&self) -> &str {
+        "task.background"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        match self.0.take() {
+            Some(body) => Ok(vm.call(body, [])),
             None => Ok(Step::Done(input)),
         }
     }
@@ -593,6 +625,175 @@ impl Native for Deadline {
     }
 }
 
+/// `task.join(pieces)` and `task.background(helpers, body)`: every
+/// function runs as a task of its own, and the caller waits in this
+/// frame until all of them have ended. The frame owns them.
+///
+/// - The first failure of one of them stops the others (as a cancel of
+///   a task above them would) and is raised in the caller, as if the
+///   caller had called the function itself: where it happened, and
+///   below the function's own calls the calls that led to the call.
+///   Failures that come while the others are stopped are notes under
+///   it (`Together::take_failure`). No task of the call is ever
+///   reported as a failure that nobody joined.
+/// - The end of the body of a `task.background` stops the helpers
+///   that still run; its value is the call's.
+/// - The call returns, or raises, only when every task of it has
+///   ended: nothing it started runs on.
+/// - The tasks have the caller's time, if it has one (a deadline
+///   around the call), and its count of late steps: that time ends
+///   them by the rule that ends the caller, and then the caller, in
+///   the wait it enters. A cancel of the caller, or its end, stops
+///   them (`Joined::abandon`; a cancel reaches them as tasks it
+///   spawned besides).
+///
+/// The frame wakes twice, whatever the number of tasks: when the call
+/// is settled (a failure, the body's end, or the end of every task),
+/// and when every task has ended (`runtime::together`).
+struct Joined {
+    /// `task.join` or `task.background`.
+    call: &'static str,
+    together: Arc<Together>,
+    /// Every task of the call: the pieces, or the helpers and the body.
+    tasks: Vec<Arc<TaskHandle>>,
+    /// The body of a `task.background`.
+    body: Option<Arc<TaskHandle>>,
+    state: JoinedState,
+}
+
+enum JoinedState {
+    /// The tasks are started and the frame has not parked.
+    Started,
+    /// The frame waits for the call to be settled.
+    Settling,
+    /// The frame waits for every task to end.
+    Ending,
+    /// The tasks were ended by a time that is the caller's own: the
+    /// caller's task is over, and ends in the wait it has entered.
+    Over,
+}
+
+impl Joined {
+    /// Start a task for each of `works`, each what its role says, for
+    /// the call `call`; `what` names them in the deadlock report.
+    fn start(
+        vm: &mut Vm,
+        call: &'static str,
+        what: &str,
+        works: Vec<(Value, Role)>,
+    ) -> Result<Step, VmError> {
+        let together = Together::new(call, what, works.len());
+        // The caller's own time, if it has one: a task of the call
+        // goes on with the caller's count of late steps then.
+        let deadline = vm.deadline;
+        let mut tasks = Vec::with_capacity(works.len());
+        let mut body = None;
+        for (work, role) in works {
+            match start_in(vm, &work, deadline, Some((&together, role))) {
+                Ok(task) => {
+                    if role == Role::Body {
+                        body = Some(task.clone());
+                    }
+                    tasks.push(task);
+                }
+                // (The task limit.) What was started is stopped.
+                Err(error) => {
+                    for task in &tasks {
+                        vm.scheduler().stop_task(task);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(Step::Run(Box::new(Joined {
+            call,
+            together,
+            tasks,
+            body,
+            state: JoinedState::Started,
+        })))
+    }
+
+    /// Stop every task that has not ended.
+    fn stop_the_rest(&self, vm: &mut Vm) {
+        for task in &self.tasks {
+            if !task.has_stopped() {
+                vm.scheduler().stop_task(task);
+            }
+        }
+    }
+
+    /// Every task has ended: the call's value, or its failure.
+    fn finish(&mut self, vm: &mut Vm) -> Result<Step, VmError> {
+        if let Some(mut failure) = self.together.take_failure() {
+            let here = vm.enrich_error(VmError::new(String::new()));
+            failure.call_stack.extend(here.call_stack);
+            return Err(failure);
+        }
+        let expired = self.tasks.iter().any(|task| task.is_expired());
+        // A clock that has panicked ended every wait that was pending
+        // on it: that is the clock's failure, not a time that passed.
+        if expired && let Some(failure) = vm.runtime.io.clock_failure() {
+            return Err(VmError::ending(failure));
+        }
+        match &self.body {
+            // A body that returned in time gives its value, whatever
+            // ended the helpers.
+            Some(body) => match body.try_get() {
+                Some(Ok(value)) => return Ok(Step::Done(value)),
+                _ if expired => {}
+                _ => {
+                    return Err(VmError::internal(
+                        "the body of a task.background ended without a value",
+                    ));
+                }
+            },
+            None if !expired => return Ok(Step::Done(Value::Unit)),
+            None => {}
+        }
+        // The tasks had the caller's time, and it is over: so is the
+        // caller, and a wait that begins now ends its task.
+        self.state = JoinedState::Over;
+        Ok(Step::Park(Wait::new(vec![])))
+    }
+}
+
+impl Native for Joined {
+    fn name(&self) -> &str {
+        self.call
+    }
+
+    fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        // The waits are not ended by the caller's own deadline: the
+        // tasks have that time, and end by it themselves.
+        match self.state {
+            JoinedState::Started => {
+                self.state = JoinedState::Settling;
+                let wait = Wait::new(vec![Arm::Cell(self.together.settled())]).unbounded();
+                Ok(Step::Park(wait))
+            }
+            JoinedState::Settling => {
+                vm.woken()?;
+                self.stop_the_rest(vm);
+                self.state = JoinedState::Ending;
+                let wait = Wait::new(vec![Arm::Cell(self.together.ended())]).unbounded();
+                Ok(Step::Park(wait))
+            }
+            JoinedState::Ending => {
+                vm.woken()?;
+                self.finish(vm)
+            }
+            JoinedState::Over => Err(VmError::internal("a task went on whose time was over")),
+        }
+    }
+
+    /// The caller was cancelled, or ended, or an error passes through
+    /// the frame: what still runs of the call is stopped.
+    fn abandon(&mut self, vm: &mut Vm) {
+        self.stop_the_rest(vm);
+    }
+}
+
 /// The result of a task for the one that joins it. A joiner that was
 /// cancelled takes nothing: its join ends the task where it is, and a
 /// failure of the joined task stays unhandled, to be reported as never
@@ -683,6 +884,39 @@ pub(crate) mod task {
             let until = vm.deadline.map_or(until, |own| own.min(until));
             let task = start(vm, work, Some(until))?;
             Ok(Step::Run(Box::new(Deadline { task, state: DeadlineState::Started })))
+        }
+
+        fn background(vm, helpers: List, body: &Value) -> Result<Step, VmError> {
+            // With no helper it is the body, called in place.
+            if helpers.is_empty() {
+                return Ok(Step::Run(Box::new(InPlace(Some(body.clone())))));
+            }
+            // A task that was cancelled or whose time is over starts
+            // none: it is ended here.
+            if vm.takes_nothing_new() {
+                return Ok(vm.end_here("task.background"));
+            }
+            let mut works: Vec<(Value, Role)> =
+                helpers.iter().map(|helper| (helper, Role::Helper)).collect();
+            works.push((body.clone(), Role::Body));
+            Joined::start(
+                vm,
+                "task.background",
+                "the body and helpers of its `task.background`",
+                works,
+            )
+        }
+
+        fn join(vm, pieces: List) -> Result<Step, VmError> {
+            if pieces.is_empty() {
+                return Ok(Step::Done(Value::Unit));
+            }
+            // As `task.background`.
+            if vm.takes_nothing_new() {
+                return Ok(vm.end_here("task.join"));
+            }
+            let works = pieces.iter().map(|piece| (piece, Role::Piece)).collect();
+            Joined::start(vm, "task.join", "the pieces of its `task.join`", works)
         }
 
         fn guard(vm, work: &Value) -> Result<Step, VmError> {

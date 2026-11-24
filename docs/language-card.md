@@ -262,6 +262,10 @@ module, named by its file (see [Modules](language/modules.md)).
 
 ## Concurrency
 
+`task.join([f, g])` runs functions as tasks at the same time and returns
+when all have returned; the first failure stops the others and is the
+caller's. `task.background(helpers) { -> ... }` runs helper functions
+while the body runs, stops them when it returns, and gives its value.
 `task.spawn { -> ... }` starts a task and gives its `Handle(a)`;
 `task.join_handle(h)` waits for its value. Tasks talk over channels:
 `channel.new(n)`, `channel.send`, `channel.receive` (`None` once closed
@@ -558,9 +562,11 @@ channel.try_send(ch: Channel(a), value: a) -> Bool
 type TaskError { Timeout }
 type RuntimeError { message: String, location: String, trace: List(String) }
 type Handle(a)  -- opaque
+task.background(helpers: List(Fn() -> ()), body: Fn() -> a) -> a
 task.cancel(handle: Handle(a)) -> ()
 task.deadline(limit: Duration, work: Fn() -> a) -> Option(a)
 task.guard(work: Fn() -> a) -> Result(a, RuntimeError)
+task.join(pieces: List(Fn() -> ())) -> ()
 task.join_handle(handle: Handle(a)) -> a
 task.spawn(f: Fn() -> a) -> Handle(a)
 ```

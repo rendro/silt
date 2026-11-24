@@ -1,0 +1,19 @@
+-- exit: 1
+-- stderr-contains: panic: the body failed
+-- stderr-not-contains: never joined
+-- A body that fails stops the helpers, and its failure is the caller's.
+import channel
+import task
+
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let _ = task.background(
+    [{ -> let _ = channel.receive(never) }, { -> let _ = spin(0) }],
+    { -> panic("the body failed") },
+  )
+  println("not reached")
+}

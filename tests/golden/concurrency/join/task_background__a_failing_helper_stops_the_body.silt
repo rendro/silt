@@ -1,0 +1,19 @@
+-- exit: 1
+-- stderr-contains: panic: the helper failed
+-- stderr-not-contains: never joined
+-- A helper that fails stops the body and the other helpers, and its
+-- failure is the caller's.
+import channel
+import task
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let _ = task.background(
+    [{ -> let _ = channel.receive(never) }, { -> panic("the helper failed") }],
+    { ->
+      let _ = channel.receive(never)
+      1
+    },
+  )
+  println("not reached")
+}

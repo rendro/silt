@@ -323,11 +323,11 @@ pub struct Diagnostic {
     pub(crate) labels: Vec<(Span, String)>,
     pub(crate) notes: Vec<String>,
     pub(crate) help: Vec<String>,
-    /// The help lines that name a place: the line at the index has
-    /// `{at}` where the place of the span is shown, as a frame of a
-    /// call stack is (`file:line:col`). The place is known only where
-    /// the diagnostic is shown, to the [`SourceView`].
-    pub(crate) help_at: Box<[(usize, Span)]>,
+    /// The notes and help lines that name a place: the line has `{at}`
+    /// where the place of the span is shown, as a frame of a call stack
+    /// is (`file:line:col`). The place is known only where the
+    /// diagnostic is shown, to the [`SourceView`].
+    pub(crate) places: Box<[(Line, Span)]>,
     pub(crate) fixes: Vec<Fix>,
 }
 
@@ -408,7 +408,7 @@ impl Diagnostic {
             labels: Vec::new(),
             notes: Vec::new(),
             help: Vec::new(),
-            help_at: Box::default(),
+            places: Box::default(),
             fixes: Vec::new(),
         }
     }
@@ -437,15 +437,23 @@ impl Diagnostic {
     }
 
     /// The help lines as `view` shows them: each that names a place
-    /// ([`Diagnostic::help_at`]) with the place in it.
+    /// ([`Diagnostic::places`]) with the place in it.
     pub(crate) fn help_lines(&self, view: &dyn SourceView) -> Vec<String> {
-        let mut lines = self.help.clone();
-        for (index, span) in &self.help_at {
-            if let Some(line) = lines.get_mut(*index) {
-                *line = line.replace("{at}", &view.frame(*span));
-            }
-        }
-        lines
+        let at = self.places.iter().filter_map(|(line, span)| match line {
+            Line::Help(index) => Some((*index, *span)),
+            Line::Note(_) => None,
+        });
+        placed(&self.help, at, view)
+    }
+
+    /// The notes as `view` shows them: each that names a place
+    /// ([`Diagnostic::places`]) with the place in it.
+    pub(crate) fn note_lines(&self, view: &dyn SourceView) -> Vec<String> {
+        let at = self.places.iter().filter_map(|(line, span)| match line {
+            Line::Note(index) => Some((*index, *span)),
+            Line::Help(_) => None,
+        });
+        placed(&self.notes, at, view)
     }
 
     pub(crate) fn with_fix(mut self, title: impl Into<String>, edits: Vec<(Span, String)>) -> Self {
@@ -467,6 +475,31 @@ impl Diagnostic {
     pub(crate) fn phase(&self) -> Phase {
         self.code.phase()
     }
+}
+
+/// A line of a diagnostic that names a place ([`Diagnostic::places`]):
+/// the note or the help line at the index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Line {
+    Note(usize),
+    Help(usize),
+}
+
+/// `lines` as `view` shows them: the line at each index of `at` with
+/// the place of its span where it has `{at}`, as a frame of a call
+/// stack is shown (`file:line:col`).
+fn placed(
+    lines: &[String],
+    at: impl Iterator<Item = (usize, Span)>,
+    view: &dyn SourceView,
+) -> Vec<String> {
+    let mut lines = lines.to_vec();
+    for (index, span) in at {
+        if let Some(line) = lines.get_mut(index) {
+            *line = line.replace("{at}", &view.frame(span));
+        }
+    }
+    lines
 }
 
 // ── Where a span is shown ───────────────────────────────────────────
@@ -828,7 +861,7 @@ pub(crate) fn render_human_in(view: &dyn SourceView, d: &Diagnostic, c: &Colors)
             }
         }
     }
-    for note in &d.notes {
+    for note in &d.note_lines(view) {
         write_body(&mut out, c, "= note:", &visible_text(note));
     }
     for help in &d.help_lines(view) {
@@ -1205,7 +1238,7 @@ pub(crate) fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::
         })
         .collect();
     out.insert("labels".into(), labels.into());
-    out.insert("notes".into(), d.notes.clone().into());
+    out.insert("notes".into(), d.note_lines(view).into());
     out.insert("help".into(), d.help_lines(view).into());
     serde_json::Value::Object(out)
 }
@@ -1271,7 +1304,7 @@ pub(crate) fn to_lsp(
         shown
     };
     let mut message = d.message.clone();
-    for note in &d.notes {
+    for note in &d.note_lines(sources) {
         message.push_str("\nnote: ");
         message.push_str(note);
     }
@@ -1609,7 +1642,7 @@ mod tests {
         let map = sources("let x = 1\nlet y = 2");
         let mut d =
             Diagnostic::error(Code::RuntimeError, Span::BUILTIN, "m").with_help("plain {at}");
-        d.help_at = Box::new([(d.help.len(), span(14, 15))]);
+        d.places = Box::new([(Line::Help(d.help.len()), span(14, 15))]);
         d.help.push("named at {at}".to_string());
         let lines = vec![
             "plain {at}".to_string(),

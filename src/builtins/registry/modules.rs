@@ -335,9 +335,11 @@ pub(super) fn modules() -> Vec<Module> {
             opaque: [("Handle", 1)],
             error: "TaskError" => concurrency::task_error_text,
             rows: [
+                f("fn background(helpers: List(Fn() -> ()), body: Fn() -> a) -> a", "Run helper functions while the body runs, stop them when it returns, and give its value", concurrency::task::background),
                 f("fn cancel(handle: Handle(a)) -> ()", "Cancel a task, and wait until it has ended (see details below)", concurrency::task::cancel),
                 f("fn deadline(limit: Duration, work: Fn() -> a) -> Option(a)", "Run a function, and end it when the duration has passed: Some of its value, or None", concurrency::task::deadline),
                 f("fn guard(work: Fn() -> a) -> Result(a, RuntimeError)", "Run a function, and give a runtime error it raises as an `Err`", concurrency::task::guard),
+                f("fn join(pieces: List(Fn() -> ())) -> ()", "Run functions at the same time, and return when all of them have returned", concurrency::task::join),
                 f("fn join_handle(handle: Handle(a)) -> a", "Wait for a task to complete", concurrency::task::join_handle),
                 f("fn spawn(f: Fn() -> a) -> Handle(a)", "Spawn a new lightweight task", concurrency::task::spawn),
             ],

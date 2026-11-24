@@ -832,6 +832,17 @@ impl Scheduler {
         }
     }
 
+    /// Stop the task `handle`, a task of a `task.join` or a
+    /// `task.background` whose call is over: as a cancel of a task
+    /// above it reaches it (a failure it had stands, and the tasks it
+    /// spawned are stopped too), and as such a cancel ends its wait.
+    pub(crate) fn stop_task(&self, handle: &TaskHandle) {
+        handle.mark_cancelled();
+        self.inner.cancel_below(handle);
+        handle.cancel_spawned(self.wake());
+        self.inner.parking.cancel(TaskId(handle.id as u64));
+    }
+
     /// Close `channel` when the clock reads `deadline`. Until then a
     /// task that waits on the channel has a wait that will end.
     pub(crate) fn close_at(&self, deadline: Duration, channel: &Arc<Channel>) {
@@ -2437,7 +2448,13 @@ impl Inner {
                 // to that task.
                 let error = task.vm.enrich_error(error);
                 let taken_from = error.taken_from.clone();
-                if task.handle.fail(error, &self.parking) {
+                // A task of a `task.join` or a `task.background` fails
+                // its call, which raises the failure (or notes it, under
+                // the first): it is never one that nobody joined.
+                if let Some((together, role)) = task.handle.together() {
+                    let _ = task.handle.complete(Err(error.clone()), &self.parking);
+                    together.failed(role, error, &self.parking);
+                } else if task.handle.fail(error, &self.parking) {
                     record_failed_task(self, &task.handle);
                 } else if let Some(joined) = taken_from {
                     self.hand_back(&joined.0);
@@ -2651,8 +2668,14 @@ fn verdict(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Option<VmError> {
     let what = match mine.on {
         [Source::Recv(_)] => "channel receive with no counterparty",
         [Source::Send(_)] => "channel send with no counterparty",
-        [Source::Cell(_)] => "task.join_handle with no progress possible",
+        // The cell of a `task.join` or a `task.background` names its
+        // call; a task's own end is what a `task.join_handle` waits for.
+        [Source::Cell(cell)] => cell.call().unwrap_or("task.join_handle"),
         _ => "channel select with no counterparty",
+    };
+    let what = match mine.on {
+        [Source::Cell(_)] => format!("{what} with no progress possible"),
+        _ => what.to_string(),
     };
     let mut verdict = VmError::ending(format!("deadlock on main thread: {what}"));
     for (line, at) in waits_of_the_others(own, main) {
@@ -2738,6 +2761,17 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                         Some(at),
                     ),
                     None => (format!("the `{name}` {what} waits {on}"), None),
+                };
+            }
+            // A task of a `task.join` or a `task.background` is named
+            // by what it is there, and the place of the call.
+            if let Sleeper::Task(task) = waiting.sleeper
+                && let Some((_, role)) = task.handle.together()
+            {
+                let what = role.what();
+                return match task.handle.spawn_site() {
+                    Some((at, _)) => (format!("{what} at {{at}} waits {on}"), Some(at)),
+                    None => (format!("{what} waits {on}"), None),
                 };
             }
             let task = match waiting.sleeper {
