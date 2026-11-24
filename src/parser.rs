@@ -3008,7 +3008,7 @@ impl<'src> Parser<'src> {
                 }
                 let mut err = self.same_line_err("statement");
                 if err.code == Code::MissingNewline && self.at_block_behind_a_name() {
-                    // `task.spawn { work() }`: a block behind a name,
+                    // `task.guard { work() }`: a block behind a name,
                     // where a closure without parameters was meant.
                     err = err.with_help(
                         "a closure without parameters is written `{ -> ... }`; a block of its \
@@ -3035,7 +3035,7 @@ impl<'src> Parser<'src> {
             )
     }
 
-    /// True at the `{` of `n { ... }` or `task.spawn { ... }`: a
+    /// True at the `{` of `n { ... }` or `task.guard { ... }`: a
     /// statement that ended at a name, followed by a block on the same
     /// line.
     fn at_block_behind_a_name(&self) -> bool {
@@ -3414,7 +3414,7 @@ impl<'src> Parser<'src> {
                     Some("impl") => {
                         "silt has no `impl`: an implementation is `trait Show for Point { ... }`".into()
                     }
-                    Some("async") => "silt has no `async`: a task is started with `task.spawn`".into(),
+                    Some("async") => "silt has no `async`: work runs at the same time with `task.join([f, g])`".into(),
                     _ => match &cur.kind {
                         Token::Lt | Token::LBracket
                             if capital(prev) && prev.is_some_and(|p| glued(p, cur)) =>

@@ -29,20 +29,19 @@ syntax keyword siltConstructor NotFound PermissionDenied AlreadyExists InvalidIn
 syntax keyword siltConstructor UnexpectedEof WriteZero Other
 syntax keyword siltConstructor InvalidDigit Overflow Underflow
 syntax keyword siltConstructor NotFinite
-syntax keyword siltConstructor Timeout
 syntax keyword siltConstructor InvalidPattern TooBig
 syntax keyword siltConstructor Syntax TypeMismatch MissingField
 syntax keyword siltConstructor ParseFormat OutOfRange InvalidFormat
-syntax keyword siltConstructor Connect Tls InvalidUrl InvalidResponse ClosedEarly
+syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse ClosedEarly
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
 syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange
 syntax keyword siltConstructor InvalidLength
 syntax keyword siltConstructor Invalid InvalidPart
 syntax keyword siltConstructor Bind
 " The builtin types, then the record and enum types of the modules.
-syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Handle Bytes TcpListener
+syntax keyword siltType Int Float Bool String List Map Set Channel Tuple Fn Bytes TcpListener
 syntax keyword siltType TcpStream Regex Url
-syntax keyword siltType IoError IntError FloatError Step ChannelResult ChannelOp Selected TaskError
+syntax keyword siltType IoError IntError FloatError Step ChannelResult ChannelOp Selected
 syntax keyword siltType RuntimeError RegexError JsonError Value TomlError Instant Date Time DateTime
 syntax keyword siltType Duration Weekday TimeError Method Response Request HttpError FileStat
 syntax keyword siltType PostgresError Notification BytesError CryptoError UrlError TcpError

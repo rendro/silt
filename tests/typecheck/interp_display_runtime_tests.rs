@@ -28,10 +28,10 @@
 //! The runtime-rejected set is exactly the *concrete* set the
 //! typechecker's interpolation Display gate rejects — every first-class
 //! value whose canonical type name is absent from the Display
-//! `trait_impl_set`: function-shaped values (`Fn`), `Channel`, `Handle`
-//! (task handles), `TcpListener` / `TcpStream` (opaque network resources
-//! left explicitly unprintable, src/typechecker/mod.rs ~7878), and the
-//! reflective descriptor values (`TypeDescriptor` / `PrimitiveDescriptor`).
+//! `trait_impl_set`: function-shaped values (`Fn`), `Channel`,
+//! `TcpListener` / `TcpStream` (opaque network resources left explicitly
+//! unprintable, src/typechecker/mod.rs ~7878), and the reflective
+//! descriptor values (`TypeDescriptor` / `PrimitiveDescriptor`).
 //! The Display-able set (Int/String/List/record) is exactly what it
 //! accepts. Both halves are asserted here so the runtime and compile-time
 //! layers cannot drift apart.
@@ -39,24 +39,21 @@
 //! Round-95 follow-up: the original gate covered only `Fn` + `Channel`
 //! and the prose falsely claimed those were "the only first-class values"
 //! the Display gate rejects yet can flow through an unbounded type
-//! variable. `Handle` (e.g. `task.spawn`) and the Tcp resources reproduce
-//! the same silent-`<handle:0>` / `<tcp-stream:0>` rendering; the gate
-//! now rejects the full set, sourced from the single VM-side oracle
+//! variable. The Tcp resources reproduce the same silent
+//! `<tcp-stream:0>` rendering; the gate now rejects the full set, sourced from the single VM-side oracle
 //! `Vm::value_implements_display` so the runtime layer cannot drift.
 //!
-//! The Fn / Channel / Handle runtime cases, the Display-able controls and
+//! The Fn / Channel runtime cases, the Display-able controls and
 //! the concrete compile-time parity cases live as golden cases under
 //! `tests/golden/typecheck/display/round95_interp_display_runtime__*`.
 //! What stays here needs a live socket (TcpListener) or calls the
 //! VM-side predicate directly.
 
-use silt::testing::runtime::handle::TaskHandle;
 #[cfg(feature = "tcp")]
 use silt::testing::scheduler::test_support::InProcessRunner;
 use silt::testing::value::Value;
 use silt::testing::vm::Vm;
 use silt::testing::{ValueInside, VmInside};
-use std::sync::Arc;
 #[cfg(feature = "tcp")]
 use std::time::Duration;
 
@@ -96,18 +93,17 @@ fn main() {
 
 #[test]
 fn value_implements_display_predicate_covers_every_no_display_value() {
-    // Rejected: function-shaped, Channel, Handle, Tcp resources,
+    // Rejected: function-shaped, Channel, Tcp resources,
     // descriptors. (Tcp stream/listener constructed directly is awkward —
     // they hold live sockets — so the runtime tests above cover the live
     // path; here we cover the cheaply-constructible no-Display values.)
-    let handle = Value::Handle(Arc::new(TaskHandle::new(0)));
     let type_desc = Value::TypeDescriptor(
         silt::testing::typeinfo::builtin_type_named("List")
             .expect("List")
             .clone(),
     );
     let prim_desc = Value::PrimitiveDescriptor("Int");
-    for v in [&handle, &type_desc, &prim_desc] {
+    for v in [&type_desc, &prim_desc] {
         assert!(
             !Vm::value_implements_display(v),
             "no-Display value must be rejected by the predicate: {v:?}"

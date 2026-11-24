@@ -386,7 +386,7 @@ pub struct Module {
     /// The names of those traits, in the order of the text.
     pub trait_names: Vec<&'static str>,
     /// The module's opaque types, each with the number of its type
-    /// arguments (`("Handle", 1)` for `task.Handle(a)`): handles a
+    /// arguments (`("Regex", 0)` for `regex.Regex`): handles a
     /// program names in a type but that have no fields or variants to
     /// declare.
     pub opaque: &'static [(&'static str, usize)],

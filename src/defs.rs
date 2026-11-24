@@ -168,7 +168,7 @@ impl ModuleId {
 }
 
 /// The number of type arguments of the builtin type `name` when it is
-/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
+/// opaque (`Bytes`, `tcp.TcpStream`, `TypeOf(a)`): it
 /// has no variants and no fields, and the builtin registry lists it with
 /// its module. `None` for any other name.
 pub(crate) fn opaque_type_arity(name: &str) -> Option<usize> {

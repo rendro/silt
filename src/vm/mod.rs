@@ -1001,7 +1001,6 @@ impl Vm {
                 | Value::HostFn(_)
                 | Value::VariantConstructor(..)
                 | Value::Channel(_)
-                | Value::Handle(_)
                 | Value::TcpListener(_)
                 | Value::TcpStream(_)
                 | Value::TypeDescriptor(_)

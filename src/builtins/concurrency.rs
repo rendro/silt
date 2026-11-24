@@ -12,13 +12,12 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use super::time;
-use super::typed::{Arg, Chan, Handle, List, builtins, unsound};
+use super::typed::{Arg, Chan, List, builtins, unsound};
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::runtime::together::{Role, Together};
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::error::TakenFrom;
 use crate::vm::{Native, Step, Vm, VmError};
 
 /// A send on a closed channel is a runtime error, whichever function
@@ -415,14 +414,6 @@ impl Native for Each {
     }
 }
 
-/// Start `f` as a task of whoever spawns it: the owner of the task
-/// that runs this, or the owner the front end set for the program.
-/// With `deadline` the task is over at that reading of the clock
-/// (`TaskHandle::deadline`). The handle of the task; an error of
-/// `scheduler.submit` as it is.
-fn start(vm: &mut Vm, f: &Value, deadline: Option<Duration>) -> Result<Arc<TaskHandle>, VmError> {
-    start_in(vm, Work::Call(f.clone()), deadline, None)
-}
 
 /// What a task runs: a function, called with no argument, or a frame
 /// of the runtime's own (a worker of `task.each` or `task.map`, a
@@ -432,10 +423,15 @@ enum Work {
     Frame(Box<dyn Native>),
 }
 
-/// [`start`], of `work`, for a task that is `role` in the call of
-/// `together`, if it is one.
+/// Start `work` as a task of whoever starts it, for the call `call`:
+/// the owner of the task that runs this, or the owner the front end set
+/// for the program. With `deadline` the task is over at that reading of
+/// the clock (`TaskHandle::deadline`). A task that is `role` in the
+/// call of `together`, if it is one. The handle of the task; an error
+/// of `scheduler.submit` as it is.
 fn start_in(
     vm: &mut Vm,
+    call: &'static str,
     work: Work,
     deadline: Option<Duration>,
     together: Option<(&Arc<Together>, Role)>,
@@ -463,7 +459,7 @@ fn start_in(
         Work::Call(Value::VmClosure(closure)) => child_vm.start_task(closure),
         // Any other function (a builtin, a host function): the task
         // is a frame that calls it.
-        Work::Call(other) => child_vm.push_native_frame(Box::new(Body(Some(other)))),
+        Work::Call(other) => child_vm.push_native_frame(Box::new(Body(call, Some(other)))),
         Work::Frame(frame) => child_vm.push_native_frame(frame),
     }
     child_vm.spawned = true;
@@ -472,18 +468,18 @@ fn start_in(
     Ok(handle)
 }
 
-/// The body of a task that is no function of silt's own code
-/// (`task.spawn(uuid.v4)`): the function, until it is called. Its value
-/// is the task's.
-struct Body(Option<Value>);
+/// The body of a task that is no function of silt's own code (a piece
+/// `uuid.v4` of a `task.join`): the call that started it, and the
+/// function, until it is called. Its value is the task's.
+struct Body(&'static str, Option<Value>);
 
 impl Native for Body {
     fn name(&self) -> &str {
-        "task.spawn"
+        self.0
     }
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        match self.0.take() {
+        match self.1.take() {
             Some(callee) => Ok(vm.call(callee, [])),
             None => Ok(Step::Done(input)),
         }
@@ -505,15 +501,6 @@ impl Native for InPlace {
             None => Ok(Step::Done(input)),
         }
     }
-}
-
-/// How `TaskError` shows the variant `tag` with `fields`:
-/// `None` if they are no variant of it.
-pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
-    Some(match (tag, fields) {
-        ("Timeout", []) => "the function was ended by its deadline".to_string(),
-        _ => return None,
-    })
 }
 
 /// `task.deadline(limit, work)`: `Some(work())`, or `None` if `work`
@@ -654,8 +641,7 @@ impl Native for Deadline {
 ///   that still run; its value is the call's. The first `Ok` of a
 ///   piece of `task.first_ok` stops the other pieces in the same way.
 /// - The call returns, or raises, only when every task of it has
-///   ended: no task of the call runs on. (A task one of them started
-///   with `task.spawn` is not one of them.)
+///   ended: no task of the call runs on.
 /// - The tasks have the caller's time, if it has one (a deadline
 ///   around the call), and its count of late steps: that time ends
 ///   them by the rule that ends the caller, and then the caller, in
@@ -734,7 +720,7 @@ impl Joined {
         let deadline = vm.deadline;
         let mut tasks = Vec::with_capacity(works.len());
         for (work, role) in works {
-            match start_in(vm, work, deadline, Some((&together, role))) {
+            match start_in(vm, call, work, deadline, Some((&together, role))) {
                 Ok(task) => {
                     if role == Role::Body {
                         gives = Gives::Body(Some(task.clone()));
@@ -982,71 +968,6 @@ impl Native for Racer {
     }
 }
 
-/// The result of a task for the one that joins it. A joiner that was
-/// cancelled takes nothing: its join ends the task where it is, and a
-/// failure of the joined task stays unhandled, to be reported as never
-/// joined. (Whether the cancel or the failure came first decides
-/// nothing.)
-fn joined(
-    vm: &mut Vm,
-    handle: &Arc<TaskHandle>,
-    result: Result<Value, VmError>,
-) -> Result<Step, VmError> {
-    if vm
-        .cancelled
-        .as_ref()
-        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
-    {
-        return Ok(vm.end_here("task.join_handle"));
-    }
-    // The joiner has the result now. If the task failed, the error is
-    // the joiner's to handle and is not reported as an unjoined
-    // failure.
-    handle.mark_joined();
-    match result {
-        Ok(value) => Ok(Step::Done(value)),
-        // As for `task.deadline`: where the task failed, and below
-        // the task's own calls the calls that led to this
-        // `task.join_handle`. A failure that has no place (a cancelled task)
-        // is placed at the join. The failure remembers the task it was
-        // taken from: a cancel that comes after the take hands it back
-        // (`Scheduler::cancel`).
-        // (A task that was cancelled, or ended by its deadline, has
-        // nothing to be given back: its end is no failure.)
-        Err(mut inner) => {
-            if handle.can_be_handed_back() {
-                inner.taken_from = Some(TakenFrom(handle.clone()));
-            }
-            // The words are there once, however many joins the failure
-            // went through: a join of a task that failed at a join of
-            // its own keeps the message.
-            if !inner.through_a_join {
-                inner.message = format!("joined task failed: {}", inner.message);
-                inner.through_a_join = true;
-            }
-            let here = vm.enrich_error(VmError::new(String::new()));
-            if inner.span.is_none() {
-                inner.span = here.span;
-            }
-            inner.call_stack.extend(here.call_stack);
-            Err(inner)
-        }
-    }
-}
-
-/// The step of `task.cancel` once it has cancelled: wait until each
-/// task of `ends` has ended, one after the other, then return `()`.
-fn until_ended(vm: &mut Vm, mut ends: Vec<Arc<TaskHandle>>) -> Step {
-    ends.retain(|task| !task.has_stopped());
-    let Some(next) = ends.last() else {
-        return Step::Done(Value::Unit);
-    };
-    let wait = Wait::new(vec![Arm::Cell(next.stopped())]);
-    vm.park("task.cancel", wait, move |vm, _| {
-        Ok(until_ended(vm, std::mem::take(&mut ends)))
-    })
-}
-
 /// `task.*`
 pub(crate) mod task {
     use super::*;
@@ -1070,7 +991,7 @@ pub(crate) mod task {
             }
             // No later than the caller's own time.
             let until = vm.deadline.map_or(until, |own| own.min(until));
-            let task = start(vm, work, Some(until))?;
+            let task = start_in(vm, "task.deadline", Work::Call(work.clone()), Some(until), None)?;
             Ok(Step::Run(Box::new(Deadline { task, state: DeadlineState::Started })))
         }
 
@@ -1200,49 +1121,6 @@ pub(crate) mod task {
             Ok(crate::builtins::guard::Guard::enter(vm, work.clone()))
         }
 
-        fn spawn(vm, f: &Value) -> Result<Value, VmError> {
-            Ok(Value::Handle(start(vm, f, None)?))
-        }
-
-        fn join_handle(vm, handle: Handle) -> Result<Step, VmError> {
-            if let Some(result) = handle.try_get() {
-                return joined(vm, handle, result);
-            }
-            let handle = handle.clone();
-            let wait = Wait::new(vec![Arm::Cell(handle.done())]);
-            Ok(vm.park("task.join_handle", wait, move |vm, _| {
-                let result = handle.try_get().ok_or_else(|| {
-                    VmError::internal("a join ended before its task")
-                })?;
-                joined(vm, &handle, result)
-            }))
-        }
-
-        // A wait of the task ends without taking or sending
-        // anything, and the task with it; a task that is not waiting
-        // goes on for a bounded number of steps, to its next wait or
-        // its next take at the latest (`Scheduler::cancel`).
-        // Cancelling a task
-        // handles it: if it had failed before, its failure is
-        // dismissed and not reported as an unjoined failure. A join
-        // still raises that failure, because the handle keeps the
-        // result that came first.
-        //
-        // The call returns when the task has ended, and every task
-        // below it that the cancel reached: their last steps are over,
-        // so what comes after the cancel (a close, a count) sees all
-        // they did. A caller that is cancelled itself (it cancelled
-        // itself, or a task above it) does not wait: it returns at
-        // once, and has the last steps of a cancelled task.
-        fn cancel(vm, handle: Handle) -> Result<Step, VmError> {
-            vm.scheduler().cancel(handle);
-            if vm.cancelled.as_ref().is_some_and(|own| own.load(std::sync::atomic::Ordering::SeqCst)) {
-                return Ok(Step::Done(Value::Unit));
-            }
-            let mut ends = crate::runtime::family::not_stopped_below(handle);
-            ends.push(handle.clone());
-            Ok(until_ended(vm, ends))
-        }
     }
 }
 
@@ -1274,102 +1152,4 @@ fn select_start_index(n: usize) -> usize {
         state.set(s);
         (s as usize) % n
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::AtomicBool;
-
-    /// A task that failed, as a join finds it.
-    fn failed(vm: &mut Vm) -> Arc<TaskHandle> {
-        let handle = Arc::new(TaskHandle::new(vm.next_task_id()));
-        assert!(handle.fail(VmError::new("boom".into()), vm.scheduler().wake()));
-        handle
-    }
-
-    /// A join in a task that was cancelled takes nothing, also of a
-    /// task that has failed already (its wait ended before the cancel
-    /// came): the failure stays unhandled, to be reported as never
-    /// joined. A join in a task that was not cancelled takes it, and
-    /// the failure it raises remembers whose it was.
-    #[test]
-    fn a_cancelled_joiner_does_not_take_the_failure() {
-        let mut vm = Vm::new(crate::HostIo::process());
-        let child = failed(&mut vm);
-        vm.cancelled = Some(Arc::new(AtomicBool::new(true)));
-        let result = child.try_get().unwrap();
-        let step = joined(&mut vm, &child, result);
-        assert!(matches!(step, Ok(Step::Run(_))), "the join ends the task");
-        assert!(child.has_unjoined_failure(), "the failure was taken");
-
-        vm.cancelled = Some(Arc::new(AtomicBool::new(false)));
-        let result = child.try_get().unwrap();
-        let Err(raised) = joined(&mut vm, &child, result) else {
-            panic!("the join of a failed task raises");
-        };
-        assert_eq!(raised.message, "joined task failed: boom");
-        assert!(!child.has_unjoined_failure());
-        let from = raised.taken_from.as_ref().map(|from| from.0.id);
-        assert_eq!(from, Some(child.id));
-    }
-
-    /// A failure that comes through several joins says "joined task
-    /// failed" once. What decides is that the failure came through a
-    /// join, not its words: a task's own failure that begins with them
-    /// gets them in front like any other.
-    #[test]
-    fn a_failure_through_several_joins_names_the_join_once() {
-        let mut vm = Vm::new(crate::HostIo::process());
-        let inner = failed(&mut vm);
-        let Err(raised) = joined(&mut vm, &inner, inner.try_get().unwrap()) else {
-            panic!("the join of a failed task raises");
-        };
-        let outer = Arc::new(TaskHandle::new(vm.next_task_id()));
-        assert!(outer.fail(raised, vm.scheduler().wake()));
-        let Err(raised) = joined(&mut vm, &outer, outer.try_get().unwrap()) else {
-            panic!("the join of a failed task raises");
-        };
-        assert_eq!(raised.message, "joined task failed: boom");
-
-        let own = Arc::new(TaskHandle::new(vm.next_task_id()));
-        let words = VmError::new("joined task failed: boom".into());
-        assert!(own.fail(words, vm.scheduler().wake()));
-        let Err(raised) = joined(&mut vm, &own, own.try_get().unwrap()) else {
-            panic!("the join of a failed task raises");
-        };
-        assert_eq!(
-            raised.message,
-            "joined task failed: joined task failed: boom"
-        );
-    }
-
-    /// A cancel that dismisses a failure the task took from a join
-    /// gives back the task it took it from; that task's failure is
-    /// unhandled again. A cancel that dismisses a failure of the
-    /// task's own gives back nothing.
-    #[test]
-    fn a_cancel_hands_back_a_failure_the_task_took_from_a_join() {
-        let mut vm = Vm::new(crate::HostIo::process());
-        let child = failed(&mut vm);
-        let result = child.try_get().unwrap();
-        let Err(raised) = joined(&mut vm, &child, result) else {
-            panic!("the join of a failed task raises");
-        };
-        let joiner = TaskHandle::new(vm.next_task_id());
-        assert!(joiner.fail(raised, vm.scheduler().wake()));
-        let back = joiner.cancel(vm.scheduler().wake());
-        assert_eq!(back.as_ref().map(|back| back.id), Some(child.id));
-        assert!(!joiner.has_unjoined_failure());
-        child.hand_back();
-        assert!(child.has_unjoined_failure());
-
-        let own = failed(&mut vm);
-        assert!(own.cancel(vm.scheduler().wake()).is_none());
-        assert!(!own.has_unjoined_failure());
-        // A task that had not failed has nothing to hand back either.
-        let running = TaskHandle::new(vm.next_task_id());
-        assert!(running.cancel(vm.scheduler().wake()).is_none());
-        assert!(running.is_cancelled());
-    }
 }

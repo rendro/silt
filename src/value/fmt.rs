@@ -347,7 +347,6 @@ fn begin<'a>(
         }
         Value::PrimitiveDescriptor(name) => return write!(f, "<type:{name}>").map(|()| None),
         Value::Channel(ch) => return write!(f, "<channel:{}>", ch.id()).map(|()| None),
-        Value::Handle(h) => return write!(f, "<handle:{}>", h.id).map(|()| None),
         Value::Bytes(b) => return f.write_str(&format_bytes_preview(b)).map(|()| None),
         Value::TcpListener(t) => return write!(f, "<tcp-listener:{}>", t.id).map(|()| None),
         Value::TcpStream(t) => return write!(f, "<tcp-stream:{}>", t.id).map(|()| None),

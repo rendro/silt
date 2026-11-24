@@ -61,7 +61,7 @@ mod time_builtin_bounds_tests;
 mod time_sleep_cooperative_tests;
 mod url_credentials_redacted_tests;
 mod utf8_bom_tests;
-mod value_ord_handle_closure_tests;
+mod value_ord_closure_tests;
 mod value_partial_eq_reflexive_tests;
 mod wave1_frontend_tests;
 mod wave1_tooling_tests;

@@ -54,8 +54,8 @@ pub struct BuiltinType {
 
 /// Single ordered authoritative list of every built-in type name.
 ///
-/// A type of a builtin module here (`task.Handle`, `tcp.TcpStream`,
-/// `regex.Regex`) is known by its id, as every builtin type is, and is
+/// A type of a builtin module here (`tcp.TcpStream`, `regex.Regex`)
+/// is known by its id, as every builtin type is, and is
 /// reached through its module: a program may declare a type of its
 /// name ([`is_prelude_name`] says which names it may not).
 ///
@@ -118,13 +118,6 @@ pub(crate) static BUILTIN_TYPES: &[BuiltinType] = &[
     },
     BuiltinType {
         name: "Fn",
-        arity: None,
-        kind: BuiltinKind::Container,
-    },
-    // `task.Handle(a)`, a type of the task module: reached through it,
-    // it reserves no name (see [`module_of`]).
-    BuiltinType {
-        name: "Handle",
         arity: None,
         kind: BuiltinKind::Container,
     },
@@ -255,7 +248,6 @@ mod tests {
     #[test]
     fn module_types_are_no_prelude_names() {
         for (name, module) in [
-            ("Handle", "task"),
             ("TcpListener", "tcp"),
             ("TcpStream", "tcp"),
             ("Regex", "regex"),

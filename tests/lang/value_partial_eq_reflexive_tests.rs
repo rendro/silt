@@ -1,12 +1,11 @@
 //! Regression tests for round-26 finding L6: `Value::PartialEq`
-//! returned `false` for reflexive comparisons on `Handle`, `VmClosure`,
+//! returned `false` for reflexive comparisons on `VmClosure`,
 //! `BuiltinFn`, and `VariantConstructor` via the catch-all `_ => false`
 //! arm. That violated the `Eq` reflexivity contract (`a == a` ≡ `true`)
 //! AND desynchronized `PartialEq` from `Ord` (round-23 added explicit
 //! arms to `Ord` returning identity-based `Equal`).
 //!
 //! The fix mirrors the `Ord` arms into `PartialEq`:
-//!   - `Handle(a) == Handle(b)` iff `a.id == b.id`
 //!   - `VmClosure(a) == VmClosure(b)` iff they run one `Function`
 //!     and their captures are equal
 //!   - `BuiltinFn(a) == BuiltinFn(b)` iff `a == b` (by name)
@@ -14,15 +13,11 @@
 //!     iff `na == nb && aa == ab`
 //!
 //! Cross-kind pairs still fall through to `_ => false` as before.
-//!
-//! The end-to-end `h == h` check is the golden case
-//! `tests/golden/lang/tasks/value_partial_eq_round26__handle_reflexivity_via_eq_operator`.
 
 use std::sync::Arc;
 
 use silt::testing::ValueInside;
 use silt::testing::bytecode::{Function, VmClosure};
-use silt::testing::runtime::handle::TaskHandle;
 use silt::testing::typeinfo::bv;
 use silt::testing::value::Value;
 
@@ -35,29 +30,6 @@ fn builtin(name: &str) -> Value {
 }
 
 // ── Rust-level unit tests ──────────────────────────────────────────
-
-// ── Handle ────────────────────────────────────────────────────────
-
-/// Same handle id → equal. The primary reflexivity lock.
-#[test]
-fn partial_eq_handle_same_id() {
-    let h = Value::Handle(Arc::new(TaskHandle::new(42)));
-    // Reflexive on the Value itself (identical Value clone shares the Arc).
-    assert_eq!(h, h.clone());
-    // Two distinct Arcs with the same id also compare equal — the fix
-    // is id-based, not Arc-ptr-based, matching `impl Ord`.
-    let h1 = Value::Handle(Arc::new(TaskHandle::new(100)));
-    let h2 = Value::Handle(Arc::new(TaskHandle::new(100)));
-    assert_eq!(h1, h2);
-}
-
-/// Different handle ids → not equal.
-#[test]
-fn partial_eq_handle_different_ids() {
-    let h1 = Value::Handle(Arc::new(TaskHandle::new(1)));
-    let h2 = Value::Handle(Arc::new(TaskHandle::new(2)));
-    assert_ne!(h1, h2);
-}
 
 // ── VmClosure ─────────────────────────────────────────────────────
 
@@ -139,12 +111,11 @@ fn partial_eq_variant_constructor_differences() {
 
 // ── Reflexivity: every variant `v == v` ───────────────────────────
 //
-// The core Eq invariant. Before the fix, `Handle`, `VmClosure`,
+// The core Eq invariant. Before the fix, `VmClosure`,
 // `BuiltinFn`, and `VariantConstructor` would violate this.
 
 #[test]
 fn partial_eq_reflexivity_every_variant() {
-    let handle_arc = Arc::new(TaskHandle::new(7));
     let closure_arc = mk_closure("id");
     let values: Vec<Value> = vec![
         Value::Unit,
@@ -159,7 +130,6 @@ fn partial_eq_reflexivity_every_variant() {
         Value::VariantConstructor(bv::SOME.tag()),
         builtin("println"),
         Value::VmClosure(closure_arc),
-        Value::Handle(handle_arc),
         Value::TypeDescriptor(silt::testing::typeinfo::TypeInfo::new_record(
             silt::testing::defs::TypeId(silt::testing::defs::DefId(9001)),
             "Point",
@@ -179,17 +149,13 @@ fn partial_eq_reflexivity_every_variant() {
 // ── Cross-kind comparisons still false ────────────────────────────
 
 /// The new explicit arms must not accidentally cross-match. Example:
-/// `Handle` vs `VmClosure` must still be `false` via the catch-all.
+/// `VmClosure` vs `BuiltinFn` must still be `false` via the catch-all.
 #[test]
 fn partial_eq_cross_kind_still_false() {
-    let h = Value::Handle(Arc::new(TaskHandle::new(1)));
     let c = Value::VmClosure(mk_closure("f"));
     let b = builtin("println");
     let vc = Value::VariantConstructor(bv::SOME.tag());
 
-    assert_ne!(h, c);
-    assert_ne!(h, b);
-    assert_ne!(h, vc);
     assert_ne!(c, b);
     assert_ne!(c, vc);
     assert_ne!(b, vc);

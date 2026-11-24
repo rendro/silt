@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::bytecode;
 use crate::defs::BuiltinId;
-use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{Tag, TypeInfo};
 
@@ -79,7 +79,6 @@ pub enum Value {
     /// `crate::module::BUILTIN_PRIMITIVE_NAMES`.
     PrimitiveDescriptor(&'static str),
     Channel(Arc<Channel>),
-    Handle(Arc<TaskHandle>),
     /// Immutable byte sequence. Structural equality and hashing — two
     /// `Bytes` values are equal iff they hold the same bytes. Forward-
     /// compatible with a future `Type::Bytes` promotion: literal syntax
@@ -264,7 +263,6 @@ impl Value {
             Value::TypeDescriptor(_) => "TypeDescriptor",
             Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
             Value::Channel(_) => "Channel",
-            Value::Handle(_) => "Handle",
             Value::Bytes(_) => "Bytes",
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",

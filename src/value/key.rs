@@ -61,7 +61,6 @@ fn rank(value: &Value) -> u8 {
         Value::Record(_) => 9,
         Value::Variant(_) => 10,
         Value::Channel(_) => 11,
-        Value::Handle(_) => 12,
         Value::Bytes(_) => 13,
         Value::TcpListener(_) => 14,
         Value::TcpStream(_) => 15,
@@ -124,7 +123,6 @@ fn cmp_other_heads(a: &Value, b: &Value) -> Ordering {
         (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
         // A channel, a task handle, a listener, a stream: which one.
         (Value::Channel(a), Value::Channel(b)) => a.id().cmp(&b.id()),
-        (Value::Handle(a), Value::Handle(b)) => a.id.cmp(&b.id),
         (Value::TcpListener(a), Value::TcpListener(b)) => a.id.cmp(&b.id),
         (Value::TcpStream(a), Value::TcpStream(b)) => a.id.cmp(&b.id),
         // A regex: its pattern text.
@@ -181,7 +179,6 @@ fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
         // it.)
         Value::Variant(variant) => variant.ordinal().hash(state),
         Value::Channel(channel) => channel.id().hash(state),
-        Value::Handle(handle) => handle.id.hash(state),
         Value::Bytes(bytes) => {
             bytes.len().hash(state);
             state.write(bytes);

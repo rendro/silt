@@ -4031,7 +4031,7 @@ impl TypeChecker {
             // `_ => Type::Generic(..)` below, silently producing a phantom
             // type that no value has. Derive fixed-arity builtin entries
             // from the authoritative table, and that of an opaque type of
-            // the table (`task.Handle(a)`, `Bytes`) from the registry, as
+            // the table (`regex.Regex`, `Bytes`) from the registry, as
             // a type expression does. `Tuple` and `Fn` carry `arity: None`
             // and do not take part in this trait-impl arity check.
             let builtin_arity: Option<usize> = builtin_type_name(written).and_then(|name| {

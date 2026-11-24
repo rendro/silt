@@ -2553,144 +2553,32 @@ fn test_loop_in_function() {
 // ── Concurrency tests ────────────────────────────────────────────
 
 #[test]
-fn test_spawn_join() {
-    let result = run_vm(
-        r#"
-            import task
-
-            fn main() {
-                let t = task.spawn({ -> 42 })
-                host.give(task.join_handle(t))
-            }
-            import host
-        "#,
-    );
-    assert_eq!(result, Value::Int(42));
-}
-
-#[test]
-fn test_spawn_join_already_completed() {
-    // Ensure task.join_handle works when the fiber has already completed
-    // before join is called (the original deadlock scenario).
-    let result = run_vm(
-        r#"
-            import channel
-            import task
-
-            fn main() {
-                let ch = channel.new(1)
-                let t = task.spawn({ ->
-                    channel.send(ch, "done")
-                    99
-                })
-                -- Wait for the message, ensuring the fiber runs to completion
-                let _ = channel.receive(ch)
-                -- Now the fiber should already be completed
-                host.give(task.join_handle(t))
-            }
-            import host
-        "#,
-    );
-    assert_eq!(result, Value::Int(99));
-}
-
-#[test]
-fn test_spawn_join_multiple_completed() {
-    // Multiple fibers that complete before join is called
-    let result = run_vm(
-        r#"
-            import channel
-            import task
-
-            fn main() {
-                let ch = channel.new(10)
-                let t1 = task.spawn({ ->
-                    channel.send(ch, 1)
-                    10
-                })
-                let t2 = task.spawn({ ->
-                    channel.send(ch, 2)
-                    20
-                })
-                let t3 = task.spawn({ ->
-                    channel.send(ch, 3)
-                    30
-                })
-                -- Drain all messages so fibers complete
-                let _ = channel.receive(ch)
-                let _ = channel.receive(ch)
-                let _ = channel.receive(ch)
-                -- All fibers should be done; join should not deadlock
-                let a = task.join_handle(t1)
-                let b = task.join_handle(t2)
-                let c = task.join_handle(t3)
-                host.give(a + b + c)
-            }
-            import host
-        "#,
-    );
-    assert_eq!(result, Value::Int(60));
-}
-
-// ── Scheduler integration tests ──────────────────────────────
-
-#[test]
-fn test_scheduler_task_completes() {
-    // task.join_handle returns the value directly on success
+fn test_task_map_gives_the_values_of_its_tasks() {
     let result = run_vm(
         r#"
             import task
             fn main() {
-                let t = task.spawn({ -> 42 })
-                host.give(task.join_handle(t))
+                host.give(task.map([1, 2, 3], 3, { n -> n * 10 }))
             }
             import host
             "#,
     );
-    assert_eq!(result, Value::Int(42));
-}
-
-#[test]
-fn test_scheduler_multiple_tasks() {
-    let result = run_vm(
-        r#"
-            import task
-            import list
-            fn main() {
-                let tasks = [1, 2, 3] |> list.map({ n -> task.spawn({ -> n * 10 }) })
-                host.give(tasks |> list.map({ t -> task.join_handle(t) }))
-            }
-            import host
-            "#,
+    assert_eq!(
+        result,
+        Value::list(vec![Value::Int(10), Value::Int(20), Value::Int(30)])
     );
-    if let Value::List(items) = &result {
-        assert_eq!(items.len(), 3);
-        // Values are returned directly (10, 20, 30) — order may vary
-        let mut vals: Vec<i64> = items
-            .iter()
-            .map(|v| match v {
-                Value::Int(n) => n,
-                other => panic!("expected Int, got {:?}", other),
-            })
-            .collect();
-        vals.sort();
-        assert_eq!(vals, vec![10, 20, 30]);
-    } else {
-        panic!("expected list, got {:?}", result);
-    }
 }
 
 #[test]
 fn test_scheduler_channel_communication() {
-    // channel.receive wraps value in Message variant
+    // A helper of a background sends; the body receives.
     let result = run_vm(
         r#"
             import task
             import channel
             fn main() {
                 let ch = channel.new(0)
-                let _ = task.spawn({ -> channel.send(ch, 99) })
-                host.give(channel.receive(ch))
+                host.give(task.background([{ -> channel.send(ch, 99) }], { -> channel.receive(ch) }))
             }
             import host
             "#,
@@ -2700,17 +2588,16 @@ fn test_scheduler_channel_communication() {
 
 #[test]
 fn test_scheduler_deadlock_detection() {
-    // Deadlock: task.join_handle propagates as a VmError
+    // Deadlock: a main thread that waits in task.join for a piece that
+    // can never receive is an error.
     let err = run_vm_result(
         r#"
             import task
             import channel
             fn main() {
-                let ch = channel.new(0)
-                let t = task.spawn({ -> channel.receive(ch) })
-                host.give(task.join_handle(t))
+                let ch: Channel(Int) = channel.new(0)
+                task.join([{ -> let _ = channel.receive(ch) }])
             }
-            import host
             "#,
     )
     .unwrap_err();
@@ -2723,34 +2610,27 @@ fn test_scheduler_deadlock_detection() {
 
 #[test]
 fn test_scheduler_task_failure_propagates() {
-    // task.join_handle on a failed task propagates as a VmError
+    // The failure of a piece of task.join is raised in the caller, as
+    // it is.
     let err = run_vm_result(
         r#"
             import task
             fn main() {
-                let t = task.spawn({ -> 1 / 0 })
-                host.give(task.join_handle(t))
+                task.join([{ -> let _ = 1 / 0 }])
             }
-            import host
             "#,
     )
     .unwrap_err();
-    // Production message from src/builtins/concurrency.rs: the join-site wraps the
-    // inner VmError as "joined task failed: <inner>".
-    assert!(
-        err.message == "joined task failed: division by zero",
-        "expected exact join-site division error, got: {}",
-        err.message
-    );
+    assert_eq!(err.message, "division by zero");
 }
 
 // ── Higher-order builtin suspension tests (G4) ───────────────────────
 //
 // These tests exercise the iteration frame of the higher-order builtins
-// (`vm::iterate`) when the task parks inside the user callback (via
-// `task.join_handle(task.spawn(...))`). They verify that the frame's state —
-// especially a fold's running value — is the same when the task goes
-// on.
+// (`vm::iterate`) when the task parks inside the user callback (in the
+// wait of a `task.deadline`, whose function runs as a task of its
+// own). They verify that the frame's state — especially a fold's
+// running value — is the same when the task goes on.
 
 #[test]
 fn test_scheduler_list_fold_with_yielding_callback() {
@@ -2760,10 +2640,15 @@ fn test_scheduler_list_fold_with_yielding_callback() {
         r#"
             import task
             import list
+            import time
+            fn later(v) {
+                match task.deadline(time.hours(1), { -> v }) {
+                    Some(x) -> x
+                    None -> v
+                }
+            }
             fn main() {
-                host.give([1, 2, 3, 4, 5] |> list.fold(0, { acc, n ->
-                    task.join_handle(task.spawn({ -> acc + n }))
-                }))
+                host.give([1, 2, 3, 4, 5] |> list.fold(0, { acc, n -> later(acc + n) }))
             }
             import host
             "#,
@@ -2780,10 +2665,15 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
         r#"
             import task
             import list
+            import time
+            fn later(v) {
+                match task.deadline(time.hours(1), { -> v }) {
+                    Some(x) -> x
+                    None -> v
+                }
+            }
             fn main() {
-                host.give(["a", "b", "c"] |> list.fold("", { acc, s ->
-                    task.join_handle(task.spawn({ -> "{acc}{s}" }))
-                }))
+                host.give(["a", "b", "c"] |> list.fold("", { acc, s -> later("{acc}{s}") }))
             }
             import host
             "#,
@@ -2800,10 +2690,15 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
         r#"
             import task
             import list
+            import time
+            fn later(v) {
+                match task.deadline(time.hours(1), { -> v }) {
+                    Some(x) -> x
+                    None -> v
+                }
+            }
             fn main() {
-                host.give([1, 2, 3, 4, 5, 6] |> list.filter({ n ->
-                    task.join_handle(task.spawn({ -> n % 2 == 0 }))
-                }))
+                host.give([1, 2, 3, 4, 5, 6] |> list.filter({ n -> later(n % 2 == 0) }))
             }
             import host
             "#,
@@ -2869,7 +2764,7 @@ fn test_tail_call_rejects_arity_mismatch() {
 
 #[test]
 fn test_spawn_child_shares_channel_id_counter() {
-    // Locks in 3a4edd6 L3: when a VM spawns a child (for task.spawn), the
+    // Locks in 3a4edd6 L3: when a VM spawns a child (for a task), the
     // channel ID counter must be shared via Arc so IDs remain globally
     // unique across parent and child. Before the fix, each VM had its
     // own `AtomicU64`, so a channel created in a spawned task could
@@ -3918,72 +3813,42 @@ fn main() {
     }
 
     #[test]
-    fn in_a_task_that_is_joined() {
+    fn in_a_piece_of_a_join() {
         let source = "\
 import task
 fn work(n: Int) -> Int {
   10 / n
 }
 fn main() {
-  let h = task.spawn({ -> work(0) })
-  let v = task.join_handle(h)
-  println(v)
+  task.join([{ -> println(work(0)) }])
+  println(\"never\")
 }
 ";
         assert_eq!(
             stops(source),
-            "joined task failed: division by zero at 3:3; work 3:3; closure in main 6:27; main 7:11; <script> 5:1"
+            "division by zero at 3:3; work 3:3; closure in main 6:27; main 6:3; <script> 5:1"
         );
     }
 
     #[test]
     fn through_three_joins() {
-        // The words of the join are there once; the call stack has
-        // each task and each join.
+        // The call stack has each piece and each join.
         let source = "\
 import task
 fn work(n: Int) -> Int {
   10 / n
 }
 fn main() {
-  let outer = task.spawn({ ->
-    let middle = task.spawn({ ->
-      let inner = task.spawn({ -> work(0) })
-      task.join_handle(inner)
-    })
-    task.join_handle(middle)
-  })
-  println(task.join_handle(outer))
+  task.join([{ ->
+    task.join([{ ->
+      task.join([{ -> println(work(0)) }])
+    }])
+  }])
 }
 ";
         assert_eq!(
             stops(source),
-            "joined task failed: division by zero at 3:3; work 3:3; closure in main 8:35; closure in main 9:7; closure in main 11:5; main 13:11; <script> 5:1"
-        );
-    }
-
-    #[test]
-    fn the_join_of_a_cancelled_task() {
-        let source = "\
-import channel
-import task
-fn wait(ch: Channel(Int)) -> Int {
-  match channel.receive(ch) {
-    Some(n) -> n
-    None -> 0
-  }
-}
-fn main() {
-  let ch = channel.new(0)
-  let h = task.spawn({ -> wait(ch) })
-  task.cancel(h)
-  let v = task.join_handle(h)
-  println(v)
-}
-";
-        assert_eq!(
-            stops(source),
-            "joined task failed: cancelled at 13:11; main 13:11; <script> 9:1"
+            "division by zero at 3:3; work 3:3; closure in main 8:31; closure in main 8:7; closure in main 7:5; main 6:3; <script> 5:1"
         );
     }
 
@@ -4006,9 +3871,9 @@ fn main() {
             stops(source),
             "division by zero at 5:3; slow 5:3; closure in main 8:46; main 8:11; <script> 7:1"
         );
-        // The same from a task: the join's error has the stack of
-        // the function, of the task that set the deadline, and of the
-        // join.
+        // The same from a piece of a join: the join's error has the
+        // stack of the function, of the piece that set the deadline,
+        // and of the join.
         let source = "\
 import task
 import time
@@ -4017,13 +3882,12 @@ fn slow(n: Int) -> Int {
   10 / n
 }
 fn main() {
-  let h = task.spawn({ -> task.deadline(time.ms(60000), { -> slow(0) }) })
-  println(task.join_handle(h))
+  task.join([{ -> println(task.deadline(time.ms(60000), { -> slow(0) })) }])
 }
 ";
         assert_eq!(
             stops(source),
-            "joined task failed: division by zero at 5:3; slow 5:3; closure in main 8:62; closure in main 8:27; main 9:11; <script> 7:1"
+            "division by zero at 5:3; slow 5:3; closure in main 8:62; closure in main 8:27; main 8:3; <script> 7:1"
         );
     }
 
@@ -5026,7 +4890,7 @@ mod abandon {
         let (handle, abandoned) = spawn_probe(&mut main, Some(ch.clone()));
         parked(&ch);
         assert_eq!(abandoned.load(Ordering::SeqCst), 0);
-        // What `task.cancel` does.
+        // What a stop of a task does.
         main.scheduler().cancel(&handle);
         assert_eq!(settled(&abandoned), 1);
         drop(main);
@@ -7181,12 +7045,9 @@ mod interpolation {
                 import task
 
                 fn main() {
-                    let tasks = list.map([1, 2, 3, 4]) { i ->
-                        task.spawn({ ->
-                            list.fold(1..50, "") { acc, k -> "{acc}v{k * i};" }
-                        })
+                    let results = task.map([1, 2, 3, 4], 4) { i ->
+                        list.fold(1..50, "") { acc, k -> "{acc}v{k * i};" }
                     }
-                    let results = list.map(tasks) { t -> task.join_handle(t) }
                     host.give(list.fold(results, "") { acc, r -> "{acc}[{r}]" })
                 }
                 import host
@@ -7550,9 +7411,7 @@ fn main() {
   let cancelled = loop k = 0 {
     match k < 9 {
       true -> {
-        let h = task.spawn({ -> spins(k) })
-        time.sleep(time.ms(1))
-        task.cancel(h)
+        task.background([{ -> let _ = spins(k) }], { -> time.sleep(time.ms(1)) })
         loop(k + 1)
       }
       false -> k
@@ -7572,7 +7431,7 @@ fn main() {
     }
 
     /// A task ended between the parts of a fused instruction, by its
-    /// deadline or by a cancel, leaves nothing behind (its own VM goes
+    /// deadline or by a stop, leaves nothing behind (its own VM goes
     /// with it), and neither does a program the step budget ends
     /// there: the next program the VM runs computes what it computes
     /// on a VM of its own.
@@ -8033,7 +7892,7 @@ fn count(xs: List(Int)) -> Int {
 fn main() {
   let xs = 1..30
   let here = count(xs)
-  let there = task.join_handle(task.spawn({ -> count(xs) }))
+  let there = list.fold(task.map([xs], 1, { ys -> count(ys) }), 0, { acc, n -> acc + n })
   host.give((here, there))
 }
 ";

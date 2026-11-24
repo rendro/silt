@@ -1286,20 +1286,6 @@ fn main() {
 }
 
 #[test]
-fn test_task_spawn_no_type_error() {
-    assert_no_errors(
-        r#"
-import task
-fn main() {
-  let h = task.spawn({ -> 42 })
-  let result = task.join_handle(h)
-  let _ = result
-}
-        "#,
-    );
-}
-
-#[test]
 fn test_map_length_no_type_error() {
     assert_no_errors(
         r#"

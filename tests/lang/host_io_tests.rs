@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use silt::testing::VmInside;
 use silt::testing::compile_str;
 use silt::{Buffer, Clock, HostIo, Output, Vm};
 
