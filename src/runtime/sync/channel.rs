@@ -51,7 +51,7 @@ impl Close {
             stage.mark_joined();
         }
         match self.failure {
-            Some(failure) => Err((*failure).clone()),
+            Some(failure) => Err(VmError::raised_from(&failure)),
             None => Ok(()),
         }
     }

@@ -107,11 +107,21 @@ impl Together {
     }
 
     /// The task of `role` failed with `error`. The first failure is
-    /// the call's; one after it is a note. Whoever waits is told.
+    /// the call's; one after it is a note, unless it is a failure the
+    /// record has already (the failure of a stream stage that several
+    /// tasks of the call read: one failure, however many raise it).
+    /// Whoever waits is told.
     pub(crate) fn failed(&self, role: Role, error: VmError, wake: &dyn Wake) {
         {
             let mut failures = self.failures.lock();
-            if failures.first.is_none() {
+            let known = failures
+                .first
+                .iter()
+                .chain(failures.also.iter().map(|(_, also)| also))
+                .any(|seen| seen.same_failure(&error));
+            if known {
+                // Nothing new: the call raises it, or has it as a note.
+            } else if failures.first.is_none() {
                 failures.first = Some(error);
             } else if failures.also.len() < NOTED {
                 failures.also.push((role, error));
@@ -239,6 +249,35 @@ mod tests {
         assert!(!background.ended().is_done());
         background.stopped(Role::Helper, wake);
         assert!(background.ended().is_done());
+    }
+
+    /// The failure of a stream stage that several tasks of a call read
+    /// is one failure: no note of it under itself. Another failure is a
+    /// note.
+    #[test]
+    fn one_stage_failure_read_by_several_tasks_is_no_note_of_itself() {
+        let scheduler = wake();
+        let wake: &dyn Wake = scheduler.wake();
+        let together = Together::new("task.each", "the workers", 4);
+        let stage = Arc::new(failure("panic: the feed broke", 3));
+        for _ in 0..3 {
+            together.failed(Role::EachWorker, VmError::raised_from(&stage), wake);
+        }
+        together.failed(Role::EachWorker, failure("panic: another", 9), wake);
+        let first = together.take_failure().expect("a failure");
+        assert_eq!(first.message, "panic: the feed broke");
+        let notes: Vec<&str> = first
+            .more
+            .as_ref()
+            .expect("a note")
+            .notes
+            .iter()
+            .map(|(note, _)| note.as_str())
+            .collect();
+        assert_eq!(
+            notes,
+            ["another worker failed too, at {at}: panic: another"]
+        );
     }
 
     /// A first `Ok` settles a `task.first_ok` before its pieces end; it

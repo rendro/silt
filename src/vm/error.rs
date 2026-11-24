@@ -14,6 +14,18 @@ impl std::fmt::Debug for TakenFrom {
     }
 }
 
+/// The failure that an error is a copy of ([`VmError::same_failure`]):
+/// the failure of a stream stage, as the close of its channel keeps it,
+/// which every read of the channel's end raises.
+#[derive(Clone)]
+pub(crate) struct Origin(pub(crate) std::sync::Arc<VmError>);
+
+impl std::fmt::Debug for Origin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<failure: {}>", self.0.message)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VmError {
     pub message: String,
@@ -247,6 +259,31 @@ impl VmError {
         self
     }
 
+    /// The error a read of the end of a stream raises when the stage
+    /// that fed it failed with `failure`: a copy of it that knows it is
+    /// one, so that the copies that several readers raise are seen to be
+    /// one failure. (A stage that failed with what it read from an
+    /// earlier stage keeps that stage's failure as the one it is.)
+    pub(crate) fn raised_from(failure: &std::sync::Arc<VmError>) -> VmError {
+        let mut error = (**failure).clone();
+        if error.origin().is_none() {
+            error.more.get_or_insert_default().origin = Some(Origin(failure.clone()));
+        }
+        error
+    }
+
+    fn origin(&self) -> Option<&std::sync::Arc<VmError>> {
+        Some(&self.more.as_ref()?.origin.as_ref()?.0)
+    }
+
+    /// Whether `self` and `other` are copies of one failure: the failure
+    /// of a stream stage that two readers of its channel raised.
+    pub(crate) fn same_failure(&self, other: &VmError) -> bool {
+        self.origin()
+            .zip(other.origin())
+            .is_some_and(|(one, two)| std::sync::Arc::ptr_eq(one, two))
+    }
+
     /// The error as `silt run` prints it, its places read from the files
     /// of `session`: the header, the place with its source line, and the
     /// call stack when it has more than one frame; for a `main` that
@@ -355,6 +392,9 @@ pub(crate) struct More {
     /// failures of the other pieces of a `task.join` that failed while
     /// they were stopped are notes of the first.
     pub(crate) notes: Vec<(String, Option<Span>)>,
+    /// The failure the error is a copy of, if it is one
+    /// ([`VmError::raised_from`]).
+    pub(crate) origin: Option<Origin>,
 }
 
 /// A `Display` impl that failed while a value was shown where its

@@ -523,10 +523,12 @@ most `at_once` calls of `f` run at a time. The channel is not closed by
 the call: whoever sends on it closes it when the work is all sent (a
 stream, such as one of `stream.from_fn`, closes when its feed returns).
 A stream that failed fails the worker that reads its end, as a receive
-would.
+would; when several workers read it, that is one failure, reported once.
 
 `at_once` must be 1 or more: `task.each(ch, 0, f)` is a runtime error
-(`task.each: at_once is 0, and must be 1 or more`).
+(`task.each: at_once is 0, and must be 1 or more`). An `at_once` above
+the limit of 100,000 tasks that can run at once is refused the same way,
+before any worker starts.
 
 The workers are the pieces of a [`task.join`](#taskjoin) in every other
 way: a call of `f` that fails stops the other workers and its failure is
