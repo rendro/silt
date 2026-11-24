@@ -41,7 +41,7 @@ fn serve(handed: Channel(Int), out: Channel(Int)) -> () {
   channel.each(handed) { item -> channel.send(out, work(item)) }
 }
 
-fn main() {
+fn round() -> Int {
   let handed = channel.new(0)
   let out = channel.new(10)
   let deepest = { ->
@@ -51,5 +51,18 @@ fn main() {
   let parent = { -> task.join([middle, { -> forever() }]) }
   task.background([parent]) { -> channel.send(handed, 2) }
   channel.close(out)
-  println("results after the stop: {count(out)}")
+  count(out)
+}
+
+-- The shape, 300 times over: a stop that ended before the tasks it
+-- reached shows in a few rounds in a hundred, so one run of the program
+-- catches it.
+fn main() {
+  let missed = loop i = 0, missed = 0 {
+    match i == 300 {
+      true -> missed
+      false -> loop(i + 1, missed + 1 - round())
+    }
+  }
+  println("rounds without the work after the stop: {missed} of 300")
 }
