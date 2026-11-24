@@ -1,0 +1,2 @@
+division by zero at task_guard__an_error_inside_a_deadline_inside_a_guard.silt:7:3
+Ok(Some(20))

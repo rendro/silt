@@ -1,0 +1,23 @@
+-- A guard runs on the task that calls it: inside a spawned task it
+-- catches there, and the task goes on and returns. A failure of a
+-- joined task, raised at the join, is caught by a guard around the join.
+import task
+
+fn fail(n: Int) -> Int {
+  panic("task {n} failed")
+}
+
+fn main() {
+  let h = task.spawn { ->
+    match task.guard({ -> fail(1) }) {
+      Ok(_) -> "no error"
+      Err(e) -> "the task caught {e.message}"
+    }
+  }
+  println(task.join(h))
+  let failing = task.spawn { -> fail(2) }
+  match task.guard({ -> task.join(failing) }) {
+    Ok(_) -> println("no error")
+    Err(e) -> println("main caught {e.message}")
+  }
+}

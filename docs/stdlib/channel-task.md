@@ -371,6 +371,7 @@ fixed thread pool and run in parallel. They communicate through channels.
 |----------|-----------|-------------|
 | `cancel` | `(Handle(a)) -> ()` | Cancel a task, and wait until it has ended (see details below) |
 | `deadline` | `(Duration, Fn() -> a) -> Option(a)` | Run a function, and end it when the duration has passed: Some of its value, or None |
+| `guard` | `(Fn() -> a) -> Result(a, RuntimeError)` | Run a function, and give a runtime error it raises as an `Err` |
 | `join` | `(Handle(a)) -> a` | Wait for a task to complete |
 | `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
 
@@ -524,10 +525,11 @@ led to the `task.join`; the error of a cancelled task points at the join.
 A failure that went through several joins (a task that joins a task that
 failed, and is joined in turn) says `joined task failed:` once; its call
 stack shows each task and each join it went through.
-Silt has no `try`/`catch`, so a joined
-failure is terminal for the joining task — when cancellation or task
-failure is an expected outcome, use a channel handshake or sentinel value
-instead of relying on `task.join` for the signal.
+A joined failure ends the joining task
+unless a [`task.guard`](#taskguard) around the join catches it, which
+gives it as an `Err`. Where cancellation is an expected outcome, a
+channel handshake or a sentinel value says so more plainly than a failed
+join.
 
 ```silt
 import task
@@ -703,3 +705,64 @@ fn main() {
 A task with a deadline is `task.spawn { -> task.deadline(limit, work) }`: its
 handle joins to the same `Option`.
 
+## `task.guard`
+
+```
+task.guard(work: Fn() -> a) -> Result(a, RuntimeError)
+```
+
+Runs `work` and gives `Ok` of what it returns, or `Err(e)` if a runtime
+error was raised inside it: a `panic`, a division by zero, a failed
+assertion of a builtin, raised in `work` or in anything it calls (a
+callback of `list.map`, the function of a `task.deadline`, a
+`task.join` of a task that failed, a stream stage it reads). The
+program goes on after the call.
+
+`work` runs in place, on the task that calls `task.guard`: no task is
+started, and a guard that catches nothing costs about what a call costs.
+When an error is raised, the calls inside the guard end where they are,
+as the error would end them: a stream stage being read is stopped, the
+function of a `task.deadline` is ended, a `postgres.transact` rolls
+back. Then `task.guard` returns `Err(e)`. Of two guards, one inside the
+other, the inner one catches.
+
+These are not runtime errors of the program, and pass through a guard:
+
+- `process.exit`, which ends the program (in a test, it fails the test);
+- a stop: a `task.cancel` of the task that runs the guard, or the end of
+  a `task.deadline`'s function at its time. The guard does not return,
+  and nothing after it runs;
+- a deadlock of the program's own thread;
+- the step budget an embedder set, used up;
+- a fault of silt or of its host: an internal error of the VM, a builtin
+  or a host function that panicked, a clock that failed.
+
+`RuntimeError` is a record:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `message` | `String` | the error's text: `division by zero`, `panic: <text>` |
+| `location` | `String` | where it was raised, `file:line:col`, as the error's report names the place |
+| `trace` | `List(String)` | the calls that led there, innermost first: one entry per line of the report's call stack, `check  at main.silt:9:13` |
+
+Shown, as `println("{e}")` shows it, a `RuntimeError` is the report the
+program would have printed for the error: its message, its place with
+the line of source, and its call stack. A `RuntimeError` the program
+changed (`e.{ message: "..." }`) is shown from its fields, without the
+line of source.
+
+```silt
+import task
+
+fn half(n: Int) -> Int {
+  100 / n
+}
+
+fn main() {
+  match task.guard({ -> half(0) }) {
+    Ok(v) -> println("half: {v}")
+    Err(e) -> println(e.message) -- division by zero
+  }
+  println(task.guard { -> half(4) }) -- Ok(25)
+}
+```

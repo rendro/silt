@@ -54,6 +54,13 @@ pub struct Program {
     /// of a task keeps this table, see `Vm::look_again`.)
     pub(crate) settled: Arc<Globals>,
     pub entry: EntryPoint,
+    /// The files it was compiled from, as its session has them: how a
+    /// runtime error it catches (`task.guard`) names its places, where
+    /// the front door that runs it names them no other way
+    /// (`Vm::name_files`).
+    pub(crate) files: Arc<crate::source::SourceMap>,
+    /// Its entry file among `files`.
+    pub(crate) entry_file: crate::source::FileId,
 }
 
 /// What a [`Program`] was compiled for.

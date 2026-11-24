@@ -1,0 +1,42 @@
+-- A runtime error in a function a builtin calls (list.map's, list.fold's,
+-- list.sort_by's, a Display impl that println runs) is caught by the
+-- guard around the builtin's call. A guard inside a callback catches
+-- its own error, and the builtin goes on with the next element.
+import list
+import task
+
+type Name {
+  Name(String),
+}
+
+trait Display for Name {
+  fn display(self) -> String {
+    match self {
+      Name("") -> panic("a name with no text")
+      Name(s) -> s
+    }
+  }
+}
+
+fn shown(r: Result(a, task.RuntimeError)) -> String where a: Display {
+  match r {
+    Ok(v) -> "Ok({v})"
+    Err(e) -> "Err({e.message})"
+  }
+}
+
+fn main() {
+  let zero = 0
+  println(shown(task.guard { -> list.map([1, 2, 0]) { x -> 6 / x } }))
+  println(shown(task.guard { -> list.sort_by([3, 1, 2]) { x -> 6 / (x - 2) } }))
+  println(shown(task.guard { -> println(Name("")) }))
+  let total = list.fold([1, 0, 3, 0, 5], 0) { acc, x ->
+    match task.guard({ -> 60 / x }) {
+      Ok(v) -> acc + v
+      Err(_) -> acc + 1000
+    }
+  }
+  println(total)
+  let each = list.map([{ -> 1 }, { -> 6 / zero }, { -> 3 }], task.guard)
+  println(list.map(each, shown))
+}

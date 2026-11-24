@@ -1,0 +1,16 @@
+-- A failure of the function of a task.deadline is raised in its caller:
+-- inside a guard, the guard catches it, with the place in the function.
+import task
+import time
+
+fn work(n: Int) -> Int {
+  100 / n
+}
+
+fn main() {
+  match task.guard({ -> task.deadline(time.hours(1)) { -> work(0) } }) {
+    Ok(_) -> println("no error")
+    Err(e) -> println("{e.message} at {e.location}")
+  }
+  println(task.guard { -> task.deadline(time.hours(1)) { -> work(5) } })
+}

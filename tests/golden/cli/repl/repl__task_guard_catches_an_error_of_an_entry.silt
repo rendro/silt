@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: import task\nlet zero = 0\ntask.guard({ -> 1 / zero })\ntype U { U(Int) }\ntrait Display for U { fn display(self) -> String { match task.guard({ -> panic("no text") }) {\nOk(_) -> "no"\nErr(e) -> "caught {e.message}"\n} } }\nU(1)\nzero + 1\n:quit\n
+-- A guard in an entry catches there, and its Err is shown as the
+-- report of the error, its place in the entry. A Display impl that the
+-- REPL runs to show a value catches with a guard of its own. The
+-- session goes on.

@@ -48,7 +48,7 @@ impl Bounded {
             return Err(too_long_text(name, len));
         }
         if let Some(failure) = failed {
-            return Err(VmError::new(failure));
+            return Err(VmError::ending(failure));
         }
         String::from_utf8(self.bytes).map_err(|_| {
             VmError::new(format!(

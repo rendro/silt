@@ -26,6 +26,14 @@ pub struct VmError {
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub(crate) type_confusion: bool,
+    /// If true, the error ends what it is raised in, and `task.guard`
+    /// does not catch it ([`VmError::catchable`]): a `process.exit`
+    /// (also one in a test), the step budget used up, a deadlock of the
+    /// program's thread, a type confusion, an internal error of the VM,
+    /// a panic of a builtin or a host function, a clock that failed, a
+    /// VM or a runtime that is gone. A join of a task that failed with
+    /// such an error raises it as it is, so it ends the joiner too.
+    pub(crate) ends: bool,
     /// If true, the program had run the steps its embedder gave it
     /// ([`Vm::set_step_budget`](super::Vm::set_step_budget)) and was
     /// ended for it: this is the budget's error, the error of a join
@@ -82,6 +90,7 @@ impl VmError {
             help: Vec::new(),
             help_at: Box::default(),
             type_confusion: false,
+            ends: false,
             out_of_steps: false,
             exit: None,
             exit_in_a_test: false,
@@ -104,8 +113,29 @@ impl VmError {
     pub(crate) fn type_confusion(message: impl Into<String>) -> Self {
         VmError {
             type_confusion: true,
-            ..VmError::new(message.into())
+            ..VmError::ending(message.into())
         }
+    }
+
+    /// An error that ends what it is raised in ([`VmError::ends`]).
+    pub(crate) fn ending(message: String) -> Self {
+        VmError {
+            ends: true,
+            ..VmError::new(message)
+        }
+    }
+
+    /// An error of the VM itself, `internal VM error: <what>`: what the
+    /// VM found in its own state cannot be, and the run ends.
+    pub(crate) fn internal(what: impl std::fmt::Display) -> Self {
+        VmError::ending(format!("internal VM error: {what}"))
+    }
+
+    /// Whether `task.guard` catches the error: a runtime error of the
+    /// program, not one that ends what it is raised in
+    /// ([`VmError::ends`]).
+    pub(crate) fn catchable(&self) -> bool {
+        !self.ends
     }
 
     /// The program's `panic(text)`: `panic: <text>`. The text is the
@@ -132,7 +162,7 @@ impl VmError {
     pub(crate) fn budget_used_up() -> Self {
         VmError {
             out_of_steps: true,
-            ..VmError::new("the step budget is used up".into())
+            ..VmError::ending("the step budget is used up".into())
         }
     }
 
@@ -141,7 +171,7 @@ impl VmError {
     pub(crate) fn exited(code: u8) -> Self {
         VmError {
             exit: Some(code),
-            ..VmError::new(format!("process.exit({code}) ended the program"))
+            ..VmError::ending(format!("process.exit({code}) ended the program"))
         }
     }
 
@@ -149,7 +179,7 @@ impl VmError {
     pub(crate) fn exit_in_a_test(code: u8) -> Self {
         VmError {
             exit_in_a_test: true,
-            ..VmError::new(format!(
+            ..VmError::ending(format!(
                 "process.exit({code}) was called in a test: a test ends by returning, or by \
                  failing an assertion"
             ))
@@ -161,7 +191,7 @@ impl VmError {
     pub(crate) fn exit_in_a_test_file(code: u8) -> Self {
         VmError {
             exit_in_a_test: true,
-            ..VmError::new(format!(
+            ..VmError::ending(format!(
                 "process.exit({code}) was called in a test file's top-level code: a test file \
                  ends by returning"
             ))
@@ -401,4 +431,30 @@ where
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What ends what it is raised in is made so where it is made; a
+    /// runtime error of the program is caught.
+    #[test]
+    fn the_errors_that_end_what_they_are_raised_in_are_not_catchable() {
+        let ending = [
+            VmError::type_confusion("cannot call value of type Int"),
+            VmError::budget_used_up(),
+            VmError::exited(3),
+            VmError::exit_in_a_test(3),
+            VmError::exit_in_a_test_file(3),
+            VmError::internal("a frame was resumed with its wait open"),
+            VmError::ending("deadlock on main thread: channel receive with no counterparty".into()),
+        ];
+        for error in &ending {
+            assert!(!error.catchable(), "{}", error.message);
+        }
+        assert!(VmError::new("division by zero".into()).catchable());
+        assert!(VmError::panic("boom").catchable());
+        assert_eq!(VmError::internal("x").message, "internal VM error: x",);
+    }
 }

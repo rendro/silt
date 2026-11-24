@@ -169,6 +169,12 @@ pub(crate) trait Native: Send {
     /// The frame is dropped because an error passes through it: undo
     /// what the builtin did to the VM for the time of its call.
     fn abandon(&mut self, _vm: &mut Vm) {}
+
+    /// For the frame of a `task.guard`, which catches a runtime error
+    /// raised above it: the height of the stack under it.
+    fn guard(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// What a builtin, or a [`Native`] frame, does next.
@@ -215,7 +221,7 @@ where
         // on it: the waiter fails as a builtin that reads the clock
         // does, unless it has an error of its own.
         match vm.runtime.io.clock_failure() {
-            Some(failure) => Err(VmError::new(failure)),
+            Some(failure) => Err(VmError::ending(failure)),
             None => Ok(step),
         }
     }
@@ -240,9 +246,9 @@ impl Vm {
     /// How the wait of the frame that is resumed after a
     /// [`Step::Park`] ended.
     pub(crate) fn woken(&mut self) -> Result<Fired, VmError> {
-        self.woken.take().ok_or_else(|| {
-            VmError::new("internal VM error: a frame was resumed with its wait open".into())
-        })
+        self.woken
+            .take()
+            .ok_or_else(|| VmError::internal("a frame was resumed with its wait open"))
     }
 
     /// Whether the task this is the VM of takes nothing new: it was
@@ -294,8 +300,8 @@ impl Vm {
     /// ([`Vm::no_wait`]), for a builtin that has no frame of its own.
     pub(crate) fn end_here(&mut self, name: &'static str) -> Step {
         self.park(name, Vm::no_wait(), |_, _| {
-            Err(VmError::new(
-                "internal VM error: a task went on that was to take nothing new".into(),
+            Err(VmError::internal(
+                "a task went on that was to take nothing new",
             ))
         })
     }
@@ -585,6 +591,100 @@ pub(crate) struct Runtime {
     /// ([`RegexCache`]). The lock is held to look a pattern up or keep
     /// one, not while it compiles or a search runs.
     pub(crate) regex_cache: parking_lot::Mutex<RegexCache>,
+
+    // ── Reports ─────────────────────────────────────────────────
+    /// How the program's files are named in the report of a runtime
+    /// error that `task.guard` caught ([`Vm::files`]).
+    pub(crate) files: parking_lot::Mutex<Files>,
+}
+
+/// A view of the program's files that is kept with its runtime.
+pub(crate) type FileView = Arc<dyn crate::diagnostic::SourceView + Send + Sync>;
+
+/// How the program's files are named in the report of a runtime error
+/// that `task.guard` caught: as the front door that runs the program
+/// names them in the reports it prints (`silt run`, `silt test`, the
+/// REPL), or else as the program's session names them, which is how
+/// [`VmError::render`](super::VmError::render) does.
+#[derive(Default)]
+pub(crate) struct Files {
+    /// The front door's ([`Vm::name_files`]).
+    pub(crate) named: Option<FileView>,
+    /// The newest program's own ([`Vm::load`](super::Vm::load)):
+    /// [`EntryFiles`].
+    pub(crate) program: Option<FileView>,
+}
+
+/// The files of a program named as a user who runs its entry file by its
+/// name, in the file's directory, sees them: a file of that directory
+/// or below it by its path from there (`main.silt`, `lib/util.silt`),
+/// any other by its whole path. What names the places of a runtime
+/// error that `task.guard` catches where no front door names them
+/// (`Vm::name_files`): an embedder's, the playground's.
+pub(crate) struct EntryFiles {
+    sources: Arc<crate::source::SourceMap>,
+    /// The directory of the entry file, if it has one.
+    dir: Option<std::path::PathBuf>,
+}
+
+impl EntryFiles {
+    /// The files of `program`.
+    pub(crate) fn of(program: &crate::program::Program) -> EntryFiles {
+        use crate::source::SourceName;
+        let dir = match program.files.get(program.entry_file).map(|file| &file.path) {
+            Some(SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p)) => {
+                p.parent().map(std::path::Path::to_path_buf)
+            }
+            _ => None,
+        };
+        EntryFiles {
+            sources: program.files.clone(),
+            dir,
+        }
+    }
+}
+
+impl crate::diagnostic::SourceView for EntryFiles {
+    fn locate(&self, span: crate::source::Span) -> Option<crate::diagnostic::Located> {
+        use crate::source::SourceName;
+        let name = &self.sources.get(span.file)?.path;
+        let file = match name {
+            SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p) => {
+                let inside = self.dir.as_deref().and_then(|dir| p.strip_prefix(dir).ok());
+                let parts = inside.map(|rel| {
+                    let parts = rel.components().map(|c| c.as_os_str().to_string_lossy());
+                    parts.collect::<Vec<_>>().join("/")
+                });
+                parts.unwrap_or_else(|| p.display().to_string())
+            }
+            other => crate::diagnostic::source_name_for_display(other)?,
+        };
+        Some(crate::diagnostic::Located {
+            file,
+            position: self.sources.position(span),
+            shown: crate::package_graph::shown_place(name),
+        })
+    }
+}
+
+impl Vm {
+    /// Name the program's files as `view` does in the report of a
+    /// runtime error that `task.guard` catches: what a front door
+    /// does that prints its reports with names of its own.
+    pub(crate) fn name_files(&self, view: FileView) {
+        self.runtime.files.lock().named = Some(view);
+    }
+
+    /// How the program's files are named in the report of a runtime
+    /// error that `task.guard` caught ([`Files`]): with no names when
+    /// nothing has said how.
+    pub(crate) fn files(&self) -> FileView {
+        let files = self.runtime.files.lock();
+        match files.named.as_ref().or(files.program.as_ref()) {
+            Some(view) => view.clone(),
+            None => Arc::new(crate::source::SourceMap::new()),
+        }
+    }
 }
 
 impl Runtime {

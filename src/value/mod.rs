@@ -42,7 +42,7 @@ pub(crate) use list::{MAX_COLLECTION_LEN, MAX_TEXT_LEN};
 #[cfg(feature = "test-hooks")]
 pub use map::copies as map_copies;
 pub(crate) use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
-pub(crate) use obj::{Record, Variant};
+pub(crate) use obj::{Record, RecordId, Variant};
 pub(crate) use regex::Compiled;
 pub(crate) use tuple::Tuple;
 pub(crate) use type_of::{dispatch_type_for_value, dispatch_type_name, kind_name};

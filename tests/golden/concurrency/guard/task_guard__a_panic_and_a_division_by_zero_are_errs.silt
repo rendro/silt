@@ -1,0 +1,21 @@
+-- task.guard gives Ok of what its function returned, or Err of a
+-- runtime error raised inside it: its message, where it happened, and
+-- the calls that led there. The program goes on after it.
+import task
+
+fn half(n: Int) -> Int {
+  100 / n
+}
+
+fn main() {
+  println(task.guard { -> half(4) })
+  match task.guard({ -> half(0) }) {
+    Ok(v) -> println("no error: {v}")
+    Err(e) -> println("{e.message} at {e.location}")
+  }
+  match task.guard({ -> panic("the work broke") }) {
+    Ok(_) -> println("no error")
+    Err(e) -> println("{e.message} at {e.location}")
+  }
+  println("main goes on")
+}

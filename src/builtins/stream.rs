@@ -261,7 +261,7 @@ fn io_failure(failure: crate::vm::IoFailure<'_>) -> Value {
 }
 
 fn internal(what: &str) -> VmError {
-    VmError::new(format!("internal VM error: a stream stage {what}"))
+    VmError::internal(format_args!("a stream stage {what}"))
 }
 
 impl Pipe {
@@ -658,9 +658,7 @@ fn stage_on(
     let mut child = vm.spawn_child();
     child.spawned = true;
     child.push_native_frame(Box::new(pipe));
-    vm.scheduler()
-        .submit(id, child, handle)
-        .map_err(VmError::new)?;
+    vm.scheduler().submit(id, child, handle)?;
     Ok(Step::Done(Value::Channel(out)))
 }
 
@@ -1422,9 +1420,7 @@ fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
     let mut child = vm.spawn_child();
     child.spawned = true;
     child.push_native_frame(Box::new(pipe));
-    vm.scheduler()
-        .submit(id, child, feeder)
-        .map_err(VmError::new)?;
+    vm.scheduler().submit(id, child, feeder)?;
     Ok(source)
 }
 

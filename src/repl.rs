@@ -691,6 +691,10 @@ impl Repl {
                 return evaluation;
             }
         };
+        self.vm.name_files(std::sync::Arc::new(HeldReplFiles {
+            sources: program.files.clone(),
+            cwd: self.cwd.clone(),
+        }));
         match self.vm.run_cell(&program) {
             Ok(value) => {
                 self.session.commit_cell(file);
@@ -885,6 +889,24 @@ impl SourceView for ReplFiles<'_> {
             position: self.sources.position(span),
             shown: crate::package_graph::shown_place(name),
         })
+    }
+}
+
+/// [`ReplFiles`] that holds what it names the files by: how the VM of
+/// the session names them in the report of a runtime error that
+/// `task.guard` caught (`Vm::name_files`).
+struct HeldReplFiles {
+    sources: std::sync::Arc<SourceMap>,
+    cwd: Option<std::path::PathBuf>,
+}
+
+impl SourceView for HeldReplFiles {
+    fn locate(&self, span: Span) -> Option<Located> {
+        let view = ReplFiles {
+            sources: &self.sources,
+            cwd: self.cwd.as_deref(),
+        };
+        view.locate(span)
     }
 }
 

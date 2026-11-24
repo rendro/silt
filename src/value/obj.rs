@@ -169,7 +169,36 @@ fn fields_text(n: usize) -> String {
 #[derive(Clone)]
 pub struct Record(Arc<Obj>);
 
+/// Which record a record is ([`Record::id`]): it and its clones are,
+/// and an equal record made apart is not. It holds none of the record's
+/// fields: the record's object is let go of with its last clone, and
+/// its place is not taken by another while this is kept.
+pub(crate) struct RecordId(std::sync::Weak<Obj>);
+
+impl RecordId {
+    /// Whether the record is gone: no clone of it is left.
+    pub(crate) fn is_gone(&self) -> bool {
+        self.0.strong_count() == 0
+    }
+
+    /// A number that is this record's while it is there, and that a
+    /// record made after it is gone may have: for a table of records.
+    pub(crate) fn key(&self) -> usize {
+        self.0.as_ptr() as usize
+    }
+}
+
 impl Record {
+    /// Which record this is ([`RecordId`]).
+    pub(crate) fn id(&self) -> RecordId {
+        RecordId(Arc::downgrade(&self.0))
+    }
+
+    /// Whether this is the record `id` is of.
+    pub(crate) fn is(&self, id: &RecordId) -> bool {
+        std::ptr::eq(Arc::as_ptr(&self.0), id.0.as_ptr())
+    }
+
     /// The record of the type `ty` with the fields `fields`, in the
     /// order the type declares them ([`Value::record`]).
     /// The number of fields is the type's, or this panics, in every

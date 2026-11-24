@@ -1,0 +1,12 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: process.exit(2) was called in a test
+-- stderr-not-contains: the guard returned
+-- A process.exit in a test fails the test, inside a guard too.
+import process
+import task
+
+fn test_exit_in_a_guard() {
+  let caught = task.guard { -> process.exit(2) }
+  println("the guard returned {caught}")
+}

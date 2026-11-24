@@ -209,8 +209,8 @@ impl Vm {
     ) -> Result<Entered, VmError> {
         match registry().builtin(id) {
             Some(row) => self.enter_row(row, args),
-            None => Err(VmError::new(format!(
-                "internal VM error: a call of the builtin {}, and there is none",
+            None => Err(VmError::internal(format_args!(
+                "a call of the builtin {}, and there is none",
                 id.0
             ))),
         }
@@ -233,7 +233,7 @@ impl Vm {
             }),
         )?;
         if let Some(failure) = self.runtime.io.clock_failure() {
-            return Err(VmError::new(failure));
+            return Err(VmError::ending(failure));
         }
         match step {
             Step::Done(value) => Ok(Entered::Value(value)),
@@ -241,10 +241,12 @@ impl Vm {
                 self.push_native_frame(native);
                 Ok(Entered::Native)
             }
-            Step::Call { .. } | Step::Park(_) | Step::Yield => Err(VmError::new(format!(
-                "internal VM error: the builtin '{}' calls or waits without a frame",
-                row.qualified()
-            ))),
+            Step::Call { .. } | Step::Park(_) | Step::Yield => {
+                Err(VmError::internal(format_args!(
+                    "the builtin '{}' calls or waits without a frame",
+                    row.qualified()
+                )))
+            }
         }
     }
 }

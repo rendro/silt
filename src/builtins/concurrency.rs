@@ -235,9 +235,7 @@ pub(crate) mod channel {
             let wait = Wait::new(arms).first(first);
             Ok(vm.park("channel.select", wait, move |_, fired| {
                 let Fired::Arm(arm, outcome) = fired else {
-                    return Err(VmError::new(
-                        "internal VM error: a select ended without an arm".into(),
-                    ));
+                    return Err(VmError::internal("a select ended without an arm"));
                 };
                 let (channel, sends) = &channels[arm];
                 let ch = Value::Channel(channel.clone());
@@ -307,7 +305,7 @@ pub(crate) mod channel {
                 .deadline_after(timer_span(dur))
                 .ok_or_else(no_timer)?;
             if let Some(failure) = vm.runtime.io.clock_failure() {
-                return Err(VmError::new(failure));
+                return Err(VmError::ending(failure));
             }
             // Nothing is ever sent on it: the timer closes it.
             let ch = Channel::new(vm.next_channel_id(), 1);
@@ -442,9 +440,7 @@ fn start(vm: &mut Vm, f: &Value, deadline: Option<Duration>) -> Result<Arc<TaskH
         other => child_vm.push_native_frame(Box::new(Body(Some(other.clone())))),
     }
     child_vm.spawned = true;
-    vm.scheduler()
-        .submit(task_id, child_vm, handle.clone())
-        .map_err(VmError::new)?;
+    vm.scheduler().submit(task_id, child_vm, handle.clone())?;
 
     Ok(handle)
 }
@@ -561,7 +557,7 @@ impl Native for Deadline {
             // pending on it: that is the clock's failure, not a time
             // that passed.
             if let Some(failure) = vm.runtime.io.clock_failure() {
-                return Err(VmError::new(failure));
+                return Err(VmError::ending(failure));
             }
             // The time that ended the function is the caller's own
             // (an outer deadline's): the caller is over as well, and a
@@ -573,9 +569,10 @@ impl Native for Deadline {
             }
             return timeout();
         }
-        let result = self.task.try_get().ok_or_else(|| {
-            VmError::new("internal VM error: a deadline's wait ended before its task".into())
-        })?;
+        let result = self
+            .task
+            .try_get()
+            .ok_or_else(|| VmError::internal("a deadline's wait ended before its task"))?;
         // The function's failure is the caller's, as if the caller had
         // called the function itself: where it happened, and below the
         // function's own calls the calls that led to this
@@ -680,12 +677,16 @@ pub(crate) mod task {
             let after = Duration::from_nanos(u64::try_from(limit.0).unwrap_or(0));
             let until = vm.runtime.io.deadline_after(after).ok_or_else(no_timer)?;
             if let Some(failure) = vm.runtime.io.clock_failure() {
-                return Err(VmError::new(failure));
+                return Err(VmError::ending(failure));
             }
             // No later than the caller's own time.
             let until = vm.deadline.map_or(until, |own| own.min(until));
             let task = start(vm, work, Some(until))?;
             Ok(Step::Run(Box::new(Deadline { task, state: DeadlineState::Started })))
+        }
+
+        fn guard(vm, work: &Value) -> Result<Step, VmError> {
+            Ok(crate::builtins::guard::Guard::enter(vm, work.clone()))
         }
 
         fn spawn(vm, f: &Value) -> Result<Value, VmError> {
@@ -700,7 +701,7 @@ pub(crate) mod task {
             let wait = Wait::new(vec![Arm::Cell(handle.done())]);
             Ok(vm.park("task.join", wait, move |vm, _| {
                 let result = handle.try_get().ok_or_else(|| {
-                    VmError::new("internal VM error: a join ended before its task".into())
+                    VmError::internal("a join ended before its task")
                 })?;
                 joined(vm, &handle, result)
             }))

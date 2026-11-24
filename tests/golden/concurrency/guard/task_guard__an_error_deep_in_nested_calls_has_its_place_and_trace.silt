@@ -1,0 +1,31 @@
+-- An error several calls down, through a tail call too: its location
+-- is where it happened, and its trace lists the calls that led there,
+-- innermost first, the call of task.guard among them.
+import list
+import task
+
+fn check(n: Int) -> Int {
+  match n > 2 {
+    true -> panic("too big: {n}")
+    false -> n
+  }
+}
+
+fn step(n: Int) -> Int {
+  check(n) + 1
+}
+
+fn walk(n: Int) -> Int {
+  step(n)
+}
+
+fn main() {
+  match task.guard({ -> walk(1) + walk(3) }) {
+    Ok(v) -> println("no error: {v}")
+    Err(e) -> {
+      println(e.message)
+      println(e.location)
+      list.each(e.trace) { line -> println(line) }
+    }
+  }
+}

@@ -30,7 +30,7 @@ pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, after_args, call_then, item_arg, iterate, next, stop};
 pub(crate) use runtime::Runtime;
-pub(crate) use runtime::{CallFrame, Frame, Native, Step};
+pub(crate) use runtime::{CallFrame, FileView, Frame, Native, Step};
 
 /// Test-only: what a test is told of the writes of a connection that
 /// take their turn, and how it holds one of them in its turn.
@@ -235,6 +235,9 @@ pub struct Vm {
     /// kept from one to the next: the string itself is then the one
     /// allocation an interpolation makes.
     text: String,
+    /// How many of the frames are those of a `task.guard`: while there
+    /// are none, a runtime error is not looked at for one to catch it.
+    pub(crate) guards: usize,
 }
 
 /// How many steps the program's own thread runs before it looks
@@ -295,6 +298,7 @@ impl Vm {
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
                 regex_cache: parking_lot::Mutex::new(RegexCache::new()),
+                files: Default::default(),
             }),
             owns_runtime: true,
             frames: Vec::new(),
@@ -317,6 +321,7 @@ impl Vm {
             late: None,
             over: None,
             text: String::new(),
+            guards: 0,
             tco_elided: TailCalls::default(),
         }
     }
@@ -458,10 +463,11 @@ impl Vm {
 
     fn run_loaded(&mut self, program: &crate::program::Program) -> Result<Value, VmError> {
         self.load(program);
-        let script =
-            program.functions.first().cloned().ok_or_else(|| {
-                VmError::new("internal VM error: a program without a script".into())
-            })?;
+        let script = program
+            .functions
+            .first()
+            .cloned()
+            .ok_or_else(|| VmError::internal("a program without a script"))?;
         let result = self.run(Arc::new(script));
         self.report_unjoined_failures();
         // A write to stdout that failed after the print that made it had
@@ -590,6 +596,7 @@ impl Vm {
     /// the entries before it too, whose values stay.
     pub(crate) fn load(&mut self, program: &crate::program::Program) {
         self.runtime.types.lock().extend(&program.types);
+        self.runtime.files.lock().program = Some(Arc::new(runtime::EntryFiles::of(program)));
         // (A description taken in anew may differ from the one a decoder
         // was decided by.)
         self.runtime.refusals.write().clear();
@@ -745,6 +752,7 @@ impl Vm {
             late: None,
             over: None,
             text: String::new(),
+            guards: 0,
             tco_elided: TailCalls::default(),
         }
     }
