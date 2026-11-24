@@ -133,7 +133,7 @@ value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
 one (`time.Date`, `json.Value`): its type, and the types of the fields
 of the record or of the variant it is, as the declaration gives them
 at the type's arguments (`Box(Int)`: its `value: a` is an `Int`),
-inside it as deep as the check goes; a `regex.Regex`, `url.Url`, `task.Handle(a)`,
+inside it as deep as the check goes; a `regex.Regex`, `url.Url`,
 `tcp.TcpStream`, `tcp.TcpListener`, `postgres.PgPool`, `postgres.PgTx`
 or `postgres.PgCursor(r)`: that it is one (what a task gives, and what
 a cursor's rows are, is not looked at). A value belongs to the program
@@ -570,7 +570,7 @@ called). `vm.call_test(&test)` runs one, as `silt test` does: `Ok(())`
 when it passed, its error when it failed.
 
 **The end of a program.** `run_program` returns when `main` has
-returned; tasks that the program spawned may still be at work.
+returned; tasks that the program started may still be at work.
 `vm.settle()` waits until the program has ended as `silt run` defines
 it: until none of its tasks can do more (each has ended or waits, and
 no timer and no I/O is pending). It then drops the tasks that still

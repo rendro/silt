@@ -51,33 +51,37 @@ a string when you don't want to branch on it.
 ## Echo server example
 
 ```silt
+import channel
 import task
 import tcp
+
+fn echo(conn: tcp.TcpStream) -> () {
+  match tcp.read(conn, 4096) {
+    Ok(buf) -> {
+      let _ = tcp.write(conn, buf)
+      tcp.close(conn)
+    }
+    Err(_) -> tcp.close(conn)
+  }
+}
 
 fn main() {
   match tcp.listen("127.0.0.1:8080") {
     Ok(listener) -> {
       println("listening on 127.0.0.1:8080")
-      loop _ = () {
-        match tcp.accept(listener) {
-          Ok(conn) -> {
-            let _ = task.spawn { ->
-              match tcp.read(conn, 4096) {
-                Ok(buf) -> {
-                  let _ = tcp.write(conn, buf)
-                  tcp.close(conn)
-                }
-                Err(_) -> tcp.close(conn)
-              }
-            }
-            loop(())
+      -- One piece accepts the clients and hands each connection to the
+      -- other, whose 64 workers serve them: 64 at a time at most.
+      let conns = channel.new(0)
+      let accept = { ->
+        loop {
+          match tcp.accept(listener) {
+            Ok(conn) -> channel.send(conns, conn)
+            Err(e) -> println("accept error: {e}")
           }
-          Err(e) -> {
-            println("accept error: {e}")
-            loop(())
-          }
+          loop()
         }
       }
+      task.join([accept, { -> task.each(conns, 64) { conn -> echo(conn) } }])
     }
     Err(e) -> println("listen error: {e}")
   }
@@ -115,7 +119,7 @@ A listener is also what [`http.serve`](http.md#httpserve) serves on.
 While it does, the listener is the server's alone: `tcp.accept` on it
 returns `Err(Other("the listener is served by http.serve"))` at once, and
 so does an accept that was waiting on it when the server started. When
-the task that serves has been cancelled, the listener is the program's
+the task that serves has been stopped, the listener is the program's
 again: the next `tcp.accept` gets the next client.
 
 ## Cooperative I/O
@@ -165,15 +169,15 @@ reference to the connection is gone.
 
 **A read or write that nobody waits for ends its connection.** When a
 task stops waiting for `tcp.read`, `tcp.read_exact` or `tcp.write`
-(`SILT_IO_TIMEOUT` passed, the task was cancelled or was the function of
-a `task.deadline` whose time is up, or the program ended), the
+(`SILT_IO_TIMEOUT` passed, the task was stopped, for example as the
+function of a `task.deadline` whose time is up, or the program ended), the
 connection is shut down exactly as by `tcp.close`. That is what lets the
 blocked operation, and its thread, end. So a read that timed out cannot
 be tried again: the next call on that connection gives `Err(Closed)`.
 So is the connection of an operation whose result arrives in the very
 moment in which its task stops waiting: what the read had taken is gone
 with the connection. The same holds for `stream.write_to_tcp` when its
-task is cancelled or its I/O times out. A `stream.tcp_lines` or
+task is stopped or its I/O times out. A `stream.tcp_lines` or
 `stream.tcp_chunks` source is different: it holds the connection as any
 other name does, and when its stream is stopped it lets go of the
 connection without shutting it (a read of it that times out shuts it, as
@@ -269,12 +273,13 @@ meanwhile. The result is the only connection to the client:
 - `Err(Closed)`: the connection was closed before the call.
 - `Err(Timeout)`: `SILT_IO_TIMEOUT` passed during the handshake.
 
-A handshake that nobody waits for any more (its task was cancelled, or
-was the function of a `task.deadline` whose time is up) shuts its
+A handshake that nobody waits for any more (its task was stopped, for
+example as the function of a `task.deadline` whose time is up) shuts its
 connection down, as a read does: its thread ends.
 
 ```silt
 import bytes
+import channel
 import io
 import task
 import tcp
@@ -304,15 +309,19 @@ fn main() {
   }
   let cert = bytes.from_string(cert_text)
   let key = bytes.from_string(key_text)
-  loop _ = () {
-    match tcp.accept(listener) {
-      Ok(conn) -> {
-        let _ = task.spawn { -> serve(conn, cert, key) }
-        loop(())
+  let conns = channel.new(0)
+  let accept = { ->
+    loop {
+      match tcp.accept(listener) {
+        Ok(conn) -> {
+          channel.send(conns, conn)
+          loop()
+        }
+        Err(e) -> println("accept failed: {e}")
       }
-      Err(e) -> println("accept failed: {e}")
     }
   }
+  task.join([accept, { -> task.each(conns, 64) { conn -> serve(conn, cert, key) } }])
 }
 ```
 

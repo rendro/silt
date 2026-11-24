@@ -637,7 +637,7 @@ connection is closed after one statement.
 Every function above that talks to the server cooperates with silt's
 task scheduler: it hands its work to silt's I/O pool, and the task
 that called it waits for the answer while the program's other tasks go
-on, whether that task is one of `task.spawn`'s or `main`. From silt's
+on, whether that task is `main` or one that a call of `task` started. From silt's
 perspective the call looks synchronous. `postgres.stream` returns its
 channel at once; a worker of its own feeds it.
 
@@ -677,7 +677,8 @@ callback returns `Ok(_)` all the same, `postgres.transact` answers
 `Err(TxnAborted)` and nothing is committed (unless a
 `ROLLBACK TO SAVEPOINT` brought the transaction back first).
 
-A `task.deadline` that passes, or a `task.cancel`, ends a task that
+A `task.deadline` that passes, or another stop of the task (see
+[Stops](channel-task.md#stops)), ends a task that
 waits for a statement at once, on the pool and inside a transaction
 alike. What becomes of the statement in the server differs:
 
@@ -692,7 +693,7 @@ alike. What becomes of the statement in the server differs:
 - Inside `postgres.transact`, the server is asked to cancel a
   statement that has the connection. When the task that ends is the one that runs `transact`
   (or the callback fails with an error of the program), the
-  transaction is rolled back. When the deadline or the cancel is one
+  transaction is rolled back. When the deadline is one
   the callback set around the statement itself, the statement fails
   as any failed statement does: the transaction is aborted, its later
   statements are `Err(TxnAborted)` at once, and so is
@@ -701,7 +702,7 @@ alike. What becomes of the statement in the server differs:
   a transaction. This is for the statements a task waits for:
   `postgres.query`, `postgres.execute`, `postgres.notify` and the
   cursor functions (`cursor`, `cursor_next`, `cursor_close`). A
-  deadline or a cancel around `channel.receive` of a stream on the
+  deadline around `channel.receive` of a stream on the
   transaction ends a wait on the channel, not on a statement: it
   cancels and aborts nothing (a stream on a `PgTx` is never
   cancelled; see below).
@@ -710,8 +711,8 @@ alike. What becomes of the statement in the server differs:
   for it (a request that reaches the server late would cancel the
   connection's next statement).
 
-Around the callback `postgres.transact` waits too, and a deadline or a
-cancel ends the task there at once as well. While it waits for a
+Around the callback `postgres.transact` waits too, and a deadline or
+another stop ends the task there at once as well. While it waits for a
 connection of the pool or for its `BEGIN`, the transaction is not
 begun, or is rolled back as soon as it is. While it waits for its
 `COMMIT` or `ROLLBACK`, that goes on and finishes in the server, and
@@ -741,7 +742,7 @@ transaction).
 
 The worker counts as a task of the program. While it fetches rows the
 program does not end. When the program ends while the worker waits for
-room in the channel (nobody reads it, or its reader was cancelled), the
+room in the channel (nobody reads it, or its reader was stopped), the
 worker is dropped there, as a task that waits to send is. A stream
 opened on a `PgTx` ends with the transaction: its channel is closed
 when the transaction commits or rolls back, and the rows it holds can
@@ -755,7 +756,7 @@ it is `Err(Other("postgres: a stream of this transaction is still
 open; read or close it first"))` at once. So is a statement that comes
 while a reader slower than the stream (another task, say) leaves the
 channel full: read the stream to its end, or close it, first. A stream on a `PgTx` whose
-reader is gone (cancelled, say) without closing the channel therefore
+reader is gone (stopped, say) without closing the channel therefore
 holds the connection until the transaction ends or the program does.
 
 `postgres.cursor(tx, sql, params, batch_size, T)` is the lower-level

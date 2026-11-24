@@ -58,12 +58,16 @@ import task
 
 fn main() {
   let ch = channel.new(10)
-  let w1 = task.spawn { -> channel.each(ch) { msg -> println("w1: {msg}") } }
-  let w2 = task.spawn { -> channel.each(ch) { msg -> println("w2: {msg}") } }
-  list.each(1..6) { n -> channel.send(ch, n) }
-  channel.close(ch)
-  task.join_handle(w1)
-  task.join_handle(w2)
+  task.join(
+    [
+      { -> channel.each(ch) { msg -> println("w1: {msg}") } },
+      { -> channel.each(ch) { msg -> println("w2: {msg}") } },
+      { ->
+        list.each(1..6) { n -> channel.send(ch, n) }
+        channel.close(ch)
+      },
+    ],
+  )
 }
 `);
   assert.equal(ran.ok, true, ran.error);
@@ -92,11 +96,14 @@ await test('a sleep in a task ends: the clock lets the time pass', (mod) => {
 import time
 
 fn main() {
-  let sleeper = task.spawn { ->
-    time.sleep(time.hours(1))
-    println("slept")
-  }
-  task.join_handle(sleeper)
+  task.join(
+    [
+      { ->
+        time.sleep(time.hours(1))
+        println("slept")
+      },
+    ],
+  )
   println("joined")
 }
 `);
@@ -121,19 +128,19 @@ fn main() {
   );
 });
 
-await test('a task that still sleeps when main returns is waited for', (mod) => {
+await test('a helper that still sleeps when the body returns is stopped', (mod) => {
   const ran = run(mod, `import task
 import time
 
 fn main() {
-  let unjoined = task.spawn { ->
+  let sleeper = { ->
     time.sleep(time.minutes(5))
     println("late")
   }
-  println("main is done")
+  task.background([sleeper]) { -> println("main is done") }
 }
 `);
-  assert.deepEqual([ran.output, ran.error], ['main is done\nlate\n', '']);
+  assert.deepEqual([ran.output, ran.error], ['main is done\n', '']);
 });
 
 await test('a deadlock is reported', (mod) => {
@@ -188,9 +195,11 @@ await test('what a page cannot do is an Err, not a trap', (mod) => {
   assert.match(ran.output, /^Err\(/);
 });
 
-await test('a task that failed and that nobody joined is reported', (mod) => {
-  const ran = run(mod, 'import task\nfn main() {\n  let unjoined = task.spawn { -> panic("in the task") }\n  println("main is done")\n}\n');
-  assert.match(ran.output, /^main is done\nerror\[runtime\]: task .* failed and was never joined: panic: in the task/);
+await test('a task that fails is the failure of its call', (mod) => {
+  const ran = run(mod, 'import task\nfn main() {\n  println("main runs")\n  task.join([{ -> panic("in the task") }])\n  println("not reached")\n}\n');
+  assert.equal(ran.ok, false);
+  assert.equal(ran.output, 'main runs\n');
+  assert.match(ran.error, /^error\[runtime\]: panic: in the task/);
 });
 
 await test('check, format, complete and tokens answer', (mod) => {
@@ -253,11 +262,15 @@ fn main() {
   1..20 |> list.each { _ ->
     let never: Channel(Int) = channel.new(0)
     let ends = stream.map(never) { x -> x }
-    let _t = task.spawn { ->
-      let s = stream.map(ends) { x -> x }
-      let _ = s
-      ()
-    }
+    task.join(
+      [
+        { ->
+          let s = stream.map(ends) { x -> x }
+          let _ = s
+          ()
+        },
+      ],
+    )
     let _ = channel.receive(ends)
   }
   println("left: stopped 20 times")
@@ -289,14 +302,14 @@ fn main() {
   -- held, whose stop wakes main.
   let never2: Channel(Int) = channel.new(0)
   let ends2 = stream.map(never2) { x -> x }
-  let _d = task.spawn { ->
-    task.deadline(time.ms(5)) { ->
+  let holder = { ->
+    let _ = task.deadline(time.ms(5)) { ->
       let held = stream.map(ends2) { x -> x }
       let _ = channel.receive(never2)
       held
     }
   }
-  println(channel.receive(ends2))
+  task.background([holder]) { -> println(channel.receive(ends2)) }
   -- A failure in a stream main leaves is not reported.
   let a = stream.from_list([1, 2, 3]) |> stream.map { x -> 10 / (x - 2) }
   let _b = stream.buffered(a, 4)

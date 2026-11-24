@@ -2,69 +2,83 @@
 title: "Concurrency"
 section: "Guide"
 order: 3
-description: "silt's CSP concurrency model: parallel tasks, typed channels, select with pin patterns."
+description: "silt's concurrency: work that lives inside a call, typed channels, select, streams."
 ---
 
 # Concurrency
 
-Silt provides built-in concurrency based on CSP (Communicating Sequential
-Processes). Tasks communicate through channels. There is no shared mutable
-state -- every value in silt is immutable, so sending a value through a channel
-is always safe. Tasks are lightweight and run in parallel on a fixed thread
-pool.
+Silt runs work at the same time in tasks. A task is light: a stack and
+frames, not an OS thread. Tasks run in parallel on a fixed pool of
+threads and talk to each other over channels. Every value in silt is
+immutable, so a value sent over a channel can never be changed under
+the task that receives it: there are no data races.
 
-All concurrency primitives live in two modules: `channel` and `task`. There are
-no concurrency keywords.
+Everything concurrent lives in three modules: `task` starts work and
+catches failures, `channel` carries values between tasks, and `stream`
+builds pipelines. There are no concurrency keywords.
 
 
-## 1. The Model
+## 1. The Idea
 
-### CSP in one paragraph
+**Concurrent work lives inside a call.** A call such as
+`task.join(pieces)` starts a task for each piece and returns only when
+every one of them has ended. Nothing it started runs on after it, and
+there are no task handles to keep, join or forget. (A stream is the one
+value with work behind it: its stages run while it is read, and are
+stopped when nobody reads it any more.)
 
-CSP -- Communicating Sequential Processes -- is a concurrency model from Tony
-Hoare's 1978 paper. Independent tasks run their own sequential code and
-coordinate by sending messages through channels. No task can see another task's
-variables. The only way to share data is to put it in a channel and let the
-other side take it out. Go's goroutines and channels are the most well-known
-modern implementation of CSP.
+**A failure inside the call is a failure of that call.** When a piece
+fails with a runtime error (a `panic`, a division by zero, a failed
+assertion), the call stops the other pieces and raises the failure in
+the caller, at the place where it happened. The program fails as it
+would if the code had run in one task.
 
-The core principle:
+**Catching is a separate step.** `task.guard(work)` runs a function and
+gives `Ok` of its value, or `Err(e)` for a runtime error raised in it.
+It starts no task. A failure that a program expects (a file that is
+missing, a bad line of input) is a `Result` value, as everywhere in
+silt; `task.guard` is for the failures it does not expect, such as a
+bug in one job of a long-running worker.
 
-> **Do not communicate by sharing memory; share memory by communicating.**
+**A stop is not a value.** A call stops the work it started when that
+work is no longer needed: `task.background` stops its helpers when its
+body returns, `task.first_ok` stops the rest when one gives `Ok`, every
+call stops the rest when one piece fails, and `task.deadline` stops its
+work when the time is up. The work that is stopped just ends. Whoever
+stopped it learns that from the call it made: `task.deadline` gives
+`None`.
 
-### Why CSP fits silt
+| Call | What it does |
+|---|---|
+| `task.join(pieces)` | Runs the functions as tasks, and returns when all have returned |
+| `task.background(helpers, body)` | Runs helpers beside the body, stops them when the body returns, and gives its value |
+| `task.map(xs, at_once, f)` | Calls `f` on each item, at most `at_once` at a time, and gives the values in order |
+| `task.each(ch, at_once, f)` | Calls `f` on each value of a channel, at most `at_once` at a time, until it is closed and empty |
+| `task.first_ok(works)` | Runs the functions together, gives the first `Ok` and stops the rest, or every `Err` in order |
+| `task.deadline(limit, work)` | Runs `work`, and stops it when `limit` has passed: `Some` of its value, or `None` |
+| `task.guard(work)` | Runs `work` in place, and gives a runtime error raised in it as an `Err` |
+| `stream.from_fn(feed)` | Runs `feed` as the source of a stream, which closes when `feed` returns |
 
-Silt is fully immutable. Every binding is `let`, data structures are never
-modified in place, and there is no mutable reference. This makes CSP a natural
-fit:
+The reference for each is in [channel / task](stdlib/channel-task.md)
+and [stream](stdlib/stream.md#streamfrom_fn).
 
-- **Immutability eliminates data races.** Any value can be sent through a
-  channel without copying concerns or locking. The receiver gets exactly what
-  the sender put in. Nothing can corrupt it.
-- **Channels are the only coordination mechanism.** No mutexes, no atomics, no
-  `synchronized` blocks. If two tasks need to interact, they use a channel.
-- **Code stays sequential.** Each task reads like straight-line code. The
-  concurrency is in how tasks are wired together via channels, not in how
-  individual tasks are written.
-- **Tasks share the environment via `Arc`.** This is safe because everything is
-  immutable -- multiple tasks can hold references to the same values without
-  risk of data races.
+### Why this shape
 
-### How CSP compares to other models
+- **The code says how long the work lives.** A task lives as long as
+  the call that started it, so the nesting of the calls is the lifetime
+  of the tasks. Where the call ends, the work has ended.
+- **No failure is lost.** A failure always has a caller to go to. It
+  does not wait in a task that nobody looks at.
+- **Code stays sequential.** Each task reads like straight-line code.
+  The concurrency is in how the calls and the channels are put together,
+  not in how each piece is written.
+- **No colored functions.** There is no `async`. A `channel.receive`, an
+  `io.read_file` or an `http.get` is an ordinary call that parks the
+  task while it waits, and lets the thread run other tasks.
 
-| Model | Key idea | Tradeoff |
-|---|---|---|
-| **Threads + locks** | Shared memory protected by mutexes | Deadlocks, data races, hard to reason about |
-| **Async/await** | Cooperative futures on an event loop | Colored functions, viral `async`, complex lifetimes |
-| **Actors** | Each actor has private state, communicates via mailboxes | Untyped messages, hard to do request/response |
-| **CSP (silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), real parallelism |
-
-Like Go's goroutines, `task.spawn` creates a lightweight task that runs in
-parallel. Tasks are multiplexed onto a fixed-size thread pool (one thread per
-CPU core), so spawning is cheap and you can run thousands of concurrent tasks
-efficiently. Tasks coordinate through channels. Since all silt values are
-immutable, there are no data races -- channels are the sole communication
-mechanism.
+The tasks share what they capture: a closure that a call runs as a task
+holds the values it uses, by reference, which is safe because no value
+can change.
 
 
 ## 2. Channels
@@ -150,7 +164,7 @@ channel.each(ch) { msg -> println("got: {msg}") }
 `channel.each` is the channel's `list.each`: it calls the function for each
 value and returns when the channel is closed and empty. After each value it
 gives the other tasks that wait on the channel their turn, which is what
-spreads work over workers in Section 5.
+spreads work over the workers of `task.each`.
 ([`channel.each`](stdlib/channel-task.md#channeleach))
 
 ### Unbuffered channels (true rendezvous)
@@ -173,16 +187,18 @@ only while a sender is.
 ```silt
 let ch = channel.new(0) -- capacity 0, true rendezvous
 
-let _ = task.spawn { ->
-  -- this blocks until the main task calls channel.receive
-  channel.send(ch, "hello")
-}
-
--- this blocks until the spawned task calls channel.send
-when let Some(msg) = channel.receive(ch) else {
-  return
-}
-println(msg) -- hello
+task.join(
+  [
+    { -> channel.send(ch, "hello") },
+    { ->
+      -- this receive and the send of the other piece meet
+      when let Some(msg) = channel.receive(ch) else {
+        return
+      }
+      println(msg) -- hello
+    },
+  ],
+)
 ```
 
 ### Waiting with a time limit
@@ -214,148 +230,52 @@ match channel.receive_timeout(ch, time.ms(500)) {
 [`channel.receive_timeout`](stdlib/channel-task.md#channelreceive_timeout))
 
 
-## 3. Tasks
+## 3. Running Work Together
 
-### Spawning: `task.spawn(fn)`
+### `task.join(pieces)`
 
-`task.spawn` runs a function of no arguments as a lightweight task on the
-thread pool and returns its `task.Handle` at once. Spawning is cheap: a
-stack and frames, no OS thread. The function is a closure; since every value
-is immutable, what it captures is shared with the task that spawned it
-safely, by reference counting. ([`task.spawn`](stdlib/channel-task.md#taskspawn))
-
-```silt
-let multiplier = 10
-let ch = channel.new(10)
-
-let h = task.spawn { ->
-  -- captures `multiplier` and `ch` from outer scope
-  channel.send(ch, multiplier * 2)
-}
-
-task.join_handle(h)
-when let Some(val) = channel.receive(ch) else {
-  return
-} -- val = 20
-```
-
-### Joining: `task.join_handle(handle)`
-
-```silt
-let h = task.spawn { -> 42 }
-let result = task.join_handle(h) -- result = 42
-```
-
-`task.join_handle` parks until the task has ended and gives what its function
-returned. A task that failed or was cancelled makes the join fail in turn,
-with the runtime error `joined task failed: <msg>`: it is not an `Err`
-value, unless a `task.guard` around the join makes it one. Where a task
-may be cancelled as a matter of course, let it signal its end over a
-channel instead.
-([`task.join_handle`](stdlib/channel-task.md#taskjoin_handle))
-
-### Cancelling: `task.cancel(handle)`
-
-```silt
-let results = channel.new(16)
-let h = task.spawn { ->
-  -- long-running work that sends what it finds
-  channel.send(results, 42)
-}
-task.cancel(h)
--- The task has ended: closing its channel loses nothing it sent.
--- task.join_handle(h) would raise `joined task failed: cancelled` here.
-channel.close(results)
-```
-
-**A cancel reaches the tasks the task spawned.** `task.cancel(h)` also
-cancels every task that `h`'s task spawned and that still runs, and every
-one that those spawned, however deep: "stop this work" includes the work
-it started. That holds also when `h`'s task has already returned, and
-below a task between them that has returned: a worker that starts
-children and returns is cancelled with its children. Each of them is
-cancelled as `h` is, and `task.cancel` returns when all of them have
-ended. A task that has already ended keeps its result: a failure of it
-is still reported. A task that is spawned by a task that has been
-cancelled is cancelled at once and never runs. The tasks the runtime
-starts in a task's place count as spawned by it: the function of a
-`task.deadline`, the stages of a stream, the connections of an
-`http.serve`. A task meant to outlive the task that starts it is spawned
-by one that is not cancelled: `main`, or a long-lived supervisor that
-hands its children's work on.
+`task.join` runs each function of the list as a task, all at the same
+time, and returns `()` when all of them have returned. A piece gives
+nothing back: what it finds, it sends on a channel, or the work is a
+`task.map`, which gives the values.
+([`task.join`](stdlib/channel-task.md#taskjoin))
 
 ```silt
 import channel
-import list
 import task
 
 fn main() {
-  let cmds = channel.new(16)
-  let worker = task.spawn { ->
-    list.each([1, 2, 3]) { i ->
-      let _ = task.spawn { -> channel.send(cmds, i) }
-    }
-  }
-  task.cancel(worker)
-  -- The worker's children are cancelled too: none of them sends on
-  -- the closed channel, and nothing fails.
-  channel.close(cmds)
+  let ch = channel.new(10)
+  task.join(
+    [
+      { ->
+        channel.send(ch, "hello")
+        channel.send(ch, "from")
+        channel.send(ch, "silt")
+        channel.close(ch)
+      },
+      { -> channel.each(ch) { msg -> println(msg) } },
+    ],
+  )
 }
+-- prints:
+--   hello
+--   from
+--   silt
 ```
 
-What a cancel does to the task depends on where the task is. A task that
-waits (in a receive, a send, a `channel.select`, a `task.join_handle`, a sleep or
-I/O) is ended there, without taking or sending anything; a task that has
-not run yet never runs. A task that is running, or whose wait has just
-ended, goes on for a bounded amount of further work: **after a cancel a
-task takes nothing new; it may still give what it holds**, so a worker that
-has just received an item can still put its result into a channel with
-room. It is ended at its next operation that would take something, wait or
-start I/O, or after 2,000 steps. A cancel is no orderly shutdown: where
-nothing may be lost, tell the task to stop over a channel (a stop message,
-or the close of its input), let it finish what it has, and join it.
+The first piece produces, the second consumes. The producer closes the
+channel when it is done, which ends the consumer's `channel.each`, and
+`task.join` returns when both have returned.
 
-`task.cancel` returns when the task, and every task below it that the
-cancel reached, has ended, so what comes after it sees everything they did.
-A `task.join_handle` of a cancelled handle raises `joined task failed: cancelled`,
-unless the task had already ended with another result, which the handle
-keeps; a failure of a cancelled task is not reported. The whole rule, step
-by step, is in the reference:
-[`task.cancel`](stdlib/channel-task.md#taskcancel).
+### `task.background(helpers, body)`
 
-Returns `()`.
-
-### When a program ends
-
-A program ends when `main` has returned **and its tasks can do no more**:
-every task has ended or waits, and none of them waits for a sleep, a
-timeout or an I/O operation that is still pending. Until then `silt run`
-keeps going:
-
-- A task that is still at work when `main` returns runs to its end. What it
-  prints is part of the program's output; if it fails, the run fails.
-- A task that sleeps, or waits for a timeout or for I/O, is waited for.
-  A `channel.timeout` channel counts only while a task waits on it: one
-  that lost its race in a `select`, or that nobody looks at any more,
-  holds nothing up, however long it still has to run.
-- A wait under a `task.deadline` is such a wait: it ends when the
-  deadline has passed at the latest, so it is waited for. A task that
-  nobody joined and that sits in
-  `task.deadline(time.hours(1), { -> channel.receive(ch) })`, on a
-  channel nobody will send on, keeps the program going for that hour
-  after `main` has returned; without the deadline it would be dropped at
-  once, as a wait that can never end.
-- A task that waits for something only another task could give (a receive
-  on a channel nobody will send on) is dropped when nothing else can run:
-  such a wait could never end.
-- A task that never stops keeps the program from ending. A ticker, a
-  server loop or a watcher has to be told to stop, or cancelled, before
-  `main` returns. That holds for a task that waits in I/O as well
-  (`tcp.accept`, `io.read_line`): once it is cancelled nobody waits for
-  the operation, which then counts for nothing. A server started with
-  `http.serve` ends when the task that called it is cancelled, or when
-  its listener is closed (`tcp.close_listener`), once it has answered the
-  requests in flight.
+`task.background` runs the helpers as tasks while `body` runs, and gives
+the value of `body`. When the body returns, the helpers that still run
+are stopped, and the call returns when they have ended. A helper is for
+work that serves the body and has no end of its own: a worker that
+answers requests on a channel, a ticker, a server.
+([`task.background`](stdlib/channel-task.md#taskbackground))
 
 ```silt
 import channel
@@ -364,93 +284,361 @@ import time
 
 fn main() {
   let ticks = channel.new(8)
-  let ticker = task.spawn { ->
+  let ticker = { ->
     loop {
       time.sleep(time.ms(10))
       let _ = channel.try_send(ticks, ())
       loop()
     }
   }
-  let _ = channel.receive(ticks)
-  println("one tick")
-  -- Without this the program would tick for ever.
-  task.cancel(ticker)
+  let seen = task.background([ticker]) { ->
+    let _ = channel.receive(ticks)
+    let _ = channel.receive(ticks)
+    2
+  }
+  println("{seen} ticks") -- 2 ticks
 }
 ```
 
-If `main` fails, with a runtime error or by returning `Err`, the program
-has failed: nothing is waited for. Under `silt test`, each test ends in the same way, for the
-tasks that the test spawned (see
-[Testing](language/testing.md#spawned-tasks)).
+The ticker would tick for ever; it ends because the body returned. A
+stopped helper takes nothing new, not even what is already in its
+channel: work that must be finished belongs in a `task.join`.
 
-A call of `process.exit(code)`, from `main` or from any task, ends the
-program at once with that exit code: every other task stops where it is,
-nothing is waited for, and the failures of tasks that nobody joined are not
-reported. A program that must finish its work first tells its tasks to stop
-over a channel and joins them, then calls `process.exit` (see
-[process](stdlib/process.md)).
+### `task.map(xs, at_once, f)`
 
-### Failures that nobody joins
-
-A task that ends with a runtime error (a `panic`, a failed assertion, a
-division by zero, ...) hands the error to whoever joins it. If the program
-never joins the task and never cancels it, nobody receives the error. Silt
-reports such a failure itself when the program ends, and `silt run` then
-exits with status 1, even if `main` returned normally:
+`task.map` calls `f` with each item of the list, at most `at_once` calls
+at a time, and gives the values in the order of the list, whichever
+call ended first. It is the fan-out and fan-in in one call: the work is
+spread over `at_once` workers, and the values come back as a list.
+([`task.map`](stdlib/channel-task.md#taskmap))
 
 ```silt
 import task
+import time
+
+fn slow_square(n: Int) -> Int {
+  time.sleep(time.ms(10 * (5 - n)))
+  n * n
+}
 
 fn main() {
-  let _ = task.spawn { -> 1 / 0 }
-  println("main done")
+  -- The last items end first; the list keeps their order all the same.
+  let squares = task.map([1, 2, 3, 4], 4) { n -> slow_square(n) }
+  println(squares) -- [1, 4, 9, 16]
+}
+```
+
+`at_once` is how much runs at the same time: the number of files read at
+once, of requests in flight to one server. It must be 1 or more.
+
+### `task.each(ch, at_once, f)`
+
+`task.each` runs `at_once` workers that take values from a channel and
+call `f` with each, until the channel is closed and empty; then it
+returns. Each value is taken by one worker, once. It is a worker pool:
+the channel is the queue of jobs.
+([`task.each`](stdlib/channel-task.md#taskeach))
+
+```silt
+import channel
+import list
+import stream
+import task
+
+fn main() {
+  let jobs = channel.new(10)
+  let results = channel.new(10)
+  list.each([10, 20, 30, 40, 50, 60]) { n -> channel.send(jobs, n) }
+  channel.close(jobs)
+
+  -- Three workers share the jobs.
+  task.each(jobs, 3) { n -> channel.send(results, n * 2) }
+  channel.close(results)
+
+  let total = stream.fold(results, 0) { sum, n -> sum + n }
+  println(total) -- 420
+}
+```
+
+The channel is not closed by the call: whoever sends the jobs closes it
+when they are all sent. Workers that wait on one channel take turns:
+every worker gets work and none starves. The split is fair, not
+ordered: which worker takes which job depends on the timing of the run.
+
+### `task.first_ok(works)`
+
+`task.first_ok` runs the functions together. The first that gives
+`Ok(value)` wins: the others are stopped, and the call gives
+`Ok(value)`. If every one gives an `Err`, the call gives `Err` of the
+list of their errors, in the order of the list.
+([`task.first_ok`](stdlib/channel-task.md#taskfirst_ok))
+
+```silt
+import task
+import time
+
+fn fetch(mirror: String, ms: Int) -> Result(String, String) {
+  time.sleep(time.ms(ms))
+  match mirror {
+    "b" -> Err("b is down")
+    _ -> Ok("the file, from {mirror}")
+  }
+}
+
+fn main() {
+  -- Ask three mirrors; the first that has the file wins.
+  let mirrors = [{ -> fetch("a", 300) }, { -> fetch("b", 10) }, { -> fetch("c", 50) }]
+  println(task.first_ok(mirrors)) -- Ok("the file, from c")
+  let down = [{ -> fetch("b", 10) }, { -> fetch("b", 20) }]
+  println(task.first_ok(down)) -- Err(["b is down", "b is down"])
+}
+```
+
+Mirror `b` answers first, with an `Err`, which does not win; `c` gives
+the first `Ok`, and `a` is stopped in its sleep.
+
+### Calls inside calls
+
+The calls nest. A piece of a `task.join` may run a `task.map` of its
+own, a helper may run a `task.each`, a `task.deadline` may hold a whole
+`task.background`. A stop or a failure goes through them all: when a
+call stops a piece, every task the piece started, in calls inside it
+however deep, is stopped too, and the call returns when all of them have
+ended.
+
+## 4. Stops
+
+### What stops a task
+
+A task that a call started is stopped when the call no longer needs it:
+
+- the body of `task.background` returned: its helpers that still run;
+- a function of `task.first_ok` gave `Ok`: the others;
+- a task of the call failed: the other tasks of the call;
+- the time of a `task.deadline` passed: its work, and everything the work
+  started;
+- nobody reads a `stream.from_fn` stream any more: its `feed`;
+- the task that waits in the call is stopped itself: every task of the
+  call.
+
+A stop is no value in the work that is stopped, and no error: the work
+ends, `task.guard` does not catch it, and nothing after the place where
+it ended runs. The call that stopped it goes on.
+
+### What a stop does
+
+What a stop does to a task depends on where the task is.
+
+- **A task that waits** (in a receive, a send, a `channel.select`, a
+  sleep, I/O, a call that waits for its own tasks) is ended there,
+  without taking or sending anything. A value sent afterwards goes to
+  the next receiver.
+- **A task that has not run yet** never runs.
+- **A task that is running, or whose wait has just ended,** goes on for a
+  bounded amount of further work: **after a stop a task takes nothing
+  new; it may still give what it holds.** A worker that has just received
+  an item can still put its result into a channel with room. It is ended
+  at its next operation that would take something, wait, or start I/O,
+  or after 2,000 steps.
+
+A stopped call returns when every task it stopped has ended, so what
+comes after it sees everything they did: closing the channel they sent
+on loses nothing they sent. A stop is no orderly shutdown. Where
+nothing may be lost, tell the work to finish over a channel (the close
+of its input, a stop message), and let a `task.join` wait for it. The
+whole rule, step by step, is in the reference:
+[Stops](stdlib/channel-task.md#stops).
+
+
+## 5. Failures
+
+### A failure is the caller's
+
+A runtime error in a piece of a call stops the other pieces and is
+raised in the caller. The report shows the place where the error
+happened, and below the piece's own calls the calls that led to
+`task.join`:
+
+```silt
+-- noexec
+import task
+
+fn check(n: Int) -> () {
+  match n > 2 {
+    true -> panic("{n} is too big")
+    false -> ()
+  }
+}
+
+fn main() {
+  task.join([{ -> check(1) }, { -> check(3) }])
+  println("after")
 }
 ```
 
 ```text
-main done
-error[runtime]: a task failed and was never joined: division by zero
- --> main.silt:4:27
+error[runtime]: panic: 3 is too big
+ --> main.silt:5:13
    |
- 4 |   let _ = task.spawn { -> 1 / 0 }
-   |                           ^^^^^ a task failed and was never joined: division by zero
-  = help: the task was spawned at main.silt:4:11: join it with task.join_handle to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+ 5 |     true -> panic("{n} is too big")
+   |             ^^^^^^^^^^^^^^^^^^^^^^^ panic: 3 is too big
+
+call stack:
+  -> check  at main.silt:5:13
+  -> closure in main  at main.silt:11:36
+  -> main  at main.silt:11:3
 ```
 
-The report is rendered like every other runtime error: the file and line
-where the task failed, the source line, and the call stack when there is
-more than one frame. Its help names where the task was spawned, and says
-so when the task that spawned it was cancelled. The rules:
+`after` is never printed: `task.join` raised the failure, as a call that
+fails does. The same holds for `task.background`, `task.map`,
+`task.each`, `task.first_ok` and `task.deadline`. The first failure is the one that is raised; a failure
+of another piece that comes while the pieces are being stopped is added
+to its report as a note.
 
-- **A join handles the failure.** `task.join_handle(h)` raises the task's error in
-  the joiner (`joined task failed: <msg>`), and the failure is not reported
-  a second time. A join in a task that has been cancelled takes nothing,
-  so the failure stays unhandled.
-- **A cancel handles the failure.** `task.cancel(h)` on a task that has
-  failed dismisses the failure: no report, no exit status 1. A failure
-  that `h` took with a join goes back to the task it joined, which is
-  reported as never joined: the cancel of a task that joins never hides
-  the failure of the task it joins, whenever the cancel comes. (Unless
-  that task was cancelled too: then nothing is reported.)
-- **Every failure counts.** The report is made when the program has ended
-  (see [When a program ends](#when-a-program-ends)): a task that fails
-  after `main` has returned still makes the run fail, every time. The
-  example above does not have to wait for its task. (A stage of a stream
-  is different: its failure goes to whoever reads the stream, and is
-  reported only if no read raised it and the stream was not cut short. See
-  [stream](stdlib/stream.md#design-notes).)
-- **A deadlock shows its cause.** When `main` is told
-  `deadlock on main thread`, the failures reported with it are usually the
-  reason: a producer that failed before it sent.
-- **An exit reports nothing.** After `process.exit` no failure is reported,
-  and the exit code is the one the program gave: whether a task had failed
-  by then is a race.
+### Catching: `task.guard(work)`
 
-Under `silt test`, the failure fails the test that spawned the task (see
-[Testing](language/testing.md#spawned-tasks)). In the REPL it is reported
-when the session ends, since a later input may still join or cancel the
-task; an input is not waited for beyond its own value, so the tasks it
-spawned go on while you type the next.
+`task.guard` runs `work` in place, on the task that calls it, and gives
+`Ok` of what it returns, or `Err(e)` for a runtime error raised inside
+it: in `work` itself, in what it calls, and in the tasks of a call inside
+it (a piece of a `task.join`, the work of a `task.deadline`, a stage of a
+stream it reads). The program goes on after the guard.
+([`task.guard`](stdlib/channel-task.md#taskguard))
+
+```silt
+import task
+
+fn check(n: Int) -> () {
+  match n > 2 {
+    true -> panic("{n} is too big")
+    false -> ()
+  }
+}
+
+fn main() {
+  match task.guard({ -> task.join([{ -> check(1) }, { -> check(3) }]) }) {
+    Ok(_) -> println("all pieces passed")
+    Err(e) -> println(e.message) -- panic: 3 is too big
+  }
+}
+```
+
+`e` is a `task.RuntimeError`, a record of the error's `message`, its
+`location` (`file:line:col`) and its `trace`, the calls that led there.
+`println("{e}")` shows the whole report, as the program would have
+printed it.
+
+What a guard does not catch, because it is no runtime error of the
+program: `process.exit`, a stop of the task that runs the guard (the
+guard does not return), a deadlock of the program's own thread, the step
+budget of an embedder, and a fault of silt or its host.
+
+Use a guard where the program can do something better than fail: a
+worker that records a job that broke and goes on with the next, a
+supervisor that starts a worker again. Around one job, not around the
+whole program: a failure that nothing handles should end the program,
+with its report.
+
+### Supervision and restart
+
+A supervisor is a loop around `task.guard`. Here each worker takes jobs
+from a shared channel; a job with a bug ends the worker's run, and its
+supervisor starts it again, at most three times:
+
+```silt
+import channel
+import list
+import task
+
+fn do_job(id: Int, job: String) -> () {
+  when job != "poison" else {
+    panic("worker {id} cannot do {job}")
+  }
+  println("worker {id} handled {job}")
+}
+
+fn supervise(id: Int, jobs: Channel(String), restarts: Int) -> () {
+  match task.guard({ -> channel.each(jobs) { job -> do_job(id, job) } }) {
+    -- The channel is closed and empty: the work is done.
+    Ok(_) -> ()
+    Err(e) -> {
+      println("{e.message}; starting worker {id} again")
+      when restarts > 0 else {
+        return
+      }
+      supervise(id, jobs, restarts - 1)
+    }
+  }
+}
+
+fn main() {
+  let jobs = channel.new(10)
+  list.each(["a", "poison", "b"]) { job -> channel.send(jobs, job) }
+  channel.close(jobs)
+  task.join([{ -> supervise(1, jobs, 3) }, { -> supervise(2, jobs, 3) }])
+}
+```
+
+- **The supervisor is ordinary code.** There is no built-in supervision
+  tree. The policy (how often to start again, when to give up, what to
+  log) is a few lines of silt, and a recursion is the loop.
+- **A job that fails costs only its own run.** The guard is around the
+  worker's loop, so the job that broke is gone, and the jobs still in the
+  channel go to the next run.
+- **What is not caught still ends the program.** A failure in
+  `supervise` itself, outside the guard, is a failure of the
+  `task.join`.
+
+### Workers that fail
+
+A worker can fail in three ways, and each has its own answer:
+
+- **An expected failure is a value.** A job whose work can fail returns
+  a `Result`, and the worker matches on it.
+- **A bug is a runtime error.** `task.guard` around the job turns it
+  into an `Err` that the worker can record.
+- **A job that hangs is stopped at a time.** `task.deadline` around the
+  job gives `None` when its time has passed.
+
+```silt
+import task
+import time
+
+fn job(n: Int) -> Result(Int, String) {
+  match n {
+    1 -> Ok(10)
+    2 -> Err("no such file")
+    3 -> Ok(100 / (n - 3))
+    _ -> {
+      time.sleep(time.hours(1))
+      Ok(0)
+    }
+  }
+}
+
+fn run(n: Int) -> String {
+  match task.guard({ -> task.deadline(time.ms(100)) { -> job(n) } }) {
+    Ok(Some(Ok(value))) -> "job {n} gave {value}"
+    Ok(Some(Err(reason))) -> "job {n} failed: {reason}"
+    Ok(None) -> "job {n} took too long"
+    Err(e) -> "job {n} has a bug: {e.message}"
+  }
+}
+
+fn main() {
+  println(run(1)) -- job 1 gave 10
+  println(run(2)) -- job 2 failed: no such file
+  println(run(3)) -- job 3 has a bug: division by zero
+  println(run(4)) -- job 4 took too long
+}
+```
+
+A server needs none of this for its handlers: `http.serve` answers
+`500` to a request whose handler fails, writes the failure to stderr as
+one line, and goes on serving
+([`http.serve`](stdlib/http.md#connections-and-handlers)).
+
+
+## 6. Time Limits
 
 ### Deadlines: `task.deadline(limit, work)`
 
@@ -459,23 +647,19 @@ let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log")
 ```
 
 `task.deadline(limit, work)` runs `work` and gives `Some` of what it
-returns, or `None` if `work` was ended because `limit` had passed. The
+returns, or `None` if `work` was stopped because `limit` had passed. The
 function runs as a task of its own, and when its time is over it is
-treated as a task that was cancelled: it **takes nothing new, and may
-still give what it holds**, for a bounded amount of further work. A wait
-it is in ends one way or the other, never both: a receive under a deadline
-that gives `None` took no value, so a loop that tries again loses nothing.
-Whatever `work` waits for (I/O, a sleep, a channel, a join, a stream), the
-deadline ends it; a function that never waits, one that only computes, is
-ended within about 2,000 steps; and what `work` spawned is cancelled with
-it. A failure inside `work` is raised by `task.deadline`, in the caller.
-The value of `work` is inside the `Some`, so a function that returns a
-`Result` gives two layers. The rule, step by step, is in the reference:
+stopped: it **takes nothing new, and may still give what it holds**, for
+a bounded amount of further work. A wait it is in ends one way or the
+other, never both: a receive under a deadline that gives `None` took no
+value, so a loop that tries again loses nothing. Whatever `work` waits
+for (I/O, a sleep, a channel, its own tasks, a stream), the deadline ends
+it; a function that never waits, one that only computes, is ended within
+about 2,000 steps; and what `work` started is stopped with it. A failure
+inside `work` is raised by `task.deadline`, in the caller. The value of
+`work` is inside the `Some`, so a function that returns a `Result` gives
+two layers. The rule, step by step, is in the reference:
 [`task.deadline`](stdlib/channel-task.md#taskdeadline).
-
-`SILT_IO_TIMEOUT` is another thing: it bounds each single wait for I/O,
-for the whole process, and gives the module's own timeout error
-(see [I/O timeouts](#io-timeouts-silt_io_timeout)).
 
 ```silt
 import io
@@ -492,80 +676,40 @@ fn main() {
 }
 ```
 
-A task with a deadline is the two together:
-`task.spawn { -> task.deadline(limit, work) }`, whose handle joins to the
-same `Option`. That is the shape for fan-out where each child must bound
-its own run time, such as racing replicas and dropping the stragglers.
-
-
-### Work that ends with the call: `task.join` and `task.background`
-
-`task.join(pieces)` runs each function of the list as a task and returns
-when all of them have returned. `task.background(helpers, body)` runs the
-helpers as tasks while `body` runs, stops the helpers that still run when
-`body` returns, and gives its value. Neither gives a handle: every function
-the call ran as a task has ended when it returns, so there is nothing to
-join or cancel afterwards.
-
-A failure of any of them stops the others and is raised in the caller,
-with the place where it happened; failures that come while the others are
-stopped are notes under it, and none is reported as a failure that nobody
-joined. A `task.guard` around the call turns it into an `Err`. A stop
-from outside (the time of a `task.deadline` around the call, a cancel of
-the task that waits in it) stops every task of the call.
+A deadline bounds everything inside it. Around a `task.join`, it stops
+every piece when the time is up; inside each piece of a `task.map`, it
+bounds each item by itself, and an item that takes too long gives
+`None` in its place of the list:
 
 ```silt
-import channel
 import task
+import time
 
-fn main() {
-  let jobs = channel.new(0)
-  let done = channel.new(10)
-  let count = task.background([{ -> channel.each(jobs) { n -> channel.send(done, n * 2) } }]) { ->
-    task.join([{ -> channel.send(jobs, 1) }, { -> channel.send(jobs, 2) }])
-    2
+fn lookup(n: Int) -> Option(Int) {
+  task.deadline(time.ms(200)) { ->
+    -- the odd items answer at once, the even ones never
+    match n % 2 {
+      0 -> time.sleep(time.hours(1))
+      _ -> ()
+    }
+    n * 10
   }
-  println(count) -- 2
 }
-```
-
-A stopped helper takes nothing new, not even what is already in its
-channel: work that must be finished belongs in a `task.join`. The
-reference has the rules: [`task.join`](stdlib/channel-task.md#taskjoin),
-[`task.background`](stdlib/channel-task.md#taskbackground).
-
-Three calls are built the same way for the common shapes of such work.
-`task.each(ch, at_once, f)` runs `at_once` workers that call `f` with each
-value of the channel until it is closed and empty. `task.map(xs, at_once,
-f)` calls `f` with each item of the list, at most `at_once` at a time, and
-gives the values in the list's order. `task.first_ok(works)` runs the
-functions together, gives the first `Ok` and stops the rest, or, if every
-one gave `Err`, `Err` of the errors in the order of the list. Failures
-and stops are those of `task.join`.
-
-```silt
-import channel
-import list
-import task
 
 fn main() {
-  let jobs = channel.new(10)
-  list.each(1..4) { n -> channel.send(jobs, n) }
-  channel.close(jobs)
-  let done = channel.new(10)
-  task.each(jobs, 2) { n -> channel.send(done, n) }
-  let doubled = task.map([1, 2, 3], 2) { n -> n * 2 }
-  println(doubled) -- [2, 4, 6]
-  let first = task.first_ok([{ -> Err("no") }, { -> Ok(7) }])
-  println(first) -- Ok(7)
+  println(task.map([1, 2, 3, 4], 4) { n -> lookup(n) }) -- [Some(10), None, Some(30), None]
 }
 ```
 
-The rules: [`task.each`](stdlib/channel-task.md#taskeach),
-[`task.map`](stdlib/channel-task.md#taskmap),
-[`task.first_ok`](stdlib/channel-task.md#taskfirst_ok).
+`SILT_IO_TIMEOUT` is another thing: it bounds each single wait for I/O,
+for the whole process, and gives the module's own timeout error
+(see [I/O timeouts](#io-timeouts-silt_io_timeout)).
 
-## 4. Select
+To wait for one value of a channel no longer than so long, use
+`channel.receive_timeout` or a `channel.timeout` arm in a select (see
+[Waiting with a time limit](#waiting-with-a-time-limit)).
+
+## 7. Select
 
 ### `channel.select(ops)`
 
@@ -661,154 +805,22 @@ feeding the pipeline that was never closed with `channel.close`) is a
 deadlock like any other, and is reported.
 
 
-## 5. Patterns
+## 8. Streams
 
-### Producer/consumer
+A stream is a channel whose values are made by a stage that the
+runtime runs: a source, or a transform of another stream. The
+[stream](stdlib/stream.md) module has the sources, the transforms
+(`stream.map`, `stream.filter`, ...) and the sinks (`stream.collect`,
+`stream.fold`, ...).
 
-The fundamental pattern. One task produces data, another consumes it, connected
-by a channel.
+### A producer of your own: `stream.from_fn(feed)`
 
-```
-Producer ----> [channel] ----> Consumer
-```
-
-```silt
-import channel
-import task
-
-fn main() {
-  let ch = channel.new(10)
-
-  let producer = task.spawn { ->
-    channel.send(ch, "hello")
-    channel.send(ch, "from")
-    channel.send(ch, "silt")
-    channel.close(ch)
-  }
-
-  let consumer = task.spawn { -> channel.each(ch) { msg -> println(msg) } }
-
-  task.join_handle(producer)
-  task.join_handle(consumer)
-}
--- prints:
---   hello
---   from
---   silt
-```
-
-The producer sends values and closes the channel when done. The consumer uses
-`channel.each` to drain the channel, which terminates when the channel closes.
-
-### Fan-out / fan-in with workers
-
-Distribute work across multiple tasks, then collect results.
-
-```
-              +---> [Worker 1] ---+
-              |                   |
-[jobs] ------+---> [Worker 2] ---+------> [results]
-              |                   |
-              +---> [Worker 3] ---+
-```
-
-```silt
-import channel
-import list
-import task
-
-fn main() {
-  let jobs = channel.new(10)
-  let results = channel.new(10)
-
-  -- Enqueue work
-  channel.send(jobs, 10)
-  channel.send(jobs, 20)
-  channel.send(jobs, 30)
-  channel.send(jobs, 40)
-  channel.send(jobs, 50)
-  channel.send(jobs, 60)
-  channel.close(jobs)
-
-  -- Spawn three workers
-  let workers = [1, 2, 3]
-    |> list.map { id -> task.spawn { -> channel.each(jobs) { n -> channel.send(results, n * 2) } } }
-
-  -- Wait for all workers to finish, then close results
-  workers |> list.each { w -> task.join_handle(w) }
-  channel.close(results)
-
-  -- Collect
-  channel.each(results) { r -> println(r) }
-}
-```
-
-When multiple tasks call `channel.each` on the same channel, the scheduler
-distributes messages fairly across them: every worker gets a turn, no worker
-starves. `channel.each` yields after processing each message, so the runtime
-can hand the next message to a different waiter.
-
-The distribution is *fair, not ordered*. With three workers and six messages
-no worker is guaranteed exactly two -- on any given run the actual split
-depends on scheduler timing, and one worker may handle several messages
-before another sees one. Treat the workers as an interchangeable pool, not a
-deterministic round-robin.
-
-### Pipeline processing
-
-Connect tasks in a linear chain where each stage reads from one channel and
-writes to the next.
-
-```
-[Stage 1] ----> [ch1] ----> [Stage 2] ----> [ch2] ----> [Stage 3]
-```
-
-```silt
-import channel
-import task
-
-fn main() {
-  let raw = channel.new(10)
-  let doubled = channel.new(10)
-
-  -- Stage 1: produce raw values
-  let s1 = task.spawn { ->
-    channel.send(raw, 1)
-    channel.send(raw, 2)
-    channel.send(raw, 3)
-    channel.close(raw)
-  }
-
-  -- Stage 2: double each value
-  let s2 = task.spawn { ->
-    channel.each(raw) { n -> channel.send(doubled, n * 2) }
-    channel.close(doubled)
-  }
-
-  -- Stage 3: consume the doubled values
-  let s3 = task.spawn { -> channel.each(doubled) { n -> println("stage 3 got: {n}") } }
-
-  task.join_handle(s1)
-  task.join_handle(s2)
-  task.join_handle(s3)
-}
--- prints:
---   stage 3 got: 2
---   stage 3 got: 4
---   stage 3 got: 6
-```
-
-Each stage only knows about its input and output channels. Adding a stage in
-the middle means inserting a new channel and a new task -- nothing else changes.
-
-A stage written this way is a task of yours: its output closes only when it
-closes it, a failure in it is the task's own (its reader waits on a channel
-that nothing will close), and it runs on after its reader has stopped
-reading. `stream.from_fn` runs a function as the source of a stream
-instead: the stream closes when the function returns, a runtime error in it
-reaches the reader as a failing stage's does, and the function is stopped
-when nobody reads the stream any more (see
-[stream](stdlib/stream.md#streamfrom_fn)).
+`stream.from_fn` runs `feed` as the source of a stream. What `feed`
+sends on the channel it is given is the stream; the stream closes when
+`feed` returns. A runtime error in `feed` reaches the reader, as a
+failing stage's does, and when nobody reads the stream any more (it is
+cut short, closed, or left), `feed` is stopped.
+([`stream.from_fn`](stdlib/stream.md#streamfrom_fn))
 
 ```silt
 import channel
@@ -828,60 +840,53 @@ fn main() {
 --   got: 6
 ```
 
-### Multiplexing with select
-
-Use `channel.select` to merge multiple input streams. When more than one
-channel is ready, `select` picks a branch fairly at random -- every ready
-branch has an equal chance of being chosen, so you cannot encode priority by
-ordering the list.
+A producer that would never end is no problem: its reader decides how
+much it takes.
 
 ```silt
 import channel
-import task
+import stream
+
+fn naturals(ch: Channel(Int), n: Int) -> () {
+  channel.send(ch, n)
+  naturals(ch, n + 1)
+}
 
 fn main() {
-  let alerts = channel.new(5)
-  let logs = channel.new(5)
-
-  let _ = task.spawn { ->
-    channel.send(logs, "background task done")
-    channel.send(logs, "log rotation complete")
-    channel.close(logs)
-  }
-
-  let _ = task.spawn { ->
-    channel.send(alerts, "disk full!")
-    channel.close(alerts)
-  }
-
-  -- Merge both streams into a single handler. Over many runs, messages from
-  -- `alerts` and `logs` interleave fairly -- neither channel starves the other.
-  -- `loop _ = () { ... loop(()) }` re-enters explicitly; a bare `loop {}`
-  -- without a `loop(...)` recursion runs its body only once.
-  loop _ = () {
-    match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
-      channel.Received(^alerts, Some(msg)) -> {
-        println("alert: {msg}")
-        loop(())
-      }
-      channel.Received(^logs, Some(msg)) -> {
-        println("log: {msg}")
-        loop(())
-      }
-      channel.Received(_, None) -> {
-        println("a channel closed")
-        return ()
-      }
-      _ -> loop(())
-    }
-  }
+  let squares = stream.from_fn { ch -> naturals(ch, 1) } |> stream.map { n -> n * n }
+  println(stream.take(squares, 4) |> stream.collect) -- [1, 4, 9, 16]
 }
 ```
 
-If you genuinely need priority semantics (for example, "always drain `alerts`
-before touching `logs`"), check the high-priority channel first with
-`channel.try_receive` and fall back to `channel.select` only when it is
-empty. `select` itself gives you fairness, not ordering.
+`stream.take` reads four values and cuts the stream short, which stops
+the `map` stage and then `feed`.
+
+### Pipelines
+
+Each stage reads one channel and writes the next:
+
+```
+[source] ----> [map] ----> [filter] ----> [sink]
+```
+
+```silt
+import stream
+
+fn main() {
+  let total = stream.from_list([1, 2, 3, 4, 5, 6])
+    |> stream.map { n -> n * 10 }
+    |> stream.filter { n -> n > 20 }
+    |> stream.fold(0) { sum, n -> sum + n }
+  println(total) -- 180
+}
+```
+
+The stages run at the same time, each a task of the runtime, and work
+ahead of their reader by a few values. A stage that fails fails the
+pipeline: the sink at the end raises the failure. A pipeline that is cut
+short stops every stage before the cut. A stage of your own that needs
+more than a function of one value (state across values, several values
+for one) is a `stream.from_fn` that reads the stream before it.
 
 ### Receiving from channels of different types
 
@@ -895,7 +900,6 @@ merged channel closes when all of its inputs have.
 ```silt
 import channel
 import stream
-import task
 
 type Event {
   Key(String),
@@ -903,16 +907,10 @@ type Event {
 }
 
 fn main() {
-  let keys = channel.new(4)
-  let ticks = channel.new(4)
-  let _ = task.spawn { ->
-    channel.send(keys, "q")
-    channel.close(keys)
-  }
-  let _ = task.spawn { ->
-    channel.send(ticks, 1)
-    channel.send(ticks, 2)
-    channel.close(ticks)
+  let keys = stream.from_fn { ch -> channel.send(ch, "q") }
+  let ticks = stream.from_fn { ch ->
+    channel.send(ch, 1)
+    channel.send(ch, 2)
   }
   let from_keys = stream.map(keys) { k -> Key(k) }
   let from_ticks = stream.map(ticks) { n -> Tick(n) }
@@ -931,11 +929,131 @@ fn main() {
 The order of messages from different channels is the order they arrive
 in; the messages of one channel keep theirs.
 
-### Graceful shutdown via channel.close
 
-Use `channel.close` to signal that a pipeline stage is done. Downstream stages
-detect closure via `channel.each` (which terminates) or by matching `None`
-from `channel.receive`.
+## 9. Patterns
+
+### Fan-out and fan-in
+
+Spread work over several tasks and collect what they give: that is
+`task.map`. The list of inputs is the fan-out, the list of values the
+fan-in, in the order of the inputs.
+
+```silt
+import list
+import string
+import task
+
+fn words(line: String) -> Int {
+  list.length(string.split(line, " "))
+}
+
+fn main() {
+  let lines = ["the quick brown fox", "jumps over", "the lazy dog"]
+  let counts = task.map(lines, 2) { line -> words(line) }
+  println(counts) -- [4, 2, 3]
+  println(list.fold(counts, 0) { sum, n -> sum + n }) -- 9
+}
+```
+
+### A worker pool
+
+A queue of jobs that is filled while the workers run is a channel and
+a `task.each`. The producer and the pool are two pieces of a
+`task.join`; the producer closes the queue when the jobs are all sent,
+and the pool returns when the queue is empty.
+
+```
+              +---> [worker 1] ---+
+              |                   |
+[jobs] -------+---> [worker 2] ---+------> [results]
+              |                   |
+              +---> [worker 3] ---+
+```
+
+```silt
+import channel
+import list
+import stream
+import task
+
+fn main() {
+  let jobs = channel.new(4)
+  let results = channel.new(16)
+  task.join(
+    [
+      { ->
+        list.each(1..10) { n -> channel.send(jobs, n) }
+        channel.close(jobs)
+      },
+      { -> task.each(jobs, 3) { n -> channel.send(results, n * n) } },
+    ],
+  )
+  channel.close(results)
+  println(stream.fold(results, 0) { sum, n -> sum + n }) -- 385
+}
+```
+
+### A server with a helper
+
+A server and the work beside it: the server is a helper of
+`task.background`, and the body is what the program does while it
+serves. When the body returns, the server is stopped.
+
+```silt
+import bytes
+import http
+import task
+import tcp
+import url
+
+fn hello(_req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string("hi"), headers: #{} }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let port = tcp.local_port(listener)
+  when let Ok(home) = url.parse("http://127.0.0.1:{port}/") else {
+    panic("no URL")
+  }
+  let status = task.background([{ -> http.serve(listener, hello) }]) { ->
+    match http.get(home) {
+      Ok(response) -> response.status
+      Err(_) -> 0
+    }
+  }
+  println(status) -- 200
+}
+```
+
+A server that runs until it is told to stop is the other way round: the
+server is the body, and the helpers are what serves it (a worker that
+takes the jobs the handlers queue, a ticker that cleans a cache). The
+body returns when the listener is closed (`tcp.close_listener`) and the
+requests in flight are answered; then the helpers are stopped.
+
+```silt
+-- noexec
+let queued = task.background([{ -> task.each(jobs, 4) { job -> run_job(job) } }]) { ->
+  http.serve(listener, handler)
+}
+```
+
+### Racing mirrors
+
+Ask several sources for the same thing and take the first answer that
+is good: that is `task.first_ok` (see
+[`task.first_ok`](#taskfirst_okworks)). Put a `task.deadline` around it
+to bound the wait for all of them together, or around each function to
+bound each by itself.
+
+### Graceful shutdown via `channel.close`
+
+`channel.close` tells a stage that no more work comes. A worker that
+reads with `channel.each` (or `task.each`) finishes what is in the
+channel and returns; nothing is lost and no stop is needed.
 
 ```silt
 import channel
@@ -943,27 +1061,21 @@ import task
 
 fn main() {
   let work = channel.new(10)
-  let done = channel.new(1)
-
-  -- Worker processes until the work channel closes
-  let worker = task.spawn { ->
-    channel.each(work) { item -> println("processing: {item}") }
-    -- channel.each returned, meaning work is closed
-    channel.send(done, "shutdown complete")
-  }
-
-  -- Send some work, then close
-  channel.send(work, "task-a")
-  channel.send(work, "task-b")
-  channel.send(work, "task-c")
-  channel.close(work)
-
-  -- Wait for the worker to finish
-  task.join_handle(worker)
-  when let Some(status) = channel.receive(done) else {
-    return
-  }
-  println(status)
+  task.join(
+    [
+      { ->
+        channel.each(work) { item -> println("processing: {item}") }
+        -- channel.each returned: the work channel is closed and empty
+        println("shutdown complete")
+      },
+      { ->
+        channel.send(work, "task-a")
+        channel.send(work, "task-b")
+        channel.send(work, "task-c")
+        channel.close(work)
+      },
+    ],
+  )
 }
 -- prints:
 --   processing: task-a
@@ -972,45 +1084,62 @@ fn main() {
 --   shutdown complete
 ```
 
-This pattern avoids the need for sentinel values or "poison pills." The
-channel's closed state is the shutdown signal.
+This needs no sentinel values or "poison pills": the closed channel is
+the signal.
 
-### Spawn, work, join
+### Multiplexing with select
 
-The simplest pattern: spawn several tasks, let them do work, join them all.
+`channel.select` merges several inputs in one loop. When more than one
+channel is ready, `select` picks a branch fairly at random, so the order
+of the list gives no priority.
 
 ```silt
 import channel
-import list
 import task
 
 fn main() {
-  let results = channel.new(10)
-
-  let workers = [1, 2, 3] |> list.map { id -> task.spawn { -> channel.send(results, id * 10) } }
-
-  workers |> list.each { w -> task.join_handle(w) }
-  channel.close(results)
-
-  when let Some(r1) = channel.receive(results) else {
-    return
-  }
-  when let Some(r2) = channel.receive(results) else {
-    return
-  }
-  when let Some(r3) = channel.receive(results) else {
-    return
-  }
-  println("results: {r1}, {r2}, {r3}")
-  -- output: results: 10, 20, 30 (in some order — the receive order is
-  -- a permutation of the spawn order, since the workers race to send)
+  let alerts = channel.new(5)
+  let logs = channel.new(5)
+  task.join(
+    [
+      { ->
+        channel.send(logs, "background task done")
+        channel.send(logs, "log rotation complete")
+        channel.close(logs)
+      },
+      { ->
+        channel.send(alerts, "disk full!")
+        channel.close(alerts)
+      },
+      { ->
+        -- Merge both inputs into one handler, until one of them closes.
+        loop {
+          match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
+            channel.Received(^alerts, Some(msg)) -> {
+              println("alert: {msg}")
+              loop()
+            }
+            channel.Received(^logs, Some(msg)) -> {
+              println("log: {msg}")
+              loop()
+            }
+            channel.Received(_, None) -> println("a channel closed")
+            _ -> loop()
+          }
+        }
+      },
+    ],
+  )
 }
 ```
 
+For priority ("always drain `alerts` before `logs`"), check the
+high-priority channel first with `channel.try_receive`, and fall back to
+`channel.select` only when it is empty.
+
 ### Draining with try_receive
 
-When you have finished all producers and want to collect results without
-knowing the exact count:
+To collect what is in a channel without knowing how much:
 
 ```silt
 import channel
@@ -1042,192 +1171,86 @@ fn main() {
 --   channel closed, all done
 ```
 
-### Supervision and restart
 
-For long-running workers, treat failures as values. Give each worker a
-fallible body that returns `Result`, report completion on an outcome
-channel, and have a supervisor task decide whether to restart:
+## 10. The End of a Program
+
+### When a program ends
+
+A program ends when `main` returns. Every task that a call started has
+ended by then, since each call returns only when its tasks have. A
+stream that `main` still holds when it returns is stopped with its
+stages.
+
+- **A piece that never returns keeps its call, and the program, going.**
+  A server in a piece of a `task.join` serves until its listener is
+  closed. A loop that never ends belongs in a helper of
+  `task.background`, which stops it when the body returns, or under a
+  `task.deadline`.
+- **A failure of `main` is the program's.** If `main` fails, with a
+  runtime error or by returning `Err`, the program has failed and
+  `silt run` exits with status 1.
+- **`process.exit(code)` ends the program at once,** from `main` or from
+  any task, with that exit code: every other task stops where it is.
+  A program that must finish its work first lets its calls return, then
+  calls `process.exit` (see [process](stdlib/process.md)).
+
+Under `silt test`, each test is the same: a failure inside a call of the
+test fails that test (see [Testing](language/testing.md)).
+
+### Deadlocks
+
+A program is deadlocked when `main` waits, every task waits too, and
+nothing is pending that could end one of the waits: no timer and no I/O.
+silt sees that at the moment it becomes true, and the wait of `main`
+fails with a runtime error that starts with `deadlock on main thread`;
+the program exits with status 1. When `main` waits in a call, the error
+names the call and has a line for each of its tasks that waits:
 
 ```silt
+-- noexec
 import channel
 import task
 
-type Outcome {
-  Finished,
-  Crashed(String),
-}
-
-fn do_job(id, job) {
-  when job != "poison" else {
-    return Err("worker {id} hit poison pill")
-  }
-  println("worker {id} handled {job}")
-  Ok(())
-}
-
-fn worker_body(id, jobs, outcomes) {
-  channel.each(jobs) { job ->
-    match do_job(id, job) {
-      Ok(_) -> ()
-      Err(msg) -> {
-        channel.send(outcomes, (id, Crashed(msg)))
-        return
-      }
-    }
-  }
-  channel.send(outcomes, (id, Finished))
-}
-
-fn spawn_worker(id, jobs, outcomes) {
-  let _ = task.spawn { -> worker_body(id, jobs, outcomes) }
-}
-
-fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
-  when outstanding > 0 else {
-    return
-  }
-  when let Some((id, outcome)) = channel.receive(outcomes) else {
-    return
-  }
-  match outcome {
-    Finished -> supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
-    Crashed(msg) -> {
-      println("worker {id} failed: {msg}")
-      when remaining_restarts > 0 else {
-        -- restart budget exhausted: drop this worker without respawning
-        supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
-        return
-      }
-      spawn_worker(id, jobs, outcomes)
-      -- restart replaces the crashed worker 1-for-1: outstanding unchanged
-      supervise(jobs, outcomes, outstanding, remaining_restarts - 1)
-    }
-  }
-}
-
 fn main() {
-  let jobs = channel.new(10)
-  let outcomes = channel.new(10)
-
-  spawn_worker(1, jobs, outcomes)
-  spawn_worker(2, jobs, outcomes)
-
-  -- Two workers are spawned, so two outcomes are expected before the
-  -- supervisor returns. Each restart-on-Crashed adds one more outcome
-  -- to wait for; the bounded restart budget caps that growth.
-  let sup = task.spawn { -> supervise(jobs, outcomes, 2, 3) }
-
-  channel.send(jobs, "a")
-  channel.send(jobs, "b")
-  channel.close(jobs)
-  task.join_handle(sup)
+  let ch: Channel(Int) = channel.new(0)
+  task.join([{ -> println(channel.receive(ch)) }, { -> println("other") }])
 }
 ```
 
-Key points:
-
-- **Failures are values on a channel.** Workers catch their own errors
-  via `Result` and `?`, then send a typed `Outcome` so the supervisor
-  can decide policy without relying on panic propagation.
-- **Supervisors are just tasks.** There is no built-in supervision
-  tree. Compose the policy you need (restart, circuit-break, escalate)
-  in ordinary silt — here, bounded restarts via recursion.
-- **A cancel of the supervisor stops its children.** `task.cancel` of
-  the supervisor also cancels the workers it spawned that still run, and
-  theirs: nothing is left behind.
-- **`task.join_handle` re-raises runtime errors.** If a spawned task's body
-  panics with an unhandled runtime error, `task.join_handle` on its handle
-  re-raises that error in the joining task. That is the "safety net"
-  path — design for outcomes-as-values instead, and keep `task.join_handle`
-  for awaiting clean completion.
-
-### Workers that fail
-
-A worker can fail in two ways: with an outcome it expected, or with a bug.
-What a program does about each:
-
-- **An expected failure is a value.** A task whose work can fail returns a
-  `Result` (or sends one on a channel, as above), and whoever joins it
-  matches on it.
-- **A server's handler that fails gets a `500`.** `http.serve` answers
-  `500` to a request whose handler fails, writes the failure to stderr as
-  one line, and goes on serving
-  ([`http.serve`](stdlib/http.md#connections-and-handlers)).
-- **A worker of the program's own that dies of a bug does not stop the
-  program.** The other tasks go on. The failure is reported when the program
-  ends, and `silt run` exits with status 1, unless the task was cancelled:
-  a cancel counts as handling it
-  ([Failures that nobody joins](#failures-that-nobody-joins)).
-- **To restart a worker, watch its heartbeat.** The worker sends a beat
-  between its steps, and a supervisor restarts it when no beat came within
-  a tolerance. A worker that is slow but alive keeps beating, so it is not
-  restarted however long its work takes:
-
-```silt
-import channel
-import task
-import time
-
-type Msg {
-  Beat,
-  Done(String),
-}
-
--- Six steps of 200 ms, with a heartbeat after each: slow, but alive.
--- The first try has a bug and dies after its second step.
-fn work(attempt: Int, left: Int, out: Channel(Msg)) -> String {
-  when left > 0 else {
-    return "done on try {attempt}"
-  }
-  time.sleep(time.ms(200))
-  channel.send(out, Beat)
-  when attempt > 1 || left > 5 else {
-    panic("a bug")
-  }
-  work(attempt, left - 1, out)
-}
-
-fn watch(out: Channel(Msg), worker: task.Handle(()), attempt: Int) -> String {
-  match channel.receive_timeout(out, time.ms(1000)) {
-    channel.Message(Beat) -> watch(out, worker, attempt)
-    channel.Message(Done(result)) -> result
-    _ -> {
-      -- No heartbeat within the tolerance: the worker died or is stuck.
-      task.cancel(worker)
-      println("no heartbeat for 1 s, restarting") -- no heartbeat for 1 s, restarting
-      supervise(attempt + 1)
-    }
-  }
-}
-
-fn supervise(attempt: Int) -> String {
-  let out = channel.new(16)
-  let worker = task.spawn { -> channel.send(out, Done(work(attempt, 6, out))) }
-  watch(out, worker, attempt)
-}
-
-fn main() {
-  println(supervise(1)) -- done on try 2
-}
+```text
+other
+error[runtime]: deadlock on main thread: task.join with no progress possible
+ --> main.silt:6:3
+   |
+ 6 |   task.join([{ -> println(channel.receive(ch)) }, { -> println("other") }])
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ deadlock on main thread: task.join with no progress possible
+  = help: a piece of `task.join` at main.silt:6:3 waits to receive from <channel:0>
 ```
 
-The work of the second try takes 1.2 s in all, longer than the tolerance,
-and it is not restarted, since each of its steps beats within 1 s. What
-the supervisor cannot do: it notices a death one tolerance late, and the
-program does not get the failure's message (`a bug` is never seen; the
-cancel dismisses it). A worker cannot beat while it is inside one call, so
-a call that hangs (a read from a peer that went quiet) costs a restart of
-the whole worker; with [`task.deadline`](#deadlines-taskdeadlinelimit-work)
-around the call, the worker gets a `None` and can go on itself.
+A deadlock is no runtime error of the program: `task.guard` does not
+catch it. The usual causes are a channel that nobody closes (a
+`channel.each` that waits for ever) and a producer that ended before it
+sent.
+
+A wait that will end by itself counts as able to go on: a `time.sleep`, a
+`channel.receive_timeout` that has not expired, a wait on a
+`channel.timeout` channel that has not closed yet, the wait of a
+`task.deadline` (a `channel.timeout` that no task waits on does not
+count: it could wake nobody). While a task is in such a wait, no deadlock
+is reported, whether or not that task could ever reach the channel that
+`main` waits on. The verdict comes when the wait has ended, if the
+program is still stuck then. So a task that sleeps for a minute delays
+the report of an unrelated deadlock by up to a minute. The same holds
+for a task that waits for an I/O operation.
 
 
-## 6. Runtime Model
+## 11. Runtime Model
 
 ### Lightweight tasks on a thread pool
 
 Tasks are lightweight -- each one is just a stack and frames, not an OS thread.
-`task.spawn` submits a task to a fixed-size thread pool (sized to the number of
-CPU cores). Many tasks are multiplexed onto a smaller number of OS threads, so
+A call that starts tasks submits them to a fixed-size thread pool (sized to the
+number of CPU cores). Many tasks are multiplexed onto a smaller number of OS threads, so
 you can run thousands of concurrent tasks efficiently.
 
 ```
@@ -1241,8 +1264,8 @@ thread pool (N = CPU count)
     └──────────────┴──────────────┴──────────────┘
 ```
 
-When a task performs a blocking operation (channel receive, select, join), it is
-parked -- the OS thread picks up another ready task instead of waiting. When the
+When a task performs a blocking operation (channel receive, select, a call that
+waits for its tasks), it is parked -- the OS thread picks up another ready task instead of waiting. When the
 blocking condition is satisfied (e.g., a value arrives on the channel), the
 parked task is woken and rescheduled.
 
@@ -1251,8 +1274,8 @@ parked task is woken and rescheduled.
 Silt uses a **cooperative** scheduler -- there is no wall-clock preemption.
 A task holds its worker thread until one of two things happens:
 
-1. It blocks on an I/O operation, channel send/receive/select, `task.join_handle`,
-   or `time.sleep`. The task is parked and the worker moves on to the next
+1. It blocks on an I/O operation, channel send/receive/select, a call that
+   waits for its tasks (`task.join` and the others), or `time.sleep`. The task is parked and the worker moves on to the next
    ready task.
 2. It exhausts its **opcode time slice**. The scheduler runs each task for a
    fixed budget of bytecode instructions (default **2000 opcodes**); when the
@@ -1271,8 +1294,8 @@ interrupted.
 
 One consequence: a task running a tight CPU loop with no blocking calls will
 still yield every ~2000 opcodes, but between those yield points it owns its
-worker. If you spawn fewer long CPU-bound tasks than you have workers, the
-remaining workers simply stay idle; the scheduler does not migrate a running
+worker. If fewer long CPU-bound tasks run than there are workers, the
+remaining workers stay idle; the scheduler does not migrate a running
 task off a busy worker.
 
 ### I/O timeouts (`SILT_IO_TIMEOUT`)
@@ -1348,10 +1371,9 @@ flight for its accept, and one for each connection that waits for a
 request or sends a response.)
 
 A task stops waiting for its operation when `SILT_IO_TIMEOUT` passes,
-when it is cancelled by `task.cancel`, when it is the function of a
-`task.deadline` whose time is up, or when it is dropped at the end of
-the program. It resumes, or ends, at that moment, and from the moment of
-the cancel or the deadline its operation is not wanted any more: an
+when it is stopped (see [What stops a task](#what-stops-a-task)), or when the program ends.
+It resumes, or ends, at that moment, and from the moment of the stop
+its operation is not wanted any more: an
 operation that would take something it cannot put back (a client, a
 connection of a database pool) and finds its task gone takes nothing.
 What becomes of the operation is one rule for each kind of operation:
@@ -1400,7 +1422,7 @@ Linux.
 |---|---|
 | `channel.send(ch, val)` | Buffer is full -- resumes when space opens |
 | `channel.receive(ch)` | Buffer is empty -- resumes when a value arrives or the channel closes |
-| `task.join_handle(handle)` | Task not yet complete -- resumes when the task finishes |
+| `task.join`, `task.background`, `task.each`, `task.map`, `task.first_ok`, `task.deadline` | Its tasks have not all ended -- resumes when they have |
 | `channel.select([...ops])` | No `Recv`/`Send` op is ready -- resumes when any becomes ready |
 | `time.sleep(duration)` | Always -- parks the task for the given duration, then resumes |
 | `io.read_file(path)` | Always (file I/O) |
@@ -1431,8 +1453,7 @@ writer still held: up to 64 KiB of prints that had returned.)
 One order has a price: while stdout is stuck, the program's own
 `io.eprintln` lines wait behind it too, and a task that logs to stderr waits
 for room as one that prints to stdout does. A program that ends by a failure
-(a runtime error, a panic, a deadlock, a task that failed and that nobody
-joined) waits for its output only while the reader takes some of it, about a
+(a runtime error, a panic, a deadlock) waits for its output only while the reader takes some of it, about a
 second without progress at most; then the failure is reported on stderr, and
 the program ends with its status, also where the reader of stdout has gone.
 What was printed and not yet written then is dropped: a reader that pauses
@@ -1444,36 +1465,11 @@ operations -- no special syntax needed. When code calls `io.read_file` or
 parked until the result is ready. `main` is a task like the others here:
 its I/O and its `time.sleep` are waits too.
 
-### Deadlock detection
-
-A program is deadlocked when `main` waits (a `channel.send`,
-`channel.receive`, `channel.each`, `channel.select` or `task.join_handle`), every
-other task waits too, and nothing is pending that could end one of the
-waits: no timer and no I/O operation. silt sees that at the moment it
-becomes true -- when the last task parks or ends, or the last timer has
-fired -- and the wait of `main` fails with a runtime error that starts with
-`deadlock on main thread`; the program exits with status 1. Together with
-that error, silt reports the tasks that failed and that nobody joined
-(`silt run` before it, `silt test` under the failing test, after it; see
-[Failures that nobody joins](#failures-that-nobody-joins)): a failed
-producer is the usual reason why a counterpart is missing.
-
-A wait that will end by itself counts as able to go on: a `time.sleep`, a
-`channel.receive_timeout` that has not expired, a wait on a `channel.timeout`
-channel that has not closed yet (a `channel.timeout` that no task waits on
-does not count: it could wake nobody). While a task is in such a wait, no
-deadlock is reported, whether or not that task could ever reach the channel
-that `main` waits on. The verdict comes when the wait has ended, if the
-program is still stuck then. So a background task that sleeps for a minute
-delays the report of an unrelated deadlock by up to a minute. The same holds
-for a task that waits for an I/O operation. Only `main` gets a deadlock verdict; tasks that are stuck while
-`main` is not waiting stay parked.
-
 ### Implications of real parallelism
 
 - **True parallelism.** Multiple tasks execute simultaneously on different CPU
-  cores. CPU-bound work benefits from spawning tasks.
-- **Lightweight spawning.** Spawning a task allocates a stack, not an OS
+  cores. CPU-bound work gains from `task.map` and the other calls.
+- **Lightweight tasks.** A task is a stack, not an OS
   thread. You can have tens of thousands of concurrent tasks.
 - **Non-deterministic ordering.** The same inputs may produce different
   interleavings across runs.
@@ -1485,9 +1481,7 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
   to the scheduler -- there is no `async io.read_file` or special I/O monad.
 
 
-## 7. Limitations and Future Work
-
-### Current limitations
+## 12. Limitations
 
 - **No buffered channel resizing.** A channel's capacity is fixed at creation
   time.
@@ -1498,10 +1492,11 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
   value is still buffered, the channel and everything in its buffer stay
   in memory until the program ends. Receive what is buffered before the
   last use of such a channel, or send a value that does not hold it.
-- **At most 100,000 tasks at once.** A `task.spawn` while 100,000 tasks
-  have not ended is a runtime error, "task limit exceeded: 100000 tasks
-  running (max 100000)". The tasks that the `stream` functions,
-  `task.deadline` and `http.serve` start count too.
+- **At most 100,000 tasks at once.** A call that would start a task while
+  100,000 tasks have not ended is a runtime error, "task limit exceeded:
+  100000 tasks running (max 100000)". The tasks of every call count: the
+  pieces and workers of the `task` calls, the work of `task.deadline`, the
+  stages of the `stream` functions and the connections of `http.serve`.
 
 
 ## Quick Reference
@@ -1509,7 +1504,9 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 Every function of `channel` and `task`, with its signature and what it
 returns, is in the tables of the reference: [channel / task](stdlib/channel-task.md).
 
-The mental model: tasks are independent workers, channels are the pipes between
-them, `channel.select` is a multiplexer, and `task.join_handle` is a synchronization
-barrier. Tasks are lightweight and multiplexed onto a fixed thread pool, giving
-you true parallelism without the cost of one OS thread per task.
+The mental model: a call that starts tasks is a block of concurrent work
+that ends when its tasks have; channels are the pipes between the tasks,
+`channel.select` is a multiplexer, and `task.guard` is where a failure
+becomes a value. Tasks are lightweight and multiplexed onto a fixed thread
+pool, giving you true parallelism without the cost of one OS thread per
+task.
