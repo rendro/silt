@@ -1,0 +1,28 @@
+-- exit: 1
+-- stderr-contains: panic: item 3 failed
+-- stderr-contains: --> task_map__a_failing_function_stops_the_other_workers.silt:13:3
+-- stderr-contains: main  at task_map__a_failing_function_stops_the_other_workers.silt:18:13
+-- stderr-not-contains: never joined
+-- stderr-not-contains: failed too
+-- A call of the function that fails stops the other workers (two wait)
+-- and its failure is the caller's: one report and exit 1.
+import channel
+import task
+
+fn fail(n: Int) -> Int {
+  panic("item {n} failed")
+}
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let got = task.map([1, 2, 3], 3) { x ->
+    match x == 3 {
+      true -> fail(x)
+      false -> {
+        let _ = channel.receive(never)
+        x
+      }
+    }
+  }
+  println(got)
+}

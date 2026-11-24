@@ -1,0 +1,4 @@
+task.each: at_once is 0, and must be 1 or more (task_each_and_map__at_once_below_one_is_a_runtime_error.silt:10:10)
+task.each: at_once is -1, and must be 1 or more (task_each_and_map__at_once_below_one_is_a_runtime_error.silt:11:10)
+task.map: at_once is 0, and must be 1 or more (task_each_and_map__at_once_below_one_is_a_runtime_error.silt:13:15)
+task.map: at_once is -5, and must be 1 or more (task_each_and_map__at_once_below_one_is_a_runtime_error.silt:16:15)

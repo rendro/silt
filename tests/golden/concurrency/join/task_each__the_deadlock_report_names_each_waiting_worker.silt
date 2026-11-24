@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread: task.each with no progress possible
+-- stderr-contains: help: a worker of `task.each` at task_each__the_deadlock_report_names_each_waiting_worker.silt:11:3 waits to receive from <channel:0>
+-- A task.each over a channel that nobody closes, and nobody sends on,
+-- is a deadlock of the program's thread: a line for each worker.
+import channel
+import task
+
+fn main() {
+  let work: Channel(Int) = channel.new(0)
+  task.each(work, 2) { n -> println(n) }
+}

@@ -1,0 +1,25 @@
+-- at_once must be 1 or more: 0 or a negative number is a runtime error
+-- that names the value, also for an empty list.
+import channel
+import list
+import task
+
+fn main() {
+  let ch: Channel(Int) = channel.new(0)
+  let tries = [
+    { -> task.each(ch, 0) { _ -> () } },
+    { -> task.each(ch, -1) { _ -> () } },
+    { ->
+      let _ = task.map([1, 2], 0) { x -> x }
+    },
+    { ->
+      let _ = task.map([], -5) { x -> x }
+    },
+  ]
+  list.each(tries) { work ->
+    match task.guard(work) {
+      Ok(_) -> println("no error")
+      Err(e) -> println("{e.message} ({e.location})")
+    }
+  }
+}

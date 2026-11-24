@@ -1,0 +1,26 @@
+-- task.map gives the values in the order of the list, also when the
+-- calls of later items return first.
+import channel
+import list
+import task
+
+fn main() {
+  let one = channel.new(1)
+  let two = channel.new(1)
+  let got = task.map([3, 2, 1], 3) { x ->
+    match x {
+      1 -> channel.send(one, 1)
+      2 -> {
+        let _ = channel.receive(one)
+        channel.send(two, 2)
+      }
+      _ -> {
+        let _ = channel.receive(two)
+      }
+    }
+    x * 10
+  }
+  println(got)
+  println(task.map(1..100, 7) { x -> x * x } == list.map(1..100) { x -> x * x })
+  println(task.map([], 3) { x -> x + 1 })
+}

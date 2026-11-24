@@ -1,0 +1,20 @@
+-- task.each reads the channel of a stream.from_fn to its end: every
+-- value the feed sent is taken once.
+import channel
+import list
+import stream
+import task
+
+fn main() {
+  let numbers = stream.from_fn { ch -> list.each(1..50) { i -> channel.send(ch, i) } }
+  let out = channel.new(50)
+  task.each(numbers, 4) { n -> channel.send(out, n * 2) }
+  channel.close(out)
+  let total = list.fold(list.map(1..50) { _ -> channel.receive(out) }, 0) { acc, got ->
+    match got {
+      Some(n) -> acc + n
+      None -> acc
+    }
+  }
+  println(total)
+}

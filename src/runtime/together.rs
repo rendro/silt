@@ -1,6 +1,7 @@
-//! The tasks of one `task.join` or `task.background`: what their
-//! frame waits for, counted, so that a call of a thousand pieces wakes
-//! its caller twice and not a thousand times.
+//! The tasks of one `task.join`, `task.background`, `task.each`,
+//! `task.map` or `task.first_ok`: what their frame waits for, counted,
+//! so that a call of a thousand pieces wakes its caller twice and not a
+//! thousand times.
 //!
 //! Each task of the call has the call's [`Together`] on its handle
 //! (`TaskHandle::in_together`). The scheduler tells it of a failure of
@@ -8,7 +9,8 @@
 //! that nobody joined: no task of such a call is ever one of them) and
 //! of the task's end (`TaskHandle::stop`). The frame waits first for
 //! the call to be settled (a failure, the end of the body of a
-//! `task.background`, or the end of every task), stops what still
+//! `task.background`, the first `Ok` of a `task.first_ok`, or the end
+//! of every task), stops what still
 //! runs, then waits for the end of every task, and only then returns
 //! or raises.
 
@@ -29,6 +31,12 @@ pub(crate) enum Role {
     Helper,
     /// The body of `task.background`.
     Body,
+    /// One of the `at_once` tasks of `task.each`.
+    EachWorker,
+    /// One of the `at_once` tasks of `task.map`.
+    MapWorker,
+    /// A function of `task.first_ok`.
+    Racer,
 }
 
 impl Role {
@@ -39,13 +47,17 @@ impl Role {
             Role::Piece => "a piece of `task.join`",
             Role::Helper => "a helper of `task.background`",
             Role::Body => "the body of `task.background`",
+            Role::EachWorker => "a worker of `task.each`",
+            Role::MapWorker => "a worker of `task.map`",
+            Role::Racer => "a piece of `task.first_ok`",
         }
     }
 
     /// Who failed as well, in a note under the first failure.
     fn too(self) -> &'static str {
         match self {
-            Role::Piece => "another piece",
+            Role::Piece | Role::Racer => "another piece",
+            Role::EachWorker | Role::MapWorker => "another worker",
             Role::Helper => "a helper",
             Role::Body => "the body",
         }
@@ -72,7 +84,8 @@ pub(crate) struct Together {
     /// The tasks that have not ended.
     left: AtomicUsize,
     /// Complete when the frame is to wake the first time: a task
-    /// failed, the body ended, or every task ended.
+    /// failed, the body ended, a task gave the call's value
+    /// ([`Together::settle`]), or every task ended.
     settled: Arc<Cell<()>>,
     /// Complete when every task has ended.
     ended: Arc<Cell<()>>,
@@ -119,6 +132,12 @@ impl Together {
         if last {
             let _ = self.ended.complete((), wake);
         }
+    }
+
+    /// A task gave what the call gives before every task has ended
+    /// (the first `Ok` of a `task.first_ok`): the call is settled.
+    pub(crate) fn settle(&self, wake: &dyn Wake) {
+        let _ = self.settled.complete((), wake);
     }
 
     /// What the frame waits for first.
@@ -220,5 +239,21 @@ mod tests {
         assert!(!background.ended().is_done());
         background.stopped(Role::Helper, wake);
         assert!(background.ended().is_done());
+    }
+
+    /// A first `Ok` settles a `task.first_ok` before its pieces end; it
+    /// has ended when every piece has.
+    #[test]
+    fn a_first_ok_settles_the_call_before_its_pieces_end() {
+        let scheduler = wake();
+        let wake: &dyn Wake = scheduler.wake();
+        let race = Together::new("task.first_ok", "the pieces", 2);
+        race.settle(wake);
+        assert!(race.settled().is_done());
+        assert!(!race.ended().is_done());
+        race.stopped(Role::Racer, wake);
+        race.stopped(Role::Racer, wake);
+        assert!(race.ended().is_done());
+        assert!(race.take_failure().is_none());
     }
 }

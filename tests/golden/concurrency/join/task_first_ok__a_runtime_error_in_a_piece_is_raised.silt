@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: panic: piece 2 failed
+-- stderr-contains: --> task_first_ok__a_runtime_error_in_a_piece_is_raised.silt:10:3
+-- stderr-not-contains: never joined
+-- A runtime error in a piece is no Err: it stops the other pieces and is
+-- raised in the caller, as in task.join.
+import task
+
+fn fail(n: Int) -> Result(Int, String) {
+  panic("piece {n} failed")
+}
+
+fn main() {
+  let got = task.first_ok([{ -> Err("no") }, { -> fail(2) }])
+  println(got)
+}

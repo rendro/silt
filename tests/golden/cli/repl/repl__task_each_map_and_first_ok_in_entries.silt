@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: import list\nimport task\nimport channel\nlet ch: Channel(Int) = channel.new(3)\nchannel.send(ch, 1)\nchannel.send(ch, 2)\nchannel.close(ch)\nlet out: Channel(Int) = channel.new(3)\ntask.each(ch, 2) { n -> channel.send(out, n * 10) }\nchannel.close(out)\nlist.sort([channel.receive(out), channel.receive(out)])\ntask.map([1, 2, 3], 2) { x -> x * x }\ntask.first_ok([{ -> Err("a") }, { -> Ok("b") }])\ntask.map([1], 1) { _ -> panic("a call failed") }\n"the session goes on"\n:quit\n
+-- stderr-contains: panic: a call failed
+-- An entry with task.each returns when the channel is drained; task.map
+-- and task.first_ok give their values; a failing call of map's function
+-- fails its entry, and the session goes on.

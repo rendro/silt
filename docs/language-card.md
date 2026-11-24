@@ -266,6 +266,11 @@ module, named by its file (see [Modules](language/modules.md)).
 when all have returned; the first failure stops the others and is the
 caller's. `task.background(helpers) { -> ... }` runs helper functions
 while the body runs, stops them when it returns, and gives its value.
+`task.map(xs, n) { x -> ... }` calls a function on each item, at most
+`n` at a time, and gives the values in order; `task.each(ch, n) { v ->
+... }` does the same for each value of a channel until it is closed and
+empty; `task.first_ok([f, g])` gives the first `Ok` and stops the rest,
+or `Err` of every error in order.
 `task.spawn { -> ... }` starts a task and gives its `Handle(a)`;
 `task.join_handle(h)` waits for its value. Tasks talk over channels:
 `channel.new(n)`, `channel.send`, `channel.receive` (`None` once closed
@@ -565,9 +570,12 @@ type Handle(a)  -- opaque
 task.background(helpers: List(Fn() -> ()), body: Fn() -> a) -> a
 task.cancel(handle: Handle(a)) -> ()
 task.deadline(limit: Duration, work: Fn() -> a) -> Option(a)
+task.each(work: Channel(a), at_once: Int, f: Fn(a) -> ()) -> ()
+task.first_ok(works: List(Fn() -> Result(a, e))) -> Result(a, List(e))
 task.guard(work: Fn() -> a) -> Result(a, RuntimeError)
 task.join(pieces: List(Fn() -> ())) -> ()
 task.join_handle(handle: Handle(a)) -> a
+task.map(xs: List(a), at_once: Int, f: Fn(a) -> b) -> List(b)
 task.spawn(f: Fn() -> a) -> Handle(a)
 ```
 

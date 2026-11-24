@@ -1,0 +1,17 @@
+-- A task.each in a helper of task.background is stopped with the
+-- helper when the body returns: every worker ends, and nothing receives
+-- on the channel afterwards.
+import channel
+import task
+
+fn main() {
+  let work: Channel(Int) = channel.new(0)
+  let done: Channel(Int) = channel.new(2)
+  let got = task.background([{ -> task.each(work, 2) { n -> channel.send(done, n) } }]) { ->
+    channel.send(work, 1)
+    channel.send(work, 2)
+    "body done"
+  }
+  println(got)
+  println(channel.try_send(work, 3))
+}

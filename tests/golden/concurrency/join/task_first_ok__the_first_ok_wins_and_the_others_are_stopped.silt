@@ -1,0 +1,26 @@
+-- The first Ok is the call's value; the pieces that still run (one
+-- waits, one computes) are stopped, and nothing receives on the channel
+-- the waiting one waited on.
+import channel
+import task
+
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let got = task.first_ok(
+    [
+      { ->
+        let _ = channel.receive(never)
+        Ok("slow")
+      },
+      { -> Err("no") },
+      { -> Ok("fast") },
+      { -> Ok("spun {spin(0)}") },
+    ],
+  )
+  println(got)
+  println(channel.try_send(never, 1))
+}

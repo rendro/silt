@@ -1,0 +1,27 @@
+-- A deadline around task.each or task.map ends every worker by its time:
+-- the deadline gives None, and the code after the call never runs. The
+-- channel of task.each is not closed by it, and nothing receives on it.
+import channel
+import task
+import time
+
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+
+fn main() {
+  let work: Channel(Int) = channel.new(0)
+  let said: Channel(String) = channel.new(2)
+  let each = task.deadline(time.ms(20)) { ->
+    task.each(work, 3) { n -> channel.send(said, "each took {n}") }
+    channel.send(said, "each returned")
+  }
+  println(each)
+  println(channel.try_send(work, 1))
+  let mapped = task.deadline(time.ms(20)) { ->
+    let values = task.map([1, 2, 3], 2) { x -> spin(x) }
+    channel.send(said, "map returned {values}")
+  }
+  println(mapped)
+  println(channel.try_receive(said))
+}
