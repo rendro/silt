@@ -12,16 +12,18 @@ fn main() {
   let never: Channel(Int) = channel.new(0)
   let started: Channel(Int) = channel.new(2)
   let h = task.spawn { ->
-    task.join([
-      { ->
-        channel.send(started, 1)
-        let _ = channel.receive(never)
-      },
-      { ->
-        channel.send(started, 2)
-        let _ = spin(0)
-      },
-    ])
+    task.join(
+      [
+        { ->
+          channel.send(started, 1)
+          let _ = channel.receive(never)
+        },
+        { ->
+          channel.send(started, 2)
+          let _ = spin(0)
+        },
+      ],
+    )
   }
   let _ = channel.receive(started)
   let _ = channel.receive(started)

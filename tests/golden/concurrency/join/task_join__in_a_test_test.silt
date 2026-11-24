@@ -13,9 +13,11 @@ import task
 import test
 
 fn test_a_join_waits_for_its_pieces() {
-  let done: Channel(Int) = channel.new(2)
-  task.join([{ -> channel.send(done, 1) }, { -> channel.send(done, 2) }])
-  test.assert_eq(channel.try_receive(done), Message(1))
+  let one: Channel(Int) = channel.new(1)
+  let two: Channel(Int) = channel.new(1)
+  task.join([{ -> channel.send(one, 1) }, { -> channel.send(two, 2) }])
+  test.assert_eq(channel.try_receive(one), Message(1))
+  test.assert_eq(channel.try_receive(two), Message(2))
 }
 
 fn test_a_failing_piece_fails_the_test() {

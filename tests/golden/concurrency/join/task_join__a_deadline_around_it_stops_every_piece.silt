@@ -13,7 +13,16 @@ fn main() {
   let never: Channel(Int) = channel.new(0)
   let said: Channel(String) = channel.new(1)
   let ended = task.deadline(time.ms(20)) { ->
-    task.join([{ -> let _ = channel.receive(never) }, { -> let _ = spin(0) }])
+    task.join(
+      [
+        { ->
+          let _ = channel.receive(never)
+        },
+        { ->
+          let _ = spin(0)
+        },
+      ],
+    )
     channel.send(said, "the join returned")
   }
   println(ended)

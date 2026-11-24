@@ -12,8 +12,14 @@ fn spin(n: Int) -> Int {
 fn main() {
   let never: Channel(Int) = channel.new(0)
   let _ = task.background(
-    [{ -> let _ = channel.receive(never) }, { -> let _ = spin(0) }],
-    { -> panic("the body failed") },
-  )
+    [
+      { ->
+        let _ = channel.receive(never)
+      },
+      { ->
+        let _ = spin(0)
+      },
+    ],
+  ) { -> panic("the body failed") }
   println("not reached")
 }

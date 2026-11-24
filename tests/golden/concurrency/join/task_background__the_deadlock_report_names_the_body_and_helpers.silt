@@ -9,5 +9,11 @@ import task
 
 fn main() {
   let a: Channel(Int) = channel.new(0)
-  let _ = task.background([{ -> let _ = channel.receive(a) }], { -> channel.receive(a) })
+  let _ = task.background(
+    [
+      { ->
+        let _ = channel.receive(a)
+      },
+    ],
+  ) { -> channel.receive(a) }
 }

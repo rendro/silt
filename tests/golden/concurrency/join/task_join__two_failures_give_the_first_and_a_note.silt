@@ -24,13 +24,15 @@ fn worker(ready: Channel(Int), go: Channel(Int)) -> Fn() -> () {
 fn main() {
   let ready: Channel(Int) = channel.new(2)
   let go: Channel(Int) = channel.new(0)
-  task.join([
-    worker(ready, go),
-    worker(ready, go),
-    { ->
-      let _ = channel.receive(ready)
-      let _ = channel.receive(ready)
-      channel.close(go)
-    },
-  ])
+  task.join(
+    [
+      worker(ready, go),
+      worker(ready, go),
+      { ->
+        let _ = channel.receive(ready)
+        let _ = channel.receive(ready)
+        channel.close(go)
+      },
+    ],
+  )
 }

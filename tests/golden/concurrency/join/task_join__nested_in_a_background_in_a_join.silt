@@ -8,25 +8,28 @@ import task
 fn main() {
   let out: Channel(String) = channel.new(10)
   let ticks: Channel(Int) = channel.new(0)
-  task.join([
-    { ->
-      let total = task.background(
-        [{ -> channel.each(ticks) { n -> channel.send(out, "tick {n}") } }],
-        { ->
+  task.join(
+    [
+      { ->
+        let total = task.background(
+          [{ -> channel.each(ticks) { n -> channel.send(out, "tick {n}") } }],
+        ) { ->
           task.join([{ -> channel.send(ticks, 1) }, { -> channel.send(ticks, 2) }])
           3
-        },
-      )
-      channel.send(out, "total {total}")
-    },
-    { -> channel.send(out, "beside") },
-  ])
+        }
+        channel.send(out, "total {total}")
+      },
+      { -> channel.send(out, "beside") },
+    ],
+  )
   channel.close(out)
-  let lines = list.sort(list.map(1..4) { _ ->
-    match channel.receive(out) {
-      Some(line) -> line
-      None -> "none"
-    }
-  })
+  let lines = list.sort(
+    list.map(1..4) { _ ->
+      match channel.receive(out) {
+        Some(line) -> line
+        None -> "none"
+      }
+    },
+  )
   list.each(lines, println)
 }

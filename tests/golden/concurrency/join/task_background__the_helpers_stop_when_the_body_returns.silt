@@ -15,16 +15,17 @@ fn main() {
   let value = task.background(
     [
       { -> channel.each(jobs) { n -> channel.send(seen, n) } },
-      { -> let _ = spin(0) },
+      { ->
+        let _ = spin(0)
+      },
     ],
-    { ->
-      channel.send(jobs, 1)
-      channel.send(jobs, 2)
-      40 + 2
-    },
-  )
+  ) { ->
+    channel.send(jobs, 1)
+    channel.send(jobs, 2)
+    40 + 2
+  }
   println(value)
   println(channel.try_send(jobs, 3))
   println(channel.try_receive(seen))
-  println(task.background([], { -> "no helpers: the body alone" }))
+  println(task.background([]) { -> "no helpers: the body alone" })
 }

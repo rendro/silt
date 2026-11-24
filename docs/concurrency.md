@@ -521,13 +521,10 @@ import task
 fn main() {
   let jobs = channel.new(0)
   let done = channel.new(10)
-  let count = task.background(
-    [{ -> channel.each(jobs) { n -> channel.send(done, n * 2) } }],
-    { ->
-      task.join([{ -> channel.send(jobs, 1) }, { -> channel.send(jobs, 2) }])
-      2
-    },
-  )
+  let count = task.background([{ -> channel.each(jobs) { n -> channel.send(done, n * 2) } }]) { ->
+    task.join([{ -> channel.send(jobs, 1) }, { -> channel.send(jobs, 2) }])
+    2
+  }
   println(count) -- 2
 }
 ```

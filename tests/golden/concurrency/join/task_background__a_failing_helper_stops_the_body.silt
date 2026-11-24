@@ -9,11 +9,15 @@ import task
 fn main() {
   let never: Channel(Int) = channel.new(0)
   let _ = task.background(
-    [{ -> let _ = channel.receive(never) }, { -> panic("the helper failed") }],
-    { ->
-      let _ = channel.receive(never)
-      1
-    },
-  )
+    [
+      { ->
+        let _ = channel.receive(never)
+      },
+      { -> panic("the helper failed") },
+    ],
+  ) { ->
+    let _ = channel.receive(never)
+    1
+  }
   println("not reached")
 }

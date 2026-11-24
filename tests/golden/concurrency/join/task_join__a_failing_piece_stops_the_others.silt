@@ -1,7 +1,7 @@
 -- exit: 1
 -- stderr-contains: panic: piece 3 failed
 -- stderr-contains: --> task_join__a_failing_piece_stops_the_others.silt:15:3
--- stderr-contains: closure in main  at task_join__a_failing_piece_stops_the_others.silt:27:18
+-- stderr-contains: closure in main  at task_join__a_failing_piece_stops_the_others.silt:33:17
 -- stderr-contains: main  at task_join__a_failing_piece_stops_the_others.silt:24:3
 -- stderr-not-contains: never joined
 -- stderr-not-contains: failed too
@@ -21,10 +21,18 @@ fn spin(n: Int) -> Int {
 
 fn main() {
   let never: Channel(Int) = channel.new(0)
-  task.join([
-    { -> let _ = channel.receive(never) },
-    { -> let _ = spin(0) },
-    { -> let _ = fail(3) },
-  ])
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(never)
+      },
+      { ->
+        let _ = spin(0)
+      },
+      { ->
+        let _ = fail(3)
+      },
+    ],
+  )
   println("not reached")
 }

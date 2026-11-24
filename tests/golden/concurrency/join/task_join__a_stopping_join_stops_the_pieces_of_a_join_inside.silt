@@ -11,23 +11,27 @@ import task
 fn main() {
   let never: Channel(Int) = channel.new(0)
   let started: Channel(Int) = channel.new(2)
-  task.join([
-    { ->
-      task.join([
-        { ->
-          channel.send(started, 1)
-          let _ = channel.receive(never)
-        },
-        { ->
-          channel.send(started, 2)
-          let _ = channel.receive(never)
-        },
-      ])
-    },
-    { ->
-      let _ = channel.receive(started)
-      let _ = channel.receive(started)
-      panic("the outer piece failed")
-    },
-  ])
+  task.join(
+    [
+      { ->
+        task.join(
+          [
+            { ->
+              channel.send(started, 1)
+              let _ = channel.receive(never)
+            },
+            { ->
+              channel.send(started, 2)
+              let _ = channel.receive(never)
+            },
+          ],
+        )
+      },
+      { ->
+        let _ = channel.receive(started)
+        let _ = channel.receive(started)
+        panic("the outer piece failed")
+      },
+    ],
+  )
 }

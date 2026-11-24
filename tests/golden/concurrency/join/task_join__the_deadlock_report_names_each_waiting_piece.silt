@@ -10,5 +10,12 @@ import task
 fn main() {
   let a: Channel(Int) = channel.new(0)
   let b: Channel(Int) = channel.new(0)
-  task.join([{ -> let _ = channel.receive(a) }, { -> channel.send(b, 1) }])
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(a)
+      },
+      { -> channel.send(b, 1) },
+    ],
+  )
 }
