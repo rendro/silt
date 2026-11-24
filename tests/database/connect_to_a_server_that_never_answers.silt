@@ -7,6 +7,7 @@
 -- The server is the program's own: a task that takes the connection
 -- and reads what comes, never answering.
 import bytes
+import channel
 import postgres
 import task
 import tcp
@@ -30,17 +31,20 @@ fn main() {
     panic("cannot listen")
   }
   let port = tcp.local_port(listener)
-  let server = task.spawn { -> tcp.accept(listener) }
+  let accepted = channel.new(1)
+  let server = { -> channel.send(accepted, tcp.accept(listener)) }
   let url = "postgres://nobody:nothing@127.0.0.1:{port}/nothing?sslmode=disable&connect_timeout=1"
-  match postgres.connect(url) {
-    Ok(pool) -> {
-      postgres.close(pool)
-      println("connect: connected")
+  task.background([server]) { ->
+    match postgres.connect(url) {
+      Ok(pool) -> {
+        postgres.close(pool)
+        println("connect: connected")
+      }
+      Err(postgres.Timeout) -> println("connect: Timeout")
+      Err(e) -> println("connect: {e}")
     }
-    Err(postgres.Timeout) -> println("connect: Timeout")
-    Err(e) -> println("connect: {e}")
   }
-  when let Ok(conn) = task.join_handle(server) else {
+  when let Some(Ok(conn)) = channel.receive(accepted) else {
     panic("cannot accept")
   }
   match task.deadline(time.seconds(5), { -> until_closed(conn) }) {

@@ -2,4 +2,4 @@ the first row: R {n: 1, code: Code {digits: "1"}}
 task.deadline: None
 the next statement: [R {n: 1, code: Code {digits: "1"}}]
 the first row: R {n: 1, code: Code {digits: "1"}}
-the reader is cancelled, main returns
+the reader is stopped, main returns
