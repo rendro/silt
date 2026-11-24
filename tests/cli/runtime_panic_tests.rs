@@ -384,8 +384,9 @@ fn main() {
 /// that nobody reads, and holds stdout's lock when a thread of the
 /// runtime panics. The process ends all the same: the thread that ends
 /// it waits for the flush of stdout for a moment and no longer. The
-/// writer is the body of a `task.background` beside a sleeping helper
-/// when the timer's thread panics; a piece of a `task.join`, with
+/// writer is `main` when the timer's thread panics (the sleeper is the
+/// feed of a `stream.from_fn`, held past the flood: `()` after it keeps
+/// the call from being a tail call, which would let go of the stream); a piece of a `task.join`, with
 /// `main` waiting in it, when a worker does; the feed of a
 /// `stream.from_fn` when `main`'s own thread does.
 #[test]
@@ -405,7 +406,9 @@ fn main() {
   MAIN
 }
 "#;
-    let writer_is_main = "task.background([{ -> time.sleep(time.ms(300)) }]) { -> flood(0) }";
+    let writer_is_main = "let _sleeper: Channel(Int) = stream.from_fn { _ -> time.sleep(time.ms(300)) }\n  \
+                          flood(0)\n  \
+                          ()";
     let writer_is_a_task = "task.join([{ -> time.sleep(time.ms(300)) }, { -> flood(0) }])";
     let main_panics = "let never = channel.new(0)\n  \
                        let _writer: Channel(Int) = stream.from_fn { _ -> flood(0) }\n  \
@@ -769,8 +772,8 @@ fn main() {
 
 /// The reader of stdout takes one line, and closes only once the process
 /// has decided to end with the internal error: a worker has panicked and
-/// Rust's lines for it are in stderr, while the body of a
-/// `task.background` prints without end beside the ticker it lost.
+/// Rust's lines for it are in stderr, while `main` prints without end
+/// beside the ticker (the feed of a `stream.from_fn`) it lost.
 /// From that moment the closed stdout is an error of the write, not a
 /// signal that kills the process: it ends with Rust's lines, the line and
 /// status 101, every time. (Before, the signal could kill the process
@@ -788,7 +791,7 @@ fn main() {
 #[cfg(all(unix, feature = "test-hooks"))]
 fn a_closed_stdout_does_not_kill_a_process_that_ends_with_the_internal_error() {
     use std::io::{BufRead, BufReader};
-    let source = r#"import task
+    let source = r#"import stream
 import time
 
 fn flood(n) {
@@ -802,7 +805,11 @@ fn tick() {
 }
 
 fn main() {
-  task.background([{ -> tick() }]) { -> flood(0) }
+  -- `()` keeps flood(0) from being a tail call, which would let go of
+  -- the ticker's stream and stop it.
+  let _ticker: Channel(Int) = stream.from_fn { _ -> tick() }
+  flood(0)
+  ()
 }
 "#;
     for round in 0..10 {

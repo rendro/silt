@@ -79,26 +79,30 @@ fn main() {
 /// machine is repeated with the next, longer wait.
 const WAITS_FOR_A_FAILURE_MS: [u64; 4] = [50, 500, 3_000, 10_000];
 
-/// The report of a task that failed and that nobody joined is the
-/// runtime's, not the program's: it goes to stderr. It is there when
-/// `run_program` returns, whose result it does not change, if the task
-/// has failed by then.
+/// The report of a failure nobody read at the end of a run (the
+/// function of a `stream.from_fn` that fails after it closed its
+/// channel) is the runtime's, not the program's: it goes to the host's
+/// stderr, once. It is there when `run_program` returns, whose result it
+/// does not change, if the function has failed by then.
 #[test]
-fn unjoined_task_failure_is_reported_on_the_stderr_buffer() {
+fn a_failure_nobody_read_is_reported_on_the_stderr_buffer() {
     for wait_ms in WAITS_FOR_A_FAILURE_MS {
         let out = Buffer::new();
         let err = Buffer::new();
         let source = format!(
             r#"
 import channel
-import task
+import stream
 import time
 fn main() {{
   let about_to_fail = channel.new(1)
-  let _ = task.spawn({{ ->
+  let s = stream.from_fn({{ ch ->
+    channel.send(ch, 1)
+    channel.close(ch)
     channel.send(about_to_fail, 1)
     panic("boom")
   }})
+  let _ = stream.collect(s)
   let _ = channel.receive(about_to_fail)
   time.sleep(time.ms({wait_ms}))
   println("main done")
@@ -113,19 +117,20 @@ fn main() {{
         drop(vm);
         let at_drop = err.take();
         // Each failure is reported once: when the program returns, or,
-        // if the task had not failed by then, when the VM is dropped.
+        // if the function had not failed by then, when the VM is dropped.
         let report = format!("{at_return}{at_drop}");
-        assert_eq!(report.matches("never joined").count(), 1, "{report:?}");
+        let headline =
+            "the function of `stream.from_fn` failed after it closed its channel: panic: boom";
+        assert_eq!(report.matches(headline).count(), 1, "{report:?}");
         assert!(
-            report.contains("task <handle:0> failed and was never joined: panic: boom"),
+            report.contains("nothing reads what happens after"),
             "{report:?}"
         );
-        assert!(report.contains("task.join_handle"), "{report:?}");
         if !at_return.is_empty() {
             return;
         }
     }
-    panic!("the task's failure was never there when run_program returned");
+    panic!("the function's failure was never there when run_program returned");
 }
 
 /// `settle` waits until the program has ended: until its tasks can do
@@ -331,20 +336,24 @@ fn main() {
 }
 
 /// A panic of the stderr output is dropped, like an error it returns:
-/// the report is lost, the program's result stands.
+/// the report (here of a `stream.from_fn` function that failed after it
+/// closed its channel) is lost, the program's result stands.
 #[test]
 fn a_panicking_stderr_loses_the_report_only() {
     let out = Buffer::new();
     let source = r#"
 import channel
-import task
+import stream
 import time
 fn main() {
   let about_to_fail = channel.new(1)
-  let _ = task.spawn({ ->
+  let s = stream.from_fn({ ch ->
+    channel.send(ch, 1)
+    channel.close(ch)
     channel.send(about_to_fail, 1)
     panic("boom")
   })
+  let _ = stream.collect(s)
   let _ = channel.receive(about_to_fail)
   time.sleep(time.ms(300))
   println("main done")
