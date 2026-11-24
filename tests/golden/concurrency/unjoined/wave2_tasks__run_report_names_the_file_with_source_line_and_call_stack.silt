@@ -1,20 +1,19 @@
 -- exit: 1
 -- repeat: 3
--- stderr-contains: failed and was never joined
+-- stderr-contains: division by zero
 -- stderr-not-contains: <input>
 -- stderr-contains:  --> wave2_tasks__run_report_names_the_file_with_source_line_and_call_stack.silt:14:
 -- stderr-contains: fn inner(n) { 10 / n }
 -- stderr-contains: -> inner  at wave2_tasks__run_report_names_the_file_with_source_line_and_call_stack.silt:14:
 -- stderr-contains: -> outer  at wave2_tasks__run_report_names_the_file_with_source_line_and_call_stack.silt:15:
--- stderr-contains: : join it with task.join_handle
--- The report names the program's file, shows the source line of the
--- failure, and gives a call stack whose frames name the file too.
+-- stderr-contains: -> main  at wave2_tasks__run_report_names_the_file_with_source_line_and_call_stack.silt:17:
+-- The report of a piece's failure names the program's file, shows the
+-- source line, and gives a call stack whose frames name the file too.
 import task
-import time
+
 fn inner(n) { 10 / n }
 fn outer(n) { inner(n) + 1 }
 fn main() {
-  let _ = task.spawn({ -> outer(0) })
-  time.sleep(time.ms(300))
-  println("main done")
+  task.join([{ -> let _ = outer(0) }])
+  println("not reached")
 }
