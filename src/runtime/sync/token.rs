@@ -86,6 +86,9 @@ pub struct Token {
     /// Once it is set nobody completes an arm for the task: a wait
     /// that is open ends only by the cancel.
     cancel: Option<Arc<AtomicBool>>,
+    /// A cancel of the task does not end the wait
+    /// ([`Wait::stays`](super::Wait::stays)).
+    stays: bool,
     /// The arm that ended the wait, once one has: whoever completed it
     /// took the token off that arm's queue. `NO_ARM` otherwise.
     ended_by: AtomicUsize,
@@ -95,10 +98,11 @@ pub struct Token {
 const NO_ARM: usize = usize::MAX;
 
 impl Token {
-    pub(super) fn new(task: TaskId, cancel: Option<Arc<AtomicBool>>) -> Arc<Token> {
+    pub(super) fn new(task: TaskId, cancel: Option<Arc<AtomicBool>>, stays: bool) -> Arc<Token> {
         Arc::new(Token {
             task,
             cancel,
+            stays,
             ended_by: AtomicUsize::new(NO_ARM),
             state: Mutex::new(State::Armed),
         })
@@ -148,7 +152,19 @@ impl Token {
     /// wait had already ended: an arm that was completed stays
     /// completed. Whoever owns the task's [`Parked`](super::Parked)
     /// drops it, which takes the token off its queues.
+    /// A wait that [stays](super::Wait::stays) is not ended so.
     pub fn cancel(&self, wake: &dyn Wake) -> bool {
+        if self.stays {
+            return false;
+        }
+        self.end(wake)
+    }
+
+    /// End the wait as [`Token::cancel`] does, also one that stays: the
+    /// task is ended where it waits, by the end of the program, its
+    /// exit, the stop of its owner's tasks, or a deadlock of the
+    /// program's thread.
+    pub(crate) fn end(&self, wake: &dyn Wake) -> bool {
         let parked = {
             let mut state = self.state.lock();
             let parked = match *state {
