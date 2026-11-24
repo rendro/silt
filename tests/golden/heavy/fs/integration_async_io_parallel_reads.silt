@@ -5,9 +5,8 @@ import task
 fn main() {
   let _ = io.write_file("a.txt", "aaa")
   let _ = io.write_file("b.txt", "bbb")
-  let h1 = task.spawn({ -> io.read_file("a.txt") })
-  let h2 = task.spawn({ -> io.read_file("b.txt") })
-  let a = task.join_handle(h1)
-  let b = task.join_handle(h2)
-  println(io.inspect((a, b)))
+  match task.map(["a.txt", "b.txt"], 2, { path -> io.read_file(path) }) {
+    [a, b] -> println(io.inspect((a, b)))
+    _ -> panic("two reads")
+  }
 }

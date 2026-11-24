@@ -4,14 +4,15 @@
 -- Two tasks each waiting on the other's channel — classic deadlock.
 import channel
 import task
+
 fn main() {
   let ch1 = channel.new(1)
   let ch2 = channel.new(1)
-  let t1 = task.spawn({ ->
-    channel.receive(ch1)
-  })
-  let t2 = task.spawn({ ->
-    channel.receive(ch2)
-  })
-  let _ = task.join_handle(t1)
+  let t1 = { ->
+    let _ = channel.receive(ch1)
+  }
+  let t2 = { ->
+    let _ = channel.receive(ch2)
+  }
+  task.join([t1, t2])
 }

@@ -1,9 +1,11 @@
 -- repeat: 3
 -- One sender, multiple receivers — verify all receivers participate.
 -- (1+2+...+9) * 10 = 45 * 10 = 450
-import io
+
 import channel
+import io
 import task
+
 fn program() {
   let jobs = channel.new(20)
   let results = channel.new(20)
@@ -20,32 +22,20 @@ fn program() {
   }
 
   -- Spawn 3 workers
-  let w1 = task.spawn({ ->
-    channel.each(jobs) { n ->
-      channel.send(results, n * 10)
-    }
-  })
-  let w2 = task.spawn({ ->
-    channel.each(jobs) { n ->
-      channel.send(results, n * 10)
-    }
-  })
-  let w3 = task.spawn({ ->
-    channel.each(jobs) { n ->
-      channel.send(results, n * 10)
-    }
-  })
+  let w1 = { -> channel.each(jobs) { n -> channel.send(results, n * 10) } }
+  let w2 = { -> channel.each(jobs) { n -> channel.send(results, n * 10) } }
+  let w3 = { -> channel.each(jobs) { n -> channel.send(results, n * 10) } }
 
-  task.join_handle(w1)
-  task.join_handle(w2)
-  task.join_handle(w3)
+  task.join([w1, w2, w3])
 
   -- Collect all results and sum
   loop i = 0, total = 0 {
     match i >= 9 {
       true -> total
       _ -> {
-        when let Some(v) = channel.receive(results) else { panic("pattern did not match") }
+        when let Some(v) = channel.receive(results) else {
+          panic("pattern did not match")
+        }
         loop(i + 1, total + v)
       }
     }

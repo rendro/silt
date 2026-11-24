@@ -1,12 +1,13 @@
 -- repeat: 3
 import io
-import task
 import string
+import task
+
 fn program() {
-  let h = task.spawn({ ->
-    string.length("hello")
-  })
-  task.join_handle(h)
+  when let [v] = task.map(["hello"], 1) { s -> string.length(s) } else {
+    panic("one value")
+  }
+  v
 }
 
 fn main() {

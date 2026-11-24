@@ -1,37 +1,51 @@
 -- repeat: 3
 -- Multiple receivers on one rendezvous channel — each message goes to exactly one.
-import io
+
 import channel
+import io
 import task
+
 fn program() {
   let ch = channel.new(0)
   let results = channel.new(10)
 
-  let r1 = task.spawn({ ->
-    when let Some(v) = channel.receive(ch) else { panic("pattern did not match") }
+  let r1 = { ->
+    when let Some(v) = channel.receive(ch) else {
+      panic("pattern did not match")
+    }
     channel.send(results, v * 2)
-  })
-  let r2 = task.spawn({ ->
-    when let Some(v) = channel.receive(ch) else { panic("pattern did not match") }
+  }
+  let r2 = { ->
+    when let Some(v) = channel.receive(ch) else {
+      panic("pattern did not match")
+    }
     channel.send(results, v * 2)
-  })
-  let r3 = task.spawn({ ->
-    when let Some(v) = channel.receive(ch) else { panic("pattern did not match") }
+  }
+  let r3 = { ->
+    when let Some(v) = channel.receive(ch) else {
+      panic("pattern did not match")
+    }
     channel.send(results, v * 2)
-  })
+  }
 
   -- Send three messages; each receiver gets exactly one
-  channel.send(ch, 10)
-  channel.send(ch, 20)
-  channel.send(ch, 30)
+  let sender = { ->
+    channel.send(ch, 10)
+    channel.send(ch, 20)
+    channel.send(ch, 30)
+  }
 
-  task.join_handle(r1)
-  task.join_handle(r2)
-  task.join_handle(r3)
+  task.join([r1, r2, r3, sender])
 
-  when let Some(a) = channel.receive(results) else { panic("pattern did not match") }
-  when let Some(b) = channel.receive(results) else { panic("pattern did not match") }
-  when let Some(c) = channel.receive(results) else { panic("pattern did not match") }
+  when let Some(a) = channel.receive(results) else {
+    panic("pattern did not match")
+  }
+  when let Some(b) = channel.receive(results) else {
+    panic("pattern did not match")
+  }
+  when let Some(c) = channel.receive(results) else {
+    panic("pattern did not match")
+  }
 
   -- Sum: (10+20+30)*2 = 120
   a + b + c

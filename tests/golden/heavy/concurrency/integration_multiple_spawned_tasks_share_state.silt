@@ -1,15 +1,15 @@
 -- repeat: 3
 import io
+import list
 import task
-fn add(a: Int, b: Int) -> Int { a + b }
+
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
 fn program() {
-  let h1 = task.spawn({ -> add(1, 2) })
-  let h2 = task.spawn({ -> add(10, 20) })
-  let h3 = task.spawn({ -> add(100, 200) })
-  let r1 = task.join_handle(h1)
-  let r2 = task.join_handle(h2)
-  let r3 = task.join_handle(h3)
-  r1 + r2 + r3
+  let sums = task.map([(1, 2), (10, 20), (100, 200)], 3) { (a, b) -> add(a, b) }
+  list.fold(sums, 0) { acc, r -> acc + r }
 }
 
 fn main() {
