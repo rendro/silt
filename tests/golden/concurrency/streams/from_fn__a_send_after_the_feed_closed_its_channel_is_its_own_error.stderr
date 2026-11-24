@@ -1,0 +1,6 @@
+error[runtime]: the function of `stream.from_fn` failed after it closed its channel: send on closed channel 0
+ --> from_fn__a_send_after_the_feed_closed_its_channel_is_its_own_error.silt:13:5
+    |
+ 13 |     channel.send(ch, 2)
+    |     ^^^^^^^^^^^^^^^^^^^ the function of `stream.from_fn` failed after it closed its channel: send on closed channel 0
+  = help: its stream ended when it closed its channel, so nothing reads what happens after: end the function by returning, or send nothing after the close

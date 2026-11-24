@@ -1,0 +1,4 @@
+  PASS from_fn__a_test_whose_feed_closed_its_channel_ends.silt::test_closes_and_goes_on
+  PASS from_fn__a_test_whose_feed_closed_its_channel_ends.silt::test_next
+
+2 tests: 2 passed, 0 failed, 0 skipped

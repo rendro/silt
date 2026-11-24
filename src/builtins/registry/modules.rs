@@ -685,6 +685,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn from_range(lo: Int, hi: Int) -> Channel(Int)", "Emit `lo..=hi` then close", stream::from_range),
                 f("fn repeat(x: a) -> Channel(a)", "Infinite — pair with `take`", stream::repeat),
                 f("fn unfold(seed: a, f: Fn(a) -> Option((b, a))) -> Channel(b)", "Generator (closes on `None`)", stream::unfold),
+                f("fn from_fn(feed: Fn(Channel(a)) -> ()) -> Channel(a)", "Emit what `feed` sends on its channel; close when it returns", stream::from_fn),
                 f("fn file_chunks(path: String, size: Int) -> Channel(Result(Bytes, IoError))", "Read file in chunks", stream::file_chunks),
                 f("fn file_lines(path: String) -> Channel(Result(String, IoError))", "Read file line-by-line", stream::file_lines),
                 f("fn stdin_lines() -> Channel(Result(String, IoError))", "Read stdin line-by-line", stream::stdin_lines),

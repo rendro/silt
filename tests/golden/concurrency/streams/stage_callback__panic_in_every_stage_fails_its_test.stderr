@@ -58,5 +58,11 @@
         |
      80 |   receive_of(stream.scan(stream.from_list([9]), 0) { acc, x -> panic("scan failed on {x}") })
         |                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: scan failed on 9
+  FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_from_fn_through_receive
+    error[runtime]: panic: from_fn failed
+     --> stage_callback__panic_in_every_stage_fails_its_test.silt:84:37
+        |
+     84 |   receive_of(stream.from_fn { ch -> panic("from_fn failed") })
+        |                                     ^^^^^^^^^^^^^^^^^^^^^^^ panic: from_fn failed
 
-10 tests: 0 passed, 10 failed, 0 skipped
+11 tests: 0 passed, 11 failed, 0 skipped

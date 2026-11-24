@@ -1,0 +1,20 @@
+-- repeat: 5
+-- stderr-not-contains: error
+-- A reader that takes two values of a feed that sends two and then fails
+-- reads no further: the pipeline is cut short and stays quiet, as one of
+-- `stream.unfold` does.
+import channel
+import stream
+
+fn breaks_after_two() {
+  stream.from_fn { ch ->
+    channel.send(ch, 0)
+    channel.send(ch, 1)
+    panic("feed broke at 2")
+  }
+}
+
+fn main() {
+  println(breaks_after_two() |> stream.take(2) |> stream.collect)
+  println("done")
+}

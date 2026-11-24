@@ -58,5 +58,11 @@
         |
      81 |   receive_of(stream.scan(stream.from_list([9]), 0) { acc, x -> process.exit(30 + x) })
         |                                                                ^^^^^^^^^^^^^^^^^^^^ process.exit(39) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_from_fn_through_receive
+    error[runtime]: process.exit(40) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:85:37
+        |
+     85 |   receive_of(stream.from_fn { ch -> process.exit(40) })
+        |                                     ^^^^^^^^^^^^^^^^ process.exit(40) was called in a test: a test ends by returning, or by failing an assertion
 
-10 tests: 0 passed, 10 failed, 0 skipped
+11 tests: 0 passed, 11 failed, 0 skipped

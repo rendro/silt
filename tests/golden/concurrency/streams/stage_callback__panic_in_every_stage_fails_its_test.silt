@@ -79,3 +79,7 @@ fn test_drop_while_through_receive() {
 fn test_scan_through_receive() {
   receive_of(stream.scan(stream.from_list([9]), 0) { acc, x -> panic("scan failed on {x}") })
 }
+
+fn test_from_fn_through_receive() {
+  receive_of(stream.from_fn { ch -> panic("from_fn failed") })
+}

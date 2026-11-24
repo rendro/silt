@@ -1,0 +1,22 @@
+-- cmd: test
+-- A test whose feed closed its channel and runs on ends, and the next
+-- test runs: the feed is stopped with its stream.
+import channel
+import stream
+import test
+import time
+
+fn test_closes_and_goes_on() {
+  let s = stream.from_fn { ch ->
+    channel.close(ch)
+    loop {
+      time.sleep(time.ms(5))
+      loop()
+    }
+  }
+  test.assert_eq(stream.collect(s), [])
+}
+
+fn test_next() {
+  test.assert_eq(1, 1)
+}

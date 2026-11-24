@@ -2671,8 +2671,16 @@ fn verdict(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Option<VmError> {
 fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(String, Option<Span>)> {
     /// How many tasks are listed.
     const LISTED: usize = 8;
-    let others: Vec<&&Waiting<'_, Sleeper>> =
-        own.iter().filter(|waiting| waiting.task != main).collect();
+    // (A stage that only relays what another task of its call sends is
+    // left out: that task's line names the call, and its wait.)
+    let relays = |waiting: &Waiting<'_, Sleeper>| match waiting.sleeper {
+        Sleeper::Task(task) => task.handle.stage_of().is_some_and(|stage| stage.relays),
+        Sleeper::Thread(_) => false,
+    };
+    let others: Vec<&&Waiting<'_, Sleeper>> = own
+        .iter()
+        .filter(|waiting| waiting.task != main && !relays(waiting))
+        .collect();
     let mut lines: Vec<(String, Option<Span>)> = others
         .iter()
         .take(LISTED)
@@ -3146,6 +3154,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
             stage_call: handle.stage_call_of_a_failed_input(),
             spawned: None,
             error,
+            after_close: handle.failed_after_its_output_closed(),
         };
         let d = failure.report_error().to_diagnostic();
         report.push_str(&crate::diagnostic::render_human(&no_files, &d));
@@ -3497,6 +3506,11 @@ fn unjoined_failure_headline(task_id: Option<usize>, message: &str) -> String {
 const UNREAD_STAGE_FAILURE_HELP: &str =
     "read its output, where the failure is raised, or drop the stage if you don't need it";
 
+/// What the report of a failure of a `stream.from_fn` function after it
+/// closed its channel advises.
+const FAILED_AFTER_CLOSE_HELP: &str = "its stream ended when it closed its channel, so nothing reads \
+     what happens after: end the function by returning, or send nothing after the close";
+
 /// The first line of the report of a stream stage's failure that
 /// nobody read.
 fn unread_stage_failure_headline(stage: &str, message: &str) -> String {
@@ -3533,6 +3547,10 @@ pub struct UnjoinedFailure {
     pub spawned: Option<(crate::source::Span, bool)>,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
+    /// The stage failed after its output had been closed (the function
+    /// of `stream.from_fn`, which closed its channel itself): no read
+    /// could have raised the failure.
+    pub(crate) after_close: bool,
 }
 
 impl UnjoinedFailure {
@@ -3548,6 +3566,13 @@ impl UnjoinedFailure {
             error.call_stack.clear();
         }
         match self.stage {
+            Some(stage) if self.after_close => {
+                error.message = format!(
+                    "the function of `{stage}` failed after it closed its channel: {}",
+                    self.error.message
+                );
+                error.with_help(FAILED_AFTER_CLOSE_HELP)
+            }
             Some(stage) => {
                 error.message = unread_stage_failure_headline(stage, &self.error.message);
                 error.with_help(UNREAD_STAGE_FAILURE_HELP)
@@ -3676,6 +3701,7 @@ pub fn take_unjoined_failures() -> UnjoinedFailures {
             stage_call: handle.stage_call_of_a_failed_input(),
             spawned: handle.spawn_site(),
             error,
+            after_close: handle.failed_after_its_output_closed(),
         })
         .collect();
     UnjoinedFailures {
@@ -4010,6 +4036,64 @@ import host
             std::thread::sleep(Duration::from_millis(2));
         }
         assert_eq!(spawned(), 0, "stages are left");
+        assert_eq!(vm.scheduler().inner.parking.waiting(), 0);
+    }
+
+    /// The function of a `stream.from_fn` that sends without end is
+    /// stopped when nobody reads its stream any more: its reader reads no
+    /// further (`take`, `first`), closes it, or lets it go (a function
+    /// that read one value and returned). So is one that closed its
+    /// channel and goes on. No task is left.
+    #[test]
+    fn a_from_fn_stream_that_nobody_reads_leaves_no_task() {
+        let (program, given) = crate::session::testing::compile_given(
+            r#"
+import channel
+import list
+import stream
+import time
+fn counting() {
+  stream.from_fn { ch ->
+    loop i = 0 {
+      channel.send(ch, i)
+      loop(i + 1)
+    }
+  }
+}
+fn first_of(s) {
+  channel.receive(s)
+}
+fn main() {
+  let taken = counting() |> stream.take(2) |> stream.collect
+  let _ = counting() |> stream.first
+  let closed = counting()
+  let _ = channel.receive(closed)
+  channel.close(closed)
+  let _ = first_of(counting())
+  -- A feed that closed its channel and waits on is stopped too.
+  let _ = stream.from_fn({ ch ->
+    channel.close(ch)
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  }) |> stream.collect
+  host.give(list.length(taken))
+}
+import host
+"#,
+        )
+        .expect("the program compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert!(result.is_ok(), "got {result:?}");
+        assert_eq!(given.last(), Some(Value::Int(2)));
+        let limit = Instant::now() + Duration::from_secs(10);
+        let spawned = || vm.scheduler().inner.spawned.load(Ordering::SeqCst);
+        while spawned() > 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(spawned(), 0, "feeds or stages are left");
         assert_eq!(vm.scheduler().inner.parking.waiting(), 0);
     }
 
