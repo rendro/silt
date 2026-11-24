@@ -29,9 +29,9 @@ fn round_trip(db: postgres.PgPool, name: String) {
         Ok(_) -> {
           let got = task.deadline(time.ms(5000)) { -> channel.receive(ch) }
           match got {
-            Ok(Some(n)) -> println("{name}: got {n.payload} on {n.channel}")
-            Ok(None) -> println("{name}: the listener ended")
-            Err(e) -> println("{name}: nothing came ({e})")
+            Some(Some(n)) -> println("{name}: got {n.payload} on {n.channel}")
+            Some(None) -> println("{name}: the listener ended")
+            None -> println("{name}: nothing came in time")
           }
         }
         Err(e) -> println("notify {name}: {e}")

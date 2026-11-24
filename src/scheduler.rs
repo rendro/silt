@@ -4462,8 +4462,8 @@ fn forever(n) {
 
 fn main() {
   match task.deadline(time.ms(5), { -> forever(0) }) {
-    Ok(_) -> println("returned")
-    Err(_) -> println("over")
+    Some(_) -> println("returned")
+    None -> println("over")
   }
   host.give(channel.receive(channel.new(0)))
 }
@@ -4664,10 +4664,7 @@ import host
             );
             std::thread::sleep(Duration::from_millis(5));
         };
-        assert_eq!(
-            said,
-            "computed 500500; the deadline: Err(the function was ended by its deadline)"
-        );
+        assert_eq!(said, "computed 500500; the deadline: None");
         assert!(err.0.lock().is_empty(), "stderr waits behind stdout");
         // The reader takes it all.
         {

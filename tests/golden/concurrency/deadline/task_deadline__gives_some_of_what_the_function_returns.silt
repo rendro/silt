@@ -1,5 +1,5 @@
--- `task.deadline(dur, f)` gives `Ok` of what `f` returns when `f`
--- returns before `dur` has passed: a value, a `Result` of its own, the
+-- `task.deadline(limit, work)` gives `Some` of what `work` returns when
+-- it returns before `limit` has passed: a value, a `Result` of its own, the
 -- value of a builtin function.
 import task
 import time
@@ -15,8 +15,7 @@ fn main() {
   println(task.deadline(time.seconds(60), uuid.nil))
   let run = task.deadline
   match run(time.seconds(60), { -> [1, 2, 3] }) {
-    Ok(xs) -> println(xs)
-    Err(task.Timeout) -> println("timed out")
-    Err(e) -> println("{e}")
+    Some(xs) -> println(xs)
+    None -> println("timed out")
   }
 }

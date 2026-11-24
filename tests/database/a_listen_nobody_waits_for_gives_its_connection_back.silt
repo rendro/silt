@@ -28,9 +28,9 @@ fn main() {
         let got = task.deadline(time.ms(ms)) { -> postgres.listen(db, "silt_given_up") }
         match got {
           -- In time: the program closes its listener itself.
-          Ok(Ok(ch)) -> channel.close(ch)
-          Ok(Err(e)) -> println("listen: {e}")
-          Err(_) -> ()
+          Some(Ok(ch)) -> channel.close(ch)
+          Some(Err(e)) -> println("listen: {e}")
+          None -> ()
         }
       }
       match postgres.query(db, "SELECT 1 AS n", (), json.Value) {

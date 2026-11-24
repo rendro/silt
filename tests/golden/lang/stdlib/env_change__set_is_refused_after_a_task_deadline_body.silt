@@ -1,5 +1,5 @@
 -- exit: 1
--- stdout-contains: Ok(3)
+-- stdout-contains: Some(3)
 -- stderr-contains: error[runtime]
 -- stderr-contains: 
 -- stderr-not-contains: not reached

@@ -1,8 +1,8 @@
 -- timeout: 120
 -- A send under a deadline was either done, and `task.deadline` gives
--- `Ok`, or was not, and it gives `Err(Timeout)`: never a value that
+-- `Some`, or was not, and it gives `None`: never a value that
 -- arrived from a send reported as timed out. The sender tries each of
--- 150 numbers again until its send is `Ok`; the consumer takes one
+-- 150 numbers again until its send is `Some`; the consumer takes one
 -- about every 3 ms. Whatever the timing, it gets each number once.
 import channel
 import task
@@ -23,8 +23,8 @@ fn main() {
     match i >= 150 {
       true -> ()
       false -> match task.deadline(time.ms(3), { -> channel.send(ch, i) }) {
-        Ok(_) -> loop(i + 1)
-        Err(_) -> loop(i)
+        Some(_) -> loop(i + 1)
+        None -> loop(i)
       }
     }
   }

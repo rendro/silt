@@ -1,7 +1,7 @@
 -- A function waits in `postgres.transact` for a connection of a pool
 -- whose one connection `main` holds in a transaction of its own. Its
 -- `task.deadline` passes, and `task.deadline` answers
--- `Err(Timeout)` at once. The connection is not taken from `main`:
+-- `None` at once. The connection is not taken from `main`:
 -- `main`'s transaction goes on, and commits.
 --
 -- The wait for a connection is the pool's, 30 seconds: a function that
@@ -30,9 +30,9 @@ fn main() {
         }
         println(
           match late {
-            Ok(Ok(said)) -> "the function ended with {said}"
-            Ok(Err(e)) -> "the function ended with {e}"
-            Err(e) -> "task.deadline: {e}"
+            Some(Ok(said)) -> "the function ended with {said}"
+            Some(Err(e)) -> "the function ended with {e}"
+            None -> "task.deadline: None"
           },
         )
         postgres.query(tx, "SELECT 1", (), json.Value)

@@ -6,7 +6,7 @@
 --   reader leaves a marker file after each row): each row is read
 --   before the next row's impl runs;
 -- - an impl that sleeps 1 s, read under a `task.deadline` of 100 ms:
---   the deadline's `Err`, and once the stream is closed the pool's next
+--   the deadline's `None`, and once the stream is closed the pool's next
 --   statement runs;
 -- (An impl that calls `env.set` fails, as it does in a spawned task:
 -- `a_streams_impl_that_calls_env_set_fails_its_reader`.)

@@ -160,7 +160,7 @@ fn main() {{
     task.spawn {{ ->
       when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
       let first = match task.deadline(time.ms(300), {{ -> tcp.read(conn, 16) }}) {{
-        Err(task.Timeout) -> "timed out"
+        None -> "timed out"
         _ -> "something else"
       }}
       let second = match tcp.read(conn, 16) {{
@@ -453,10 +453,9 @@ fn main() {{
   when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
   let chunk = bytes.from_string(string.repeat("0123456789abcdef", 65536))
   match task.deadline(time.ms(300), {{ -> fill(conn, chunk, 256) }}) {{
-    Err(task.Timeout) -> println("timed out")
-    Ok(Ok(_)) -> println("the peer took everything")
-    Ok(Err(e)) -> println("a write failed: {{e}}")
-    Err(e) -> println("a write failed: {{e}}")
+    None -> println("timed out")
+    Some(Ok(_)) -> println("the peer took everything")
+    Some(Err(e)) -> println("a write failed: {{e}}")
   }}
   match tcp.write(conn, chunk) {{
     Err(tcp.Closed) -> println("closed")

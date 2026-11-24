@@ -451,23 +451,26 @@ when the session ends, since a later input may still join or cancel the
 task; an input is not waited for beyond its own value, so the tasks it
 spawned go on while you type the next.
 
-### Deadlines: `task.deadline(dur, fn)`
+### Deadlines: `task.deadline(limit, work)`
 
 ```silt
 let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
 ```
 
-`task.deadline(dur, f)` runs `f` and gives `Ok` of what it returns, or
-`Err(Timeout)` if `f` was ended because `dur` had passed. The function runs
-as a task of its own, and when its time is over it is treated as a task
-that was cancelled: it **takes nothing new, and may still give what it
-holds**, for a bounded amount of further work. A wait it is in ends one way
-or the other, never both: a receive that answers `Err(Timeout)` took no
-value, so a loop that tries again loses nothing. Whatever `f` waits for
-(I/O, a sleep, a channel, a join, a stream), the deadline ends it, and what
-`f` spawned is cancelled with it. The value of `f` is inside the `Ok`, so a
-function that returns a `Result` gives two layers. The rule, step by step,
-is in the reference: [`task.deadline`](stdlib/channel-task.md#taskdeadline).
+`task.deadline(limit, work)` runs `work` and gives `Some` of what it
+returns, or `None` if `work` was ended because `limit` had passed. The
+function runs as a task of its own, and when its time is over it is
+treated as a task that was cancelled: it **takes nothing new, and may
+still give what it holds**, for a bounded amount of further work. A wait
+it is in ends one way or the other, never both: a receive under a deadline
+that gives `None` took no value, so a loop that tries again loses nothing.
+Whatever `work` waits for (I/O, a sleep, a channel, a join, a stream), the
+deadline ends it; a function that never waits, one that only computes, is
+ended within about 2,000 steps; and what `work` spawned is cancelled with
+it. A failure inside `work` is raised by `task.deadline`, in the caller.
+The value of `work` is inside the `Some`, so a function that returns a
+`Result` gives two layers. The rule, step by step, is in the reference:
+[`task.deadline`](stdlib/channel-task.md#taskdeadline).
 
 `SILT_IO_TIMEOUT` is another thing: it bounds each single wait for I/O,
 for the whole process, and gives the module's own timeout error
@@ -481,18 +484,17 @@ import time
 fn main() {
   let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
   match outcome {
-    Ok(Ok(contents)) -> println(contents)
-    Ok(Err(e)) -> println("the read failed: {e}")
-    Err(task.Timeout) -> println("the read took too long")
-    Err(e) -> println("{e}")
+    Some(Ok(contents)) -> println(contents)
+    Some(Err(e)) -> println("the read failed: {e}")
+    None -> println("the read took too long")
   }
 }
 ```
 
 A task with a deadline is the two together:
-`task.spawn { -> task.deadline(dur, f) }`, whose handle joins to the same
-`Result`. That is the shape for fan-out where each child must bound its
-own run time, such as racing replicas and dropping the stragglers.
+`task.spawn { -> task.deadline(limit, work) }`, whose handle joins to the
+same `Option`. That is the shape for fan-out where each child must bound
+its own run time, such as racing replicas and dropping the stragglers.
 
 
 ## 4. Select
@@ -1120,8 +1122,8 @@ the supervisor cannot do: it notices a death one tolerance late, and the
 program does not get the failure's message (`a bug` is never seen; the
 cancel dismisses it). A worker cannot beat while it is inside one call, so
 a call that hangs (a read from a peer that went quiet) costs a restart of
-the whole worker; with [`task.deadline`](#deadlines-taskdeadlinedur-fn)
-around the call, the worker gets an `Err` and can go on itself.
+the whole worker; with [`task.deadline`](#deadlines-taskdeadlinelimit-work)
+around the call, the worker gets a `None` and can go on itself.
 
 
 ## 6. Runtime Model
@@ -1223,9 +1225,9 @@ SILT_IO_TIMEOUT=5s silt run server.silt
 ```
 
 To bound one piece of work rather than every wait of the process, use
-[`task.deadline(dur, fn)`](#deadlines-taskdeadlinedur-fn): it ends the
+[`task.deadline(limit, work)`](#deadlines-taskdeadlinelimit-work): it ends the
 function it runs, whatever the function waits for, and says so with its own
-`Err(Timeout)`. The two are independent: inside a `task.deadline`, a wait
+`None`. The two are independent: inside a `task.deadline`, a wait
 for I/O still ends at `SILT_IO_TIMEOUT` with the module's error if that
 comes first.
 

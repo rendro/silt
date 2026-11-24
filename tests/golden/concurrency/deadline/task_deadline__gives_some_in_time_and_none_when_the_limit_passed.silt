@@ -1,0 +1,27 @@
+-- repeat: 3
+-- timeout: 30
+-- `task.deadline(limit, work)` is an `Option`: `Some` of what `work`
+-- returns in time, `None` when `limit` passed first and `work` was
+-- ended, for work that waits and for work that only computes and never
+-- waits. Inside a deadline, an inner `None` is a value the outer work
+-- goes on with.
+import task
+import time
+
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+fn main() {
+  let in_time: Option(Int) = task.deadline(time.seconds(60), { -> count(1000, 0) })
+  println("in time: {in_time}")
+  println("waits: {task.deadline(time.ms(20), { -> time.sleep(time.hours(1)) })}")
+  println("only computes: {task.deadline(time.ms(20), { -> count(2000000000, 0) })}")
+  let nested = task.deadline(time.seconds(60), { ->
+    task.deadline(time.ms(20), { -> count(2000000000, 0) })
+  })
+  println("an inner deadline that passed: {nested}")
+}

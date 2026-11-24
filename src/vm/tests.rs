@@ -7541,8 +7541,8 @@ fn main() {
   let ended = loop k = 0, timeouts = 0 {
     match k < 9 {
       true -> match task.deadline(time.ms(0), { -> spins(k) }) {
-        Ok(_) -> loop(k + 1, timeouts)
-        Err(_) -> loop(k + 1, timeouts + 1)
+        Some(_) -> loop(k + 1, timeouts)
+        None -> loop(k + 1, timeouts + 1)
       }
       false -> timeouts
     }

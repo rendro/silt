@@ -1,5 +1,5 @@
 main holds the lock
-task.deadline: the function was ended by its deadline
+task.deadline: None
 the next statement: postgres transaction aborted; rollback required
 the transaction of the deadline: postgres transaction aborted; rollback required
 the task is cancelled

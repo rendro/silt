@@ -1,7 +1,7 @@
 -- timeout: 120
 -- A receive under a deadline either took a value, and `task.deadline`
--- gives `Ok` of it, or took none and gives `Err(Timeout)`: never
--- `Err` with a value gone. A producer sends 150 numbered messages on a
+-- gives `Some` of it, or took none and gives `None`: never
+-- `None` with a value gone. A producer sends 150 numbered messages on a
 -- rendezvous channel, about one every 3 ms, so every send that
 -- returned was taken by somebody; the consumer gives up every 3 ms and
 -- asks again. Whatever the timing, it sees all 150.
@@ -25,9 +25,9 @@ fn main() {
   }
   let r = loop got = 0, sum = 0 {
     match task.deadline(time.ms(3), { -> channel.receive(ch) }) {
-      Ok(Some(v)) -> loop(got + 1, sum + v)
-      Ok(None) -> (got, sum)
-      Err(_) -> loop(got, sum)
+      Some(Some(v)) -> loop(got + 1, sum + v)
+      Some(None) -> (got, sum)
+      None -> loop(got, sum)
     }
   }
   task.join(producer)

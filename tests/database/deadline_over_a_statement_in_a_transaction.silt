@@ -1,6 +1,6 @@
 -- A transaction's function is ended by its `task.deadline` while the
 -- server works on a statement of the transaction. `task.deadline`
--- answers `Err(Timeout)` at once. The statement is cancelled in the
+-- answers `None` at once. The statement is cancelled in the
 -- server and the transaction rolled back: neither of its rows reaches
 -- the table.
 --
@@ -89,9 +89,9 @@ fn main() {
             }
           }
           match late {
-            Ok(Ok(said)) -> "the function ended with {said}"
-            Ok(Err(e)) -> "the function ended with {e}"
-            Err(e) -> "task.deadline: {e}"
+            Some(Ok(said)) -> "the function ended with {said}"
+            Some(Err(e)) -> "the function ended with {e}"
+            None -> "task.deadline: None"
           }
         }
         println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
