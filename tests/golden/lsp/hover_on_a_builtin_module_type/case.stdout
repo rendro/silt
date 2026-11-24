@@ -105,8 +105,6 @@ type task.TaskError {
 
 ---
 
-Returned by `task.deadline`.
-
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Timeout` | — | the function was ended because its time was over |

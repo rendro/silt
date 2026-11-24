@@ -1,6 +1,6 @@
 -- timeout: 120
 -- A select under a deadline: an arm was completed and `task.deadline`
--- gives `Ok` of it, or none was and it gives `Err(Timeout)`. A
+-- gives `Some` of it, or none was and it gives `None`. A
 -- producer sends 100 numbers in turn on two rendezvous channels; the
 -- one in the middle takes them with a select of two `Recv` arms under
 -- a deadline and passes each on with a select that has a `Send` arm,
@@ -18,7 +18,7 @@ fn pass(out, never, v) {
     }
   })
   match sent {
-    Ok(true) -> ()
+    Some(true) -> ()
     _ -> pass(out, never, v)
   }
 }
@@ -63,12 +63,12 @@ fn main() {
       }
     })
     match got {
-      Ok(Some(v)) -> {
+      Some(Some(v)) -> {
         pass(out, never, v)
         loop()
       }
-      Ok(_) -> channel.close(out)
-      Err(_) -> loop()
+      Some(None) -> channel.close(out)
+      None -> loop()
     }
   }
   task.join(producer)

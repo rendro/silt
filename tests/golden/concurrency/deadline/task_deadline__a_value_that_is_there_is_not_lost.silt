@@ -1,6 +1,6 @@
 -- timeout: 120
 -- A buffered channel holds one value. A receive under a deadline that
--- answers `Err(Timeout)` has left it there. 500 rounds with the
+-- gives `None` has left it there. 500 rounds with the
 -- function sleeping first for about as long as its deadline, so that
 -- the time passes around the receive, and 500 with a deadline that is
 -- over when the function starts.
@@ -16,8 +16,8 @@ fn round(dur, before) {
     channel.receive(ch)
   })
   match (out, channel.try_receive(ch)) {
-    (Ok(Some(7)), channel.Empty) -> 0
-    (Err(_), channel.Message(7)) -> 0
+    (Some(Some(7)), channel.Empty) -> 0
+    (None, channel.Message(7)) -> 0
     _ -> 1
   }
 }

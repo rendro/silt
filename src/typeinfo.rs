@@ -610,7 +610,6 @@ pub(crate) mod ty {
     pub(crate) const FLOAT_ERROR: TypeId = TypeId(DefId(29));
     pub(crate) const CRYPTO_ERROR: TypeId = TypeId(DefId(30));
     pub(crate) const UUID_ERROR: TypeId = TypeId(DefId(31));
-    pub(crate) const TASK_ERROR: TypeId = TypeId(DefId(32));
     pub(crate) const SELECTED: TypeId = TypeId(DefId(33));
     pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(34));
     pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(35));
@@ -695,7 +694,6 @@ pub mod bv {
     pub(crate) const CSV_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 1);
     pub(crate) const CSV_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 2);
     pub(crate) const CSV_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 3);
-    pub(crate) const TASK_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 0);
     pub(crate) const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
     pub(crate) const HTTP_TLS: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 1);
     pub(crate) const HTTP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 2);
@@ -1026,7 +1024,6 @@ mod tests {
             (bv::CSV_TYPE_MISMATCH, "TypeMismatch"),
             (bv::CSV_MISSING_FIELD, "MissingField"),
             (bv::CSV_OTHER, "Other"),
-            (bv::TASK_TIMEOUT, "Timeout"),
             (bv::HTTP_CONNECT, "Connect"),
             (bv::HTTP_TLS, "Tls"),
             (bv::HTTP_TIMEOUT, "Timeout"),

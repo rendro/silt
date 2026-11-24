@@ -1,0 +1,12 @@
+error[type]: type mismatch: expected Int, got Option(Int)
+ --> task_deadline__the_result_is_an_option_and_spawn_until_is_none.silt:10:16
+    |
+ 10 |   let n: Int = task.deadline(time.seconds(1), { -> 1 })
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got Option(Int)
+  = help: to chain through an `Option`, use `?` to propagate `None`, or `|> option.flat_map { x -> ... }` to continue the pipeline on the Some value
+
+error[type]: module 'task' has no member 'spawn_until'
+ --> task_deadline__the_result_is_an_option_and_spawn_until_is_none.silt:11:16
+    |
+ 11 |   let handle = task.spawn_until(time.seconds(1), { -> 1 })
+    |                ^^^^^^^^^^^^^^^^ module 'task' has no member 'spawn_until'

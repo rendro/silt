@@ -4,8 +4,8 @@
 -- starts, and the rule is the one of every function whose time is
 -- over: it takes nothing new, and it runs on only for the steps a late
 -- function has. So a function that returns without taking or waiting
--- is `Ok`, and one that gives what it holds (a send into room) is too.
--- A function that receives is ended there, `Err(Timeout)`, whether or
+-- is `Some`, and one that gives what it holds (a send into room) is too.
+-- A function that receives is ended there, `None`, whether or
 -- not a value is there, every time: the values that were there are
 -- still there afterwards. One that would wait is ended there, and one
 -- that computes on is ended when those steps are used up.

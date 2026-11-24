@@ -1,6 +1,6 @@
 -- A stream whose rows the program's `json.Decode` impls finish, read by
 -- a function that `task.deadline` ends after one row: the deadline's
--- `Err`, and the pool answers the next statement. Then a task reads
+-- `None`, and the pool answers the next statement. Then a task reads
 -- one row of such a stream and is cancelled, and `main` returns. Nobody
 -- closed either channel; the streams' senders wait for room in them
 -- and are dropped as the program ends, as a task that waits to send
@@ -59,8 +59,8 @@ fn main() {
         }
       }
       match late {
-        Ok(said) -> println(said)
-        Err(e) -> println("task.deadline: {e}")
+        Some(said) -> println(said)
+        None -> println("task.deadline: None")
       }
       match postgres.query(pool, "SELECT 1 AS n, to_jsonb('1'::text) AS code", (), R) {
         Ok(rows) -> println("the next statement: {rows}")

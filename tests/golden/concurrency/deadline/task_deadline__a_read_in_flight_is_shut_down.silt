@@ -18,7 +18,7 @@ fn main() {
   }
   when let Ok(peer) = tcp.accept(listener) else { panic("cannot accept") }
   match task.deadline(time.ms(300), { -> tcp.read(conn, 16) }) {
-    Err(task.Timeout) -> println("the deadline passed")
+    None -> println("the deadline passed")
     other -> println("something else")
   }
   when let Ok(_) = tcp.write(peer, bytes.from_string("x")) else { panic("the peer cannot write") }

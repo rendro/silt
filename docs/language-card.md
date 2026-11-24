@@ -559,7 +559,7 @@ type TaskError { Timeout }
 type RuntimeError { message: String, location: String, trace: List(String) }
 type Handle(a)  -- opaque
 task.cancel(handle: Handle(a)) -> ()
-task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, TaskError)
+task.deadline(limit: Duration, work: Fn() -> a) -> Option(a)
 task.guard(work: Fn() -> a) -> Result(a, RuntimeError)
 task.join(handle: Handle(a)) -> a
 task.spawn(f: Fn() -> a) -> Handle(a)

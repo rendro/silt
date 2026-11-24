@@ -1,14 +1,14 @@
-returns at once: Ok(1)
-returns at once, negative: Ok(1)
-computes a little: Ok(100)
-sends into room: Ok(())
-receives, a value is there: Err(the function was ended by its deadline)
-tries to receive, a value is there: Err(the function was ended by its deadline)
-selects, a value is there: Err(the function was ended by its deadline)
-receives, nothing is there: Err(the function was ended by its deadline)
-receives, nothing is there, negative: Err(the function was ended by its deadline)
-sleeps: Err(the function was ended by its deadline)
-computes on: Err(the function was ended by its deadline)
+returns at once: Some(1)
+returns at once, negative: Some(1)
+computes a little: Some(100)
+sends into room: Some(())
+receives, a value is there: None
+tries to receive, a value is there: None
+selects, a value is there: None
+receives, nothing is there: None
+receives, nothing is there, negative: None
+sleeps: None
+computes on: None
 what was sent is there: Message(1)
 what was there is still there: Message(7) Message(8)
 and nothing else: Empty Empty

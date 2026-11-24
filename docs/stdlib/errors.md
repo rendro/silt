@@ -151,8 +151,6 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 
 ### `TaskError` (requires `import task`)
 
-Returned by `task.deadline`.
-
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Timeout` | — | the function was ended because its time was over |

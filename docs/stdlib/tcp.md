@@ -283,12 +283,12 @@ import time
 fn serve(conn, cert, key) {
   -- A client gets 10 seconds to complete the handshake.
   match task.deadline(time.seconds(10), { -> tcp.tls_server(conn, cert, key) }) {
-    Ok(Ok(tls)) -> {
+    Some(Ok(tls)) -> {
       let _ = tcp.write(tls, bytes.from_string("hello over TLS\n"))
       tcp.close(tls)
     }
-    Ok(Err(e)) -> println("handshake failed: {e}")
-    Err(_) -> println("the client took too long")
+    Some(Err(e)) -> println("handshake failed: {e}")
+    None -> println("the client took too long")
   }
 }
 

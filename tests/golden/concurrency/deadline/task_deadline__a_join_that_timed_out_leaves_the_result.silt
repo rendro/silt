@@ -1,16 +1,16 @@
 -- timeout: 120
--- A join under a deadline that answers `Err(Timeout)` took nothing:
+-- A join under a deadline that gives `None` took nothing:
 -- the task's result is there for the next join. 100 tasks return
 -- their number after a short sleep; each is joined under a deadline
--- of about that length until the join is `Ok`.
+-- of about that length until the join is `Some`.
 import list
 import task
 import time
 
 fn joined(h) {
   match task.deadline(time.micros(500), { -> task.join(h) }) {
-    Ok(v) -> v
-    Err(_) -> joined(h)
+    Some(v) -> v
+    None -> joined(h)
   }
 }
 

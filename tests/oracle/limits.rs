@@ -224,7 +224,7 @@ const SLICES: [Option<usize>; 3] = [None, Some(2000), Some(1)];
 /// function waits for when its time is up: a sleep, a channel, a join,
 /// a wait deep inside a callback of a builtin or a stage of a stream;
 /// and a function that never waits at all, where tasks have a time
-/// slice. And a function that returns in time is `Ok` of its value at
+/// slice. And a function that returns in time is `Some` of its value at
 /// every slice.
 #[test]
 fn a_deadline_ends_its_function_at_every_slice() {
@@ -256,7 +256,7 @@ fn a_deadline_ends_its_function_at_every_slice() {
              fn count(n, acc) {{\n  match n {{\n    0 -> acc\n    _ -> count(n - 1, acc + 1)\n  }}\n}}\n\n\
              fn main() {{\n  let never: Channel(Int) = channel.new(0)\n  \
              host.give(match task.deadline({dur}, {{ -> {door} }}) {{\n    \
-             Ok(_) -> \"returned\"\n    Err(task.Timeout) -> \"timeout\"\n    Err(_) -> \"other\"\n  }})\n}}\nimport host\n"
+             Some(_) -> \"returned\"\n    None -> \"timeout\"\n  }})\n}}\nimport host\n"
         )
     };
     let at_each = |slices: &[Option<usize>], what: &str, source: &str, expected: &str| {
@@ -294,7 +294,7 @@ fn a_deadline_ends_its_function_at_every_slice() {
 }
 
 /// Under `task.deadline` nothing is lost at any time slice: a wait of
-/// the function ended by its arm, and the caller has `Ok` of what the
+/// the function ended by its arm, and the caller has `Some` of what the
 /// function made of it, or the wait ended by the deadline and nothing
 /// was taken or sent. Each program counts what arrived against what
 /// was sent, with deadlines about as long as the waits they are
@@ -326,9 +326,9 @@ fn main() {
   }
   let r = loop got = 0, sum = 0 {
     match task.deadline(time.ms(2), { -> channel.receive(ch) }) {
-      Ok(Some(v)) -> loop(got + 1, sum + v)
-      Ok(None) -> (got, sum)
-      Err(_) -> loop(got, sum)
+      Some(Some(v)) -> loop(got + 1, sum + v)
+      Some(None) -> (got, sum)
+      None -> loop(got, sum)
     }
   }
   task.join(producer)
@@ -338,7 +338,7 @@ fn main() {
 }
 import host
 "#;
-    // A send: a number arrives once for each send that was `Ok`.
+    // A send: a number arrives once for each send that was `Some`.
     let send = r#"
 fn main() {
   let ch: Channel(Int) = channel.new(0)
@@ -355,8 +355,8 @@ fn main() {
     match i >= 60 {
       true -> ()
       false -> match task.deadline(time.ms(2), { -> channel.send(ch, i) }) {
-        Ok(_) -> loop(i + 1)
-        Err(_) -> loop(i)
+        Some(_) -> loop(i + 1)
+        None -> loop(i)
       }
     }
   }
@@ -377,8 +377,8 @@ fn round(dur, before) {
     channel.receive(ch)
   })
   match (out, channel.try_receive(ch)) {
-    (Ok(Some(7)), channel.Empty) -> 0
-    (Err(_), channel.Message(7)) -> 0
+    (Some(Some(7)), channel.Empty) -> 0
+    (None, channel.Message(7)) -> 0
     _ -> 1
   }
 }
@@ -416,8 +416,8 @@ fn main() {
           _ -> false
         }
         match (out, was_sent) {
-          (Ok(_), true) -> loop(i + 1, wrong)
-          (Err(_), false) -> loop(i + 1, wrong)
+          (Some(_), true) -> loop(i + 1, wrong)
+          (None, false) -> loop(i + 1, wrong)
           _ -> loop(i + 1, wrong + 1)
         }
       }
@@ -437,7 +437,7 @@ fn pass(out, never, v) {
     }
   })
   match sent {
-    Ok(true) -> ()
+    Some(true) -> ()
     _ -> pass(out, never, v)
   }
 }
@@ -475,12 +475,12 @@ fn main() {
       }
     })
     match got {
-      Ok(Some(v)) -> {
+      Some(Some(v)) -> {
         pass(out, never, v)
         loop()
       }
-      Ok(_) -> channel.close(out)
-      Err(_) -> loop()
+      Some(None) -> channel.close(out)
+      None -> loop()
     }
   }
   task.join(producer)
@@ -511,10 +511,10 @@ fn main() {
       task.deadline(time.hours(1), { -> channel.receive(ch) })
     })
     match out {
-      Ok(Ok(Some(v))) -> loop(got + 1, sum + v, inner)
-      Ok(Ok(None)) -> (got, sum, inner)
-      Ok(Err(_)) -> loop(got, sum, inner + 1)
-      Err(_) -> loop(got, sum, inner)
+      Some(Some(Some(v))) -> loop(got + 1, sum + v, inner)
+      Some(Some(None)) -> (got, sum, inner)
+      Some(None) -> loop(got, sum, inner + 1)
+      None -> loop(got, sum, inner)
     }
   }
   task.join(producer)
@@ -633,7 +633,7 @@ fn rounds(marks, round) {
 fn late(round) {
   let marks: Channel(Int) = channel.new(20000)
   match task.deadline(time.ms(0), { -> rounds(marks, round) }) {
-    Err(task.Timeout) -> drained(marks)
+    None -> drained(marks)
     _ -> -1
   }
 }
@@ -844,12 +844,12 @@ fn main() {
   }
   let given = loop given = 0, idle = 0 {
     match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
-      Ok(Ok(c)) -> {
+      Some(Ok(c)) -> {
         tcp.close(c)
         loop(given + 1, 0)
       }
-      Ok(Err(e)) -> panic("accept failed: {e}")
-      Err(_) -> match channel.try_receive(done) {
+      Some(Err(e)) -> panic("accept failed: {e}")
+      None -> match channel.try_receive(done) {
         channel.Closed -> match idle >= 20 {
           true -> given
           false -> loop(given, idle + 1)
@@ -1648,12 +1648,12 @@ fn main() {
   }
   let left = loop left = 0, idle = 0 {
     match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
-      Ok(Ok(c)) -> {
+      Some(Ok(c)) -> {
         tcp.close(c)
         loop(left + 1, 0)
       }
-      Ok(Err(e)) -> panic("accept failed: {e}")
-      Err(_) -> match idle >= 20 {
+      Some(Err(e)) -> panic("accept failed: {e}")
+      None -> match idle >= 20 {
         true -> left
         false -> loop(left, idle + 1)
       }

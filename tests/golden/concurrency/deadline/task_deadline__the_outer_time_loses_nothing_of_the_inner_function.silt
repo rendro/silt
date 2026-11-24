@@ -1,9 +1,9 @@
 -- timeout: 120
 -- A deadline inside a deadline, and the outer time comes first: the
 -- inner function has the outer time too, and is ended by the same
--- rule. It took a value, and the outer `task.deadline` gives `Ok` of
--- the inner `Ok`; or it took none, and the outer one gives
--- `Err(Timeout)`. The inner `Err(Timeout)` is never the outer
+-- rule. It took a value, and the outer `task.deadline` gives `Some` of
+-- the inner `Some`; or it took none, and the outer one gives
+-- `None`. The inner `None` is never the outer
 -- function's value: when the inner function was ended at the outer
 -- time, the outer function is over too.
 import channel
@@ -29,17 +29,17 @@ fn main() {
       task.deadline(time.hours(1), { -> channel.receive(ch) })
     })
     match out {
-      Ok(Ok(Some(v))) -> loop(got + 1, sum + v, inner_timeouts)
-      Ok(Ok(None)) -> (got, sum, inner_timeouts)
-      Ok(Err(_)) -> loop(got, sum, inner_timeouts + 1)
-      Err(_) -> loop(got, sum, inner_timeouts)
+      Some(Some(Some(v))) -> loop(got + 1, sum + v, inner_timeouts)
+      Some(Some(None)) -> (got, sum, inner_timeouts)
+      Some(None) -> loop(got, sum, inner_timeouts + 1)
+      None -> loop(got, sum, inner_timeouts)
     }
   }
   task.join(producer)
   match r {
     (got, sum, inner_timeouts) -> {
       println("sent 100 (sum 4950), received {got} (sum {sum})")
-      println("the inner Err(Timeout) as the outer function's value: {inner_timeouts}")
+      println("the inner None as the outer function's value: {inner_timeouts}")
     }
   }
 }

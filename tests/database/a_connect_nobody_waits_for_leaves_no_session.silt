@@ -46,9 +46,9 @@ fn main() {
         let got = task.deadline(time.ms(ms)) { -> postgres.connect(tagged()) }
         match got {
           -- In time: the program closes the pool itself.
-          Ok(Ok(other)) -> postgres.close(other)
-          Ok(Err(e)) -> println("connect: {e}")
-          Err(_) -> ()
+          Some(Ok(other)) -> postgres.close(other)
+          Some(Err(e)) -> println("connect: {e}")
+          None -> ()
         }
       }
       -- The connects that were given up end within their 10 seconds;

@@ -313,7 +313,7 @@ fn the_function_of_a_deadline_sees_later_entries_in_a_task_of_an_earlier_one() {
          type Q { q: Int }\n\
          trait Display for Q { fn display(self) -> String { \"Q!\" } }",
         "task.deadline(time.ms(60000), { -> \"{later()} {call(5)} {[Q { q: 1 }]}\" })",
-        "Ok(\"fn int [Q!]\")",
+        "Some(\"fn int [Q!]\")",
     );
 }
 
@@ -323,7 +323,7 @@ fn the_function_of_a_deadline_sees_later_entries_in_a_task_of_an_earlier_one() {
 /// reads a later entry's function and calls a later entry's impl, the
 /// two places where its VM takes the program's newest definitions: the
 /// end falls before them, on them and behind them. Each call answers
-/// one of two things, the value or `Timeout`; none fails; and what
+/// one of two things, the value or `None`; none fails; and what
 /// the task and the session have of the program is whole afterwards.
 #[test]
 fn a_deadline_ends_its_function_around_its_look_for_later_entries() {
@@ -381,8 +381,8 @@ task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
         assert_eq!(errors, "", "{slice:?}\n{output}");
         let answers: Vec<&str> = output.lines().collect();
         let (swept, rest) = answers.split_at(rounds.clone().count());
-        let in_time = "Some(Ok(\"fn int\"))";
-        let ended = "Some(Err(the function was ended by its deadline))";
+        let in_time = "Some(Some(\"fn int\"))";
+        let ended = "Some(None)";
         // In time first, ended from some amount of work on, and
         // nothing else.
         let first_ended = (swept.iter().position(|answer| *answer == ended))
@@ -393,7 +393,7 @@ task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
                 && swept[first_ended..].iter().all(|answer| *answer == ended),
             "{slice:?}: {swept:?}"
         );
-        assert_eq!(rest, [in_time, "Ok(\"fn int\")"], "{slice:?}");
+        assert_eq!(rest, [in_time, "Some(\"fn int\")"], "{slice:?}");
     }
 }
 

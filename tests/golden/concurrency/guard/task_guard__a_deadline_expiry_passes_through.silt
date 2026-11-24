@@ -1,6 +1,6 @@
 -- A function that task.deadline ends at its time, inside a guard that
 -- runs work that never waits: the guard does not return, and the
--- deadline gives its Err(Timeout).
+-- deadline gives None.
 import channel
 import task
 import time

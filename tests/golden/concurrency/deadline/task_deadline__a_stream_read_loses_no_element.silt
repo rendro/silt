@@ -1,6 +1,6 @@
 -- timeout: 120
 -- A read from a stream under a deadline: the element was read and
--- `task.deadline` gives `Ok` of it, or it was not and stays in the
+-- `task.deadline` gives `Some` of it, or it was not and stays in the
 -- stream. The stage is slow, the reader gives up after about the time
 -- one element takes and asks again.
 import channel
@@ -15,9 +15,9 @@ fn main() {
   }
   let r = loop got = 0, sum = 0 {
     match task.deadline(time.ms(2), { -> channel.receive(s) }) {
-      Ok(Some(v)) -> loop(got + 1, sum + v)
-      Ok(None) -> (got, sum)
-      Err(_) -> loop(got, sum)
+      Some(Some(v)) -> loop(got + 1, sum + v)
+      Some(None) -> (got, sum)
+      None -> loop(got, sum)
     }
   }
   match r {

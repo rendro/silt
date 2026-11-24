@@ -44,7 +44,7 @@ fn main() {
     panic("cannot accept")
   }
   match task.deadline(time.seconds(5), { -> until_closed(conn) }) {
-    Ok(said) -> println("the server: {said}")
-    Err(_) -> println("the server: the connection is still open at the deadline")
+    Some(said) -> println("the server: {said}")
+    None -> println("the server: the connection is still open at the deadline")
   }
 }

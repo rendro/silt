@@ -799,7 +799,7 @@ fn main() {
     assert_eq!(run(source, io), Ok(()));
     assert_eq!(
         out.contents(),
-        "Ok(Err(file not found: /no/such/file))\nErr(the function was ended by its deadline)\n"
+        "Some(Err(file not found: /no/such/file))\nNone\n"
     );
     assert!(clock.passed() >= Duration::from_secs(3600));
 }
@@ -834,10 +834,7 @@ fn main() {
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(()));
-    assert_eq!(
-        out.contents(),
-        "Err(the function was ended by its deadline)\n"
-    );
+    assert_eq!(out.contents(), "None\n");
     assert!(clock.passed() >= Duration::from_secs(3600));
 }
 
