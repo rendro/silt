@@ -9,19 +9,18 @@ import task
 
 fn main() {
   let ch = channel.new(0)
-  let senders = 1..16
-    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
-  let sum = loop c = 0, acc = 0 {
-    match c >= 16 {
-      true -> acc
-      _ -> {
-        match channel.receive(ch) {
+  let senders = 1..16 |> list.map { i -> { -> channel.send(ch, i) } }
+  let receiver = { ->
+    let sum = loop c = 0, acc = 0 {
+      match c >= 16 {
+        true -> acc
+        _ -> match channel.receive(ch) {
           Some(v) -> loop(c + 1, acc + v)
           None -> acc
         }
       }
     }
+    println("sum={sum}")
   }
-  senders |> list.each { h -> task.join_handle(h) }
-  println("sum={sum}")
+  task.join(list.append(senders, receiver))
 }

@@ -22,18 +22,31 @@ fn handle(conn: tcp.TcpStream) -> Int {
 }
 
 fn main() {
-  when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let server = task.spawn { ->
-    match tcp.accept(l) {
-      Ok(conn) -> handle(conn)
-      Err(_) -> -1
-    }
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
   }
-  when let Ok(c) = tcp.connect("127.0.0.1:{tcp.local_port(l)}") else { panic("cannot connect") }
-  let _ = tcp.write(c, bytes.from_string("a\nb\n\n"))
-  println("the handler read {task.join_handle(server)} lines and returned")
-  match tcp.read(c, 10) {
-    Ok(b) -> println("the client read {bytes.length(b)} bytes: the end of the connection")
-    Err(e) -> println("the client: {e}")
+  let handled = channel.new(1)
+  task.background(
+    [
+      { ->
+        match tcp.accept(l) {
+          Ok(conn) -> channel.send(handled, handle(conn))
+          Err(_) -> channel.send(handled, -1)
+        }
+      },
+    ],
+  ) { ->
+    when let Ok(c) = tcp.connect("127.0.0.1:{tcp.local_port(l)}") else {
+      panic("cannot connect")
+    }
+    let _ = tcp.write(c, bytes.from_string("a\nb\n\n"))
+    when let Some(n) = channel.receive(handled) else {
+      panic("no handler")
+    }
+    println("the handler read {n} lines and returned")
+    match tcp.read(c, 10) {
+      Ok(b) -> println("the client read {bytes.length(b)} bytes: the end of the connection")
+      Err(e) -> println("the client: {e}")
+    }
   }
 }

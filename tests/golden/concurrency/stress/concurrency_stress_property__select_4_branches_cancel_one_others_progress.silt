@@ -1,8 +1,8 @@
 -- repeat: 3
 -- stderr-not-contains: deadlock
 -- stderr-not-contains: panicked
--- Select over four channels with one (slow) sender cancelled: the other
--- three still deliver (1+2+4 = 7).
+-- Select over four channels with one (slow) sender stopped by its
+-- deadline: the other three still deliver (1+2+4 = 7).
 import channel
 import task
 import time
@@ -13,38 +13,41 @@ fn main() {
   let c = channel.new(0)
   let d = channel.new(0)
 
-  let sa = task.spawn({ ->
+  let sa = { ->
     time.sleep(time.ms(5))
     channel.send(a, 1)
-  })
-  let sb = task.spawn({ ->
+  }
+  let sb = { ->
     time.sleep(time.ms(10))
     channel.send(b, 2)
-  })
-  let sc = task.spawn({ ->  -- slow; will be cancelled
-    time.sleep(time.ms(500))
-    channel.send(c, 3)
-  })
-  let sd = task.spawn({ ->
+  }
+  -- slow; its deadline ends it
+  let sc = { ->
+    let _ = task.deadline(time.ms(1)) { ->
+      time.sleep(time.ms(500))
+      channel.send(c, 3)
+    }
+  }
+  let sd = { ->
     time.sleep(time.ms(20))
     channel.send(d, 4)
-  })
-
-  time.sleep(time.ms(1))
-  task.cancel(sc)
+  }
 
   -- Drain a, b, d via select (c never delivers).
-  let sum = loop collected = 0, acc = 0 {
-    match collected >= 3 {
-      true -> acc
-      _ -> {
-        match channel.select([channel.Recv(a), channel.Recv(b), channel.Recv(c), channel.Recv(d)]) {
+  let drain = { ->
+    let sum = loop collected = 0, acc = 0 {
+      match collected >= 3 {
+        true -> acc
+        _ -> match channel.select(
+          [channel.Recv(a), channel.Recv(b), channel.Recv(c), channel.Recv(d)],
+        ) {
           channel.Received(_, Some(v)) -> loop(collected + 1, acc + v)
           channel.Received(_, None) -> acc
           channel.Sent(_) -> acc
         }
       }
     }
+    println("sum={sum}")
   }
-  println("sum={sum}")
+  task.join([sa, sb, sc, sd, drain])
 }

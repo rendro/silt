@@ -3,20 +3,22 @@
 -- A task waits for `channel.timeout(time.ms(600))` and then sends to the main
 -- thread, which waits for that send. Without the fix the main thread
 -- is told "deadlock" while the timer is running.
+-- (The task is the function of a `stream.from_fn`, which runs while the
+-- program's own thread waits.)
 import channel
-import task
+import stream
 import time
 
 fn main() {
   let x = channel.new(0)
-  let h = task.spawn({ ->
+  let h = stream.from_fn { _ ->
     let t = channel.timeout(time.ms(600))
     let _ = channel.receive(t)
     channel.send(x, 1)
-  })
+  }
   match channel.receive(x) {
     Some(v) -> println("main got: {v}")
     None -> println("main got no message")
   }
-  task.join_handle(h)
+  let _ = stream.collect(h)
 }

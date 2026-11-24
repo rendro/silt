@@ -1,17 +1,19 @@
 -- repeat: 3
--- receive_timeout inside a spawned task really expires: a timer wake must
+-- receive_timeout inside a task really expires: a timer wake must
 -- not re-arm a fresh full-duration timer (round 101 livelock).
 import channel
+import list
 import task
 import time
+
 fn main() {
   let ch = channel.new(1)
-  let h = task.spawn({ ->
-    match channel.receive_timeout(ch, time.ms(50)) {
+  let outcomes = task.map([ch], 1) { c ->
+    match channel.receive_timeout(c, time.ms(50)) {
       channel.Message(_) -> "got value"
       channel.Empty -> "timed out"
       channel.Closed -> "closed"
     }
-  })
-  println(task.join_handle(h))
+  }
+  list.each(outcomes) { o -> println(o) }
 }

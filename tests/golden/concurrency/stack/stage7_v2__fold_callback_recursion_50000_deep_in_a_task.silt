@@ -12,7 +12,6 @@ fn down(acc, n) {
 }
 
 fn main() {
-  let h = task.spawn({ -> down(0, 50000) })
-  println(task.join_handle(h))
+  list.each(task.map([50000], 1) { n -> down(0, n) }) { v -> println(v) }
   println(down(0, 50000))
 }
