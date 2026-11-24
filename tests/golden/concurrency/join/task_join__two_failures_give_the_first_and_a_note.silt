@@ -1,11 +1,13 @@
 -- exit: 1
 -- stderr-contains: error[runtime]: panic: boom
--- stderr-contains: = note: another piece failed too, at task_join__two_failures_give_the_first_and_a_note.silt:13:3: panic: boom
+-- stderr-contains: = note: another piece failed too, at task_join__two_failures_give_the_first_and_a_note.silt:15:3: panic: boom
 -- stderr-not-contains: never joined
 -- Two pieces fail: the first failure is raised, and the one that came
--- while the pieces were stopped is a note under it. Both pieces wait
--- for one channel to close, so both have been woken when the first
--- fails.
+-- while the pieces were stopped is a note under it.
+-- Both failures are certain: the two pieces meet on a channel with no
+-- room, so each fails only after that meeting, and after it neither
+-- takes anything more. A piece that is stopped then still has the steps
+-- to reach its failure, and neither was stopped before it ran.
 import channel
 import task
 
@@ -13,25 +15,17 @@ fn boom() -> () {
   panic("boom")
 }
 
-fn worker(ready: Channel(Int), go: Channel(Int)) -> Fn() -> () {
-  { ->
-    channel.send(ready, 1)
-    let _ = channel.receive(go)
-    boom()
-  }
-}
-
 fn main() {
-  let ready: Channel(Int) = channel.new(2)
-  let go: Channel(Int) = channel.new(0)
+  let meet: Channel(Int) = channel.new(0)
   task.join(
     [
-      worker(ready, go),
-      worker(ready, go),
       { ->
-        let _ = channel.receive(ready)
-        let _ = channel.receive(ready)
-        channel.close(go)
+        channel.send(meet, 1)
+        boom()
+      },
+      { ->
+        let _ = channel.receive(meet)
+        boom()
       },
     ],
   )
