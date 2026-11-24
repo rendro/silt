@@ -1,0 +1,10 @@
+-- Ten thousand items through task.map: every value, in order.
+import list
+import task
+
+fn main() {
+  let values = task.map(1..10000, 8) { x -> x * 2 }
+  println(list.length(values))
+  println(list.sum(values))
+  println(values == list.map(1..10000) { x -> x * 2 })
+}

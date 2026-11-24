@@ -1,0 +1,20 @@
+-- exit: 1
+-- stderr-contains: panic: the feed broke
+-- stderr-contains: --> task_each__a_failed_stream_read_by_every_worker_is_one_failure.silt:16:5
+-- stderr-not-contains: failed too
+-- stderr-not-contains: never joined
+-- A stream whose feed fails, read by three workers that all wait at its
+-- end: each worker raises the feed's failure, and it is one failure, one
+-- report with no note.
+import stream
+import task
+import time
+
+fn main() {
+  let failing = stream.from_fn { _ ->
+    time.sleep(time.ms(10))
+    panic("the feed broke")
+  }
+  task.each(failing, 3) { n -> println(n) }
+  println("not reached")
+}

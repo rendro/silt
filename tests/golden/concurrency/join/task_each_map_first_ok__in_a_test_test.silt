@@ -1,0 +1,34 @@
+-- cmd: test
+-- stderr-contains: PASS task_each_map_first_ok__in_a_test_test.silt::test_each_map_and_first_ok
+-- stderr-contains: FAIL task_each_map_first_ok__in_a_test_test.silt::test_a_failing_call_of_map_fails_the_test
+-- stderr-contains: panic: item failed
+-- stderr-contains: 2 tests: 1 passed, 1 failed
+-- stderr-not-contains: never joined
+-- exit: 1
+-- In a test, task.each, task.map and task.first_ok work as in main; a
+-- call of map's function that fails fails the test, once.
+import channel
+import list
+import task
+import test
+
+fn test_each_map_and_first_ok() {
+  let work = channel.new(3)
+  channel.send(work, 1)
+  channel.send(work, 2)
+  channel.close(work)
+  let out = channel.new(2)
+  task.each(work, 2) { n -> channel.send(out, n) }
+  test.assert_eq(list.sort([channel.receive(out), channel.receive(out)]), [Some(1), Some(2)])
+  test.assert_eq(task.map([1, 2, 3], 2) { x -> x + 1 }, [2, 3, 4])
+  test.assert_eq(task.first_ok([{ -> Err("a") }, { -> Ok(1) }]), Ok(1))
+}
+
+fn test_a_failing_call_of_map_fails_the_test() {
+  let _ = task.map([1, 2], 2) { x ->
+    match x {
+      2 -> panic("item failed")
+      _ -> x
+    }
+  }
+}

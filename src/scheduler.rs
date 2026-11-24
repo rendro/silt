@@ -82,7 +82,7 @@ use crate::vm::{HostIo, Vm, VmError};
 pub mod test_support;
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
-const MAX_TASKS: usize = 100_000;
+pub(crate) const MAX_TASKS: usize = 100_000;
 
 /// Stack size of every scheduler worker thread, in bytes.
 ///

@@ -1,0 +1,34 @@
+-- task.map runs at most at_once calls of the function at a time: each
+-- call holds a slot of a channel with room for three, and the first
+-- three wait until three have started.
+import channel
+import list
+import task
+
+fn main() {
+  let slots: Channel(Int) = channel.new(3)
+  let started: Channel(Int) = channel.new(12)
+  let go: Channel(Int) = channel.new(0)
+  let got = task.background(
+    [
+      { ->
+        list.each(1..3) { _ ->
+          let _ = channel.receive(started)
+        }
+        channel.close(go)
+      },
+    ],
+  ) { ->
+    task.map(1..12, 3) { x ->
+      match channel.try_send(slots, x) {
+        true -> ()
+        false -> panic("more than three calls at once")
+      }
+      channel.send(started, x)
+      let _ = channel.receive(go)
+      let _ = channel.receive(slots)
+      x * 2
+    }
+  }
+  println(got)
+}

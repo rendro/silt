@@ -1,0 +1,4 @@
+panic: 3 is too big
+task_map__a_guard_around_it_gives_the_error_and_its_location.silt:7:13
+["check  at task_map__a_guard_around_it_gives_the_error_and_its_location.silt:7:13", "closure in main  at task_map__a_guard_around_it_gives_the_error_and_its_location.silt:13:55", "closure in main  at task_map__a_guard_around_it_gives_the_error_and_its_location.silt:13:25", "main  at task_map__a_guard_around_it_gives_the_error_and_its_location.silt:13:9"]
+main goes on

@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: division by zero
+-- stderr-not-contains: failed too
+-- stderr-not-contains: never joined
+-- A stream.map stage that fails, read by four workers: one failure, one
+-- report with no note, however many workers read the end of the stream.
+import stream
+import task
+
+fn main() {
+  let failing = stream.from_range(1, 10) |> stream.map { x -> 10 / (x - 3) }
+  task.each(failing, 4) { _ -> () }
+  println("not reached")
+}

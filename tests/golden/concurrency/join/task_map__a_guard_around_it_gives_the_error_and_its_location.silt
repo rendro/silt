@@ -1,0 +1,22 @@
+-- A guard around task.map catches the failure of a call: the Err has
+-- the message, the place where it failed, and its trace.
+import task
+
+fn check(n: Int) -> Int {
+  match n > 2 {
+    true -> panic("{n} is too big")
+    false -> n
+  }
+}
+
+fn main() {
+  match task.guard({ -> task.map([1, 2, 3], 2) { n -> check(n) } }) {
+    Ok(values) -> println(values)
+    Err(e) -> {
+      println(e.message)
+      println(e.location)
+      println(e.trace)
+    }
+  }
+  println("main goes on")
+}

@@ -1,0 +1,25 @@
+-- task.each takes every value of a closed channel once, with one worker
+-- and with three, and returns when the channel is closed and empty.
+import channel
+import list
+import task
+
+fn values(n: Int) -> Channel(Int) {
+  let ch = channel.new(n)
+  list.each(1..n) { i -> channel.send(ch, i) }
+  channel.close(ch)
+  ch
+}
+
+fn seen(at_once: Int) -> Bool {
+  let out = channel.new(30)
+  task.each(values(30), at_once) { n -> channel.send(out, n) }
+  channel.close(out)
+  let got = list.sort(list.map(1..30) { _ -> channel.receive(out) })
+  got == list.map(1..30) { i -> Some(i) } && channel.receive(out) == None
+}
+
+fn main() {
+  println(seen(1))
+  println(seen(3))
+}

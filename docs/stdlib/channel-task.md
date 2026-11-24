@@ -372,9 +372,12 @@ fixed thread pool and run in parallel. They communicate through channels.
 | `background` | `(List(Fn() -> ()), Fn() -> a) -> a` | Run helper functions while the body runs, stop them when it returns, and give its value |
 | `cancel` | `(Handle(a)) -> ()` | Cancel a task, and wait until it has ended (see details below) |
 | `deadline` | `(Duration, Fn() -> a) -> Option(a)` | Run a function, and end it when the duration has passed: Some of its value, or None |
+| `each` | `(Channel(a), Int, Fn(a) -> ()) -> ()` | Call a function on each value of a channel, at most at_once calls at a time, until the channel is closed and empty |
+| `first_ok` | `(List(Fn() -> Result(a, e))) -> Result(a, List(e))` | Run functions at the same time, give the first Ok and stop the others, or every Err in order |
 | `guard` | `(Fn() -> a) -> Result(a, RuntimeError)` | Run a function, and give a runtime error it raises as an `Err` |
 | `join` | `(List(Fn() -> ())) -> ()` | Run functions at the same time, and return when all of them have returned |
 | `join_handle` | `(Handle(a)) -> a` | Wait for a task to complete |
+| `map` | `(List(a), Int, Fn(a) -> b) -> List(b)` | Call a function on each item of a list, at most at_once calls at a time, and give the values in the list's order |
 | `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
 
 
@@ -504,6 +507,120 @@ fn main() {
     ask(requests, answers, 3) + ask(requests, answers, 4)
   }
   println(total) -- 25
+}
+```
+
+## `task.each`
+
+```
+task.each(work: Channel(a), at_once: Int, f: Fn(a) -> ()) -> ()
+```
+
+Runs `at_once` workers, each a task, that take values from `work` and
+call `f` with each one, until the channel is closed and empty; then
+`task.each` returns. Every value is taken by one worker, once, and at
+most `at_once` calls of `f` run at a time. The channel is not closed by
+the call: whoever sends on it closes it when the work is all sent (a
+stream, such as one of `stream.from_fn`, closes when its feed returns).
+A stream that failed fails the worker that reads its end, as a receive
+would; when several workers read it, that is one failure, reported once.
+
+`at_once` must be 1 or more: `task.each(ch, 0, f)` is a runtime error
+(`task.each: at_once is 0, and must be 1 or more`). An `at_once` above
+the limit of 100,000 tasks that can run at once is refused the same way,
+before any worker starts.
+
+The workers are the pieces of a [`task.join`](#taskjoin) in every other
+way: a call of `f` that fails stops the other workers and its failure is
+raised in the caller; a stop from outside (the time of a `task.deadline`
+around the call, a cancel of the task that waits in it, an enclosing
+`task.join` or `task.background` that stops) stops every worker, and
+nothing of the call runs on after it. A stopped worker takes no further
+value. When no worker can go on and the program's own thread waits in
+the call, the deadlock report reads `task.each with no progress
+possible`, with a line for each worker that waits (``a worker of
+`task.each` at main.silt:9:3 waits to receive from <channel:0>``).
+
+```silt
+import channel
+import list
+import stream
+import string
+import task
+
+fn main() {
+  let pages = stream.from_fn { ch -> list.each(1..6) { i -> channel.send(ch, "page {i}") } }
+  let sizes = channel.new(6)
+  task.each(pages, 3) { page -> channel.send(sizes, string.length(page)) }
+  channel.close(sizes)
+  let total = list.fold(list.map(1..6) { _ -> channel.receive(sizes) }, 0) { acc, size ->
+    match size {
+      Some(n) -> acc + n
+      None -> acc
+    }
+  }
+  println(total) -- 36
+}
+```
+
+## `task.map`
+
+```
+task.map(xs: List(a), at_once: Int, f: Fn(a) -> b) -> List(b)
+```
+
+Calls `f` with each item of `xs`, at most `at_once` calls at a time
+(each worker a task that takes the next item when its call has
+returned), and gives the values in the order of `xs`, whichever call
+returned first. `task.map([], n, f)` is `[]`. `at_once` must be 1 or
+more, as for `task.each`; with more than there are items, one worker
+runs for each item.
+
+A call of `f` that fails stops the other workers and is raised in the
+caller, as in `task.join`, and a stop from outside stops every worker:
+a stopped worker starts no further call.
+
+```silt
+import task
+
+fn main() {
+  let squares = task.map([1, 2, 3, 4, 5], 2) { n -> n * n }
+  println(squares) -- [1, 4, 9, 16, 25]
+}
+```
+
+## `task.first_ok`
+
+```
+task.first_ok(works: List(Fn() -> Result(a, e))) -> Result(a, List(e))
+```
+
+Runs each function of `works` as a task, all at the same time. The first
+that gives `Ok(value)` wins: the others are stopped, and the call gives
+`Ok(value)` when they have ended. If every function gives an `Err`, the
+call gives `Err` of the list of their errors, in the order of `works`
+(not the order they ended in); `task.first_ok([])` is `Err([])`.
+
+A runtime error in a function is no `Err`: it stops the others and is
+raised in the caller, as in `task.join`, also when it comes while the
+others are stopped after an `Ok`. A stop from outside stops every
+function, and a deadlock reads `task.first_ok with no progress possible`.
+
+```silt
+import task
+
+fn lookup(replica: String, key: String) -> Result(Int, String) {
+  match replica {
+    "b" -> Ok(42)
+    _ -> Err("{replica}: no {key}")
+  }
+}
+
+fn main() {
+  let found = task.first_ok([{ -> lookup("a", "x") }, { -> lookup("b", "x") }])
+  println(found) -- Ok(42)
+  let missing = task.first_ok([{ -> lookup("a", "y") }, { -> lookup("c", "y") }])
+  println(missing) -- Err(["a: no y", "c: no y"])
 }
 ```
 

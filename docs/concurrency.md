@@ -534,6 +534,37 @@ channel: work that must be finished belongs in a `task.join`. The
 reference has the rules: [`task.join`](stdlib/channel-task.md#taskjoin),
 [`task.background`](stdlib/channel-task.md#taskbackground).
 
+Three calls are built the same way for the common shapes of such work.
+`task.each(ch, at_once, f)` runs `at_once` workers that call `f` with each
+value of the channel until it is closed and empty. `task.map(xs, at_once,
+f)` calls `f` with each item of the list, at most `at_once` at a time, and
+gives the values in the list's order. `task.first_ok(works)` runs the
+functions together, gives the first `Ok` and stops the rest, or, if every
+one gave `Err`, `Err` of the errors in the order of the list. Failures
+and stops are those of `task.join`.
+
+```silt
+import channel
+import list
+import task
+
+fn main() {
+  let jobs = channel.new(10)
+  list.each(1..4) { n -> channel.send(jobs, n) }
+  channel.close(jobs)
+  let done = channel.new(10)
+  task.each(jobs, 2) { n -> channel.send(done, n) }
+  let doubled = task.map([1, 2, 3], 2) { n -> n * 2 }
+  println(doubled) -- [2, 4, 6]
+  let first = task.first_ok([{ -> Err("no") }, { -> Ok(7) }])
+  println(first) -- Ok(7)
+}
+```
+
+The rules: [`task.each`](stdlib/channel-task.md#taskeach),
+[`task.map`](stdlib/channel-task.md#taskmap),
+[`task.first_ok`](stdlib/channel-task.md#taskfirst_ok).
+
 ## 4. Select
 
 ### `channel.select(ops)`

@@ -1,0 +1,29 @@
+-- When every piece gives Err, the call gives Err of the errors in the
+-- order of the pieces, whichever ended first. No pieces: Err([]).
+import channel
+import task
+
+fn main() {
+  let one = channel.new(1)
+  let two = channel.new(1)
+  let got = task.first_ok(
+    [
+      { ->
+        let _ = channel.receive(two)
+        Err("first")
+      },
+      { ->
+        let _ = channel.receive(one)
+        channel.send(two, 2)
+        Err("second")
+      },
+      { ->
+        channel.send(one, 1)
+        Err("third")
+      },
+    ],
+  )
+  println(got)
+  let none: List(Fn() -> Result(Int, String)) = []
+  println(task.first_ok(none))
+}

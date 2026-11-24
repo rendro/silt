@@ -1,0 +1,5 @@
+Silt REPL (type :quit to exit, :help for commands)
+[Some(10), Some(20)]
+[1, 4, 9]
+Ok("b")
+the session goes on
