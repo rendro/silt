@@ -1,0 +1,16 @@
+-- A `stream.from_fn` stream is a stream like any other: `stream.map`
+-- reads it, and `stream.merge` interleaves two of them.
+import channel
+import list
+import stream
+
+fn numbers(from, to) {
+  stream.from_fn { ch -> list.each(from..to) { i -> channel.send(ch, i) } }
+}
+
+fn main() {
+  let tens = numbers(1, 3) |> stream.map { x -> x * 10 }
+  println(stream.collect(tens))
+  let both = stream.merge([numbers(1, 3) |> stream.map { x -> x * 10 }, numbers(100, 102)])
+  println(both |> stream.collect |> list.sort)
+}

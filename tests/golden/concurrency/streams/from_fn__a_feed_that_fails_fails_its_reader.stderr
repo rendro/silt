@@ -1,0 +1,9 @@
+error[runtime]: panic: cannot read events-2026-11-09.log
+ --> from_fn__a_feed_that_fails_fails_its_reader.silt:19:19
+    |
+ 19 |         Err(_) -> panic("cannot read {path}")
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: cannot read events-2026-11-09.log
+
+call stack:
+  -> closure in lines_of  at from_fn__a_feed_that_fails_fails_its_reader.silt:19:19
+  -> closure in lines_of  at from_fn__a_feed_that_fails_fails_its_reader.silt:16:5

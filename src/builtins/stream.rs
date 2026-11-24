@@ -215,6 +215,10 @@ struct Pipe {
 struct Armed {
     stop: Stop,
     armed: AtomicBool,
+    /// The stop outlives the stage's own end: the stage ending by itself
+    /// does not disarm it (`stream.from_fn`, whose function may run on
+    /// after the stage has ended: its stop disarms itself).
+    lasts: bool,
 }
 
 impl Armed {
@@ -222,6 +226,15 @@ impl Armed {
         Armed {
             stop,
             armed: AtomicBool::new(true),
+            lasts: false,
+        }
+    }
+
+    /// A stop that the stage's own end leaves armed.
+    fn lasting(stop: Stop) -> Armed {
+        Armed {
+            lasts: true,
+            ..Armed::new(stop)
         }
     }
 
@@ -232,7 +245,9 @@ impl Armed {
     }
 
     fn disarm(&self) {
-        self.armed.store(false, Ordering::SeqCst);
+        if !self.lasts {
+            self.armed.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -295,7 +310,16 @@ impl Pipe {
         let wake = vm.scheduler().wake();
         if let Some(out) = self.output() {
             let stage = failure.as_ref().and(self.handle.clone());
-            out.close(Close { failure, stage }, wake);
+            let failed = failure.is_some();
+            // A failure that comes after the output was closed reaches no
+            // reader: the function of `stream.from_fn` closed its channel
+            // itself and failed after that.
+            if !out.close(Close { failure, stage }, wake)
+                && failed
+                && let Some(handle) = &self.handle
+            {
+                handle.fails_after_its_output_closed();
+            }
         }
         for (input, open) in self.inputs.iter().zip(&self.open) {
             if *open {
@@ -543,18 +567,21 @@ fn stage(
     output: Output,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
-    stage_on(vm, name, inputs, output, None, logic)
+    stage_on(vm, name, inputs, output, None, false, logic)
 }
 
 /// Start a stage, as [`stage`] does, that works on a connection: `stop`
 /// is run when the stage is stopped, whenever that is: in a read,
-/// between two, or before the stage has run at all.
+/// between two, or before the stage has run at all. A stage that
+/// `relays` only passes on what another task of the same call sends,
+/// which the deadlock report names instead (`stream.from_fn`).
 fn stage_on(
     vm: &mut Vm,
     name: &'static str,
     inputs: Vec<Arc<Channel>>,
     output: Output,
-    stop: Option<Stop>,
+    stop: Option<Arc<Armed>>,
+    relays: bool,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
     if vm.takes_nothing_new() {
@@ -575,12 +602,13 @@ fn stage_on(
         at: vm.place_here(),
         inputs: inputs.iter().map(|input| input.id()).collect(),
         output: out.id(),
+        relays,
     };
     let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(stage));
     // Whoever reads the output and stops reading stops the stage.
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = handle.clone();
-    let armed = stop.map(|stop| Arc::new(Armed::new(stop)));
+    let armed = stop;
     let shut = armed.clone();
     // (Weakly: the output does not keep the stage's inputs.)
     let feeds: Vec<Weak<Channel>> = inputs.iter().map(Arc::downgrade).collect();
@@ -816,8 +844,8 @@ fn reading(
     let read = Arc::new(Mutex::new(read));
     let mut failed = false;
     let mut items = std::collections::VecDeque::new();
-    let stop = on.stop.clone();
-    stage_on(vm, name, vec![], SOURCE, stop, move |got| {
+    let stop = on.stop.clone().map(|stop| Arc::new(Armed::new(stop)));
+    stage_on(vm, name, vec![], SOURCE, stop, false, move |got| {
         // The next item read, which ends the source if it is an error.
         fn emit(item: Value, failed: &mut bool) -> Next {
             *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
@@ -1315,6 +1343,91 @@ fn writing(
     })
 }
 
+/// `stream.from_fn(feed)`: a source whose values are those `feed` sends
+/// on the channel it is given. Two tasks make it, one stage to the
+/// program. `feed` runs in a task of its own, the feeder, and sends into
+/// a channel of [`AHEAD`] values: it works ahead of its reader as far as
+/// every source does. The source takes from that channel when its reader
+/// asks for a value, as a transform does ([`STOPS`]), and emits it on the
+/// output. (A channel of capacity 0 between them, with the source
+/// working ahead instead, cost three times the time a value: the two
+/// tasks met at every send.)
+///
+/// The program never has the output in `feed`'s hands: the source holds
+/// it weakly as every stage does, so a reader that lets it go stops the
+/// source. The source's stop stops the feeder first (`Armed`), before
+/// anything closes the channel `feed` sends into: a stop is never a send
+/// on a closed channel in `feed`. When `feed` returns, the feeder closes
+/// that channel, and the source closes the output after what is in it.
+/// A `feed` that closes the channel itself ends the stream so too, and
+/// runs on: the source's stop stays armed until the feeder has ended.
+/// When `feed` fails, the feeder closes it with the failure, as a stage
+/// that fails closes its output, and the source fails with it in turn.
+fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
+    const NAME: &str = "stream.from_fn";
+    if vm.takes_nothing_new() {
+        return Ok(vm.end_here(NAME));
+    }
+    // `feed` sends into it: it is the program's, and no stream's.
+    let into = Channel::new(vm.next_channel_id(), AHEAD);
+    let id = vm.next_task_id();
+    let owner = vm.scheduler().current_owner();
+    let feeder = Arc::new(TaskHandle::with_owner(id, owner).of_stage(StageOf {
+        name: NAME,
+        source: true,
+        at: vm.place_here(),
+        inputs: Vec::new().into(),
+        output: into.id(),
+        relays: false,
+    }));
+    let scheduler = Arc::downgrade(vm.scheduler());
+    let stopped = feeder.clone();
+    // Armed until the feeder has ended, not until the source has: a
+    // `feed` that closed its channel ends the stream, and runs on until
+    // it returns or nobody reads the stream any more. A feeder that
+    // returned is not cancelled: that would stop what it spawned and left
+    // running. One that failed is, as every stage that is stopped: that
+    // dismisses a failure nobody will read, but for one that came after
+    // `feed` closed its channel, which is `feed`'s own.
+    let stop: Stop = Arc::new(move || {
+        let returned = matches!(stopped.try_get(), Some(Ok(_)));
+        if let Some(scheduler) = scheduler.upgrade()
+            && !returned
+            && !stopped.failed_after_its_output_closed()
+        {
+            scheduler.cancel(&stopped);
+        }
+        true
+    });
+    let stop = Some(Arc::new(Armed::lasting(stop)));
+    let source = stage_on(vm, NAME, vec![into.clone()], STOPS, stop, true, |got| {
+        Ok(match got {
+            Got::Start | Got::Emitted => Next::Take(0),
+            Got::Value(_, value) => Next::Emit(value),
+            Got::End => Next::Done(Value::Unit),
+            _ => return unexpected(),
+        })
+    })?;
+    let mut given = Some(into.clone());
+    let mut pipe = Pipe::new(NAME, vec![], move |got| {
+        Ok(match (got, given.take()) {
+            (Got::Start, Some(into)) => Next::Call(feed.clone(), vec![Value::Channel(into)]),
+            (Got::Returned(_), None) => Next::Done(Value::Unit),
+            _ => return unexpected(),
+        })
+    });
+    pipe.out = Some(Arc::downgrade(&into));
+    pipe.handle = Some(feeder.clone());
+    std::mem::drop(into);
+    let mut child = vm.spawn_child();
+    child.spawned = true;
+    child.push_native_frame(Box::new(pipe));
+    vm.scheduler()
+        .submit(id, child, feeder)
+        .map_err(VmError::new)?;
+    Ok(source)
+}
+
 // ── The functions ──────────────────────────────────────────────────────
 
 builtins! {
@@ -1377,6 +1490,10 @@ builtins! {
                 _ => Next::Done(Value::Unit),
             })
         })
+    }
+
+    fn from_fn(vm, feed: &Value) -> Result<Step, VmError> {
+        fed_by_a_function(vm, feed.clone())
     }
 
     fn file_chunks(vm, path: &str, size: i64) -> Result<Step, VmError> {

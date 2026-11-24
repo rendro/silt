@@ -1,0 +1,23 @@
+-- repeat: 10
+-- stderr-not-contains: deadlock
+-- A reader that takes two values of a feed that sends without end, and
+-- reads no further, stops the feed: the program ends. (That no task is
+-- left is checked by the unit test
+-- `a_from_fn_stream_that_nobody_reads_leaves_no_task`.)
+import channel
+import stream
+
+fn counting() {
+  stream.from_fn { ch ->
+    loop i = 0 {
+      channel.send(ch, i)
+      loop(i + 1)
+    }
+  }
+}
+
+fn main() {
+  println(counting() |> stream.take(2) |> stream.collect)
+  println(counting() |> stream.first)
+  println("done")
+}

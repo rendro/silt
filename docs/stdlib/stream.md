@@ -35,6 +35,7 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | `from_range` | `(Int, Int) -> Channel(Int)` | Emit `lo..=hi` then close |
 | `repeat` | `(a) -> Channel(a)` | Infinite — pair with `take` |
 | `unfold` | `(a, Fn(a) -> Option((b, a))) -> Channel(b)` | Generator (closes on `None`) |
+| `from_fn` | `(Fn(Channel(a)) -> ()) -> Channel(a)` | Emit what `feed` sends on its channel; close when it returns |
 | `file_chunks` | `(String, Int) -> Channel(Result(Bytes, IoError))` | Read file in chunks |
 | `file_lines` | `(String) -> Channel(Result(String, IoError))` | Read file line-by-line |
 | `stdin_lines` | `() -> Channel(Result(String, IoError))` | Read stdin line-by-line |
@@ -327,6 +328,16 @@ fn main() {
   has raised is not reported again, a stage that nobody asked for a value
   computes nothing and so does not fail, and a pipeline that is cut short
   stays quiet.
+- **A source of your own is `stream.from_fn`.** `stream.from_fn(feed)`
+  runs `feed` as the stream's source: what it sends on the channel it is
+  given is the stream, which closes when `feed` returns (or closes the
+  channel itself). A runtime error
+  in `feed` fails the stream as a failing stage does, and when nobody
+  reads the stream any more (it is cut short, closed or left), `feed` is
+  stopped where it is. A task that you spawn to feed a `channel.new` does
+  none of this: its channel closes only when it closes it, a failure in it
+  is the task's own and leaves its reader waiting, and it runs on after
+  its reader has gone.
 - **A pipeline that is cut short stops.** When a stage or a sink reads no
   further (`take`, `take_while`, `first`, a failure downstream), the stage
   that feeds it is stopped, and so on up to the source. So
@@ -507,6 +518,34 @@ fn main() {
     }
   }
   println(stream.collect(powers)) -- [1, 2, 4, 8, 16, 32, 64]
+}
+```
+
+
+## `stream.from_fn`
+
+```
+stream.from_fn(feed: Fn(Channel(a)) -> ()) -> Channel(a)
+```
+
+A stream of what `feed` sends on the channel it is given. `feed` runs in a task of its own as the stream's source, and works ahead of its reader: a send of `feed` waits while 16 of its values wait to be read, or 32 under a sink that reads to the end (`collect`, `fold`, `channel.each`, ...). The stream closes when `feed` returns. A `feed` that closes its channel itself ends the stream there as returning does, and runs on until it returns or nobody reads the stream any more; a send after that close is a runtime error of `feed`'s own ("send on closed channel"), reported as such. A task that `feed` spawned and that still sends when `feed` returns fails the same way: wait for it in `feed` with `task.join` before `feed` returns. A runtime error in `feed` fails the stream as a failing stage does: the sink or the read that reads it raises the error. When nobody reads the stream any more (it is cut short, closed, or its last name is gone), `feed` is stopped, in a send or wherever it waits.
+
+```silt
+import channel
+import list
+import stream
+
+fn main() {
+  let squares = stream.from_fn { ch -> list.each([1, 2, 3]) { n -> channel.send(ch, n * n) } }
+  println(stream.collect(squares)) -- [1, 4, 9]
+  -- A feed without end, of which a reader takes two values.
+  let naturals = stream.from_fn { ch ->
+    loop n = 0 {
+      channel.send(ch, n)
+      loop(n + 1)
+    }
+  }
+  println(naturals |> stream.take(2) |> stream.collect) -- [0, 1]
 }
 ```
 

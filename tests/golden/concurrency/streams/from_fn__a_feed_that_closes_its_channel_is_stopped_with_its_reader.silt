@@ -1,0 +1,24 @@
+-- stderr-not-contains: error
+-- A feed that closes its channel ends the stream, as returning does, and
+-- runs on: here it waits without end. When the stream's last name goes,
+-- the feed is stopped, and the program ends.
+import channel
+import stream
+import time
+
+fn closes_and_waits() {
+  stream.from_fn { ch ->
+    channel.send(ch, 1)
+    channel.close(ch)
+    loop {
+      time.sleep(time.ms(5))
+      loop()
+    }
+  }
+}
+
+fn main() {
+  println(stream.collect(closes_and_waits()))
+  time.sleep(time.ms(20))
+  println("end")
+}

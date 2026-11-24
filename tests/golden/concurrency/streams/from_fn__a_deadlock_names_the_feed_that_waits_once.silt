@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread: channel receive with no counterparty
+-- stderr-not-contains: stage at
+-- A deadlock in which a feed waits names the feed's call once.
+import channel
+import stream
+
+fn main() {
+  let never = channel.new(0)
+  let s = stream.from_fn { ch ->
+    channel.send(ch, 1)
+    let _ = channel.receive(never)
+    channel.send(ch, 2)
+  }
+  println(stream.collect(s))
+}

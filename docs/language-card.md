@@ -865,6 +865,7 @@ stream.filter(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
 stream.first(ch: Channel(a)) -> Option(a)
 stream.flat_map(ch: Channel(a), f: Fn(a) -> List(b)) -> Channel(b)
 stream.fold(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> b
+stream.from_fn(feed: Fn(Channel(a)) -> ()) -> Channel(a)
 stream.from_list(xs: List(a)) -> Channel(a)
 stream.from_range(lo: Int, hi: Int) -> Channel(Int)
 stream.last(ch: Channel(a)) -> Option(a)
