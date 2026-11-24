@@ -6,22 +6,24 @@ fn main() {
   let done = channel.new(1)
 
   -- Worker processes until the work channel closes
-  let worker = task.spawn(fn() {
+  let worker = fn() {
     channel.each(work) { item ->
       println("processing: {item}")
     }
     -- channel.each returned, meaning work is closed
     channel.send(done, "shutdown complete")
-  })
+  }
 
   -- Send some work, then close
-  channel.send(work, "task-a")
-  channel.send(work, "task-b")
-  channel.send(work, "task-c")
-  channel.close(work)
+  let sender = fn() {
+    channel.send(work, "task-a")
+    channel.send(work, "task-b")
+    channel.send(work, "task-c")
+    channel.close(work)
+  }
 
   -- Wait for the worker to finish
-  task.join_handle(worker)
+  task.join([worker, sender])
   when let Some(status) = channel.receive(done) else { return }
   println(status)
 }

@@ -1,22 +1,27 @@
 -- verdict: same
 import channel
+import option
 import task
 import time
 fn main() {
   let ch = channel.new(0)
   println("try_send, no receiver: {channel.try_send(ch, 1)}")
-  let r = task.spawn(fn() {
-    match channel.receive(ch) { Some(v) -> v  _ -> 0 - 1 }
+  let got = channel.new(1)
+  let r = fn() {
+    channel.send(got, match channel.receive(ch) { Some(v) -> v  _ -> 0 - 1 })
+  }
+  task.background([r], fn() {
+    time.sleep(time.ms(100))
+    println("try_send, receiver parked: {channel.try_send(ch, 2)}")
+    println("second try_send (one receiver only): {channel.try_send(ch, 3)}")
+    println("receiver got {channel.receive(got) |> option.unwrap_or(0)}")
   })
-  time.sleep(time.ms(100))
-  println("try_send, receiver parked: {channel.try_send(ch, 2)}")
-  println("second try_send (one receiver only): {channel.try_send(ch, 3)}")
-  println("receiver got {task.join_handle(r)}")
   println("try_receive on rendezvous, no sender: {channel.try_receive(ch)}")
   -- parked sender + try_receive
-  let s = task.spawn(fn() { channel.send(ch, 42) })
-  time.sleep(time.ms(100))
-  println("try_receive with parked sender: {channel.try_receive(ch)}")
-  time.sleep(time.ms(100))
-  println("try_receive again: {channel.try_receive(ch)}")
+  task.background([fn() { channel.send(ch, 42) }], fn() {
+    time.sleep(time.ms(100))
+    println("try_receive with parked sender: {channel.try_receive(ch)}")
+    time.sleep(time.ms(100))
+    println("try_receive again: {channel.try_receive(ch)}")
+  })
 }

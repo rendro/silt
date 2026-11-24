@@ -32,10 +32,8 @@ fn main() {
   println(list.map([1, 2], n.incf))
   println(list.map([[1], [2, 3]], nums.suml))
   -- tasks
-  let t1 = task.spawn({ -> nums.addl(10, 20) })
-  let t2 = task.spawn({ -> n.suml([1.5, 1.5]) })
-  println(task.join_handle(t1))
-  println(task.join_handle(t2))
+  list.each(task.map([0], 1) { _ -> nums.addl(10, 20) }) { v -> println(v) }
+  list.each(task.map([0], 1) { _ -> n.suml([1.5, 1.5]) }) { v -> println(v) }
   -- record fields
   let o = nums.ops()
   println(o.add(4, 5))

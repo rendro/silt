@@ -489,14 +489,11 @@ fn main() {
 import task
 import list
 fn main() {
-  let tasks = list.map(1..11) { n ->
-    task.spawn({ -> n * n })
-  }
-  list.map(tasks) { t -> task.join_handle(t) }
+  task.map(1..11, 10) { n -> n * n }
   |> list.fold(0) { acc, x -> acc + x }
 }
         "#;
-        bench("task: spawn+join 10", source);
+        bench("task: map of 10", source);
     }
 
     {

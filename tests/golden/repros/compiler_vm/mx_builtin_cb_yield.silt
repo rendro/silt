@@ -9,12 +9,10 @@ fn pair(x, ys) { (x, ys) }
 fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
-  let feeder = task.spawn(fn() {
+  let feeder = fn() {
     time.sleep(time.ms(50))
     channel.send(a, 1)
     channel.send(b, 2)
-  })
-  let h1 = task.spawn(fn() { pair("x", list.map([a, b], channel.receive)) })
-  println(task.join_handle(h1))
-  task.join_handle(feeder)
+  }
+  task.join([feeder, fn() { println(pair("x", list.map([a, b], channel.receive))) }])
 }

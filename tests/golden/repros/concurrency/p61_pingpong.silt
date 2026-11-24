@@ -1,6 +1,7 @@
 -- verdict: same
 import channel
 import list
+import option
 import task
 
 fn player(inp, out, rounds) {
@@ -20,20 +21,25 @@ fn player(inp, out, rounds) {
 
 -- 1000 pairs (2000 tasks) ping-ponging 20 rounds each over rendezvous channels
 fn main() {
-  let pairs = 1..1000 |> list.map { i ->
+  let finals = channel.new(1000)
+  let pairs = 1..1000 |> list.flat_map { i ->
     let a = channel.new(0)
     let b = channel.new(0)
-    let p1 = task.spawn(fn() { player(a, b, 20) })
-    let p2 = task.spawn(fn() {
+    let p1 = fn() {
+      let _ = player(a, b, 20)
+    }
+    let p2 = fn() {
       channel.send(a, 0)
-      player(b, a, 19)
-      match channel.receive(b) {
+      let _ = player(b, a, 19)
+      channel.send(finals, match channel.receive(b) {
         Some(v) -> v
         None -> 0 - 1
-      }
-    })
-    p2
+      })
+    }
+    [p1, p2]
   }
-  let total = pairs |> list.fold(0) { acc, h -> acc + task.join_handle(h) }
+  task.join(pairs)
+  channel.close(finals)
+  let total = 1..1000 |> list.fold(0) { acc, _ -> acc + (channel.receive(finals) |> option.unwrap_or(0)) }
   println("sum of final tokens: {total} (expected {1000 * 39})")
 }

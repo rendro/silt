@@ -1,14 +1,19 @@
 -- verdict: same
+import channel
 import list
+import option
 import task
 import time
 
 fn main() {
-  let worker = task.spawn { ->
-    let hs = [1, 2, 3] |> list.map { i -> task.spawn { -> 
+  let worker = task.map([0], 1) { _ ->
+    let out = channel.new(3)
+    let groups = [1, 2, 3] |> list.map { i -> [{ ->
       time.sleep(time.ms(20 * i))
-      i * 10 } }
-    [0] |> list.concat(list.map(hs, task.join_handle))
+      channel.send(out, i * 10) }] }
+    let _ = list.map(groups, task.join)
+    channel.close(out)
+    [0] |> list.concat(list.map([1, 2, 3]) { _ -> channel.receive(out) |> option.unwrap_or(0) })
   }
-  println(task.join_handle(worker))
+  println(worker)
 }

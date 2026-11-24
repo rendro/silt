@@ -19,11 +19,13 @@ fn recv_n(ch, n) {
 
 fn main() {
   let ch = channel.new(3)
-  let hs = [1, 2, 3, 4, 5, 6, 7, 8] |> list.map { i ->
-    task.spawn(fn() { channel.send(ch, i) })
+  let senders = [1, 2, 3, 4, 5, 6, 7, 8] |> list.map { i ->
+    fn() { channel.send(ch, i) }
   }
-  time.sleep(time.ms(200))
-  let r = task.spawn(fn() { recv_n(ch, 8) })
-  task.join_handle(r)
+  let receiver = fn() {
+    time.sleep(time.ms(200))
+    recv_n(ch, 8)
+  }
+  task.join(list.append(senders, receiver))
   println("done")
 }

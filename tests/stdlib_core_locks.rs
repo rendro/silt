@@ -185,23 +185,22 @@ import host
 }
 
 // ════════════════════════════════════════════════════════════════════
-// env.set from a spawned task — src/builtins/io.rs (`env::set`)
+// env.set from a task — src/builtins/io.rs (`env::set`)
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_env_set_from_spawned_task_rejected() {
+fn test_env_set_from_a_task_rejected() {
     // Locks src/builtins/io.rs (`env::set`): env.set refuses to run from
-    // a spawned task, whose start was the program's first. The error
-    // from the task propagates through task.join_handle.
+    // a task, whose start was the program's first. The error from the
+    // task is raised by the task.join it is a piece of.
     let err = run_err(
         r#"
 import env
 import task
 fn main() {
-    let h = task.spawn({ ->
+    task.join([{ ->
         env.set("SILT_LOCK_TEST_SPAWN", "nope")
-    })
-    task.join_handle(h)
+    }])
 }
     "#,
     );

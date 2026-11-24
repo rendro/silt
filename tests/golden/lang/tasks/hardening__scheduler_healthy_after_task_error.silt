@@ -1,16 +1,14 @@
--- exit: 1
 -- repeat: 100
--- stderr-contains: failed and was never joined: division by zero
+import list
 import task
 fn main() {
   -- First task fails
-  let h1 = task.spawn({ ->
-    1 / 0
-  })
+  let _ = task.guard { ->
+    task.join([{ ->
+      let _ = 1 / 0
+    }])
+  }
 
   -- Second task should still work
-  let h2 = task.spawn({ ->
-    42
-  })
-  println(task.join_handle(h2))
+  list.each(task.map([0], 1) { _ -> 42 }) { v -> println(v) }
 }

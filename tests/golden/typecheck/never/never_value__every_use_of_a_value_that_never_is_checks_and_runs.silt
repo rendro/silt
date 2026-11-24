@@ -3,6 +3,7 @@
 -- call of its field, an update of it, its `?`, what a pattern binds of
 -- it and leaves undecided, one step after another and through a `let`. None
 -- of these steps runs; each checks and compiles, and the program runs.
+import list
 import task
 
 type A { x: Int, y: Int }
@@ -104,8 +105,8 @@ fn match_binds() -> Int {
 fn in_a_closure_and_a_task() -> Int {
   let v = boom()
   let c = { -> v.x.k }
-  let h = task.spawn({ -> v.x.y + 1 })
-  c() + task.join_handle(h)
+  let in_a_task = task.map([0], 1) { _ -> v.x.y + 1 }
+  c() + list.sum(in_a_task)
 }
 
 fn main() {

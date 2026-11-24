@@ -1,9 +1,10 @@
 -- verdict: same
+import list
 import task
 import io
 fn sneaky() -> Int !{} {
-  let h = task.spawn(fn() { println("spawned io") 1 })
-  task.join_handle(h)
+  let h = task.map([0], 1) { _ -> println("spawned io") 1 }
+  list.length(h)
 }
 fn main() !{} {
   let _ = sneaky()

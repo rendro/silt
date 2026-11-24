@@ -1,4 +1,4 @@
-//! A task that waits for a line of input and is cancelled does not
+//! A task that waits for a line of input and is stopped does not
 //! keep the program alive: the read cannot be interrupted, but nobody
 //! waits for it any more, so it is not pending for the program.
 //!
@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[test]
-fn a_cancelled_reader_of_stdin_does_not_keep_the_program() {
+fn a_stopped_reader_of_stdin_does_not_keep_the_program() {
     let dir = std::env::temp_dir().join(format!("silt_stage7_stdin_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.silt");
@@ -20,10 +20,8 @@ import task
 import time
 
 fn main() {
-  let reader = task.spawn { -> io.read_line() }
-  time.sleep(time.ms(20))
-  task.cancel(reader)
-  println("cancelled")
+  let _ = task.deadline(time.ms(20), { -> io.read_line() })
+  println("stopped")
 }
 "#,
     )
@@ -62,6 +60,6 @@ fn main() {
         .unwrap()
         .read_to_string(&mut out)
         .unwrap();
-    assert_eq!(out, "cancelled\n");
+    assert_eq!(out, "stopped\n");
     assert!(status.success(), "{status:?}");
 }

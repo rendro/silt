@@ -14,13 +14,9 @@ fn inner(c, ys) {
 
 fn main() {
   let a = channel.new(1)
-  let sender = task.spawn { ->
+  let sender = { ->
     time.sleep(time.ms(50))
     channel.send(a, 1)
   }
-  let worker = task.spawn { ->
-    outer(inner, list.map([a], channel.receive))
-  }
-  println(task.join_handle(worker))
-  task.join_handle(sender)
+  task.join([sender, { -> println(outer(inner, list.map([a], channel.receive))) }])
 }

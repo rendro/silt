@@ -1,7 +1,7 @@
 error[parse]: expected a newline before '{': each statement must start on its own line
  --> statement_newline__a_block_behind_a_name_rejected.silt:14:22
     |
- 14 |   let _ = task.spawn { work() }
+ 14 |   let _ = task.guard { work() }
     |                      ^ expected a newline before '{': each statement must start on its own line
   = help: a closure without parameters is written `{ -> ... }`; a block of its own starts on a new line
 

@@ -1,16 +1,19 @@
 -- io.read_file bound to a variable and called indirectly (Op::Call, not
--- Op::CallBuiltin) inside a spawned task survives the yield/resume
+-- Op::CallBuiltin) inside a task survives the yield/resume
 -- cycle. The case reads its own source.
 -- hello from indirect
 import io
+import list
 import string
 import task
 
 fn main() {
   let read = io.read_file
-  let h = task.spawn({ -> read("indirect_builtin_call__indirect_read_file_in_spawned_task.silt") })
-  match task.join_handle(h) {
-    Ok(s) -> println(string.contains(s, "-- hello from indirect"))
-    Err(e) -> println("{e}")
+  let results = task.map([0], 1) { _ -> read("indirect_builtin_call__indirect_read_file_in_spawned_task.silt") }
+  list.each(results) { r ->
+    match r {
+      Ok(s) -> println(string.contains(s, "-- hello from indirect"))
+      Err(e) -> println("{e}")
+    }
   }
 }

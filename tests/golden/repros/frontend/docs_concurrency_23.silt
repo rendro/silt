@@ -4,21 +4,20 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let producer = task.spawn(fn() {
+  let producer = fn() {
     channel.send(ch, "hello")
     channel.send(ch, "from")
     channel.send(ch, "silt")
     channel.close(ch)
-  })
+  }
 
-  let consumer = task.spawn(fn() {
+  let consumer = fn() {
     channel.each(ch) { msg ->
       println(msg)
     }
-  })
+  }
 
-  task.join_handle(producer)
-  task.join_handle(consumer)
+  task.join([producer, consumer])
 }
 -- prints:
 --   hello

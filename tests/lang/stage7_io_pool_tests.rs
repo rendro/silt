@@ -96,8 +96,8 @@ fn temp_file(name: &str, text: &str) -> String {
 /// Eight tasks each wait for bytes from a peer that sends none. A
 /// file read does not wait for any of them: it has a thread of its
 /// own. (With a pool of at most four threads it waited for ever.)
-/// When the tasks are cancelled their reads end, and so do the
-/// threads.
+/// When the tasks are stopped (they are helpers of a
+/// `task.background`) their reads end, and so do the threads.
 #[test]
 fn idle_readers_do_not_hold_up_a_file_read() {
     let (listener, addr) = listener();
@@ -115,19 +115,20 @@ import time
 fn main() {{
   let connected = channel.new(0)
   let readers = 1..8 |> list.map {{ _ ->
-    task.spawn {{ ->
+    {{ ->
       when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
       channel.send(connected, ())
-      tcp.read(conn, 16)
+      let _ = tcp.read(conn, 16)
     }}
   }}
-  1..8 |> list.each {{ _ ->
-    let _ = channel.receive(connected)
+  task.background(readers) {{ ->
+    1..8 |> list.each {{ _ ->
+      let _ = channel.receive(connected)
+    }}
+    time.sleep(time.ms(100))
+    when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}
+    println(text)
   }}
-  time.sleep(time.ms(100))
-  when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}
-  println(text)
-  let _ = readers |> list.each {{ h -> task.cancel(h) }}
 }}
 "#
     );
@@ -156,8 +157,7 @@ import tcp
 import time
 
 fn main() {{
-  let readers = 1..8 |> list.map {{ _ ->
-    task.spawn {{ ->
+  let lines = task.map(1..8, 8) {{ _ ->
       when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
       let first = match task.deadline(time.ms(300), {{ -> tcp.read(conn, 16) }}) {{
         None -> "timed out"
@@ -168,9 +168,8 @@ fn main() {{
         _ -> "something else"
       }}
       "{{first}}, then {{second}}"
-    }}
   }}
-  readers |> list.each {{ h -> println(task.join_handle(h)) }}
+  lines |> list.each {{ line -> println(line) }}
   when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}
   println(text)
 }}
@@ -217,14 +216,18 @@ import time
 fn main() {{
   when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
   let reading = channel.new(0)
-  let reader = task.spawn {{ ->
+  let answers = channel.new(1)
+  let reader = {{ ->
     channel.send(reading, ())
-    tcp.read_exact(conn, 4)
+    channel.send(answers, tcp.read_exact(conn, 4))
   }}
-  let _ = channel.receive(reading)
-  time.sleep(time.ms(100))
-  when let Ok(_) = tcp.write(conn, bytes.from_string("ping")) else {{ panic("cannot write") }}
-  when let Ok(answer) = task.join_handle(reader) else {{ panic("cannot read") }}
+  let writer = {{ ->
+    let _ = channel.receive(reading)
+    time.sleep(time.ms(100))
+    when let Ok(_) = tcp.write(conn, bytes.from_string("ping")) else {{ panic("cannot write") }}
+  }}
+  task.join([reader, writer])
+  when let Some(Ok(answer)) = channel.receive(answers) else {{ panic("cannot read") }}
   println(bytes.length(answer))
   tcp.close(conn)
 }}
@@ -236,11 +239,11 @@ fn main() {{
         .expect("the peer got the ping and sent the pong");
 }
 
-/// A task that waits in `tcp.accept` is cancelled, a thousand times in
-/// a row. Each accept gives up, and its thread ends: the number of
+/// A task that waits in `tcp.accept` is stopped (a helper of a
+/// `task.background` whose body returns), a thousand times in a row. Each accept gives up, and its thread ends: the number of
 /// threads stays level.
 #[test]
-fn cancelled_accepts_leave_no_thread() {
+fn stopped_accepts_leave_no_thread() {
     let source = r#"
 import channel
 import task
@@ -250,12 +253,13 @@ fn go(listener, started, n) {
   match n {
     0 -> ()
     _ -> {
-      let acceptor = task.spawn { ->
+      let acceptor = { ->
         channel.send(started, ())
-        tcp.accept(listener)
+        let _ = tcp.accept(listener)
       }
-      let _ = channel.receive(started)
-      task.cancel(acceptor)
+      task.background([acceptor]) { ->
+        let _ = channel.receive(started)
+      }
       go(listener, started, n - 1)
     }
   }
@@ -312,45 +316,56 @@ fn tick() {
 
 fn main() {
   when let Ok(other) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let _ = task.spawn(tick)
-  println("waiting")
-  let _ = tcp.accept(other)
+  task.background([{ -> tick() }]) { ->
+    println("waiting")
+    let _ = tcp.accept(other)
+  }
 }
 "#;
     crate::quiet::assert_never_woken(wakes, Duration::from_secs(3));
 }
 
 /// Two tasks wait in `tcp.accept` on one listener; the first is
-/// cancelled. The connection that wakes it reaches it and no other:
-/// the second still gets the client that connects afterwards, and
-/// only that one.
+/// stopped (a helper of a `task.background` whose body returns once
+/// the second waits too). The connection that wakes it reaches it and
+/// no other: the second still gets the client that connects
+/// afterwards, and only that one.
 #[test]
 fn giving_up_one_accept_leaves_the_others() {
     let source = r#"
 import bytes
 import channel
+import option
 import task
 import tcp
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let started = channel.new(0)
-  let first = task.spawn { ->
+  let gate = channel.new(0)
+  let got = channel.new(1)
+  let first = { ->
     channel.send(started, ())
-    tcp.accept(listener)
+    let _ = tcp.accept(listener)
   }
-  let _ = channel.receive(started)
-  let second = task.spawn { ->
+  let second = { ->
+    let _ = channel.receive(gate)
     channel.send(started, ())
     when let Ok(conn) = tcp.accept(listener) else { panic("the second accept failed") }
     when let Ok(greeting) = tcp.read_exact(conn, 5) else { panic("cannot read") }
-    bytes.length(greeting)
+    channel.send(got, bytes.length(greeting))
   }
-  let _ = channel.receive(started)
-  task.cancel(first)
-  when let Ok(client) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else { panic("cannot connect") }
-  when let Ok(_) = tcp.write(client, bytes.from_string("hello")) else { panic("cannot write") }
-  println(task.join_handle(second))
+  let driver = { ->
+    task.background([first]) { ->
+      let _ = channel.receive(started)
+      channel.send(gate, ())
+      let _ = channel.receive(started)
+    }
+    when let Ok(client) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else { panic("cannot connect") }
+    when let Ok(_) = tcp.write(client, bytes.from_string("hello")) else { panic("cannot write") }
+  }
+  task.join([second, driver])
+  println(channel.receive(got) |> option.unwrap_or(0))
 }
 "#;
     let (_vm, out) = run(source).expect("the program ended");
@@ -358,9 +373,10 @@ fn main() {
 }
 
 /// An accept is given up in the same instant as a client connects, a
-/// thousand times. The client's connection is never lost: if the
-/// accept that was given up had it already and its task got it, that
-/// task hands it on; if the accept had it and its task was gone, or
+/// thousand times (the accept is a helper of a `task.background` whose
+/// body returns as it lets the client go). The client's connection is
+/// never lost: if the accept that was given up had it already and its
+/// task got it, that task hands it on; if the accept had it and its task was gone, or
 /// was given up with it in hand, the next accept gets it. Either way
 /// the client is served.
 #[test]
@@ -368,11 +384,12 @@ fn a_client_is_never_lost_to_an_accept_that_was_given_up() {
     let source = r#"
 import bytes
 import channel
+import option
 import task
 import tcp
 
 fn acceptor(listener, started, accepted) {
-  task.spawn { ->
+  { ->
     channel.send(started, ())
     match tcp.accept(listener) {
       Ok(conn) -> channel.send(accepted, conn)
@@ -386,24 +403,35 @@ fn round(listener, port, started, n, served) {
     0 -> served
     _ -> {
       let accepted = channel.new(2)
-      let given_up = acceptor(listener, started, accepted)
-      let _ = channel.receive(started)
-      let client = task.spawn { ->
+      let go = channel.new(0)
+      let echoed = channel.new(1)
+      let counted = channel.new(1)
+      let client = { ->
+        let _ = channel.receive(go)
         when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("the client cannot connect") }
         when let Ok(_) = tcp.write(conn, bytes.from_string("x")) else { panic("the client cannot write") }
         when let Ok(echo) = tcp.read_exact(conn, 1) else { panic("the client was not served") }
         tcp.close(conn)
-        bytes.length(echo)
+        channel.send(echoed, bytes.length(echo))
       }
-      task.cancel(given_up)
-      let next = acceptor(listener, started, accepted)
-      let _ = channel.receive(started)
-      when let Some(conn) = channel.receive(accepted) else { panic("no connection") }
-      when let Ok(byte) = tcp.read_exact(conn, 1) else { panic("the server cannot read") }
-      when let Ok(_) = tcp.write(conn, byte) else { panic("the server cannot write") }
-      let got = task.join_handle(client)
-      tcp.close(conn)
-      task.cancel(next)
+      let server = { ->
+        -- The accept given up as the client sets out.
+        task.background([acceptor(listener, started, accepted)]) { ->
+          let _ = channel.receive(started)
+          channel.send(go, ())
+        }
+        task.background([acceptor(listener, started, accepted)]) { ->
+          let _ = channel.receive(started)
+          when let Some(conn) = channel.receive(accepted) else { panic("no connection") }
+          when let Ok(byte) = tcp.read_exact(conn, 1) else { panic("the server cannot read") }
+          when let Ok(_) = tcp.write(conn, byte) else { panic("the server cannot write") }
+          let got = channel.receive(echoed) |> option.unwrap_or(0)
+          tcp.close(conn)
+          channel.send(counted, got)
+        }
+      }
+      task.join([client, server])
+      let got = channel.receive(counted) |> option.unwrap_or(0)
       round(listener, port, started, n - 1, served + got)
     }
   }
@@ -472,10 +500,9 @@ fn main() {{
     drop(vm);
 }
 
-/// `main` fails while a task waits in `tcp.read`. Nothing is waited
-/// for (`stop_tasks`): the task is dropped, its connection is shut
-/// down, and the thread of the read ends although the peer never says
-/// a word.
+/// The body of a `task.background` fails while its helper waits in
+/// `tcp.read`: the helper is stopped, its connection is shut down, and
+/// the thread of the read ends although the peer never says a word.
 #[test]
 fn a_read_dropped_with_its_task_leaves_no_thread() {
     let (listener, addr) = listener();
@@ -488,13 +515,15 @@ import tcp
 
 fn main() {{
   let connected = channel.new(0)
-  let _reader = task.spawn {{ ->
+  let reader = {{ ->
     when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
     channel.send(connected, ())
-    tcp.read(conn, 16)
+    let _ = tcp.read(conn, 16)
   }}
-  let _ = channel.receive(connected)
-  panic("main gives up")
+  task.background([reader]) {{ ->
+    let _ = channel.receive(connected)
+    panic("main gives up")
+  }}
 }}
 "#
     );

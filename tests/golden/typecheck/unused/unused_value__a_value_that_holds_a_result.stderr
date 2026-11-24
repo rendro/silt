@@ -1,29 +1,23 @@
 error[type]: this `List(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
- --> unused_value__a_value_that_holds_a_result.silt:14:3
+ --> unused_value__a_value_that_holds_a_result.silt:13:3
     |
- 14 |   [risky()]
+ 13 |   [risky()]
     |   ^^^^^^^^^ here
 
 error[type]: this `Option(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
- --> unused_value__a_value_that_holds_a_result.silt:15:3
+ --> unused_value__a_value_that_holds_a_result.silt:14:3
     |
- 15 |   Some(risky())
+ 14 |   Some(risky())
     |   ^^^^^^^^^^^^^ here
 
 error[type]: this `(Result(Int, String), Int)` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
- --> unused_value__a_value_that_holds_a_result.silt:16:3
+ --> unused_value__a_value_that_holds_a_result.silt:15:3
     |
- 16 |   (risky(), 1)
+ 15 |   (risky(), 1)
     |   ^^^^^^^^^^^^ here
 
-error[type]: this `task.Handle(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
- --> unused_value__a_value_that_holds_a_result.silt:17:3
-    |
- 17 |   task.spawn { -> risky() }
-    |   ^^^^^^^^^^^^^^^^^^^^^^^^^ here
-
 error[type]: this `Fn() -> Result(Int, String)` value is unused; write `let _ = ...` to discard it
- --> unused_value__a_value_that_holds_a_result.silt:18:3
+ --> unused_value__a_value_that_holds_a_result.silt:16:3
     |
- 18 |   risky
+ 16 |   risky
     |   ^^^^^ this `Fn() -> Result(Int, String)` value is unused; write `let _ = ...` to discard it

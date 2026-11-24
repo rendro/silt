@@ -1,14 +1,17 @@
--- io.write_file bound to a variable and called indirectly inside a spawned
+-- io.write_file bound to a variable and called indirectly inside a
 -- task; the main thread then reads the file back.
 import io
+import list
 import task
 
 fn main() {
   let write = io.write_file
-  let h = task.spawn({ -> write("indirect_write.txt", "written indirectly") })
-  match task.join_handle(h) {
-    Ok(_) -> println("ok")
-    Err(e) -> println("{e}")
+  let results = task.map([0], 1) { _ -> write("indirect_write.txt", "written indirectly") }
+  list.each(results) { r ->
+    match r {
+      Ok(_) -> println("ok")
+      Err(e) -> println("{e}")
+    }
   }
   match io.read_file("indirect_write.txt") {
     Ok(s) -> println(s)

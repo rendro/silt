@@ -6,31 +6,29 @@ fn main() {
   let doubled = channel.new(10)
 
   -- Stage 1: produce raw values
-  let s1 = task.spawn(fn() {
+  let s1 = fn() {
     channel.send(raw, 1)
     channel.send(raw, 2)
     channel.send(raw, 3)
     channel.close(raw)
-  })
+  }
 
   -- Stage 2: double each value
-  let s2 = task.spawn(fn() {
+  let s2 = fn() {
     channel.each(raw) { n ->
       channel.send(doubled, n * 2)
     }
     channel.close(doubled)
-  })
+  }
 
   -- Stage 3: consume the doubled values
-  let s3 = task.spawn(fn() {
+  let s3 = fn() {
     channel.each(doubled) { n ->
       println("stage 3 got: {n}")
     }
-  })
+  }
 
-  task.join_handle(s1)
-  task.join_handle(s2)
-  task.join_handle(s3)
+  task.join([s1, s2, s3])
 }
 -- prints:
 --   stage 3 got: 2

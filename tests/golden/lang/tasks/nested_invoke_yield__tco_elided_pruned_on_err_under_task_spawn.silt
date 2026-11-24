@@ -13,8 +13,7 @@ fn helper(x) {
 }
 fn wrapper(x) { helper(x) }
 fn main() {
-  let h = task.spawn({ ->
-    list.map([1, 2, 0], wrapper)
-  })
-  let _ = task.join_handle(h)
+  task.join([{ ->
+    let _ = list.map([1, 2, 0], wrapper)
+  }])
 }

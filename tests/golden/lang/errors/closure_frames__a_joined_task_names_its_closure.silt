@@ -1,6 +1,6 @@
 -- exit: 1
--- The failure of a joined task has a call stack: the function that
--- failed, and the closure the task was spawned with.
+-- The failure of a task has a call stack: the function that failed,
+-- and the closure the task was started with.
 import task
 
 fn work(n) {
@@ -8,6 +8,5 @@ fn work(n) {
 }
 
 fn main() {
-  let h = task.spawn({ -> work(1) + 1 })
-  println(task.join_handle(h))
+  println(task.map([1], 1) { n -> work(n) + 1 })
 }

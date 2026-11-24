@@ -6,9 +6,12 @@ import time
 
 fn main() {
   let ch = channel.new(1)
-  let hs = 1..5000 |> list.map { i -> task.spawn(fn() { channel.receive(ch) }) }
-  time.sleep(time.ms(500))
-  println("READY")
-  time.sleep(time.ms(2500))
-  println(list.length(hs))
+  let parked = 1..5000 |> list.map { i -> fn() { let _ = channel.receive(ch) } }
+  let n = task.background(parked, fn() {
+    time.sleep(time.ms(500))
+    println("READY")
+    time.sleep(time.ms(2500))
+    list.length(parked)
+  })
+  println(n)
 }

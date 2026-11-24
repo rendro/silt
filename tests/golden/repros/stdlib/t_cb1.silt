@@ -1,18 +1,18 @@
 -- verdict: same
 import channel
 import list
-import task
+import stream
 import time
 
 -- builtin passed directly as callback; it must block (yield)
 fn main() {
-  let a = channel.new(1)
-  let b = channel.new(1)
-  let sender = task.spawn { ->
+  let a = stream.from_fn { ch ->
     time.sleep(time.ms(50))
-    channel.send(a, 1)
-    time.sleep(time.ms(50))
-    channel.send(b, 2)
+    channel.send(ch, 1)
+  }
+  let b = stream.from_fn { ch ->
+    time.sleep(time.ms(100))
+    channel.send(ch, 2)
   }
   let marker = "marker"
   let r = list.map([a, b], channel.receive)
@@ -20,5 +20,4 @@ fn main() {
   println(marker)
   println(r)
   println(after)
-  task.join_handle(sender)
 }

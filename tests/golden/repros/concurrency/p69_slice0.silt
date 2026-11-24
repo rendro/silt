@@ -1,5 +1,5 @@
 -- verdict: same
 import task
 fn main() {
-  println(task.join_handle(task.spawn(fn() { 1 + 1 })))
+  println(task.map([0], 1, fn(_) { 1 + 1 }))
 }

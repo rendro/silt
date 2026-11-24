@@ -4,14 +4,13 @@ import io
 import time
 
 fn main() {
-  let h = task.spawn({ ->
-    task.deadline(time.seconds(10), { ->
+  task.join([{ ->
+    let _ = task.deadline(time.seconds(10), { ->
       task.deadline(time.seconds(10), { ->
         println("enter-inner")
         let _ = io.read_file("data.txt")
         println("exit-inner")
       })
     })
-  })
-  let _ = task.join_handle(h)
+  }])
 }

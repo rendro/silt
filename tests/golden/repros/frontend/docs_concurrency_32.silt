@@ -2,64 +2,35 @@
 import channel
 import task
 
-type Outcome { Finished, Crashed(String) }
-
 fn do_job(id, job) {
-  when job != "poison" else { return Err("worker {id} hit poison pill") }
+  when job != "poison" else { panic("worker {id} hit poison pill") }
   println("worker {id} handled {job}")
-  Ok(())
 }
 
-fn worker_body(id, jobs, outcomes) {
-  channel.each(jobs) { job ->
-    match do_job(id, job) {
-      Ok(_) -> ()
-      Err(msg) -> {
-        channel.send(outcomes, (id, Crashed(msg)))
-        return
-      }
-    }
-  }
-  channel.send(outcomes, (id, Finished))
+fn worker_body(id, jobs) {
+  channel.each(jobs) { job -> do_job(id, job) }
 }
 
-fn spawn_worker(id, jobs, outcomes) {
-  task.spawn(fn() { worker_body(id, jobs, outcomes) })
-}
-
-fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
-  when outstanding > 0 else { return }
-  when let Some((id, outcome)) = channel.receive(outcomes) else { return }
-  match outcome {
-    Finished -> supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
-    Crashed(msg) -> {
-      println("worker {id} failed: {msg}")
-      when remaining_restarts > 0 else {
-        -- restart budget exhausted: drop this worker without respawning
-        supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
-        return
-      }
-      spawn_worker(id, jobs, outcomes)
-      -- restart replaces the crashed worker 1-for-1: outstanding unchanged
-      supervise(jobs, outcomes, outstanding, remaining_restarts - 1)
+-- A worker that fails is started again, up to a budget of restarts.
+fn supervise(id, jobs, remaining_restarts) {
+  match task.guard(fn() { worker_body(id, jobs) }) {
+    Ok(_) -> ()
+    Err(e) -> {
+      println("worker {id} failed: {e.message}")
+      when remaining_restarts > 0 else { return }
+      supervise(id, jobs, remaining_restarts - 1)
     }
   }
 }
 
 fn main() {
   let jobs = channel.new(10)
-  let outcomes = channel.new(10)
 
-  spawn_worker(1, jobs, outcomes)
-  spawn_worker(2, jobs, outcomes)
+  let sender = fn() {
+    channel.send(jobs, "a")
+    channel.send(jobs, "b")
+    channel.close(jobs)
+  }
 
-  -- Two workers are spawned, so two outcomes are expected before the
-  -- supervisor returns. Each restart-on-Crashed adds one more outcome
-  -- to wait for; the bounded restart budget caps that growth.
-  let sup = task.spawn(fn() { supervise(jobs, outcomes, 2, 3) })
-
-  channel.send(jobs, "a")
-  channel.send(jobs, "b")
-  channel.close(jobs)
-  task.join_handle(sup)
+  task.join([fn() { supervise(1, jobs, 3) }, fn() { supervise(2, jobs, 3) }, sender])
 }

@@ -5,8 +5,8 @@ import task
 import result
 
 fn main() {
-  let worker = task.spawn { ->
+  let worker = task.map([0], 1) { _ ->
     list.length(list.map(["t/f1.txt", "t/f2.txt"], io.read_file)) + 100
   }
-  println(task.join_handle(worker))
+  println(worker)
 }

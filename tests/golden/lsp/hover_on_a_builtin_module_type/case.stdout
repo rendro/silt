@@ -98,16 +98,12 @@ type channel.Selected(a) {
 ```
 > hover 63:15
 ```silt
-type task.TaskError {
-  Timeout,
+type task.RuntimeError {
+  message: String,
+  location: String,
+  trace: List(String),
 }
 ```
-
----
-
-| Variant | Fields | Meaning |
-|---------|--------|---------|
-| `Timeout` | — | the function was ended because its time was over |
 > hover 64:16
 ```silt
 type regex.RegexError {
@@ -415,7 +411,7 @@ Returned by `uuid.parse`.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Invalid(String)` | why | not a syntactically valid UUID |
-> hover 84:16
+> hover 84:17
 ```silt
-type task.Handle(a)
+type regex.Regex
 ```

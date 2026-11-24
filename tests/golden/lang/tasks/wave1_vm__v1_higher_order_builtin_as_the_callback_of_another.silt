@@ -7,21 +7,20 @@ fn pair(x, y) { (x, y) }
 fn main() {
   let a = channel.new(1)
   let b = channel.new(1)
-  let sender = task.spawn { ->
+  let sender = { ->
     time.sleep(time.ms(50))
     channel.send(a, 1)
     time.sleep(time.ms(20))
     channel.send(b, 2)
   }
-  let worker = task.spawn { ->
+  let worker = { ->
     let drain = { c ->
       let m = channel.receive(c)
       println("received {m}")
       c
     }
     let chans = list.fold([drain], [a, b], list.map)
-    pair("x", list.length(chans))
+    println(pair("x", list.length(chans)))
   }
-  println(task.join_handle(worker))
-  task.join_handle(sender)
+  task.join([sender, worker])
 }

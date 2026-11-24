@@ -4,9 +4,6 @@ import stream
 import task
 
 fn main() {
-  -- from a spawned task: rejected
-  let h = task.spawn(fn() { env.set("SILT_PROBE_A", "task") })
-  println("joined")
   -- from a stream pump thread (an OS thread that is NOT the main thread): accepted
   let out = stream.from_list([1, 2, 3])
     |> stream.map { x ->
@@ -16,5 +13,7 @@ fn main() {
     |> stream.collect
   println(out)
   println(env.get("SILT_PROBE_B"))
-  task.join_handle(h)
+  -- from a task: rejected
+  task.join([fn() { env.set("SILT_PROBE_A", "task") }])
+  println("joined")
 }

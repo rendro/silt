@@ -4,12 +4,11 @@ import time
 
 fn main() {
   let ch = channel.new(0)
-  let sleeper = task.spawn({ ->
+  let sleeper = { ->
     time.sleep(time.ms(5))
     channel.send(ch, "late")
-  })
-  let first = channel.receive_timeout(ch, time.seconds(2))
+  }
+  let first = task.background([sleeper]) { -> channel.receive_timeout(ch, time.seconds(2)) }
   println(first)
-  task.join_handle(sleeper)
   let _ = task.deadline(time.seconds(1), { -> 1 + 1 })
 }
