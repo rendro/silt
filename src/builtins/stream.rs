@@ -1384,12 +1384,16 @@ fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
     let stopped = feeder.clone();
     // Armed until the feeder has ended, not until the source has: a
     // `feed` that closed its channel ends the stream, and runs on until
-    // it returns or nobody reads the stream any more. (A feeder that has
-    // ended is not cancelled: that would stop what it spawned and left
-    // running.)
+    // it returns or nobody reads the stream any more. A feeder that
+    // returned is not cancelled: that would stop what it spawned and left
+    // running. One that failed is, as every stage that is stopped: that
+    // dismisses a failure nobody will read, but for one that came after
+    // `feed` closed its channel, which is `feed`'s own.
     let stop: Stop = Arc::new(move || {
+        let returned = matches!(stopped.try_get(), Some(Ok(_)));
         if let Some(scheduler) = scheduler.upgrade()
-            && !stopped.has_result()
+            && !returned
+            && !stopped.failed_after_its_output_closed()
         {
             scheduler.cancel(&stopped);
         }

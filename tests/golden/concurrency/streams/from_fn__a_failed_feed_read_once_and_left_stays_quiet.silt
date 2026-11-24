@@ -1,0 +1,23 @@
+-- repeat: 5
+-- stderr-not-contains: error
+-- A reader that reads one value of a feed that then fails, and lets the
+-- stream go, leaves the failure unread: the stream was left, so it stays
+-- quiet.
+import channel
+import stream
+import time
+
+fn first_of() {
+  let s = stream.from_fn { ch ->
+    channel.send(ch, 0)
+    channel.send(ch, 1)
+    panic("feed broke at 2")
+  }
+  channel.receive(s)
+}
+
+fn main() {
+  println(first_of())
+  time.sleep(time.ms(20))
+  println("done")
+}
