@@ -10,9 +10,10 @@ fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
   let c = channel.new(0)
-  let reader = task.spawn({ -> list.map([a, b, c], channel.receive) })
-  channel.send(a, 1)
-  channel.send(b, 2)
-  channel.send(c, 3)
-  println(task.join_handle(reader))
+  let sender = { ->
+    channel.send(a, 1)
+    channel.send(b, 2)
+    channel.send(c, 3)
+  }
+  println(task.background([sender]) { -> list.map([a, b, c], channel.receive) })
 }
