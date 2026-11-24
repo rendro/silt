@@ -32,7 +32,7 @@ fn program() {
   }
 
   -- Join all senders
-  handles |> list.each { h -> task.join(h) }
+  handles |> list.each { h -> task.join_handle(h) }
 
   -- Sum of 0..19 = 190
   total

@@ -1,6 +1,6 @@
 -- exit: 1
 -- repeat: 40
--- A task that waits in task.join is cancelled at the moment the task it
+-- A task that waits in task.join_handle is cancelled at the moment the task it
 -- joins fails. Whichever comes first, the cancelled joiner does not
 -- keep the failure (it takes nothing, or the cancel hands back what it
 -- took), so every run reports the failure the same way: as never
@@ -14,7 +14,7 @@ fn main() {
     let _ = channel.receive(go)
     panic("the child failed")
   }
-  let joiner = task.spawn { -> task.join(child) }
+  let joiner = task.spawn { -> task.join_handle(child) }
   channel.send(go, ())
   task.cancel(joiner)
   println("cancelled")

@@ -16,5 +16,5 @@ fn main() {
     })
     println("done")
   })
-  task.join(h)
+  task.join_handle(h)
 }

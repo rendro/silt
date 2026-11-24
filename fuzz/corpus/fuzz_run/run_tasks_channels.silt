@@ -16,7 +16,7 @@ fn main() {
     }
   }
   println(total)
-  println(task.join(producer))
+  println(task.join_handle(producer))
   let workers = list.map([1, 2, 3]) { n -> task.spawn({ -> n * 10 }) }
-  let _ = list.fold(workers, 0) { acc, h -> acc + task.join(h) }
+  let _ = list.fold(workers, 0) { acc, h -> acc + task.join_handle(h) }
 }

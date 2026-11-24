@@ -23,5 +23,5 @@ fn main() {
     Some(m) -> println(m)
     None -> println("no message")
   }
-  println(task.join(h))
+  println(task.join_handle(h))
 }

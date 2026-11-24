@@ -17,6 +17,6 @@ fn main() {
     Some(v) -> v
     None -> 0
   }
-  let _ = task.join(feeder)
+  let _ = task.join_handle(feeder)
   println("{got}")
 }

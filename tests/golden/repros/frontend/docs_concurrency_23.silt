@@ -17,8 +17,8 @@ fn main() {
     }
   })
 
-  task.join(producer)
-  task.join(consumer)
+  task.join_handle(producer)
+  task.join_handle(consumer)
 }
 -- prints:
 --   hello

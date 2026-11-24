@@ -226,7 +226,7 @@ fn main() {
   channel.send(ch, "hello")
   channel.send(ch, "world")
   channel.close(ch)
-  task.join(worker)
+  task.join_handle(worker)
 }
 ```
 

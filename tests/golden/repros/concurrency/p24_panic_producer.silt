@@ -14,5 +14,5 @@ fn main() {
     let x = 0
     channel.send(ch, 10 / x)
   })
-  println(task.join(consumer))
+  println(task.join_handle(consumer))
 }

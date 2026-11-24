@@ -33,7 +33,7 @@ fn main() {
           Some(answer) -> println("the waiting statement answered: {answer}")
           None -> println("the waiting statement: None")
         }
-        match task.join(sleeper) {
+        match task.join_handle(sleeper) {
           Ok(_) -> println("the running statement: Ok")
           Err(e) -> println("the running statement: {e}")
         }

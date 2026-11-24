@@ -24,5 +24,5 @@ fn main() {
   println(list.map(xs) { b -> Sum.sum(b) })
   println(list.map(xs, total))
   let h = task.spawn { -> total(Box("u")) }
-  println(task.join(h))
+  println(task.join_handle(h))
 }

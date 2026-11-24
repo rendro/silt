@@ -192,7 +192,7 @@ import host
 fn test_env_set_from_spawned_task_rejected() {
     // Locks src/builtins/io.rs (`env::set`): env.set refuses to run from
     // a spawned task, whose start was the program's first. The error
-    // from the task propagates through task.join.
+    // from the task propagates through task.join_handle.
     let err = run_err(
         r#"
 import env
@@ -201,7 +201,7 @@ fn main() {
     let h = task.spawn({ ->
         env.set("SILT_LOCK_TEST_SPAWN", "nope")
     })
-    task.join(h)
+    task.join_handle(h)
 }
     "#,
     );

@@ -8,11 +8,11 @@ fn program() {
       let innermost = task.spawn({ ->
         42
       })
-      task.join(innermost) + 1
+      task.join_handle(innermost) + 1
     })
-    task.join(inner) + 1
+    task.join_handle(inner) + 1
   })
-  task.join(h)
+  task.join_handle(h)
 }
 
 fn main() {

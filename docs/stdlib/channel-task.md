@@ -221,7 +221,7 @@ fn main() {
   channel.send(jobs, 1)
   channel.send(jobs, 2)
   channel.close(quit)
-  println(task.join(worker)) -- 3
+  println(task.join_handle(worker)) -- 3
 }
 ```
 
@@ -369,12 +369,143 @@ fixed thread pool and run in parallel. They communicate through channels.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `background` | `(List(Fn() -> ()), Fn() -> a) -> a` | Run helper functions while the body runs, stop them when it returns, and give its value |
 | `cancel` | `(Handle(a)) -> ()` | Cancel a task, and wait until it has ended (see details below) |
 | `deadline` | `(Duration, Fn() -> a) -> Option(a)` | Run a function, and end it when the duration has passed: Some of its value, or None |
 | `guard` | `(Fn() -> a) -> Result(a, RuntimeError)` | Run a function, and give a runtime error it raises as an `Err` |
-| `join` | `(Handle(a)) -> a` | Wait for a task to complete |
+| `join` | `(List(Fn() -> ())) -> ()` | Run functions at the same time, and return when all of them have returned |
+| `join_handle` | `(Handle(a)) -> a` | Wait for a task to complete |
 | `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
 
+
+## `task.join`
+
+```
+task.join(pieces: List(Fn() -> ())) -> ()
+```
+
+Runs each function of `pieces` as a task of its own, all at the same
+time, and returns when every one of them has returned. What the pieces
+did (a send, a file they wrote) is done when the call returns. An empty
+list returns at once.
+
+If a piece fails (a runtime error: a `panic`, a division by zero), the
+other pieces are stopped and `task.join` raises that failure in the
+caller. Its report names the place in the piece where it happened, and
+below the piece's own calls the calls that led to the `task.join`; a
+`task.guard` around the join catches it like any runtime error. A piece
+that fails while the others are being stopped is a note under the first
+failure (`another piece failed too, at main.silt:7:3: panic: ...`). The
+failure of a piece is never reported as a failure that nobody joined.
+
+A piece is stopped as a cancelled task is (see
+[`task.cancel`](#taskcancel)): it takes nothing new, a wait it is in
+ends, and a piece that only computes ends within about 2,000 steps.
+`task.join` returns, or raises, only when every piece has ended: no piece
+runs on after it.
+
+A stop from outside reaches every piece: when the time of a
+`task.deadline` around the join is over, the pieces end with its
+function; a `task.cancel` of the task that waits in the join stops them,
+and so does an enclosing `task.join` or `task.background` that stops.
+
+When no piece can go on and the program's own thread waits in the join,
+the program is deadlocked: the report says `task.join with no progress
+possible`, with a line for each piece that waits and what it waits on
+(``a piece of `task.join` at main.silt:6:3 waits to receive from
+<channel:0>``).
+
+```silt
+import channel
+import list
+import task
+
+fn sum(ch: Channel(Int), acc: Int) -> Int {
+  match channel.receive(ch) {
+    Some(n) -> sum(ch, acc + n)
+    None -> acc
+  }
+}
+
+fn main() {
+  let results = channel.new(3)
+  task.join(list.map([1, 2, 3]) { n -> { -> channel.send(results, n * 10) } })
+  channel.close(results)
+  println(sum(results, 0)) -- 60
+}
+```
+
+A failure of a piece, caught around the join:
+
+```silt
+import task
+
+fn check(n: Int) -> () {
+  match n > 2 {
+    true -> panic("{n} is too big")
+    false -> ()
+  }
+}
+
+fn main() {
+  match task.guard({ -> task.join([{ -> check(1) }, { -> check(3) }]) }) {
+    Ok(_) -> println("all pieces passed")
+    Err(e) -> println(e.message) -- panic: 3 is too big
+  }
+}
+```
+
+## `task.background`
+
+```
+task.background(helpers: List(Fn() -> ()), body: Fn() -> a) -> a
+```
+
+Runs each helper as a task while `body` runs (as a task too), and gives
+the value of `body`. When `body` returns, the helpers that still run are
+stopped, and the call returns when they have ended. Helpers are for work
+that serves the body and has no end of its own: a worker that answers
+requests on a channel, a ticker, a logger.
+
+A helper is stopped as a cancelled task is: it takes nothing new, not
+even what is already in its channel. Work that must be finished (a
+channel drained to its end) belongs in a `task.join` with the code that
+closes the channel when it is done.
+
+If a helper or the body fails, the others are stopped and the failure is
+raised in the caller, as in `task.join`; a failure during that stop is a
+note under it. A helper that fails while it is being stopped, after the
+body has returned, fails the call too: the caller gets the failure, not
+the body's value. A stop from outside reaches the body and every helper, and
+a deadlock reads `task.background with no progress possible`, with a
+line for the body and each helper that waits. With no helpers,
+`task.background([], body)` is `body()`.
+
+```silt
+import channel
+import task
+
+fn square_server(requests: Channel(Int), answers: Channel(Int)) -> () {
+  channel.each(requests) { n -> channel.send(answers, n * n) }
+}
+
+fn ask(requests: Channel(Int), answers: Channel(Int), n: Int) -> Int {
+  channel.send(requests, n)
+  match channel.receive(answers) {
+    Some(answer) -> answer
+    None -> 0
+  }
+}
+
+fn main() {
+  let requests = channel.new(0)
+  let answers = channel.new(0)
+  let total = task.background([{ -> square_server(requests, answers) }]) { ->
+    ask(requests, answers, 3) + ask(requests, answers, 4)
+  }
+  println(total) -- 25
+}
+```
 
 ## `task.cancel`
 
@@ -392,11 +523,11 @@ place (a `task.deadline`'s function, a stream's stages, an
 
 Flips the handle's result slot to `Err("cancelled")` using first-writer-wins
 semantics: if the task has already completed with some other result,
-the result is kept: a later `task.join` still returns it, or raises it if the
+the result is kept: a later `task.join_handle` still returns it, or raises it if the
 task failed. Cancelling a
 task that has already failed also dismisses that failure: it is not
 reported as unjoined, does not make `silt run` exit 1 and does not fail
-the test that spawned it. A failure the task took with a `task.join` is
+the test that spawned it. A failure the task took with a `task.join_handle` is
 not its own: the cancel hands it back to the task that failed, which is
 then reported as never joined, unless that task was cancelled too.
 
@@ -413,7 +544,7 @@ returns at once, and it has the last steps of a cancelled task (below).
 Its effect on the task depends on where the task is at that moment:
 
 - **The task is waiting** (parked in a channel receive or send, a
-  `channel.select`, a `task.join`, a `time.sleep`, I/O, or similar): its
+  `channel.select`, a `task.join_handle`, a `time.sleep`, I/O, or similar): its
   wait ends without taking or sending anything, and the task is ended
   there. A value sent afterwards goes to the next receiver, not to it.
 - **The task has never run** (spawned, and not yet picked up by a
@@ -429,7 +560,7 @@ Its effect on the task depends on where the task is at that moment:
     the thing is there: a `channel.receive`, `channel.try_receive` or
     `channel.receive_timeout`, the next message of a `channel.each`,
     the next element of a stream, `tcp.accept` (the connection stays
-    with the listener), a `task.join`, also of a task that has ended
+    with the listener), a `task.join_handle`, also of a task that has ended
     (what that task returned or failed with stays with it: a failure
     of it is reported as never joined), and a `channel.select` of which
     no `Send` arm can be done at once (its `Recv` arms, timeouts among
@@ -480,7 +611,7 @@ may be lost when the work stops, tell the task to stop over a channel
 (a stop message, or the close of its input), let it finish what it has,
 and join it.
 
-`task.join` on a cancelled handle does **not** return `Err("cancelled")`
+`task.join_handle` on a cancelled handle does **not** return `Err("cancelled")`
 as a value — it raises the failure as a runtime error of the form
 `joined task failed: cancelled`. A task you cancelled is not joined: the
 cancel is the wait for it. See
@@ -500,28 +631,28 @@ fn main() {
   }
   task.cancel(h)
   -- The task has ended: closing its channel loses nothing it sent.
-  -- `task.join(h)` here would raise `joined task failed: cancelled`.
+  -- `task.join_handle(h)` here would raise `joined task failed: cancelled`.
   channel.close(results)
 }
 ```
 
 
-## `task.join`
+## `task.join_handle`
 
 ```
-task.join(handle: Handle(a)) -> a
+task.join_handle(handle: Handle(a)) -> a
 ```
 
 Blocks until the task completes and returns its result. Parks the calling task
 while waiting, allowing other tasks to run.
 
-If the joined task panicked, errored, or was cancelled, `task.join` does
+If the joined task panicked, errored, or was cancelled, `task.join_handle` does
 **not** surface the failure as an `Err` value. It raises a runtime error of
 the form `joined task failed: <msg>` in the joining task (e.g. `joined task
 failed: cancelled` for a cancelled handle, `joined task failed: division by
 zero` for a panicking task body). The error points at where the task failed,
 and its call stack goes on, below the task's own calls, with the calls that
-led to the `task.join`; the error of a cancelled task points at the join.
+led to the `task.join_handle`; the error of a cancelled task points at the join.
 A failure that went through several joins (a task that joins a task that
 failed, and is joined in turn) says `joined task failed:` once; its call
 stack shows each task and each join it went through.
@@ -536,7 +667,7 @@ import task
 
 fn main() {
   let h = task.spawn { -> 1 + 2 }
-  let sum = task.join(h)
+  let sum = task.join_handle(h)
   println(sum) -- 3
 }
 ```
@@ -550,7 +681,7 @@ task.spawn(f: Fn() -> a) -> Handle(a)
 
 Spawns a zero-argument function as a lightweight task on the thread pool.
 Spawning is cheap -- it allocates a stack, not an OS thread. Returns a handle
-that can be used with `task.join` or `task.cancel`.
+that can be used with `task.join_handle` or `task.cancel`.
 
 ```silt
 import task
@@ -560,7 +691,7 @@ fn main() {
     println("running in a task")
     42
   }
-  let answer = task.join(h)
+  let answer = task.join_handle(h)
   println(answer) -- 42
 }
 ```
@@ -584,7 +715,7 @@ computes, is ended after that work. That is one rule for everything
 `work` does, whatever it waits
 for: I/O (see [Blocking operations](../concurrency.md#blocking-operations)), a
 `time.sleep`, a `channel.receive` or `channel.send`, a `channel.select`,
-a `task.join`, a wait deep inside the callback of a `list.fold`, or the
+a `task.join_handle`, a wait deep inside the callback of a `list.fold`, or the
 read of a stream. A `channel.receive` that nobody will ever answer is no
 deadlock inside a deadline: it ends when the deadline has passed. It is
 the rule of a task that was cancelled (see
@@ -623,7 +754,7 @@ the rule of a task that was cancelled (see
 - **It may still give what it holds.** A `channel.send` into a channel
   with room or to a receiver that waits, `channel.try_send`, a `Send`
   arm of a `channel.select` that can be done at once and
-  `channel.close` are done; so are the `task.join` of a task that has
+  `channel.close` are done; so are the `task.join_handle` of a task that has
   ended and `task.spawn`. That is what a function that got its value
   just in time has to hand it on.
 - **A duration of zero or less is a time that is over from the start**,
@@ -715,7 +846,7 @@ Runs `work` and gives `Ok` of what it returns, or `Err(e)` if a runtime
 error was raised inside it: a `panic`, a division by zero, a failed
 assertion of a builtin, raised in `work` or in anything it calls (a
 callback of `list.map`, the function of a `task.deadline`, a
-`task.join` of a task that failed, a stream stage it reads). The
+`task.join_handle` of a task that failed, a stream stage it reads). The
 program goes on after the call.
 
 `work` runs in place, on the task that calls `task.guard`: no task is

@@ -36,5 +36,5 @@ fn test_a_fails_before_it_cancels_its_ticker() {
 
 fn test_b_runs() {
   let h = task.spawn({ -> 20 + 1 })
-  test.assert_eq(task.join(h), 21)
+  test.assert_eq(task.join_handle(h), 21)
 }

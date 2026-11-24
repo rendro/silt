@@ -46,7 +46,7 @@ fn main() {
   when let Ok(c) = tcp.connect(addr) else { panic("no connection") }
   let chunks = stream.collect(stream.tcp_chunks(c, huge))
   println("tcp_chunks: {list.map(chunks) { chunk -> text(chunk) }}")
-  task.join(peer)
+  task.join_handle(peer)
   when let Ok(_) = io.write_file("five.txt", "hello") else { panic("no file") }
   let chunks = stream.collect(stream.file_chunks("five.txt", huge))
   println("file_chunks: {list.map(chunks) { chunk -> text(chunk) }}")

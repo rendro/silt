@@ -544,7 +544,7 @@ fn main() {{
       handle(conn, i)
     }}
   }}
-  list.each(handlers) {{ h -> task.join(h) }}
+  list.each(handlers) {{ h -> task.join_handle(h) }}
   host.give({after})
 }}
 import host

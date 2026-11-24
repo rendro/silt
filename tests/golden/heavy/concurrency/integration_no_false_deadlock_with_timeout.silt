@@ -17,7 +17,7 @@ fn program() {
     }
   })
 
-  task.join(consumer)
+  task.join_handle(consumer)
 }
 
 fn main() {

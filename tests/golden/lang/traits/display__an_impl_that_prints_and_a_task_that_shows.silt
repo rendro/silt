@@ -20,6 +20,6 @@ fn main() {
   let h = task.spawn({ ->
     channel.send(ch, "{Some(Loud { n: 3 })}")
   })
-  task.join(h)
+  task.join_handle(h)
   println(channel.receive(ch))
 }

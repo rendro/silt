@@ -10,7 +10,7 @@ fn program() {
     channel.send(ch, "world")
   })
 
-  task.join(producer)
+  task.join_handle(producer)
   when let Some(msg1) = channel.receive(ch) else { panic("pattern did not match") }
   when let Some(msg2) = channel.receive(ch) else { panic("pattern did not match") }
   "{msg1} {msg2}"

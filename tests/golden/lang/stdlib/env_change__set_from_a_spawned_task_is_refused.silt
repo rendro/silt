@@ -9,6 +9,6 @@ import task
 
 fn main() {
   let changer = task.spawn { -> env.set("SILT_ENV_CHANGE_D", "1") }
-  task.join(changer)
+  task.join_handle(changer)
   println("not reached")
 }

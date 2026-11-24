@@ -28,9 +28,9 @@ fn main() {
     }
   })
 
-  task.join(s1)
-  task.join(s2)
-  task.join(s3)
+  task.join_handle(s1)
+  task.join_handle(s2)
+  task.join_handle(s3)
 }
 -- prints:
 --   stage 3 got: 2

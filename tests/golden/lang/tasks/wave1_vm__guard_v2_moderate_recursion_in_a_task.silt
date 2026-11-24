@@ -23,6 +23,6 @@ fn deep(n) {
 fn main() {
   let a = task.spawn { -> Deep.go(6) }
   let b = task.spawn { -> deep(6) }
-  println("method {task.join(a)}")
-  println("fold {task.join(b)}")
+  println("method {task.join_handle(a)}")
+  println("fold {task.join_handle(b)}")
 }

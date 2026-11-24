@@ -23,9 +23,9 @@ fn main() {
         channel.send(cmds, 4)
       }
     }
-    task.join(middle)
+    task.join_handle(middle)
   }
-  task.join(worker)
+  task.join_handle(worker)
   task.cancel(worker)
   channel.close(cmds)
   channel.close(gate)

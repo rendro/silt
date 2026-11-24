@@ -37,7 +37,7 @@ fn round(i) {
   }
   time.sleep(time.ms(1))
   task.cancel(sender)
-  match task.join(receiver) {
+  match task.join_handle(receiver) {
     -1 -> match channel.try_receive(sent) {
       channel.Empty -> 0
       _ -> panic("round {i}: a record of a number that nobody received")

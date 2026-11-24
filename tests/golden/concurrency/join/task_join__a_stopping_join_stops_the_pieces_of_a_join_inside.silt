@@ -1,0 +1,37 @@
+-- exit: 1
+-- stderr-contains: panic: the outer piece failed
+-- stderr-not-contains: never joined
+-- stderr-not-contains: failed too
+-- A join that stops its pieces stops the pieces of a join inside one of
+-- them too: the outer join returns, with the failure, and does not wait
+-- for the inner pieces' channel.
+import channel
+import task
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let started: Channel(Int) = channel.new(2)
+  task.join(
+    [
+      { ->
+        task.join(
+          [
+            { ->
+              channel.send(started, 1)
+              let _ = channel.receive(never)
+            },
+            { ->
+              channel.send(started, 2)
+              let _ = channel.receive(never)
+            },
+          ],
+        )
+      },
+      { ->
+        let _ = channel.receive(started)
+        let _ = channel.receive(started)
+        panic("the outer piece failed")
+      },
+    ],
+  )
+}

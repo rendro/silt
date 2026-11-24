@@ -28,9 +28,9 @@ fn program() {
     channel.send(results, n * 2)
   })
 
-  task.join(w1)
-  task.join(w2)
-  task.join(w3)
+  task.join_handle(w1)
+  task.join_handle(w2)
+  task.join_handle(w3)
 
   when let Some(a) = channel.receive(results) else { panic("pattern did not match") }
   when let Some(b) = channel.receive(results) else { panic("pattern did not match") }

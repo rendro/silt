@@ -25,7 +25,7 @@ fn main() {
   }
 
   -- Wait for all workers to finish, then close results
-  workers |> list.each { w -> task.join(w) }
+  workers |> list.each { w -> task.join_handle(w) }
   channel.close(results)
 
   -- Collect

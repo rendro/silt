@@ -63,8 +63,8 @@ fn main() {
   }
   let _ = channel.receive(called)
   tcp.close_listener(l)
-  println(task.join(client))
-  println(task.join(server))
+  println(task.join_handle(client))
+  println(task.join_handle(server))
   match tcp.connect("127.0.0.1:{port}") {
     Ok(_) -> println("connected after the close")
     Err(_) -> println("refused after the close")
@@ -89,7 +89,7 @@ fn main() {
   tcp.close_listener(k)
   let rest = read_all(conn)
   println("then closed by the server, nothing more: {rest == ""}")
-  println(task.join(kserver))
+  println(task.join_handle(kserver))
   println("at once: {time.since(started, time.now()).ns < 5_000_000_000}")
   -- A deadline around serve cuts a request in flight: 503.
   when let Ok(d) = tcp.listen("127.0.0.1:0") else {
@@ -114,8 +114,8 @@ fn main() {
   }
   let _ = channel.receive(dcalled)
   tcp.close_listener(d)
-  println(task.join(dclient))
-  println(task.join(cut))
+  println(task.join_handle(dclient))
+  println(task.join_handle(cut))
 }
 
 fn url_of(text: String) -> url.Url {

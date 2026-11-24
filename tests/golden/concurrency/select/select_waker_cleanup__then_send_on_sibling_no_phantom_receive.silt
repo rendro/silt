@@ -21,7 +21,7 @@ fn main() {
   -- Resolve r1 via a. With the bug, b's waiting_receivers stays
   -- at 1 forever even after r1 completes.
   channel.send(a, 1)
-  let v1 = task.join(r1)
+  let v1 = task.join_handle(r1)
 
   -- Receiver 2: real consumer of b.
   let r2 = task.spawn { -> channel.receive(b) }
@@ -31,7 +31,7 @@ fn main() {
   -- waiting_receivers, this might falsely succeed without r2 ever
   -- waking. With the fix, this blocks until r2 is the actual receiver.
   channel.send(b, 2)
-  let v2 = task.join(r2)
+  let v2 = task.join_handle(r2)
 
   match v2 {
     Some(_) -> println("ok:{v1}")

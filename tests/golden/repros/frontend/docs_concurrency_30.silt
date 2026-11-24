@@ -11,7 +11,7 @@ fn main() {
     })
   }
 
-  workers |> list.each { w -> task.join(w) }
+  workers |> list.each { w -> task.join_handle(w) }
   channel.close(results)
 
   when let Some(r1) = channel.receive(results) else { return }

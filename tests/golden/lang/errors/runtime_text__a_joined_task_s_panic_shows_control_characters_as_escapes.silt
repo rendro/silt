@@ -5,5 +5,5 @@ import task
 
 fn main() {
   let h = task.spawn { -> panic("x\u{1b}[2Jy") }
-  println(task.join(h))
+  println(task.join_handle(h))
 }

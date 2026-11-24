@@ -16,7 +16,7 @@ fn main() {
           Some(v) -> v
           None -> -1
         }
-        task.join(producer)
+        task.join_handle(producer)
         match v == 7 {
           true -> loop(i + 1)
           _ -> println("iteration {i}: rendezvous receive lost, got {v}")

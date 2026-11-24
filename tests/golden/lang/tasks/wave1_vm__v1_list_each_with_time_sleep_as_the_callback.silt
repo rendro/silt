@@ -8,5 +8,5 @@ fn main() {
   let worker = task.spawn { ->
     outer(inner, list.each([time.ms(10), time.ms(20)], time.sleep))
   }
-  println(task.join(worker))
+  println(task.join_handle(worker))
 }

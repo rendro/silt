@@ -162,7 +162,7 @@ fn process_exit_ends_the_run_with_its_code() {
         ("before", "", true)
     );
     let ran = run_it(
-        "import process\nimport task\nfn main() {\n  task.join(task.spawn { -> process.exit(3) })\n}\n",
+        "import process\nimport task\nfn main() {\n  task.join_handle(task.spawn { -> process.exit(3) })\n}\n",
     );
     assert_eq!(
         (ran.output.as_str(), ran.error.as_str(), ran.ok),

@@ -102,7 +102,7 @@ fn main() {
     sent
   }
   let got = http.request(http.POST, url_of("http://127.0.0.1:{tcp.local_port(by_hand)}/"), bytes.empty(), #{})
-  let sent = task.join(reader)
+  let sent = task.join_handle(reader)
   println("  the request on the wire: {length_line(sent)}, {bytes.length(body_of(sent) |> option.unwrap_or(bytes.empty()))} bytes after the head")
   match got {
     Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")

@@ -13,6 +13,6 @@ fn main() {
   let sender = task.spawn { -> channel.select([channel.Send(quiet, 1)]) }
   channel.close(quiet)
   println("joining")
-  let _ = task.join(sender)
+  let _ = task.join_handle(sender)
   println("not reached")
 }

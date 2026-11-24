@@ -11,5 +11,5 @@ fn main() {
       println(x)
     })
   })
-  let _ = task.join(h)
+  let _ = task.join_handle(h)
 }

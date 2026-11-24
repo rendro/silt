@@ -39,7 +39,7 @@ fn against(answer) {
     tcp.close(conn)
   }
   let out = http.get(url_of("http://127.0.0.1:{port}/"))
-  task.join(server)
+  task.join_handle(server)
   out
 }
 

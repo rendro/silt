@@ -34,7 +34,7 @@ fn main() {
     channel.send(ch, 7)
   })
   time.sleep(time.ms(50))
-  let r = task.join(real)
-  let _ = task.join(snd)
+  let r = task.join_handle(real)
+  let _ = task.join_handle(snd)
   println(r)
 }

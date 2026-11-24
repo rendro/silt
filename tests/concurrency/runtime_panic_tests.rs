@@ -57,19 +57,19 @@ fn main() {
     time.sleep(time.ms(5))
     channel.send(only, 1)
   }
-  let joiner = task.spawn { -> task.join(lost) }
+  let joiner = task.spawn { -> task.join_handle(lost) }
   let receiver = task.spawn { -> channel.receive(only) }
   println("main waits")
   channel.send(gate, 1)
-  task.join(joiner)
-  let _ = task.join(receiver)
+  task.join_handle(joiner)
+  let _ = task.join_handle(receiver)
   println("main went on")
 }
 "#;
 
 /// A worker panics as it is about to run a task that a joiner, a
 /// receiver and the program's thread all wait on. The program's
-/// thread, in its `task.join`, gets the panic; the VM gives it again
+/// thread, in its `task.join_handle`, gets the panic; the VM gives it again
 /// at every later call, and is dropped like any other. The process
 /// (the embedder's) lives: another VM runs a program in it.
 #[test]
@@ -183,7 +183,7 @@ fn main() {
   let sleeper = task.spawn { -> time.sleep(time.ms(30)) }
   println("main sleeps")
   time.sleep(time.ms(5))
-  task.join(sleeper)
+  task.join_handle(sleeper)
   println("main went on")
 }
 "#,
@@ -210,7 +210,7 @@ import time
 fn main() {
   let sleeper = task.spawn { -> time.sleep(time.nanos(1)) }
   println("main waits")
-  task.join(sleeper)
+  task.join_handle(sleeper)
   println("main went on")
 }
 "#,
@@ -240,7 +240,7 @@ import task
 fn main() {
   let reader = task.spawn { -> io.read_file("no such file of the runtime panic tests") }
   println("main waits")
-  let _ = task.join(reader)
+  let _ = task.join_handle(reader)
   println("main went on")
 }
 "#,

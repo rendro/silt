@@ -312,9 +312,9 @@ fn round(n) {{
   let asks = channel.new(0)
   let answers = channel.new(0)
   let server = task.spawn({{ -> echo(asks, answers) }})
-  let parked = task.join(task.spawn({{ -> at_depth(n, asks, answers) }}))
+  let parked = task.join_handle(task.spawn({{ -> at_depth(n, asks, answers) }}))
   channel.close(asks)
-  task.join(server)
+  task.join_handle(server)
   parked
 }}
 
@@ -366,7 +366,7 @@ fn fan_in(senders) {{
       }}
     }}
   }}
-  hs |> list.each {{ h -> task.join(h) }}
+  hs |> list.each {{ h -> task.join_handle(h) }}
   sum
 }}
 

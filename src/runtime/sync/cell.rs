@@ -11,6 +11,9 @@ use super::token::{Fired, Outcome, Token, Wake};
 pub(crate) struct Cell<T> {
     /// What the cell is, for a report of who waits for it.
     label: Option<String>,
+    /// The call whose frame waits on the cell, when the deadlock verdict
+    /// of the program's thread is to name it (`task.join`).
+    call: Option<&'static str>,
     value: OnceLock<T>,
     /// Set before the queue is drained, read under the queue's lock by
     /// whoever joins the queue: a waiter is either drained or sees the
@@ -22,6 +25,7 @@ impl<T> Default for Cell<T> {
     fn default() -> Self {
         Cell {
             label: None,
+            call: None,
             value: OnceLock::new(),
             waiters: Mutex::new(Vec::new()),
         }
@@ -37,6 +41,15 @@ impl<T> Cell<T> {
     pub(crate) fn labelled(label: String) -> Arc<Cell<T>> {
         Arc::new(Cell {
             label: Some(label),
+            ..Cell::default()
+        })
+    }
+
+    /// A labelled cell that the frame of `call` waits on.
+    pub(crate) fn of_call(label: String, call: &'static str) -> Arc<Cell<T>> {
+        Arc::new(Cell {
+            label: Some(label),
+            call: Some(call),
             ..Cell::default()
         })
     }
@@ -72,6 +85,9 @@ pub trait Completion: Send + Sync {
     /// What the cell is, if it says.
     fn label(&self) -> Option<&str>;
 
+    /// The call whose frame waits on it, if it says.
+    fn call(&self) -> Option<&'static str>;
+
     fn enqueue(&self, waiter: Waiter, wakes: &mut Wakes);
 
     fn forget(&self, token: &Arc<Token>);
@@ -89,6 +105,10 @@ impl<T: Send + Sync> Completion for Cell<T> {
 
     fn label(&self) -> Option<&str> {
         self.label.as_deref()
+    }
+
+    fn call(&self) -> Option<&'static str> {
+        self.call
     }
 
     fn enqueue(&self, waiter: Waiter, wakes: &mut Wakes) {

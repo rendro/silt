@@ -1,6 +1,6 @@
 -- verdict: same
 import task
-fn wait(h: Handle(Int)) -> Int { task.join(h) }
+fn wait(h: Handle(Int)) -> Int { task.join_handle(h) }
 fn main() {
   let h = task.spawn(fn() { 1 })
   println(wait(h))

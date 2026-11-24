@@ -45,5 +45,5 @@ fn main() {
   println(Forecast { days: [s, s] })
   println(both(s, [Forecast { days: [] }]))
   let h = task.spawn({ -> "in a task: {Some(s)}" })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

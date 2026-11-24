@@ -1,6 +1,6 @@
 -- repeat: 3
 -- stderr-not-contains: deadlock
--- Cancelling a task parked on task.join leaves the scheduler clean.
+-- Cancelling a task parked on task.join_handle leaves the scheduler clean.
 import channel
 import task
 import time
@@ -8,7 +8,7 @@ import time
 fn main() {
   let dead = channel.new(0)
   let joinee = task.spawn({ -> channel.receive(dead) })
-  let victim = task.spawn({ -> task.join(joinee) })
+  let victim = task.spawn({ -> task.join_handle(joinee) })
   time.sleep(time.ms(50))
   task.cancel(victim)
   task.cancel(joinee)
@@ -19,6 +19,6 @@ fn main() {
     Some(v) -> v
     None -> 0
   }
-  let _ = task.join(feeder)
+  let _ = task.join_handle(feeder)
   println("{got}")
 }

@@ -161,7 +161,7 @@ example; an editor shows the same text when you hover a `test.*` name.
 ## Spawned Tasks
 
 A test that spawns tasks is responsible for them. If a task fails and the
-test never joins it (`task.join`) or cancels it (`task.cancel`), the failure
+test never joins it (`task.join_handle`) or cancels it (`task.cancel`), the failure
 fails **the test that spawned the task** -- also when the task was spawned by
 another task of that test. The failure is reported under the test's result
 line, rendered like any runtime error:
@@ -171,7 +171,7 @@ line, rendered like any runtime error:
     error[runtime]: a task failed and was never joined: division by zero
      --> spawn_test.silt:5:13
     ...
-      = help: the task was spawned at spawn_test.silt:4:11: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+      = help: the task was spawned at spawn_test.silt:4:11: join it with task.join_handle to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
 A test has ended when its test function has returned **and the tasks it

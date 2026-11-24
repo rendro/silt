@@ -26,5 +26,5 @@ fn main() {
     }
   }
   println(got)
-  println(task.join(h))
+  println(task.join_handle(h))
 }

@@ -10,7 +10,7 @@ fn program() {
     channel.send(ch, x * 2)
   })
 
-  task.join(h)
+  task.join_handle(h)
   when let Some(val) = channel.receive(ch) else { panic("pattern did not match") }
   val
 }

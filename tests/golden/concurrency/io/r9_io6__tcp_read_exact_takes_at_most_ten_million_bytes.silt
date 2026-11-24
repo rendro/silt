@@ -32,5 +32,5 @@ fn main() {
     Err(_) -> println("the connection was lost")
   }
   tcp.close(conn)
-  task.join(peer)
+  task.join_handle(peer)
 }

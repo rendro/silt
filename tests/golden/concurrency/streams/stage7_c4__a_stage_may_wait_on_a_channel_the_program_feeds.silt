@@ -21,5 +21,5 @@ fn main() {
   channel.send(gate, 10)
   channel.send(gate, 100)
   channel.send(gate, 1000)
-  println(task.join(reader))
+  println(task.join_handle(reader))
 }

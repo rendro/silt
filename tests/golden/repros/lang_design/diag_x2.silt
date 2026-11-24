@@ -2,6 +2,6 @@
 import task
 fn main() {
   let h = task.spawn(fn() { 1 / 0 })
-  let r = task.join(h)
+  let r = task.join_handle(h)
   println("after join: {r}")
 }

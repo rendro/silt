@@ -9,7 +9,7 @@ fn program() {
   let p = task.spawn({ ->
     channel.send(ch1, "first")
   })
-  task.join(p)
+  task.join_handle(p)
 
   match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
     channel.Received(^ch1, Some(msg)) -> msg

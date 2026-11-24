@@ -21,7 +21,7 @@ fn main() {
   channel.send(full, 1)
   let t = task.spawn { ->
     let helper = task.spawn { -> 7 }
-    let _ = task.join(helper)
+    let _ = task.join_handle(helper)
     match channel.receive(own) {
       Some(me) -> task.cancel(me)
       None -> ()

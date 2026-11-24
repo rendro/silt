@@ -17,7 +17,7 @@ fn main() {
   -- recv-waker keeps `waiting_receivers == 1`, and `try_send`
   -- phantom-succeeds (value silently dropped into the handoff slot).
   let probe = task.spawn({ -> channel.try_send(ch, 999) })
-  let ok = task.join(probe)
+  let ok = task.join_handle(probe)
   match ok {
     true -> println("BUG:phantom_send_after_cancel")
     false -> println("ok")

@@ -31,11 +31,11 @@ fn main() {
   time.sleep(time.ms(50))
   channel.send(a, 1)
   channel.send(b, 2)
-  let took = task.join(r1)
+  let took = task.join_handle(r1)
   match took {
     "a" -> channel.send(a, 1)
     _ -> ()
   }
-  let got = task.join(r2)
+  let got = task.join_handle(r2)
   println("r2 got {got}")
 }

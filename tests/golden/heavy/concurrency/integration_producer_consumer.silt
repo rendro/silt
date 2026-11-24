@@ -15,6 +15,6 @@ fn main() {
     println("{msg1} {msg2}")
   })
 
-  task.join(producer)
-  task.join(consumer)
+  task.join_handle(producer)
+  task.join_handle(consumer)
 }

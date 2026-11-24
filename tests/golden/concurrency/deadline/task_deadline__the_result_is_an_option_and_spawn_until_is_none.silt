@@ -9,5 +9,5 @@ import time
 fn main() {
   let n: Int = task.deadline(time.seconds(1), { -> 1 })
   let handle = task.spawn_until(time.seconds(1), { -> 1 })
-  println(n + task.join(handle))
+  println(n + task.join_handle(handle))
 }

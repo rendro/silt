@@ -18,9 +18,9 @@ fn main() {
     task.spawn(fn() { spin_loop(300000, 0) })
   }
   let quick = task.spawn(fn() { time.now() })
-  let tq = task.join(quick)
+  let tq = task.join_handle(quick)
   println("A (recursion hogs): quick task ran after {time.since(t0, tq)}")
-  let _ = hogs |> list.map { h -> task.join(h) }
+  let _ = hogs |> list.map { h -> task.join_handle(h) }
 
   let t1 = time.now()
   -- Variant B: same work inside a higher-order builtin callback
@@ -28,8 +28,8 @@ fn main() {
     task.spawn(fn() { 1..300000 |> list.fold(0) { acc, n -> acc + n } })
   }
   let quick2 = task.spawn(fn() { time.now() })
-  let tq2 = task.join(quick2)
+  let tq2 = task.join_handle(quick2)
   println("B (list.fold hogs): quick task ran after {time.since(t1, tq2)}")
-  let _ = hogs2 |> list.map { h -> task.join(h) }
+  let _ = hogs2 |> list.map { h -> task.join_handle(h) }
   println("total {time.since(t0, time.now())}")
 }

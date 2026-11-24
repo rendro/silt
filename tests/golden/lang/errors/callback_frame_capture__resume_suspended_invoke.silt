@@ -21,5 +21,5 @@ fn main() {
   channel.close(c)
   let t1 = task.spawn({ -> consumer(c, blocker) })
   let _ = task.spawn({ -> producer(blocker) })
-  task.join(t1)
+  task.join_handle(t1)
 }

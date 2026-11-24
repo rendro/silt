@@ -37,5 +37,5 @@ fn main() {
   let _ = tcp.write(c, bytes.from_string("a\nb\n\n"))
   let answer = tcp.read(c, 100) |> result.map { b -> bytes.to_string(b) |> result.unwrap_or("") }
   println("client read: {answer}")
-  println(task.join(server))
+  println(task.join_handle(server))
 }

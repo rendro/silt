@@ -2378,7 +2378,7 @@ impl TypeChecker {
             let mut d = Diagnostic::error(code, span, message);
             d.notes.extend(first.notes);
             d.help.extend(first.help);
-            d.help_at = first.help_at;
+            d.places = first.places;
             d.help.push(help.to_string());
             found.insert(name, d);
         }

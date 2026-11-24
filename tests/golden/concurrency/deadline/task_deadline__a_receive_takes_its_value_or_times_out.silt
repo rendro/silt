@@ -30,7 +30,7 @@ fn main() {
       None -> loop(got, sum)
     }
   }
-  task.join(producer)
+  task.join_handle(producer)
   match r {
     (got, sum) -> println("sent 150 (sum 11175), received {got} (sum {sum}), lost {150 - got}")
   }

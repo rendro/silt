@@ -26,6 +26,6 @@ fn main() {
       false -> ()
     }
   }
-  senders |> list.each { s -> task.join(s) }
+  senders |> list.each { s -> task.join_handle(s) }
   println("done")
 }

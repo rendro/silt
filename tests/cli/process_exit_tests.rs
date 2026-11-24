@@ -80,7 +80,7 @@ fn an_exit_writes_out_what_was_printed_to_a_slow_reader() {
         ("main", "process.exit(3)"),
         (
             "task",
-            "let _ = task.join(task.spawn { -> process.exit(3) })",
+            "let _ = task.join_handle(task.spawn { -> process.exit(3) })",
         ),
     ] {
         let src = format!(
@@ -126,7 +126,7 @@ fn a_failed_program_whose_stderr_reader_has_gone_still_exits_1() {
         ),
         (
             "unjoined",
-            "import io\nimport task\nfn main() {\n  let _ = io.read_line()\n  let _ = task.join(task.spawn { -> () })\n  let _ = task.spawn { -> 1 / 0 }\n}\n",
+            "import io\nimport task\nfn main() {\n  let _ = io.read_line()\n  let _ = task.join_handle(task.spawn { -> () })\n  let _ = task.spawn { -> 1 / 0 }\n}\n",
         ),
     ] {
         let path = program(&format!("closed_stderr_{label}"), src);

@@ -81,7 +81,7 @@ fn no_doc_calls_channel_new_without_a_capacity() {
     );
 }
 
-/// The failure `task.join` raises points at where the task failed, and
+/// The failure `task.join_handle` raises points at where the task failed, and
 /// its call stack goes on with the calls that led to the join: it is
 /// not reported at the join.
 #[test]

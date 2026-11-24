@@ -29,7 +29,7 @@ fn main() {
   let acceptor = task.spawn { -> tcp.accept(l) }
   time.sleep(time.ms(100))
   tcp.close_listener(l)
-  println(said(task.join(acceptor)))
+  println(said(task.join_handle(acceptor)))
   println(said(tcp.accept(l)))
   println(tcp.local_port(l) == port)
   tcp.close_listener(l)
@@ -50,7 +50,7 @@ fn main() {
     Err(e) -> println(e)
   }
   tcp.close_listener(s)
-  println(task.join(server))
+  println(task.join_handle(server))
   match tcp.connect("127.0.0.1:{sport}") {
     Ok(_) -> println("connected to a closed listener")
     Err(tcp.Connect(_)) -> println("refused")

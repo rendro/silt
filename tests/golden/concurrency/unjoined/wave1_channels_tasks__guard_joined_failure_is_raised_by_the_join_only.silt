@@ -12,6 +12,6 @@ import time
 fn main() {
   let failing = task.spawn({ -> panic("worker failed") })
   time.sleep(time.ms(100))
-  let v = task.join(failing)
+  let v = task.join_handle(failing)
   println("not reached {v}")
 }

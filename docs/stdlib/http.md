@@ -586,7 +586,7 @@ fn main() {
     Err(e) -> println("{e}")
   }
   tcp.close_listener(listener)
-  task.join(server)
+  task.join_handle(server)
   match http.get(home) {
     Ok(_) -> println("still served")
     Err(_) -> println("refused") -- refused

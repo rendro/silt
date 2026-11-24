@@ -15,7 +15,7 @@ fn read_self() -> String {
 fn main() {
   let sync = read_self()
   let h = task.spawn(read_self)
-  let async = task.join(h)
+  let async = task.join_handle(h)
   println(sync == async)
   println(string.contains(async, "-- round78-payload"))
 }

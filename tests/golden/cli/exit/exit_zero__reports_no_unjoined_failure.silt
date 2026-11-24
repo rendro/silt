@@ -7,7 +7,7 @@ import time
 
 fn main() {
   let _ = task.spawn { -> 1 / 0 }
-  let _ = task.join(task.spawn { -> time.sleep(time.ms(50)) })
+  let _ = task.join_handle(task.spawn { -> time.sleep(time.ms(50)) })
   println("done")
   process.exit(0)
 }

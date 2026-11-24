@@ -62,8 +62,8 @@ fn main() {
   let w2 = task.spawn { -> channel.each(ch) { msg -> println("w2: {msg}") } }
   list.each(1..6) { n -> channel.send(ch, n) }
   channel.close(ch)
-  task.join(w1)
-  task.join(w2)
+  task.join_handle(w1)
+  task.join_handle(w2)
 }
 `);
   assert.equal(ran.ok, true, ran.error);
@@ -96,7 +96,7 @@ fn main() {
     time.sleep(time.hours(1))
     println("slept")
   }
-  task.join(sleeper)
+  task.join_handle(sleeper)
   println("joined")
 }
 `);

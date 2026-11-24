@@ -1,0 +1,4 @@
+panic: piece 2 failed
+task_join__a_guard_around_it_gives_the_pieces_error.silt:6:3
+["fail  at task_join__a_guard_around_it_gives_the_pieces_error.silt:6:3", "closure in main  at task_join__a_guard_around_it_gives_the_pieces_error.silt:10:52", "closure in main  at task_join__a_guard_around_it_gives_the_pieces_error.silt:10:25", "main  at task_join__a_guard_around_it_gives_the_pieces_error.silt:10:9"]
+main goes on

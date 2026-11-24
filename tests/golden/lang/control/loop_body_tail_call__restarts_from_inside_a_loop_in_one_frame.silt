@@ -71,7 +71,7 @@ fn main() {
       }
     }
   })
-  println(task.join(h))
+  println(task.join_handle(h))
   println(used_by_let(10))
   println(used_by_plus(10))
 }

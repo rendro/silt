@@ -22,5 +22,5 @@ fn main() {
     let msg = Greet.greet(g)
     msg
   })
-  println(task.join(handle))
+  println(task.join_handle(handle))
 }

@@ -61,5 +61,5 @@ fn main() {
   channel.send(jobs, "a")
   channel.send(jobs, "b")
   channel.close(jobs)
-  task.join(sup)
+  task.join_handle(sup)
 }

@@ -15,8 +15,8 @@ fn main() {
     channel.send(b, 2)
   }
   let first = task.spawn { -> pair("option", option.map(Some(a), channel.receive)) }
-  println(task.join(first))
+  println(task.join_handle(first))
   let second = task.spawn { -> pair("result", result.map(Ok(b), channel.receive)) }
-  println(task.join(second))
-  task.join(sender)
+  println(task.join_handle(second))
+  task.join_handle(sender)
 }

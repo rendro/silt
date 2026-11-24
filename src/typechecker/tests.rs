@@ -1292,7 +1292,7 @@ fn test_task_spawn_no_type_error() {
 import task
 fn main() {
   let h = task.spawn({ -> 42 })
-  let result = task.join(h)
+  let result = task.join_handle(h)
   let _ = result
 }
         "#,

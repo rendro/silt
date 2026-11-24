@@ -4,6 +4,6 @@
 import task
 fn main() {
   let h = task.spawn({ -> 42 })
-  let s: String = task.join(h)
+  let s: String = task.join_handle(h)
   println(s)
 }

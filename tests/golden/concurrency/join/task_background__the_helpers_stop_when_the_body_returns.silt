@@ -1,0 +1,31 @@
+-- The helpers run while the body runs; when the body returns, those
+-- still running are stopped (one that waits on a channel, one that only
+-- computes), and the body's value is the call's. After the call nothing
+-- of it runs: no task receives on the channel the helper read.
+import channel
+import task
+
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+
+fn main() {
+  let jobs: Channel(Int) = channel.new(0)
+  let seen: Channel(Int) = channel.new(10)
+  let value = task.background(
+    [
+      { -> channel.each(jobs) { n -> channel.send(seen, n) } },
+      { ->
+        let _ = spin(0)
+      },
+    ],
+  ) { ->
+    channel.send(jobs, 1)
+    channel.send(jobs, 2)
+    40 + 2
+  }
+  println(value)
+  println(channel.try_send(jobs, 3))
+  println(channel.try_receive(seen))
+  println(task.background([]) { -> "no helpers: the body alone" })
+}

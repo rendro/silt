@@ -2,7 +2,7 @@ import task
 
 fn main() {
   let h = task.spawn { -> 42 }
-  let r = task.join(h)
+  let r = task.join_handle(h)
   -- `h == h` must be true.
   println(h == h)
   match r == 42 {

@@ -14,9 +14,9 @@ fn main() {
       Err(e) -> "the task caught {e.message}"
     }
   }
-  println(task.join(h))
+  println(task.join_handle(h))
   let failing = task.spawn { -> fail(2) }
-  match task.guard({ -> task.join(failing) }) {
+  match task.guard({ -> task.join_handle(failing) }) {
     Ok(_) -> println("no error")
     Err(e) -> println("main caught {e.message}")
   }

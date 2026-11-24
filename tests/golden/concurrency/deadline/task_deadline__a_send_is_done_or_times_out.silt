@@ -29,7 +29,7 @@ fn main() {
     }
   }
   channel.close(ch)
-  match task.join(consumer) {
+  match task.join_handle(consumer) {
     (got, sum) -> println("150 sends were Ok (sum 11175); the consumer received {got} (sum {sum})")
   }
 }

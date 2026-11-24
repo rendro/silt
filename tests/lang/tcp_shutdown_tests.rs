@@ -84,7 +84,7 @@ fn main() {
               }
               Err(e) -> "read-err:{e}"
             }
-            task.join(closer)
+            task.join_handle(closer)
             r
           }
           Err(e) -> "accept-err:{e}"
@@ -95,7 +95,7 @@ fn main() {
         Ok(client) -> {
           -- Do NOT send data: we want the server's read to be pending
           -- when the sibling calls tcp.close(conn) on it.
-          let r = task.join(server)
+          let r = task.join_handle(server)
           tcp.close(client)
           r
         }
@@ -162,7 +162,7 @@ fn main() {
             Ok(_) -> "wrong: write-after-close should error"
             Err(_) -> "errored"
           }
-          task.join(server)
+          task.join_handle(server)
           r
         }
         Err(e) -> "connect-err:{e}"
@@ -203,7 +203,7 @@ fn main() {
         Ok(conn) -> {
           tcp.close(conn)
           tcp.close(conn)
-          task.join(server)
+          task.join_handle(server)
           "ok"
         }
         Err(e) -> "connect-err:{e}"
@@ -264,7 +264,7 @@ fn main() {
       match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
         Ok(conn) -> {
           tcp.close(conn)
-          task.join(server)
+          task.join_handle(server)
         }
         Err(e) -> "connect-err:{e}"
       }

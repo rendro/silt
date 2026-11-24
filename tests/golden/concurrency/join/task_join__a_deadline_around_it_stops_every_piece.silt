@@ -1,0 +1,31 @@
+-- A deadline around a join ends every piece by the deadline's time,
+-- one that waits and one that only computes: the deadline gives None,
+-- and the code after the join in the deadline's function never runs.
+import channel
+import task
+import time
+
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let said: Channel(String) = channel.new(1)
+  let ended = task.deadline(time.ms(20)) { ->
+    task.join(
+      [
+        { ->
+          let _ = channel.receive(never)
+        },
+        { ->
+          let _ = spin(0)
+        },
+      ],
+    )
+    channel.send(said, "the join returned")
+  }
+  println(ended)
+  println(channel.try_receive(said))
+  println(channel.try_send(never, 1))
+}

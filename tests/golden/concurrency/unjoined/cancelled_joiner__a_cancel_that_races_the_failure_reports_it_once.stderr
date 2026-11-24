@@ -3,4 +3,4 @@ error[runtime]: a task failed and was never joined: panic: the child failed
     |
  15 |     panic("the child failed")
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^ a task failed and was never joined: panic: the child failed
-  = help: the task was spawned at cancelled_joiner__a_cancel_that_races_the_failure_reports_it_once.silt:13:15: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+  = help: the task was spawned at cancelled_joiner__a_cancel_that_races_the_failure_reports_it_once.silt:13:15: join it with task.join_handle to stop where you wait for it, or cancel it with task.cancel if you don't need its result

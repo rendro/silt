@@ -8,7 +8,7 @@ fn main() {
   let k = fn() { 42 }
   println(f(1) + g(1) + h() + k())
   let t = task.spawn { -> 7 }
-  println(task.join(t))
+  println(task.join_handle(t))
   let pairs = [(1, "a"), (2, "b")]
   pairs |> list.each { (n, s) -> println("{n}{s}") }
   pairs |> list.each(fn((n, s)) { println("{n}{s}") })

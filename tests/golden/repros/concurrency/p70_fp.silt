@@ -11,7 +11,7 @@ fn one_round(i) {
     }
   })
   let b = task.spawn(fn() { channel.send(ch, i) })
-  task.join(a)
+  task.join_handle(a)
 }
 
 fn go(i, acc) {

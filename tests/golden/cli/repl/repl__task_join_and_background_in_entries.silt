@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: import task\nimport channel\nlet ch: Channel(Int) = channel.new(2)\ntask.join([{ -> channel.send(ch, 1) }, { -> channel.send(ch, 2) }])\nchannel.close(ch)\ntask.background([{ -> channel.each(ch) { _ -> () } }], { -> "body done" })\ntask.join([{ -> panic("a piece failed") }])\n"the session goes on"\n:quit\n
+-- stderr-contains: panic: a piece failed
+-- An entry that joins returns when its pieces have; a background's
+-- body gives its value; a failing piece fails its entry, and the
+-- session goes on.

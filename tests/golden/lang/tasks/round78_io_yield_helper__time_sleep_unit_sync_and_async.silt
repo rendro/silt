@@ -8,7 +8,7 @@ fn worker() -> () {
 fn main() {
   let sync = time.sleep(time.ms(1))
   let h = task.spawn(worker)
-  let async = task.join(h)
+  let async = task.join_handle(h)
   println(sync)
   println(async)
 }

@@ -26,5 +26,5 @@ fn main() {
     None -> println("nothing ended")
   }
   list.each(workers, task.cancel)
-  task.join(idle)
+  task.join_handle(idle)
 }

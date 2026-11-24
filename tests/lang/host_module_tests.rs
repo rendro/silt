@@ -221,7 +221,7 @@ import mylib
 import task
 fn main() {
   let t = task.spawn { -> mylib.double(21) }
-  host.give(task.join(t))
+  host.give(task.join_handle(t))
 }
 import host
 "#;

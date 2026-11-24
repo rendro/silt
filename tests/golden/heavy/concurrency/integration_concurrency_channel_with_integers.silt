@@ -11,7 +11,7 @@ fn program() {
     channel.send(ch, 30)
   })
 
-  task.join(producer)
+  task.join_handle(producer)
 
   when let Some(a) = channel.receive(ch) else { panic("pattern did not match") }
   when let Some(b) = channel.receive(ch) else { panic("pattern did not match") }

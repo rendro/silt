@@ -17,5 +17,5 @@ fn wide() {
 fn main() {
   println("main {wide()}")
   let t = task.spawn { -> wide() }
-  println("task {task.join(t)}")
+  println("task {task.join_handle(t)}")
 }

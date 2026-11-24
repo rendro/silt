@@ -3,4 +3,4 @@ error[runtime]: a task failed and was never joined: panic: worker failed
     |
  16 |   let _ = task.spawn({ -> panic("worker failed") })
     |                           ^^^^^^^^^^^^^^^^^^^^^^ a task failed and was never joined: panic: worker failed
-  = help: the task was spawned at wave1_channels_tasks__h5_failed_task_that_is_never_joined_is_reported.silt:16:11: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+  = help: the task was spawned at wave1_channels_tasks__h5_failed_task_that_is_never_joined_is_reported.silt:16:11: join it with task.join_handle to stop where you wait for it, or cancel it with task.cancel if you don't need its result

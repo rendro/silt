@@ -19,5 +19,5 @@ fn main() {
     let r = Holder { bump: make_bump() }
     r.bump()
   })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

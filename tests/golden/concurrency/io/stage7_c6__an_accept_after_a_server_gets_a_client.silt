@@ -40,7 +40,7 @@ fn main() {
       }
       Err(e) -> "no connection: {e}"
     }
-    let _ = task.join(client)
+    let _ = task.join_handle(client)
     match got {
       "a client" -> bad
       _ -> {

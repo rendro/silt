@@ -13,5 +13,5 @@ fn main() {
       channel.Closed -> "closed"
     }
   })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: deadlock on main thread: task.join with no progress possible
+-- stderr-contains: deadlock on main thread: task.join_handle with no progress possible
 -- stderr-contains: task <handle:0> waits to receive from <channel:0>
 -- stderr-contains: task <handle:1> waits to send to <channel:1>
 -- The deadlock report says what every other task waits on.
@@ -11,5 +11,5 @@ fn main() {
   let b = channel.new(0)
   let h1 = task.spawn({ -> channel.receive(a) })
   let _h2 = task.spawn({ -> channel.send(b, 1) })
-  let _ = task.join(h1)
+  let _ = task.join_handle(h1)
 }

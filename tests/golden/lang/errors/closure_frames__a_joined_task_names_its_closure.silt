@@ -9,5 +9,5 @@ fn work(n) {
 
 fn main() {
   let h = task.spawn({ -> work(1) + 1 })
-  println(task.join(h))
+  println(task.join_handle(h))
 }

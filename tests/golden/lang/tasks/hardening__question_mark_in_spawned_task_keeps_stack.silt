@@ -20,5 +20,5 @@ fn main() {
   let h = task.spawn(worker)
   -- 111 + 222 + 333; any other value means the task's stack was
   -- truncated to the wrong offset after the `?` early return
-  println(task.join(h))
+  println(task.join_handle(h))
 }

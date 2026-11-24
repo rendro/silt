@@ -18,7 +18,7 @@ fn main() {
       let _ = channel.receive(gate)
       channel.send(cmds, 1)
     }
-    task.join(other)
+    task.join_handle(other)
   }
   match outcome {
     None -> println("timed out")
@@ -26,5 +26,5 @@ fn main() {
   }
   channel.close(cmds)
   channel.close(gate)
-  println(task.join(other))
+  println(task.join_handle(other))
 }

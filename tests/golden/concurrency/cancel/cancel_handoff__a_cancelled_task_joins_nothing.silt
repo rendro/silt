@@ -1,4 +1,4 @@
--- A join is a take: after a cancel, a task's `task.join` ends the task,
+-- A join is a take: after a cancel, a task's `task.join_handle` ends the task,
 -- also the join of a task that has ended, and nothing is taken from it
 -- (a failure of the joined task would stay to be reported as never
 -- joined). The task cancels itself, so the cancel comes at a known
@@ -12,13 +12,13 @@ fn main() {
   let given: Channel(Int) = channel.new(8)
   let t = task.spawn { ->
     let helper = task.spawn { -> 7 }
-    let _ = task.join(helper)
+    let _ = task.join_handle(helper)
     match channel.receive(own) {
       Some(me) -> task.cancel(me)
       None -> ()
     }
     channel.send(given, 1)
-    channel.send(given, task.join(helper))
+    channel.send(given, task.join_handle(helper))
     println("not reached")
   }
   channel.send(own, t)

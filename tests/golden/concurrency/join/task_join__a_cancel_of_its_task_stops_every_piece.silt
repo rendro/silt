@@ -1,0 +1,32 @@
+-- A cancel of the task that waits in a join stops every piece of the
+-- join, and returns when they have ended: nothing receives on the
+-- channel a piece waited on.
+import channel
+import task
+
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let started: Channel(Int) = channel.new(2)
+  let h = task.spawn { ->
+    task.join(
+      [
+        { ->
+          channel.send(started, 1)
+          let _ = channel.receive(never)
+        },
+        { ->
+          channel.send(started, 2)
+          let _ = spin(0)
+        },
+      ],
+    )
+  }
+  let _ = channel.receive(started)
+  let _ = channel.receive(started)
+  task.cancel(h)
+  println(channel.try_send(never, 1))
+}

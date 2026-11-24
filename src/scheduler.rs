@@ -690,7 +690,7 @@ impl Scheduler {
     }
 
     /// Report on the host's stderr every task of this scheduler that failed and
-    /// whose error no `task.join` has received and no `task.cancel` has
+    /// whose error no `task.join_handle` has received and no `task.cancel` has
     /// dismissed. Each failure is reported once, so the call can be
     /// repeated. Returns the number of failures that this call reported.
     ///
@@ -830,6 +830,17 @@ impl Scheduler {
         if let Some(joined) = taken_from {
             self.inner.hand_back(&joined);
         }
+    }
+
+    /// Stop the task `handle`, a task of a `task.join` or a
+    /// `task.background` whose call is over: as a cancel of a task
+    /// above it reaches it (a failure it had stands, and the tasks it
+    /// spawned are stopped too), and as such a cancel ends its wait.
+    pub(crate) fn stop_task(&self, handle: &TaskHandle) {
+        handle.mark_cancelled();
+        self.inner.cancel_below(handle);
+        handle.cancel_spawned(self.wake());
+        self.inner.parking.cancel(TaskId(handle.id as u64));
     }
 
     /// Close `channel` when the clock reads `deadline`. Until then a
@@ -2437,7 +2448,13 @@ impl Inner {
                 // to that task.
                 let error = task.vm.enrich_error(error);
                 let taken_from = error.taken_from.clone();
-                if task.handle.fail(error, &self.parking) {
+                // A task of a `task.join` or a `task.background` fails
+                // its call, which raises the failure (or notes it, under
+                // the first): it is never one that nobody joined.
+                if let Some((together, role)) = task.handle.together() {
+                    let _ = task.handle.complete(Err(error.clone()), &self.parking);
+                    together.failed(role, error, &self.parking);
+                } else if task.handle.fail(error, &self.parking) {
                     record_failed_task(self, &task.handle);
                 } else if let Some(joined) = taken_from {
                     self.hand_back(&joined.0);
@@ -2651,8 +2668,14 @@ fn verdict(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Option<VmError> {
     let what = match mine.on {
         [Source::Recv(_)] => "channel receive with no counterparty",
         [Source::Send(_)] => "channel send with no counterparty",
-        [Source::Cell(_)] => "task.join with no progress possible",
+        // The cell of a `task.join` or a `task.background` names its
+        // call; a task's own end is what a `task.join_handle` waits for.
+        [Source::Cell(cell)] => cell.call().unwrap_or("task.join_handle"),
         _ => "channel select with no counterparty",
+    };
+    let what = match mine.on {
+        [Source::Cell(_)] => format!("{what} with no progress possible"),
+        _ => what.to_string(),
     };
     let mut verdict = VmError::ending(format!("deadlock on main thread: {what}"));
     for (line, at) in waits_of_the_others(own, main) {
@@ -2738,6 +2761,17 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                         Some(at),
                     ),
                     None => (format!("the `{name}` {what} waits {on}"), None),
+                };
+            }
+            // A task of a `task.join` or a `task.background` is named
+            // by what it is there, and the place of the call.
+            if let Sleeper::Task(task) = waiting.sleeper
+                && let Some((_, role)) = task.handle.together()
+            {
+                let what = role.what();
+                return match task.handle.spawn_site() {
+                    Some((at, _)) => (format!("{what} at {{at}} waits {on}"), Some(at)),
+                    None => (format!("{what} waits {on}"), None),
                 };
             }
             let task = match waiting.sleeper {
@@ -3489,7 +3523,7 @@ pub(crate) enum Blocks {
 }
 
 /// What the report of a failure that nobody joined advises.
-const UNJOINED_FAILURE_HELP: &str = "join it with task.join to stop where you wait for it, or \
+const UNJOINED_FAILURE_HELP: &str = "join it with task.join_handle to stop where you wait for it, or \
      cancel it with task.cancel if you don't need its result";
 
 /// The first line of the report of a failure that nobody joined: the
@@ -3645,7 +3679,7 @@ fn not_shown_help(count: usize) -> String {
         _ => "the first of them was spawned here",
     };
     format!(
-        "{spawned}: join each task with task.join, or cancel it with task.cancel if you \
+        "{spawned}: join each task with task.join_handle, or cancel it with task.cancel if you \
          don't need its result"
     )
 }
@@ -3890,7 +3924,7 @@ fn main() {
     channel.Message(v) -> println("got {v}")
     _ -> println("timed out")
   }
-  task.join(sender)
+  task.join_handle(sender)
   match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(5)))]) {
     channel.Received(_, None) -> println("the timeout channel closed")
     _ -> println("something else")
@@ -3957,7 +3991,7 @@ fn main() {
     println("last")
   })
   channel.send(ch, 1)
-  task.join(ends)
+  task.join_handle(ends)
 }
 "#,
         );
@@ -3977,11 +4011,11 @@ fn main() {
   let timer = channel.timeout(time.ms(150))
   let _waits = task.spawn({ -> channel.receive(timer) })
   let other = task.spawn({ -> channel.receive(ch) })
-  host.give(task.join(other))
+  host.give(task.join_handle(other))
 }
 import host
 "#);
-        assert_deadlock(result, "task.join with no progress possible");
+        assert_deadlock(result, "task.join_handle with no progress possible");
         // Not before the timer: while it is pending, a wait can end.
         let took = end.duration_since(start);
         assert!(
@@ -4138,7 +4172,7 @@ fn main() {
   let never: Channel(Int) = channel.new(0)
   let idle = list.map(1..100) { _ -> task.spawn { -> channel.receive(never) } }
   let sleeper = task.spawn { -> list.each(1..200) { _ -> time.sleep(time.micros(1)) } }
-  task.join(sleeper)
+  task.join_handle(sleeper)
   let ping = channel.new(0)
   let pong = channel.new(0)
   let partner = task.spawn { -> channel.each(ping) { v -> channel.send(pong, v) } }
@@ -4147,7 +4181,7 @@ fn main() {
     let _ = channel.receive(pong)
   }
   channel.close(ping)
-  task.join(partner)
+  task.join_handle(partner)
   list.each(idle, task.cancel)
 }
 "#,
@@ -4383,7 +4417,7 @@ import time
 fn main() {{
   list.each(1..{rounds}) {{ i ->
     let c = task.spawn {{ -> panic("child {{i}}") }}
-    let j = task.spawn {{ -> task.join(c) }}
+    let j = task.spawn {{ -> task.join_handle(c) }}
     time.sleep(time.micros(300))
     task.cancel(j)
   }}
@@ -4500,8 +4534,8 @@ fn main() {{
     }}
   }}
   let last = task.spawn {{ -> channel.close(stop) }}
-  task.join(last)
-  list.each(busy_ones) {{ t -> task.join(t) }}
+  task.join_handle(last)
+  list.each(busy_ones) {{ t -> task.join_handle(t) }}
   println("all ended")
 }}
 "#,
@@ -4572,7 +4606,7 @@ fn forever(n) {
 fn main() {
   let _computes = task.spawn { -> forever(0) }
   let sleeps = task.spawn { -> time.sleep(time.ms(5)) }
-  task.join(sleeps)
+  task.join_handle(sleeps)
 }
 "#;
 
@@ -4719,11 +4753,11 @@ fn main() {
     task.spawn { -> list.each(1..100) { i -> println("{p} {i} {line}") } }
   }
   let sum = task.spawn { -> list.fold(1..1000, 0) { acc, i -> acc + i } }
-  let computed = task.join(sum)
+  let computed = task.join_handle(sum)
   let cut = task.deadline(time.ms(50)) { -> list.each(1..100) { _ -> println(line) } }
   host.give("computed {computed}; the deadline: {cut}")
   io.eprintln("on stderr, after them all")
-  list.each(printers, task.join)
+  list.each(printers, task.join_handle)
 }
 import host
 "#,

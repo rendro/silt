@@ -28,9 +28,9 @@ fn program() {
     x + y
   })
 
-  task.join(producer)
-  task.join(transformer)
-  task.join(consumer)
+  task.join_handle(producer)
+  task.join_handle(transformer)
+  task.join_handle(consumer)
 }
 
 fn main() {

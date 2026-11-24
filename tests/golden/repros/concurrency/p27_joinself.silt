@@ -8,7 +8,7 @@ fn main() {
     match channel.receive(hch) {
       Some(me) -> {
         println("task: joining myself")
-        task.join(me)
+        task.join_handle(me)
         println("task: join-self returned")
         1
       }
@@ -18,5 +18,5 @@ fn main() {
   channel.send(hch, h)
   time.sleep(time.ms(300))
   println("main: slept; now joining")
-  println(task.join(h))
+  println(task.join_handle(h))
 }

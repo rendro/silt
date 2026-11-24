@@ -1,0 +1,32 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: panic: the text says {at}
+-- stderr-contains: = note: another piece failed too, at task_join__a_note_keeps_the_text_of_the_failure_it_quotes.silt:15:3: panic: the text says {at}
+-- stderr-not-contains: never joined
+-- A note names the place of the failure it is about; a "{at}" in the
+-- text of that failure is the program's own text and stays as it is.
+-- Both failures are certain: the two pieces meet on a channel with no
+-- room, so each fails only after that meeting, and after it neither
+-- takes anything more. A piece that is stopped then still has the steps
+-- to reach its failure, and neither was stopped before it ran.
+import channel
+import task
+
+fn boom() -> () {
+  panic("the text says \{at\}")
+}
+
+fn main() {
+  let meet: Channel(Int) = channel.new(0)
+  task.join(
+    [
+      { ->
+        channel.send(meet, 1)
+        boom()
+      },
+      { ->
+        let _ = channel.receive(meet)
+        boom()
+      },
+    ],
+  )
+}

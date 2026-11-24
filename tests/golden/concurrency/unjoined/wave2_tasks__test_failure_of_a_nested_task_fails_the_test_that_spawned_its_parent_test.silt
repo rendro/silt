@@ -20,7 +20,7 @@ fn test_nested() {
     })
     42
   })
-  test.assert_eq(task.join(outer), 42)
+  test.assert_eq(task.join_handle(outer), 42)
   let _ = channel.receive(about_to_fail)
   time.sleep(time.ms(300))
 }

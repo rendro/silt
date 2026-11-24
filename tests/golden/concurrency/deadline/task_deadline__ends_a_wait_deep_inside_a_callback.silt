@@ -24,7 +24,7 @@ fn main() {
   let inside = task.spawn { ->
     task.deadline(time.ms(20), { -> list.map(1..3) { i -> recv(never) * i } })
   }
-  println(task.join(inside))
+  println(task.join_handle(inside))
   println(task.deadline(time.ms(20), { ->
     map.each(#{ "a": 1 }) { key, value -> time.sleep(time.hours(1)) }
   }))

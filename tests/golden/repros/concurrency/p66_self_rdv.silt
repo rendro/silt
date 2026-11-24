@@ -14,6 +14,6 @@ fn main() {
       _ -> "other"
     }
   })
-  println(task.join(h))
+  println(task.join_handle(h))
   println("leftover in channel: {channel.try_receive(ch)}")
 }

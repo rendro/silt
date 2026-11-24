@@ -10,5 +10,5 @@ fn main() {
       println("exit")
     })
   })
-  let _ = task.join(h)
+  let _ = task.join_handle(h)
 }

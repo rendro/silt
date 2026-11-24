@@ -35,7 +35,7 @@ fn main() {
       None -> loop(got, sum, inner_timeouts)
     }
   }
-  task.join(producer)
+  task.join_handle(producer)
   match r {
     (got, sum, inner_timeouts) -> {
       println("sent 100 (sum 4950), received {got} (sum {sum})")

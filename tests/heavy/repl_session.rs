@@ -41,7 +41,7 @@ fn session(rounds: usize, waiting: bool) -> (Vec<String>, Vec<usize>) {
         entries.push(format!("let bad{i}: Int = \"s\""));
         entries.push(match waiting {
             true => format!("let h{i} = task.spawn {{ -> channel.receive(never) }}"),
-            false => format!("task.join(task.spawn {{ -> f{i}(2) }})"),
+            false => format!("task.join_handle(task.spawn {{ -> f{i}(2) }})"),
         });
     }
     (entries, markers)

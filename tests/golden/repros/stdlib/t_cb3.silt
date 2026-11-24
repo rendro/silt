@@ -20,7 +20,7 @@ fn main() {
   let worker = task.spawn { ->
     pair("x", list.map([a, b], channel.receive))
   }
-  let out = task.join(worker)
+  let out = task.join_handle(worker)
   println(out)
-  task.join(sender)
+  task.join_handle(sender)
 }

@@ -154,7 +154,7 @@ terminal. Its line ends stay: the lines after the first are a note.
 
 The payload is shown as `println` shows it, so a tool's own error type
 with a `Display` impl reads as the tool writes it. Where that impl itself
-fails (a `panic` in it, a division by zero, a failed `task.join`), the
+fails (a `panic` in it, a division by zero, a failed `task.join_handle`), the
 payload is shown by its structure, and one line under it says which
 impl failed, what its failure said and where:
 
