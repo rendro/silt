@@ -393,8 +393,9 @@ let vm = Vm::new(HostIo::buffer(&out));
 
 **Output.** `print` and `println` write to stdout, `io.eprint` and
 `io.eprintln` to stderr. What the runtime prints for the program goes to
-stderr too: the report of a stream stage that failed and whose output
-nobody read, and the log of an `http.serve` handler that failed. A `Buffer` collects text in memory; its clones share the text,
+stderr too: the report of failures that nothing read (see below), and the
+log of an `http.serve` handler that failed. A `Buffer` collects text in
+memory; its clones share the text,
 so the embedder keeps one and reads it with `contents()` or `take()`.
 For anything else, implement `Output`:
 
@@ -419,12 +420,17 @@ take a text of any length, in pieces.) An error `write` returns for a
 stdout: ...`), and so is a panic inside it; for a write to stderr both are
 dropped.
 
-The report of stream stages that failed and whose output nobody read
-is written when `run_program` returns, for the stages that have failed
-by then. It does not change the result: `run_program` still says how
-`main` ended. A stage that fails later (one that a top-level binding
-holds goes on after `main`) is reported when the `Vm` is dropped, if
-it has failed by then; `vm.settle()` waits for every task first (see
+The report of failures that nothing read is written when `run_program`
+returns, for the failures that have happened by then. A failure that
+nothing read is one of three: a stream stage that failed and whose
+output nobody read; the function of a `stream.from_fn` that failed after
+it closed its channel, so that no read could raise the failure; and the
+handler of an `http.serve` that a test started and that called
+`process.exit` (`Exit::FailsTest`), which fails that test. The report
+does not change the result: `run_program` still says how `main` ended.
+A stage that fails later (one that a top-level binding holds goes on
+after `main`) is reported when the `Vm` is dropped, if it has failed by
+then; `vm.settle()` waits for every task first (see
 "The end of a program" below). With `HostIo::process()`, a program
 that writes to a closed stdout pipe ends the process quietly with status
 141; give `HostIo::new` your own `Output` if the process must go on.
@@ -576,8 +582,8 @@ top-level binding holds one) may still be at work.
 `vm.settle()` waits until the program has ended as `silt run` defines
 it: until none of its tasks can do more (each has ended or waits, and
 no timer and no I/O is pending). It then drops the tasks that still
-wait, and reports on stderr the stages that failed and whose output
-nobody read. An embedder that wants the exit rule of `silt run` calls it
+wait, and reports on stderr the failures that nothing read (the three
+kinds above). An embedder that wants the exit rule of `silt run` calls it
 after a `run_program` that returned `Ok`.
 
 Without `settle`, the program's tasks go on for as long as the `Vm`
@@ -592,7 +598,7 @@ program's stages (a playground with a time limit) does not call
 process: whatever call into the `Vm` is running (`run_program`,
 `call_test`) returns an error whose `exit` is `Some(code)`, also when a
 task made the call. No task runs further, nothing is waited for, and the
-failures of stages whose output nobody read are not reported. Your thread gets
+failures that nothing read are not reported. Your thread gets
 the error at once where it waits for a task, a channel or an I/O
 operation, and within about a million steps where it computes; a thread
 asleep in your `Clock::sleep`, or inside one call of a builtin or a host
