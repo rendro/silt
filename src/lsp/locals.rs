@@ -110,18 +110,6 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
             }
             collect_locals_in_expr(body, cursor, locals);
         }
-        ExprKind::Loop { bindings, body } => {
-            for (name, _, init) in bindings {
-                if (init.span.start as usize) <= cursor {
-                    locals.push(LocalVar {
-                        name: name.to_string(),
-                        ty: init.ty.clone(),
-                    });
-                }
-                collect_locals_in_expr(init, cursor, locals);
-            }
-            collect_locals_in_expr(body, cursor, locals);
-        }
         _ => {
             expr.for_each_child(|child| collect_locals_in_expr(child, cursor, locals));
         }

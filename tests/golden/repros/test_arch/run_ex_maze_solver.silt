@@ -83,7 +83,7 @@ fn reconstruct_path(visited, goal_idx) {
   step(goal_idx, [])
 }
 
--- BFS using loop: bind queue and visited, iterate until found or exhausted
+-- BFS: a closure that calls itself with the queue and the visited list, until found or exhausted
 
 fn bfs(maze, start, goal) {
   let go = { queue, visited ->

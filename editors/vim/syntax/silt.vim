@@ -11,7 +11,7 @@ endif
 " tests/meta/editor_grammar_names_tests.rs: do not edit by hand. After a
 " change of either, `SILT_BLESS=1 cargo nextest run --test meta
 " editor_grammar_names` writes these lines again.
-syntax keyword siltKeyword as else fn import let loop match opaque pub return trait type when where
+syntax keyword siltKeyword as else fn import let match opaque pub return trait type when where
 syntax keyword siltBoolean true false
 " The variants of the builtin enums, one enum a line. The types come
 " after them: a name that is both (json.Value's Int) is a type, as vim

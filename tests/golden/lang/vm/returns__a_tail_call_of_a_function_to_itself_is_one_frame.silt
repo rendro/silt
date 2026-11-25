@@ -1,8 +1,8 @@
 -- cmd: test
 -- exit: 1
--- A tail call of a function to itself is a jump back to its start, as
--- the round of a loop is: however many rounds it made, the call stack
--- of a failure shows one frame of it. So does a closure that calls
+-- A tail call of a function to itself is a jump back to its start:
+-- however many rounds it made, the call stack of a failure shows one
+-- frame of it. So does a closure that calls
 -- itself by the name its `let` gives it, in a function or at the top
 -- level. A call of the function from a
 -- closure inside it is the closure's call, and each takes a frame.

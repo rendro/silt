@@ -29,8 +29,8 @@ pub(super) struct DefUse {
     pub(super) id: DefId,
 }
 
-/// A local name as a module writes it: where a pattern, a parameter or
-/// a `loop` binds it, or a use of it.
+/// A local name as a module writes it: where a pattern or a parameter
+/// binds it, or a use of it.
 pub(super) struct LocalName {
     pub(super) span: Span,
     pub(super) name: Symbol,
@@ -461,7 +461,7 @@ impl<'a> Names<'a> {
                     self.expr(value);
                 }
             }
-            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
                 for e in elems {
                     self.expr(e);
                 }
@@ -607,13 +607,6 @@ impl<'a> Names<'a> {
                 for stmt in stmts {
                     self.stmt(stmt);
                 }
-            }
-            ExprKind::Loop { bindings, body } => {
-                for (name, span, init) in bindings {
-                    self.expr(init);
-                    self.local(*span, *name, true, false);
-                }
-                self.expr(body);
             }
         }
     }

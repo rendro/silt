@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: silt has no `loop`: a function that calls itself repeats, and `list.each` and `list.fold` go over a list or a range
+fn main() {
+  let r = loop i = 0 { i }
+  println(r)
+}

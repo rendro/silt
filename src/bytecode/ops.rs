@@ -1060,15 +1060,13 @@ ops! {
     /// Extract the map value of the key. Peek map, push value.
     DestructMapValue { key: Str } => pops 1, pushes 2;
 
-    // ── Loop ───────────────────────────────────────────────────
+    // ── Self tail call ─────────────────────────────────────────
     /// Store the top `argc` values in the slots from `first` on, cut
     /// the frame back to just above them and jump back to `to`: the
-    /// next round of a loop whose bindings those slots are, or the tail
-    /// call of a function to itself, whose parameters they are, with
-    /// `to` the start of its code. (The count
-    /// is a `Byte`, so that the decoded instruction of three operands
-    /// stays three words.)
-    Recur { argc: Byte("bindings of a loop"), first: Cut, to: Rel } => pops usize::from(argc), cut first, pushes usize::from(argc), jump;
+    /// tail call of a function to itself, whose parameters those slots
+    /// are, with `to` the start of its code. (The count is a `Byte`, so
+    /// that the decoded instruction of three operands stays three words.)
+    Recur { argc: Byte("parameters of a self tail call"), first: Cut, to: Rel } => pops usize::from(argc), cut first, pushes usize::from(argc), jump;
 
     // ── Error handling ─────────────────────────────────────────
     /// Unwrap Ok/Some or early-return Err/None.

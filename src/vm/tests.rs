@@ -2304,42 +2304,6 @@ fn test_match_guard_with_tuple() {
 // ── Phase 5 tests ──────────────────────────────────────────
 
 #[test]
-fn test_loop_sum() {
-    let result = run_vm(
-        r#"
-            fn main() {
-                host.give(loop x = 0, sum = 0 {
-                    match x >= 10 {
-                        true -> sum
-                        _ -> loop(x + 1, sum + x)
-                    }
-                })
-            }
-            import host
-        "#,
-    );
-    assert_eq!(result, Value::Int(45));
-}
-
-#[test]
-fn test_loop_factorial() {
-    let result = run_vm(
-        r#"
-            fn main() {
-                host.give(loop n = 10, acc = 1 {
-                    match n <= 1 {
-                        true -> acc
-                        _ -> loop(n - 1, acc * n)
-                    }
-                })
-            }
-            import host
-        "#,
-    );
-    assert_eq!(result, Value::Int(3628800));
-}
-
-#[test]
 fn test_record_create_and_access() {
     let result = run_vm(
         r#"
@@ -2527,27 +2491,6 @@ fn test_recursive_variant_eval() {
         "#,
     );
     assert_eq!(result, Value::Int(8));
-}
-
-#[test]
-fn test_loop_in_function() {
-    let result = run_vm(
-        r#"
-            fn sum_to(n) {
-                loop i = 0, acc = 0 {
-                    match i > n {
-                        true -> acc
-                        _ -> loop(i + 1, acc + i)
-                    }
-                }
-            }
-            fn main() {
-                host.give(sum_to(100))
-            }
-            import host
-        "#,
-    );
-    assert_eq!(result, Value::Int(5050));
 }
 
 // ── Concurrency tests ────────────────────────────────────────────
@@ -3442,7 +3385,7 @@ fn main() {
     }
 
     #[test]
-    fn in_a_closure_and_in_a_loop() {
+    fn in_a_closure_and_in_a_self_call() {
         let source = "\
 fn make(d: Int) -> Fn(Int) -> Int {
   { x -> x / d }
@@ -3460,18 +3403,18 @@ fn main() {
         );
         let source = "\
 fn main() {
-  let r = loop i = 5, acc = 1 {
+  let go = { i, acc ->
     match i < 0 {
       true -> acc
-      false -> loop(i - 1, acc + 100 / i)
+      false -> go(i - 1, acc + 100 / i)
     }
   }
-  println(r)
+  println(go(5, 1))
 }
 ";
         assert_eq!(
             stops(source),
-            "division by zero at 5:34; main 5:34; <script> 1:1"
+            "division by zero at 5:32; go in main 5:32; main 8:11; <script> 1:1"
         );
     }
 
@@ -5862,14 +5805,14 @@ mod slots_in_place {
         assert!(vm.stack.is_empty());
     }
 
-    /// `Recur` writes the values on top over the loop's bindings and
-    /// cuts the stack back to them.
+    /// `Recur` writes the values on top over the parameters and cuts
+    /// the stack back to them.
     #[test]
     fn recur_of_every_kind_over_every_kind() {
         let samples = samples();
         let count = samples.len();
         let script = make_function(|e| {
-            // The bindings, then their next values: the same, turned
+            // The parameters, then their next values: the same, turned
             // by one.
             for sample in &samples {
                 push(e, sample.clone());
@@ -5900,11 +5843,11 @@ mod slots_in_place {
         );
     }
 
-    /// The bindings' old values end in the bindings' order, at the
-    /// `Recur`; the new ones are held by the bindings from then on,
+    /// The parameters' old values end in the parameters' order, at the
+    /// `Recur`; the new ones are held by the parameters from then on,
     /// until the script's return cuts the stack back.
     #[test]
-    fn recur_ends_the_old_values_of_the_bindings_in_order() {
+    fn recur_ends_the_old_values_of_the_parameters_in_order() {
         let (vm, run, log) = left_by(|e, k| {
             for _ in 0..6 {
                 probe(e, k);
@@ -7314,9 +7257,9 @@ mod fused_steps {
         }
     }
 
-    /// A counting loop: `loop i = start { match i <compare> bound { .. } }`
-    /// that leaves when the comparison is `exit_if` and otherwise goes
-    /// on with `i + 1` (`up`) or `i - 1`.
+    /// A counting function: `fn count(i) { match i <compare> bound { .. } }`,
+    /// called with `start`, that ends when the comparison is `exit_if`
+    /// and otherwise calls itself with `i + 1` (`up`) or `i - 1`.
     #[derive(Clone, Copy, Debug)]
     struct Counting {
         compare: Asm<'static>,
@@ -7376,7 +7319,7 @@ mod fused_steps {
         ]
     };
 
-    /// The loop `counting`, with its pairs fused or kept apart.
+    /// The function `counting`, with its pairs fused or kept apart.
     fn counting(counting: Counting, fuse: bool) -> Arc<Function> {
         make_function(|e| {
             let start = e.constant(Value::Int(counting.start), span()).unwrap();

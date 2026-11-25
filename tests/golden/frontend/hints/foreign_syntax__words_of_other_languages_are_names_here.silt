@@ -1,5 +1,5 @@
 -- The words and operators the hints for other languages look for are ordinary names, strings and comments where a program uses them so: each statement below parses and runs as on main (a hint fires only where main already gives an error).
--- (`try`, `case`, `switch` bound and used as values (a call `case(1)`); functions named `new`, `and`, `not`, `while` called with a trailing closure; a field named `class`; names `in`, `mut`, `assert`, `catch`, `or`; the operators of other languages inside strings and comments.)
+-- (`try`, `case`, `switch` bound and used as values (a call `case(1)`); functions named `new`, `and`, `not`, `while` called with a trailing closure; a field named `class`; names `in`, `mut`, `assert`, `catch`, `or`, `loop`; the operators of other languages inside strings and comments.)
 import list
 
 type Course { class: String, seats: Int }
@@ -25,7 +25,8 @@ fn main() {
   let assert = 3
   let catch = 4
   let or = 5
-  println(in + mut + assert + catch + or)
+  let loop = 6
+  println(in + mut + assert + catch + or + loop)
   -- a ?? b, x += 1, list::length, a <> b, /* c */, fn(x) { x }
   println("a ?? b, x += 1, list::length, a <> b, a === b, 2 ** 3, /* c */")
 }

@@ -85,7 +85,6 @@ const DENY_SUBSTRINGS: &[&str] = &[
     "uuid.v4",
     "uuid.v7",
     // Infinite loops.
-    "loop {",
     "while true",
     // Process exit.
     "process.exit",

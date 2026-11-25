@@ -365,7 +365,7 @@ impl TypeChecker {
     }
 
     /// Whether the value of `e` comes from calls alone: a call, a pipe,
-    /// a `?`, or a `match`, block or loop whose every result does. A
+    /// a `?`, or a `match` or block whose every result does. A
     /// variant applied to values is a value, not a call.
     fn is_call_like(&self, e: &Expr) -> bool {
         match &e.kind {
@@ -382,8 +382,7 @@ impl TypeChecker {
                 Some(Stmt::Expr(last)) => self.is_call_like(last),
                 _ => true,
             },
-            ExprKind::Loop { body, .. } => self.is_call_like(body),
-            ExprKind::Return(_) | ExprKind::Recur(_) => true,
+            ExprKind::Return(_) => true,
             _ => false,
         }
     }

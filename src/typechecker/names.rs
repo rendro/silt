@@ -36,7 +36,7 @@ use crate::defs::{
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_WHILE_FOR};
+use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_LOOP, NO_WHILE_FOR};
 use crate::source::Span;
 
 use super::suggest::suggest_similar;
@@ -3205,7 +3205,7 @@ impl Resolver<'_> {
                     }
                 }
             }
-            ExprKind::SetLit(elems) | ExprKind::Recur(elems) => {
+            ExprKind::SetLit(elems) => {
                 for e in elems {
                     self.expr(e);
                 }
@@ -3291,17 +3291,6 @@ impl Resolver<'_> {
                 }
             }
             ExprKind::Block(stmts) => self.block(stmts),
-            ExprKind::Loop { bindings, body } => {
-                for (_, _, init) in bindings.iter_mut() {
-                    self.expr(init);
-                }
-                self.push();
-                for (name, at, _) in bindings.iter() {
-                    self.bind_local(*name, *at, Some(vec![(*at, format!("_{name}"))]));
-                }
-                self.expr(body);
-                self.pop();
-            }
         }
     }
 
@@ -3469,6 +3458,7 @@ impl Resolver<'_> {
                  value as a parameter instead",
             ),
             "while" | "for" => Some(NO_WHILE_FOR),
+            "loop" => Some(NO_LOOP),
             "_" => Some(PLACEHOLDER_VALUE_HELP),
             "try" => Some(
                 "silt has no `try`: `?` passes an `Err` on, and `match` takes a `Result` apart",

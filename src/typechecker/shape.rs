@@ -584,17 +584,6 @@ impl<'a, 'd> Walk<'a, 'd> {
                 }
             }
             ExprKind::Return(Some(value)) => self.expr(value, true),
-            ExprKind::Loop { bindings, body } => {
-                for (_, _, init) in bindings {
-                    self.expr(init, false);
-                }
-                let depth = self.scopes.len();
-                for (name, _, _) in bindings {
-                    self.scopes.push((*name, Origin::Other));
-                }
-                self.expr(body, tail);
-                self.scopes.truncate(depth);
-            }
             _ => e.for_each_child(|child| self.expr(child, false)),
         }
     }
@@ -1354,7 +1343,6 @@ fn endings(
                 endings(&arm.body, goes_on, true, out);
             }
         }
-        ExprKind::Loop { body, .. } => endings(body, goes_on, in_arm, out),
         ExprKind::Call(..) | ExprKind::Pipe(..)
             if !goes_on.contains(&(e.span.start, e.span.end))
                 && matches!(e.ty, Some(Type::Unit)) =>

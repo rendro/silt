@@ -18,8 +18,6 @@ fn main() {
 
   -- Merge both streams into a single handler. Over many runs, messages from
   -- `alerts` and `logs` interleave fairly -- neither channel starves the other.
-  -- `loop _ = () { ... loop(()) }` re-enters explicitly; a bare `loop {}`
-  -- without a `loop(...)` recursion runs its body only once.
   let handler = fn() {
     let go = { ->
       match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {

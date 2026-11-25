@@ -962,12 +962,7 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         // non-deterministic but usually safe, so we only deny
         // the blocking form.
         "time.sleep",
-        // Infinite loops — `loop { ... }` without a bound is
-        // common in server/daemon demos and would hang the
-        // walker. This is a fuzzy match; blocks using bounded
-        // `loop acc = 0 { ... }` accumulators are safe because
-        // they don't contain the bare `loop {` pattern.
-        "loop {",
+        // Infinite loops.
         "while true",
         // `process.exit` ends the program with a code of its own,
         // as a rule not 0.

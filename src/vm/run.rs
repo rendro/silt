@@ -1487,7 +1487,7 @@ impl Vm {
                     for i in 0..arg_count {
                         set_copy!(self.stack, base + first_slot + i, self.stack[start + i]);
                     }
-                    // Truncate all the way back to just after loop bindings.
+                    // Truncate all the way back to just after the parameters.
                     self.stack.truncate(base + first_slot + arg_count);
                     ip = to;
                 }
@@ -1803,8 +1803,8 @@ impl Vm {
                 Half::Branch(to)
             }
             Instr::Recur { argc, first, to } => {
-                // The values on top over the loop's bindings, the old
-                // values let go of in the bindings' order, and the frame
+                // The values on top over the parameters, the old values
+                // let go of in the parameters' order, and the frame
                 // cut back to just above them.
                 let argc = usize::from(argc);
                 let values = self.stack.split_off(self.stack.len() - argc);

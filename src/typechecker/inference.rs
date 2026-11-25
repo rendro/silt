@@ -9,7 +9,7 @@ use super::infer::pattern::*;
 use super::names::is_placeholder;
 use super::suggest::suggest_similar;
 use super::*;
-use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_WHILE_FOR};
+use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_LOOP, NO_WHILE_FOR};
 
 // The arms of `infer_expr_kind`, by family of forms.
 mod control;
@@ -17,28 +17,6 @@ mod literal;
 mod name;
 mod operator;
 mod record;
-
-/// Where an expression stands relative to its enclosing `loop`, for the
-/// check that `loop(...)` is in tail position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecurPos {
-    /// The loop's result: a `loop(...)` here restarts the loop.
-    Tail,
-    /// Somewhere whose value is used.
-    NotTail,
-    /// Inside a closure in the loop body.
-    InClosure,
-}
-
-impl RecurPos {
-    /// The position of a sub-expression whose value is used.
-    fn inner(self) -> RecurPos {
-        match self {
-            RecurPos::InClosure => RecurPos::InClosure,
-            RecurPos::Tail | RecurPos::NotTail => RecurPos::NotTail,
-        }
-    }
-}
 
 /// Pick the singular or plural form of a word
 /// based on `n`. Used to render arity/field/binding counts in
@@ -182,6 +160,7 @@ pub(super) fn format_undefined_variable_message(
     let foreign_keyword_hint = match name_str.as_str() {
         "break" | "continue" => Some(NO_BREAK),
         "while" | "for" => Some(NO_WHILE_FOR),
+        "loop" => Some(NO_LOOP),
         _ => None,
     };
     if let Some(hint) = foreign_keyword_hint {
@@ -2255,7 +2234,7 @@ impl TypeChecker {
     }
 
     /// `ty` as the type of a place that later values join (a map's keys
-    /// and values, a loop's binding): a variable resolved to it, so that a
+    /// and values): a variable resolved to it, so that a
     /// function that never returns, taken first, does not keep `Never` in
     /// the place's type (see `TyVarSupply::bind`).
     fn kept(&mut self, ty: Type) -> Type {
@@ -2939,7 +2918,7 @@ impl TypeChecker {
                 Code::InvalidControlFlow,
                 format!(
                     "'{}' is declared to return `Never`, but its body can return — end it with \
-                     'panic', a call of a function that returns `Never` or a `loop` that never ends",
+                     'panic' or a call of a function that returns `Never`",
                     f.name
                 ),
                 f.body.span,
@@ -3043,7 +3022,7 @@ impl TypeChecker {
                 diagnostic = diagnostic.with_help(format!(
                     "a `?` in a closure ends the closure, not the function; over a list, \
                      `{}(xs) {{ x -> ... }}?` calls the closure on every element, then gives \
-                     the first `{fails}`; to stop at the first `{fails}`, use `{}` or a `loop`",
+                     the first `{fails}`; to stop at the first `{fails}`, use `{}` or a function that calls itself",
                     self.written_builtin("list.traverse"),
                     self.written_builtin("list.fold_until"),
                 ));
@@ -3144,7 +3123,7 @@ impl TypeChecker {
                 )
                 .with_note(note)
                 .with_help(format!(
-                    "to stop early, use `{}`, `{}` or `{}`, or a `loop`",
+                    "to stop early, use `{}`, `{}` or `{}`, or a function that calls itself",
                     self.written_builtin("list.find"),
                     self.written_builtin("list.any"),
                     self.written_builtin("list.fold_until")
@@ -4697,102 +4676,10 @@ impl TypeChecker {
 
                 last_ty
             }
-
-            ExprKind::Loop { .. } => self.infer_loop(expr, env),
-
-            ExprKind::Recur(..) => self.infer_recur(expr, env, span),
         };
         let resolved = self.apply(&ty);
         expr.ty = Some(resolved.clone());
         resolved
-    }
-
-    /// Reject a `loop(...)` call that is not in tail position of its
-    /// loop. `loop(...)` restarts the loop, so nothing may use its result:
-    /// it must be the last expression of the loop body, or of a block,
-    /// match arm or `when ... else` body that is itself in tail position.
-    /// `pos` says where `expr` stands. A nested `loop` starts its own
-    /// tail context, checked when that loop is inferred, so only its
-    /// binding initialisers are walked here.
-    fn check_recur_tail_positions(&mut self, expr: &Expr, pos: RecurPos) {
-        let inner = pos.inner();
-        match &expr.kind {
-            ExprKind::Recur(args) => {
-                match pos {
-                    RecurPos::Tail => {}
-                    RecurPos::NotTail => self.error(
-                        Code::InvalidControlFlow,
-                        "`loop(...)` must be in tail position: it restarts the loop, so \
-                         nothing can use its result — make it the last expression of \
-                         the loop body, or of a block, match arm or `when ... else` body \
-                         in tail position"
-                            .to_string(),
-                        expr.span,
-                    ),
-                    RecurPos::InClosure => self.error(
-                        Code::InvalidControlFlow,
-                        "`loop(...)` inside a closure is not the loop's tail: the closure \
-                         runs when it is called, not as the loop body, so it cannot \
-                         restart the loop — return a value from the closure and call \
-                         `loop(...)` in the loop body"
-                            .to_string(),
-                        expr.span,
-                    ),
-                }
-                for arg in args {
-                    self.check_recur_tail_positions(arg, inner);
-                }
-            }
-            ExprKind::Loop { bindings, .. } => {
-                for (_, _, value) in bindings {
-                    self.check_recur_tail_positions(value, inner);
-                }
-            }
-            ExprKind::Block(stmts) => {
-                let last = stmts.len().saturating_sub(1);
-                for (i, stmt) in stmts.iter().enumerate() {
-                    match stmt {
-                        Stmt::Let { value, .. } => self.check_recur_tail_positions(value, inner),
-                        Stmt::When {
-                            expr: value,
-                            else_body,
-                            ..
-                        } => {
-                            self.check_recur_tail_positions(value, inner);
-                            self.check_recur_tail_positions(else_body, pos);
-                        }
-                        Stmt::WhenBool {
-                            condition,
-                            else_body,
-                        } => {
-                            self.check_recur_tail_positions(condition, inner);
-                            self.check_recur_tail_positions(else_body, pos);
-                        }
-                        Stmt::Expr(e) => {
-                            self.check_recur_tail_positions(e, if i == last { pos } else { inner })
-                        }
-                    }
-                }
-            }
-            ExprKind::Match {
-                expr: scrutinee,
-                arms,
-            } => {
-                if let Some(scrutinee) = scrutinee {
-                    self.check_recur_tail_positions(scrutinee, inner);
-                }
-                for arm in arms {
-                    if let Some(guard) = &arm.guard {
-                        self.check_recur_tail_positions(guard, inner);
-                    }
-                    self.check_recur_tail_positions(&arm.body, pos);
-                }
-            }
-            ExprKind::Lambda { body, .. } => {
-                self.check_recur_tail_positions(body, RecurPos::InClosure)
-            }
-            _ => expr.for_each_child(|child| self.check_recur_tail_positions(child, inner)),
-        }
     }
 
     // ── Statement type inference ────────────────────────────────────
@@ -4962,8 +4849,8 @@ impl TypeChecker {
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
                         Code::InvalidControlFlow,
-                        "'when let' else body must diverge — end it with 'return', 'panic', a call \
-                         of a function that returns `Never` or, inside a loop, 'loop(...)'"
+                        "'when let' else body must diverge — end it with 'return', 'panic' or a call \
+                         of a function that returns `Never`"
                             .to_string(),
                         else_body.span,
                     );
@@ -4992,8 +4879,8 @@ impl TypeChecker {
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
                         Code::InvalidControlFlow,
-                        "'when' else body must diverge — end it with 'return', 'panic', a call of \
-                         a function that returns `Never` or, inside a loop, 'loop(...)'"
+                        "'when' else body must diverge — end it with 'return', 'panic' or a call of \
+                         a function that returns `Never`"
                             .to_string(),
                         else_body.span,
                     );
@@ -5372,13 +5259,6 @@ fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
                 }
             }
             false
-        }
-        ExprKind::Loop { bindings, body } => {
-            bindings
-                .iter_mut()
-                .any(|(_, _, value)| reads_field_of(value, name))
-                || (!bindings.iter().any(|(bound, ..)| *bound == name)
-                    && reads_field_of(body, name))
         }
         _ => {
             let mut found = false;

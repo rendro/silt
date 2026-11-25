@@ -236,8 +236,11 @@ const LINE_START_PLUS: &str =
     "a line cannot start with `+`; to add to the line above, end that line with the `+`";
 
 /// The hint for `while` or `for`, a loop of another language.
-pub(crate) const NO_WHILE_FOR: &str =
-    "silt has no `while` or `for`: write a `loop`, or `list.each` / `list.map` over a list";
+pub(crate) const NO_WHILE_FOR: &str = "silt has no `while` or `for`: `list.each` and `list.fold` go over a \
+     list or a range, and a function that calls itself repeats";
+/// The hint for `loop`, a keyword of another language.
+pub(crate) const NO_LOOP: &str = "silt has no `loop`: a function that calls itself repeats, and \
+     `list.each` and `list.fold` go over a list or a range";
 /// The hint for `break` or `continue`.
 pub(crate) const NO_BREAK: &str =
     "silt has no `break` or `continue`: return early, or restructure the recursion";
@@ -258,19 +261,10 @@ pub(crate) const TUPLE_INDEX_HELP: &str =
 /// without a value (see `ExprKind::RecordCreate`).
 type RecordFields = (Vec<(Symbol, Expr)>, Vec<Symbol>);
 
-/// The construct whose block follows a header expression.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HeaderKind {
-    /// `match <scrutinee> { arms }`
-    MatchScrutinee,
-    /// `loop name = <initialiser>, ... { body }`
-    LoopInit,
-}
-
 /// Parser context for "an expression that is followed by a block": a
-/// `match` scrutinee or a `loop` binding initialiser. Inside one, a `{`
-/// that directly follows an expression may be the block of the header
-/// rather than a trailing closure or a record literal.
+/// `match` scrutinee. Inside one, a `{` that directly follows an
+/// expression may be the block of the header rather than a trailing
+/// closure or a record literal.
 ///
 /// The context only applies to tokens at the header's own delimiter depth
 /// (`depth`). Inside parentheses, brackets, braces or a string
@@ -278,7 +272,6 @@ enum HeaderKind {
 /// expression rules apply there.
 #[derive(Debug, Clone, Copy)]
 struct BlockHeader {
-    kind: HeaderKind,
     /// Delimiter depth (see `Parser::delim_depth`) of the first token of
     /// the header expression.
     depth: i32,
@@ -287,8 +280,8 @@ struct BlockHeader {
     /// The header stands in another header at its depth, or in the
     /// value of a `when`: `match match f(x) { a -> 1 } { b -> 2 }`, where
     /// the `{` behind the inner match's arms opens the outer one's, and
-    /// `loop v = match f(x) { a -> a } { b -> b } {`, where the braces
-    /// behind the arms have been a closure given to the match's value.
+    /// `when let 2 = match f(x) { a -> a } { b -> b } else {`, where the
+    /// braces behind the arms are a closure given to the match's value.
     /// Such a match keeps that reading.
     nested: bool,
 }
@@ -300,8 +293,7 @@ enum ListEnd<'t> {
     /// or `}`.
     Close(&'t Token),
     /// In front of the token that follows the list, which is left for
-    /// the caller: the `->` after closure parameters, the `{` after
-    /// `loop` bindings.
+    /// the caller: the `->` after closure parameters.
     Before(&'t Token),
     /// As `Before`, for a list that may also end with its last element:
     /// the `where` clauses of a function, whose body `{` is missing in a
@@ -586,16 +578,15 @@ impl<'src> Parser<'src> {
             .filter(|h| h.depth == self.delim_depth_at(self.pos))
     }
 
-    /// Parse one header expression (a `match` scrutinee or a `loop`
-    /// binding initialiser) with the header context set. The previous
+    /// Parse one header expression (a `match` scrutinee) with the header
+    /// context set. The previous
     /// context is put back on success and on failure, so a parse error in
     /// a header cannot leak the context into the rest of the file.
-    fn parse_header_expr(&mut self, kind: HeaderKind) -> Result<Expr> {
+    fn parse_header_expr(&mut self) -> Result<Expr> {
         let depth = self.delim_depth_at(self.pos);
         let nested = self.header.is_some_and(|outer| outer.depth == depth)
             || self.when_value_depth == Some(depth);
         let prev = self.header.replace(BlockHeader {
-            kind,
             depth,
             in_pipe_rhs: false,
             nested,
@@ -3111,7 +3102,6 @@ impl<'src> Parser<'src> {
                 | Token::When
                 | Token::Match
                 | Token::Return
-                | Token::Loop
                 | Token::Fn
                 | Token::Type
                 | Token::Trait
@@ -3193,8 +3183,8 @@ impl<'src> Parser<'src> {
         )
     }
 
-    /// G1 hint table: messages for C-family control-flow keywords that
-    /// silt deliberately lacks. `if`/`while`/`for` lex as ordinary
+    /// G1 hint table: messages for control-flow keywords of other
+    /// languages that silt lacks. `if`/`while`/`for`/`loop` lex as ordinary
     /// identifiers, so a user porting code gets a baffling generic parse
     /// error unless we recognize the shape and point at the silt
     /// equivalent. Used by the statement-level guard in `parse_stmt`.
@@ -3202,6 +3192,7 @@ impl<'src> Parser<'src> {
         match text {
             "if" => Some(NO_IF),
             "while" | "for" => Some(NO_WHILE_FOR),
+            "loop" => Some(NO_LOOP),
             _ => None,
         }
     }
@@ -3995,7 +3986,7 @@ impl<'src> Parser<'src> {
 
     /// The value of a `when let` or the condition of a `when`. A `match`
     /// that stands in it at its depth is a nested header (see
-    /// `BlockHeader::nested`), as one in a `loop` header is.
+    /// `BlockHeader::nested`), as one in another `match` header is.
     fn parse_when_value(&mut self) -> Result<Expr> {
         let depth = self.delim_depth_at(self.pos);
         let outer = self.when_value_depth.replace(depth);
@@ -4542,7 +4533,6 @@ impl<'src> Parser<'src> {
                 }
             }
             Token::Match => self.parse_match_expr(),
-            Token::Loop => self.parse_loop_expr(),
             Token::Return => {
                 self.advance();
                 // A `return` has a value when one follows on its line: not
@@ -4775,25 +4765,18 @@ impl<'src> Parser<'src> {
         }
         match self.header_here() {
             None => true,
-            Some(header) => match header.kind {
-                // The body of a `loop` is a block, and a block never has
-                // the `params ->` shape, so braces that have it are a
-                // closure.
-                HeaderKind::LoopInit => true,
-                // A match body has exactly the closure shape
-                // (`{ x -> ... }`), so in a scrutinee the braces are the
-                // match body, unless another `{` follows them on their
-                // line: then they are the closure of a call and the `{`
-                // is the body (`match list.find(xs) { x -> x > 1 } {`).
-                // (Not in a match that stands in another header, whose
-                // `{` that is.) Behind `|>` a closure is also allowed
-                // where something else that can be the rest of the
-                // scrutinee comes after it.
-                HeaderKind::MatchScrutinee => {
-                    !header.nested && self.brace_follows_braces_on_line()
-                        || header.in_pipe_rhs && self.scrutinee_continues_after_braces()
-                }
-            },
+            // A match body has exactly the closure shape (`{ x -> ... }`),
+            // so in a scrutinee the braces are the match body, unless
+            // another `{` follows them on their line: then they are the
+            // closure of a call and the `{` is the body
+            // (`match list.find(xs) { x -> x > 1 } {`). (Not in a match
+            // that stands in another header, whose `{` that is.) Behind
+            // `|>` a closure is also allowed where something else that
+            // can be the rest of the scrutinee comes after it.
+            Some(header) => {
+                !header.nested && self.brace_follows_braces_on_line()
+                    || header.in_pipe_rhs && self.scrutinee_continues_after_braces()
+            }
         }
     }
 
@@ -4877,7 +4860,7 @@ impl<'src> Parser<'src> {
     /// with either. This bounded lookahead lets a record literal through
     /// inside scrutinee position without breaking match-body
     /// suppression. A lone shorthand field (`P { x }`) is not let
-    /// through: braces holding one name are also a `loop`'s body.
+    /// through: `header_lone_shorthand` says how to write it.
     fn scrutinee_lbrace_is_record_literal(&self) -> bool {
         if self.peek() != &Token::LBrace {
             return false;
@@ -4892,8 +4875,7 @@ impl<'src> Parser<'src> {
 
     /// In a header, at braces behind a type name that hold one name
     /// alone and are followed on their line by another `{`: `match Q {
-    /// x } {`, `loop q = Q { x } {`. The braces were meant as the
-    /// literal `Q { x }`, but in a header they are its block (see
+    /// x } {`. The braces were meant as the literal `Q { x }`, but in a header they are its block (see
     /// `scrutinee_lbrace_is_record_literal`), and the `{` behind them
     /// is the real one.
     fn header_lone_shorthand(&self) -> bool {
@@ -4904,19 +4886,9 @@ impl<'src> Parser<'src> {
         if !lone {
             return false;
         }
-        match self.header_here().map(|h| h.kind) {
-            // A match body is never `{ x }`: the braces were meant as
-            // the literal, wherever the header goes on behind them.
-            Some(HeaderKind::MatchScrutinee) => true,
-            // A loop's body may be `{ x }`, so only what cannot follow
-            // a loop on its line says the braces were the literal: the
-            // `,` of another binding, or the real body's `{`.
-            Some(HeaderKind::LoopInit) => {
-                matches!(kind(3), Some(Token::LBrace | Token::Comma))
-                    && !self.starts_line.get(self.pos + 3).copied().unwrap_or(true)
-            }
-            None => false,
-        }
+        // A match body is never `{ x }`: the braces were meant as the
+        // literal, wherever the header goes on behind them.
+        self.header_here().is_some()
     }
 
     /// The error at `header_lone_shorthand`, for the type `ty` as
@@ -4926,15 +4898,11 @@ impl<'src> Parser<'src> {
             Some(Token::Ident(name)) => intern::resolve(*name),
             _ => String::new(),
         };
-        let what = match self.header_here().map(|h| h.kind) {
-            Some(HeaderKind::LoopInit) => "a `loop`'s",
-            _ => "a `match`'s",
-        };
         Diagnostic::error(
             Code::ExpectedToken,
             self.span(),
             format!(
-                "in {what} header, the braces of `{ty} {{ {field} }}` are read as its body: \
+                "in a `match`'s header, the braces of `{ty} {{ {field} }}` are read as its body: \
                  write `{ty} {{ {field}: {field} }}`, or the literal in parentheses, \
                  `({ty} {{ {field} }})`"
             ),
@@ -5044,7 +5012,7 @@ impl<'src> Parser<'src> {
             // The scrutinee is a header expression (see `BlockHeader`):
             // the match body `{` that follows it must not be consumed as
             // a trailing closure or as the braces of a record literal.
-            let expr = self.parse_header_expr(HeaderKind::MatchScrutinee)?;
+            let expr = self.parse_header_expr()?;
             Some(Box::new(expr))
         };
 
@@ -5141,52 +5109,6 @@ impl<'src> Parser<'src> {
             ));
         }
         Ok(body)
-    }
-
-    // ── Loop expression ──────────────────────────────────────────────
-
-    fn parse_loop_expr(&mut self) -> Result<Expr> {
-        let span = self.span();
-        self.expect(&Token::Loop)?;
-
-        // Check for recur: `loop(args)` — LParen immediately (no newline)
-        if !self.nl_before() && self.at(&Token::LParen) {
-            let args = self.parse_call_args()?;
-            return Ok(self.mk_expr(ExprKind::Recur(args), span));
-        }
-
-        // Zero-binding variant: `loop { body }`
-        if self.at(&Token::LBrace) {
-            let body = self.parse_block()?;
-            return Ok(self.mk_expr(
-                ExprKind::Loop {
-                    bindings: Vec::new(),
-                    body: Box::new(body),
-                },
-                span,
-            ));
-        }
-
-        // Binding variant: `loop x = init, y = init { body }`
-        let end = ListEnd::Before(&Token::LBrace);
-        let bindings = self.comma_list("loop binding list", span, end, |p| {
-            let (name, name_span) = p.expect_ident()?;
-            p.expect(&Token::Eq)?;
-            // An initialiser is a header expression (see `BlockHeader`):
-            // in `loop i = n, acc = Nil { ... }` the `{` opens the loop
-            // body, it does not make `Nil { ... }` a record literal.
-            let init = p.parse_header_expr(HeaderKind::LoopInit)?;
-            Ok((name, name_span, init))
-        })?;
-        let body = self.parse_block()?;
-
-        Ok(self.mk_expr(
-            ExprKind::Loop {
-                bindings,
-                body: Box::new(body),
-            },
-            span,
-        ))
     }
 
     // ── Record fields ────────────────────────────────────────────────
@@ -7119,63 +7041,6 @@ fn main() {
         }
     }
 
-    #[test]
-    fn test_loop_with_bindings() {
-        let prog = parse(
-            r#"
-            fn main() {
-                loop i = 0, acc = 0 {
-                    loop(i + 1, acc + i)
-                }
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
-        if let ExprKind::Loop {
-            ref bindings,
-            ref body,
-        } = expr.kind
-        {
-            assert_eq!(bindings.len(), 2);
-            assert_eq!(bindings[0].0, intern::intern("i"));
-            assert_eq!(bindings[1].0, intern::intern("acc"));
-            // body should contain a Recur
-            if let ExprKind::Block(ref inner_stmts) = body.kind {
-                let recur_expr = match inner_stmts.last().unwrap() {
-                    Stmt::Expr(e) => e,
-                    _ => panic!("expected expr in loop body"),
-                };
-                if let ExprKind::Recur(ref args) = recur_expr.kind {
-                    assert_eq!(args.len(), 2);
-                } else {
-                    panic!("expected recur, got {:?}", recur_expr.kind);
-                }
-            } else {
-                panic!("expected block body");
-            }
-        } else {
-            panic!("expected loop, got {:?}", expr.kind);
-        }
-    }
-
-    #[test]
-    fn test_recur_in_loop() {
-        let prog = parse(
-            r#"
-            fn sum(n) {
-                loop i = 0, acc = 0 {
-                    match i == n {
-                        true -> acc
-                        _ -> loop(i + 1, acc + i)
-                    }
-                }
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-    }
-
     // ── 4. Declaration parsing ──────────────────────────────────────
 
     #[test]
@@ -7463,27 +7328,6 @@ fn main() {
     }
 
     #[test]
-    fn test_loop_zero_bindings() {
-        // loop { body } with no bindings
-        let prog = parse(
-            r#"
-            fn main() {
-                loop {
-                    loop()
-                }
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
-        if let ExprKind::Loop { ref bindings, .. } = expr.kind {
-            assert!(bindings.is_empty());
-        } else {
-            panic!("expected loop, got {:?}", expr.kind);
-        }
-    }
-
-    #[test]
     fn test_error_bad_decl_keyword() {
         let err = parse_err(
             r#"
@@ -7511,54 +7355,6 @@ fn main() {
     }
 
     // ── Headers: an expression that is followed by a block ──────────
-
-    #[test]
-    fn test_loop_initialiser_may_end_in_a_constructor() {
-        let prog = parse(
-            r#"
-            fn build(n) {
-                loop i = n, acc = Nil {
-                    acc
-                }
-            }
-        "#,
-        );
-        match &last_expr_of_main(&prog).kind {
-            ExprKind::Loop { bindings, .. } => {
-                assert_eq!(bindings.len(), 2);
-                assert!(
-                    matches!(&bindings[1].2.kind, ExprKind::Ident(_)),
-                    "expected the constructor name, got {:?}",
-                    bindings[1].2.kind
-                );
-            }
-            other => panic!("expected loop, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_loop_initialiser_may_be_a_record_literal() {
-        let prog = parse(
-            r#"
-            fn build(n) {
-                loop i = n, p = Pt { x: 1 } {
-                    p
-                }
-            }
-        "#,
-        );
-        match &last_expr_of_main(&prog).kind {
-            ExprKind::Loop { bindings, .. } => {
-                assert_eq!(bindings.len(), 2);
-                assert!(
-                    matches!(&bindings[1].2.kind, ExprKind::RecordCreate { .. }),
-                    "expected a record literal, got {:?}",
-                    bindings[1].2.kind
-                );
-            }
-            other => panic!("expected loop, got {:?}", other),
-        }
-    }
 
     #[test]
     fn test_trailing_closure_inside_parentheses_in_a_scrutinee() {

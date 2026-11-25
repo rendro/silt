@@ -21,7 +21,6 @@ pub enum Token {
     As,
     Else,
     Where,
-    Loop,
 
     // Literals
     /// An integer literal's magnitude. `Int(i64::MIN)` is the magnitude
@@ -105,7 +104,6 @@ impl Token {
             Token::As => "as",
             Token::Else => "else",
             Token::Where => "where",
-            Token::Loop => "loop",
             _ => return None,
         })
     }
@@ -127,7 +125,6 @@ impl fmt::Display for Token {
             Token::As => write!(f, "as"),
             Token::Else => write!(f, "else"),
             Token::Where => write!(f, "where"),
-            Token::Loop => write!(f, "loop"),
             Token::Int(n) => write!(f, "{}", n.unsigned_abs()),
             // (As a Float is shown.)
             Token::Float(n) => crate::value::Float::write_text(*n, f),
@@ -409,8 +406,8 @@ type Scanned = (Token, Span);
 /// `match name.as_str()` arms in `scan_ident_or_keyword` and that no
 /// LSP module re-introduces a hand-rolled keyword list.
 pub const KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "opaque", "pub", "return", "trait",
-    "type", "when", "where",
+    "as", "else", "fn", "import", "let", "match", "opaque", "pub", "return", "trait", "type",
+    "when", "where",
 ];
 
 /// Reserved-word-shaped boolean literals. Lexed as `Token::Bool(_)`,
@@ -1285,7 +1282,6 @@ impl Lexer {
             "as" => Token::As,
             "else" => Token::Else,
             "where" => Token::Where,
-            "loop" => Token::Loop,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
             _ => Token::Ident(intern::intern(&name)),

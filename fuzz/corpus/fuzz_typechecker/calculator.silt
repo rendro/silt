@@ -96,7 +96,7 @@ fn print_history(history) {
 
 fn main() {
   print_help()
-  -- Main REPL loop: stack is a list of floats (front = top), history is a list of strings
+  -- Main REPL: go reads one line and calls itself with the new state; stack is a list of floats (front = top), history is a list of strings
   let go = { stack, history ->
     print("> ")
     match io.read_line() {

@@ -108,8 +108,6 @@ struct CompileContext {
     scope_starts: Vec<usize>,
     /// Upvalue descriptors for this function/closure.
     upvalues: Vec<UpvalueDesc>,
-    /// The loops the code being compiled is in, innermost last.
-    loop_stack: Vec<LoopInfo>,
     /// While the names of a pattern are being bound: the number of
     /// locals there were before the pattern bound any. A pin in the
     /// pattern is one of those (see `Compiler::compile_pattern_bind`).
@@ -144,14 +142,6 @@ enum SelfName {
     Global(u16),
     /// A closure that a `let` names, by the local it has itself in.
     Local(usize),
-}
-
-struct LoopInfo {
-    /// The slot of the loop's first binding.
-    first_slot: usize,
-    /// Where a `loop(...)` jumps back to.
-    start: Label,
-    binding_count: usize,
 }
 
 struct Local {
@@ -228,8 +218,7 @@ fn written_leaves<'e>(expr: &'e Expr, out: &mut Vec<&'e Expr>) {
 // ── Compiler errors ─────────────────────────────────────────────────
 
 /// A defect in silt: the program reached the compiler with an error the
-/// typechecker reports (a builtin module used without an import, a
-/// `loop(...)` outside a loop or with the wrong number of arguments). The
+/// typechecker reports (a builtin module used without an import). The
 /// session compiles only programs whose analysis has no error.
 fn checker_missed(span: Span, what: &str) -> Diagnostic {
     Diagnostic::error(
@@ -1335,7 +1324,7 @@ impl<'a> Compiler<'a> {
                 // Else block: condition was false
                 self.bind(else_jump, condition.span)?;
                 self.compile_expr(else_body)?;
-                // The else body must diverge (return, panic or loop(...)).
+                // The else body must diverge (return or panic).
                 // If it doesn't, we just pop its value and continue.
                 self.emit(Asm::Pop, condition.span)?;
 
@@ -1531,8 +1520,8 @@ impl<'a> Compiler<'a> {
         }
         let emitter = self.emitter();
         if !emitter.reachable() {
-            // The expression does not return (`return`, `panic`, a
-            // `loop(...)`): code after it is dead, and compiled as if
+            // The expression does not return (`return`, `panic`, a self
+            // tail call): code after it is dead, and compiled as if
             // the value were there.
             emitter.assume_height(before + 1);
             return Ok(());
@@ -1742,36 +1731,6 @@ impl<'a> Compiler<'a> {
                 let fields = self.name_constants(&field_names, span)?;
                 self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
             }
-
-            ExprKind::Loop { bindings, body } => {
-                self.compile_loop(bindings, body, span, tail)?;
-            }
-
-            ExprKind::Recur(args) => {
-                let loop_info = self
-                    .ctx()
-                    .loop_stack
-                    .last()
-                    .ok_or_else(|| checker_missed(span, "a `loop(...)` outside a loop"))?;
-                let first = loop_info.first_slot;
-                let start = loop_info.start;
-                if args.len() != loop_info.binding_count {
-                    return Err(checker_missed(
-                        span,
-                        "a `loop(...)` with the wrong number of arguments",
-                    ));
-                }
-                self.compile_operands(args)?;
-                self.emit(
-                    Asm::Recur {
-                        argc: args.len(),
-                        first,
-                        to: start,
-                    },
-                    span,
-                )?;
-            } // All expression kinds are handled above. If new ones are added,
-              // the match will become non-exhaustive and the compiler will error.
         }
 
         Ok(())
@@ -2063,7 +2022,7 @@ impl<'a> Compiler<'a> {
             }
         } else if tail && let Some(start) = self.self_jump(callee, args.len()) {
             // A tail call of the function to itself: its arguments over
-            // its parameters, and a jump to its start, as a loop's round.
+            // its parameters, and a jump to its start.
             let first = self.ctx().emitter.hidden();
             self.compile_operands(args.iter().copied())?;
             self.emit(
@@ -2221,68 +2180,6 @@ impl<'a> Compiler<'a> {
             _ => self.compile_call(right, &[left], span, tail)?,
         }
         Ok(())
-    }
-
-    // ── Loop compilation ─────────────────────────────────────────
-
-    fn compile_loop(
-        &mut self,
-        bindings: &[(Symbol, Span, Expr)],
-        body: &Expr,
-        span: Span,
-        tail: bool,
-    ) -> Result<(), Diagnostic> {
-        self.begin_scope();
-
-        // The bindings occupy the slots from the current frame height on;
-        // `Recur` writes the new values there, cuts the frame back to
-        // just above them and jumps back to the start. With no bindings
-        // that is the frame as it is now, with every enclosing local
-        // still in place.
-        let first_slot = self.emitter().height();
-
-        // The initial values are of the enclosing scope, all of them, as
-        // the arguments of a `loop(...)` see the values of the round
-        // before: each is compiled before any binding has its name, and
-        // stays on the stack as its binding.
-        for (_, _, init) in bindings {
-            self.compile_expr(init)?;
-        }
-        let ctx = self.ctx_mut();
-        let depth = ctx.scope_depth;
-        for (i, (name, _, _)) in bindings.iter().enumerate() {
-            ctx.locals.push(Local {
-                name: *name,
-                depth,
-                slot: first_slot + i,
-            });
-        }
-
-        // Record the loop start, where `loop(...)` jumps back to.
-        let start = self.label();
-        self.bind(start, span)?;
-
-        // Push loop info so Recur knows what to do.
-        self.ctx_mut().loop_stack.push(LoopInfo {
-            first_slot,
-            start,
-            binding_count: bindings.len(),
-        });
-
-        // The body is in tail position when the loop is: the value it
-        // falls through with is the loop's, and so the function's, so a
-        // call there is a tail call, which drops the bindings with the
-        // frame.
-        self.in_tail_position = tail;
-        self.compile_expr(body)?;
-
-        // Pop loop info.
-        self.ctx_mut().loop_stack.pop();
-
-        // The body either used `recur` (which updates locals and jumps back)
-        // or fell through with the final value on the stack, above the
-        // bindings.
-        self.end_scope_with_result(tail, span)
     }
 
     // ── Helper: what names resolve to ────────────────────────────
@@ -2999,7 +2896,6 @@ impl<'a> Compiler<'a> {
             scope_depth: 0,
             scope_starts: Vec::new(),
             upvalues: Vec::new(),
-            loop_stack: Vec::new(),
             pattern_floor: None,
             frame_dict: None,
             self_call: None,
@@ -4096,28 +3992,6 @@ fn main() { let _ = [3, 1, 2] |> list.length() }
         assert!(has_op(main.chunk(), Op::CallBuiltin));
     }
 
-    // ── Loop/Recur compilation ─────────────────────────────────────
-
-    #[test]
-    fn test_compile_loop_recur() {
-        let fns = compile(
-            r#"
-fn main() {
-    let _ = loop i = 0 {
-        match i >= 10 {
-            true -> i
-            false -> loop(i + 1)
-        }
-    }
-}
-"#,
-        );
-        let main = find_fn(&fns, "main");
-        assert!(has_op(main.chunk(), Op::Recur));
-        // The jump back to the start of the loop.
-        assert!(has_op(main.chunk(), Op::Jump));
-    }
-
     // ── Question mark ──────────────────────────────────────────────
 
     #[test]
@@ -4397,8 +4271,6 @@ fn f(x) {
         let f = find_fn(&fns, "f");
         assert!(has_op(f.chunk(), Op::JumpIfNotGt));
     }
-
-    // ── `loop(...)` outside a loop is an error ─────────────────────
 
     // ── Record field metadata ──────────────────────────────────────
 

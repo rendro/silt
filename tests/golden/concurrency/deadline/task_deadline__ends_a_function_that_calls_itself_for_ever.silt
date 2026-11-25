@@ -1,6 +1,6 @@
--- A function that calls itself in tail position for ever runs as a
--- loop does: a deadline ends it, a top-level function and a closure
--- that calls itself alike.
+-- A function that calls itself in tail position for ever is ended by a
+-- deadline, a top-level function and a closure that calls itself
+-- alike.
 import task
 import time
 

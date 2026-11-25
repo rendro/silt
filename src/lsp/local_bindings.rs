@@ -1,7 +1,7 @@
 //! The local bindings of a document: every name a parameter, a `let` in
-//! a body, a `when let`, a match arm, a closure or a `loop` binds, with
-//! the span of the name where it is bound and the range of the source it
-//! is visible in. Hover, go-to-definition, references and rename find a
+//! a body, a `when let`, a match arm or a closure binds, with the span
+//! of the name where it is bound and the range of the source it is
+//! visible in. Hover, go-to-definition, references and rename find a
 //! local by them: a use is the binding of its name with the smallest
 //! range around it.
 
@@ -225,29 +225,6 @@ fn collect_local_bindings_in_expr(expr: &Expr, scope_end: usize, out: &mut Colle
                 }
                 collect_local_bindings_in_expr(&arm.body, arm_end, out);
             }
-        }
-        ExprKind::Loop {
-            bindings: loop_bindings,
-            body,
-        } => {
-            // The initial values are of the enclosing scope, all of
-            // them: a binder is visible in the body only.
-            let body_end = body.span.end as usize;
-            for (_, _, init) in loop_bindings {
-                collect_local_bindings_in_expr(init, scope_end, out);
-            }
-            for (name, name_span, init) in loop_bindings {
-                out.bindings.push(LocalBinding {
-                    name: *name,
-                    binding_offset: name_span.start as usize,
-                    binding_len: resolve(*name).len(),
-                    scope_start: body.span.start as usize,
-                    scope_end: body_end,
-                    ty: init.ty.clone(),
-                    same_as: None,
-                });
-            }
-            collect_local_bindings_in_expr(body, body_end, out);
         }
         _ => {
             expr.for_each_child(|child| {

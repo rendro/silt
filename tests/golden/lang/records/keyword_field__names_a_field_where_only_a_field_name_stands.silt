@@ -3,7 +3,7 @@
 -- pattern, after a dot.
 type Event { type: String, match: Int, fn: Bool }
 type At { when: String, as: Int }
-type Loop { loop: Int }
+type Back { return: Int }
 
 fn kind(e: Event) -> String {
   match e {
@@ -25,6 +25,6 @@ fn main() {
   let a = At { when: "now", as: 1 }
   let At { when: w, as: n } = a
   println("{a.when} {w} {n}")
-  let f = { r: Loop -> r.loop + 1 }
-  println(f(Loop { loop: 41 }))
+  let f = { r: Back -> r.return + 1 }
+  println(f(Back { return: 41 }))
 }
