@@ -4,6 +4,40 @@ use crate::typeinfo::bv;
 use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::VmError;
 
+/// What a builtin's frame needs to take the next value of a channel
+/// between two calls of its function without being resumed
+/// ([`crate::vm::Native::again`], which is given no VM): the scheduler,
+/// whose wake a receive takes, and the flags that say its task takes
+/// nothing new ([`crate::vm::Vm::takes_nothing_new`]), which are set
+/// when the task is started.
+pub(crate) struct Taking {
+    scheduler: std::sync::Arc<crate::scheduler::Scheduler>,
+    cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    over: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl Taking {
+    pub(crate) fn of(vm: &crate::vm::Vm) -> Taking {
+        Taking {
+            scheduler: vm.scheduler().clone(),
+            cancelled: vm.cancelled.clone(),
+            over: vm.over.clone(),
+        }
+    }
+
+    pub(crate) fn wake(&self) -> &dyn crate::runtime::sync::Wake {
+        self.scheduler.wake()
+    }
+
+    /// [`crate::vm::Vm::takes_nothing_new`] of the task's VM.
+    pub(crate) fn takes_nothing_new(&self) -> bool {
+        let set = |flag: &std::sync::Arc<std::sync::atomic::AtomicBool>| {
+            flag.load(std::sync::atomic::Ordering::SeqCst)
+        };
+        self.cancelled.as_ref().is_some_and(set) || self.over.as_ref().is_some_and(set)
+    }
+}
+
 /// What a step of a fold that can end early (`list.fold_until`,
 /// `channel.fold_until`, `stream.fold_until`) says: `Continue(state)`
 /// goes on with that state, `Stop(value)` ends the fold with that value.

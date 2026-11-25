@@ -151,7 +151,7 @@ fn a_round_of_a_fold_costs_the_same_steps_at_every_slice() {
     let calls = [
         "let _ = list.fold(1..1000000, 0) { acc, i ->\n    println(i)\n    acc + i\n  }",
         "list.each(1..1000000) { i -> println(i) }",
-        "let _ = list.fold_until(1..1000000, 0) { acc, i ->\n    println(i)\n    list.Continue(acc + i)\n  }",
+        "let _ = list.fold_until(1..1000000, 0) { acc, i ->\n    println(i)\n    Continue(acc + i)\n  }",
         "let _ = list.map(1..1000000) { i -> println(i) }",
         // A function with a bound, whose dictionary comes with each call.
         "let _ = list.fold(1..1000000, 0, shown)",

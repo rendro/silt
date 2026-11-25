@@ -325,12 +325,15 @@ pub(crate) mod channel {
             }))
         }
 
-        fn fold_until(ch: Chan, init: &Value, f: &Value) -> Step {
+        fn fold_until(vm, ch: Chan, init: &Value, f: &Value) -> Step {
             Step::Run(Box::new(Each {
                 ch: ch.clone(),
                 callback: f.clone(),
                 state: EachState::Start,
-                fold: Some(init.clone()),
+                fold: Some(Fold {
+                    state: init.clone(),
+                    taking: crate::builtins::common::Taking::of(vm),
+                }),
             }))
         }
     }
@@ -346,7 +349,14 @@ struct Each {
     callback: Value,
     state: EachState,
     /// For `channel.fold_until`: the state, between two calls.
-    fold: Option<Value>,
+    fold: Option<Fold>,
+}
+
+/// The state of a `channel.fold_until`, and what it takes the next
+/// message with between two calls (`Native::again`).
+struct Fold {
+    state: Value,
+    taking: super::common::Taking,
 }
 
 /// What the input of an `Each` frame is.
@@ -374,8 +384,8 @@ impl Each {
         match &mut self.fold {
             // The call is given the state, so a state the call alone
             // holds can be changed in place.
-            Some(state) => {
-                let state = std::mem::replace(state, Value::Unit);
+            Some(fold) => {
+                let state = std::mem::replace(&mut fold.state, Value::Unit);
                 vm.call(self.callback.clone(), [state, message])
             }
             None => vm.call(self.callback.clone(), [message]),
@@ -385,7 +395,7 @@ impl Each {
     /// The value of the call when the channel is closed and empty: the
     /// fold's state, or `()`.
     fn value(&mut self) -> Value {
-        self.fold.take().unwrap_or(Value::Unit)
+        self.fold.take().map_or(Value::Unit, |fold| fold.state)
     }
 
     /// The channel is closed and empty: the value, or the failure of the
@@ -413,9 +423,9 @@ impl Native for Each {
             // After each message, give way to the other tasks; a fold
             // first reads the step the call gave.
             EachState::Called => {
-                if let Some(state) = &mut self.fold {
+                if let Some(fold) = &mut self.fold {
                     match super::common::fold_step(input) {
-                        std::ops::ControlFlow::Continue(next) => *state = next,
+                        std::ops::ControlFlow::Continue(next) => fold.state = next,
                         std::ops::ControlFlow::Break(value) => return Ok(Step::Done(value)),
                     }
                 }
@@ -458,6 +468,53 @@ impl Native for Each {
     /// channel the program made is left to its other readers.
     fn abandon(&mut self, vm: &mut Vm) {
         self.ch.abandon(vm.scheduler().wake());
+    }
+
+    /// A fold's call returned: it reads the step, and when the next
+    /// message is there it calls the function again in the frame of the
+    /// call that returned (`Native::again`). Otherwise it is resumed
+    /// with the step read, and takes or waits there. (`channel.each` is
+    /// always resumed: it gives way to the other tasks after each
+    /// message, which spreads the work of `task.each` over its workers.)
+    fn again<'a>(
+        &'a mut self,
+        input: Value,
+        stack: &mut Vec<Value>,
+    ) -> Result<crate::vm::Again<'a>, VmError> {
+        use crate::vm::Again;
+        let Each {
+            ch,
+            callback,
+            state,
+            fold,
+        } = self;
+        let (Some(fold), Value::VmClosure(callback), EachState::Called) =
+            (fold, &*callback, &state)
+        else {
+            return Ok(Again::No(input));
+        };
+        match super::common::fold_step(input) {
+            std::ops::ControlFlow::Continue(next) => fold.state = next,
+            std::ops::ControlFlow::Break(value) => return Ok(Again::Done(value)),
+        }
+        // The step is read: a resumption takes the next message.
+        *state = EachState::Take;
+        if fold.taking.takes_nothing_new() {
+            return Ok(Again::No(Value::Unit));
+        }
+        match ch.try_receive(fold.taking.wake()) {
+            TryReceive::Value(message) => {
+                stack.push(std::mem::replace(&mut fold.state, Value::Unit));
+                stack.push(message);
+                *state = EachState::Called;
+                Ok(Again::Call(callback))
+            }
+            TryReceive::Closed(close) => {
+                raise_failure(close)?;
+                Ok(Again::Done(std::mem::replace(&mut fold.state, Value::Unit)))
+            }
+            TryReceive::Empty => Ok(Again::No(Value::Unit)),
+        }
     }
 }
 
