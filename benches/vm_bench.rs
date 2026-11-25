@@ -504,13 +504,13 @@ fn main() {
   -- Pre-fill the channel, then read back (avoids cross-thread blocking)
   list.each(1..10000) { n -> channel.send(ch, n) }
   channel.close(ch)
-  let sum = loop acc = 0 {
+  let take = { acc ->
     match channel.receive(ch) {
-      Some(n) -> loop(acc + n)
+      Some(n) -> take(acc + n)
       None -> acc
     }
   }
-  sum
+  take(0)
 }
         "#;
         bench("channel: send/receive 10K", source);
@@ -541,20 +541,20 @@ fn main() {
   channel.close(ch1)
   channel.close(ch2)
 
-  let sum = loop acc = 0, done = 0 {
+  let take = { acc, done ->
     match done {
       2 -> acc
       _ -> {
         let result = channel.select([channel.Recv(ch1), channel.Recv(ch2)])
         match result {
-          channel.Received(_, Some(n)) -> loop(acc + n, done)
-          channel.Received(_, None) -> loop(acc, done + 1)
+          channel.Received(_, Some(n)) -> take(acc + n, done)
+          channel.Received(_, None) -> take(acc, done + 1)
           _ -> acc
         }
       }
     }
   }
-  sum
+  take(0, 0)
 }
         "#;
         bench("channel.select: 2ch x 500 msg", source);

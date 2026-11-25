@@ -621,16 +621,17 @@ fn main() {{
     -- took to get here.
     channel.send(log, "queued")
     task.background([{{ -> channel.send(log, "the other task") }}]) {{ ->
-      let before = loop served = 0, counting = false {{
+      let count = {{ served, counting ->
         match channel.receive(log) {{
-          Some("queued") -> loop(served, true)
+          Some("queued") -> count(served, true)
           Some("served") -> match counting {{
-            true -> loop(served + 1, counting)
-            false -> loop(served, counting)
+            true -> count(served + 1, counting)
+            false -> count(served, counting)
           }}
           _ -> served
         }}
       }}
+      let before = count(0, false)
       println("{{before}}")
       let _ = tcp.accept(control)
     }}

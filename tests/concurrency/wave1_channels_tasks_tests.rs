@@ -157,23 +157,25 @@ fn main() {
     channel.close(alerts)
   }
 
-  loop _ = () {
+  let next = { ->
     match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
       channel.Received(^alerts, Some(msg)) -> {
         println("alert: {msg}")
-        loop(())
+        next()
       }
       channel.Received(^logs, Some(msg)) -> {
         println("log: {msg}")
-        loop(())
+        next()
       }
       channel.Received(_, None) -> {
         println("a channel closed")
         return ()
       }
-      _ -> loop(())
+      _ -> next()
     }
   }
+  let result = next()
+  result
 }
 "#;
     for run in 1..=HANG_REPEATS {

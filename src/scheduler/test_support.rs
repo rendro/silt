@@ -384,13 +384,15 @@ import host
     #[test]
     fn run_trial_enforces_budget() {
         let src = r#"
+fn spin(k) {
+  match k >= 100000000 {
+    true -> 0
+    _ -> spin(k + 1)
+  }
+}
+
 fn main() {
-  host.give(loop k = 0 {
-    match k >= 100000000 {
-      true -> 0
-      _ -> loop(k + 1)
-    }
-  })
+  host.give(spin(0))
 }
 import host
 "#;
@@ -414,15 +416,16 @@ fn main() {
   let ch = channel.new(0)
   let senders = 1..16 |> list.map { i -> { -> channel.send(ch, i) } }
   host.give(task.background(senders) { ->
-    loop c = 0, acc = 0 {
+    let take = { c, acc ->
       match c >= 16 {
         true -> acc
         _ -> match channel.receive(ch) {
-          Some(v) -> loop(c + 1, acc + v)
+          Some(v) -> take(c + 1, acc + v)
           None -> acc
         }
       }
     }
+    take(0, 0)
   })
 }
 import host

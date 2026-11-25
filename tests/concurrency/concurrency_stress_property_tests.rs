@@ -566,18 +566,19 @@ fn emit_program(p: &genp::Program) -> String {
     ));
     src.push_str("  let timer = channel.timeout(time.ms(800))\n");
     src.push_str(&format!(
-        "  loop c = 0 {{\n\
+        "  let count = {{ c ->\n\
          \x20   match c >= {} {{\n\
          \x20     true -> c\n\
          \x20     _ -> {{\n\
          \x20       match channel.select([channel.Recv(done), channel.Recv(timer)]) {{\n\
-         \x20         channel.Received(_, Some(_v)) -> loop(c + 1)\n\
+         \x20         channel.Received(_, Some(_v)) -> count(c + 1)\n\
          \x20         channel.Received(_, None) -> c\n\
          \x20         channel.Sent(_) -> c\n\
          \x20       }}\n\
          \x20     }}\n\
          \x20   }}\n\
-         \x20 }}\n",
+         \x20 }}\n\
+         \x20 count(0)\n",
         total_tasks
     ));
     src.push_str("  }\n");

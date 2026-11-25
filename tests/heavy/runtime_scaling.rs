@@ -289,19 +289,20 @@ fn echo(asks, answers) {{
 }}
 
 fn parks(count, asks, answers) {{
-  loop i = 0 {{
+  let park = {{ i ->
     match i >= count {{
       true -> i
       false -> {{
         channel.send(asks, i)
         let _ = channel.receive(answers)
-        loop(i + 1)
+        park(i + 1)
       }}
     }}
   }}
+  park(0)
 }}
 
-fn at_depth(n, asks, answers) {{
+deep fn at_depth(n, asks, answers) {{
   match n {{
     0 -> parks(2000, asks, answers)
     _ -> list.fold([n], 0) {{ acc, x -> acc + at_depth(x - 1, asks, answers) }}
@@ -355,15 +356,16 @@ fn fan_in(senders) {{
     1..3 |> list.each {{ j -> channel.send(ch, i + j) }}
   }} }}
   task.background(hs) {{ ->
-    loop left = senders * 3, acc = 0 {{
+    let take = {{ left, acc ->
       match left {{
         0 -> acc
         _ -> match channel.receive(ch) {{
-          Some(v) -> loop(left - 1, acc + v)
+          Some(v) -> take(left - 1, acc + v)
           None -> acc
         }}
       }}
     }}
+    take(senders * 3, 0)
   }}
 }}
 
@@ -433,12 +435,13 @@ trait Size for Box {{
 }}
 
 fn total(x: a, times: Int) -> Int where a: Size {{
-  loop i = 0, acc = 0 {{
+  let add = {{ i, acc ->
     match i >= times {{
       true -> acc
-      false -> loop(i + 1, acc + {calls})
+      false -> add(i + 1, acc + {calls})
     }}
   }}
+  add(0, 0)
 }}
 
 fn main() {{
