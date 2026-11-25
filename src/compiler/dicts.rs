@@ -934,7 +934,7 @@ impl Compiler<'_> {
     /// How many of the dictionaries `bounds` are those the function
     /// being compiled was passed first, in their order: in its frame's
     /// first slots.
-    fn kept_dicts(&self, bounds: &[Evidence]) -> usize {
+    pub(super) fn kept_dicts(&self, bounds: &[Evidence]) -> usize {
         let own = |(i, ev): (usize, &Evidence)| match ev {
             Evidence::Param { owner, k } => {
                 usize::from(*k) == i

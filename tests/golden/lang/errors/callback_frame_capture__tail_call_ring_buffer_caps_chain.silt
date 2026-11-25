@@ -2,7 +2,8 @@
 fn count(n) {
   match n <= 0 {
     true -> 1 / 0
-    false -> count(n - 1)
+    false -> down(n - 1)
   }
 }
+fn down(n) { count(n) }
 fn main() { let _ = count(100) }

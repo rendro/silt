@@ -21,7 +21,7 @@
 0013  Constant             0     ; 0
 0016  Jump                 13    -> 0034
 0021  Pop
-0022  GetGlobal            0     ; tail
+0022  GetGlobal            1     ; kept
 0025  GetLocal             1
 0028  SubConst             1     ; 1
 0031  TailCall             1
@@ -37,7 +37,7 @@
 0013  Constant             0     ; 0
 0016  Jump                 12    -> 0033
 0021  Pop
-0022  GetGlobal            1     ; kept
+0022  GetGlobal            0     ; tail
 0025  GetLocal             1
 0028  SubConst             1     ; 1
 0031  Call                 1

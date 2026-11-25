@@ -1,0 +1,7 @@
+-- cmd: repl
+-- In the REPL a tail call of a top-level function to itself, or of a
+-- closure a top-level `let` binds, stays a call that reads the
+-- definition's global, as every call of a global there does: the call
+-- stack shows each round, where a file shows one frame. A closure a
+-- local `let` binds jumps back to its start there too: one frame.
+-- stdin: fn down(n) {\n  match n {\n    0 -> 1 / n\n    _ -> down(n - 1)\n  }\n}\ndown(3)\nlet go = { n ->\n  match n {\n    0 -> 1 / n\n    _ -> go(n - 1)\n  }\n}\ngo(3)\nfn inside() {\n  let g = { n ->\n    match n {\n      0 -> 1 / n\n      _ -> g(n - 1)\n    }\n  }\n  g(3)\n}\ninside()\n:quit\n
