@@ -1191,14 +1191,13 @@ fn a_deep_value_is_written_and_dropped_without_the_native_stack() {
 /// dropped like any other: what a holder far inside holds is put aside
 /// and dropped by the outermost (src/value/deep.rs). A program nests a
 /// value through a list, a tuple, a map or a set alone with a function
-/// that calls itself at another type, and through a closure, a channel
-/// or the handle of a task with a loop. (Each of these was dropped
+/// that calls itself at another type, and through a closure or a
+/// channel with a loop. (Each of these was dropped
 /// once a level on the native stack: a thread of a test has a stack
 /// for a few thousand levels of it.)
 #[test]
 fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
     use crate::bytecode::{VmClosure, call_global_script};
-    use crate::runtime::handle::TaskHandle;
     use crate::runtime::sync::{Channel, TaskId, TrySend, Wake};
 
     const DEPTH: i64 = 200_000;
@@ -1207,7 +1206,7 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
         fn wake(&self, _: TaskId) {}
     }
     let function = Arc::new(call_global_script(0, "f"));
-    let shapes: [&dyn Fn(i64, Value) -> Value; 10] = [
+    let shapes: [&dyn Fn(i64, Value) -> Value; 9] = [
         // A list, and a part of a list.
         &|_, rest| Value::list(vec![rest]),
         &|n, rest| {
@@ -1226,12 +1225,6 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
             let channel = Channel::new(n as usize, 1);
             assert!(matches!(channel.try_send(rest, &Nobody), TrySend::Sent));
             Value::Channel(channel)
-        },
-        // The handle of a task that ended with the next level.
-        &|n, rest| {
-            let handle = TaskHandle::new(n as usize);
-            assert!(handle.complete(Ok(rest), &Nobody));
-            Value::Handle(Arc::new(handle))
         },
         // One kind of holder in another.
         &|n, rest| match n % 4 {
@@ -2369,7 +2362,6 @@ fn the_kind_of_a_value_is_a_plain_tag() {
         ("TypeDescriptor", size_of::<Arc<TypeInfo>>()),
         ("PrimitiveDescriptor", size_of::<&'static str>()),
         ("Channel", size_of::<Arc<Channel>>()),
-        ("Handle", size_of::<Arc<TaskHandle>>()),
         ("Bytes", size_of::<Arc<Vec<u8>>>()),
         ("TcpListener", size_of::<Arc<TcpListenerHandle>>()),
         ("TcpStream", size_of::<Arc<TcpStreamHandle>>()),

@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: a `stream.buffered` stage failed and its output was never read: panic: held
+-- stderr-contains: 36 more failures were never read (at most 64 failures are shown)
+-- stderr-contains: the stage of the first of them was started here
+-- A top-level binding holds 100 stages to the end, and each fails:
+-- `stream.buffered` reads ahead without being asked. 64 of the failures
+-- are shown with their errors, and the other 36 are counted, at the
+-- call of the stage.
+import list
+import stream
+
+let held: List(Channel(Int)) = list.map(1..100) { i ->
+  stream.from_list([0]) |> stream.map { _ -> panic("held {i}") } |> stream.buffered(1)
+}
+
+fn main() {
+  ()
+}

@@ -123,7 +123,7 @@ impl Double {
         }
     }
 
-    /// Cancel a parked task, as `task.cancel` does.
+    /// Cancel a parked task, as a stop of it does.
     pub(crate) fn cancel(&self, task: u64) -> bool {
         let token = {
             let state = self.state.lock();

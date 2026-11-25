@@ -13,4 +13,3 @@ mod repl_tasks_see_later_entries_tests;
 mod runtime_panic_tests;
 mod stream_channel_main_thread_wait_tests;
 mod wave1_channels_tasks_tests;
-mod wave2_tasks_tests;

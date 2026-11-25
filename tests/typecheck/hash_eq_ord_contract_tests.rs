@@ -18,7 +18,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use silt::testing::bytecode::{Function, VmClosure};
-use silt::testing::runtime::handle::TaskHandle;
 use silt::testing::value::Value;
 
 /// The builtin function `name` (`println`, `list.map`) as a value.
@@ -109,10 +108,9 @@ fn hashset_dedup_across_list_range() {
 //
 // The original round-74 contract tests covered a list against the
 // list a range makes: one kind of value stored in two ways, the case
-// that motivated the round-74 audit fix. They did NOT cover Handle, VmClosure,
+// that motivated the round-74 audit fix. They did NOT cover VmClosure,
 // BuiltinFn, or VariantConstructor reflexivity. The PartialEq impl
 // in value/key.rs declares:
-//   - Handle(a) == Handle(b) iff a.id == b.id
 //   - VmClosure(a) == VmClosure(b) iff they run one Function and
 //     their captures are equal
 //   - BuiltinFn(a) == BuiltinFn(b) iff a == b
@@ -123,33 +121,6 @@ fn hashset_dedup_across_list_range() {
 // suite. Use a HashSet insertion-dedup probe (round-74 style) so
 // Hash/Eq are exercised together — `s.insert(h); s.insert(h);
 // assert size == 1` is the canonical contract probe.
-
-#[test]
-fn handle_reflexive_eq_hash_dedup() {
-    // TaskHandle id 42 — same id ⇒ eq ⇒ hash equal ⇒ HashSet dedups.
-    let h = Arc::new(TaskHandle::new(42));
-    let a = Value::Handle(h.clone());
-    let b = Value::Handle(h);
-    assert_eq!(a, b, "Handle(a) == Handle(a) (same id) must hold");
-    assert_eq!(
-        hash_of(&a),
-        hash_of(&b),
-        "Hash/Eq contract: equal Handles must hash equal"
-    );
-    assert_eq!(
-        a.cmp(&b),
-        Ordering::Equal,
-        "Ord/Eq contract: a == b ⇒ a.cmp(&b) == Equal"
-    );
-    let mut s: HashSet<Value> = HashSet::new();
-    s.insert(a);
-    s.insert(b);
-    assert_eq!(
-        s.len(),
-        1,
-        "HashSet must dedup two Value::Handle wrappers around the same TaskHandle Arc"
-    );
-}
 
 /// A closure of `function` that captured `captures`.
 fn closure_of(function: &Arc<Function>, captures: Vec<Value>) -> Value {
@@ -351,29 +322,23 @@ fn variant_constructor_reflexive_eq_hash_dedup() {
 
 #[test]
 fn opaque_values_distinct_across_discriminants() {
-    let h = Arc::new(TaskHandle::new(1));
     let func = Arc::new(Function::returning_unit("f".into(), 0));
     let closure = Arc::new(VmClosure::new(func, Vec::new()));
-    let handle = Value::Handle(h);
     let vm_closure = Value::VmClosure(closure);
     let builtin = builtin("panic");
     let ctor = Value::VariantConstructor(bv::OK.tag());
     // Pairwise: must all be unequal.
-    assert_ne!(handle, vm_closure);
-    assert_ne!(handle, builtin);
-    assert_ne!(handle, ctor);
     assert_ne!(vm_closure, builtin);
     assert_ne!(vm_closure, ctor);
     assert_ne!(builtin, ctor);
-    // HashSet length must be 4 — no false collapses.
+    // HashSet length must be 3 — no false collapses.
     let mut s: HashSet<Value> = HashSet::new();
-    s.insert(handle);
     s.insert(vm_closure);
     s.insert(builtin);
     s.insert(ctor);
     assert_eq!(
         s.len(),
-        4,
-        "four distinct opaque values must NOT dedup across discriminants"
+        3,
+        "three distinct opaque values must NOT dedup across discriminants"
     );
 }

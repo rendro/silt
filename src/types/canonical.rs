@@ -354,7 +354,6 @@ pub(crate) struct KindTypes {
     pub(crate) function: TypeId,
     pub(crate) unit: TypeId,
     pub(crate) bytes: TypeId,
-    pub(crate) handle: TypeId,
     pub(crate) tcp_listener: TypeId,
     pub(crate) tcp_stream: TypeId,
     pub(crate) regex: TypeId,
@@ -379,7 +378,6 @@ pub(crate) fn kind_types() -> &'static KindTypes {
             function: of(Type::Fun(vec![], unit())),
             unit: of(Type::Unit),
             bytes: TypeRef::builtin("Bytes").id,
-            handle: TypeRef::builtin("Handle").id,
             tcp_listener: TypeRef::builtin("TcpListener").id,
             tcp_stream: TypeRef::builtin("TcpStream").id,
             regex: TypeRef::builtin("Regex").id,
@@ -389,13 +387,12 @@ pub(crate) fn kind_types() -> &'static KindTypes {
 }
 
 /// Whether `id` is an opaque type of a builtin module whose values are a
-/// kind of their own: `task.Handle`, `tcp.TcpListener`, `tcp.TcpStream`,
-/// `regex.Regex`, `url.Url`, and the handles of `postgres` (`PgPool`, `PgTx`,
+/// kind of their own: `tcp.TcpListener`, `tcp.TcpStream`, `regex.Regex`,
+/// `url.Url`, and the handles of `postgres` (`PgPool`, `PgTx`,
 /// `PgCursor`), variants of types of their own that no program can make.
 pub(crate) fn is_opaque_value_type(id: TypeId) -> bool {
     let kinds = kind_types();
     [
-        kinds.handle,
         kinds.tcp_listener,
         kinds.tcp_stream,
         kinds.regex,
@@ -449,9 +446,6 @@ mod tests {
                 Type::Int,
             ]))),
             "Fn" => Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
-            // Handle is a runtime-only resource type with no Type
-            // variant; it does not participate in canonicalisation.
-            "Handle" => None,
             _ => None,
         }
     }

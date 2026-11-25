@@ -25,7 +25,6 @@ use silt::testing::{ValueInside, VmInside};
 use std::sync::Arc;
 
 use silt::testing::bytecode::{Function, VmClosure};
-use silt::testing::runtime::handle::TaskHandle;
 use silt::testing::runtime::sync::Channel;
 use silt::testing::value::Value;
 use silt::testing::vm::Vm;
@@ -61,7 +60,6 @@ struct AllVariants {
     type_descriptor: Value,
     primitive_descriptor: Value,
     channel: Value,
-    handle: Value,
     bytes: Value,
     tcp_listener: Value,
     tcp_stream: Value,
@@ -113,7 +111,6 @@ fn build_all_variants() -> AllVariants {
         type_descriptor: Value::TypeDescriptor(point_type()),
         primitive_descriptor: Value::PrimitiveDescriptor("Int"),
         channel: Value::Channel(Channel::new(0, 0)),
-        handle: Value::Handle(Arc::new(TaskHandle::new(0))),
         bytes: Value::Bytes(Arc::new(vec![1, 2, 3])),
         tcp_listener: Value::TcpListener(Arc::new(tcp_listener_handle)),
         tcp_stream: Value::TcpStream(tcp_stream_handle),
@@ -140,7 +137,6 @@ fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) 
     f(&av.type_descriptor, "TypeDescriptor");
     f(&av.primitive_descriptor, "PrimitiveDescriptor");
     f(&av.channel, "Channel");
-    f(&av.handle, "Handle");
     f(&av.bytes, "Bytes");
     f(&av.tcp_listener, "TcpListener");
     f(&av.tcp_stream, "TcpStream");
@@ -181,8 +177,7 @@ fn user_facing_type_name_titlecase_aligned_with_kind() {
         let ufn = vm.user_facing_type_name(v);
         let tn = v.kind();
         // No "a " article allowed (catches "a function", "a channel",
-        // "a constructor", "a TCP listener", "a TCP stream",
-        // "a task handle"). Use word-boundary check: the literal
+        // "a constructor", "a TCP listener", "a TCP stream"). Use word-boundary check: the literal
         // prefix "a " or middle " a " in the rendered string is the
         // pre-fix indefinite-article form.
         assert!(

@@ -81,17 +81,6 @@ fn no_doc_calls_channel_new_without_a_capacity() {
     );
 }
 
-/// The failure `task.join_handle` raises points at where the task failed, and
-/// its call stack goes on with the calls that led to the join: it is
-/// not reported at the join.
-#[test]
-fn no_doc_places_a_joined_failure_at_the_join() {
-    assert_no_doc_says(
-        &["`joined task failed: <msg>` at the call site"],
-        "a doc says a joined failure is reported at the join",
-    );
-}
-
 /// `import x` never picks one of a builtin module, a dependency and a
 /// module of the package by an order: a dependency key named like
 /// either of the others is an error, as a module named like a builtin

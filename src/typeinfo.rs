@@ -610,11 +610,11 @@ pub(crate) mod ty {
     pub(crate) const FLOAT_ERROR: TypeId = TypeId(DefId(29));
     pub(crate) const CRYPTO_ERROR: TypeId = TypeId(DefId(30));
     pub(crate) const UUID_ERROR: TypeId = TypeId(DefId(31));
-    pub(crate) const SELECTED: TypeId = TypeId(DefId(33));
-    pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(34));
-    pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(35));
-    pub(crate) const URL_ERROR: TypeId = TypeId(DefId(36));
-    pub(crate) const RUNTIME_ERROR: TypeId = TypeId(DefId(37));
+    pub(crate) const SELECTED: TypeId = TypeId(DefId(32));
+    pub(crate) const JSON_VALUE: TypeId = TypeId(DefId(33));
+    pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(34));
+    pub(crate) const URL_ERROR: TypeId = TypeId(DefId(35));
+    pub(crate) const RUNTIME_ERROR: TypeId = TypeId(DefId(36));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -775,7 +775,6 @@ pub(crate) const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "FloatError",
     "CryptoError",
     "UuidError",
-    "TaskError",
     "Selected",
     "Value",
     "CsvError",

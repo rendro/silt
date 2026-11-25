@@ -243,9 +243,8 @@ pub enum HostShape {
         args: Vec<HostShape>,
     },
     /// An opaque type of a builtin module whose values are a kind of
-    /// their own (`regex.Regex`, `task.Handle(a)`, `tcp.TcpStream`), as
-    /// written: a value of it is of that kind. (What a task gives is
-    /// not shown by its handle.)
+    /// their own (`regex.Regex`, `tcp.TcpStream`), as written: a value of
+    /// it is of that kind.
     Opaque {
         id: TypeId,
         name: String,
@@ -427,7 +426,6 @@ pub(super) fn same_type(witness: &Value, value: &Value) -> bool {
             | (Value::Bytes(_), Value::Bytes(_))
             | (Value::Unit, Value::Unit)
             | (Value::Channel(_), Value::Channel(_))
-            | (Value::Handle(_), Value::Handle(_))
             | (Value::TcpListener(_), Value::TcpListener(_))
             | (Value::TcpStream(_), Value::TcpStream(_))
             | (Value::Regex(_), Value::Regex(_))
@@ -609,7 +607,6 @@ fn shown_type(value: &Value, budget: &mut usize) -> String {
             format!("({})", parts.join(", "))
         }
         Value::Channel(_) => "Channel(_)".to_string(),
-        Value::Handle(_) => "Handle(_)".to_string(),
         Value::Record(record) => {
             let declared = match &record.ty().shape {
                 crate::typeinfo::Shape::Record(fields) => fields.iter().map(|(_, ty)| ty).collect(),

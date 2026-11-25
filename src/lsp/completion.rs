@@ -292,7 +292,7 @@ impl Server {
                     ..CompletionItem::default()
                 });
             }
-            // The module's types (`time.Weekday`, `task.Handle`).
+            // The module's types (`time.Weekday`, `regex.Regex`).
             let (_, scopes) = crate::typechecker::names::builtins();
             if let Some(exports) =
                 crate::defs::ModuleId::builtin(prefix).and_then(|id| scopes.modules.get(&id))

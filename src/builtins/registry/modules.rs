@@ -329,22 +329,16 @@ pub(super) fn modules() -> Vec<Module> {
             name: "task",
             page: "channel-task.md",
             types: "\
-                pub type TaskError { Timeout }\n\
                 pub type RuntimeError { message: String, location: String, trace: List(String) }\n\
             ",
-            opaque: [("Handle", 1)],
-            error: "TaskError" => concurrency::task_error_text,
             rows: [
                 f("fn background(helpers: List(Fn() -> ()), body: Fn() -> a) -> a", "Run helper functions while the body runs, stop them when it returns, and give its value", concurrency::task::background),
-                f("fn cancel(handle: Handle(a)) -> ()", "Cancel a task, and wait until it has ended (see details below)", concurrency::task::cancel),
                 f("fn deadline(limit: Duration, work: Fn() -> a) -> Option(a)", "Run a function, and end it when the duration has passed: Some of its value, or None", concurrency::task::deadline),
                 f("fn each(work: Channel(a), at_once: Int, f: Fn(a) -> ()) -> ()", "Call a function on each value of a channel, at most at_once calls at a time, until the channel is closed and empty", concurrency::task::each),
                 f("fn first_ok(works: List(Fn() -> Result(a, e))) -> Result(a, List(e))", "Run functions at the same time, give the first Ok and stop the others, or every Err in order", concurrency::task::first_ok),
                 f("fn guard(work: Fn() -> a) -> Result(a, RuntimeError)", "Run a function, and give a runtime error it raises as an `Err`", concurrency::task::guard),
                 f("fn join(pieces: List(Fn() -> ())) -> ()", "Run functions at the same time, and return when all of them have returned", concurrency::task::join),
-                f("fn join_handle(handle: Handle(a)) -> a", "Wait for a task to complete", concurrency::task::join_handle),
                 f("fn map(xs: List(a), at_once: Int, f: Fn(a) -> b) -> List(b)", "Call a function on each item of a list, at most at_once calls at a time, and give the values in the list's order", concurrency::task::map),
-                f("fn spawn(f: Fn() -> a) -> Handle(a)", "Spawn a new lightweight task", concurrency::task::spawn),
             ],
         },
         module! {

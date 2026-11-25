@@ -24,7 +24,7 @@ error[type]: undefined variable 'Timeout'
     |
  14 |   println(Timeout)
     |           ^^^^^^^ undefined variable 'Timeout'
-  = help: did you mean `http.Timeout` or `tcp.Timeout`? or import one of them by name: `import http.{ Timeout }` (`Timeout` is also in modules `task` and `postgres`)
+  = help: did you mean `http.Timeout` or `tcp.Timeout`? or import one of them by name: `import http.{ Timeout }` (`Timeout` is also in module `postgres`)
 
 error[type]: undefined variable 'Closed'
  --> conventions__a_bare_variant_s_help_names_every_module_that_has_it.silt:15:11

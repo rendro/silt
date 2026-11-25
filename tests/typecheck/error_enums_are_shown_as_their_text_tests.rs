@@ -50,7 +50,6 @@ fn every_builtin_error_enum_is_shown_as_its_text() {
         ("UrlError", "url", r#"InvalidPart("x")"#),
         ("UuidError", "uuid", r#"Invalid("x")"#),
         ("CsvError", "csv", r#"Syntax("x", 0)"#),
-        ("TaskError", "task", "Timeout"),
     ];
 
     let skip = |enum_name: &str| -> bool {

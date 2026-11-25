@@ -47,20 +47,25 @@ fn run_with(name: &str, source: &str, hook: &str, value: &str) -> (Option<i32>, 
 
 /// A task holds the stream `b` to the end, and a stage of it fails
 /// (tests/golden/concurrency/streams/
-/// wave7_s1__a_failure_the_next_stage_raised_is_reported_once).
+/// wave7_s1__a_failure_the_next_stage_raised_is_reported_once). The task
+/// is the function of a `stream.from_fn` that holds its own stream, so
+/// that it is not stopped when `main` lets go of that: it waits at the
+/// end, and is dropped with `b`.
 const HELD_TO_THE_END: &str = r#"import channel
 import stream
-import task
 
 fn main() {
   let src = stream.from_list([1, 2, 3])
   let a = stream.map(src) { x -> 10 / (x - 2) }
   let b = stream.buffered(a, 4)
   let never: Channel(Int) = channel.new(0)
-  let _holds = task.spawn { ->
+  let hand: Channel(Channel(Int)) = channel.new(1)
+  let holds = stream.from_fn { _ ->
+    let _mine = channel.receive(hand)
     let _ = channel.receive(never)
-    b
+    let _ = b
   }
+  channel.send(hand, holds)
   println("done")
 }
 "#;

@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: panic: the helper failed
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- A helper that fails stops the body and the other helpers, and its
 -- failure is the caller's.
 import channel

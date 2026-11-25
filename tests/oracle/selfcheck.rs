@@ -192,12 +192,13 @@ fn a_run_that_fails_where_success_is_expected_is_a_finding() {
         Kind::Expectation,
         "main returned",
     );
-    // A task that fails and that nobody joins makes `silt run` fail.
-    let unjoined = "import task\nimport time\nfn main() {\n  let h = task.spawn({ -> 1 / 0 })\n  time.sleep(time.ms(50))\n}\n";
+    // A stage that fails and whose output nobody reads makes `silt run`
+    // fail.
+    let unread = "import stream\nlet s = stream.from_list([0]) |> stream.map { x -> 10 / x } |> stream.buffered(1)\nfn main() {\n  ()\n}\n";
     assert_finding(
-        verdict_with(unjoined, succeeds()),
+        verdict_with(unread, succeeds()),
         Kind::Expectation,
-        "a task failed and nobody joined it: division by zero",
+        "a failure nothing read: division by zero",
     );
 }
 

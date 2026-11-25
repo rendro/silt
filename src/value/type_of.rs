@@ -39,7 +39,6 @@ pub(crate) fn dispatch_type_for_value(val: &Value) -> TypeId {
         | Value::VariantConstructor(..) => kinds.function,
         Value::Unit => kinds.unit,
         Value::Bytes(_) => kinds.bytes,
-        Value::Handle(_) => kinds.handle,
         Value::TcpListener(_) => kinds.tcp_listener,
         Value::TcpStream(_) => kinds.tcp_stream,
         Value::Regex(_) => kinds.regex,

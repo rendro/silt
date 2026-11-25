@@ -463,7 +463,7 @@ fn declarations(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The line of an opaque type: `type Handle(a)  -- opaque`, a type
+/// The line of an opaque type: `type Regex  -- opaque`, a type
 /// whose values only the module's functions make and take.
 fn opaque_line(name: &str, arity: usize) -> String {
     let params: Vec<String> = (b'a'..)
@@ -477,7 +477,7 @@ fn opaque_line(name: &str, arity: usize) -> String {
 }
 
 /// The line among `lines` that declares `keyword name`: `type Value {
-/// ... }` for `("type", "Value")`, also `type Handle(a)  -- opaque`.
+/// ... }` for `("type", "Value")`, also `type Regex  -- opaque`.
 fn declaring<'a>(lines: &'a [String], keyword: &str, name: &str) -> Option<&'a String> {
     lines.iter().find(|line| {
         line.strip_prefix(keyword)
@@ -499,7 +499,7 @@ fn lines_of(qualified: &str) -> Option<(Vec<String>, &str)> {
 
 /// The declaration of the builtin type `name` as [`module_lines`]
 /// writes it: a type of the prelude by its bare name (`Option`), a
-/// module's with its module (`json.Value`, `task.Handle`).
+/// module's with its module (`json.Value`, `regex.Regex`).
 pub(crate) fn type_line(name: &str) -> Option<String> {
     let (lines, name) = lines_of(name)?;
     declaring(&lines, "type", name).cloned()

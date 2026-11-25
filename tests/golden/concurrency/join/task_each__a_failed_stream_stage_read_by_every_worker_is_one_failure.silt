@@ -1,7 +1,7 @@
 -- exit: 1
 -- stderr-contains: division by zero
 -- stderr-not-contains: failed too
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- A stream.map stage that fails, read by four workers: one failure, one
 -- report with no note, however many workers read the end of the stream.
 import stream

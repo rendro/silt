@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-not-contains: deadlock
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- A feed that fails after two lines fails the sink that reads it, with
 -- the feed's own error, once: here the feed reads a directory named like
 -- a day's log file.

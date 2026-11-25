@@ -705,7 +705,7 @@ impl TypeChecker {
                 &help,
             );
         }
-        // Any other builtin type (`time.DateTime`, `Bytes`, `task.Handle`)
+        // Any other builtin type (`time.DateTime`, `Bytes`, `regex.Regex`)
         // is no type argument of a decoder; a decoder decodes some of
         // them as the type of a record's field.
         if !is_primitive {

@@ -108,7 +108,7 @@ fn module_of(qualified: &str) -> &str {
 
 /// Bind the types that are values: the descriptors of the primitive and
 /// container types and of the opaque types, the prelude's (`Bytes`) and
-/// the modules' (`task.Handle`). (A declared type is bound with its
+/// the modules' (`regex.Regex`). (A declared type is bound with its
 /// declaration, `enter_registry`.)
 fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // A primitive type written as a value is its descriptor, of the type
@@ -140,7 +140,7 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
         );
     }
     // An opaque type written as a value is its descriptor too, of any
-    // of its instances: `Bytes`, `task.Handle`.
+    // of its instances: `Bytes`, `regex.Regex`.
     let registry = crate::builtins::registry::registry();
     let opaque = (crate::builtins::registry::PRELUDE_OPAQUE.iter())
         .filter(|(name, _)| *name != crate::defs::TYPE_OF)

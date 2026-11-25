@@ -102,43 +102,6 @@ fn a_panic_of_a_worker_reaches_the_thread_that_waits_for_the_lost_task() {
     assert_eq!(given.last(), Some(Value::Int(42)));
 }
 
-/// The program's own code has returned and its thread waits for the
-/// program to end (`Vm::settle`) when the worker panics: `settle`
-/// gives the panic.
-#[test]
-fn a_panic_of_a_worker_reaches_the_thread_that_waits_for_the_program_to_end() {
-    let program = compiled(
-        r#"
-import channel
-import task
-import time
-
-fn main() {
-  let gate = channel.new(0)
-  let lost = task.spawn { ->
-    let _ = channel.receive(gate)
-    time.sleep(time.ms(20))
-  }
-  println("main returns")
-  channel.send(gate, 1)
-}
-"#,
-    );
-    let out = Buffer::new();
-    let mut vm = Vm::new(HostIo::buffer(&out));
-    panic_for_test(&vm, PanicAt::Task(0));
-    // The task is let through the gate as `main` returns, and is lost
-    // when its sleep ends: 20 ms later, in `settle`, unless this
-    // thread was held up for that long before it got there (then the
-    // panic comes out of `run_program`, which is as right).
-    let panic = panic_of(|| {
-        let _ = vm.run_program(&program);
-        vm.settle();
-    });
-    assert_eq!(panic, "a panic made for a test: Task(0)");
-    assert_eq!(out.contents(), "main returns\n");
-}
-
 /// The program's thread computes and never waits: it gets the panic
 /// where it looks for one, every million steps or so of its loop,
 /// which would never end otherwise. (The task, the function of a

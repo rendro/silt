@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{FieldType, TypeInfo, bv};
 use crate::value::Value;
@@ -134,18 +134,6 @@ impl<'a> Arg<'a> for &'a Arc<Channel> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
             Value::Channel(channel) => Some(channel),
-            _ => None,
-        }
-    }
-}
-
-/// A `Handle` argument: a task's.
-pub(crate) type Handle<'a> = &'a Arc<TaskHandle>;
-
-impl<'a> Arg<'a> for &'a Arc<TaskHandle> {
-    fn take(value: &'a Value) -> Option<Self> {
-        match value {
-            Value::Handle(handle) => Some(handle),
             _ => None,
         }
     }

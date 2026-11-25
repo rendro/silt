@@ -1,7 +1,7 @@
 -- exit: 1
 -- stderr-contains: error[runtime]: panic: the text says {at}
 -- stderr-contains: = note: another piece failed too, at task_join__a_note_keeps_the_text_of_the_failure_it_quotes.silt:15:3: panic: the text says {at}
--- stderr-not-contains: never joined
+-- stderr-not-contains: never read
 -- A note names the place of the failure it is about; a "{at}" in the
 -- text of that failure is the program's own text and stays as it is.
 -- Both failures are certain: the two pieces meet on a channel with no

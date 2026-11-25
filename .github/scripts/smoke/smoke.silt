@@ -14,11 +14,11 @@ type Count {
 
 fn main() {
   let ch = channel.new(0)
-  let _ = task.spawn { ->
+  let produce = { ->
     list.each(["a", "b", "a", "c", "a"]) { word -> channel.send(ch, word) }
     channel.close(ch)
   }
-  let counts = channel_counts(ch, #{})
+  let counts = task.background([produce]) { -> channel_counts(ch, #{}) }
   let rows = counts |> map.entries |> list.map { (word, times) -> Count { word, times } }
   let text = json.stringify(rows)
   println(text)

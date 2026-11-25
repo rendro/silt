@@ -138,7 +138,7 @@ pub enum Exit {
     /// waits, within about a million steps where it computes, and when
     /// a sleep in [`Clock::sleep`] or one call of a builtin or a host
     /// function returns. So does every later run of the VM. Failures
-    /// of tasks that nobody joined are not reported. What a VM does
+    /// that nothing read are not reported. What a VM does
     /// unless told otherwise; the REPL's too.
     EndsRun,
     /// The process ends with the code at once, whatever thread calls
@@ -197,7 +197,7 @@ pub struct Vm {
     /// How the wait of the builtin's frame on top ended, between the
     /// end of the wait and the frame's resumption ([`Step::Park`]).
     pub(crate) woken: Option<Fired>,
-    /// True for the VM of a task made by `task.spawn`.
+    /// True for the VM of a task the runtime started.
     pub(crate) spawned: bool,
     /// The cancel flag of the task this is the VM of; `None` for the
     /// VM that runs the program itself. Set when the task is started
@@ -279,9 +279,9 @@ impl Vm {
     ///
     /// Dropping it ends the program: the threads that served it (the
     /// scheduler's, the timer's, the I/O workers) end, tasks that are
-    /// still running or waiting never run again, and the tasks that
-    /// failed since the last report and that nobody joined are reported
-    /// on the stderr of `io`.
+    /// still running or waiting never run again, and the failures since
+    /// the last report that nothing read are reported on the stderr of
+    /// `io`.
     pub fn new(io: HostIo) -> Self {
         let scheduler = Arc::new(Scheduler::new(io.clone()));
         Vm {
@@ -411,15 +411,15 @@ impl Vm {
         }
     }
 
-    /// Report on the host's stderr the tasks that have failed so far
-    /// and that nobody joined or cancelled. Nothing while a front end
-    /// collects them (`scheduler::collect_unjoined_failures`).
-    fn report_unjoined_failures(&self) {
-        self.runtime.scheduler.report_unjoined_failures();
+    /// Report on the host's stderr the failures so far that nothing
+    /// read (a stream stage's whose output nobody read). Nothing while a
+    /// front end collects them ([`Vm::collect_unread_failures`]).
+    fn report_unread_failures(&self) {
+        self.runtime.scheduler.report_unread_failures();
         // What the tasks printed, and the report, are written out before
         // whoever settled says more; where a task failed, as at any end
         // by a failure, only while the reader takes some of it.
-        match self.runtime.io.is_failing() || self.runtime.scheduler.has_unhandled_failures() {
+        match self.runtime.io.is_failing() || self.runtime.scheduler.has_unread_failures() {
             true => self.runtime.io.drain_failing(crate::scheduler::LAST_WORDS),
             false => self.runtime.io.drain(),
         }
@@ -469,7 +469,7 @@ impl Vm {
             .cloned()
             .ok_or_else(|| VmError::internal("a program without a script"))?;
         let result = self.run(Arc::new(script));
-        self.report_unjoined_failures();
+        self.report_unread_failures();
         // A write to stdout that failed after the print that made it had
         // returned (the process's stdout is written by its writer) is the
         // program's error, as the print's own would have been.
@@ -505,16 +505,18 @@ impl Vm {
 
     /// Wait until the program has ended. [`Vm::run_program`] and
     /// `Vm::call_test` return when the program's own code (`fn main`,
-    /// the test function) has returned; the tasks it spawned may still
+    /// the test function) has returned; the stages of the streams that
+    /// the program still holds (a top-level binding holds one) may still
     /// run. The program has ended when none of them can go on: each
     /// has ended or waits, and no timer and no I/O operation of theirs
     /// is pending. The tasks that still wait then are dropped, and the
-    /// failures that nobody joined are final.
+    /// failures that nothing read are final.
     ///
     /// `silt run` and `silt test` call this before they give the
-    /// program's result, so a task that fails after `main` has
-    /// returned still makes the run fail, and a task that never ends
-    /// (an endless loop, a sleep) keeps the program from ending. An
+    /// program's result, so a stage that fails after `main` has
+    /// returned still makes the run fail, and one that never ends (the
+    /// function of a `stream.from_fn` that loops for ever) keeps the
+    /// program from ending. An
     /// embedder that wants neither does not call it, and drops the VM
     /// to end the program where it is.
     ///
@@ -525,7 +527,23 @@ impl Vm {
         // first, as they would be by the next step of a task.
         crate::scheduler::run_deferred();
         self.runtime.scheduler.settle();
-        self.report_unjoined_failures();
+        self.report_unread_failures();
+    }
+
+    /// From now on, keep the failures that nothing read (a stream
+    /// stage's whose output nobody read) for [`Vm::take_unread_failures`],
+    /// instead of reporting them on the host's stderr: for a front end
+    /// that renders them with the program's files (`silt run`, `silt
+    /// test`, the REPL). This VM's alone, and it cannot be undone.
+    pub(crate) fn collect_unread_failures(&self) {
+        self.runtime.scheduler.collect_unread_failures();
+    }
+
+    /// The failures that nothing read and that this VM's tasks have had
+    /// since the last take, each given out once (see
+    /// [`Vm::collect_unread_failures`]).
+    pub(crate) fn take_unread_failures(&self) -> crate::scheduler::UnreadFailures {
+        self.runtime.scheduler.take_unread_failures()
     }
 
     /// Set the owner tag of the tasks that this VM's own code spawns
@@ -537,7 +555,7 @@ impl Vm {
     /// The owner is whose tasks the VM asks about: a deadlock is one
     /// of the owner's tasks, [`Vm::settle`] waits for them and no
     /// others, and the report of a task's failure carries the tag
-    /// (`crate::scheduler::UnjoinedFailure::owner`). `silt test`
+    /// (`crate::scheduler::UnreadFailure::owner`). `silt test`
     /// sets one tag per test, and so judges each test by its own
     /// tasks. The tag is the VM's: two VMs do not see each other's.
     pub(crate) fn set_task_owner(&mut self, owner: u64) {
@@ -564,7 +582,7 @@ impl Vm {
     pub fn stop_tasks(&mut self) {
         crate::scheduler::run_deferred();
         self.runtime.scheduler.stop_tasks();
-        self.report_unjoined_failures();
+        self.report_unread_failures();
     }
 
     /// Wait as [`Vm::settle`] does, and drop nothing: the tasks that
@@ -575,7 +593,7 @@ impl Vm {
     pub fn wait_until_idle(&mut self) {
         crate::scheduler::run_deferred();
         self.runtime.scheduler.wait_until_idle();
-        self.report_unjoined_failures();
+        self.report_unread_failures();
     }
 
     /// Call the test function `test` of the program this VM ran with
@@ -586,7 +604,7 @@ impl Vm {
         let value = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,
         )));
-        self.report_unjoined_failures();
+        self.report_unread_failures();
         self.ended(value?, &test.name, test.span)
     }
 
@@ -1001,7 +1019,6 @@ impl Vm {
                 | Value::HostFn(_)
                 | Value::VariantConstructor(..)
                 | Value::Channel(_)
-                | Value::Handle(_)
                 | Value::TcpListener(_)
                 | Value::TcpStream(_)
                 | Value::TypeDescriptor(_)

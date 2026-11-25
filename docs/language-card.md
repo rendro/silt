@@ -567,19 +567,14 @@ channel.try_send(ch: Channel(a), value: a) -> Bool
 ### task
 
 ```
-type TaskError { Timeout }
 type RuntimeError { message: String, location: String, trace: List(String) }
-type Handle(a)  -- opaque
 task.background(helpers: List(Fn() -> ()), body: Fn() -> a) -> a
-task.cancel(handle: Handle(a)) -> ()
 task.deadline(limit: Duration, work: Fn() -> a) -> Option(a)
 task.each(work: Channel(a), at_once: Int, f: Fn(a) -> ()) -> ()
 task.first_ok(works: List(Fn() -> Result(a, e))) -> Result(a, List(e))
 task.guard(work: Fn() -> a) -> Result(a, RuntimeError)
 task.join(pieces: List(Fn() -> ())) -> ()
-task.join_handle(handle: Handle(a)) -> a
 task.map(xs: List(a), at_once: Int, f: Fn(a) -> b) -> List(b)
-task.spawn(f: Fn() -> a) -> Handle(a)
 ```
 
 ### regex

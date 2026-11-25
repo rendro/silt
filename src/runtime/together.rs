@@ -6,7 +6,7 @@
 //! Each task of the call has the call's [`Together`] on its handle
 //! (`TaskHandle::in_together`). The scheduler tells it of a failure of
 //! the task (`Together::failed`, in place of the record of failures
-//! that nobody joined: no task of such a call is ever one of them) and
+//! that nothing read: no task of such a call is ever one of them) and
 //! of the task's end (`TaskHandle::stop`). The frame waits first for
 //! the call to be settled (a failure, the end of the body of a
 //! `task.background`, the first `Ok` of a `task.first_ok`, or the end

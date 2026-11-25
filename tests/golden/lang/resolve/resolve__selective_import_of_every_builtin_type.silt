@@ -18,7 +18,7 @@ import regex.{ RegexError, Regex }
 import bytes.{ BytesError }
 import postgres.{ PostgresError, PgPool, PgTx, PgCursor, Notification }
 import tcp.{ TcpError, TcpStream, TcpListener }
-import task.{ Handle }
+import task.{ RuntimeError }
 fn main() {
   println(Monday)
   println(GET)

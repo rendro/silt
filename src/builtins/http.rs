@@ -2184,12 +2184,12 @@ impl crate::vm::Native for Conn {
                     let _ = self.stream.write_in_turn(&bytes);
                     return;
                 };
-                // The failure is handled here: it is logged, and not
-                // reported as a task that nobody joined. Not a test's
-                // `process.exit`: that fails the test, as the failure of
-                // a task that nobody joined does.
+                // The failure is read here: it is logged, and not
+                // reported as a failure that nothing read. Not a test's
+                // `process.exit`: that fails the test, as a failure that
+                // nothing read does.
                 if !e.exit_in_a_test {
-                    self.handle.mark_joined();
+                    self.handle.mark_read();
                     // Security: do NOT include VmError details (call
                     // stack, line numbers, panic payload) in the response
                     // body — that leaks implementation details and

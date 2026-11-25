@@ -902,7 +902,7 @@ fn impl_only_type_message(ty: TypeRef) -> Option<String> {
 }
 
 /// The number of type arguments of the builtin type `name` when it is
-/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
+/// opaque (`Bytes`, `tcp.TcpStream`, `TypeOf(a)`): it
 /// has no variants and no fields. `None` for any other builtin type.
 fn opaque_arity(name: &str) -> Option<usize> {
     crate::defs::opaque_type_arity(name)

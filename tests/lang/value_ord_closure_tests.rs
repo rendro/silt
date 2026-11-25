@@ -1,14 +1,14 @@
 #![allow(clippy::mutable_key_type)] // intentional: locks Value-as-key ordering
 
 //! Regression tests for round-23 audit fix: `Value::Ord` returning
-//! `Equal` for distinct `Handle` / `VmClosure` / `BuiltinFn` /
+//! `Equal` for distinct `VmClosure` / `BuiltinFn` /
 //! `VariantConstructor` values caused `BTreeSet` / `BTreeMap` (used by
 //! the `MakeSet` / `MakeMap` opcodes) to silently drop "duplicates" that
 //! `PartialEq` already considers distinct.
 //!
 //! Rust's `Ord` contract requires that `a == b` ⇒ `cmp(a,b) == Equal`,
 //! and contrapositively `a != b` ⇒ `cmp(a,b) != Equal`. Silt's
-//! `PartialEq` returns `false` for these four kinds via the catch-all
+//! `PartialEq` returns `false` for these three kinds via the catch-all
 //! `_ => false` arm, so `Ord` must never return `Equal` for distinct
 //! instances — otherwise the `BTreeSet` backing `Set` and `BTreeMap`
 //! backing `Map` will deduplicate values that the language layer
@@ -17,11 +17,10 @@
 use silt::testing::ValueInside;
 use silt::testing::typeinfo::bv;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use silt::testing::bytecode::{Function, VmClosure};
-use silt::testing::runtime::handle::TaskHandle;
 use silt::testing::value::Value;
 
 /// The builtin function `name` (`println`, `list.map`) as a value.
@@ -30,54 +29,6 @@ fn builtin(name: &str) -> Value {
         .named(name)
         .unwrap_or_else(|| panic!("the builtin {name}"))
         .value()
-}
-
-// ── TaskHandle ─────────────────────────────────────────────────────
-
-/// Two distinct `TaskHandle` values (different `id`s) must compare
-/// non-Equal via `Ord`, matching the `PartialEq` behavior of returning
-/// `false` for them.
-#[test]
-fn ord_handle_distinct_ids_not_equal() {
-    let h1 = Value::Handle(Arc::new(TaskHandle::new(1)));
-    let h2 = Value::Handle(Arc::new(TaskHandle::new(2)));
-    assert_ne!(h1.cmp(&h2), Ordering::Equal);
-    assert_ne!(h2.cmp(&h1), Ordering::Equal);
-    // Directional consistency: one side must be Less and the other Greater.
-    assert_eq!(h1.cmp(&h2).reverse(), h2.cmp(&h1));
-}
-
-/// A `BTreeSet` built from distinct handles (the primary user-visible
-/// symptom — the `MakeSet` opcode builds a `BTreeSet`) must retain all
-/// elements.
-#[test]
-fn btreeset_of_distinct_handles_retains_all() {
-    let h1 = Value::Handle(Arc::new(TaskHandle::new(10)));
-    let h2 = Value::Handle(Arc::new(TaskHandle::new(20)));
-    let h3 = Value::Handle(Arc::new(TaskHandle::new(30)));
-    let mut s = BTreeSet::new();
-    s.insert(h1);
-    s.insert(h2);
-    s.insert(h3);
-    assert_eq!(
-        s.len(),
-        3,
-        "BTreeSet must not drop distinct handles as duplicates"
-    );
-}
-
-/// Same check for `BTreeMap` (backs `Map` literals via `MakeMap`): three
-/// distinct handles used as keys must all survive insertion.
-#[test]
-fn btreemap_keyed_by_distinct_handles_retains_all() {
-    let h1 = Value::Handle(Arc::new(TaskHandle::new(1)));
-    let h2 = Value::Handle(Arc::new(TaskHandle::new(2)));
-    let h3 = Value::Handle(Arc::new(TaskHandle::new(3)));
-    let mut m = BTreeMap::new();
-    m.insert(h1, Value::Int(1));
-    m.insert(h2, Value::Int(2));
-    m.insert(h3, Value::Int(3));
-    assert_eq!(m.len(), 3);
 }
 
 // ── VmClosure ──────────────────────────────────────────────────────

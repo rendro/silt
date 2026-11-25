@@ -4,8 +4,9 @@
 //! Every piece of running silt code is a task to the scheduler, whoever
 //! drives it:
 //!
-//! - a task made by `task.spawn`, a stage of a stream and the handler
-//!   of an HTTP request are run slice by slice by the workers;
+//! - a task of a call (`task.join`, `task.deadline`, ...), a stage of a
+//!   stream and the handler of an HTTP request are run slice by slice by
+//!   the workers;
 //! - the program itself (`fn main`, a test, a REPL entry) is run by
 //!   its own thread (`Scheduler::enter`).
 //!
@@ -97,7 +98,7 @@ pub(crate) const MAX_TASKS: usize = 100_000;
 ///
 /// On 64-bit targets the value equals the main thread's reserve
 /// (`SILT_STACK_SIZE` in `src/cli/mod.rs`, 256 MiB), so a program can
-/// work on the same values inside `task.spawn` as outside of it. The
+/// work on the same values inside a task as outside of it. The
 /// size is a reservation of address space: memory is committed page by
 /// page as the stack grows, so a worker that never recurses deeply
 /// costs what it cost before. There are `max(cores, 2)` workers; on a
@@ -112,10 +113,11 @@ pub(crate) const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64"
     16 * 1024 * 1024
 };
 
-/// How many failures that nobody joined are shown for each owner; the
+/// How many failures that nothing read are shown for each owner; the
 /// rest are counted. Past these, a failure is kept only while the
-/// program can still join or cancel its task: a long-running program
-/// whose tasks keep failing must not grow without bound.
+/// program can still read it (it holds the stage whose output it is): a
+/// long-running program whose stages keep failing must not grow without
+/// bound.
 const MAX_SHOWN_FAILURES: usize = 64;
 
 /// Why a text is no duration that silt can wait for ([`parse_duration`]).
@@ -371,8 +373,11 @@ struct Inner {
     /// for I/O ends after it.
     global_io_timeout: Option<Duration>,
     /// Tasks that ended with an error, kept for the report of failures
-    /// that nobody joined. See `report_unjoined_failures`.
+    /// that nothing read. See `report_unread_failures`.
     failed_tasks: Mutex<FailedTasks>,
+    /// Set when a front end takes the failures that nothing read itself
+    /// (`Scheduler::collect_unread_failures`): the scheduler prints none.
+    collecting: AtomicBool,
     /// The host's clock and stderr.
     io: HostIo,
     /// Set when a thread of the runtime has panicked
@@ -624,6 +629,7 @@ impl Scheduler {
                 timer_wake: Condvar::new(),
                 global_io_timeout,
                 failed_tasks: Mutex::new(FailedTasks::default()),
+                collecting: AtomicBool::new(false),
                 io,
                 broken: AtomicBool::new(false),
                 panic: Mutex::default(),
@@ -689,32 +695,64 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Report on the host's stderr every task of this scheduler that failed and
-    /// whose error no `task.join_handle` has received and no `task.cancel` has
-    /// dismissed. Each failure is reported once, so the call can be
-    /// repeated. Returns the number of failures that this call reported.
+    /// Report on the host's stderr every task of this scheduler that
+    /// failed and whose error nothing read (the output of a stream stage
+    /// that nobody read) and no cancel dismissed. Each failure is
+    /// reported once, so the call can be repeated. Returns the number of
+    /// failures that this call reported.
     ///
     /// It runs by itself when the scheduler is dropped and when the
     /// thread that spawned the first task ends. A caller that ends the
     /// process in another way (`std::process::exit`) calls it before
     /// that.
     ///
-    /// While the failures are collected (`collect_unjoined_failures`),
-    /// the scheduler keeps none, and this reports nothing: the front
-    /// end takes them with `take_unjoined_failures` and reports them.
-    pub(crate) fn report_unjoined_failures(&self) -> usize {
-        report_unjoined_failures(&self.inner)
+    /// While the failures are collected (`collect_unread_failures`),
+    /// this reports nothing: the front end takes them with
+    /// `take_unread_failures` and reports them.
+    pub(crate) fn report_unread_failures(&self) -> usize {
+        report_unread_failures(&self.inner)
     }
 
-    /// Whether a task of the program has failed and nobody has joined
-    /// or cancelled it: the program ends by a failure then.
-    pub(crate) fn has_unhandled_failures(&self) -> bool {
-        let unhandled = |tasks: &FailedTasks| {
-            tasks.owners.values().any(|failed| {
-                failed.counted > 0 || failed.handles.iter().any(|h| h.has_unjoined_failure())
-            })
-        };
-        unhandled(&self.inner.failed_tasks.lock()) || unhandled(&collected_failures().lock())
+    /// Whether a task of the program has failed and nothing has read
+    /// the failure or dismissed it: the program ends by a failure then.
+    pub(crate) fn has_unread_failures(&self) -> bool {
+        let tasks = self.inner.failed_tasks.lock();
+        tasks.owners.values().any(|failed| {
+            failed.counted > 0 || failed.handles.iter().any(|h| h.has_unread_failure())
+        })
+    }
+
+    /// From now on, keep the failures that nothing read for
+    /// [`Scheduler::take_unread_failures`], instead of printing them on
+    /// the host's stderr. This is for the front end that runs the
+    /// program (`silt run`, `silt test`, the REPL, the oracle of the
+    /// tests): it decides when a failure counts and renders the report
+    /// with the program's files. It cannot be undone, and it is this
+    /// scheduler's alone: another VM's goes on printing its own.
+    ///
+    /// A failure that is not taken is never reported: the front end
+    /// takes them when the program has ended ([`Vm::settle`]), after
+    /// which no task can fail.
+    pub(crate) fn collect_unread_failures(&self) {
+        self.inner.collecting.store(true, Ordering::SeqCst);
+    }
+
+    /// Take every failure of this scheduler's tasks that has been
+    /// recorded since the last take, that nothing read and that no
+    /// cancel dismissed. Each failure is given out once.
+    pub(crate) fn take_unread_failures(&self) -> UnreadFailures {
+        // The lock is released at the end of this statement; the
+        // handles are dropped after that.
+        let given = self.inner.failed_tasks.lock().take();
+        let failures = given
+            .shown
+            .into_iter()
+            .map(|(handle, error)| UnreadFailure::of(&handle, error))
+            .collect();
+        UnreadFailures {
+            failures,
+            not_shown: given.not_shown,
+        }
     }
 
     /// Start the task `id`, whose VM `vm` has its first frame and
@@ -795,8 +833,9 @@ impl Scheduler {
         &self.inner.parking
     }
 
-    /// `task.cancel` of the task `handle`. What becomes of the task
-    /// depends on where it is:
+    /// A cancel of the task `handle` (a stream stage that nobody reads
+    /// any more, a deadline's function that its caller let go of). What
+    /// becomes of the task depends on where it is:
     ///
     /// - It waits: its wait ends without taking or sending anything,
     ///   and the task is ended there.
@@ -811,10 +850,6 @@ impl Scheduler {
     ///   nothing new in them: an operation that would ends it too
     ///   (`Vm::takes_nothing_new`).
     ///
-    /// A failure that the task took from a task it joined, and that
-    /// the cancel dismisses, goes back to that task: it is reported as
-    /// never joined ([`Inner::hand_back`]).
-    ///
     /// The cancel also reaches every task that `handle`'s task spawned
     /// and that still runs, and every one that those spawned, also
     /// below a task that has returned ([`Inner::cancel_below`]). All of
@@ -825,11 +860,8 @@ impl Scheduler {
         // spawned, before whoever waits for it learns of the cancel.
         handle.mark_cancelled();
         self.inner.cancel_below(handle);
-        let taken_from = handle.cancel(self.wake());
+        handle.cancel(self.wake());
         self.inner.parking.cancel(TaskId(handle.id as u64));
-        if let Some(joined) = taken_from {
-            self.inner.hand_back(&joined);
-        }
     }
 
     /// Stop the task `handle`, a task of a `task.join` or a
@@ -958,7 +990,6 @@ impl Scheduler {
         // lets go of the streams it held, and the stops of their stages
         // dismiss no failure of theirs, whenever they run.
         self.inner.failed_tasks.lock().keep(group.owner);
-        collected_failures().lock().keep(group.owner);
         // The flag first: a task on its way into a wait reads it.
         group.stopped.store(true, Ordering::SeqCst);
         self.drop_waiting(&group);
@@ -1105,7 +1136,7 @@ impl Scheduler {
                     // A task that failed is the usual reason why the
                     // counterparty of the wait is missing: it is
                     // reported before the verdict.
-                    let _ = report_unjoined_failures(inner);
+                    let _ = report_unread_failures(inner);
                     verdict
                 }
                 None => VmError::ending("the VM that ran the program has been dropped".into()),
@@ -1462,7 +1493,7 @@ pub(crate) fn exit_with_status(status: i32) -> ! {
 
 /// Which of two ends of a program run by the `silt` command came first:
 /// its failure (a runtime error of `main`, a `main` that returned `Err`,
-/// tasks that failed and that nobody joined), which is reported and
+/// failures that nothing read), which is reported and
 /// ends the process with 1, or a `process.exit`, which reports nothing
 /// and ends it with its code. The one that comes first is the end: a
 /// report never stands beside the code of an exit, and an exit that
@@ -1609,8 +1640,8 @@ pub(crate) fn report_on_stderr(text: &str) {
 }
 
 /// Write a report of the `silt` command's own with `write`, while a
-/// program's threads may exist: a program's runtime error, the tasks
-/// that failed and were never joined, a test's result, the errors of
+/// program's threads may exist: a program's runtime error, the
+/// failures that nothing read, a test's result, the errors of
 /// a REPL entry. If the process is ending with the internal error
 /// nothing is written, and the calling thread waits for the end and
 /// never returns: what a thread of a broken runtime was told is not
@@ -2092,19 +2123,6 @@ impl Inner {
         }
     }
 
-    /// A join took the failure of `joined`, and the task that joined
-    /// was cancelled before it failed with it, or had that failure
-    /// dismissed by a cancel: the failure is the joined task's again,
-    /// reported as never joined. (A cancelled task never takes a
-    /// failure: its join ends without taking. This is for the cancel
-    /// that comes after the take.)
-    fn hand_back(&self, joined: &Arc<TaskHandle>) {
-        joined.hand_back();
-        if joined.has_unjoined_failure() {
-            record_failed_task(self, joined);
-        }
-    }
-
     /// Cancel the tasks below `handle` in the tree of who spawned whom
     /// that still run (`runtime::family`): a cancel of the task, or its
     /// end by its deadline, reaches them. One that has ended keeps its
@@ -2135,7 +2153,7 @@ impl Inner {
             vm, handle, group, ..
         } = task;
         drop(vm);
-        // Then whoever waits for its end (`task.cancel`) is told,
+        // Then whoever waits for its end (a stop) is told,
         // while it still counts: a wait for it is never seen as stuck.
         handle.stop(&self.parking);
         drop(handle);
@@ -2440,24 +2458,20 @@ impl Inner {
                 self.end(task, true);
             }
             SliceResult::Failed(error) => {
-                // A failure that no join receives is reported when the
-                // program ends, so it is recorded here. `fail` returns
-                // false if the task had been cancelled before: its
-                // handle keeps the cancellation as its result then.
-                // A failure it took from a task it joined then goes back
-                // to that task.
+                // A failure that nothing reads (the output of a stream
+                // stage that nobody reads) is reported when the program
+                // ends, so it is recorded here. `fail` returns false if
+                // the task had been cancelled before: its handle keeps
+                // the cancellation as its result then.
                 let error = task.vm.enrich_error(error);
-                let taken_from = error.taken_from.clone();
                 // A task of a `task.join` or a `task.background` fails
                 // its call, which raises the failure (or notes it, under
-                // the first): it is never one that nobody joined.
+                // the first): it is never one that nothing read.
                 if let Some((together, role)) = task.handle.together() {
                     let _ = task.handle.complete(Err(error.clone()), &self.parking);
                     together.failed(role, error, &self.parking);
                 } else if task.handle.fail(error, &self.parking) {
                     record_failed_task(self, &task.handle);
-                } else if let Some(joined) = taken_from {
-                    self.hand_back(&joined.0);
                 }
                 self.end(task, true);
             }
@@ -2669,8 +2683,8 @@ fn verdict(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Option<VmError> {
         [Source::Recv(_)] => "channel receive with no counterparty",
         [Source::Send(_)] => "channel send with no counterparty",
         // The cell of a `task.join` or a `task.background` names its
-        // call; a task's own end is what a `task.join_handle` waits for.
-        [Source::Cell(cell)] => cell.call().unwrap_or("task.join_handle"),
+        // call, and so does the end of a `task.deadline`'s function.
+        [Source::Cell(cell)] => cell.call().unwrap_or("a wait for a task"),
         _ => "channel select with no counterparty",
     };
     let what = match mine.on {
@@ -2769,8 +2783,8 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                 && let Some((_, role)) = task.handle.together()
             {
                 let what = role.what();
-                return match task.handle.spawn_site() {
-                    Some((at, _)) => (format!("{what} at {{at}} waits {on}"), Some(at)),
+                return match task.handle.start_site() {
+                    Some(at) => (format!("{what} at {{at}} waits {on}"), Some(at)),
                     None => (format!("{what} waits {on}"), None),
                 };
             }
@@ -2825,8 +2839,8 @@ pub(crate) fn time_slice() -> usize {
 
 impl Scheduler {
     /// End the scheduler with the program that used it: report the
-    /// failures that nobody joined (nobody can join a task of it any
-    /// more), tell the workers and the timer thread to end, and drop
+    /// failures that nothing read (nothing can read one any more), tell
+    /// the workers and the timer thread to end, and drop
     /// the tasks that wait for a worker or for anything else. A task
     /// submitted later is refused.
     ///
@@ -2836,7 +2850,7 @@ impl Scheduler {
         let inner = &self.inner;
         #[cfg(any(test, feature = "test-hooks"))]
         inner.panic_for_test(|at| at == PanicAt::Shutdown);
-        let _ = report_unjoined_failures(inner);
+        let _ = report_unread_failures(inner);
         inner.shutdown.store(true, Ordering::SeqCst);
         {
             let _timer = inner.timer_lock.lock();
@@ -2942,10 +2956,8 @@ fn fire_timers(inner: &Inner) {
     }
 }
 
-/// Failed tasks kept for the report of failures that nobody joined,
-/// per owner. Each scheduler has one; while the failures are collected
-/// (`collect_unjoined_failures`), the one of the process is used
-/// instead.
+/// Failed tasks kept for the report of failures that nothing read, per
+/// owner. Each scheduler has one.
 #[derive(Default)]
 struct FailedTasks {
     owners: BTreeMap<u64, Failed>,
@@ -2958,11 +2970,12 @@ struct FailedTasks {
 #[derive(Default)]
 struct Failed {
     /// The handles of tasks that ended with an error, in the order of
-    /// their failures. Whether a join has received the error since, or
-    /// a cancel has dismissed it, is read from the handle at report
-    /// time. Kept: each one that nobody has handled and whose handle
-    /// the program still has, and of the others the first
-    /// `MAX_SHOWN_FAILURES` ([`Failed::count_unreachable`]).
+    /// their failures. Whether a reader has received the error since,
+    /// or a cancel has dismissed it, is read from the handle at report
+    /// time. Kept: each one that nothing has read and whose handle the
+    /// program still holds (through the stage's output), and of the
+    /// others the first `MAX_SHOWN_FAILURES`
+    /// ([`Failed::count_unreachable`]).
     handles: Vec<Arc<TaskHandle>>,
     /// How many of the kept handles the program held at the last
     /// sweep. The next sweep comes
@@ -2973,46 +2986,39 @@ struct Failed {
     /// The failures past those kept that nothing could handle any
     /// more: they are only counted.
     counted: usize,
-    /// Where the first of those was spawned, if that is a place in the
+    /// Where the first of those was started, if that is a place in the
     /// program.
     first_counted: Option<crate::source::Span>,
 }
 
 impl Failed {
     /// The first half of a sweep: let go of each handle whose failure
-    /// has been joined or cancelled, and of a second entry of a handle
-    /// (a failure that went back to its task, `Inner::hand_back`, is
-    /// recorded again). Returns the handles let go: dropped by the
-    /// caller after it has released the lock, they no longer count as
-    /// holders of the tasks whose failures they took, which the second
-    /// half reads ([`Failed::count_unreachable`]).
+    /// has been read or dismissed. Returns the handles let go: dropped
+    /// by the caller after it has released the lock, they no longer
+    /// count as holders of the tasks, which the second half reads
+    /// ([`Failed::count_unreachable`]).
     fn let_go_handled(&mut self) -> Vec<Arc<TaskHandle>> {
-        // (A second entry is dropped here: the first one holds the
-        // handle, so nothing of it is freed under the lock.)
-        let mut seen = std::collections::HashSet::with_capacity(self.handles.len());
-        self.handles
-            .retain(|handle| seen.insert(Arc::as_ptr(handle)));
         let (kept, gone) = std::mem::take(&mut self.handles)
             .into_iter()
-            .partition(|handle| handle.has_unjoined_failure());
+            .partition(|handle| handle.has_unread_failure());
         self.handles = kept;
         gone
     }
 
-    /// The second half of a sweep. Of the failures that nobody has
-    /// handled, keep each whose handle the program still has (it may
-    /// join or cancel it yet), and the first `MAX_SHOWN_FAILURES` of
-    /// those that only the record holds: they are the errors the
-    /// report can show. Every other one can never be joined or
-    /// cancelled any more, so its failure is counted at once. Returns
-    /// the handles let go.
+    /// The second half of a sweep. Of the failures that nothing has
+    /// read, keep each whose handle the program still holds (it may read
+    /// it yet, or let go of the stage, which dismisses it), and the first
+    /// `MAX_SHOWN_FAILURES` of those that only the record holds: they
+    /// are the errors the report can show. Every other one can never be
+    /// read or dismissed any more, so its failure is counted at once.
+    /// Returns the handles let go.
     fn count_unreachable(&mut self) -> Vec<Arc<TaskHandle>> {
         let mut gone = Vec::new();
         let mut kept = Vec::with_capacity(self.handles.len());
         let mut only_here = 0;
         self.held = 0;
         for handle in std::mem::take(&mut self.handles) {
-            if !handle.has_unjoined_failure() {
+            if !handle.has_unread_failure() {
                 gone.push(handle);
             } else if Arc::strong_count(&handle) > 1 {
                 self.held += 1;
@@ -3021,10 +3027,10 @@ impl Failed {
                 only_here += 1;
                 kept.push(handle);
             } else {
-                if handle.take_unjoined_failure().is_some() {
+                if handle.take_unread_failure().is_some() {
                     self.counted += 1;
                     if self.first_counted.is_none() {
-                        self.first_counted = handle.spawn_site().map(|(at, _)| at);
+                        self.first_counted = started_at(&handle);
                     }
                 }
                 gone.push(handle);
@@ -3067,7 +3073,7 @@ impl FailedTasks {
     }
 
     /// The code of `owner` has ended: the failures of its tasks that
-    /// nobody has handled are kept for the report
+    /// nothing has read are kept for the report
     /// ([`TaskHandle::keep_failure`]).
     fn keep(&self, owner: u64) {
         if let Some(failed) = self.owners.get(&owner) {
@@ -3077,8 +3083,8 @@ impl FailedTasks {
         }
     }
 
-    /// Empty the record, and give out each failure it held that no
-    /// join has received and no cancel has dismissed, once: up to
+    /// Empty the record, and give out each failure it held that nothing
+    /// has read and no cancel has dismissed, once: up to
     /// `MAX_SHOWN_FAILURES` of each owner with their errors, in the
     /// order of the owners and then of the failures; of the rest, per
     /// owner, how many there are. The handles are dropped by the
@@ -3090,10 +3096,10 @@ impl FailedTasks {
             let mut not_shown = (failed.counted > 0).then_some(NotShown {
                 owner,
                 count: failed.counted,
-                first_spawned: failed.first_counted,
+                first_at: failed.first_counted,
             });
             for handle in failed.handles {
-                match handle.take_unjoined_failure() {
+                match handle.take_unread_failure() {
                     Some(error) if shown < MAX_SHOWN_FAILURES => {
                         shown += 1;
                         given.shown.push((handle, error));
@@ -3102,7 +3108,7 @@ impl FailedTasks {
                         let first = not_shown.get_or_insert_with(|| NotShown {
                             owner,
                             count: 0,
-                            first_spawned: handle.spawn_site().map(|(at, _)| at),
+                            first_at: started_at(&handle),
                         });
                         first.count += 1;
                         given.rest.push(handle);
@@ -3127,19 +3133,22 @@ struct Given {
     rest: Vec<Arc<TaskHandle>>,
 }
 
+/// Where the task `handle` was started, for the report of failures
+/// that are not shown: the call of its stage, else the call that started
+/// it, if that is a place in the program.
+fn started_at(handle: &TaskHandle) -> Option<crate::source::Span> {
+    (handle.stage_of().and_then(|stage| stage.at)).or_else(|| handle.start_site())
+}
+
 /// Keep the handle of a task that ended with an error, for the report
-/// of failures that nobody joined: in the record of the process while
-/// the failures are collected, in the scheduler's own record otherwise.
+/// of failures that nothing read.
 fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
     // A program that has exited reports no failure: which tasks had
     // failed by then is a race.
     if inner.exit.get().is_some() {
         return;
     }
-    let record = match COLLECTING.load(Ordering::SeqCst) {
-        true => collected_failures(),
-        false => &inner.failed_tasks,
-    };
+    let record = &inner.failed_tasks;
     let (handled_since, sweep) = record.lock().record(handle);
     // Dropped after the lock has been released: from then on they hold
     // no task whose failure they took.
@@ -3151,7 +3160,7 @@ fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
 }
 
 /// Report on stderr every recorded task of this scheduler that failed,
-/// whose error no join has received and that no cancel has dismissed.
+/// whose error nothing has read and that no cancel has dismissed.
 /// A failure is reported once: the record is emptied and each handle
 /// gives its error out once. Returns the number of failures that this
 /// call reported, those that were counted but not shown included.
@@ -3159,12 +3168,14 @@ fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
 /// The report has no file name and no source line: the scheduler knows
 /// neither, so it renders through a source map with no files. A front end
 /// that knows the program's files collects the failures instead
-/// (`collect_unjoined_failures`) and renders them itself; the record of
-/// the scheduler stays empty then.
-fn report_unjoined_failures(inner: &Inner) -> usize {
+/// (`Scheduler::collect_unread_failures`), takes them and renders them
+/// itself; this reports nothing then.
+fn report_unread_failures(inner: &Inner) -> usize {
     // (Nothing after the internal-error line: the failures of a
     // process that is ending with it stay unreported.)
-    if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR {
+    if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR
+        || inner.collecting.load(Ordering::SeqCst)
+    {
         return 0;
     }
     let given = inner.failed_tasks.lock().take();
@@ -3179,17 +3190,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
     let mut report = String::new();
     for (handle, error) in given.shown {
         reported += 1;
-        // (No file to show the place of the spawn in: the task is
-        // named by its id.)
-        let failure = UnjoinedFailure {
-            task_id: handle.id,
-            owner: 0,
-            stage: handle.stage(),
-            stage_call: handle.stage_call_of_a_failed_input(),
-            spawned: None,
-            error,
-            after_close: handle.failed_after_its_output_closed(),
-        };
+        let failure = UnreadFailure::of(&handle, error);
         let d = failure.report_error().to_diagnostic();
         report.push_str(&crate::diagnostic::render_human(&no_files, &d));
         report.push('\n');
@@ -3198,9 +3199,9 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
     if not_shown > 0 {
         reported += not_shown;
         let d = crate::diagnostic::Diagnostic::error(
-            crate::diagnostic::Code::UnjoinedTaskFailure,
+            crate::diagnostic::Code::UnreadFailure,
             crate::source::Span::BUILTIN,
-            UnjoinedFailures::not_shown_message(not_shown),
+            UnreadFailures::not_shown_message(not_shown),
         );
         report.push_str(&crate::diagnostic::render_human(&no_files, &d));
         report.push('\n');
@@ -3474,14 +3475,14 @@ pub(crate) fn force_the_end_race() {
 ///
 /// The thread that spawns the first task of a program is the thread
 /// that runs the program. When that thread ends, the program has ended,
-/// and the failures that nobody joined are reported. Tasks that are
+/// and the failures that nothing read are reported. Tasks that are
 /// still parked keep the scheduler itself alive, so its `Drop` alone
 /// would not be reached in a program that leaves a task behind.
 ///
 /// This is a thread-local with a destructor. It runs when the thread
 /// returns. Whether it runs when the thread calls
 /// `std::process::exit` depends on the platform; a caller that ends
-/// the process that way calls `Scheduler::report_unjoined_failures`
+/// the process that way calls `Scheduler::report_unread_failures`
 /// first.
 struct StartedSchedulers {
     schedulers: RefCell<Vec<Weak<Inner>>>,
@@ -3491,7 +3492,7 @@ impl Drop for StartedSchedulers {
     fn drop(&mut self) {
         for scheduler in self.schedulers.get_mut().drain(..) {
             if let Some(inner) = scheduler.upgrade() {
-                let _ = report_unjoined_failures(&inner);
+                let _ = report_unread_failures(&inner);
             }
         }
     }
@@ -3505,7 +3506,7 @@ thread_local! {
     };
 }
 
-// ── Who spawned a task, and the failures that nobody joined ─────────
+// ── Who started a task, and the failures that nothing read ──────────
 
 thread_local! {
     /// On a worker thread, while it runs a slice of a task: the owner
@@ -3522,18 +3523,11 @@ pub(crate) enum Blocks {
     Program,
 }
 
-/// What the report of a failure that nobody joined advises.
-const UNJOINED_FAILURE_HELP: &str = "join it with task.join_handle to stop where you wait for it, or \
-     cancel it with task.cancel if you don't need its result";
-
-/// The first line of the report of a failure that nobody joined: the
-/// task is named by its handle's id when where it was spawned is not
-/// known (else the help names that place).
-fn unjoined_failure_headline(task_id: Option<usize>, message: &str) -> String {
-    match task_id {
-        Some(task_id) => format!("task <handle:{task_id}> failed and was never joined: {message}"),
-        None => format!("a task failed and was never joined: {message}"),
-    }
+/// The first line of the report of a failure of a task of the runtime
+/// that is no stage (the handler of an `http.serve` that a test
+/// started, which called `process.exit`) and that nothing read.
+fn unread_task_failure_headline(message: &str) -> String {
+    format!("a task failed and its failure was never read: {message}")
 }
 
 /// What the report of a stream stage's failure that nobody read advises.
@@ -3551,24 +3545,13 @@ fn unread_stage_failure_headline(stage: &str, message: &str) -> String {
     format!("a `{stage}` stage failed and its output was never read: {message}")
 }
 
-/// Set once a front end collects the failures that nobody joined. See
-/// `collect_unjoined_failures`.
-static COLLECTING: AtomicBool = AtomicBool::new(false);
-
-/// The record of failed tasks of the whole process, used instead of the
-/// schedulers' own while `COLLECTING` is set.
-fn collected_failures() -> &'static Mutex<FailedTasks> {
-    static COLLECTED: OnceLock<Mutex<FailedTasks>> = OnceLock::new();
-    COLLECTED.get_or_init(|| Mutex::new(FailedTasks::default()))
-}
-
-/// A task that failed, whose error no join received and that no cancel
-/// dismissed. Given out by `take_unjoined_failures`.
+/// A task that failed, whose error nothing read and that no cancel
+/// dismissed: a stream stage whose output nobody read, or a task of the
+/// runtime that is no stage (the handler of an `http.serve` that a test
+/// started). Given out by `Scheduler::take_unread_failures`.
 #[derive(Debug, Clone)]
-pub struct UnjoinedFailure {
-    /// The id of the task, as `<handle:N>` shows it.
-    pub task_id: usize,
-    /// The owner tag the task was spawned under. See `Vm::set_task_owner`.
+pub struct UnreadFailure {
+    /// The owner tag the task was started under. See `Vm::set_task_owner`.
     pub owner: u64,
     /// The name of the stream stage the task ran (`stream.map`): its
     /// failure was in its output, which nobody read.
@@ -3576,9 +3559,6 @@ pub struct UnjoinedFailure {
     /// The place of the call that started the stage, if it failed with
     /// the failure of an earlier stage, which it read from its input.
     pub stage_call: Option<crate::source::Span>,
-    /// Where the task was spawned, if that is a place in the program,
-    /// and whether the task that spawned it was cancelled.
-    pub spawned: Option<(crate::source::Span, bool)>,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
     /// The stage failed after its output had been closed (the function
@@ -3587,9 +3567,20 @@ pub struct UnjoinedFailure {
     pub(crate) after_close: bool,
 }
 
-impl UnjoinedFailure {
+impl UnreadFailure {
+    /// The failure `error` of the task `handle`.
+    fn of(handle: &TaskHandle, error: VmError) -> UnreadFailure {
+        UnreadFailure {
+            owner: handle.owner(),
+            stage: handle.stage(),
+            stage_call: handle.stage_call_of_a_failed_input(),
+            error,
+            after_close: handle.failed_after_its_output_closed(),
+        }
+    }
+
     /// The error to report: the task's error, with a message that names
-    /// the task and a help line that says what to do. Span and call
+    /// the stage and a help line that says what to do. Span and call
     /// stack are the task's; those of a stage that failed with an
     /// earlier stage's failure are its call's: the stage the report
     /// names.
@@ -3611,36 +3602,21 @@ impl UnjoinedFailure {
                 error.message = unread_stage_failure_headline(stage, &self.error.message);
                 error.with_help(UNREAD_STAGE_FAILURE_HELP)
             }
-            None => match self.spawned {
-                Some((at, by_cancelled)) => {
-                    error.message = unjoined_failure_headline(None, &self.error.message);
-                    let by = if by_cancelled {
-                        " by a task that was cancelled"
-                    } else {
-                        ""
-                    };
-                    error.with_help_at(
-                        format!("the task was spawned at {{at}}{by}: {UNJOINED_FAILURE_HELP}"),
-                        at,
-                    )
-                }
-                None => {
-                    error.message =
-                        unjoined_failure_headline(Some(self.task_id), &self.error.message);
-                    error.with_help(UNJOINED_FAILURE_HELP)
-                }
-            },
+            None => {
+                error.message = unread_task_failure_headline(&self.error.message);
+                error
+            }
         }
     }
 }
 
-/// The failures that nobody joined, as `take_unjoined_failures` gives
-/// them out.
+/// The failures that nothing read, as `Scheduler::take_unread_failures`
+/// gives them out.
 #[derive(Debug, Default)]
-pub struct UnjoinedFailures {
+pub struct UnreadFailures {
     /// The failures to show, in the order in which the tasks failed:
     /// at most `MAX_SHOWN_FAILURES` of each owner.
-    pub failures: Vec<UnjoinedFailure>,
+    pub failures: Vec<UnreadFailure>,
     /// Per owner, the failed tasks that are not shown.
     pub not_shown: Vec<NotShown>,
 }
@@ -3649,24 +3625,24 @@ pub struct UnjoinedFailures {
 /// that are shown.
 #[derive(Debug, Clone)]
 pub struct NotShown {
-    /// The owner tag the tasks were spawned under.
+    /// The owner tag the tasks were started under.
     pub owner: u64,
     /// How many failed.
     pub count: usize,
-    /// Where the first of them was spawned, if that is a place in the
-    /// program.
-    pub first_spawned: Option<crate::source::Span>,
+    /// Where the first of them was started (the call of its stage), if
+    /// that is a place in the program.
+    pub first_at: Option<crate::source::Span>,
 }
 
 impl NotShown {
     /// The report of these failures, at the place where the first of
-    /// them was spawned.
+    /// them was started.
     pub(crate) fn diagnostic(&self) -> crate::diagnostic::Diagnostic {
-        let at = self.first_spawned.unwrap_or(crate::source::Span::BUILTIN);
+        let at = self.first_at.unwrap_or(crate::source::Span::BUILTIN);
         crate::diagnostic::Diagnostic::error(
-            crate::diagnostic::Code::UnjoinedTaskFailure,
+            crate::diagnostic::Code::UnreadFailure,
             at,
-            UnjoinedFailures::not_shown_message(self.count),
+            UnreadFailures::not_shown_message(self.count),
         )
         .with_help(not_shown_help(self.count))
     }
@@ -3674,73 +3650,29 @@ impl NotShown {
 
 /// What the report of `count` failures that are not shown advises.
 fn not_shown_help(count: usize) -> String {
-    let spawned = match count {
-        1 => "it was spawned here",
-        _ => "the first of them was spawned here",
+    let started = match count {
+        1 => "its stage was started here",
+        _ => "the stage of the first of them was started here",
     };
-    format!(
-        "{spawned}: join each task with task.join_handle, or cancel it with task.cancel if you \
-         don't need its result"
-    )
+    format!("{started}: {UNREAD_STAGE_FAILURE_HELP}")
 }
 
-impl UnjoinedFailures {
+impl UnreadFailures {
     /// True if there is nothing to report.
     pub(crate) fn is_empty(&self) -> bool {
         self.failures.is_empty() && self.not_shown.is_empty()
     }
 
-    /// The message that reports `count` more failed tasks, which are
-    /// not shown. It names no place: which tasks they were is not
-    /// told.
+    /// The message that reports `count` more failures, which are not
+    /// shown. It names no place: which tasks they were is not told.
     pub(crate) fn not_shown_message(count: usize) -> String {
         let failed = match count {
-            1 => "task failed and was",
-            _ => "tasks failed and were",
+            1 => "failure was",
+            _ => "failures were",
         };
         format!(
-            "{count} more {failed} never joined (at most {MAX_SHOWN_FAILURES} failures are shown)"
+            "{count} more {failed} never read (at most {MAX_SHOWN_FAILURES} failures are shown)"
         )
-    }
-}
-
-/// From now on, keep the failures that nobody joined for
-/// `take_unjoined_failures`, instead of having each scheduler print them
-/// on stderr. This is for the front end that owns the process (`silt
-/// run`, `silt test`, the REPL): it decides when a failure counts and
-/// renders the report with the program's files. It cannot be undone.
-///
-/// A failure that is not taken is never reported: the front end takes
-/// them when the program has ended ([`Vm::settle`]), after which no
-/// task can fail.
-pub fn collect_unjoined_failures() {
-    COLLECTING.store(true, Ordering::SeqCst);
-}
-
-/// Take every task failure, of any scheduler of the process, that has
-/// been recorded since the last take, whose error no join received and
-/// that no cancel dismissed. Each failure is given out once. Empty
-/// unless `collect_unjoined_failures` has been called.
-pub fn take_unjoined_failures() -> UnjoinedFailures {
-    // The lock is released at the end of this statement; the handles
-    // are dropped after that.
-    let given = collected_failures().lock().take();
-    let failures = given
-        .shown
-        .into_iter()
-        .map(|(handle, error)| UnjoinedFailure {
-            task_id: handle.id,
-            owner: handle.owner(),
-            stage: handle.stage(),
-            stage_call: handle.stage_call_of_a_failed_input(),
-            spawned: handle.spawn_site(),
-            error,
-            after_close: handle.failed_after_its_output_closed(),
-        })
-        .collect();
-    UnjoinedFailures {
-        failures,
-        not_shown: given.not_shown,
     }
 }
 
@@ -3839,17 +3771,32 @@ mod tests {
         let compile = |source: &str| {
             crate::session::testing::compile_str(source).expect("the program compiles")
         };
+        // The function of each stream holds the stream itself, so
+        // that it is not stopped when `main` lets go of it: the tasks
+        // stay when the program has returned. It holds it past `work`:
+        // with `work()` its tail call, the function let go of its own
+        // stream there, whose stop then ended it, maybe before its send
+        // to `ready` (a false deadlock of `main`, now and then).
         let leaves_tasks = compile(
             r#"
 import channel
-import task
+import stream
 import time
+fn kept(work: Fn() -> ()) -> () {
+  let hand: Channel(Channel(Int)) = channel.new(1)
+  let s = stream.from_fn { _ ->
+    let mine = channel.receive(hand)
+    work()
+    let _ = mine
+  }
+  channel.send(hand, s)
+}
 fn main() {
-  let never = channel.new(0)
-  let _asleep = task.spawn({ -> time.sleep(time.hours(1)) })
-  let _waits = task.spawn({ -> channel.receive(never) })
+  let never: Channel(Int) = channel.new(0)
+  kept({ -> time.sleep(time.hours(1)) })
+  kept({ -> let _ = channel.receive(never) })
   let ready = channel.new(0)
-  let _third = task.spawn({ -> channel.send(ready, 1) })
+  kept({ -> channel.send(ready, 1) })
   let _ = channel.receive(ready)
 }
 "#,
@@ -3857,11 +3804,12 @@ fn main() {
         let deadlocked = compile(
             r#"
 import channel
-import task
+import stream
 fn main() {
-  let never = channel.new(0)
-  let _waits = task.spawn({ -> channel.receive(never) })
+  let never: Channel(Int) = channel.new(0)
+  let s = stream.from_fn { _ -> let _ = channel.receive(never) }
   let _ = channel.receive(never)
+  let _ = s
 }
 "#,
         );
@@ -3894,6 +3842,7 @@ fn main() {
         let program = crate::session::testing::compile_str(
             r#"
 import channel
+import stream
 import task
 import time
 
@@ -3904,10 +3853,19 @@ fn busy(woke) {
   }
 }
 
+-- A task that goes on after `main`: the function of a stream that a
+-- top-level binding holds, which waits for `main` to let it go on.
+let gate: Channel(()) = channel.new(1)
+let late: Channel(Int) = stream.from_fn { _ ->
+  let _ = channel.receive(gate)
+  time.sleep(time.ms(5))
+  println("a task after main")
+}
+
 fn main() {
   -- main never waits here: the task's sleep ends all the same.
   let woke = channel.new(1)
-  let _sleeper = task.spawn { ->
+  let sleeper: Channel(Int) = stream.from_fn { _ ->
     time.sleep(time.ms(5))
     channel.send(woke, ())
   }
@@ -3916,24 +3874,23 @@ fn main() {
   time.sleep(time.ms(5))
   println("main slept")
   let ch = channel.new(0)
-  let sender = task.spawn { ->
+  let sender = { ->
     time.sleep(time.ms(5))
     channel.send(ch, 1)
   }
-  match channel.receive_timeout(ch, time.ms(20000)) {
-    channel.Message(v) -> println("got {v}")
-    _ -> println("timed out")
+  task.background([sender]) { ->
+    match channel.receive_timeout(ch, time.ms(20000)) {
+      channel.Message(v) -> println("got {v}")
+      _ -> println("timed out")
+    }
   }
-  task.join_handle(sender)
   match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(5)))]) {
     channel.Received(_, None) -> println("the timeout channel closed")
     _ -> println("something else")
   }
   println("main returns")
-  let _late = task.spawn { ->
-    time.sleep(time.ms(5))
-    println("a task after main")
-  }
+  channel.send(gate, ())
+  let _ = sleeper
 }
 "#,
         )
@@ -3958,17 +3915,18 @@ fn main() {
         let (result, at) = run_given(
             r#"
 import channel
-import task
+import stream
 import time
 fn main() {
   let a = channel.new(0)
-  let b = channel.new(0)
-  let _waits = task.spawn({ ->
+  let b: Channel(Int) = channel.new(0)
+  let waits: Channel(Int) = stream.from_fn { _ ->
     time.sleep(time.ms(150))
     println("last")
-    channel.receive(b)
-  })
+    let _ = channel.receive(b)
+  }
   host.give(channel.receive(a))
+  let _ = waits
 }
 import host
 "#,
@@ -3982,16 +3940,16 @@ import host
         let (result, at) = run_given(
             r#"
 import channel
-import task
+import stream
 import time
 fn main() {
   let ch = channel.new(0)
-  let ends = task.spawn({ ->
+  let ends: Channel(Int) = stream.from_fn { _ ->
     time.sleep(time.ms(150))
     println("last")
-  })
+  }
   channel.send(ch, 1)
-  task.join_handle(ends)
+  let _ = ends
 }
 "#,
         );
@@ -4007,15 +3965,12 @@ import channel
 import task
 import time
 fn main() {
-  let ch = channel.new(0)
-  let timer = channel.timeout(time.ms(150))
-  let _waits = task.spawn({ -> channel.receive(timer) })
-  let other = task.spawn({ -> channel.receive(ch) })
-  host.give(task.join_handle(other))
+  let ch: Channel(Int) = channel.new(0)
+  let timer: Channel(Int) = channel.timeout(time.ms(150))
+  task.join([{ -> let _ = channel.receive(timer) }, { -> let _ = channel.receive(ch) }])
 }
-import host
 "#);
-        assert_deadlock(result, "task.join_handle with no progress possible");
+        assert_deadlock(result, "task.join with no progress possible");
         // Not before the timer: while it is pending, a wait can end.
         let took = end.duration_since(start);
         assert!(
@@ -4145,9 +4100,10 @@ fn spin(n, acc) {
 }
 fn main() {
   let ch = channel.new(0)
-  let _sends = task.spawn({ -> channel.send(ch, spin(300000, 0)) })
-  when let Some(n) = channel.receive(ch) else { panic("closed") }
-  host.give(n)
+  host.give(task.background([{ -> channel.send(ch, spin(300000, 0)) }]) { ->
+    when let Some(n) = channel.receive(ch) else { panic("closed") }
+    n
+  })
 }
 import host
 "#);
@@ -4170,19 +4126,20 @@ import task
 import time
 fn main() {
   let never: Channel(Int) = channel.new(0)
-  let idle = list.map(1..100) { _ -> task.spawn { -> channel.receive(never) } }
-  let sleeper = task.spawn { -> list.each(1..200) { _ -> time.sleep(time.micros(1)) } }
-  task.join_handle(sleeper)
-  let ping = channel.new(0)
-  let pong = channel.new(0)
-  let partner = task.spawn { -> channel.each(ping) { v -> channel.send(pong, v) } }
-  list.each(1..200) { i ->
-    channel.send(ping, i)
-    let _ = channel.receive(pong)
+  let idle = list.map(1..100) { _ -> { -> let _ = channel.receive(never) } }
+  task.background(idle) { ->
+    task.join([{ -> list.each(1..200) { _ -> time.sleep(time.micros(1)) } }])
+    let ping = channel.new(0)
+    let pong = channel.new(0)
+    let partner = { -> channel.each(ping) { v -> channel.send(pong, v) } }
+    task.join([partner, { ->
+      list.each(1..200) { i ->
+        channel.send(ping, i)
+        let _ = channel.receive(pong)
+      }
+      channel.close(ping)
+    }])
   }
-  channel.close(ping)
-  task.join_handle(partner)
-  list.each(idle, task.cancel)
 }
 "#,
         )
@@ -4256,7 +4213,7 @@ fn main() {
         scheduler.stop_tasks();
         // What the stop of the stage does.
         scheduler.cancel(&stage);
-        assert_eq!(scheduler.report_unjoined_failures(), 1);
+        assert_eq!(scheduler.report_unread_failures(), 1);
         assert!(out.take().contains("division by zero"));
     }
 
@@ -4272,7 +4229,7 @@ fn main() {
         let (stops, stopped) = (scheduler.clone(), stage.clone());
         super::defer(move || stops.cancel(&stopped));
         scheduler.settle();
-        assert_eq!(scheduler.report_unjoined_failures(), 0, "{}", out.take());
+        assert_eq!(scheduler.report_unread_failures(), 0, "{}", out.take());
     }
 
     /// Stopping a chain of stages does the work of each stage's stop
@@ -4336,7 +4293,7 @@ fn main() {
     /// nothing but the record holds them: the 64 it can show, and past
     /// them those whose handles are still held as a sweep looks (each
     /// worker's task that is ending, the one the program has just
-    /// spawned), twice, for the sweep's slack. The bound is wide, so
+    /// started), twice, for the sweep's slack. The bound is wide, so
     /// that no timing reaches it; a record that keeps failures it
     /// should let go holds one or two a round and passes it at once.
     fn failure_record_bound() -> usize {
@@ -4347,10 +4304,6 @@ fn main() {
     /// the failures shown with the text `what`, the failures counted in
     /// all; and the most failed tasks its record held at a time.
     fn failure_reports(source: &str, what: &str) -> (String, usize, usize, usize) {
-        assert!(
-            !super::COLLECTING.load(Ordering::SeqCst),
-            "the scheduler keeps its own record (each test is a process of its own)"
-        );
         let program = crate::session::testing::compile_str(source).expect("compiles");
         let out = crate::vm::Buffer::new();
         let mut vm = Vm::new(HostIo::buffer(&out));
@@ -4361,132 +4314,85 @@ fn main() {
         let printed = out.take();
         let shown = printed.matches(what).count();
         let counted: usize = printed
-            .split(" more task")
+            .split(" more failure")
             .filter_map(|before| before.rsplit(' ').next()?.parse::<usize>().ok())
             .sum();
         (printed, shown, counted, most)
     }
 
-    /// Failed tasks that the program holds are kept beside the 64 that
-    /// the report can show, not in their places: when they are
-    /// cancelled, 64 of the failures that are left are shown with their
-    /// errors (it was one, and "199 more"). A report shows fewer only
-    /// when fewer than 64 failed by then, so over the program's reports
-    /// at least 64 of the 200 are shown.
+    /// Past the 64 failures that are shown, the failures that nothing
+    /// read are counted: a program that holds 100 stages that failed
+    /// (a top-level binding holds them to the end; `stream.buffered`
+    /// reads ahead without being asked) has 64 of them shown with their
+    /// errors and the other 36 counted.
     #[test]
-    fn held_failures_do_not_take_the_places_of_the_shown_ones() {
-        let (printed, shown, counted, _) = failure_reports(
+    fn past_the_shown_failures_the_others_are_counted() {
+        let program = crate::session::testing::compile_str(
             r#"
 import list
-import task
-import time
+import stream
+let held: List(Channel(Int)) = list.map(1..100) { i ->
+  stream.from_list([0]) |> stream.map { _ -> panic("held {i}") } |> stream.buffered(1)
+}
 fn main() {
-  let held = list.map(1..64) { i -> task.spawn { -> panic("held {i}") } }
-  time.sleep(time.ms(50))
-  list.each(1..200) { i ->
-    let _ = task.spawn { -> panic("dropped {i}") }
-  }
-  time.sleep(time.ms(50))
-  list.each(held, task.cancel)
+  ()
 }
 "#,
-            "failed and was never joined: panic: dropped",
-        );
-        assert!(!printed.contains("panic: held"), "{printed}");
-        assert_eq!(shown + counted, 200, "{printed}");
+        )
+        .expect("compiles");
+        let out = crate::vm::Buffer::new();
+        let mut vm = Vm::new(HostIo::buffer(&out));
+        // Taken once, when the stages have ended: a report while they
+        // run could show a `stream.map`'s failure that its
+        // `stream.buffered` had not read yet.
+        vm.collect_unread_failures();
+        assert_eq!(vm.run_program(&program).map_err(|e| e.message), Ok(()));
+        vm.settle();
+        let taken = vm.take_unread_failures();
+        let counted: usize = taken.not_shown.iter().map(|n| n.count).sum();
+        assert_eq!(taken.failures.len(), super::MAX_SHOWN_FAILURES);
+        assert_eq!(taken.failures.len() + counted, 100);
         assert!(
-            shown >= super::MAX_SHOWN_FAILURES,
-            "{shown} shown: {printed}"
+            (taken.failures.iter()).all(|f| f.stage == Some("stream.buffered")),
+            "{:?}",
+            taken.failures
+        );
+        assert_eq!(
+            out.take(),
+            "",
+            "nothing is printed while the failures are collected"
         );
     }
 
-    /// A failure that went back to its task, because the task that had
-    /// joined it was cancelled, is recorded again: the record keeps one
-    /// entry of it, so that it is let go like any other once nothing
-    /// else holds its task. Before, the two entries held each other's
-    /// task and the record grew by one failure a round.
+    /// A failed stage that the program lets go of is stopped, and the
+    /// stop dismisses its failure: a program that makes stages that
+    /// fail and lets go of them reports none, and its record of failed
+    /// tasks lets go of them as it goes (it held about 840 bytes per
+    /// failure when every one was kept). Counted, not timed: the record
+    /// holds no more than a few past the 64, however many fail.
     #[test]
-    fn a_failure_that_went_back_to_its_task_is_let_go() {
-        let rounds = 1000;
+    fn failures_that_nothing_can_read_any_more_are_not_kept() {
         let (printed, shown, counted, most) = failure_reports(
-            &format!(
-                r#"
-import list
-import task
-import time
-fn main() {{
-  list.each(1..{rounds}) {{ i ->
-    let c = task.spawn {{ -> panic("child {{i}}") }}
-    let j = task.spawn {{ -> task.join_handle(c) }}
-    time.sleep(time.micros(300))
-    task.cancel(j)
-  }}
-}}
-"#
-            ),
-            "failed and was never joined: panic: child",
-        );
-        assert_eq!(shown + counted, rounds, "{printed}");
-        // As for failures that nothing holds (`failure_record_bound`):
-        // not one a round.
-        let bound = failure_record_bound();
-        assert!(
-            most <= bound,
-            "the record held {most} failures (at most {bound})"
-        );
-    }
-
-    /// Past the 64 failures that are shown, a failed task that only the
-    /// record holds (nothing can join or cancel it any more) is counted
-    /// and let go: a program whose tasks keep failing and whose handles
-    /// it drops does not grow (about 840 bytes per failure when every
-    /// one was kept). Failed tasks that the program holds are kept, so
-    /// a cancel still dismisses them. Counted, not timed: the record
-    /// holds no more than a few past the 64, however many fail, and
-    /// every failure is in the report.
-    #[test]
-    fn failures_that_nothing_can_handle_any_more_are_counted_not_kept() {
-        let run = failure_reports;
-        let dropped = "failed and was never joined: panic: dropped";
-        let (printed, shown, counted, most) = run(
             r#"
+import channel
 import list
-import task
+import stream
 fn main() {
   list.each(1..1000) { i ->
-    let _ = task.spawn { -> panic("dropped {i}") }
+    let s = stream.map(stream.from_list([0, 1])) { x -> 10 / (x - x) + i }
+    let _ = channel.try_receive(s)
   }
 }
 "#,
-            dropped,
+            "its output was never read",
         );
-        assert_eq!(shown + counted, 1000, "{printed}");
+        assert_eq!(shown + counted, 0, "{printed}");
         // Not 1000 (`failure_record_bound`).
         let bound = failure_record_bound();
         assert!(
             most <= bound,
             "the record held {most} failures (at most {bound})"
         );
-        // Failed tasks that the program holds stay in the record while
-        // dropped ones go, and are dismissed by their cancel.
-        let (printed, shown, counted, _) = run(
-            r#"
-import list
-import task
-import time
-fn main() {
-  let held = list.map(1..100) { i -> task.spawn { -> panic("held {i}") } }
-  list.each(1..1000) { i ->
-    let _ = task.spawn { -> panic("dropped {i}") }
-  }
-  time.sleep(time.ms(20))
-  list.each(held, task.cancel)
-}
-"#,
-            dropped,
-        );
-        assert!(!printed.contains("panic: held"), "{printed}");
-        assert_eq!(shown + counted, 1000, "{printed}");
     }
 
     /// As many workers as `Scheduler::ensure_workers` starts.
@@ -4530,12 +4436,10 @@ fn main() {{
   let busy_ones = loop i = 0, acc = [] {{
     match i == {workers} {{
       true -> acc
-      false -> loop(i + 1, [task.spawn {{ -> busy(stop) }}, ..acc])
+      false -> loop(i + 1, [{{ -> busy(stop) }}, ..acc])
     }}
   }}
-  let last = task.spawn {{ -> channel.close(stop) }}
-  task.join_handle(last)
-  list.each(busy_ones) {{ t -> task.join_handle(t) }}
+  task.join([..busy_ones, {{ -> channel.close(stop) }}])
   println("all ended")
 }}
 "#,
@@ -4545,11 +4449,12 @@ fn main() {{
         out.at("all ended");
     }
 
-    /// A cancel ends a task that computes alone, on a worker it keeps:
-    /// the program's receive is then a deadlock, which it is not while
-    /// the task lives.
+    /// A stop ends a task that computes alone, on a worker it keeps
+    /// (the helper of a `task.background` whose body has returned): the
+    /// program's receive is then a deadlock, which it is not while the
+    /// task lives.
     #[test]
-    fn a_cancel_ends_a_lone_task_that_never_waits() {
+    fn a_stop_ends_a_lone_task_that_never_waits() {
         let (result, _, _) = run(r#"
 import channel
 import task
@@ -4560,9 +4465,7 @@ fn forever(n) {
 }
 
 fn main() {
-  let computes = task.spawn { -> forever(0) }
-  time.sleep(time.ms(5))
-  task.cancel(computes)
+  task.background([{ -> forever(0) }]) { -> time.sleep(time.ms(5)) }
   host.give(channel.receive(channel.new(0)))
 }
 import host
@@ -4595,7 +4498,10 @@ import host
         out.at("over");
     }
 
+    /// The function of a stream that a top-level binding holds computes
+    /// for ever, also after `main` has returned.
     const COMPUTES_ALONE: &str = r#"
+import stream
 import task
 import time
 
@@ -4603,10 +4509,10 @@ fn forever(n) {
   forever(n + 1)
 }
 
+let computes: Channel(Int) = stream.from_fn { _ -> forever(0) }
+
 fn main() {
-  let _computes = task.spawn { -> forever(0) }
-  let sleeps = task.spawn { -> time.sleep(time.ms(5)) }
-  task.join_handle(sleeps)
+  task.join([{ -> time.sleep(time.ms(5)) }])
 }
 "#;
 
@@ -4629,8 +4535,10 @@ fn main() {
     fn a_panic_of_the_runtime_stops_a_task_that_keeps_its_worker() {
         let program = crate::session::testing::compile_str(COMPUTES_ALONE).expect("compiles");
         let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
-        // The second task, as its sleep ends.
-        vm.scheduler().panic_for_test(super::PanicAt::Task(1));
+        // The piece of the `task.join`, as its sleep ends: the third
+        // task (the function of the stream and its stage are the first
+        // two).
+        vm.scheduler().panic_for_test(super::PanicAt::Task(2));
         let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = vm.run_program(&program);
         }));
@@ -4750,14 +4658,14 @@ import time
 fn main() {
   let line = string.repeat("x", 1000)
   let printers = list.map(1..12) { p ->
-    task.spawn { -> list.each(1..100) { i -> println("{p} {i} {line}") } }
+    { -> list.each(1..100) { i -> println("{p} {i} {line}") } }
   }
-  let sum = task.spawn { -> list.fold(1..1000, 0) { acc, i -> acc + i } }
-  let computed = task.join_handle(sum)
-  let cut = task.deadline(time.ms(50)) { -> list.each(1..100) { _ -> println(line) } }
-  host.give("computed {computed}; the deadline: {cut}")
-  io.eprintln("on stderr, after them all")
-  list.each(printers, task.join_handle)
+  task.join([..printers, { ->
+    let computed = list.fold(task.map([1000], 1) { n -> list.fold(1..n, 0) { acc, i -> acc + i } }, 0) { a, b -> a + b }
+    let cut = task.deadline(time.ms(50)) { -> list.each(1..100) { _ -> println(line) } }
+    host.give("computed {computed}; the deadline: {cut}")
+    io.eprintln("on stderr, after them all")
+  }])
 }
 import host
 "#,
