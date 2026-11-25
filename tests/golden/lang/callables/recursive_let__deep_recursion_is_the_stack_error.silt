@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
--- stderr-contains: closure in main
+-- stderr-contains: deep in main
 -- A call of itself whose result is still used takes a frame, as a
 -- function's does.
 fn main() {

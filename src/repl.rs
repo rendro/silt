@@ -1171,7 +1171,7 @@ mod tests {
         assert_eq!(value(&mut repl, "Nm.nm"), "<fn:Nm.nm>");
         assert_eq!(value(&mut repl, "(greet2, 1)"), "(<fn:greet2>, 1)");
         assert_eq!(value(&mut repl, "Some(greet2)"), "Some(<fn:greet2>)");
-        assert_eq!(value(&mut repl, "shout"), "<fn:closure in shout>");
+        assert_eq!(value(&mut repl, "shout"), "<fn:shout>");
         assert_eq!(value(&mut repl, "h"), "<fn:greet2>");
         assert_eq!(value(&mut repl, "h(n)"), "i");
         assert_eq!(value(&mut repl, "shout(n)"), "i!");
