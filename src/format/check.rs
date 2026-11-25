@@ -787,7 +787,9 @@ impl ShapeWriter {
 
     /// A function's body, with a `return` on its last line compared as
     /// its value, and a last line `()` behind a `let` as nothing: the
-    /// printer writes neither.
+    /// printer writes neither, except in a function that may reach
+    /// itself (`print::calls_back`), where they say that a loop ends;
+    /// with them or without, the trees compare the same.
     fn fn_body(&mut self, body: &Expr) {
         let ExprKind::Block(stmts) = &body.kind else {
             return self.expr(body);
