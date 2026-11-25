@@ -1,0 +1,52 @@
+-- An ending that says so: (), return of a call, a call of a function
+-- that gives Never. A loop that gives a value, and a function whose
+-- calls of itself keep frames, are not asked.
+import channel
+
+fn serve(inbox: Channel(String), seen: Int) {
+  match channel.receive(inbox) {
+    Some("stop") -> return println("stopped after {seen}")
+    Some(_) -> serve(inbox, seen + 1)
+    None -> ()
+  }
+}
+
+fn fail(n: Int) {
+  match n {
+    0 -> panic("never")
+    1 -> ()
+    _ -> fail(n - 1)
+  }
+}
+
+fn total(inbox: Channel(Int), sum: Int) -> Int {
+  match channel.receive(inbox) {
+    Some(n) -> total(inbox, sum + n)
+    None -> sum
+  }
+}
+
+fn show(xs: List(Int)) {
+  match xs {
+    [] -> println("end")
+    [x, ..rest] -> {
+      show(rest)
+      println(x)
+    }
+  }
+}
+
+fn main() {
+  let inbox = channel.new(8)
+  channel.send(inbox, "a")
+  channel.send(inbox, "b")
+  channel.send(inbox, "stop")
+  serve(inbox, 0)
+  fail(3)
+  let numbers = channel.new(4)
+  channel.send(numbers, 1)
+  channel.send(numbers, 2)
+  channel.close(numbers)
+  println(total(numbers, 0))
+  show([1, 2])
+}

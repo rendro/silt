@@ -1,0 +1,9 @@
+error[type]: this call of `f` takes a frame for every round
+ --> shape__a_top_level_let_that_names_a_function_is_checked.silt:8:7
+   |
+ 8 |   1 + g(n + 1)
+   |       ^^^^^^^^ this call of `f` takes a frame for every round
+  = note: not the last thing `f` does, and `n + 1` is not a part of `n`
+  = note: `g` is `f`: an alias is the function it names
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn f`

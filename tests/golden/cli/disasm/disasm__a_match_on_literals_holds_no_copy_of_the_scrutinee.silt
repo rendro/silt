@@ -12,7 +12,7 @@ fn sum(n) {
   }
 }
 
-fn fib(n) {
+deep fn fib(n) {
   match n {
     0 -> 0
     1 -> 1

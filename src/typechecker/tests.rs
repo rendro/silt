@@ -1434,7 +1434,7 @@ fn main() {
 fn test_recursive_function() {
     assert_no_errors(
         r#"
-fn factorial(n) {
+deep fn factorial(n) {
   match n {
     0 -> 1
     _ -> n * factorial(n - 1)
@@ -1453,7 +1453,7 @@ fn test_recursive_list_function() {
     assert_no_errors(
         r#"
 import list
-fn sum(xs) {
+deep fn sum(xs) {
   match list.first(xs) {
     None -> 0
     Some(h) -> h + sum(list.tail(xs))

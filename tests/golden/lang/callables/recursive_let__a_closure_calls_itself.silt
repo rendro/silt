@@ -1,6 +1,7 @@
 -- A local `let f = { … }` is `f` inside its own closure: it can call
 -- itself, also where the result is still used, and with the values it
--- captures.
+-- captures. (A closure cannot be `deep`: one that counts down carries
+-- its running value, so that the call comes last.)
 import int
 import list
 
@@ -9,14 +10,25 @@ type Tree {
   Node(Tree, Int, Tree),
 }
 
+type Rose {
+  Rose(List(Rose)),
+}
+
 fn make_counter(step: Int) -> Fn(Int) -> Int {
-  let go = { n ->
+  let go = { n, total ->
     match n {
-      0 -> 0
-      _ -> step + go(n - 1)
+      0 -> total
+      _ -> go(n - 1, total + step)
     }
   }
-  go
+  { n -> go(n, 0) }
+}
+
+fn chain(n: Int, inner: Rose) -> Rose {
+  match n {
+    0 -> inner
+    _ -> chain(n - 1, Rose([inner]))
+  }
 }
 
 fn main() {
@@ -40,26 +52,23 @@ fn main() {
   println(len([1, 2, 3]) + len(["a"]))
 
   -- With an annotation.
-  let fact: Fn(Int) -> Int = { n ->
+  let fact: Fn(Int, Int) -> Int = { n, product ->
     match n {
-      0 -> 1
-      _ -> n * fact(n - 1)
+      0 -> product
+      _ -> fact(n - 1, product * n)
     }
   }
-  println(fact(10))
+  println(fact(10, 1))
 
   -- A closure inside it captures it.
-  let depth = { n ->
-    [n]
-      |> list.map { k ->
-        match k {
-          0 -> 0
-          _ -> depth(k - 1) + 1
-        }
-      }
-      |> list.sum
+  let depth = { r ->
+    match r {
+      Rose(kids) -> kids
+        |> list.map { kid -> depth(kid) + 1 }
+        |> list.fold(0) { deepest, d -> int.max(deepest, d) }
+    }
   }
-  println(depth(5))
+  println(depth(chain(5, Rose([]))))
 
   -- It leaves the function that made it.
   let triple = make_counter(3)

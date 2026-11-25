@@ -4,7 +4,7 @@
 -- bounce's call back emit TailCall
 import helper
 
-fn countdown(n) {
+deep fn countdown(n) {
   match n {
     0 -> 0
     _ -> helper.bounce(countdown, n - 1)

@@ -8,8 +8,8 @@ import time
 
 fn read(s) {
   match channel.try_receive(s) {
-    channel.Message(v) -> println("got {v}")
-    channel.Closed -> println("closed")
+    channel.Message(v) -> return println("got {v}")
+    channel.Closed -> return println("closed")
     channel.Empty -> {
       time.sleep(time.ms(1))
       read(s)

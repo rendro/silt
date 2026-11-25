@@ -1,24 +1,24 @@
 error[runtime]: stack overflow: call frames take more than 1 MiB; this task holds 1 MiB
- --> closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
+ --> closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
     |
- 10 |   _ -> 1 + deep(x, n - 1)
-    |            ^^^^^^^^^^^^^^ stack overflow: call frames take more than 1 MiB; this task holds 1 MiB
+ 10 |   [_, ..m] -> 1 + deep(x, m)
+    |                   ^^^^^^^^^^ stack overflow: call frames take more than 1 MiB; this task holds 1 MiB
   = help: a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own
 
 call stack:
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  ... (9269 more frames)
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
-  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:12
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  ... (6617 more frames)
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
+  -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19
   -> main  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:15:11

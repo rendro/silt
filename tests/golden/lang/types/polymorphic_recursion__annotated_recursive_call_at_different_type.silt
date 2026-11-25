@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 0
 -- stderr-not-contains: error
-fn myfn(p: a) -> Int where a: Display {
+deep fn myfn(p: a) -> Int where a: Display {
   let s = "{p}"
   let _ = myfn("hello")
   let _ = myfn(42)

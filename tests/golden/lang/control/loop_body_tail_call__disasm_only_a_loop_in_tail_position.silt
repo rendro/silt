@@ -11,7 +11,7 @@ fn tail(n: Int) -> Int {
   }
 }
 
-fn kept(n: Int) -> Int {
+deep fn kept(n: Int) -> Int {
   let x = loop k = n {
     match k {
       0 -> 0

@@ -6,18 +6,18 @@ error[runtime]: division by zero
 
 call stack:
   -> count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:7:10
-  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:21
+  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:28
   -> count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:8:10
-  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:21
+  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:28
   -> count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:8:10
-  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:21
+  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:28
   -> count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:8:10
-  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:21
+  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:28
   -> count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:8:10
-  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:21
+  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:28
   ... (27 more frames)
-  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:21
+  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:28
   -> count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:8:10
-  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:21
+  -> step in count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:5:28
   -> count  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:8:10
   -> main  at closure_frames__a_recursion_through_a_closure_is_cut_like_any_other.silt:13:11

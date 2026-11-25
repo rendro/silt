@@ -1,0 +1,20 @@
+warning[type]: `len` does not need `deep`: its depth follows the data
+ --> deep__a_deep_the_check_does_not_need_is_a_warning.silt:4:1
+   |
+ 4 | deep fn len(xs: List(Int)) -> Int {
+   | ^^^^ `len` does not need `deep`: its depth follows the data
+  = help: remove `deep`
+
+warning[type]: `count` does not need `deep`: it runs in constant stack
+ --> deep__a_deep_the_check_does_not_need_is_a_warning.silt:11:1
+    |
+ 11 | deep fn count(n: Int) -> Int {
+    | ^^^^ `count` does not need `deep`: it runs in constant stack
+  = help: remove `deep`
+
+warning[type]: `once` does not need `deep`: it does not call itself
+ --> deep__a_deep_the_check_does_not_need_is_a_warning.silt:18:1
+    |
+ 18 | deep fn once(n: Int) -> Int {
+    | ^^^^ `once` does not need `deep`: it does not call itself
+  = help: remove `deep`

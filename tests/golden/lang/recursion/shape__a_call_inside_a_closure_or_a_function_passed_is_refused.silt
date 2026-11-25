@@ -1,0 +1,51 @@
+-- cmd: check
+-- exit: 1
+-- A call of the function from inside a closure takes a frame for the
+-- closure and one for the call, and one passed as a value is called
+-- where the compiler cannot see: both are refused, except a closure (or
+-- the function itself) handed to list.each, list.map, ... over a part,
+-- on the element. A closure bound by a let is a function of the graph:
+-- naming it does not switch the check off.
+import list
+
+type Tree {
+  Node(Int, List(Tree))
+}
+
+fn guarded(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> {
+      let f = { -> guarded(n - 1) }
+      call(f)
+    }
+  }
+}
+
+fn call(f: Fn() -> Int) -> Int {
+  f() + 1
+}
+
+fn passed(t: Tree) -> List(Int) {
+  match t {
+    Node(v, kids) -> [v, ..list.flat_map([t, ..kids], passed)]
+  }
+}
+
+fn on_the_sum(t: Tree) -> Int {
+  match t {
+    Node(_, kids) -> list.fold(kids, t) { acc, _k -> Node(on_the_sum(acc), []) } |> size
+  }
+}
+
+fn size(t: Tree) -> Int {
+  match t {
+    Node(v, _) -> v
+  }
+}
+
+fn main() {
+  println(guarded(1))
+  println(passed(Node(1, [])))
+  println(on_the_sum(Node(1, [])))
+}

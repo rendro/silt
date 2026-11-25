@@ -162,21 +162,21 @@ trait Kinds for Point {
   }
 }
 
-fn depth(n: Int) -> Int {
+deep fn depth(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> 1 + depth(n - 1)
   }
 }
 
-fn depth_float(n: Int) -> Float {
+deep fn depth_float(n: Int) -> Float {
   match n {
     0 -> 0.0
     _ -> 0.5 + depth_float(n - 1)
   }
 }
 
-fn depth_string(n: Int) -> String {
+deep fn depth_string(n: Int) -> String {
   match n {
     0 -> ""
     _ -> "{depth_string(n - 1)}."

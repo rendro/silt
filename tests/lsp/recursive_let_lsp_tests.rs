@@ -10,7 +10,7 @@ const SRC: &str = "fn main() {\n  \
                    let count = { n ->\n    \
                    match n {\n      \
                    0 -> 0\n      \
-                   _ -> 1 + count(n - 1)\n    \
+                   _ -> count(n - 1)\n    \
                    }\n  \
                    }\n  \
                    println(count(3))\n\

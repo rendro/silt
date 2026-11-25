@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected String, got Int
+ --> shape__a_module_with_a_type_error_is_not_checked.silt:13:19
+    |
+ 13 |   let s: String = sum_to(3)
+    |                   ^^^^^^^^^ type mismatch: expected String, got Int

@@ -6,11 +6,11 @@ trait Nm { fn nm(self) -> Int }
 trait Nm for Int { fn nm(self) -> Int { 1 } }
 trait Nm for String { fn nm(self) -> Int { 2 } }
 let deep = { x, n -> match n {
-  0 -> Nm.nm(x)
-  _ -> 1 + deep(x, n - 1)
+  [] -> Nm.nm(x)
+  [_, ..m] -> 1 + deep(x, m)
 } }
 fn main() {
-  println(deep(1, 5000))
-  println(deep("a", 5000))
-  println(deep("a", 100000))
+  println(deep(1, 1..5000))
+  println(deep("a", 1..5000))
+  println(deep("a", 1..20000000))
 }

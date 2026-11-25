@@ -16,7 +16,7 @@ fn run_it(source: &str) -> silt_playground::Run {
 #[test]
 fn a_runaway_recursion_ends_at_the_playgrounds_frame_budget() {
     let ran = run_it(
-        "fn deep(n: Int) -> Int {\n  1 + deep(n + 1)\n}\nfn main() {\n  println(deep(0))\n}\n",
+        "deep fn deep(n: Int) -> Int {\n  1 + deep(n + 1)\n}\nfn main() {\n  println(deep(0))\n}\n",
     );
     assert!(!ran.ok);
     assert!(

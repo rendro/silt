@@ -1,0 +1,73 @@
+-- Every call between the functions of a group a tail call: constant
+-- stack, any number of rounds. A closure handed to list.fold, list.map,
+-- list.each, list.any over a part, calling the function on the element,
+-- and the function itself passed to list.map over a part, go as deep as
+-- the data.
+import list
+
+type Tree {
+  Node(Int, List(Tree))
+}
+
+fn count(i: Int, acc: Int) -> Int {
+  match i {
+    0 -> acc
+    _ -> count(i - 1, acc + i)
+  }
+}
+
+fn even(n: Int) -> Bool {
+  match n {
+    0 -> true
+    _ -> odd(n - 1)
+  }
+}
+
+fn odd(n: Int) -> Bool {
+  match n {
+    0 -> false
+    _ -> even(n - 1)
+  }
+}
+
+fn size(t: Tree) -> Int {
+  match t {
+    Node(_, kids) -> 1 + list.fold(kids, 0) { total, kid -> total + size(kid) }
+  }
+}
+
+fn values(t: Tree) -> List(Int) {
+  match t {
+    Node(v, kids) -> [v, ..list.flat_map(kids, values)]
+  }
+}
+
+fn has(t: Tree, x: Int) -> Bool {
+  match t {
+    Node(v, kids) -> v == x || list.any(kids) { kid -> has(kid, x) }
+  }
+}
+
+fn show(t: Tree) {
+  match t {
+    Node(v, kids) -> {
+      println(v)
+      list.each(kids) { kid -> show(kid) }
+    }
+  }
+}
+
+fn main() {
+  let walk = { i, acc -> match i {
+    0 -> acc
+    _ -> walk(i - 1, acc + 1)
+  } }
+  println(count(300000, 0))
+  println(even(300001))
+  println(walk(300000, 0))
+  let t = Node(1, [Node(2, [Node(4, [])]), Node(3, [])])
+  println(size(t))
+  println(values(t))
+  println(has(t, 4))
+  show(t)
+}

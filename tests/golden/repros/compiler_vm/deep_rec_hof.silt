@@ -1,6 +1,6 @@
 -- verdict: same
 import list
-fn go(n) {
+deep fn go(n) {
   match n {
     0 -> 0
     _ -> {

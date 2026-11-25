@@ -1,0 +1,45 @@
+error[type]: this call of `sum_to` takes a frame for every round
+ --> shape__a_call_that_keeps_a_frame_must_pass_a_part.silt:13:14
+    |
+ 13 |     _ -> n + sum_to(n - 1)
+    |              ^^^^^^^^^^^^^ this call of `sum_to` takes a frame for every round
+  = note: not the last thing `sum_to` does, and `n - 1` is not a part of `n`
+  = help: count with the library: `list.fold(1..n, start) { acc, i -> ... }`
+  = help: or carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn sum_to`
+
+error[type]: this call of `swap` takes a frame for every round
+ --> shape__a_call_that_keeps_a_frame_must_pass_a_part.silt:20:24
+    |
+ 20 |     [_, ..rest] -> 1 + swap(ys, rest)
+    |                        ^^^^^^^^^^^^^^ this call of `swap` takes a frame for every round
+  = note: not the last thing `swap` does, and `ys` is not a part of `xs`
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn swap`
+
+error[type]: this call of `whole` takes a frame for every round
+ --> shape__a_call_that_keeps_a_frame_must_pass_a_part.silt:27:16
+    |
+ 27 |     all -> 1 + whole(all)
+    |                ^^^^^^^^^^ this call of `whole` takes a frame for every round
+  = note: not the last thing `whole` does, and `all` is not a part of `xs`
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn whole`
+
+error[type]: this call of `again` takes a frame for every round
+ --> shape__a_call_that_keeps_a_frame_must_pass_a_part.silt:36:11
+    |
+ 36 |       1 + again(rest)
+    |           ^^^^^^^^^^^ this call of `again` takes a frame for every round
+  = note: not the last thing `again` does, and `rest` is not a part of `xs`
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn again`
+
+error[type]: this call of `built` takes a frame for every round
+ --> shape__a_call_that_keeps_a_frame_must_pass_a_part.silt:43:27
+    |
+ 43 |     Some([_, ..r]) -> 1 + built(Some(r))
+    |                           ^^^^^^^^^^^^^^ this call of `built` takes a frame for every round
+  = note: not the last thing `built` does, and `Some(r)` is not a part of `o`
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn built`

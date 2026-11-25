@@ -31,6 +31,7 @@ pub(crate) fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<
         hold_closure: false,
         closure_held: false,
         stage_call: None,
+        calls_back: calls_back(program),
     };
     let doc = printer.program(program);
     match printer.cur.error {
@@ -635,6 +636,65 @@ struct Printer<'a> {
     /// with no arguments `call_args` writes without its parentheses
     /// (`xs |> f()` as `xs |> f`; see `pipeline`).
     stage_call: Option<crate::source::Span>,
+    /// The top-level functions that may reach themselves (`calls_back`):
+    /// the last line of such a function's body keeps the `return` of a
+    /// call and the `()` behind a `let` (see `fn_body`).
+    calls_back: std::collections::HashSet<crate::intern::Symbol>,
+}
+
+/// The names of the top-level functions of `program` that name
+/// themselves, or a top-level function that names them back, by
+/// spelling (a local of the name counts too: the printer has no
+/// bindings, and keeping a `return` too often costs nothing). Such a
+/// function can be a loop of tail calls that gives `()`, whose endings
+/// must say that they end (E0346): a `return` on its last line, or a
+/// `()` behind a `let` there, is what says it.
+fn calls_back(program: &Program) -> std::collections::HashSet<crate::intern::Symbol> {
+    use std::collections::{HashMap, HashSet};
+    let bodies: HashMap<crate::intern::Symbol, &Expr> = (program.decls.iter())
+        .filter_map(|decl| match decl {
+            Decl::Fn(f) if !f.is_signature_only => Some((f.name, &f.body)),
+            Decl::Let { pattern, value, .. } => match &pattern.kind {
+                PatternKind::Ident(name) => Some((*name, value)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let names: HashMap<crate::intern::Symbol, HashSet<crate::intern::Symbol>> = (bodies.iter())
+        .map(|(name, body)| {
+            let mut named = HashSet::new();
+            body.for_each_expr(&mut |e| {
+                if let ExprKind::Ident(other) = &e.kind
+                    && bodies.contains_key(other)
+                {
+                    named.insert(*other);
+                }
+            });
+            (*name, named)
+        })
+        .collect();
+    // (A function reaches itself when a walk from what it names comes
+    // back to it.)
+    let reaches_itself = |start: crate::intern::Symbol| {
+        let mut seen = HashSet::new();
+        let mut stack: Vec<crate::intern::Symbol> = names[&start].iter().copied().collect();
+        while let Some(next) = stack.pop() {
+            if next == start {
+                return true;
+            }
+            if seen.insert(next) {
+                stack.extend(names[&next].iter().copied());
+            }
+        }
+        false
+    };
+    (program.decls.iter())
+        .filter_map(|decl| match decl {
+            Decl::Fn(f) if !f.is_signature_only && reaches_itself(f.name) => Some(f.name),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Whether the parser reads `pattern`, without parentheses around it,
@@ -908,6 +968,10 @@ impl Printer<'_> {
             docs.push(self.tok(Token::Pub));
             docs.push(space());
         }
+        if f.deep.is_some() {
+            docs.push(self.name());
+            docs.push(space());
+        }
         docs.push(self.tok(Token::Fn));
         docs.push(space());
         docs.push(self.name());
@@ -947,7 +1011,8 @@ impl Printer<'_> {
             // (A comment between the signature and its `{` belongs to
             // the signature, indented as a `where` clause is.)
             docs.push(Doc::nest(self.dangling()));
-            docs.push(self.fn_body(&f.body));
+            let keep = top_level && self.calls_back.contains(&f.name);
+            docs.push(self.fn_body(&f.body, keep));
         }
         Doc::concat(docs)
     }
@@ -958,8 +1023,11 @@ impl Printer<'_> {
     /// behind a `let`: the body's value is `()` with it and without it
     /// (see `check::value_is_unit_after_let`); its comments stay, in
     /// front of the `}`. (A `return` with a comment between it and its
-    /// value stays.)
-    fn fn_body(&mut self, body: &Expr) -> Doc {
+    /// value stays.) `keep`: the function may reach itself
+    /// (`calls_back`), so its last line may be an ending of a loop of
+    /// tail calls that must say so: there a `return` of a call, and a
+    /// `()` behind a `let`, stay.
+    fn fn_body(&mut self, body: &Expr, keep: bool) -> Doc {
         let ExprKind::Block(stmts) = &body.kind else {
             return self.block(body);
         };
@@ -971,6 +1039,7 @@ impl Printer<'_> {
         let (value, returned) = match &last.kind {
             ExprKind::Return(Some(value))
                 if !matches!(value.kind, ExprKind::Return(_))
+                    && !(keep && matches!(value.kind, ExprKind::Call(..) | ExprKind::Pipe(..)))
                     && !self.cur.comments_between(last.span.start, value.span.start) =>
             {
                 (&**value, true)
@@ -979,7 +1048,7 @@ impl Printer<'_> {
         };
         // (Whatever comments stand around it: the printer moves a
         // comment, and the choice must be the same on the result.)
-        let dropped = super::check::value_is_unit_after_let(value, front);
+        let dropped = !keep && super::check::value_is_unit_after_let(value, front);
         if !returned && !dropped {
             return self.block(body);
         }

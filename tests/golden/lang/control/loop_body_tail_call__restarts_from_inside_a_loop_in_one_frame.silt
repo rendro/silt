@@ -31,7 +31,7 @@ fn bare(n: Int) -> Int {
   }
 }
 
-fn used_by_let(n: Int) -> Int {
+deep fn used_by_let(n: Int) -> Int {
   let x = loop k = n {
     match k {
       0 -> 0
@@ -41,7 +41,7 @@ fn used_by_let(n: Int) -> Int {
   x + 1
 }
 
-fn used_by_plus(n: Int) -> Int {
+deep fn used_by_plus(n: Int) -> Int {
   1 + loop k = n {
     match k {
       0 -> 0

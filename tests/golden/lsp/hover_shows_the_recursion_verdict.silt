@@ -1,0 +1,54 @@
+-- cmd: lsp
+-- lsp: hover 12:4
+-- lsp: hover 19:4
+-- lsp: hover 26:9
+-- lsp: hover 39:6
+-- lsp: hover 48:7
+-- The recursion check's verdict is shown on a function's name: constant
+-- stack, depth follows the data (and what it descends on), deep, and
+-- for a method that calls its own trait, not checked.
+import list
+
+fn count(i: Int, acc: Int) -> Int {
+  match i {
+    0 -> acc
+    _ -> count(i - 1, acc + i)
+  }
+}
+
+fn len(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..rest] -> 1 + len(rest)
+  }
+}
+
+deep fn fib(n: Int) -> Int {
+  match n {
+    0 -> 0
+    1 -> 1
+    _ -> fib(n - 1) + fib(n - 2)
+  }
+}
+
+type Tree { Leaf, Node(Tree, Tree) }
+
+trait Size { fn size(self) -> Int }
+
+trait Size for Tree {
+  fn size(self) -> Int {
+    match self {
+      Leaf -> 0
+      Node(l, r) -> 1 + Size.size(l) + Size.size(r)
+    }
+  }
+}
+
+fn main() {
+  let go = { n -> match n {
+    0 -> 0
+    _ -> go(n - 1)
+  } }
+  println(count(3, 0) + len([1]) + fib(5) + Size.size(Node(Leaf, Leaf)) + go(2))
+  println(list.length([]))
+}

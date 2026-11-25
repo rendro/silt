@@ -1,0 +1,27 @@
+-- `deep fn` turns the check off for the function's calls: quicksort
+-- calls itself on filtered lists, which are no parts, and its depth is
+-- bounded by what the compiler cannot see.
+import list
+
+deep fn quicksort(xs: List(Int)) -> List(Int) {
+  match xs {
+    [] -> []
+    [pivot, ..rest] -> list.concat(
+      quicksort(list.filter(rest) { x -> x < pivot }),
+      [pivot, ..quicksort(list.filter(rest) { x -> x >= pivot })],
+    )
+  }
+}
+
+pub deep fn fib(n: Int) -> Int {
+  match n {
+    0 -> 0
+    1 -> 1
+    _ -> fib(n - 1) + fib(n - 2)
+  }
+}
+
+fn main() {
+  println(quicksort([3, 1, 2, 5, 4]))
+  println(fib(15))
+}

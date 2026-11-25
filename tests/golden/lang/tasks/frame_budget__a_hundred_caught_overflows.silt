@@ -7,7 +7,7 @@ import list
 import string
 import task
 
-fn runaway(n: Int) -> Int {
+deep fn runaway(n: Int) -> Int {
   1 + runaway(n + 1)
 }
 

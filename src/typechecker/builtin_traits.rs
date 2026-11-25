@@ -59,6 +59,7 @@ pub(crate) fn builtin_trait_decls() -> Vec<TraitDecl> {
             where_clauses: Vec::new(),
             body: unit_body(span),
             is_pub: true,
+            deep: None,
             span,
             // Synthesized built-in: no source identifier — mirror `span`.
             name_span: span,

@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- In a function that also keeps frames, a tail call must pass the
+-- parameter or a part of it: one that passes something it has just
+-- built lets the other calls go deeper than the data.
+type Expr {
+  Num(Int),
+  Neg(Expr),
+  Add(Expr, Expr),
+}
+
+fn simplify(e: Expr) -> Expr {
+  match e {
+    Num(n) -> Num(n)
+    Neg(Neg(x)) -> simplify(x)
+    Neg(x) -> Neg(simplify(x))
+    Add(Neg(a), Neg(b)) -> simplify(Neg(Add(a, b)))
+    Add(a, b) -> Add(simplify(a), simplify(b))
+  }
+}
+
+fn main() {
+  println(simplify(Add(Num(1), Num(2))))
+}

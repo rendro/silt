@@ -1,6 +1,6 @@
 -- Non-tail recursion within the frame limit should work fine.
 import io
-fn factorial(n) {
+deep fn factorial(n) {
   match n {
     0 -> 1
     _ -> n * factorial(n - 1)

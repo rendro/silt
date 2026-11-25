@@ -1,0 +1,26 @@
+> hover 12:4
+```silt
+Fn(Int, Int) -> Int
+```
+
+count: constant stack
+> hover 19:4
+```silt
+Fn(List(Int)) -> Int
+```
+
+len: depth follows the data (descends on xs)
+> hover 26:9
+```silt
+Fn(Int) -> Int
+```
+
+fib: deep (not checked)
+> hover 39:6
+size: not checked: trait call
+> hover 48:7
+```silt
+Fn(Int) -> Int
+```
+
+go: constant stack

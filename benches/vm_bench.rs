@@ -135,7 +135,7 @@ fn main() { sum(100000, 0) }
     bench(
         "recursion: fibonacci(25)",
         r#"
-fn fib(n) {
+deep fn fib(n) {
   match n {
     0 -> 0
     1 -> 1

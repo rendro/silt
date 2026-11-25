@@ -4,7 +4,7 @@
 import list
 import task
 
-fn down(acc, n) {
+deep fn down(acc, n) {
   match n {
     0 -> acc
     _ -> 1 + list.fold([n - 1], acc, down)

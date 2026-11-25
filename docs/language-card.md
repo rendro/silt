@@ -183,6 +183,13 @@ fn main() {
   and its tasks may take 128 MiB in all (`SILT_FRAME_BUDGET` sets
   another, in MiB), about 700,000 levels of `x + sum(rest)`; a recursion
   that would take more is the runtime error "stack overflow".
+- Functions that call themselves (or each other) are checked: every call
+  among them a tail call is "constant stack"; else each call that keeps a
+  frame must pass a part of a parameter (`rest` of `[x, ..rest]`, a
+  field, what a constructor pattern binds), "depth follows the data";
+  anything else is an error (`E0345`) unless the function is written
+  `deep fn name(...)`. A `()` loop of tail calls ends with `()`,
+  `return e` or a call that gives `Never` (`E0346`).
 
 ## Errors
 

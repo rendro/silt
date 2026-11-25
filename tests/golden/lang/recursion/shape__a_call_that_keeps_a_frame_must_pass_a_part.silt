@@ -1,0 +1,51 @@
+-- cmd: check
+-- exit: 1
+-- A call of a function to itself that is not its last act takes a frame
+-- for every round: it must pass a part of a parameter, in the place the
+-- function descends on. A count down, a part in another place, the
+-- whole value under another name, a name bound again and a value built
+-- in the call are no parts.
+import list
+
+fn sum_to(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> n + sum_to(n - 1)
+  }
+}
+
+fn swap(xs: List(Int), ys: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..rest] -> 1 + swap(ys, rest)
+  }
+}
+
+fn whole(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    all -> 1 + whole(all)
+  }
+}
+
+fn again(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [x, ..rest] -> {
+      let rest = [x, x, ..rest]
+      1 + again(rest)
+    }
+  }
+}
+
+fn built(o: Option(List(Int))) -> Int {
+  match o {
+    Some([_, ..r]) -> 1 + built(Some(r))
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(sum_to(3) + swap([1], [2]) + whole([]) + again([]) + built(None))
+  println(list.length([1]))
+}

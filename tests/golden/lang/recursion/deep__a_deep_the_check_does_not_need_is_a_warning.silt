@@ -1,0 +1,24 @@
+-- cmd: check
+-- A `deep` on a function the check accepts without it, or on one that
+-- does not call itself, is a warning: remove it.
+deep fn len(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..rest] -> 1 + len(rest)
+  }
+}
+
+deep fn count(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> count(n - 1)
+  }
+}
+
+deep fn once(n: Int) -> Int {
+  n + 1
+}
+
+fn main() {
+  println(len([1]) + count(2) + once(3))
+}

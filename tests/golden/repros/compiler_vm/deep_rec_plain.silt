@@ -1,5 +1,5 @@
 -- verdict: same
-fn depth(n) {
+deep fn depth(n) {
   match n {
     0 -> 0
     _ -> 1 + depth(n - 1)

@@ -941,7 +941,7 @@ fn test_e2e_multiple_functions() {
 fn test_e2e_recursion() {
     let result = run_vm(
         r#"
-            fn factorial(n) {
+            deep fn factorial(n) {
                 match n {
                     0 -> 1
                     _ -> n * factorial(n - 1)
@@ -2741,7 +2741,7 @@ fn a_builtin_calls_its_function_again_in_the_frame_of_the_last_call() {
         "a fold of a function with a bound made {made} frames"
     );
     // (Frames are counted: a recursion makes one for each call.)
-    let depth = "fn depth(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + depth(n - 1)\n  }\n}";
+    let depth = "deep fn depth(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + depth(n - 1)\n  }\n}";
     let (given, made) = frames_made(depth, "depth(1000)");
     assert_eq!(given, Value::Int(1000));
     assert!(made > 1000, "a recursion 1000 deep made {made} frames");
@@ -4015,7 +4015,7 @@ fn main() {
     #[test]
     fn at_the_frame_budget() {
         let source = "\
-fn deep(n: Int) -> Int {
+deep fn deep(n: Int) -> Int {
   1 + deep(n + 1)
 }
 fn main() {
@@ -6086,7 +6086,7 @@ mod calls_and_returns {
                 "depth(3000)"
             };
             let source = format!(
-                "import string\nfn step() {{ {step} }}\nfn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ host.give(\"{{{shown}}}\") }}\nimport host"
+                "import string\nfn step() {{ {step} }}\ndeep fn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ host.give(\"{{{shown}}}\") }}\nimport host"
             );
             assert_eq!(run_vm(&source), Value::string(expected), "{source}");
         }
@@ -8181,7 +8181,7 @@ import host
 import list
 import string
 import task
-fn deep(n: Int) -> Int {
+deep fn deep(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> 1 + deep(n - 1)
@@ -8298,7 +8298,7 @@ fn main() {
     #[test]
     fn a_recursion_inside_a_fold_callback_is_counted() {
         let walk = "\
-fn walk(n: Int) -> Int {
+deep fn walk(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> list.fold([n - 1], 1) { acc, m -> acc + walk(m) }
@@ -8341,7 +8341,7 @@ fn walk(n: Int) -> Int {
         let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
         vm.set_frame_budget(1);
         let main = "\
-fn runaway(n: Int) -> Int {
+deep fn runaway(n: Int) -> Int {
   1 + runaway(n + 1)
 }
 fn main() {

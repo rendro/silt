@@ -41,7 +41,7 @@ fn echo(y: b, n: Int) where b: Loud {
   }
 }
 let relay = { x -> relay_helper(x) }
-fn relay_helper(x: q) {
+deep fn relay_helper(x: q) {
   let _ = [relay]
   x
 }

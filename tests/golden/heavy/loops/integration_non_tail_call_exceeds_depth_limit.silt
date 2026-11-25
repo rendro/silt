@@ -3,7 +3,7 @@
 -- stderr-contains: tail position
 -- frame-budget: 1
 -- Non-tail recursion beyond the frame budget should produce a clear error.
-fn deep(n) {
+deep fn deep(n) {
   match n {
     0 -> 0
     _ -> 1 + deep(n - 1)

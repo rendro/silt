@@ -4,7 +4,7 @@
 -- more than the budget of 16 MiB.
 import task
 
-fn deep(n: Int) -> Int {
+deep fn deep(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> 1 + deep(n - 1)

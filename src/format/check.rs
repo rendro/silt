@@ -771,6 +771,7 @@ impl ShapeWriter {
     fn fn_decl(&mut self, f: &FnDecl, top_level: bool) {
         self.open("fn");
         self.flag(f.is_pub);
+        self.flag(f.deep.is_some());
         self.sym(f.name);
         self.params(&f.params);
         let dropped = top_level && unit_return_dropped(f);
@@ -786,7 +787,9 @@ impl ShapeWriter {
 
     /// A function's body, with a `return` on its last line compared as
     /// its value, and a last line `()` behind a `let` as nothing: the
-    /// printer writes neither.
+    /// printer writes neither, except in a function that may reach
+    /// itself (`print::calls_back`), where they say that a loop ends;
+    /// with them or without, the trees compare the same.
     fn fn_body(&mut self, body: &Expr) {
         let ExprKind::Block(stmts) = &body.kind else {
             return self.expr(body);

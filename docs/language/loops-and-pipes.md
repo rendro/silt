@@ -237,6 +237,115 @@ ends a runaway recursion sooner. A value silt cannot read (`abc`, `0`,
 start, and the error says why.
 
 
+## Repeating
+
+A function that calls itself, or a group of functions that call each
+other, is checked for what it costs in stack. The editor shows the
+verdict on the function's name:
+
+- **constant stack**: every call between them is a tail call (the last
+  thing the function does). It runs for as many rounds as it likes.
+- **depth follows the data**: each one descends on a parameter. Every
+  call that is not a tail call passes a *part* of the caller's parameter
+  in the callee's place, and every tail call passes the parameter itself
+  or a part of it. It goes as deep as its data is, no deeper.
+- anything else is an error, `E0345`.
+
+A part is a name a pattern binds strictly inside the parameter: `rest`
+in `[x, ..rest]`, `l` and `r` in `Node(l, v, r)`, a field read
+(`t.kids`), and so on down. The parameter's own name in an arm
+(`all -> ...`) is the whole value, not a part, and so is a name bound
+again by a `let`. A closure handed to `list.each`, `list.map`,
+`list.flat_map`, `list.fold`, `list.filter`, `list.find`, `list.any` or
+`list.all` over a part may call the function on the element, and
+`list.map(kids, walk)` passes it each element:
+
+```silt
+type Tree {
+  Node(Int, List(Tree)),
+}
+
+fn size(t: Tree) -> Int {
+  match t {
+    Node(_, kids) -> 1 + list.fold(kids, 0) { total, kid -> total + size(kid) }
+  }
+}
+```
+
+A count down is not a part. `n + sum_to(n - 1)` is refused, with the
+fold or a parameter that carries the running value as the way out:
+
+```
+error[type]: this call of `sum_to` takes a frame for every round
+ --> sum.silt:4:14
+  |
+4 |     _ -> n + sum_to(n - 1)
+  |              ^^^^^^^^^^^^^ this call of `sum_to` takes a frame for every round
+  = note: not the last thing `sum_to` does, and `n - 1` is not a part of `n`
+  = help: count with the library: `list.fold(1..n, start) { acc, i -> ... }`
+  = help: or carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn sum_to`
+```
+
+**`deep fn`.** When the depth is bounded by something the compiler
+cannot see (quicksort calls itself on filtered lists, a parser on the
+rest of its input), write `deep` before `fn`: the check is off for that
+function's calls, and the editor says "deep (not checked)". It is normal
+in parsers and interpreters. `deep` is a word of its own only there; a
+`let` closure that needs it becomes a top-level function. A `deep` the
+check would not need is a warning (`W0301`).
+
+```silt
+deep fn quicksort(xs: List(Int)) -> List(Int) {
+  match xs {
+    [] -> []
+    [pivot, ..rest] -> list.concat(
+      quicksort(list.filter(rest) { x -> x < pivot }),
+      [pivot, ..quicksort(list.filter(rest) { x -> x >= pivot })],
+    )
+  }
+}
+```
+
+**A `()` loop says where it ends.** When every call of a group is a tail
+call and a function of it gives `()`, each place it ends without calling
+on must be `()`, `return e`, or a call of a function that gives
+`Never`. A call that gives `()` there, or a block that ends in a `let`,
+is an error (`E0346`): it is where a forgotten call to go on hides.
+
+```silt
+fn serve(inbox: Channel(String)) {
+  match channel.receive(inbox) {
+    Some("flush") -> {
+      flush()
+      serve(inbox)
+    }
+    Some(line) -> return println(line) -- stops here, and says so
+    None -> ()
+  }
+}
+```
+
+The rule is about loops that give `()`; one that gives a value (a
+`Result`, an `Option`) is not checked for it.
+
+**What the check does not see.** It reads direct calls. A call through
+a trait (`Show.show(left)`, `x.show()`) is a call of the impl of the
+argument's type and is not checked (the editor says "not checked: trait
+call" on such a method), and neither is a function reached through a
+value kept in data (a list, a tuple, a record, a map of handlers). A
+`let` whose value is just a function's name (`let g = f`, also inside a
+function, also an alias of an alias) is that function wherever it is
+named. It catches the accidents (a call that silently takes a frame for
+every round, a forgotten call to go on); it does not prove that every
+program ends.
+
+**A tail call lets go.** A call that ends a function runs in the
+function's place, so what the function holds is let go before the call
+runs. A `let` whose name starts with `_` (a value kept only for as long
+as it lives) that is in scope at such a call gets a warning (`W0302`).
+
+
 ## Loop with State
 
 `loop` is an expression that binds state variables and re-enters via

@@ -77,7 +77,8 @@ impl Server {
             // decides: written with letters, `Fn(a) -> a`, as a generic
             // function's hover is.)
             let ty = super::ast_walk::written_with_letters(&self.written_here(doc, ty));
-            let value = super::conversions::code_block(&ty.to_string());
+            let mut value = super::conversions::code_block(&ty.to_string());
+            push_verdict(&mut value, program, cursor);
             return Some(Hover {
                 contents: HoverContents::Markup(super::conversions::markdown(value)),
                 range: None,
@@ -241,7 +242,9 @@ impl Server {
             .filter(|_| ty.as_ref().is_none_or(has_unresolved_vars));
         // If neither a type nor a doc is available, no hover.
         if ty.is_none() && doc_text.is_none() && signature.is_none() {
-            return None;
+            let mut value = String::new();
+            push_verdict(&mut value, program, cursor);
+            return (!value.is_empty()).then(|| markdown(value));
         }
 
         // Suppress the top-of-hover signature block when
@@ -279,6 +282,7 @@ impl Server {
                 value.push_str(&super::conversions::code_block(&t.to_string()));
             }
         }
+        push_verdict(&mut value, program, cursor);
         if let Some(d) = doc_text {
             if !value.is_empty() {
                 value.push_str("\n\n---\n\n");
@@ -328,6 +332,24 @@ fn on_keyword(tokens: &[crate::lexer::Tok], cursor: usize) -> bool {
     tokens[at].kind.keyword().is_some()
         && !(at > 0 && kind(at - 1) == Some(&Token::Dot))
         && kind(at + 1) != Some(&Token::Colon)
+}
+
+/// What the recursion check says of the function whose name (where it
+/// is declared) is at byte `cursor`, on a line of its own below `value`:
+/// `go: constant stack`, `walk: depth follows the data (descends on
+/// tree)`, `parse: deep (not checked)`, `show: not checked: trait call`.
+fn push_verdict(value: &mut String, program: &crate::ast::Program, cursor: usize) {
+    let verdicts = crate::typechecker::shape::verdicts(program);
+    let Some((_, name, verdict)) = verdicts
+        .iter()
+        .find(|(span, _, _)| (span.start as usize..span.end as usize).contains(&cursor))
+    else {
+        return;
+    };
+    if !value.is_empty() {
+        value.push_str("\n\n");
+    }
+    value.push_str(&format!("{name}: {}", verdict.text()));
 }
 
 /// A hover of the markdown `value`.

@@ -8,7 +8,7 @@ import list
 import string
 import task
 
-fn deep(n: Int) -> Int {
+deep fn deep(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> 1 + deep(n - 1)

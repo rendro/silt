@@ -45,7 +45,7 @@ trait Display for Point {
   fn display(self) -> String { "<{self.x},{self.y}>" }
 }
 
-fn fib(n) {
+deep fn fib(n) {
   match n < 2 {
     true -> n
     false -> fib(n - 1) + fib(n - 2)
