@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- `deep fn` declares a top-level function: inside another it is an
+-- error that says where it goes.
+fn main() {
+  deep fn inner(n: Int) -> Int { n }
+  println(1)
+}

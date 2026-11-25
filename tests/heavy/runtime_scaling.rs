@@ -301,7 +301,7 @@ fn parks(count, asks, answers) {{
   }}
 }}
 
-fn at_depth(n, asks, answers) {{
+deep fn at_depth(n, asks, answers) {{
   match n {{
     0 -> parks(2000, asks, answers)
     _ -> list.fold([n], 0) {{ acc, x -> acc + at_depth(x - 1, asks, answers) }}
