@@ -1,0 +1,14 @@
+import io
+fn program() {
+  let go = { i, acc ->
+    match i >= 10 {
+      true -> acc
+      _ -> go(i + 1, acc + i)
+    }
+  }
+  go(0, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

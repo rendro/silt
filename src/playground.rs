@@ -192,8 +192,7 @@ fn kind_of(token: &Token) -> Option<u32> {
         | Token::Import
         | Token::As
         | Token::Else
-        | Token::Where
-        | Token::Loop => KEYWORD,
+        | Token::Where => KEYWORD,
         Token::Int(_) | Token::Float(_) => NUMBER,
         Token::Bool(_) => LITERAL,
         // The parts of a string with interpolations: each from its

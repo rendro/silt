@@ -1,0 +1,19 @@
+-- Build a list of closures in a function that calls itself; each
+-- closure captures the value of its round.
+import io
+import list
+fn program() {
+  let build = { i, acc ->
+    match i >= 4 {
+      true -> acc
+      _ -> build(i + 1, list.append(acc, { -> i }))
+    }
+  }
+  let closures = build(0, [])
+  -- Call each closure and collect results
+  closures |> list.map({ f -> f() })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -146,20 +146,6 @@ fn main() { fib(25) }
     "#,
     );
 
-    bench(
-        "loop: sum 100K",
-        r#"
-fn main() {
-  loop n = 0, acc = 0 {
-    match n {
-      100000 -> acc
-      _ -> loop(n + 1, acc + n)
-    }
-  }
-}
-    "#,
-    );
-
     println!();
 
     // ── Collections ─────────────────────────────────────────────────
@@ -447,7 +433,7 @@ fn main() {
 
     // ── Collections built by updates ────────────────────────────────
     // Each row builds a collection of 2,000 elements one update at a
-    // time, the old version still held: what a fold or a loop does.
+    // time, the old version still held: what a fold or a self call does.
     // The read rows walk 10,000 elements. benches/collections.silt
     // runs the same programs at any size, one process per run.
     println!("── Collections built by updates ───────────────────────────────");
@@ -470,13 +456,12 @@ fn main() {
     println!();
 
     // ── Counting ────────────────────────────────────────────────────
-    // Each row counts to 1,000,000 by one form of a counting loop.
+    // Each row counts to 1,000,000 by one way of counting.
     // benches/counting.silt runs the same programs to any count, one
     // process per run.
     println!("── Counting ───────────────────────────────────────────────────");
 
     for (name, kind) in [
-        ("counting: loop 1M", "by_loop"),
         ("counting: self tail call 1M", "by_self_call"),
         ("counting: capturing closure 1M", "by_closure"),
         ("counting: mutual tail calls 1M", "by_mutual_calls"),

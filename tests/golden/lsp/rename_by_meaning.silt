@@ -3,7 +3,7 @@
 -- lsp: rename 52:10 resize
 -- lsp: definition 52:10
 -- lsp: definition 52:30
--- lsp: definition 100:93
+-- lsp: definition 101:93
 -- lsp: rename 34:12 me
 -- lsp: rename 56:13 width
 -- lsp: rename 57:3 width
@@ -16,16 +16,16 @@
 -- lsp: rename 67:7 _
 -- lsp: rename 74:9 inner
 -- lsp: references 77:3
--- lsp: references 81:8
+-- lsp: references 81:14
 -- lsp: references 80:10
--- lsp: rename 94:31 Holder
+-- lsp: rename 95:31 Holder
 -- A rename edits what the name means and nothing else. A method name at
 -- a call is no name of its trait: its rename is the method's, as is its
 -- definition. `self` is not renamed. A field written without its value
 -- is written out. The binders of an or-pattern's alternatives are one
 -- binding. A new name that is taken where the old one is written is
 -- refused. A block ends its `let`s. A `where` clause names the trait.
--- A loop's initial values are read outside it; its names are its body's.
+-- A closure's parameter hides an outer name only inside the closure.
 type Box {
   w: Int,
 }
@@ -78,12 +78,13 @@ fn blocks(n: Int) -> Int {
 }
 
 fn loops(n: Int) -> Int {
-  loop n = n + 1, acc = n {
+  let go = { n, acc ->
     match n > 5 {
       true -> n + acc
-      false -> loop(n + 1, acc)
+      false -> go(n + 1, acc)
     }
   }
+  go(n + 1, n)
 }
 
 trait Container {

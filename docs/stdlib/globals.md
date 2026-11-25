@@ -128,7 +128,8 @@ panic(message: a) -> Never where a: Display
 Terminates execution with an error message. Accepts any value that implements
 `Display`. A message longer than 100,000 bytes is given cut there, ending with
 `… (N more bytes)`. It never returns: its result is of type `Never`, the type of an expression
-that does not return (`return`, `loop(...)`), which goes with every type, so
+that does not return (`return`, a call of a function that never returns),
+which goes with every type, so
 `panic` can stand wherever a value is expected and ends an `else` block that
 must leave. A program writes `Never` only as the return type of a
 function that never returns either (see [the Never

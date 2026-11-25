@@ -31,7 +31,6 @@ fn arb_ident() -> impl Strategy<Value = String> {
                     | "as"
                     | "else"
                     | "where"
-                    | "loop"
                     | "true"
                     | "false"
             )

@@ -73,14 +73,6 @@ fn binop_token(op: BinOp) -> Token {
     }
 }
 
-/// An expression that is followed by a block (see the parser's
-/// `BlockHeader`): a `{` at its own depth may be that block.
-#[derive(Clone, Copy, PartialEq)]
-enum Header {
-    Match,
-    Loop,
-}
-
 /// Where an expression stands, as far as parentheses go.
 #[derive(Clone, Copy)]
 struct Ctx {
@@ -94,9 +86,10 @@ struct Ctx {
     /// The expression is the right operand of `|>`, where a `?` at its
     /// own level ends the pipeline.
     stage: bool,
-    /// The expression is in a `match` or `loop` header, outside any
-    /// brackets.
-    header: Option<Header>,
+    /// The expression is in a `match` header, outside any brackets: a
+    /// `{` at its own depth may be the block of the header (see the
+    /// parser's `BlockHeader`).
+    header: bool,
     /// The expression is a pipeline with a `?` behind it: its last
     /// stage stands in front of the `?`.
     question_follows: bool,
@@ -119,16 +112,16 @@ impl Ctx {
             min_bp: 0,
             left_of: None,
             stage: false,
-            header: None,
+            header: false,
             question_follows: false,
             line_start: false,
             ends_scrutinee: false,
         }
     }
 
-    fn in_header(header: Header) -> Ctx {
+    fn in_header() -> Ctx {
         Ctx {
-            header: Some(header),
+            header: true,
             ..Ctx::top()
         }
     }
@@ -229,7 +222,7 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
             left_of: None,
             min_bp: 0,
             stage: false,
-            header: None,
+            header: false,
             question_follows: false,
             line_start: false,
             ends_scrutinee: false,
@@ -251,7 +244,7 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
     false
 }
 
-/// Whether `expr`, printed in a `match` or `loop` header without
+/// Whether `expr`, printed in a `match` header without
 /// parentheses around it, would show a `{` that is not in brackets: a
 /// block, a closure that is not an argument, or
 /// a record literal without fields or with one field written alone
@@ -1461,8 +1454,8 @@ impl Printer<'_> {
     // ── Expressions ──────────────────────────────────────────────────
 
     /// The token in front of a value that is written in parentheses
-    /// (`parens`: one that ends in a bare stage, behind `match` or the
-    /// `=` of a loop's last binding), and the comments that go behind
+    /// (`parens`: one that ends in a bare stage, behind `match`), and the
+    /// comments that go behind
     /// the `(` written. Comments behind the token, on its line, that
     /// start with a `{- -}` one go inside the parentheses, as a second
     /// pass finds them there: in front of the value (left to it here),
@@ -1486,9 +1479,9 @@ impl Printer<'_> {
         // The source's parentheses around this expression: one pair is
         // kept if the expression needs it here, the rest is dropped.
         let wrappers = self.cur.wrappers(expr.span.end);
-        // In a `match` or `loop` header, parentheses that hold a `{`
+        // In a `match` header, parentheses that hold a `{`
         // keep it from being taken for the block of the header.
-        let shields_brace = (ctx.header.is_some() && opens_brace_in_header(expr))
+        let shields_brace = (ctx.header && opens_brace_in_header(expr))
             || (ctx.line_start && starts_with_brace(expr));
         // A token behind the parentheses that would make the body of a
         // match on a pipeline at the end of `expr` a closure (a `{`, an
@@ -1542,7 +1535,7 @@ impl Printer<'_> {
         let wrappers = self.cur.wrappers(expr.span.end);
         if wrappers > 0
             && (self.cur.comments_inside_parens(wrappers)
-                || (ctx.header.is_some() && opens_brace_in_header(expr)))
+                || (ctx.header && opens_brace_in_header(expr)))
         {
             return None;
         }
@@ -1697,7 +1690,7 @@ impl Printer<'_> {
                     let bare = ends_in_bare_stage(scrutinee);
                     let ctx = Ctx {
                         ends_scrutinee: closure && !bare,
-                        ..Ctx::in_header(Header::Match)
+                        ..Ctx::in_header()
                     };
                     // (Parentheses with a comment at their inside stay as
                     // they are: then they are the pair.)
@@ -1714,7 +1707,7 @@ impl Printer<'_> {
                     // in it trails its call.)
                     let ctx = match bare && !commented && comment_first {
                         true => Ctx {
-                            header: None,
+                            header: false,
                             ..ctx
                         },
                         false => ctx,
@@ -1756,69 +1749,6 @@ impl Printer<'_> {
                 }
             }
             ExprKind::Block(_) => self.block(expr),
-            ExprKind::Loop { bindings, body } => {
-                let keyword = self.tok(Token::Loop);
-                if bindings.is_empty() {
-                    return Doc::concat(vec![keyword, space(), self.block(body)]);
-                }
-                // A header that does not fit its line has each binding on
-                // a line of its own, one level in, and the body's `{` on
-                // the next line:
-                //   loop
-                //     a = 0,
-                //     b = [],
-                //   {
-                let mut docs = vec![];
-                for (i, (_, _, init)) in bindings.iter().enumerate() {
-                    docs.push(Doc::Line);
-                    // The last value, which the body's `{` follows, is
-                    // written in parentheses when it ends in a stage
-                    // written as a bare name, as a match's scrutinee is.
-                    let bare = i + 1 == bindings.len() && ends_in_bare_stage(init);
-                    docs.push(self.name());
-                    docs.push(space());
-                    let (eq, behind_open) = self.tok_before_parens(&Token::Eq, bare);
-                    docs.push(eq);
-                    docs.push(space());
-                    let commented = self
-                        .cur
-                        .comments_inside_parens(self.cur.wrappers(init.span.end));
-                    let comment_first = !behind_open.is_nil() || self.cur.comment_ahead();
-                    // (Inside parentheses written with a comment in front
-                    // of the value, it is in no header, as a second pass
-                    // reads it there: a closure in it trails its call.)
-                    let ctx = match bare && !commented && comment_first {
-                        true => Ctx {
-                            header: None,
-                            ..Ctx::in_header(Header::Loop)
-                        },
-                        false => Ctx::in_header(Header::Loop),
-                    };
-                    let doc = self.expr(init, ctx);
-                    let open = Doc::concat(vec![Doc::text("("), behind_open.clone()]);
-                    let close = Doc::text(")");
-                    docs.push(match (bare && !commented, comment_first) {
-                        (true, false) => Doc::concat(vec![open, doc, close]),
-                        (true, true) => parenthesized(open, doc, close),
-                        (false, _) => behind_token(behind_open, doc),
-                    });
-                    if i + 1 < bindings.len() {
-                        docs.push(self.tok(Token::Comma));
-                    }
-                }
-                // (The keyword, with the comments in front of it, stays
-                // out of the group: a comment line above the loop is no
-                // reason to break its header.)
-                let header = Doc::group(Doc::concat(vec![Doc::nest(Doc::concat(docs)), Doc::Line]));
-                Doc::concat(vec![keyword, header, self.block(body)])
-            }
-            ExprKind::Recur(args) => {
-                let keyword = self.tok(Token::Loop);
-                let args = self.delimited(Token::LParen, Token::RParen, TIGHT, args, |p, arg| {
-                    p.expr(arg, Ctx::top())
-                });
-                Doc::concat(vec![keyword, args])
-            }
         }
     }
 
@@ -2206,7 +2136,7 @@ impl Printer<'_> {
     /// The arguments of a call. A closure that is the last argument
     /// stands behind the parentheses, `f(a) { x -> x }`; one in front of
     /// it stands between them, `f({ x -> x }) { y -> y }`. In a `match`
-    /// or `loop` header every closure stands between them, since a `{`
+    /// header every closure stands between them, since a `{`
     /// there is the header's block; so does a closure that is the only
     /// argument of a call whose callee is a call, which it would join.
     fn call_args(&mut self, call: &Expr, callee: &Expr, args: &[Expr], ctx: Ctx) -> Doc {
@@ -2243,8 +2173,7 @@ impl Printer<'_> {
                 .last()
                 .is_some_and(|last| last.span.end == call.span.end);
         let trailing = closure_last
-            && (stays_behind
-                || (ctx.header.is_none() && !(count == 1 && callee_is_call) && !in_the_way));
+            && (stays_behind || (!ctx.header && !(count == 1 && callee_is_call) && !in_the_way));
         // How many arguments stand between the parentheses of the result.
         let inside = if trailing { count - 1 } else { count };
         // `f({ x -> x })` becomes `f { x -> x }`: no parentheses.
@@ -2534,7 +2463,7 @@ impl Printer<'_> {
                 // The parser finds the arm's `->` by looking along the
                 // line: braces in the guard stay in their parentheses,
                 // as in the header of the match.
-                docs.push(self.expr(guard, Ctx::in_header(Header::Match)));
+                docs.push(self.expr(guard, Ctx::in_header()));
             }
         }
         docs.push(space());

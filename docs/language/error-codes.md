@@ -81,7 +81,7 @@ missing belong to codes that are gone.
 | `E0322` | A pattern that cannot stand where it is (a refutable `let`, an or-pattern whose alternatives bind different names, ...). |
 | `E0323` | A name bound twice in one pattern. |
 | `E0324` | `?` where it cannot propagate. |
-| `E0325` | `loop(...)` or a `when` else body where it may not stand. |
+| `E0325` | A `when` else body that does not end, or a function declared to return `Never` that can return (its body, a `return` or a `?`). |
 | `E0326` | An operation the operand types do not support. |
 | `E0328` | A use of a builtin module that is not imported. |
 | `E0330` | A trait declaration that breaks a trait rule. |
@@ -98,7 +98,7 @@ missing belong to codes that are gone.
 | `E0343` | A type constructor where a type is needed, or a type where a type constructor is needed. |
 | `E0344` | A value of an opaque type built, taken apart, updated or read outside its module. |
 | `E0345` | A function, or a group of functions that call each other, that takes a frame for every round without descending on a parameter: a call that is not a tail call and does not pass a part of a parameter, a tail call that passes something bigger than a part, a call inside a closure, a function passed as a value (see [Repeating](loops-and-pipes.md#repeating)). |
-| `E0346` | A loop of tail calls that gives `()` and ends somewhere without saying so: a call that gives `()`, or a block that ends in a `let`. |
+| `E0346` | A function that gives `()`, of a group whose calls of each other are all tail calls, that ends somewhere without saying so: a call that gives `()`, or a block that ends in a `let` (see [Repeating](loops-and-pipes.md#repeating)). |
 
 ## Compiling and the entry point (4xx, 5xx)
 

@@ -13,17 +13,15 @@
 
 tests/golden/concurrency/stack/frame_budget__200_tasks_50000_deep_share_the_budget.silt | a frame budget test: 200 tasks recurse 50,000 levels each, then 600,000 levels
 tests/golden/heavy/compute/stage6_perf__method_calls.silt | a speed measurement: a million method calls
-tests/golden/heavy/compute/stage7_perf__loop_sum.silt | a speed measurement: a loop of millions of rounds
 tests/golden/heavy/compute/stage7_perf__tail_calls.silt | a speed measurement: millions of tail calls
 tests/golden/lang/compiler/selection__impl_method_recursion_is_a_tail_call.silt | a tail-call depth test: millions of calls
 tests/golden/lang/compiler/selection__method_found_at_run_time_is_a_tail_call.silt | a tail-call depth test: millions of calls
 tests/golden/lang/patterns/guarded_or__each_alternative_that_matches_is_tried.silt | a tail-call depth test through guards on or-patterns: a million calls
+tests/golden/lang/tasks/frame_budget__a_hundred_caught_overflows.silt | a frame budget test: a hundred runaway recursions, each to the end of the budget
 tests/golden/repros/compiler_vm/deep_nest_disp_1000000.silt | a value nested a million levels deep is built and shown: loops of millions of rounds
 tests/golden/repros/compiler_vm/deep_nest_drop_1000000.silt | a value nested a million levels deep is built and dropped: loops of millions of rounds
 tests/golden/repros/compiler_vm/deep_nest_eq_1000000.silt | a value nested a million levels deep is built and compared with `==`: loops of millions of rounds
 tests/golden/repros/compiler_vm/deep_nest_lt_1000000.silt | a value nested a million levels deep is built and compared with `<`: loops of millions of rounds
 tests/golden/repros/compiler_vm/deep_nest_set_1000000.silt | a value nested a million levels deep is built and put in a set: loops of millions of rounds
-tests/golden/repros/compiler_vm/mx_loop_nobind_nomatch.silt | `loop { loop() }`: it does not end
-tests/golden/repros/lang_design/cross_x4_loop_nobind.silt | `loop { loop() }`: it does not end
 tests/golden/repros/stdlib/t_ho1.silt | a speed measurement: five passes of callbacks over a list of a million
 tests/golden/repros/stdlib/t_ho2.silt | a fold over a range of twenty million numbers

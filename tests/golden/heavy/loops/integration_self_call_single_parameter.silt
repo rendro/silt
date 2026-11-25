@@ -1,0 +1,14 @@
+import io
+fn program() {
+  let go = { i ->
+    match i >= 3 {
+      true -> i
+      _ -> go(i + 1)
+    }
+  }
+  go(0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

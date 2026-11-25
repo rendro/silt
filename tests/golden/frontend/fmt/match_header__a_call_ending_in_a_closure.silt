@@ -1,7 +1,6 @@
 -- cmd: fmt
 -- A call that ends in a closure in a `match` header is written with the
--- closure in its parentheses, as in a `loop` header; a second run
--- changes nothing.
+-- closure in its parentheses; a second run changes nothing.
 import list
 import string
 import task

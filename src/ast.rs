@@ -142,16 +142,6 @@ pub enum ExprKind {
     // Block
     Block(Vec<Stmt>),
 
-    // Loop
-    /// Loop expression: `loop x = init, y = init { body }`; each binding
-    /// is its name, the span of the name, and its initialiser.
-    Loop {
-        bindings: Vec<(Symbol, Span, Expr)>,
-        body: Box<Expr>,
-    },
-    /// Recur: `loop(args)` inside a loop body
-    Recur(Vec<Expr>),
-
     // Unit
     Unit,
 }
@@ -953,7 +943,7 @@ impl Expr {
                 f(Child::Expr(k))?;
                 f(Child::Expr(v))
             }),
-            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
                 elems.iter().try_for_each(|e| f(Child::Expr(e)))
             }
             ExprKind::FieldAccess(e, ..)
@@ -1017,12 +1007,6 @@ impl Expr {
                 }
                 Stmt::Expr(e) => f(Child::Expr(e)),
             }),
-            ExprKind::Loop { bindings, body } => {
-                bindings
-                    .iter()
-                    .try_for_each(|(_, _, e)| f(Child::Expr(e)))?;
-                f(Child::Expr(body))
-            }
         }
     }
 
@@ -1091,7 +1075,7 @@ impl Expr {
                     f(v);
                 }
             }
-            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
                 elems.iter_mut().for_each(f);
             }
             ExprKind::FieldAccess(e, ..)
@@ -1150,12 +1134,6 @@ impl Expr {
                         Stmt::Expr(e) => f(e),
                     }
                 }
-            }
-            ExprKind::Loop { bindings, body } => {
-                for (_, _, e) in bindings {
-                    f(e);
-                }
-                f(body);
             }
         }
     }
@@ -1303,8 +1281,6 @@ mod walk_tests {
             ExprKind::Match { .. } => "Match",
             ExprKind::Return(_) => "Return",
             ExprKind::Block(_) => "Block",
-            ExprKind::Loop { .. } => "Loop",
-            ExprKind::Recur(_) => "Recur",
             ExprKind::Unit => "Unit",
         }
     }
@@ -1334,8 +1310,6 @@ mod walk_tests {
         "Match",
         "Return",
         "Block",
-        "Loop",
-        "Recur",
         "Unit",
     ];
 
@@ -1354,11 +1328,9 @@ fn f(r: Result(Int, String)) -> Result(Int, String) {
   let g = { a: Int -> a * 2 }
   when let Ok(w) = r else { return Err("no") }
   when v > 0 else { return Ok(0) }
-  let n = loop i = 0 {
-    match i >= 3 {
-      true -> i
-      false -> loop(i + 1)
-    }
+  let n = match v >= 3 {
+    true -> v
+    false -> 0
   }
   let k = match q {
     P { x, .. } when x > 0 -> x

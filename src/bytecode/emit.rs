@@ -47,7 +47,7 @@
 //!
 //! A jump names a [`Label`]. `JumpIfFalse` and `JumpIfTrue` go forward:
 //! they are emitted before their label is bound. `Jump` goes either
-//! way: to a label bound later, or back to one bound already (a loop),
+//! way: to a label bound later, or back to one bound already,
 //! which it must reach with the height the label was bound at. The
 //! emitter remembers the height each forward jump arrives with, and
 //! `bind` sets the height to it. Where jumps arrive at one label with
@@ -496,7 +496,7 @@ impl Writer for Out<'_> {
             // Back, from the end of this operand.
             Some((target, height)) => {
                 if self.arriving.is_some_and(|arriving| arriving != height) {
-                    self.bug = Some("jumps back with a height the loop did not start with");
+                    self.bug = Some("jumps back with a height its target did not have");
                 }
                 let count = self.chunk.len() + 4 - target;
                 let back = i32::try_from(count).map_err(|_| function_too_large(count))?;
@@ -962,8 +962,9 @@ mod tests {
 
     #[test]
     fn a_recur_jumps_back_with_the_frame_it_leaves() {
-        // A loop of two bindings in slots 1 and 2 of a function of one
-        // parameter: at its start the frame holds three values.
+        // A jump back that writes the two values in slots 1 and 2 of a
+        // function of one parameter: at its start the frame holds three
+        // values.
         let recur = |first| {
             let mut e = Emitter::new("f".into(), 1, span()).unwrap();
             let start = e.label();

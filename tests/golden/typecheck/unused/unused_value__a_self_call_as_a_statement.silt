@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A call of a function that calls itself, as a statement, must give
+-- `()`: the first one does, the second leaves the Int it counted to.
+fn show(i: Int) {
+  match i < 3 {
+    true -> {
+      println(i)
+      show(i + 1)
+    }
+    false -> ()
+  }
+}
+
+fn count(i: Int) -> Int {
+  match i < 3 {
+    true -> count(i + 1)
+    false -> i
+  }
+}
+
+fn main() {
+  show(0)
+  count(0)
+  println("done")
+}

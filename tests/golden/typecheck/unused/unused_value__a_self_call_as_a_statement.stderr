@@ -1,0 +1,5 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_self_call_as_a_statement.silt:25:3
+    |
+ 25 |   count(0)
+    |   ^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it

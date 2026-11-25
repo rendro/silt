@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: error[parse]
 -- stderr-contains: silt has no `while` or `for`
--- stderr-contains: write a `loop`, or `list.each` / `list.map` over a list
+-- stderr-contains: `list.each` and `list.fold` go over a list or a range, and a function that calls itself repeats
 fn main() {
     let x: Bool = true
     let r = while x { 1 }

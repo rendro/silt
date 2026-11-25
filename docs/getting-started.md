@@ -270,7 +270,7 @@ The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-
 
 `silt fmt` changes the layout of a file and, beside it, only these spellings, each of which the checker reads the same:
 
-- parentheses that group nothing and trailing commas go; a closure that is the last argument is written behind the call (in a `match` or `loop` header, inside the parentheses);
+- parentheses that group nothing and trailing commas go; a closure that is the last argument is written behind the call (in a `match` header, inside the parentheses);
 - imports move to the top of the file, sorted;
 - `(a | b) | c` in a pattern is written `a | b | c`, and a closure's or a `match` arm's body of one expression in braces of its own is written without them;
 - `xs |> f()` is written `xs |> f`;

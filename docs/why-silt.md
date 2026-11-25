@@ -73,7 +73,8 @@ Three design commitments shape everything:
 - **Systems programming** — no `unsafe`, no raw pointers, no inline
   assembly. silt cannot implement its own allocator.
 - **Iterative mutation-heavy algorithms** — dynamic programming and
-  graph algorithms threaded through `loop` / `fold` are more verbose
+  graph algorithms threaded through folds or functions that call
+  themselves are more verbose
   than their mutable counterparts. The trade-off buys concurrency
   safety.
 

@@ -1244,22 +1244,6 @@ impl ShapeWriter {
                     self.stmt(stmt);
                 }
             }
-            ExprKind::Loop { bindings, body } => {
-                self.open("loop");
-                for (name, _, init) in bindings {
-                    self.open("binding");
-                    self.sym(*name);
-                    self.expr(init);
-                    self.close();
-                }
-                self.expr(body);
-            }
-            ExprKind::Recur(args) => {
-                self.open("recur");
-                for arg in args {
-                    self.expr(arg);
-                }
-            }
             ExprKind::Unit => self.open("unit"),
         }
         self.close();

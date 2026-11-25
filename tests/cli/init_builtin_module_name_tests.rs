@@ -275,15 +275,15 @@ fn round75_validate_package_name_rejects_builtins_accepts_others() {
 
 // ─── 8. reserved-keyword GAP: `silt init` in a keyword-named dir ───────
 //
-// A directory named after a silt keyword (e.g. `loop`) would previously
-// produce a `silt.toml` whose `name = "loop"`. The package runs as a
-// single file, but `import loop` can never parse: `loop` lexes as a
+// A directory named after a silt keyword (e.g. `match`) would previously
+// produce a `silt.toml` whose `name = "match"`. The package runs as a
+// single file, but `import match` can never parse: `match` lexes as a
 // keyword token, not an `Ident`. Same import-shadowing footgun the
 // builtin-collision check above guards against, now extended to keywords.
 
 #[test]
-fn keyword_init_in_dir_named_loop_is_rejected() {
-    let dir = temp_dir_named("loop");
+fn keyword_init_in_dir_named_match_is_rejected() {
+    let dir = temp_dir_named("match");
     let out = silt_cmd()
         .arg("init")
         .current_dir(&dir)
@@ -291,15 +291,15 @@ fn keyword_init_in_dir_named_loop_is_rejected() {
         .expect("failed to invoke silt init");
     assert!(
         !out.status.success(),
-        "silt init should refuse a package whose name is the reserved keyword `loop`; \
+        "silt init should refuse a package whose name is the reserved keyword `match`; \
          stdout={} stderr={}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("loop"),
-        "stderr should name the offending package name `loop`: {stderr}"
+        stderr.contains("match"),
+        "stderr should name the offending package name `match`: {stderr}"
     );
     assert!(
         stderr.contains("reserved silt keyword"),

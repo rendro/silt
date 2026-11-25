@@ -19,12 +19,3 @@ fn f(xs: List(Int), limit: Int) -> Int {
     _ -> x
   }
 }
-
-fn countdown() -> Int {
-  loop n = 3, steps = 0 {
-    match n {
-      0 -> 0
-      _ -> loop(n - 1, 0)
-    }
-  }
-}

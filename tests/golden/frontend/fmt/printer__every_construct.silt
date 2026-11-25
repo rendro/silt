@@ -21,8 +21,6 @@ fn h ( ) {
   y } }
   let j = match { _ -> 1 }
   let k = match x { _ when y -> 1 }
-  let l = loop { loop ( ) }
-  let m = loop a = { 1 } , b = ( P { } ) { loop ( a , b , ) }
   let n = m.P { x : 1 , } . { x : 2 , }
   let o = [ .. ( p ) , ]
   let p = "a{ "b{ { -> 1 } ( ) }c" }d{ [ 1 , 2 , ] }"

@@ -263,7 +263,7 @@ your own types' too.
 one has failed, and then gives the first failure. For a function
 without effects (`int.parse`) only the time differs. Where the steps
 must stop at the first failure (reading files, sending requests), write
-the loop with `?`:
+a function that calls itself, with `?`:
 
 ```silt
 import io

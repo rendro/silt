@@ -1,18 +1,17 @@
 -- cmd: disasm
--- stdout-contains: 0042  Recur                2  slot 2  -38   -> 0012
--- stdout-contains: 0050  Slide
--- Recur carries a u8 count of bindings, a u16 first slot and the i32
--- distance of its jump back to the start of the loop, which is
+-- stdout-contains: 0030  Recur                2  slot 0  -38   -> 0000
+-- stdout-contains: 0038  Return
+-- Recur carries a u8 count of parameters, a u16 first slot and the i32
+-- distance of its jump back to the start of the function, which is
 -- negative (7 operand bytes): the next instruction starts 8 bytes
 -- after Recur.
-fn main() {
-  let a = 1
-  let b = 2
-  let total = loop i = 0, acc = 0 {
-    match i >= 3 {
-      true -> acc
-      false -> loop(i + 1, acc + i)
-    }
+fn total(i: Int, acc: Int) -> Int {
+  match i >= 3 {
+    true -> acc
+    false -> total(i + 1, acc + i)
   }
-  println(total + a + b)
+}
+
+fn main() {
+  println(total(0, 0))
 }

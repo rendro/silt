@@ -1,13 +1,14 @@
 import channel
 
 fn total(ch, base) {
-  base + loop {
+  let go = { ->
     match channel.try_receive(ch) {
-      channel.Message(v) when v < 3 -> loop()
+      channel.Message(v) when v < 3 -> go()
       channel.Message(v) -> v
       _ -> 0
     }
   }
+  base + go()
 }
 
 fn main() {

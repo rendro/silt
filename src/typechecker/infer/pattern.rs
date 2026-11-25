@@ -15,9 +15,6 @@ pub(in crate::typechecker) enum PatternMode {
 
 /// A place that binds a pattern and has no branch to take when the
 /// pattern fails to match.
-///
-/// `loop` bindings are not listed: a `loop` binds plain names, never a
-/// pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::typechecker) enum BindingSite {
     /// A `let`, as a statement or at the top level.

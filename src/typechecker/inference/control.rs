@@ -1,5 +1,5 @@
 //! The type of the forms that decide where control goes: `?`, a closure,
-//! `match`, `return`, `loop` and `loop(...)` (arms of `infer_expr_kind`).
+//! `match` and `return` (arms of `infer_expr_kind`).
 
 use super::*;
 
@@ -486,76 +486,6 @@ impl TypeChecker {
             }
             (None, _) => {}
         }
-        Type::Never
-    }
-
-    /// `infer_expr_kind` for `loop`.
-    pub(super) fn infer_loop(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
-        let ExprKind::Loop { bindings, body } = &mut expr.kind else {
-            unreachable!("infer_loop of another form");
-        };
-        // Each initialiser is checked outside the loop's frame: it
-        // does not see the bindings.
-        let mut binding_types = Vec::new();
-        for (_, _, value) in bindings.iter_mut() {
-            let ty = self.infer_expr(value, env);
-            binding_types.push(self.kept(ty));
-        }
-        env.push();
-        for ((name, _, _), ty) in bindings.iter().zip(&binding_types) {
-            env.define(*name, Scheme::mono(ty.clone()));
-        }
-        self.check_recur_tail_positions(body, RecurPos::Tail);
-        let prev_loop = self.loop_binding_types.take();
-        self.loop_binding_types = Some(binding_types);
-        let result = self.infer_expr(body, env);
-        env.pop();
-        self.loop_binding_types = prev_loop;
-        result
-    }
-
-    /// `infer_expr_kind` for `loop(...)`.
-    pub(super) fn infer_recur(&mut self, expr: &mut Expr, env: &mut TypeEnv, span: Span) -> Type {
-        let ExprKind::Recur(args) = &mut expr.kind else {
-            unreachable!("infer_recur of another form");
-        };
-        let recur_count = args.len();
-        let arg_types: Vec<Type> = args
-            .iter_mut()
-            .map(|arg| self.infer_expr(arg, env))
-            .collect();
-        if let Some(binding_types) = self.loop_binding_types.clone() {
-            if recur_count != binding_types.len() {
-                let bindings_n = binding_types.len();
-                self.error(
-                    Code::ArityMismatch,
-                    format!(
-                        "loop has {} {}, but `loop(...)` supplies {} {}",
-                        bindings_n,
-                        plural(bindings_n, "binding", "bindings"),
-                        recur_count,
-                        plural(recur_count, "argument", "arguments")
-                    ),
-                    span,
-                );
-            }
-            // Unify each recur arg with its corresponding loop binding type
-            for (i, arg_ty) in arg_types.iter().enumerate() {
-                if let Some(binding_ty) = binding_types.get(i) {
-                    self.unify(arg_ty, binding_ty, span);
-                }
-            }
-        } else {
-            self.error(
-                Code::InvalidControlFlow,
-                "`loop(...)` can only appear inside a `loop` body — it restarts \
-                 the enclosing loop with new binding values"
-                    .to_string(),
-                span,
-            );
-        }
-        // `loop(...)` jumps back to the top of the loop and never
-        // produces a value here.
         Type::Never
     }
 }

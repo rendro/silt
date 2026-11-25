@@ -1,0 +1,20 @@
+import io
+fn program() {
+  let inner = { j, sum ->
+    match j >= 3 {
+      true -> sum
+      _ -> inner(j + 1, sum + 1)
+    }
+  }
+  let outer = { i, total ->
+    match i >= 3 {
+      true -> total
+      _ -> outer(i + 1, total + inner(0, 0))
+    }
+  }
+  outer(0, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

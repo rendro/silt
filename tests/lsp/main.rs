@@ -30,7 +30,7 @@ mod lsp_hover_callee_signature_tests;
 mod lsp_hover_fn_decl_tests;
 mod lsp_hover_stdlib_method_tests;
 mod lsp_inlay_trait_default_tests;
-mod lsp_lambda_loop_binder_rename_tests;
+mod lsp_lambda_binder_rename_tests;
 mod lsp_markdown_control_characters_tests;
 mod lsp_pattern_binders_and_type_name_completion_tests;
 mod lsp_preload_pull_tests;

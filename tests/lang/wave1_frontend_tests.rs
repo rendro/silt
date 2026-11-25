@@ -11,11 +11,9 @@
 //!    pipes, calls or field accesses that exceeds it is a parse error
 //!    with a position, not a stack overflow in a later pass.
 //!
-//! 3. In a `loop` header a binding initialiser may end in a constructor
-//!    (`loop i = n, acc = Nil { ... }`). In a `match` scrutinee a
-//!    trailing closure may be used inside parentheses or call arguments,
-//!    and the match body may follow the right operand of `|>` directly
-//!    (`match xs |> list.first { ... }`).
+//! 3. In a `match` scrutinee a trailing closure may be used inside
+//!    parentheses or call arguments, and the match body may follow the
+//!    right operand of `|>` directly (`match xs |> list.first { ... }`).
 //!
 //! The run-only tests of part 3 are golden cases
 //! (`tests/golden/lang/control/wave1_frontend__*`); what stays here runs
@@ -816,37 +814,6 @@ fn a_chain_of_200_links_still_formats() {
 // ════════════════════════════════════════════════════════════════════
 // 3. Expressions that are followed by a block
 // ════════════════════════════════════════════════════════════════════
-
-const LIST_TYPE: &str = "type L { Nil, Cons(Int, L) }\n";
-
-/// Whether the `{` of the loop body is on the line of the header or on
-/// the next one makes no difference, to the parser or to the formatter
-/// (which always puts it on the line of the header).
-#[test]
-fn a_loop_header_means_the_same_with_the_brace_on_either_line() {
-    let body = r#"    match i {
-      0 -> acc
-      _ -> loop(i - 1, Cons(i, acc))
-    }
-  }
-}
-fn main() {
-  println("{build(3)}")
-}
-"#;
-    let same_line = format!("{LIST_TYPE}fn build(n) {{\n  loop i = n, acc = Nil {{\n{body}");
-    let next_line = format!("{LIST_TYPE}fn build(n) {{\n  loop i = n, acc = Nil\n  {{\n{body}");
-    assert_fmt_keeps_program(
-        "fmt_brace_same_line",
-        &same_line,
-        &["loop i = n, acc = Nil {"],
-    );
-    assert_fmt_keeps_program(
-        "fmt_brace_next_line",
-        &next_line,
-        &["loop i = n, acc = Nil {"],
-    );
-}
 
 #[test]
 fn a_trailing_closure_works_inside_call_arguments_in_a_scrutinee() {

@@ -1,0 +1,21 @@
+import io
+fn program() {
+  let items = [Some(1), None, Some(3), None, Some(5)]
+  let go = { xs, acc ->
+    match xs {
+      [] -> acc
+      [head, ..tail] -> {
+        let add = match head {
+          Some(n) -> n
+          None -> 0
+        }
+        go(tail, acc + add)
+      }
+    }
+  }
+  go(items, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -32,21 +32,11 @@ fn header(xs: List(Int)) -> Int {
   }
 }
 
-fn looped(xs: List(Int)) -> Int {
-  loop ys = xs |> list.reverse() {
-    match ys {
-      [] -> 0
-      [y, ..] -> y
-    }
-  }
-}
-
 fn main() {
   let xs = [3, 1, 2]
   println(total(xs))
   println(first(xs))
   println(kept(xs))
   println(header(xs))
-  println(looped(xs))
   return ()
 }

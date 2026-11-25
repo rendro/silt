@@ -1,4 +1,4 @@
-error[type]: 'ends' is declared to return `Never`, but its body can return — end it with 'panic', a call of a function that returns `Never` or a `loop` that never ends
+error[type]: 'ends' is declared to return `Never`, but its body can return — end it with 'panic' or a call of a function that returns `Never`
  --> never_return__what_is_refused.silt:6:20
    |
  6 | fn ends() -> Never {
@@ -40,8 +40,8 @@ error[type]: `Never` is written only as the whole return type of a function decl
  39 |   fn m(self) -> Never
     |                 ^^^^^ here
 
-error[type]: 'when let' else body must diverge — end it with 'return', 'panic', a call of a function that returns `Never` or, inside a loop, 'loop(...)'
+error[type]: 'when let' else body must diverge — end it with 'return', 'panic' or a call of a function that returns `Never`
  --> never_return__what_is_refused.silt:43:30
     |
  43 |   when let [x, ..] = xs else {
-    |                              ^ here
+    |                              ^ 'when let' else body must diverge — end it with 'return', 'panic' or a call of a function that returns `Never`

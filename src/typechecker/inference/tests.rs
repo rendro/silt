@@ -293,25 +293,6 @@ fn main() { let _ = check(1) }
     );
 }
 
-// ── Loop/recur type inference ───────────────────────────────────
-
-#[test]
-fn test_loop_bindings_inferred() {
-    assert_no_errors(
-        r#"
-fn factorial(n) {
-  loop i = n, acc = 1 {
-    match i <= 1 {
-      true -> acc
-      false -> loop(i - 1, acc * i)
-    }
-  }
-}
-fn main() { let _ = factorial(5) }
-        "#,
-    );
-}
-
 // ── Trait constraint checking at definition ────────────────────
 
 #[test]

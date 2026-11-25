@@ -1,0 +1,45 @@
+-- frame-budget: 1
+-- A self call comes last, and takes no frame, as the last statement of
+-- the body, of a block that comes last and of a match arm that does, and
+-- behind `return`: so a `when` or `when let` whose else goes on
+-- writes `return` before the call. Each runs 300,000 rounds, more than a
+-- frame budget of 1 MiB holds.
+import list
+
+fn fact(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> {
+      let next = (acc * n) % 1000003
+      fact(n - 1, next)
+    }
+  }
+}
+
+fn sum_even(i: Int, n: Int, acc: Int) -> Int {
+  when i < n else { return acc }
+  when i % 2 == 0 else { return sum_even(i + 1, n, acc) }
+  sum_even(i + 1, n, acc + i)
+}
+
+fn sum_somes(xs: List(Option(Int)), acc: Int) -> Int {
+  match xs {
+    [] -> acc
+    [head, ..tail] -> {
+      when let Some(n) = head else { return sum_somes(tail, acc) }
+      sum_somes(tail, acc + n)
+    }
+  }
+}
+
+fn main() {
+  println(fact(300000, 1))
+  println(sum_even(0, 300000, 0))
+  let somes = list.map(1..300000) { i ->
+    match i % 3 {
+      0 -> None
+      _ -> Some(1)
+    }
+  }
+  println(sum_somes(somes, 0))
+}

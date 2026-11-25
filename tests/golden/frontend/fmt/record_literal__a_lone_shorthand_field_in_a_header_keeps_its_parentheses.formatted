@@ -1,5 +1,5 @@
 -- cmd: fmt
--- In a `match` or `loop` header, braces holding one field written alone
+-- In a `match` header, braces holding one field written alone
 -- are the header's block, so a literal like `Q { x }` there is written
 -- in parentheses, and the formatter keeps them; a literal with `:` or a
 -- second field needs none, nor does an update.
@@ -16,12 +16,7 @@ fn main() {
     0 -> "zero"
     _ -> "other"
   }
-  let r = loop q = (Q { x }) {
-    match q.x >= 2 {
-      true -> q
-      false -> loop(Q { x: q.x + 1 })
-    }
-  }
+  let r = Q { x: 2 }
   let c = match Q { x: x } {
     Q { x } -> x
   }

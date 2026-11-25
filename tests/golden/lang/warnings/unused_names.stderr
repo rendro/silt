@@ -18,10 +18,3 @@ warning[type]: 'b' is never used
  18 |     [(a, b), ..] -> a
     |          ^ 'b' is never used
   = help: remove it, or name it `_b`
-
-warning[type]: 'steps' is never used
- --> unused_names.silt:24:15
-    |
- 24 |   loop n = 3, steps = 0 {
-    |               ^^^^^ 'steps' is never used
-  = help: remove it, or name it `_steps`

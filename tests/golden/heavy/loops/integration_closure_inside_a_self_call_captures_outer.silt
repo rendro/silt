@@ -1,0 +1,21 @@
+-- A closure created in a function that calls itself captures a
+-- variable from outside it.
+import io
+import list
+fn program() {
+  let factor = 5
+  let go = { i, acc ->
+    match i > 4 {
+      true -> acc
+      _ -> {
+        let f = { -> i * factor }
+        go(i + 1, list.append(acc, f()))
+      }
+    }
+  }
+  go(1, [])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

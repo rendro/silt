@@ -181,7 +181,8 @@ codes! {
     DuplicateBinding = "E0323", Type;
     /// `?` where it cannot propagate.
     InvalidQuestion = "E0324", Type;
-    /// `loop(...)` or a `when` else body where it may not stand.
+    /// A `when` else body that does not end, or a function declared to
+    /// return `Never` that can return.
     InvalidControlFlow = "E0325", Type;
     /// An operation the operand types do not support.
     UnsupportedOperation = "E0326", Type;

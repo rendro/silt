@@ -212,7 +212,7 @@ fn apply_discard_fixes(client: &mut LspClient, uri: &str, source: &str) -> (usiz
 
 /// The quick fix on every shape a statement can have: a statement that
 /// starts with a parenthesis, the literals, a closure, a line that
-/// starts with `-`, a loop, a match, a pipeline over several lines, a
+/// starts with `-`, a call of a closure that calls itself, a match, a pipeline over several lines, a
 /// string, and statements behind text that is not ASCII. Each unused
 /// value has the fix, and the text with every fix applied checks.
 #[test]
@@ -256,12 +256,13 @@ fn kinds() {
   { -> risky() }
   -n
   - n * 2
-  loop i = 0 {
+  let count = { i ->
     match i < 3 {
-      true -> loop(i + 1)
+      true -> count(i + 1)
       false -> i
     }
   }
+  count(0)
   match n {
     3 -> "three"
     _ -> "other"

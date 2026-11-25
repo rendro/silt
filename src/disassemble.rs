@@ -170,7 +170,7 @@ fn disassemble_instruction(
             ),
         },
 
-        // Recur: the bindings, the first of their slots, and the jump
+        // Recur: the parameters, the first of their slots, and the jump
         // back.
         Instr::Recur { argc, first, to } => {
             let distance = distance(to);
