@@ -185,12 +185,13 @@ fn main() {
   list.each(1..3) { i -> println("round {i}") }
   let total = list.fold(1..100, 0) { acc, i -> acc + i }
   println(total) -- 5050
-  let first_big = [3, 8, 12, 5] |> list.fold_until(None) { _, x ->
-    match x > 10 {
-      true -> Stop(Some(x))
-      _ -> Continue(None)
+  let first_big = [3, 8, 12, 5]
+    |> list.fold_until(None) { _, x ->
+      match x > 10 {
+        true -> Stop(Some(x))
+        _ -> Continue(None)
+      }
     }
-  }
   println(first_big) -- Some(12)
 }
 ```
@@ -268,8 +269,12 @@ the call:
 
 ```silt
 fn sum_even(i: Int, n: Int, acc: Int) -> Int {
-  when i < n else { return acc }
-  when i % 2 == 0 else { return sum_even(i + 1, n, acc) }
+  when i < n else {
+    return acc
+  }
+  when i % 2 == 0 else {
+    return sum_even(i + 1, n, acc)
+  }
   sum_even(i + 1, n, acc + i)
 }
 
