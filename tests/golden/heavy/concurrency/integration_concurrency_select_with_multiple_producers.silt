@@ -17,15 +17,16 @@ fn program() {
   task.join([p1, p2, p3])
 
   -- Select three times to collect all messages
-  loop i = 0, total = 0 {
+  let go = { i, total ->
     match i >= 3 {
       true -> total
       _ -> match channel.select([channel.Recv(ch1), channel.Recv(ch2), channel.Recv(ch3)]) {
-        channel.Received(_, Some(val)) -> loop(i + 1, total + val)
+        channel.Received(_, Some(val)) -> go(i + 1, total + val)
         _ -> total
       }
     }
   }
+  go(0, 0)
 }
 
 fn main() {

@@ -6,18 +6,19 @@ import list
 
 fn round(xs, k) {
   xs
-  |> list.map { x -> x * k + 1 }
-  |> list.filter { x -> x % 3 != 0 }
-  |> list.fold(0) { acc, x -> (acc + x) % 1000003 }
+    |> list.map { x -> x * k + 1 }
+    |> list.filter { x -> x % 3 != 0 }
+    |> list.fold(0) { acc, x -> (acc + x) % 1000003 }
 }
 
 fn main() {
   let xs = list.map(1..50000) { x -> x }
-  let total = loop k = 1, acc = 0 {
+  let go = { k, acc ->
     match k > 15 {
       true -> acc
-      false -> loop(k + 1, acc + round(xs, k))
+      false -> go(k + 1, acc + round(xs, k))
     }
   }
+  let total = go(1, 0)
   println(total)
 }

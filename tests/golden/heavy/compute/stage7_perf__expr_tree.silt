@@ -85,15 +85,16 @@ fn main() {
   let tree = build(16, 1)
   let small = simplify(tree)
   println("{Size.size(tree)} {Size.size(small)}")
-  let total = loop i = 0, acc = 0 {
+  let go = { i, acc ->
     match i >= 60 {
       true -> acc
       false -> {
         let env = Env { x: i, y: i * 2 + 1 }
-        loop(i + 1, (acc + eval(small, env)) % 1000003)
+        go(i + 1, (acc + eval(small, env)) % 1000003)
       }
     }
   }
+  let total = go(0, 0)
   println(total)
   let label = list.map(1..2000) { i -> "{i}:{i % 7}" } |> string.join(",")
   println(string.length(label))

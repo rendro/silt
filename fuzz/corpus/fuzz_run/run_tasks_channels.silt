@@ -9,12 +9,13 @@ fn main() {
     channel.close(ch)
   }
   let total = task.background([producer]) { ->
-    loop acc = 0 {
+    let go = { acc ->
       match channel.receive(ch) {
-        Some(n) -> loop(acc + n)
+        Some(n) -> go(acc + n)
         None -> acc
       }
     }
+    go(0)
   }
   println(total)
   println("produced")

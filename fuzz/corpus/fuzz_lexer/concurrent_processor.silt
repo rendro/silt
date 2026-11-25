@@ -83,7 +83,7 @@ fn main() {
   println("Workers: {num_workers}")
   println("Files to process: {num_files}")
   println("")
-  let summary = loop collected = 0, successes = 0, failures = 0 {
+  let go = { collected, successes, failures ->
     match collected >= num_files {
       true -> (successes, failures)
       _ -> {
@@ -95,12 +95,12 @@ fn main() {
                 let (path, lines, words, dept, revenue) = info
                 println("[Worker {worker_id}] {path}")
                 println("  Lines: {lines}, Words: {words}, Dept: {dept}, Revenue: {revenue}")
-                loop(collected + 1, successes + 1, failures)
+                go(collected + 1, successes + 1, failures)
               }
               Err(err_info) -> {
                 let (path, err) = err_info
                 println("[Worker {worker_id}] FAILED {path}: {err}")
-                loop(collected + 1, successes, failures + 1)
+                go(collected + 1, successes, failures + 1)
               }
             }
           }
@@ -116,6 +116,7 @@ fn main() {
       }
     }
   }
+  let summary = go(0, 0, 0)
   -- Use channel.select to wait on both result channels
   -- Close result channels for graceful shutdown
   channel.close(results_1)

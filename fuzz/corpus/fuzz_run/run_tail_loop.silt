@@ -1,10 +1,11 @@
 fn sum_to(n) {
-  loop i = 0, acc = 0 {
+  let go = { i, acc ->
     match i > n {
       true -> acc
-      false -> loop(i + 1, acc + i)
+      false -> go(i + 1, acc + i)
     }
   }
+  go(0, 0)
 }
 
 fn count_down(n, acc) {
