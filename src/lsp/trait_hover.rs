@@ -290,7 +290,7 @@ fn prelude_type_declaration(name: &str) -> Option<String> {
 }
 
 /// The fields of silt's own variant `qualified` (`Some` of the prelude,
-/// `list.Stop` of a module), each type as a program writes it (`a`,
+/// `channel.Message` of a module), each type as a program writes it (`a`,
 /// `io.IoError`), as an enum of a program has its variants' fields.
 /// `None` when no builtin enum declares the variant.
 pub(super) fn builtin_variant_fields(qualified: &str) -> Option<Vec<String>> {

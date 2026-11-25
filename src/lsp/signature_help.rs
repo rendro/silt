@@ -157,7 +157,7 @@ impl Server {
     }
 
     /// The signature of silt's own `name` (`list.map`, `println` of the
-    /// prelude, a variant: `Some`, `list.Stop`), with each parameter
+    /// prelude, a variant: `Some`, `channel.Message`), with each parameter
     /// where the signature writes it, and its stdlib markdown: its own
     /// section (of the globals page, for one of the prelude).
     fn builtin_signature(

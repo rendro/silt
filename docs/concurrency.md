@@ -167,6 +167,61 @@ gives the other tasks that wait on the channel their turn, which is what
 spreads work over the workers of `task.each`.
 ([`channel.each`](stdlib/channel-task.md#channeleach))
 
+### Keeping state: `channel.fold_until(ch, init) { state, msg -> ... }`
+
+An actor is a task that owns some state and changes it only by the
+messages it receives. `channel.fold_until` is its shape: the function is
+given the state and each message, and gives `Continue(next)` to go on
+with the next state or `Stop(value)` to end with a value, which the call
+gives. When the channel is closed and empty, the call gives the last
+state. A `Stop` leaves the channel open, with what is still in it.
+
+```silt
+import channel
+import task
+
+type Msg { Add(Int), Get(Channel(Int)), Quit }
+
+fn counter(inbox: Channel(Msg)) -> Int {
+  channel.fold_until(inbox, 0) { count, msg ->
+    match msg {
+      Add(n) -> Continue(count + n)
+      Get(reply) -> {
+        channel.send(reply, count)
+        Continue(count)
+      }
+      Quit -> Stop(count)
+    }
+  }
+}
+
+fn main() {
+  let inbox = channel.new(10)
+  let reply = channel.new(1)
+  task.join(
+    [
+      { -> println("ended at {counter(inbox)}") },
+      { ->
+        channel.send(inbox, Add(2))
+        channel.send(inbox, Add(3))
+        channel.send(inbox, Get(reply))
+        println("count is {channel.receive(reply)}")
+        channel.send(inbox, Quit)
+      },
+    ],
+  )
+}
+-- prints:
+--   count is Some(5)
+--   ended at 5
+```
+
+`Continue` and `Stop` are the prelude's, the same steps `list.fold_until`
+and `stream.fold_until` take. A message type of your own with a variant
+named `Stop` hides the prelude's in its module; write that one as
+`Step.Stop(value)` there.
+([`channel.fold_until`](stdlib/channel-task.md#channelfold_until))
+
 ### Unbuffered channels (true rendezvous)
 
 `channel.new(0)` creates a true rendezvous channel, with capacity 0. The

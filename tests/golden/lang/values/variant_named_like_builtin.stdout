@@ -2,5 +2,5 @@
 empty, leaf b
 Leaf < Empty: true
 Continue < Stop: true
-list.Stop < list.Continue: true
+Step.Stop < Step.Continue: true
 fold_until: 3

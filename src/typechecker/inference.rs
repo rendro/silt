@@ -4181,6 +4181,20 @@ impl TypeChecker {
                             r.name
                         ));
                     }
+                    // A variant of the program's own named like one of
+                    // the prelude's (`Stop` of a message type) hides it;
+                    // the prelude's is reached through its type.
+                    if let ExprKind::Ident(name) = &callee.kind
+                        && let Some(prelude) =
+                            crate::builtins::registry::prelude_enum_of(&resolve(*name))
+                        && !other.is_builtin(prelude)
+                    {
+                        d = d.with_help(format!(
+                            "`{name}` here is the variant of `{}`, which hides the prelude's \
+                             `{name}`: write `{prelude}.{name}`",
+                            self.show_type(other)
+                        ));
+                    }
                     self.errors.push(d);
                     self.fresh_var()
                 }

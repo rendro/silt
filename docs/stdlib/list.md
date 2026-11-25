@@ -440,7 +440,9 @@ list.fold_until(xs: List(a), init: b, f: Fn(b, a) -> Step(b)) -> b
 ```
 
 Like `fold`, but the callback returns `Continue(acc)` to keep going or
-`Stop(value)` to terminate early.
+`Stop(value)` to terminate early. `Continue` and `Stop` are the prelude's
+(the variants of `Step`, which `channel.fold_until` and `stream.fold_until`
+take too): they need no import.
 
 ```silt
 import list
@@ -450,8 +452,8 @@ fn main() {
   let partial_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
     let next = acc + x
     match {
-      next > 5 -> list.Stop(acc)
-      _ -> list.Continue(next)
+      next > 5 -> Stop(acc)
+      _ -> Continue(next)
     }
   }
   println(partial_sum) -- 3

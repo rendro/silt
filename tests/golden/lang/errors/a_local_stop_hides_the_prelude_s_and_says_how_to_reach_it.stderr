@@ -1,0 +1,6 @@
+error[type]: `Msg` is not callable
+ --> a_local_stop_hides_the_prelude_s_and_says_how_to_reach_it.silt:13:15
+    |
+ 13 |       Stop -> Stop(count)
+    |               ^^^^^^^^^^^ `Msg` is not callable
+  = help: `Stop` here is the variant of `Msg`, which hides the prelude's `Stop`: write `Step.Stop`

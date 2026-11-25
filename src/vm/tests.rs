@@ -3598,20 +3598,20 @@ fn main() {
 type C {
   n: Int,
 }
-trait Step {
+trait Turn {
   fn go(self, k: Int) -> Int
 }
-trait Step for C {
+trait Turn for C {
   fn go(self, k: Int) -> Int {
     match k {
       0 -> 1 / k
-      _ -> Step.go(self, k - 1)
+      _ -> Turn.go(self, k - 1)
     }
   }
 }
 fn main() {
   let c = C { n: 1 }
-  println(Step.go(c, 5))
+  println(Turn.go(c, 5))
 }
 ";
         assert_eq!(

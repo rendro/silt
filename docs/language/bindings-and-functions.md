@@ -34,18 +34,18 @@ Concurrency primitives live in modules (`channel.new`, `channel.send`,
 namespace clean and avoids the PHP problem of too many bare globals.
 
 The following names are always available without an import: `print`,
-`println`, `panic`, `Ok`, `Err`, `Some`, `None`, plus the prelude's types
-written as values, their descriptors (`Int`, `Float`, `String`, `Bool`,
-`List`, `Map`, `Set`, `Channel`, `Option`, `Result` and `Bytes`; used
-with type-directed APIs like `json.parse`). Everything else is
-reached through its module, the stdlib's types and constructors included:
-`list.Stop(acc)`, `channel.Message(v)`, `time.Monday`, `http.GET` (after
-`import list`, `import channel`, ...), or listed in a selective import
-(`import channel.{ Message }`).
+`println`, `panic`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, plus
+the prelude's types written as values, their descriptors (`Int`, `Float`,
+`String`, `Bool`, `List`, `Map`, `Set`, `Channel`, `Option`, `Result`,
+`Step` and `Bytes`; used with type-directed APIs like `json.parse`).
+Everything else is reached through its module, the stdlib's types and
+constructors included: `channel.Message(v)`, `time.Monday`, `http.GET`
+(after `import channel`, `import time`, ...), or listed in a selective
+import (`import channel.{ Message }`).
 
 What is _not_ a keyword matters too. `true`/`false` are builtin literals.
-`Ok`, `Err`, `Some`, `None` are builtin variant constructors -- ordinary
-values defined in the prelude. `_` is a wildcard pattern token. This keeps
+`Ok`, `Err`, `Some`, `None`, `Stop`, `Continue` are builtin variant
+constructors -- ordinary values defined in the prelude. `_` is a wildcard pattern token. This keeps
 the keyword count honest.
 
 ### Expression-Based
@@ -506,7 +506,7 @@ nothing more: `silt fmt` writes `x` for a last line `return x`.
 function of its own: a `return` inside a closure ends that call of the
 closure, not the function around it. So a callback cannot end a
 `list.each` or a `list.fold` early. To stop at the first match, use
-`list.find`, `list.fold_until` (it stops at `list.Stop(value)`) or a
+`list.find`, `list.fold_until` (it stops at `Stop(value)`) or a
 `loop`:
 
 ```silt
@@ -515,8 +515,8 @@ import list
 fn first_negative(xs: List(Int)) -> Option(Int) {
   list.fold_until(xs, None) { _, x ->
     match {
-      x < 0 -> list.Stop(Some(x))
-      _ -> list.Continue(None)
+      x < 0 -> Stop(Some(x))
+      _ -> Continue(None)
     }
   }
 }

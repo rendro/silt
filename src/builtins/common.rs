@@ -4,6 +4,22 @@ use crate::typeinfo::bv;
 use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::VmError;
 
+/// What a step of a fold that can end early (`list.fold_until`,
+/// `channel.fold_until`, `stream.fold_until`) says: `Continue(state)`
+/// goes on with that state, `Stop(value)` ends the fold with that value.
+pub(crate) fn fold_step(step: Value) -> std::ops::ControlFlow<Value, Value> {
+    use std::ops::ControlFlow;
+    match step {
+        Value::Variant(variant) if variant.fields().len() == 1 && variant.is(bv::CONTINUE) => {
+            ControlFlow::Continue(variant.fields()[0].clone())
+        }
+        Value::Variant(variant) if variant.fields().len() == 1 && variant.is(bv::STOP) => {
+            ControlFlow::Break(variant.fields()[0].clone())
+        }
+        other => ControlFlow::Continue(other),
+    }
+}
+
 /// The most bytes one read of a connection takes (`tcp.read`, a chunk
 /// of `stream.tcp_chunks`), and one read of a file of no known length
 /// (`stream.file_chunks`): a caller may ask for more, and gets what one

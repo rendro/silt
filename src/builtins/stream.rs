@@ -2060,6 +2060,35 @@ builtins! {
         })
     }
 
+    // A fold that may stop asks for one value at a time, as `first`
+    // does; at `Stop` the sink is over, which stops the stage that
+    // feeds it.
+    fn fold_until(ch: Chan, init: &Value, f: &Value) -> Result<Step, VmError> {
+        let ch = ch.clone();
+        let mut acc = init.clone();
+        let callback = f.clone();
+        sink("stream.fold_until", ch, false, move |got| {
+            Ok(match got {
+                Got::Start => Next::Take(0),
+                // The call is given the state, so a state the call
+                // alone holds can be changed in place.
+                Got::Value(_, v) => {
+                    let state = std::mem::replace(&mut acc, Value::Unit);
+                    Next::Call(callback.clone(), vec![state, v])
+                }
+                Got::Returned(step) => match super::common::fold_step(step) {
+                    std::ops::ControlFlow::Continue(next) => {
+                        acc = next;
+                        Next::Take(0)
+                    }
+                    std::ops::ControlFlow::Break(value) => Next::Done(value),
+                },
+                Got::End => Next::Done(std::mem::replace(&mut acc, Value::Unit)),
+                _ => return unexpected(),
+            })
+        })
+    }
+
     fn length(ch: Chan) -> Result<Step, VmError> {
         let ch = ch.clone();
         let mut n: i64 = 0;

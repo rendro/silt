@@ -1,0 +1,14 @@
+-- exit: 1
+-- A stream that fails while `channel.fold_until` reads it makes the
+-- fold raise its failure, once, after the values that came before it.
+import channel
+import stream
+
+fn main() {
+  let quotients = stream.from_list([2, 1, 0, 5]) |> stream.map({ x -> 10 / x })
+  let total = channel.fold_until(quotients, 0) { acc, q ->
+    println("got {q}")
+    Continue(acc + q)
+  }
+  println("unreachable {total}")
+}

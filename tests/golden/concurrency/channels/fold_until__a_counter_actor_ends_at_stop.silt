@@ -1,0 +1,43 @@
+-- An actor keeps its state in `channel.fold_until`: each message gives
+-- `Continue(next)` or `Stop(value)`, and the call gives the value of the
+-- `Stop`. The fold leaves the channel open: the message after `Quit` is
+-- still in it.
+import channel
+import task
+
+type Msg { Add(Int), Get(Channel(Int)), Quit }
+
+fn counter(inbox: Channel(Msg)) -> Int {
+  channel.fold_until(inbox, 0) { count, msg ->
+    match msg {
+      Add(n) -> Continue(count + n)
+      Get(reply) -> {
+        channel.send(reply, count)
+        Continue(count)
+      }
+      Quit -> Stop(count)
+    }
+  }
+}
+
+fn main() {
+  let inbox = channel.new(10)
+  let reply = channel.new(1)
+  task.join(
+    [
+      { -> println("ended at {counter(inbox)}") },
+      { ->
+        channel.send(inbox, Add(2))
+        channel.send(inbox, Add(3))
+        channel.send(inbox, Get(reply))
+        println("count is {channel.receive(reply)}")
+        channel.send(inbox, Quit)
+        channel.send(inbox, Add(100))
+      },
+    ],
+  )
+  match channel.try_receive(inbox) {
+    channel.Message(Add(n)) -> println("still in the inbox: Add({n})")
+    _ -> println("the inbox lost its message")
+  }
+}

@@ -36,7 +36,7 @@ const ERRORS_PAGE: &str = include_str!("../../../docs/stdlib/errors.md");
 const GLOBALS_PAGE: &str = include_str!("../../../docs/stdlib/globals.md");
 
 /// The prelude's variants, which the globals page documents.
-const PRELUDE_VARIANTS: &[&str] = &["Ok", "Err", "Some", "None"];
+const PRELUDE_VARIANTS: &[&str] = &["Ok", "Err", "Some", "None", "Stop", "Continue"];
 
 /// Every reference page, by its file name under `docs/stdlib/`, in the
 /// order of the modules; `errors.md` and `globals.md` last.

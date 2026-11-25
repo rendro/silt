@@ -1,0 +1,20 @@
+-- exit: 1
+-- stderr-contains: type mismatch: expected Step(Int), got Int
+-- Each arm of a fold's step gives `Continue` or `Stop`: an arm that
+-- gives the bare state does not type-check.
+import channel
+
+type Msg { Add(Int), Quit }
+
+fn counter(inbox: Channel(Msg)) -> Int {
+  channel.fold_until(inbox, 0) { count, msg ->
+    match msg {
+      Add(n) -> count + n
+      Quit -> Stop(count)
+    }
+  }
+}
+
+fn main() {
+  println(counter(channel.new(1)))
+}

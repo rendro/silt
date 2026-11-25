@@ -106,6 +106,7 @@ an earlier value. `buffered(ch, 0)` reads nothing ahead.
 |----------|-----------|
 | `collect` | `(Channel(a)) -> List(a)` |
 | `fold` | `(Channel(a), b, Fn(b, a) -> b) -> b` |
+| `fold_until` | `(Channel(a), b, Fn(b, a) -> Step(b)) -> b` |
 | `length` | `(Channel(a)) -> Int` |
 | `first` | `(Channel(a)) -> Option(a)` |
 | `last` | `(Channel(a)) -> Option(a)` |
@@ -306,7 +307,7 @@ fn main() {
   `channel.each`) asks for every value: the stage before it works up to 16
   values ahead while it reads, and so does each stage before that, up to a
   `take`, a `take_while` or a `zip`, which ask for one value at a time, as
-  `first` and a read by hand do. A read that does not wait
+  `first`, `fold_until`, `channel.fold_until` and a read by hand do. A read that does not wait
   (`channel.try_receive`, a `channel.receive_timeout` that runs out) asks
   too: the value it asked for comes to a later read, and is gone if the
   stream is closed or cut short before then (at most one value for each
@@ -336,7 +337,8 @@ fn main() {
   reads the stream any more (it is cut short, closed or left), `feed` is
   stopped where it is.
 - **A pipeline that is cut short stops.** When a stage or a sink reads no
-  further (`take`, `take_while`, `first`, a failure downstream), the stage
+  further (`take`, `take_while`, `first`, a `Stop` of `fold_until`, a
+  failure downstream), the stage
   that feeds it is stopped, and so on up to the source. So
   `stream.repeat(x) |> stream.take(3)` leaves nothing running. The output
   of a stage is closed by this: read it with one consumer. A channel that
@@ -947,6 +949,36 @@ import stream
 
 fn main() {
   println(stream.from_range(1, 10) |> stream.fold(0) { acc, n -> acc + n }) -- 55
+}
+```
+
+
+## `stream.fold_until`
+
+```
+stream.fold_until(ch: Channel(a), init: b, f: Fn(b, a) -> Step(b)) -> b
+```
+
+Folds the values of `ch` into a state, starting from `init`, as
+`list.fold_until` folds a list: `f` gives `Continue(next)` to go on or
+`Stop(value)` to end, and the call gives that value, or the last state
+when the stream ends. It asks for one value at a time, as `first` does,
+and a `Stop` cuts the stream short: the stages that feed it are stopped,
+as when `stream.take` has its values. A stage that fails makes the fold
+raise its failure.
+
+```silt
+import stream
+
+fn main() {
+  -- The sum of the values before the first one above 3.
+  let total = stream.from_range(1, 1000000) |> stream.fold_until(0) { acc, n ->
+    match n > 3 {
+      true -> Stop(acc)
+      false -> Continue(acc + n)
+    }
+  }
+  println(total) -- 6
 }
 ```
 

@@ -15,6 +15,7 @@ communication between the tasks that the calls of `task` run.
 |----------|-----------|-------------|
 | `close` | `(Channel(a)) -> ()` | Close the channel |
 | `each` | `(Channel(a), Fn(a) -> ()) -> ()` | Call a function with each message until the channel closes |
+| `fold_until` | `(Channel(a), b, Fn(b, a) -> Step(b)) -> b` | Fold the messages until a step gives `Stop` or the channel closes; leaves the channel open |
 | `new` | `(Int) -> Channel(a)` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel(a)) -> Option(a)` | Blocking receive: `None` once the channel is closed and empty |
 | `receive_timeout` | `(Channel(a), Duration) -> ChannelResult(a)` | Receive, waiting no longer than a duration |
@@ -75,6 +76,65 @@ fn main() {
     ],
   )
   -- prints 1, then 2
+}
+```
+
+
+## `channel.fold_until`
+
+```
+channel.fold_until(ch: Channel(a), init: b, f: Fn(b, a) -> Step(b)) -> b
+```
+
+Receives messages from the channel and folds them into a state, starting
+from `init`: `f` is given the state and each message, and gives
+`Continue(next)` to go on with `next` or `Stop(value)` to end. The call
+gives that value, or the last state when the channel is closed and empty.
+It is how an actor keeps its state: every arm of the `match` says what
+comes next, so an arm that forgets to go on does not type-check.
+
+A `Stop` leaves the channel as it is: open, with the messages after the
+one that stopped the fold still in it, for another reader. The fold asks
+for one message at a time, so a stream read with it is not read ahead (to
+stop a stream at `Stop`, use `stream.fold_until`). A stream that fails
+makes the fold raise the failure, as `channel.each` does.
+
+```silt
+import channel
+import task
+
+type Msg { Add(Int), Get(Channel(Int)), Quit }
+
+fn counter(inbox: Channel(Msg)) -> Int {
+  channel.fold_until(inbox, 0) { count, msg ->
+    match msg {
+      Add(n) -> Continue(count + n)
+      Get(reply) -> {
+        channel.send(reply, count)
+        Continue(count)
+      }
+      Quit -> Stop(count)
+    }
+  }
+}
+
+fn main() {
+  let inbox = channel.new(10)
+  let reply = channel.new(1)
+  let total = channel.new(1)
+  task.join(
+    [
+      { -> channel.send(total, counter(inbox)) },
+      { ->
+        channel.send(inbox, Add(2))
+        channel.send(inbox, Add(3))
+        channel.send(inbox, Get(reply))
+        println(channel.receive(reply)) -- Some(5)
+        channel.send(inbox, Quit)
+      },
+    ],
+  )
+  println(channel.receive(total)) -- Some(5)
 }
 ```
 
