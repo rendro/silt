@@ -1,0 +1,30 @@
+-- The frame budget is the program's, not each task's: 200 tasks that
+-- each recurse 50,000 levels at once want more than its 128 MiB, and a
+-- task whose frames ask for more when it is used up ends with the
+-- stack-overflow error, whichever tasks hold the rest. A task gives back
+-- what its frames took when they shrink and when it ends: afterwards the
+-- program's own code recurses 600,000 levels deep.
+import list
+import string
+import task
+
+fn deep(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + deep(n - 1)
+  }
+}
+
+fn main() {
+  let results = task.map(list.map(1..200) { i -> i }, 200) { _ ->
+    task.guard({ -> deep(50000) })
+  }
+  let ended = list.filter(results) { r ->
+    match r {
+      Ok(v) -> v == 50000
+      Err(e) -> string.starts_with(e.message, "stack overflow: call frames take more than 128 MiB; this task holds ")
+    }
+  }
+  println("{list.length(ended)} tasks ended, each with its value or a stack overflow")
+  println(deep(600000))
+}

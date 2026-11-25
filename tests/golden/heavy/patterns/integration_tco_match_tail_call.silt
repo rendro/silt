@@ -1,5 +1,7 @@
 -- Tail call inside match arm — should use constant stack space.
--- 200_000 exceeds the 100_000 frame limit, proving TCO is active.
+-- frame-budget: 1
+-- 200_000 levels are far more than a frame budget of 1 MiB holds, proving
+-- TCO is active.
 import io
 fn count_down(n, acc) {
   match n {

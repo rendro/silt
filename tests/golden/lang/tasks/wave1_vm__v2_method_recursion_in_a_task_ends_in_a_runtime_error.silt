@@ -1,6 +1,7 @@
 -- exit: 1
 -- stderr-contains: error[runtime]
--- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
+-- frame-budget: 1
+-- stderr-contains: stack overflow: call frames take more than 1 MiB
 -- stderr-not-contains: overflowed its stack
 import task
 

@@ -1,3 +1,4 @@
+-- frame-budget: 1
 -- Tail call in a guardless match arm.
 import io
 fn countdown(n) {

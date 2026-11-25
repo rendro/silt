@@ -166,7 +166,7 @@ await test('deep recursion is a runtime error, not a trap', (mod) => {
 }
 
 fn main() {
-  println(depth(1000000))
+  println(depth(100000000))
 }
 `);
   assert.match(ran.error, /^error\[runtime\]: stack overflow/);

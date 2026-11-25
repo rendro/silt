@@ -9,23 +9,22 @@ use crate::value::Value;
 
 use super::dispatch::{catch_builtin_panic, invoke_host_fn};
 use super::run::push_with;
-use super::runtime::{CallFrame, Frame, Native, Step};
+use super::runtime::{CallFrame, Frame, Native, Room, Step, chunks_for, frame_bytes};
 use super::{Vm, VmError};
 
-/// Maximum number of calls of silt functions in progress on a VM
-/// before it reports a stack-overflow error (see `stack_overflow_error`
-/// for the user-facing message). Every such call takes a frame, however
-/// it is made: by a call, by a method call, or by a builtin that was
-/// passed the function (`list.map`). The builtin's own frame is not
-/// counted: it comes with a function's frame, the one of its caller.
-const MAX_FRAMES: usize = 100_000;
-
-/// Build the user-facing stack-overflow error reported when a call would
-/// exceed `MAX_FRAMES`. A call in tail position, of a function or of a
-/// method, runs in its caller's frame; any other takes one.
-fn stack_overflow_error() -> VmError {
+/// The error of a call whose frame the frame budget has no room for
+/// (`runtime::FrameBudget`): the budget, of `limit` MiB, is the
+/// program's, so the VM that asks when it is used up gets it, and the
+/// error says how much that VM's own frames take (`bytes`). A call in
+/// tail position, of a function or of a method, runs in its caller's
+/// frame; any other takes one.
+fn stack_overflow_error(limit: usize, bytes: usize) -> VmError {
+    let holds = match bytes >> 20 {
+        0 => format!("{} KiB", bytes >> 10),
+        mib => format!("{mib} MiB"),
+    };
     VmError::new(format!(
-        "stack overflow: recursion depth exceeded {MAX_FRAMES} frames"
+        "stack overflow: call frames take more than {limit} MiB; this task holds {holds}"
     ))
     .with_help(
         "a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own",
@@ -44,15 +43,18 @@ pub(super) enum Entered {
 
 impl Vm {
     /// Push the frame of a call of `closure`, whose arguments are the
-    /// stack's values from `base_slot` on, if the VM has room for one
-    /// more.
+    /// stack's values from `base_slot` on, if the frame budget has room
+    /// for it. Every call of a silt function takes a frame, however it
+    /// is made: by a call, by a method call, or by a builtin that was
+    /// passed the function (`list.map`), whose own frame is counted too.
     fn push_code_frame(
         &mut self,
         closure: std::sync::Arc<crate::bytecode::VmClosure>,
         base_slot: usize,
     ) -> Result<(), VmError> {
-        if self.frames.len() - self.native_frames >= MAX_FRAMES {
-            return Err(stack_overflow_error());
+        let bytes = frame_bytes(self.frames.len() + 1, self.stack.len());
+        if !self.room.fits(bytes) {
+            self.make_room(bytes)?;
         }
         // (Built where it goes, as the values the loop pushes.)
         push_with(&mut self.frames, || {
@@ -65,10 +67,42 @@ impl Vm {
         Ok(())
     }
 
+    /// Take from the frame budget what frames of `bytes` need beyond
+    /// what this VM holds, or give back what they do not: a call's
+    /// frames are outside the VM's room (`Room`).
+    #[cold]
+    #[inline(never)]
+    fn make_room(&mut self, bytes: usize) -> Result<(), VmError> {
+        let need = chunks_for(bytes);
+        let budget = &self.runtime.frame_budget;
+        if need > self.held {
+            if !budget.take(need - self.held) {
+                return Err(stack_overflow_error(budget.limit(), bytes));
+            }
+        } else {
+            budget.give(self.held - need);
+        }
+        self.held = need;
+        self.room = Room::holding(need);
+        Ok(())
+    }
+
+    /// Give back to the frame budget what this VM's frames do not need
+    /// now, all of it beyond `keep` chunks: where its frames have
+    /// shrunk: a slice of a task ends, a run ends or fails (a REPL
+    /// entry is over), the VM ends.
+    pub(super) fn give_back_frames(&mut self) {
+        let need = chunks_for(frame_bytes(self.frames.len(), self.stack.len()));
+        if need < self.held {
+            self.runtime.frame_budget.give(self.held - need);
+            self.held = need;
+            self.room = Room::holding(need);
+        }
+    }
+
     /// Push the frame of a builtin.
     pub(crate) fn push_native_frame(&mut self, native: Box<dyn Native>) {
         self.frames.push(Frame::Native(native));
-        self.native_frames += 1;
     }
 
     /// Call the value in the stack's slot `func_slot` with the `argc`

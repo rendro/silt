@@ -201,14 +201,29 @@ fn time_slice_setting() -> Result<Option<usize>, String> {
     }
 }
 
+/// `SILT_FRAME_BUDGET`, in MiB: `Ok(None)` where it is not set, the
+/// error's text where silt cannot read it.
+pub(crate) fn frame_budget_setting() -> Result<Option<usize>, String> {
+    let Some(value) = setting("SILT_FRAME_BUDGET") else {
+        return Ok(None);
+    };
+    match value.trim().parse::<usize>() {
+        Ok(mib) if mib > 0 => Ok(Some(mib)),
+        _ => Err(format!(
+            "SILT_FRAME_BUDGET='{value}' is not a number of MiB: write a whole number above 0, as in 64"
+        )),
+    }
+}
+
 /// What is wrong with the runtime's settings in the environment
-/// (`SILT_IO_TIMEOUT`, `SILT_TIME_SLICE`), if anything. `silt run` and
-/// `silt test` refuse to start then: a safety setting with a typo would
-/// otherwise be silently not there.
+/// (`SILT_IO_TIMEOUT`, `SILT_TIME_SLICE`, `SILT_FRAME_BUDGET`), if
+/// anything. `silt run` and `silt test` refuse to start then: a safety
+/// setting with a typo would otherwise be silently not there.
 pub(crate) fn settings_error() -> Option<String> {
     io_timeout_setting()
         .err()
         .or_else(|| time_slice_setting().err())
+        .or_else(|| frame_budget_setting().err())
 }
 
 /// What the error of an I/O operation says when the wait for it ended

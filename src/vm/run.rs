@@ -1590,10 +1590,7 @@ impl Vm {
             };
             let step = super::dispatch::resume_native(self, native.as_mut(), value);
             let entered = match step {
-                Ok(Step::Done(result)) => {
-                    self.native_frames -= 1;
-                    Entered::Value(result)
-                }
+                Ok(Step::Done(result)) => Entered::Value(result),
                 Ok(Step::Run(next)) => {
                     self.frames.push(Frame::Native(next));
                     Entered::Native
@@ -1633,11 +1630,11 @@ impl Vm {
     pub(super) fn unwind(&mut self, floor: usize, stack_floor: usize) {
         while self.frames.len() > floor {
             if let Some(Frame::Native(mut native)) = self.frames.pop() {
-                self.native_frames -= 1;
                 native.abandon(self);
             }
         }
         self.stack.truncate(stack_floor);
+        self.give_back_frames();
         self.tco_elided.prune(floor);
         self.pending_input = None;
         self.half = None;
@@ -1897,7 +1894,6 @@ impl Vm {
         self.unwind(at + 1, stack);
         // The guard's frame is done.
         if let Some(Frame::Native(_)) = self.frames.pop() {
-            self.native_frames -= 1;
             self.guards -= 1;
         }
         self.tco_elided.prune(at);
@@ -1923,7 +1919,10 @@ impl Vm {
         stack_floor: usize,
     ) -> Result<Value, VmError> {
         let error = match run {
-            Ok(Slice::Done(value)) => return Ok(value),
+            Ok(Slice::Done(value)) => {
+                self.give_back_frames();
+                return Ok(value);
+            }
             Ok(Slice::OutOfBudget | Slice::Yielded | Slice::Parked(_)) => {
                 VmError::internal("a run to the end stopped before it")
             }
@@ -1948,7 +1947,11 @@ impl Vm {
             return SliceResult::Failed(e);
         }
         let ran = self.run_frames(0, max_steps);
-        match self.caught(0, ran) {
+        let ran = self.caught(0, ran);
+        // (What the task's frames no longer take is given back once a
+        // slice, not on every return.)
+        self.give_back_frames();
+        match ran {
             Ok(Slice::Done(value)) => SliceResult::Completed(value),
             Ok(Slice::OutOfBudget) => match self.runtime.charge(max_steps) {
                 Ok(()) => SliceResult::Yielded,

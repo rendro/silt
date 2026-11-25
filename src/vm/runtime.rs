@@ -533,6 +533,135 @@ impl OwnClosures {
     }
 }
 
+// ── The frame budget ──────────────────────────────────────────────
+
+/// The size of the pieces in which a VM takes the frame budget and gives
+/// it back.
+pub(crate) const FRAME_CHUNK: usize = 1 << 20;
+
+/// The bytes of frames and slots each VM has of its own, outside the
+/// budget: a program can have a hundred thousand tasks, and a task of
+/// ordinary depth costs the budget nothing (nor can it be the one that
+/// gets the error for another's runaway).
+pub(crate) const FRAME_ALLOWANCE: usize = 64 << 10;
+
+/// The budget unless the environment (`SILT_FRAME_BUDGET`) or an
+/// embedder ([`Vm::set_frame_budget`]) says otherwise, in MiB: about a
+/// million levels of a small function's recursion.
+pub(crate) const FRAME_BUDGET_MIB: usize = 128;
+
+/// How far below the chunk it last took a VM's frames must shrink before
+/// it gives that chunk back on a call: a recursion that goes up and down
+/// across the edge of a chunk does not take it and give it back on every
+/// call.
+const FRAME_SLACK: usize = 16 << 10;
+
+/// The bytes of a VM's frames that the budget counts: each frame
+/// (`size_of::<Frame>()`) and each slot of the stack (`size_of::<Value>()`),
+/// not what the slots point to.
+pub(crate) const fn frame_bytes(frames: usize, slots: usize) -> usize {
+    frames * std::mem::size_of::<Frame>() + slots * std::mem::size_of::<Value>()
+}
+
+/// The chunks a VM whose frames take `bytes` needs from the budget.
+pub(crate) const fn chunks_for(bytes: usize) -> usize {
+    bytes.saturating_sub(FRAME_ALLOWANCE).div_ceil(FRAME_CHUNK)
+}
+
+/// What the call frames of a program, its tasks' included, may take
+/// beyond the allowance each VM has (`FRAME_ALLOWANCE`), in chunks of
+/// `FRAME_CHUNK`. One counter for the program, not one per VM: the VM
+/// whose frames grow into a new chunk takes it, and the one that asks
+/// when none is left gets the stack-overflow error, whichever VM holds
+/// the rest.
+pub(crate) struct FrameBudget {
+    /// How many chunks there are.
+    limit: std::sync::atomic::AtomicUsize,
+    /// How many of them the VMs hold.
+    taken: std::sync::atomic::AtomicUsize,
+}
+
+impl FrameBudget {
+    pub(crate) fn new(mib: usize) -> Self {
+        FrameBudget {
+            limit: mib.into(),
+            taken: 0.into(),
+        }
+    }
+
+    /// How many chunks (MiB) there are.
+    pub(crate) fn limit(&self) -> usize {
+        self.limit.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_limit(&self, mib: usize) {
+        self.limit.store(mib, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Take `chunks` more, if that many are left.
+    pub(crate) fn take(&self, chunks: usize) -> bool {
+        use std::sync::atomic::Ordering;
+        let limit = self.limit();
+        let mut taken = self.taken.load(Ordering::Acquire);
+        loop {
+            let Some(after) = taken.checked_add(chunks).filter(|&after| after <= limit) else {
+                return false;
+            };
+            match self.taken.compare_exchange_weak(
+                taken,
+                after,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(now) => taken = now,
+            }
+        }
+    }
+
+    /// Give back `chunks` that were taken.
+    pub(crate) fn give(&self, chunks: usize) {
+        if chunks != 0 {
+            self.taken
+                .fetch_sub(chunks, std::sync::atomic::Ordering::AcqRel);
+        }
+    }
+
+    /// How many chunks the VMs hold now.
+    #[cfg(test)]
+    pub(crate) fn taken(&self) -> usize {
+        self.taken.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+/// The sizes (`frame_bytes`) between which a VM's frames need nothing
+/// of the budget beyond what the VM holds, and hold nothing it should
+/// give back: a call compares the size of its frames with them, and
+/// only outside them looks at the budget.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Room {
+    pub(crate) low: usize,
+    pub(crate) high: usize,
+}
+
+impl Room {
+    /// The room of a VM that holds `held` chunks.
+    pub(crate) const fn holding(held: usize) -> Room {
+        let high = FRAME_ALLOWANCE + held * FRAME_CHUNK;
+        let low = match held {
+            0 => 0,
+            _ => (high - FRAME_CHUNK).saturating_sub(FRAME_SLACK),
+        };
+        Room { low, high }
+    }
+
+    /// Whether frames of `bytes` fit it.
+    #[inline(always)]
+    pub(crate) fn fits(self, bytes: usize) -> bool {
+        bytes.wrapping_sub(self.low) <= self.high - self.low
+    }
+}
+
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub(crate) struct Runtime {
@@ -556,6 +685,9 @@ pub(crate) struct Runtime {
     /// What `process.exit` does ([`Vm::set_exit`]): an
     /// [`Exit`](super::Exit) as its number.
     pub(crate) exit: std::sync::atomic::AtomicU8,
+    /// The bytes the call frames of the program and of its tasks may
+    /// take beyond each VM's allowance ([`FrameBudget`]).
+    pub(crate) frame_budget: FrameBudget,
 
     // ── The program ─────────────────────────────────────────────
     /// The global slots and the tables of the newest program the VM

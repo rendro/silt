@@ -1,4 +1,5 @@
 -- stderr-not-contains: stack overflow
+-- frame-budget: 1
 import counter
 
 fn main() {

@@ -161,8 +161,9 @@ pub struct Vm {
     /// The calls in progress, the innermost last: functions, and
     /// builtins that call functions or wait ([`Native`]).
     pub(crate) frames: Vec<Frame>,
-    /// How many of the frames are builtins'.
-    native_frames: usize,
+    /// The sizes of the frames between which a call need not look at
+    /// the frame budget ([`runtime::Room`]): those of what `held` allows.
+    room: runtime::Room,
     /// The value the builtin's frame on top is resumed with, when a
     /// slice ended between the value and the frame.
     pending_input: Option<Value>,
@@ -238,6 +239,10 @@ pub struct Vm {
     /// How many of the frames are those of a `task.guard`: while there
     /// are none, a runtime error is not looked at for one to catch it.
     pub(crate) guards: usize,
+    /// How many chunks of the frame budget this VM holds
+    /// ([`runtime::FrameBudget`]): what its frames take beyond its
+    /// allowance.
+    held: usize,
 }
 
 /// How many steps the program's own thread runs before it looks
@@ -252,6 +257,7 @@ impl Drop for Vm {
         // program ended. Each builtin's frame is told ([`Native::abandon`]).
         let end = |vm: &mut Vm| {
             vm.unwind(0, 0);
+            vm.give_back_frames();
             if vm.owns_runtime {
                 vm.runtime.shutdown();
             }
@@ -292,6 +298,12 @@ impl Vm {
                 time_slice: Default::default(),
                 steps_left: AtomicU64::new(u64::MAX),
                 exit: AtomicU8::new(Exit::EndsRun as u8),
+                frame_budget: runtime::FrameBudget::new(
+                    crate::scheduler::frame_budget_setting()
+                        .ok()
+                        .flatten()
+                        .unwrap_or(runtime::FRAME_BUDGET_MIB),
+                ),
                 newest: Default::default(),
                 types: Default::default(),
                 refusals: Default::default(),
@@ -305,7 +317,7 @@ impl Vm {
             pending_input: None,
             display_failed: None,
             half: None,
-            native_frames: 0,
+            room: runtime::Room::holding(0),
             stack: Vec::new(),
             builtin_args: Vec::new(),
             view: Default::default(),
@@ -322,6 +334,7 @@ impl Vm {
             over: None,
             text: String::new(),
             guards: 0,
+            held: 0,
             tco_elided: TailCalls::default(),
         }
     }
@@ -376,6 +389,24 @@ impl Vm {
     pub fn set_step_budget(&mut self, steps: u64) {
         let steps = steps.min(u64::MAX - 1);
         self.runtime.steps_left.store(steps, Ordering::Relaxed);
+    }
+
+    /// Let the calls in progress of the program, and of its tasks, take
+    /// `mib` MiB in all: a recursion that would take more ends with the
+    /// runtime error "stack overflow" and its call stack, in the VM
+    /// whose frames then ask for more. 128 MiB until this is called, or
+    /// what `SILT_FRAME_BUDGET` in the environment says, which is about a
+    /// million levels of a small function's recursion.
+    ///
+    /// A call takes the size of its frame and of the stack slots of its
+    /// arguments and values (24 bytes each), not of the data they point
+    /// to, and a call in tail position takes nothing. Each VM (the
+    /// program's own, and one for each task) has its first 64 KiB
+    /// outside the budget, and takes the rest from it in pieces of 1 MiB
+    /// as its frames grow, giving them back when they shrink and when
+    /// it ends. It holds from then on for the programs the VM runs.
+    pub fn set_frame_budget(&mut self, mib: usize) {
+        self.runtime.frame_budget.set_limit(mib);
     }
 
     /// Say what `process.exit` does in the programs this VM runs, and
@@ -754,7 +785,7 @@ impl Vm {
             pending_input: None,
             display_failed: None,
             half: None,
-            native_frames: 0,
+            room: runtime::Room::holding(0),
             stack: Vec::new(),
             builtin_args: Vec::new(),
             view: self.view_of_a_task(),
@@ -771,6 +802,7 @@ impl Vm {
             over: None,
             text: String::new(),
             guards: 0,
+            held: 0,
             tco_elided: TailCalls::default(),
         }
     }

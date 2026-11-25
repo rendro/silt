@@ -1,4 +1,5 @@
--- 300000 calls, three times the VM frame cap (MAX_FRAMES = 100000): only
+-- frame-budget: 1
+-- 300000 calls, far more than a frame budget of 1 MiB holds: only
 -- tail-call elimination lets this finish.
 fn dec(n) {
   n - 1
