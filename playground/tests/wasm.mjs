@@ -158,7 +158,7 @@ await test('a program that loops for ever is ended', (mod) => {
 });
 
 await test('deep recursion is a runtime error, not a trap', (mod) => {
-  const ran = run(mod, `fn depth(n) {
+  const ran = run(mod, `deep fn depth(n) {
   match n {
     0 -> 0
     _ -> 1 + depth(n - 1)
