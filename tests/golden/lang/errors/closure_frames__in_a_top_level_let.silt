@@ -1,5 +1,5 @@
 -- exit: 1
--- A closure in a top-level `let` is named after the binding.
+-- A closure a top-level `let` binds is named by the binding: `top`.
 fn fail(x) {
   x / 0
 }

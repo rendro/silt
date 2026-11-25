@@ -1,0 +1,12 @@
+-- A function that calls itself to count and add: the round the guard
+-- counts. (It is stopped long before it ends.)
+fn sum(i: Int, acc: Int, n: Int) -> Int {
+  match i >= n {
+    true -> acc
+    false -> sum(i + 1, acc + i, n)
+  }
+}
+
+fn main() {
+  println(sum(0, 0, 400000000))
+}

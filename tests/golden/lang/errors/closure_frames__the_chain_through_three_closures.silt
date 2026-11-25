@@ -1,5 +1,5 @@
 -- exit: 1
--- A call stack lists a closure like a function, named after the
+-- A call stack lists a closure like a function, by its `let` and the
 -- function it is written in: six frames, the innermost first.
 import list
 

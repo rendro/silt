@@ -1,0 +1,20 @@
+-- A function that calls itself in tail position for ever runs as a
+-- loop does: a deadline ends it, a top-level function and a closure
+-- that calls itself alike.
+import task
+import time
+
+fn spin(n: Int) -> Int {
+  spin(n + 1)
+}
+
+fn main() {
+  println(task.deadline(time.ms(20)) { -> spin(0) })
+  let go = { n ->
+    match n < 0 {
+      true -> n
+      false -> go(n + 1)
+    }
+  }
+  println(task.deadline(time.ms(20)) { -> go(0) })
+}

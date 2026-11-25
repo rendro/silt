@@ -96,31 +96,60 @@ impl Compiler<'_> {
             unreachable!("compile_lambda of another form");
         };
         let own_name = self.closure_name.take();
+        let own_global = self.closure_global.take();
+        let label = self.closure_label.take();
         // A closure is named after what it is written in, and
-        // so are the closures in it.
-        let name = match self.contexts.last() {
-            Some(around) => around.closures.clone(),
+        // so are the closures in it; one a `let` binds directly
+        // is named by its binding.
+        let (closures, place) = match self.contexts.last() {
+            Some(around) => (around.closures.clone(), around.place.clone()),
             None => return Err(checker_missed(span, "a closure outside any code")),
         };
-        self.begin_function(name.clone(), params.len(), span)?;
+        let name = label.unwrap_or_else(|| closures.clone());
+        self.begin_function(name, params.len(), span)?;
         if let Some(closure) = self.contexts.last_mut() {
-            closure.closures = name;
+            closure.closures = closures;
+            closure.place = place;
+        }
+
+        // A closure that calls itself by the name its `let`
+        // gives it has itself in a local of that name, unless a
+        // parameter takes the name; a tail call of it by that name
+        // jumps back here, to the start of its code.
+        let itself = own_name.filter(|&name| {
+            reads_local(body, name)
+                && !params
+                    .iter()
+                    .any(|p| Self::pattern_binding_names(&p.pattern).contains(&name))
+        });
+        // (One a top-level `let` binds calls itself by its global.)
+        let start = match itself.is_some() || own_global.is_some() {
+            true => {
+                let start = self.label();
+                self.bind(start, span)?;
+                Some(start)
+            }
+            false => None,
+        };
+        if let (Some(slot), Some(start)) = (own_global, start) {
+            self.ctx_mut().self_call = Some(SelfCall {
+                by: SelfName::Global(slot),
+                start,
+                params: params.len(),
+            });
         }
 
         self.compile_params(params, span)?;
 
-        // A closure that calls itself by the name its `let`
-        // gives it has itself in a local of that name, unless a
-        // parameter takes the name.
-        if let Some(name) = own_name
-            && reads_local(body, name)
-            && !params
-                .iter()
-                .any(|p| Self::pattern_binding_names(&p.pattern).contains(&name))
-        {
+        if let (Some(name), Some(start)) = (itself, start) {
             self.emit(Asm::GetClosure, span)?;
             let slot = self.add_local(name, span)?;
             self.emit(Asm::SetLocal { slot }, span)?;
+            self.ctx_mut().self_call = Some(SelfCall {
+                by: SelfName::Local(slot),
+                start,
+                params: params.len(),
+            });
         }
 
         // Compile the lambda body in tail position for TCO.

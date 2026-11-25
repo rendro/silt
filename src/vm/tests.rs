@@ -3644,7 +3644,8 @@ fn main() {
             stops(source),
             "division by zero at 2:3; c 2:3; b 5:3; a 8:3; main 11:11; <script> 10:1"
         );
-        // More tail calls than the log keeps.
+        // A tail call of a function to itself is a jump: however many
+        // rounds it made, the function has one frame.
         let source = "\
 fn count(i: Int, acc: Int) -> Int {
   match i {
@@ -3658,7 +3659,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "division by zero at 3:10; count 3:10; count 4:10 (32 times); main 8:11; <script> 7:1"
+            "division by zero at 3:10; count 3:10; main 8:11; <script> 7:1"
         );
         let source = "\
 type C {
@@ -3718,8 +3719,11 @@ fn main() {
 fn inner(n: Int) -> Int {
   match n {
     0 -> 1 / n
-    _ -> inner(n - 1)
+    _ -> step(n - 1)
   }
+}
+fn step(n: Int) -> Int {
+  inner(n)
 }
 fn mid(n: Int) -> Int {
   1 + inner(n)
@@ -3727,8 +3731,11 @@ fn mid(n: Int) -> Int {
 fn outer(n: Int) -> Int {
   match n {
     0 -> mid(3)
-    _ -> outer(n - 1)
+    _ -> back(n - 1)
   }
+}
+fn back(n: Int) -> Int {
+  outer(n)
 }
 fn main() {
   println(outer(2))
@@ -3736,7 +3743,11 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "division by zero at 3:10; inner 3:10; inner 4:10 (3 times); mid 8:7; outer 12:10; outer 13:10 (2 times); main 17:11; <script> 16:1"
+            format!(
+                "division by zero at 3:10; inner 3:10; {}mid 11:7; outer 15:10; {}main 23:11; <script> 22:1",
+                "step 8:3; inner 4:10; ".repeat(3),
+                "back 20:3; outer 16:10; ".repeat(2)
+            )
         );
         // A frame's callers go with the frame: the second call of
         // `inner` shows its own tail calls only.
@@ -3744,8 +3755,11 @@ fn main() {
 fn inner(n: Int, d: Int) -> Int {
   match n {
     0 -> 6 / d
-    _ -> inner(n - 1, d)
+    _ -> step(n - 1, d)
   }
+}
+fn step(n: Int, d: Int) -> Int {
+  inner(n, d)
 }
 fn main() {
   let first = inner(5, 1)
@@ -3755,7 +3769,10 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "division by zero at 3:10; inner 3:10; inner 4:10 (2 times); main 9:16; <script> 7:1"
+            format!(
+                "division by zero at 3:10; inner 3:10; {}main 12:16; <script> 10:1",
+                "step 8:3; inner 4:10; ".repeat(2)
+            )
         );
     }
 
@@ -3816,32 +3833,42 @@ fn main() {{
         }
         // Three frames that have each made more tail calls than the
         // log keeps: each frame's latest 32 callers come after it.
+        // (Each function goes back to itself through a second one: a
+        // tail call of a function to itself takes no line.)
         let source = "\
 fn inner(n: Int) -> Int {
   match n {
     0 -> 1 / n
-    _ -> inner(n - 1)
+    _ -> inner_on(n - 1)
   }
 }
+fn inner_on(n: Int) -> Int { inner(n) }
 fn mid(n: Int) -> Int {
   match n {
     0 -> 1 + inner(40)
-    _ -> mid(n - 1)
+    _ -> mid_on(n - 1)
   }
 }
+fn mid_on(n: Int) -> Int { mid(n) }
 fn outer(n: Int) -> Int {
   match n {
     0 -> 1 + mid(50)
-    _ -> outer(n - 1)
+    _ -> outer_on(n - 1)
   }
 }
+fn outer_on(n: Int) -> Int { outer(n) }
 fn main() {
   println(outer(60))
 }
 ";
+        let inner = "inner_on 7:30; inner 4:10; ".repeat(16);
+        let mid = "mid_on 14:28; mid 11:10; ".repeat(16);
+        let outer = "outer_on 21:30; outer 18:10; ".repeat(16);
         assert_eq!(
             stops(source),
-            "division by zero at 3:10; inner 3:10; inner 4:10 (32 times); mid 9:14; mid 10:10 (32 times); outer 15:14; outer 16:10 (32 times); main 20:11; <script> 19:1"
+            format!(
+                "division by zero at 3:10; inner 3:10; {inner}mid 10:14; {mid}outer 17:14; {outer}main 23:11; <script> 22:1"
+            )
         );
     }
 
@@ -4438,6 +4465,69 @@ mod tail_calls {
         assert_eq!(Arc::strong_count(&f), 1);
         assert_eq!(Arc::strong_count(&g), 1);
         assert_eq!(Arc::strong_count(&h), 1);
+    }
+}
+
+// ── A tail call of a function to itself ─────────────────────────────
+mod self_tail_calls {
+    use super::*;
+    use crate::{Buffer, HostIo};
+
+    /// A tail call of a function to itself is a jump to its start with
+    /// the frame cut back to its arguments: 300,000 rounds of a
+    /// top-level function, of one with bounds, and of a closure that
+    /// calls itself by its `let`'s name (whose `GetClosure` runs again
+    /// each round) leave the stack as small as three rounds do, and
+    /// take one frame; so do 30,000 in slices of one step.
+    #[test]
+    fn rounds_take_no_more_of_the_stack_than_one_round() {
+        let source = "\
+trait Sz {
+  fn sz(self) -> Int
+}
+trait Sz for Int {
+  fn sz(self) -> Int { self }
+}
+fn count(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+fn total(x: a, n: Int, acc: Int) -> Int where a: Sz {
+  match n {
+    0 -> acc
+    _ -> total(x, n - 1, acc + Sz.sz(x))
+  }
+}
+fn main() {
+  let go = { n, acc ->
+    match n {
+      0 -> acc
+      _ -> go(n - 1, acc + 2)
+    }
+  }
+  println(count(ROUNDS, 0) + total(1, ROUNDS, 0) + go(ROUNDS, 0))
+}
+";
+        let held = |rounds: usize, slice: Option<usize>| {
+            let program = crate::session::testing::compile_str(
+                &source.replace("ROUNDS", &rounds.to_string()),
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
+            let out = Buffer::new();
+            let mut vm = Vm::new(HostIo::buffer(&out));
+            if let Some(steps) = slice {
+                vm.set_time_slice(steps);
+            }
+            vm.run_program(&program).unwrap();
+            assert_eq!(out.contents(), format!("{}\n", 4 * rounds));
+            vm.stop_tasks();
+            (vm.stack.capacity(), vm.frames.capacity())
+        };
+        for (rounds, slice) in [(300_000, None), (30_000, Some(1))] {
+            assert_eq!(held(rounds, slice), held(3, slice), "slice {slice:?}");
+        }
     }
 }
 

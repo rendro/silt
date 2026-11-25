@@ -1,0 +1,52 @@
+-- cmd: test
+-- exit: 1
+-- A tail call of a function to itself is a jump back to its start, as
+-- the round of a loop is: however many rounds it made, the call stack
+-- of a failure shows one frame of it. So does a closure that calls
+-- itself by the name its `let` gives it, in a function or at the top
+-- level. A call of the function from a
+-- closure inside it is the closure's call, and each takes a frame.
+import list
+
+fn count(n: Int) -> Int {
+  match n {
+    0 -> 10 / n
+    _ -> count(n - 1)
+  }
+}
+
+let top = { n ->
+  match n {
+    0 -> 10 / n
+    _ -> top(n - 1)
+  }
+}
+
+fn each_down(n: Int) -> Int {
+  match n {
+    0 -> count(5)
+    _ -> list.fold([n - 1], 0) { _, m -> each_down(m) }
+  }
+}
+
+fn test_a_function() {
+  println(count(100000))
+}
+
+fn test_a_closure() {
+  let go = { n ->
+    match n {
+      0 -> 10 / n
+      _ -> go(n - 1)
+    }
+  }
+  println(go(100000))
+}
+
+fn test_a_closure_of_the_top_level() {
+  println(top(100000))
+}
+
+fn test_from_a_closure_inside() {
+  println(each_down(2))
+}

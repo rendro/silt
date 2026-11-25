@@ -1,0 +1,38 @@
+-- A closure that a `let` binds is named by its binding and the function
+-- it is in, `plain in main`, also with a type written on the binding.
+-- A closure inside it, and one the `let` hands to a call, keep the name
+-- of the function: `closure in main`. A closure bound in a closure of a
+-- top-level `let` of several names is `inner at the top level`.
+import task
+
+fn fail(x: Int) -> Int {
+  x / 0
+}
+
+fn apply(f: Fn(Int) -> Int) -> Fn(Int) -> Int {
+  f
+}
+
+fn show(f: Fn() -> Int) -> () {
+  match task.guard(f) {
+    Ok(n) -> println(n)
+    Err(e) -> println(e.trace)
+  }
+}
+
+let (start, step) = (1, { y ->
+  let inner = { z -> fail(z) }
+  inner(y) + 0
+})
+
+fn main() {
+  let plain = { x -> fail(x) + 0 }
+  let typed: Fn(Int) -> Int = { x -> fail(x) + 0 }
+  let outer = { x -> apply({ y -> fail(y) + 0 })(x) + 0 }
+  let handed = apply({ x -> fail(x) + 0 })
+  show({ -> plain(1) })
+  show({ -> typed(1) })
+  show({ -> outer(1) })
+  show({ -> handed(1) })
+  show({ -> step(start) })
+}

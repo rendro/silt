@@ -410,13 +410,20 @@ fn count_at_most(tree, limit) {
 ```
 
 Inside its own body the closure has one type; it is generalised after,
-as any `let` closure is. A call of itself in tail position reuses the
-frame, as a function's does.
+as any `let` closure is. A call of itself in tail position is a jump back
+to its start, as a function's is (see
+[Infinite Loops](loops-and-pipes.md#infinite-loops)).
 
 Only the closure the `let` binds is its own name: in
 `let f = memo({ n -> f(n - 1) })` the closure is handed to `memo`, and
 `f` is not bound yet. Two local closures cannot call each other; make them
 top-level functions.
+
+A call stack names a closure that a `let` binds by the binding and the
+function it is in: `visit` above is `visit in count_at_most`, and a
+top-level `let f = { ... }` is `f`, as a function is. Any other closure is
+named after the function it is written in, however deep:
+`closure in count_at_most`.
 
 A closure may not call itself by a name that meant something else where
 its `let` stands, an earlier local, a function of the module or an

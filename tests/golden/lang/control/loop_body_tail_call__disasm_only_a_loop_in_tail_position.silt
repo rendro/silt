@@ -6,7 +6,7 @@ fn tail(n: Int) -> Int {
   loop k = n {
     match k {
       0 -> 0
-      _ -> tail(k - 1)
+      _ -> kept(k - 1)
     }
   }
 }
@@ -15,7 +15,7 @@ fn kept(n: Int) -> Int {
   let x = loop k = n {
     match k {
       0 -> 0
-      _ -> kept(k - 1)
+      _ -> tail(k - 1)
     }
   }
   x
