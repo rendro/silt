@@ -175,6 +175,34 @@ pub(crate) trait Native: Send {
     fn guard(&self) -> Option<usize> {
         None
     }
+
+    /// The function this frame called has returned `input`, and its
+    /// frame is still on top, with the stack cut back to its arguments'
+    /// place. A frame that calls one function again and again
+    /// (`list.fold`) can take the value here and push the arguments of
+    /// the next call: that call runs in the frame on top, which is not
+    /// let go of and made again ([`Again::Call`]). It is a resumption
+    /// of the frame as [`Native::resume`] is, and a step of the
+    /// budget. Any other frame gives the value back ([`Again::No`])
+    /// and is resumed with it.
+    fn again<'a>(
+        &'a mut self,
+        input: Value,
+        _stack: &mut Vec<Value>,
+    ) -> Result<Again<'a>, VmError> {
+        Ok(Again::No(input))
+    }
+}
+
+/// What a builtin's frame did with the value of its call
+/// ([`Native::again`]).
+pub(crate) enum Again<'a> {
+    /// Nothing: it is resumed with the value.
+    No(Value),
+    /// It calls this function again, with the arguments it pushed.
+    Call(&'a Arc<VmClosure>),
+    /// It is finished, with this value.
+    Done(Value),
 }
 
 /// What a builtin, or a [`Native`] frame, does next.

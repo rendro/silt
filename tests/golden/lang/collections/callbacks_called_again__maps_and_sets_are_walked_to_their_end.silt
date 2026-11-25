@@ -1,0 +1,23 @@
+-- The callback builtins of maps and sets, and those of lists that keep
+-- a state of their own, over several rounds.
+import list
+import map
+import set
+
+fn main() {
+  let m = map.from_entries([(1, "a"), (2, "b"), (3, "c")])
+  map.each(m) { k, v -> print("{k}={v} ") }
+  println("")
+  println(map.fold(m, 0) { acc, k, v -> acc + k })
+  let s = set.from_list([5, 3, 9])
+  println(set.fold(s, 0) { acc, x -> acc * 10 + x })
+  println(list.filter(1..10) { x -> x % 3 == 0 })
+  println(list.find(1..10) { x -> x > 6 })
+  println(list.flat_map(1..3) { x -> [x, x] })
+  println(list.filter_map(1..6) { x ->
+    match x % 2 == 0 {
+      true -> Some(x * x)
+      _ -> None
+    }
+  })
+}

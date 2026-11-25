@@ -1,0 +1,9 @@
+error[runtime]: division by zero
+ --> callback_frame_capture__a_fold_fails_in_a_later_round.silt:6:9
+   |
+ 6 |   acc + 100 / d
+   |         ^^^^^^^ division by zero
+
+call stack:
+  -> add_share  at callback_frame_capture__a_fold_fails_in_a_later_round.silt:6:9
+  -> main  at callback_frame_capture__a_fold_fails_in_a_later_round.silt:10:11
