@@ -1,6 +1,6 @@
 -- cmd: repl
 -- frame-budget: 1
--- stdin: fn deep(n: Int) -> Int { match n { 0 -> 0\n _ -> 1 + deep(n - 1) } }\ndeep(100000)\ndeep(10000)\ndeep(10000)\n:quit\n
+-- stdin: deep fn deep(n: Int) -> Int { match n { 0 -> 0\n _ -> 1 + deep(n - 1) } }\ndeep(100000)\ndeep(10000)\ndeep(10000)\n:quit\n
 -- stderr-contains: error[runtime]: stack overflow: call frames take more than 1 MiB; this task holds 1 MiB
 -- An entry whose recursion runs out of the frame budget gives back what
 -- its frames took as it ends: the next entries recurse 10,000 levels

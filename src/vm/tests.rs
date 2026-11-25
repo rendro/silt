@@ -8181,7 +8181,7 @@ import host
 import list
 import string
 import task
-fn deep(n: Int) -> Int {
+deep fn deep(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> 1 + deep(n - 1)
@@ -8298,7 +8298,7 @@ fn main() {
     #[test]
     fn a_recursion_inside_a_fold_callback_is_counted() {
         let walk = "\
-fn walk(n: Int) -> Int {
+deep fn walk(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> list.fold([n - 1], 1) { acc, m -> acc + walk(m) }
@@ -8341,7 +8341,7 @@ fn walk(n: Int) -> Int {
         let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
         vm.set_frame_budget(1);
         let main = "\
-fn runaway(n: Int) -> Int {
+deep fn runaway(n: Int) -> Int {
   1 + runaway(n + 1)
 }
 fn main() {
