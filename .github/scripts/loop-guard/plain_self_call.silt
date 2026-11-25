@@ -1,0 +1,12 @@
+-- A function that calls itself to count, and does nothing else: the
+-- round the guard counts. (It is stopped long before it ends.)
+fn count(i: Int, n: Int) -> Int {
+  match i >= n {
+    true -> i
+    false -> count(i + 1, n)
+  }
+}
+
+fn main() {
+  println(count(0, 400000000))
+}

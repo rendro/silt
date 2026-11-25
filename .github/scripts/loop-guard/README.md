@@ -42,7 +42,7 @@ bash .github/scripts/loop-guard/run.sh target/x86_64-unknown-linux-gnu/release/s
 ```
 
 Linux on x86_64 only. It needs `cc`, `python3`, `nm` and `objdump`, and
-leave to ptrace a child process. It takes about twenty seconds after
+leave to ptrace a child process. It takes about forty seconds after
 the build.
 
 ## When it fails
@@ -59,7 +59,9 @@ what the loop relies on.
   longer, a jump the processor predicts badly, code that falls on a
   worse address.
 - A round it does not run: only a plain loop and one with an add are
-  counted, not a call, a method call or a Float.
+  counted, each written as a `loop` and as a function that calls itself
+  in tail position (which is the same jump), not a call of another
+  function, a method call or a Float.
 - Any other target. The releases for aarch64, macOS and Windows are
   built from the same source and are not looked at.
 - What a real processor does. The rule for "cannot be forwarded" (an
@@ -72,5 +74,7 @@ what the loop relies on.
   each instruction ran and the registers before each step.
 - `count.py`: makes the two numbers of a round from that and the
   binary's disassembly.
-- `plain_loop.silt`, `add_round.silt`: the two loops.
-- `run.sh`: builds `step`, runs both loops, fails on a waiting load.
+- `plain_loop.silt`, `add_round.silt`: the two loops, written with `loop`.
+- `plain_self_call.silt`, `add_self_call.silt`: the same two, written as
+  a function that calls itself.
+- `run.sh`: builds `step`, runs the four loops, fails on a waiting load.
