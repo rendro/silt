@@ -2741,7 +2741,7 @@ fn a_builtin_calls_its_function_again_in_the_frame_of_the_last_call() {
         "a fold of a function with a bound made {made} frames"
     );
     // (Frames are counted: a recursion makes one for each call.)
-    let depth = "fn depth(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + depth(n - 1)\n  }\n}";
+    let depth = "deep fn depth(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + depth(n - 1)\n  }\n}";
     let (given, made) = frames_made(depth, "depth(1000)");
     assert_eq!(given, Value::Int(1000));
     assert!(made > 1000, "a recursion 1000 deep made {made} frames");

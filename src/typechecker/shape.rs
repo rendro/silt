@@ -353,7 +353,13 @@ impl<'a, 'd> Walk<'a, 'd> {
                 Some(Origin::Node(n)) => Some(n),
                 _ => None,
             },
-            Some(Res::Def(_)) => self.top.get(name).copied(),
+            // (The definition the name names is the node's when it is
+            // declared where the node's name is: in a REPL entry a name
+            // can still name an earlier entry's definition of it.)
+            Some(Res::Def(id)) => self.top.get(name).copied().filter(|&n| {
+                self.defs
+                    .is_none_or(|defs| defs.get(id).span == self.nodes[n].name_span)
+            }),
             _ => None,
         }
     }
