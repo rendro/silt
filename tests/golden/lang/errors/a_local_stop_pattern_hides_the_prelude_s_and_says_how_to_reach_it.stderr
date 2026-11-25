@@ -1,0 +1,6 @@
+error[type]: type mismatch: expected Step(Int), got Msg
+ --> a_local_stop_pattern_hides_the_prelude_s_and_says_how_to_reach_it.silt:9:5
+   |
+ 9 |     Stop(v) -> v
+   |     ^^^^^^^ type mismatch: expected Step(Int), got Msg
+  = help: `Stop` here is the variant of `Msg`, which hides the prelude's `Stop`: write `Step.Stop`
