@@ -297,6 +297,7 @@ impl Cells {
                 .filter_map(|module| index.get(module).copied())
                 .collect(),
             globals: self.globals.clone(),
+            repl: true,
         }
     }
 

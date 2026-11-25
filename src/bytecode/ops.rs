@@ -1063,7 +1063,9 @@ ops! {
     // ── Loop ───────────────────────────────────────────────────
     /// Store the top `argc` values in the slots from `first` on, cut
     /// the frame back to just above them and jump back to `to`: the
-    /// next round of a loop whose bindings those slots are. (The count
+    /// next round of a loop whose bindings those slots are, or the tail
+    /// call of a function to itself, whose parameters they are, with
+    /// `to` the start of its code. (The count
     /// is a `Byte`, so that the decoded instruction of three operands
     /// stays three words.)
     Recur { argc: Byte("bindings of a loop"), first: Cut, to: Rel } => pops usize::from(argc), cut first, pushes usize::from(argc), jump;

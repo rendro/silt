@@ -114,6 +114,32 @@ struct CompileContext {
     /// method, whose dictionary a call leaves below its arguments
     /// (`Instr::FrameDict`).
     frame_dict: Option<Span>,
+    /// What a call of the function being compiled to itself names it
+    /// by, if a tail call of it is a jump to its start
+    /// (`Compiler::self_jump`).
+    self_call: Option<SelfCall>,
+}
+
+/// How a function's code names the function itself, and where a tail
+/// call of it jumps to: the start of its code, whose frame then holds
+/// the call's arguments in the slots of its parameters, as a call of
+/// it would leave them. (A closure's `GetClosure` runs again, and its
+/// parameters' patterns are bound again.)
+#[derive(Clone, Copy)]
+struct SelfCall {
+    by: SelfName,
+    start: Label,
+    /// The parameters the program wrote, after the hidden ones.
+    params: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SelfName {
+    /// A top-level function, or a closure a top-level `let` binds, by
+    /// its global.
+    Global(u16),
+    /// A closure that a `let` names, by the local it has itself in.
+    Local(usize),
 }
 
 struct LoopInfo {
@@ -313,6 +339,8 @@ pub(crate) struct EarlierCells {
     /// The global slots the earlier entries took. The entry's own
     /// definitions get new ones.
     pub globals: Globals,
+    /// Whether the entry is a REPL entry.
+    pub(crate) repl: bool,
 }
 
 pub(crate) struct Compiler<'a> {
@@ -342,6 +370,9 @@ pub(crate) struct Compiler<'a> {
     /// The name a local `let` gives the closure compiled next, its
     /// value.
     closure_name: Option<Symbol>,
+    /// The global of the top-level `let` whose value is the closure
+    /// compiled next, if its tail calls of itself jump.
+    closure_global: Option<u16>,
     /// The body of the trait's default method being compiled, if one is:
     /// `Self` there is its impl's type (`DictType`).
     default_body: Option<Span>,
@@ -452,6 +483,7 @@ impl<'a> Compiler<'a> {
             globals: Globals::default(),
             own_slots: HashMap::new(),
             closure_name: None,
+            closure_global: None,
             default_body: None,
             decode_params: None,
             by_dict: false,
@@ -845,6 +877,7 @@ impl<'a> Compiler<'a> {
                     span,
                 )?;
                 self.hidden_params(tag);
+                self.jump_to_itself(fn_decl.name, fn_decl.params.len(), span)?;
 
                 self.compile_params(&fn_decl.params, span)?;
 
@@ -895,7 +928,19 @@ impl<'a> Compiler<'a> {
                 let compiled = match (&pattern.kind, self.shape(value.span)) {
                     (PatternKind::Ident(name), Some(_)) => self.compile_thunk(*name, value, None),
                     (_, Some(_)) => self.install_pattern_thunks(pattern, value, span),
-                    _ => self.compile_expr(value),
+                    _ => {
+                        // (A closure the `let` binds jumps to its start
+                        // where it calls itself in tail position.)
+                        if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) =
+                            (&pattern.kind, &value.kind)
+                            && self.jumps_to_itself()
+                        {
+                            self.closure_global = Some(self.own_slot(*name, span)?);
+                        }
+                        let compiled = self.compile_expr(value);
+                        self.closure_global = None;
+                        compiled
+                    }
                 };
                 if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
                     context.closures = around;
@@ -1341,6 +1386,76 @@ impl<'a> Compiler<'a> {
         } else {
             self.emit(Asm::Call { argc }, span)
         }
+    }
+
+    /// Start the code of the top-level function `name` of `params`
+    /// written parameters, whose frame holds its arguments now: a tail
+    /// call of it to itself is a jump here (`Compiler::self_jump`).
+    /// Not in a REPL entry, where a running function's call of itself
+    /// reads its global again, as every call of a global does.
+    fn jump_to_itself(
+        &mut self,
+        name: Symbol,
+        params: usize,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if !self.jumps_to_itself() {
+            return Ok(());
+        }
+        let slot = self.own_slot(name, span)?;
+        let start = self.label();
+        self.bind(start, span)?;
+        self.ctx_mut().self_call = Some(SelfCall {
+            by: SelfName::Global(slot),
+            start,
+            params,
+        });
+        Ok(())
+    }
+
+    /// Whether a top-level definition of the module being compiled that
+    /// calls itself in tail position jumps to its start: not in a REPL
+    /// entry.
+    fn jumps_to_itself(&self) -> bool {
+        let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        !(self.units.earlier.repl && current == self.units.entry)
+    }
+
+    /// Where a tail call of `callee` with `argc` arguments jumps to,
+    /// if it is the function being compiled calling itself with the
+    /// dictionaries it was passed (the same instantiation): a top-level
+    /// function by its name, or a closure by the name its `let` gives
+    /// it. A call of it from a closure inside it is the closure's, and
+    /// stays a call.
+    fn self_jump(&self, callee: &Expr, argc: usize) -> Option<Label> {
+        let call = self.ctx().self_call?;
+        let ExprKind::Ident(name) = callee.kind else {
+            return None;
+        };
+        let hidden = self.ctx().emitter.hidden();
+        let kept = match callee.ev.as_deref() {
+            None => 0,
+            Some(crate::evidence::Site::Ref(bounds))
+                if !self.makes_its_value(callee) && self.kept_dicts(bounds) == bounds.len() =>
+            {
+                bounds.len()
+            }
+            Some(_) => return None,
+        };
+        let named = match call.by {
+            SelfName::Global(slot) => {
+                self.builtin_function(callee.res).is_none()
+                    && self
+                        .value_def(callee.res)
+                        .and_then(|def| self.globals.def(def))
+                        == Some(slot)
+            }
+            SelfName::Local(slot) => {
+                callee.res == Some(crate::defs::Res::Local)
+                    && self.resolve_local(name) == Some(slot)
+            }
+        };
+        (named && kept == hidden && argc == call.params).then_some(call.start)
     }
 
     /// Emit the `Return` of a function's body, whose value is on the
@@ -1922,6 +2037,19 @@ impl<'a> Compiler<'a> {
                 // value (`a.empty()` for a `type a`).
                 self.compile_method_call(callee, receiver, *method, args, span, tail)?;
             }
+        } else if tail && let Some(start) = self.self_jump(callee, args.len()) {
+            // A tail call of the function to itself: its arguments over
+            // its parameters, and a jump to its start, as a loop's round.
+            let first = self.ctx().emitter.hidden();
+            self.compile_operands(args.iter().copied())?;
+            self.emit(
+                Asm::Recur {
+                    argc: args.len(),
+                    first,
+                    to: start,
+                },
+                span,
+            )?;
         } else {
             // Normal function call: a function with bounds is passed its
             // dictionaries first.
@@ -2830,6 +2958,7 @@ impl<'a> Compiler<'a> {
             loop_stack: Vec::new(),
             pattern_floor: None,
             frame_dict: None,
+            self_call: None,
         });
         Ok(())
     }
@@ -3440,9 +3569,71 @@ mod tests {
     #[test]
     fn test_compile_tail_call() {
         // The body of a function in tail position should emit TailCall
-        let fns = compile("fn f(n) { f(n - 1) }");
+        let fns = compile("fn f(n) { g(n - 1) }\nfn g(n) { f(n) }");
         let f = find_fn(&fns, "f");
         assert!(has_op(f.chunk(), Op::TailCall));
+    }
+
+    /// The tail call of a function to itself is a `Recur` to the start
+    /// of its code, with its arguments over its parameters: of a
+    /// top-level function, of one with bounds that passes the
+    /// dictionaries it was passed, and of a closure by the name its
+    /// `let` gives it, in a function or at the top level. In no other place: not a call that is no tail
+    /// call, not one that passes other dictionaries, not one from a
+    /// closure inside the function, not one of another value by the
+    /// name.
+    #[test]
+    fn a_tail_call_of_a_function_to_itself_is_a_jump_to_its_start() {
+        let jumps = |f: &Function, first: usize, argc: usize| {
+            let code = f.chunk();
+            let recurs: Vec<_> = (code.instrs())
+                .filter_map(|(_, instr)| match instr {
+                    crate::bytecode::Instr::Recur { argc, first, to } => {
+                        Some((usize::from(argc), first, to))
+                    }
+                    _ => None,
+                })
+                .collect();
+            recurs == [(argc, first, 0)]
+                && !has_op(code, Op::TailCall)
+                && !has_op(code, Op::TailCallKeep)
+        };
+        let fns = compile(
+            "fn count(n, acc) {\n  match n {\n    0 -> acc\n    _ -> count(n - 1, acc + n)\n  }\n}\n",
+        );
+        assert!(jumps(find_fn(&fns, "count"), 0, 2));
+        let bounded = "trait Sz { fn sz(self) -> Int }\ntrait Sz for Int { fn sz(self) -> Int { self } }\n\
+             trait Sz for List(a) where a: Sz { fn sz(self) -> Int { 1 } }\n\
+             fn total(x: a, n: Int, acc: Int) -> Int where a: Sz {\n  match n {\n    0 -> acc\n    _ -> total(x, n - 1, acc + Sz.sz(x))\n  }\n}\n\
+             fn nest(x: a, n: Int) -> Int where a: Sz {\n  match n {\n    0 -> Sz.sz(x)\n    _ -> nest([x], n - 1)\n  }\n}\n";
+        let fns = compile(bounded);
+        assert!(jumps(find_fn(&fns, "total"), 1, 3));
+        let nest = find_fn(&fns, "nest");
+        assert!(!has_op(nest.chunk(), Op::Recur));
+        assert!(has_op(nest.chunk(), Op::TailCall));
+        let named = closure_in_f(
+            "fn f() -> Int {\n  let g = { n ->\n    match n {\n      0 -> 0\n      _ -> g(n - 1)\n    }\n  }\n  g(3)\n}\n",
+        );
+        assert!(jumps(&named, 0, 1));
+        let fns = compile(
+            "let top = { n ->\n  match n {\n    0 -> 0\n    _ -> top(n - 1)\n  }\n}\nfn main() { let _ = top(3) }\n",
+        );
+        assert!(jumps(find_fn(&fns, "closure in top"), 0, 1));
+        // A call that is no tail call.
+        let fns =
+            compile("fn down(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + down(n - 1)\n  }\n}\n");
+        assert!(!has_op(find_fn(&fns, "down").chunk(), Op::Recur));
+        // A call of the function from a closure inside it: the closure's.
+        let fns = compile(
+            "import list\nfn f(n) {\n  match n {\n    0 -> 0\n    _ -> list.fold([n], 0) { _, m -> f(m - 1) }\n  }\n}\n",
+        );
+        assert!(!has_op(find_fn(&fns, "f").chunk(), Op::Recur));
+        let inside = find_fn(&fns, "closure in f");
+        assert!(!has_op(inside.chunk(), Op::Recur));
+        assert!(has_op(inside.chunk(), Op::TailCall));
+        // A local that takes the function's name.
+        let fns = compile("fn f(n) {\n  let f = { m -> m }\n  f(n)\n}\n");
+        assert!(!has_op(find_fn(&fns, "f").chunk(), Op::Recur));
     }
 
     // ── Lambda / closure compilation ───────────────────────────────
