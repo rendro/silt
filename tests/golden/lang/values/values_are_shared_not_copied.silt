@@ -31,12 +31,13 @@ fn total(c: Chain, acc: Int) -> Int {
 }
 
 fn length(c: Chain) -> Int {
-  loop c = c, n = 0 {
+  let count = { c, n ->
     match c {
       End -> n
-      Link(_, rest) -> loop(rest, n + 1)
+      Link(_, rest) -> count(rest, n + 1)
     }
   }
+  count(c, 0)
 }
 
 -- A tree whose every node holds the same long string.

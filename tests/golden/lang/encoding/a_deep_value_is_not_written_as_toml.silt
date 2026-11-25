@@ -5,6 +5,7 @@
 -- went down the value on the native stack, and one 200,000 levels deep
 -- overflowed it and aborted the program.) A value 1,000 levels deep is
 -- written.
+import list
 import string
 import toml
 
@@ -25,34 +26,19 @@ type Tree {
 
 -- A chain of `n` links: `End` is `n` levels in.
 fn chain(n: Int) -> Chain {
-  loop i = 0, acc = End {
-    match i >= n {
-      true -> acc
-      false -> loop(i + 1, Link(i % 10, acc))
-    }
-  }
+  list.fold(0..n - 1, End) { acc, i -> Link(i % 10, acc) }
 }
 
 -- `n` rows, each the `next` of the one before: the fields of the last
 -- are `n` levels in.
 fn rows(n: Int) -> Row {
-  loop i = 1, acc = Row { v: 0, next: None } {
-    match i >= n {
-      true -> acc
-      false -> loop(i + 1, Row { v: i % 10, next: Some(acc) })
-    }
-  }
+  list.fold(1..n - 1, Row { v: 0, next: None }) { acc, i -> Row { v: i % 10, next: Some(acc) } }
 }
 
 -- A tree of `n` nodes, each in the list of the one before: `Leaf` is
 -- `2 * n` levels in (a list in a variant at each).
 fn tree(n: Int) -> Tree {
-  loop i = 0, acc = Leaf {
-    match i >= n {
-      true -> acc
-      false -> loop(i + 1, Node([acc]))
-    }
-  }
+  list.fold(0..n - 1, Leaf) { acc, _ -> Node([acc]) }
 }
 
 type Doc {

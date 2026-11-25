@@ -41,7 +41,7 @@ error[type]: type 'Int' has no field 'port'
     |                ^^^^^^ type 'Int' has no field 'port'
 
 error[type]: type mismatch: expected String, got Int
- --> never_annotation__a_let_s_name_is_of_the_written_type.silt:52:22
+ --> never_annotation__a_let_s_name_is_of_the_written_type.silt:52:20
     |
- 52 |     let _s: String = i
-    |                      ^ type mismatch: expected String, got Int
+ 52 |   let _s: String = i
+    |                    ^ type mismatch: expected String, got Int

@@ -198,7 +198,7 @@ type ExportError {
 fn write_rows(rows: Channel(Result(String, String)), path: String) -> Result(Int, ExportError) {
   let outcome = channel.new(1)
   let lines = stream.from_fn { out ->
-    let sent = loop n = 0 {
+    let pass = { n ->
       match channel.receive(rows) {
         None -> Ok(n)
         Some(Err(e)) -> {
@@ -207,11 +207,11 @@ fn write_rows(rows: Channel(Result(String, String)), path: String) -> Result(Int
         }
         Some(Ok(row)) -> {
           channel.send(out, bytes.from_string("{row}\n"))
-          loop(n + 1)
+          pass(n + 1)
         }
       }
     }
-    channel.send(outcome, sent)
+    channel.send(outcome, pass(0))
   }
   -- A write that fails reads no further, and the relay is stopped.
   match stream.write_to_file(lines, path) {
@@ -539,10 +539,11 @@ fn main() {
   println(stream.collect(squares)) -- [1, 4, 9]
   -- A feed without end, of which a reader takes two values.
   let naturals = stream.from_fn { ch ->
-    loop n = 0 {
+    let count = { n ->
       channel.send(ch, n)
-      loop(n + 1)
+      count(n + 1)
     }
+    count(0)
   }
   println(naturals |> stream.take(2) |> stream.collect) -- [0, 1]
 }

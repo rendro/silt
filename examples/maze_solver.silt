@@ -71,20 +71,21 @@ fn get_neighbors(maze, pos: Pos) {
 
 -- Reconstruct path by following parent indices from goal back to start
 fn reconstruct_path(visited, goal_idx) {
-  loop idx = goal_idx, path = [] {
+  let back = { idx, path ->
     let entry = visited |> list.get(idx) |> option.unwrap_or((Pos { row: 0, col: 0 }, -1))
     let (pos, parent_idx) = entry
     let new_path = list.prepend(path, pos)
     match parent_idx == -1 {
       true -> new_path
-      _ -> loop(parent_idx, new_path)
+      _ -> back(parent_idx, new_path)
     }
   }
+  back(goal_idx, [])
 }
 
--- BFS using loop: bind queue and visited, iterate until found or exhausted
+-- BFS: a closure that calls itself with the queue and the visited list, until found or exhausted
 fn bfs(maze, start: Pos, goal: Pos) {
-  loop queue = [(start, -1)], visited = [(start, -1)] {
+  let search = { queue, visited ->
     match queue {
       [] -> None
       [(node, _parent_idx), ..rest] -> match node == goal {
@@ -128,11 +129,12 @@ fn bfs(maze, start: Pos, goal: Pos) {
           -- Add new neighbors to queue
           let new_queue_entries = new_neighbors |> list.map { n -> (n, node_idx) }
           let updated_queue = list.concat(rest, new_queue_entries)
-          loop(updated_queue, updated_visited)
+          search(updated_queue, updated_visited)
         }
       }
     }
   }
+  search([(start, -1)], [(start, -1)])
 }
 
 -- Print the maze with solution path marked as '*'

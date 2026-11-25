@@ -88,60 +88,60 @@ fn print_history(history) {
 
 fn main() {
   print_help()
-  -- Main REPL loop: stack is a list of floats (front = top), history is a list of strings
-  loop stack = [], history = [] {
+  -- Main REPL: step reads one line and calls itself with the new state; stack is a list of floats (front = top), history is a list of strings
+  let step = { stack, history ->
     print("> ")
     match io.read_line() {
-      Err(_) | Ok(None) -> println("Goodbye!")
+      Err(_) | Ok(None) -> return println("Goodbye!")
       Ok(Some(line)) -> {
         let input = string.trim(line)
         match input {
-          "quit" -> println("Goodbye!")
+          "quit" -> return println("Goodbye!")
           "help" -> {
             print_help()
-            loop(stack, history)
+            step(stack, history)
           }
           "stack" -> {
             print_stack(stack)
-            loop(stack, history)
+            step(stack, history)
           }
           "history" -> {
             print_history(history)
-            loop(stack, history)
+            step(stack, history)
           }
           "clear" -> {
             println("Stack and history cleared.")
-            loop([], [])
+            step([], [])
           }
           "undo" -> match list.first(stack) {
             Some(top) -> {
               println("Undone. Removed {format(top)} from stack.")
-              loop(list.tail(stack), list.append(history, "undo: removed {format(top)}"))
+              step(list.tail(stack), list.append(history, "undo: removed {format(top)}"))
             }
             None -> {
               println("Nothing to undo.")
-              loop(stack, history)
+              step(stack, history)
             }
           }
           "+" -> {
             let (s, e) = apply_binary(stack, "+") { a, b -> a + b }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "-" -> {
             let (s, e) = apply_binary(stack, "-") { a, b -> a - b }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "*" -> {
             let (s, e) = apply_binary(stack, "*") { a, b -> a * b }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "/" -> {
@@ -152,8 +152,8 @@ fn main() {
               }
             }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "sqrt" -> {
@@ -164,8 +164,8 @@ fn main() {
               }
             }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "pow" -> {
@@ -177,22 +177,22 @@ fn main() {
               }
             }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "sin" -> {
             let (s, e) = apply_unary(stack, "sin") { a -> math.sin(a) }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "cos" -> {
             let (s, e) = apply_unary(stack, "cos") { a -> math.cos(a) }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "log" -> {
@@ -203,33 +203,34 @@ fn main() {
               }
             }
             match e {
-              Some(h) -> loop(s, list.append(history, h))
-              None -> loop(s, history)
+              Some(h) -> step(s, list.append(history, h))
+              None -> step(s, history)
             }
           }
           "pi" -> {
             println("Pushed pi = {format(math.pi)}")
-            loop(list.prepend(stack, math.pi), history)
+            step(list.prepend(stack, math.pi), history)
           }
           "e" -> {
             println("Pushed e = {format(math.e)}")
-            loop(list.prepend(stack, math.e), history)
+            step(list.prepend(stack, math.e), history)
           }
-          "" -> loop(stack, history)
+          "" -> step(stack, history)
           _ ->
             -- Try to parse as a number
             match float.parse(input) {
               Ok(n) -> {
                 println("Pushed {format(n)}")
-                loop(list.prepend(stack, n), history)
+                step(list.prepend(stack, n), history)
               }
               Err(_) -> {
                 println("Unknown command or invalid number: '{input}'")
-                loop(stack, history)
+                step(stack, history)
               }
             }
         }
       }
     }
   }
+  step([], [])
 }

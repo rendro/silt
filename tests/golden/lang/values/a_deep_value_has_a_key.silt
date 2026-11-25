@@ -4,6 +4,7 @@
 -- to another, less than it, and its hash is found without going down
 -- the value on the native stack. (Each of these overflowed it and
 -- aborted the program: a debug build below 200,000 levels.)
+import list
 import set
 
 type Nest {
@@ -20,21 +21,11 @@ type Chain {
 }
 
 fn nest(depth: Int, innermost: Int) -> Nest {
-  loop i = 0, acc = Leaf(innermost) {
-    match i >= depth {
-      true -> acc
-      false -> loop(i + 1, Node([acc]))
-    }
-  }
+  list.fold(0..depth - 1, Leaf(innermost)) { acc, _ -> Node([acc]) }
 }
 
 fn chain(depth: Int, innermost: Int) -> Chain {
-  loop i = 0, acc = End(innermost) {
-    match i >= depth {
-      true -> acc
-      false -> loop(i + 1, More((acc, i)))
-    }
-  }
+  list.fold(0..depth - 1, End(innermost)) { acc, i -> More((acc, i)) }
 }
 
 fn main() {

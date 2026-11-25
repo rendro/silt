@@ -1,4 +1,4 @@
--- A value that never is (a panic, a return, a loop without end) is of
+-- A value that never is (a panic, a return, a call that never ends) is of
 -- every type, and so is each step taken from it: a field read of it, a
 -- call of its field, an update of it, its `?`, what a pattern binds of
 -- it and leaves undecided, one step after another and through a `let`. None
@@ -6,7 +6,10 @@
 import list
 import task
 
-type A { x: Int, y: Int }
+type A {
+  x: Int,
+  y: Int,
+}
 
 fn boom() -> Never {
   panic("b")
@@ -44,10 +47,12 @@ fn interpolation() -> String {
   "{v.x.y} {v.f(1)} {v.a.b(2).c}"
 }
 
-fn after_a_loop() -> Int {
-  let v = loop {
-    loop()
-  }
+fn spin() {
+  spin()
+}
+
+fn after_a_call_that_never_ends() -> Int {
+  let v = spin()
   v.x.y
 }
 
