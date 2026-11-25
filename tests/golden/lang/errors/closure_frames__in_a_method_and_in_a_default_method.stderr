@@ -5,8 +5,8 @@ error[runtime]: division by zero
     |                        ^^^^^^^^^^^ division by zero
 
 call stack:
-  -> closure in Half.size  at closure_frames__in_a_method_and_in_a_default_method.silt:18:24
+  -> halve in Half.size  at closure_frames__in_a_method_and_in_a_default_method.silt:18:24
   -> Half.size  at closure_frames__in_a_method_and_in_a_default_method.silt:19:5
-  -> closure in Sized.twice  at closure_frames__in_a_method_and_in_a_default_method.silt:11:29
+  -> double in Sized.twice  at closure_frames__in_a_method_and_in_a_default_method.silt:11:29
   -> Sized.twice  at closure_frames__in_a_method_and_in_a_default_method.silt:12:5
   -> main  at closure_frames__in_a_method_and_in_a_default_method.silt:24:11

@@ -746,10 +746,12 @@ impl Compiler<'_> {
         let span = value.span;
         let hidden = self.shape(span).map_or(0, Self::hidden_count);
         // (The closures in it are named as they would be without it.)
-        let closures = self.contexts.last().map(|around| around.closures.clone());
+        let around =
+            (self.contexts.last()).map(|around| (around.closures.clone(), around.place.clone()));
         self.begin_function(resolve(name), hidden, span)?;
-        if let (Some(closures), Some(context)) = (closures, self.contexts.last_mut()) {
+        if let (Some((closures, place)), Some(context)) = (around, self.contexts.last_mut()) {
             context.closures = closures;
+            context.place = place;
         }
         self.hidden_params(span);
         self.closure_name = own_name;

@@ -96,8 +96,12 @@ struct CompileContext {
     /// P.show` in a method; `closure in table` in the top-level
     /// `let table = ...`, and `closure at the top level` in one that
     /// binds several names or none. No function has `<...>` for a
-    /// closure's name.
+    /// closure's name. A closure a `let` binds directly is named by its
+    /// binding instead (`Compiler::let_closure_name`).
     closures: String,
+    /// What the closures written in this code are in, as their names say
+    /// it: `main`, `P.show`, `table`; `None` at the top level.
+    place: Option<String>,
     locals: Vec<Local>,
     scope_depth: usize,
     /// Frame height at the start of every open scope, innermost last.
@@ -373,6 +377,9 @@ pub(crate) struct Compiler<'a> {
     /// The global of the top-level `let` whose value is the closure
     /// compiled next, if its tail calls of itself jump.
     closure_global: Option<u16>,
+    /// The name in call stacks of the closure compiled next, which a
+    /// `let` binds directly (`Compiler::let_closure_name`).
+    closure_label: Option<String>,
     /// The body of the trait's default method being compiled, if one is:
     /// `Self` there is its impl's type (`DictType`).
     default_body: Option<Span>,
@@ -484,6 +491,7 @@ impl<'a> Compiler<'a> {
             own_slots: HashMap::new(),
             closure_name: None,
             closure_global: None,
+            closure_label: None,
             default_body: None,
             decode_params: None,
             by_dict: false,
@@ -914,14 +922,27 @@ impl<'a> Compiler<'a> {
                 // The closures of the initialiser are named after the
                 // binding if the `let` binds one name. If it binds
                 // several, or none, no name is theirs alone.
-                let closures = match crate::parser::top_level_binders(decl).as_slice() {
-                    [(name, _, _)] => format!("closure in {name}"),
-                    _ => "closure at the top level".to_string(),
+                let place = match crate::parser::top_level_binders(decl).as_slice() {
+                    [(name, _, _)] => Some(resolve(*name)),
+                    _ => None,
                 };
-                let around = self
-                    .contexts
-                    .last_mut()
-                    .map(|context| std::mem::replace(&mut context.closures, closures));
+                let closures = match &place {
+                    Some(name) => format!("closure in {name}"),
+                    None => "closure at the top level".to_string(),
+                };
+                // A closure the `let` binds directly is the binding's
+                // value, named as it is: `let top = { ... }` is `top`.
+                if let (PatternKind::Ident(_), ExprKind::Lambda { .. }) =
+                    (&pattern.kind, &value.kind)
+                {
+                    self.closure_label = place.clone();
+                }
+                let around = self.contexts.last_mut().map(|context| {
+                    (
+                        std::mem::replace(&mut context.closures, closures),
+                        std::mem::replace(&mut context.place, place),
+                    )
+                });
                 // (A `let` general in a bound is the function of its
                 // dictionaries that makes its value; of each name of a
                 // pattern, the function that makes the name's part.)
@@ -942,8 +963,10 @@ impl<'a> Compiler<'a> {
                         compiled
                     }
                 };
-                if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
-                    context.closures = around;
+                if let (Some(context), Some((closures, place))) = (self.contexts.last_mut(), around)
+                {
+                    context.closures = closures;
+                    context.place = place;
                 }
                 compiled?;
                 if self.shape(value.span).is_some()
@@ -1230,6 +1253,7 @@ impl<'a> Compiler<'a> {
                     (PatternKind::Ident(name), ExprKind::Lambda { .. }) => Some(*name),
                     _ => None,
                 };
+                self.closure_label = own_name.map(|name| self.let_closure_name(name));
                 // (A `let` general in a bound is the function of its
                 // dictionaries that makes its value.)
                 match (&pattern.kind, self.shape(value.span)) {
@@ -2933,6 +2957,21 @@ impl<'a> Compiler<'a> {
         &mut self.ctx_mut().emitter
     }
 
+    /// The name in call stacks of a closure that a local `let` of
+    /// `name` binds directly: `go in parse` in the function `parse`
+    /// (and in every closure in it), `go at the top level` in a closure
+    /// of a top-level `let` that binds several names or none.
+    fn let_closure_name(&self, name: Symbol) -> String {
+        match self
+            .contexts
+            .last()
+            .and_then(|context| context.place.as_ref())
+        {
+            Some(place) => format!("{} in {place}", resolve(name)),
+            None => format!("{} at the top level", resolve(name)),
+        }
+    }
+
     /// Start compiling a function named `name` with `params` parameters:
     /// until [`Compiler::end_function`], code is emitted into it.
     fn begin_function(
@@ -2944,12 +2983,17 @@ impl<'a> Compiler<'a> {
         // (The code of a file's top level, `<script>` or
         // `<module:...>`, is its `let`s, each of which says how its
         // closures are named.)
-        let closures = match name.starts_with("<script>") || name.starts_with("<module:") {
-            true => "closure at the top level".to_string(),
-            false => format!("closure in {name}"),
+        let place = match name.starts_with("<script>") || name.starts_with("<module:") {
+            true => None,
+            false => Some(name.clone()),
+        };
+        let closures = match &place {
+            None => "closure at the top level".to_string(),
+            Some(name) => format!("closure in {name}"),
         };
         self.contexts.push(CompileContext {
             closures,
+            place,
             emitter: Emitter::new(name, params, span)?,
             locals: Vec::new(),
             scope_depth: 0,
@@ -3618,7 +3662,7 @@ mod tests {
         let fns = compile(
             "let top = { n ->\n  match n {\n    0 -> 0\n    _ -> top(n - 1)\n  }\n}\nfn main() { let _ = top(3) }\n",
         );
-        assert!(jumps(find_fn(&fns, "closure in top"), 0, 1));
+        assert!(jumps(find_fn(&fns, "top"), 0, 1));
         // A call that is no tail call.
         let fns =
             compile("fn down(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + down(n - 1)\n  }\n}\n");
@@ -4500,9 +4544,10 @@ fn f(expected, actual) {
         );
     }
 
-    /// The closure of `fn f`'s one `let g = { … }`.
+    /// The closure of `fn f`'s one `let g = { … }`, named by its
+    /// binding.
     fn closure_in_f(input: &str) -> Function {
-        find_fn(&compile(input), "closure in f").clone()
+        find_fn(&compile(input), "g in f").clone()
     }
 
     /// A closure that calls itself by the name its `let` gives it takes

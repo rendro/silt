@@ -17,10 +17,10 @@ error[runtime]: division by zero
    |          ^^^^^ division by zero
 
 call stack:
-  -> closure in go  at <repl:3>:3:10
-  -> closure in go  at <repl:3>:4:10
-  -> closure in go  at <repl:3>:4:10
-  -> closure in go  at <repl:3>:4:10
+  -> go  at <repl:3>:3:10
+  -> go  at <repl:3>:4:10
+  -> go  at <repl:3>:4:10
+  -> go  at <repl:3>:4:10
   -> <repl:4>  at <repl:4>:1:1
 error[runtime]: division by zero
  --> <repl:5>:4:12
@@ -29,6 +29,6 @@ error[runtime]: division by zero
    |            ^^^^^ division by zero
 
 call stack:
-  -> closure in inside  at <repl:5>:4:12
+  -> g in inside  at <repl:5>:4:12
   -> inside  at <repl:5>:8:3
   -> <repl:6>  at <repl:6>:1:1

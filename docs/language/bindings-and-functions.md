@@ -419,6 +419,12 @@ Only the closure the `let` binds is its own name: in
 `f` is not bound yet. Two local closures cannot call each other; make them
 top-level functions.
 
+A call stack names a closure that a `let` binds by the binding and the
+function it is in: `visit` above is `visit in count_at_most`, and a
+top-level `let f = { ... }` is `f`, as a function is. Any other closure is
+named after the function it is written in, however deep:
+`closure in count_at_most`.
+
 A closure may not call itself by a name that meant something else where
 its `let` stands, an earlier local, a function of the module or an
 imported name: which of the two is meant would not be clear, so it is an
