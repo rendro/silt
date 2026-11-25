@@ -1,0 +1,107 @@
+-- Counting: the same rounds of `i == n`, `i + 1` and `acc + i` in
+-- each form a counting loop can take. A `loop`; a function that calls
+-- itself in tail position; a closure that does, `n` captured; two
+-- functions that call each other in tail position; and `list.fold`,
+-- `list.each` and `list.fold_until` over a range.
+--
+-- main runs the one its arguments name, `n` rounds:
+--
+--   silt run benches/counting.silt -- fold 10000000
+--
+-- benches/vm_bench.rs runs the same functions in its counting rows.
+
+import int
+import io
+import list
+
+fn by_loop(n) {
+  loop i = 0, acc = 0 {
+    match i == n {
+      true -> acc
+      _ -> loop(i + 1, acc + i)
+    }
+  }
+}
+
+fn count(i, n, acc) {
+  match i == n {
+    true -> acc
+    _ -> count(i + 1, n, acc + i)
+  }
+}
+
+fn by_self_call(n) {
+  count(0, n, 0)
+}
+
+fn by_closure(n) {
+  let go = { i, acc ->
+    match i == n {
+      true -> acc
+      _ -> go(i + 1, acc + i)
+    }
+  }
+  go(0, 0)
+}
+
+fn ping(i, n, acc) {
+  match i == n {
+    true -> acc
+    _ -> pong(i + 1, n, acc + i)
+  }
+}
+
+fn pong(i, n, acc) {
+  match i == n {
+    true -> acc
+    _ -> ping(i + 1, n, acc + i)
+  }
+}
+
+fn by_mutual_calls(n) {
+  ping(0, n, 0)
+}
+
+fn by_fold(n) {
+  list.fold(0..n - 1, 0) { acc, i -> acc + i }
+}
+
+fn by_each(n) {
+  list.each(0..n - 1) { i -> () }
+  n
+}
+
+fn by_fold_until(n) {
+  list.fold_until(0..n - 1, 0) { acc, i ->
+    match i == n {
+      true -> list.Stop(acc)
+      _ -> list.Continue(acc + i)
+    }
+  }
+}
+
+fn main() {
+  let args = io.args()
+  let kind = match list.get(args, 0) {
+    Some(k) -> k
+    None -> "loop"
+  }
+  let n = match list.get(args, 1) {
+    Some(s) -> match int.parse(s) {
+      Ok(v) -> v
+      Err(_) -> 1000
+    }
+    None -> 1000
+  }
+  let r = match kind {
+    "loop" -> by_loop(n)
+    "self_call" -> by_self_call(n)
+    "closure" -> by_closure(n)
+    "mutual_calls" -> by_mutual_calls(n)
+    "fold" -> by_fold(n)
+    "each" -> by_each(n)
+    "fold_until" -> by_fold_until(n)
+    _ -> 0
+  }
+  println(r)
+}

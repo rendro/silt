@@ -1,0 +1,11 @@
+-- exit: 1
+import list
+
+fn add_share(acc, i) {
+  let d = 5 - i
+  acc + 100 / d
+}
+
+fn main() {
+  let _ = list.fold(1..10, 0, add_share)
+}

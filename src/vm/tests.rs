@@ -2681,6 +2681,59 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
     assert_eq!(result, Value::string("abc"));
 }
 
+// ── A builtin that calls its function again ──────────────────────
+//
+// `list.fold` and the other builtins of `vm::iterate` call their
+// function for each element in the frame of the last call
+// (`Native::again`): a fold over ten thousand elements makes no frame
+// for each.
+
+/// The value `call` gives, run in `main` after `decls`, and how many
+/// frames of functions it made.
+fn frames_made(decls: &str, call: &str) -> (Value, usize) {
+    use super::calls::CODE_FRAMES_MADE;
+    let source =
+        format!("import list\nimport host\n{decls}\nfn main() {{\n  host.give({call})\n}}\n");
+    let before = CODE_FRAMES_MADE.with(std::cell::Cell::get);
+    let value = run_vm(&source);
+    (value, CODE_FRAMES_MADE.with(std::cell::Cell::get) - before)
+}
+
+#[test]
+fn a_builtin_calls_its_function_again_in_the_frame_of_the_last_call() {
+    let sum = Value::Int(50_005_000);
+    let step = "fn add(acc, x) {\n  acc + x\n}\nfn step(acc, x) {\n  add(acc, x)\n}";
+    for (decls, call, value) in [
+        (
+            "",
+            "list.fold(1..10000, 0) { acc, i -> acc + i }",
+            sum.clone(),
+        ),
+        (
+            "",
+            "list.fold_until(1..10000, 0) { acc, i -> list.Continue(acc + i) }",
+            sum.clone(),
+        ),
+        ("", "list.each(1..10000) { i -> () }", Value::Unit),
+        (
+            "",
+            "list.length(list.map(1..10000) { i -> i * 2 })",
+            Value::Int(10_000),
+        ),
+        // A function whose body is a tail call of another.
+        (step, "list.fold(1..10000, 0, step)", sum),
+    ] {
+        let (given, made) = frames_made(decls, call);
+        assert_eq!(given, value, "{call}");
+        assert!(made < 10, "{call} made {made} frames");
+    }
+    // (Frames are counted: a recursion makes one for each call.)
+    let depth = "fn depth(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + depth(n - 1)\n  }\n}";
+    let (given, made) = frames_made(depth, "depth(1000)");
+    assert_eq!(given, Value::Int(1000));
+    assert!(made > 1000, "a recursion 1000 deep made {made} frames");
+}
+
 #[test]
 fn test_scheduler_list_filter_with_yielding_predicate() {
     // list.filter with a yielding predicate. Verifies both the count and

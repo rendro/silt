@@ -141,6 +141,41 @@ fn at_slice_one_the_budget_is_exact() {
     assert_eq!(lines(0), 0);
 }
 
+/// A round of a builtin that calls a function for each element costs
+/// the same steps whether the next call runs in the frame of the last
+/// one, as it does with steps left in the slice, or the builtin's frame
+/// is resumed first and makes a new frame, as at slice 1: a budget ends
+/// the program after the same line at every slice.
+#[test]
+fn a_round_of_a_fold_costs_the_same_steps_at_every_slice() {
+    let calls = [
+        "let _ = list.fold(1..1000000, 0) { acc, i ->\n    println(i)\n    acc + i\n  }",
+        "list.each(1..1000000) { i -> println(i) }",
+        "let _ = list.fold_until(1..1000000, 0) { acc, i ->\n    println(i)\n    list.Continue(acc + i)\n  }",
+        "let _ = list.map(1..1000000) { i -> println(i) }",
+    ];
+    for call in calls {
+        let source = format!("import list\nfn main() {{\n  {call}\n}}\n");
+        let lines = |slice: usize, steps: u64| {
+            let (result, output) = run_whole(&source, |vm| {
+                vm.set_time_slice(slice);
+                vm.set_step_budget(steps);
+            });
+            assert!(result.unwrap_err().out_of_steps, "{call}");
+            output.lines().count()
+        };
+        // (Budgets that each slice divides: every slice runs its full
+        // length.)
+        for steps in [14_000, 28_000] {
+            let one_by_one = lines(1, steps);
+            assert!(one_by_one > 100, "{one_by_one} lines of {call}");
+            for slice in [7, 2000] {
+                assert_eq!(lines(slice, steps), one_by_one, "{call} at slice {slice}");
+            }
+        }
+    }
+}
+
 /// A program that ends within its budget is not touched by it, and is
 /// counted at the scheduler's own slice when none is set.
 #[test]
