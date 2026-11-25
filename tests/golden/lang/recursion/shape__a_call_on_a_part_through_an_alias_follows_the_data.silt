@@ -1,0 +1,25 @@
+-- An alias is the function it names: a call on a part through it, or
+-- through a local copy of it, follows the data as the function's own.
+fn len(xs: List(Int)) -> Int {
+  match xs {
+    [_, ..rest] -> 1 + size(rest)
+    [] -> 0
+  }
+}
+
+let size = len
+
+fn sum(xs: List(Int)) -> Int {
+  let add = total
+  match xs {
+    [x, ..rest] -> x + add(rest)
+    [] -> 0
+  }
+}
+
+let total = sum
+
+fn main() {
+  println(len([1, 2, 3]))
+  println(sum([1, 2, 3, 4]))
+}

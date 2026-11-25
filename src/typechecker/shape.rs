@@ -110,6 +110,9 @@ struct Node<'a> {
     deep: Option<Span>,
     /// A top-level function (or `let`).
     top: bool,
+    /// A top-level `let` of a value that is no closure (`let g = f`):
+    /// what it names is named by it.
+    value: bool,
     params: &'a [Param],
     body: &'a Expr,
 }
@@ -145,6 +148,8 @@ struct Site {
     args: Vec<Span>,
     /// For a member passed as a value to a call: the callee's span.
     passed_to: Option<Span>,
+    /// Where the member is named: an alias's name, if it is one.
+    named_at: Span,
 }
 
 enum SiteKind {
@@ -180,6 +185,9 @@ struct Walk<'a, 'd> {
     nodes: Vec<Node<'a>>,
     /// The top-level nodes by name.
     top: HashMap<Symbol, usize>,
+    /// The top-level plain aliases (`let g = f`) by name: the span of
+    /// the alias's name and the node it is, through any chain of them.
+    top_alias: HashMap<Symbol, (Span, usize)>,
     /// The local names in scope, innermost last.
     scopes: Vec<(Symbol, Origin)>,
     /// The innermost node the walk is in.
@@ -200,6 +208,7 @@ impl<'a, 'd> Walk<'a, 'd> {
     fn new(program: &'a Program, text: Option<&'a str>, defs: Option<&'d DefTable>) -> Self {
         let mut nodes = Vec::new();
         let mut top = HashMap::new();
+        let mut aliases: Vec<(Symbol, Span, Symbol)> = Vec::new();
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) if !f.is_recovery_stub && !f.is_signature_only => {
@@ -209,20 +218,33 @@ impl<'a, 'd> Walk<'a, 'd> {
                         name_span: f.name_span,
                         deep: f.deep,
                         top: true,
+                        value: false,
                         params: &f.params,
                         body: &f.body,
                     });
                 }
+                // A top-level `let` is a node whatever its value: `let g = f`
+                // names `f` as `g` does, and naming a function must not
+                // switch the check off.
                 Decl::Let { pattern, value, .. } => {
-                    if let (PatternKind::Ident(name), ExprKind::Lambda { params, body }) =
-                        (&pattern.kind, &value.kind)
-                    {
+                    if let PatternKind::Ident(name) = &pattern.kind {
+                        // A plain alias (`let g = f`, `let h = g`) is what it
+                        // names: resolved below, no node of its own.
+                        if let ExprKind::Ident(target) = &unwrapped(value).kind {
+                            aliases.push((*name, pattern.span, *target));
+                            continue;
+                        }
+                        let (params, body, is_value) = match &value.kind {
+                            ExprKind::Lambda { params, body } => (&params[..], &**body, false),
+                            _ => (&[][..], value, true),
+                        };
                         top.insert(*name, nodes.len());
                         nodes.push(Node {
                             name: *name,
                             name_span: pattern.span,
                             deep: None,
                             top: true,
+                            value: is_value,
                             params,
                             body,
                         });
@@ -231,11 +253,48 @@ impl<'a, 'd> Walk<'a, 'd> {
                 _ => {}
             }
         }
+        // Each alias is what the end of its chain is (a cycle of aliases
+        // names no node). Each is resolved once: a walk stops at an alias
+        // already resolved, and what it finds is written on every alias
+        // it passed, so a long chain of them costs its length, not its
+        // length squared.
+        let target_of: HashMap<Symbol, Symbol> = aliases
+            .iter()
+            .map(|&(name, _, target)| (name, target))
+            .collect();
+        let mut resolved: HashMap<Symbol, Option<usize>> = HashMap::new();
+        for &(name, _, _) in &aliases {
+            let mut path = Vec::new();
+            let mut on_path = std::collections::HashSet::new();
+            let mut at = name;
+            let end = loop {
+                if let Some(&known) = resolved.get(&at) {
+                    break known;
+                }
+                if !on_path.insert(at) {
+                    break None;
+                }
+                match target_of.get(&at) {
+                    Some(&next) => {
+                        path.push(at);
+                        at = next;
+                    }
+                    None => break top.get(&at).copied(),
+                }
+            };
+            for passed in path {
+                resolved.insert(passed, end);
+            }
+        }
+        let top_alias: HashMap<Symbol, (Span, usize)> = (aliases.iter())
+            .filter_map(|&(name, span, _)| Some((name, (span, resolved.get(&name).copied()??))))
+            .collect();
         Walk {
             text,
             defs,
             nodes,
             top,
+            top_alias,
             scopes: Vec::new(),
             node: None,
             closure: None,
@@ -252,7 +311,9 @@ impl<'a, 'd> Walk<'a, 'd> {
         }
         for decl in &program.decls {
             match decl {
-                Decl::Let { value, .. } if !matches!(value.kind, ExprKind::Lambda { .. }) => {
+                Decl::Let { pattern, value, .. }
+                    if !matches!(pattern.kind, PatternKind::Ident(_)) =>
+                {
                     self.expr(value, false);
                 }
                 Decl::TraitImpl(ti) => {
@@ -356,10 +417,15 @@ impl<'a, 'd> Walk<'a, 'd> {
             // (The definition the name names is the node's when it is
             // declared where the node's name is: in a REPL entry a name
             // can still name an earlier entry's definition of it.)
-            Some(Res::Def(id)) => self.top.get(name).copied().filter(|&n| {
-                self.defs
-                    .is_none_or(|defs| defs.get(id).span == self.nodes[n].name_span)
-            }),
+            Some(Res::Def(id)) => {
+                let declared_at =
+                    |span: Span| self.defs.is_none_or(|defs| defs.get(id).span == span);
+                match (self.top.get(name), self.top_alias.get(name)) {
+                    (Some(&n), _) => declared_at(self.nodes[n].name_span).then_some(n),
+                    (None, Some(&(span, n))) => declared_at(span).then_some(n),
+                    (None, None) => None,
+                }
+            }
             _ => None,
         }
     }
@@ -480,7 +546,14 @@ impl<'a, 'd> Walk<'a, 'd> {
         match &e.kind {
             ExprKind::Ident(_) => {
                 if let Some(to) = self.node_named(e) {
-                    self.site(to, e.span, SiteKind::Value { elem: None }, Vec::new(), None);
+                    self.site(
+                        to,
+                        e.span,
+                        SiteKind::Value { elem: None },
+                        Vec::new(),
+                        None,
+                        e.span,
+                    );
                 }
             }
             ExprKind::Call(callee, args) => {
@@ -543,11 +616,33 @@ impl<'a, 'd> Walk<'a, 'd> {
                                 name_span: pattern.span,
                                 deep: None,
                                 top: false,
+                                value: false,
                                 params,
                                 body,
                             });
                             self.scopes.push((*name, Origin::Node(n)));
                             self.function(n);
+                        }
+                        // A plain alias of a function (`let h = g`) is that
+                        // function for every mention.
+                        (PatternKind::Ident(name), _)
+                            if self.node_named(unwrapped(value)).is_some() =>
+                        {
+                            let n = self.node_named(unwrapped(value)).expect("a node");
+                            self.scopes.push((*name, Origin::Node(n)));
+                        }
+                        // A copy of the parameter under another name is the
+                        // parameter (a copy of a part is a part, by `bind`).
+                        (PatternKind::Ident(name), ExprKind::Ident(_))
+                            if matches!(
+                                self.measure(value),
+                                Some(Measure { strict: false, .. })
+                            ) =>
+                        {
+                            let (Some(n), Some(m)) = (self.node, self.measure(value)) else {
+                                unreachable!("a measure is of the node the walk is in")
+                            };
+                            self.scopes.push((*name, Origin::Param(n, m.param)));
                         }
                         _ => {
                             self.expr(value, false);
@@ -632,7 +727,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                 },
             };
             let spans = args.iter().map(|a| a.span).collect();
-            self.site(to, e.span, kind, spans, None);
+            self.site(to, e.span, kind, spans, None, callee.span);
             self.args(callee, &args);
             return;
         }
@@ -650,7 +745,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                     Some(to) => {
                         let elem = coll.map(|m| (m, at));
                         let kind = SiteKind::Value { elem };
-                        self.site(to, fun.span, kind, Vec::new(), Some(callee.span));
+                        self.site(to, fun.span, kind, Vec::new(), Some(callee.span), fun.span);
                     }
                     None => self.expr(fun, false),
                 },
@@ -668,7 +763,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             match self.node_named(arg) {
                 Some(to) => {
                     let kind = SiteKind::Value { elem: None };
-                    self.site(to, arg.span, kind, Vec::new(), Some(callee.span));
+                    self.site(to, arg.span, kind, Vec::new(), Some(callee.span), arg.span);
                 }
                 None => self.expr(arg, false),
             }
@@ -682,7 +777,14 @@ impl<'a, 'd> Walk<'a, 'd> {
         kind: SiteKind,
         args: Vec<Span>,
         passed_to: Option<Span>,
+        named_at: Span,
     ) {
+        // A top-level `let` of a value (`let routes = [home, help]`) is
+        // reached through a call of its name (`let g = f`, `g(n)`): to
+        // read it (a table its handlers read) calls nothing.
+        if matches!(kind, SiteKind::Value { .. }) && self.nodes[to].value {
+            return;
+        }
         if let Some(from) = self.node {
             self.sites.push(Site {
                 from,
@@ -691,6 +793,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                 kind,
                 args,
                 passed_to,
+                named_at,
             });
         }
     }
@@ -994,19 +1097,22 @@ impl<'a, 'd> Walk<'a, 'd> {
         let d_from = best[at(site.from)];
         let d_to = best[at(site.to)];
         let arg = d_to.and_then(|i| site.args.get(i)).map(|s| self.shown(*s));
-        let deep_help = match from.top {
-            true => format!(
+        let deep_help = match (from.top, from.value) {
+            (true, true) => {
+                let to = to_name;
+                format!(
+                    "if its depth is bounded by something the compiler cannot see, write \
+                     `{from_name}` as a top-level `deep fn` that calls `{to}`"
+                )
+            }
+            (true, false) => format!(
                 "if its depth is bounded by something the compiler cannot see, write \
                  `deep fn {from_name}`"
             ),
-            false => format!(
+            (false, _) => format!(
                 "if its depth is bounded by something the compiler cannot see, make \
                  `{from_name}` a top-level `deep fn`"
             ),
-        };
-        let descends_on = |n: usize, d: Option<usize>| match d {
-            Some(i) => self.param_name(n, i),
-            None => "nothing".to_string(),
         };
         let mut d = match &site.kind {
             SiteKind::Value { .. } => {
@@ -1046,9 +1152,8 @@ impl<'a, 'd> Walk<'a, 'd> {
                     Code::RecursionShape,
                     site.span,
                     format!(
-                        "this call of `{to_name}` passes `{arg}` where `{to_name}` descends \
-                         on `{}`",
-                        descends_on(site.to, d_to)
+                        "this call of `{to_name}` passes `{arg}`, which is no part of a \
+                         parameter of `{from_name}`"
                     ),
                 )
                 .with_note(
@@ -1095,6 +1200,13 @@ impl<'a, 'd> Walk<'a, 'd> {
                 d.with_help(deep_help)
             }
         };
+        // (Named through an alias: say what the alias is.)
+        let written = self.shown(site.named_at);
+        if !written.is_empty() && written != to_name.to_string() {
+            d = d.with_note(format!(
+                "`{written}` is `{to_name}`: an alias is the function it names"
+            ));
+        }
         if members.len() > 1 {
             let names: Vec<String> = members
                 .iter()
@@ -1250,6 +1362,14 @@ fn endings(
             out.push((e.span, Ending::Call, in_arm));
         }
         _ => {}
+    }
+}
+
+/// `e` without the type a `as` gives it.
+fn unwrapped(e: &Expr) -> &Expr {
+    match &e.kind {
+        ExprKind::Ascription(inner, _) => unwrapped(inner),
+        _ => e,
     }
 }
 

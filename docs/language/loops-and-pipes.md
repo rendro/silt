@@ -333,7 +333,10 @@ The rule is about loops that give `()`; one that gives a value (a
 a trait (`Show.show(left)`, `x.show()`) is a call of the impl of the
 argument's type and is not checked (the editor says "not checked: trait
 call" on such a method), and neither is a function reached through a
-value. It catches the accidents (a call that silently takes a frame for
+value kept in data (a list, a tuple, a record, a map of handlers). A
+`let` whose value is just a function's name (`let g = f`, also inside a
+function, also an alias of an alias) is that function wherever it is
+named. It catches the accidents (a call that silently takes a frame for
 every round, a forgotten call to go on); it does not prove that every
 program ends.
 

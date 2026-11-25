@@ -1,0 +1,21 @@
+-- A table of functions that its functions read is data: reading it
+-- calls nothing, and a function taken out of it is a value the check
+-- does not follow. Accepted, and it runs.
+import map
+
+fn home(path: String) -> String {
+  "home {map.length(routes)} {path}"
+}
+
+fn about(path: String) -> String {
+  "about {path}"
+}
+
+let routes = #{"/": home, "/about": about}
+
+fn main() {
+  match map.get(routes, "/") {
+    Some(handler) -> println(handler("x"))
+    None -> println("none")
+  }
+}

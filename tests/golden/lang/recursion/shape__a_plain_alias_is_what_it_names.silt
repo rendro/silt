@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- A `let` whose whole value is a name of a function (or of another such
+-- alias) is that function, for every mention: a call through an alias
+-- of an alias, through a local copy, and the alias passed on are
+-- checked as the function's own (here each is refused).
+fn call(k: Fn(Int) -> Int, n: Int) -> Int {
+  k(n)
+}
+
+fn chained(n: Int) -> Int {
+  1 + again(n + 1)
+}
+
+let once = chained
+
+let again = once
+
+fn copied(n: Int) -> Int {
+  let h = alias
+  1 + h(n + 1)
+}
+
+let alias = copied
+
+fn passed(n: Int) -> Int {
+  1 + call(other, n + 1)
+}
+
+let other = passed
+
+fn main() {
+  println(chained(0) + copied(0) + passed(0))
+}

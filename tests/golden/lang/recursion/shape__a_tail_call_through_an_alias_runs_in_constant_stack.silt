@@ -1,0 +1,14 @@
+-- An alias is the function it names: a tail call through it is the
+-- function's tail call, constant stack, here a million rounds.
+fn count(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> again(n - 1, acc + 1)
+  }
+}
+
+let again = count
+
+fn main() {
+  println(count(1000000, 0))
+}
