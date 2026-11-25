@@ -414,7 +414,6 @@ impl Native for Each {
     }
 }
 
-
 /// What a task runs: a function, called with no argument, or a frame
 /// of the runtime's own (a worker of `task.each` or `task.map`, a
 /// piece of `task.first_ok`).

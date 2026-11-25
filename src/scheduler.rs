@@ -4320,10 +4320,10 @@ fn main() {
     /// read are counted: a program that holds 100 stages that failed
     /// (a top-level binding holds them to the end; `stream.buffered`
     /// reads ahead without being asked) has 64 of them shown with their
-    /// errors and the others counted.
+    /// errors and the other 36 counted.
     #[test]
     fn past_the_shown_failures_the_others_are_counted() {
-        let (printed, shown, counted, _) = failure_reports(
+        let program = crate::session::testing::compile_str(
             r#"
 import list
 import stream
@@ -4334,12 +4334,30 @@ fn main() {
   ()
 }
 "#,
-            "its output was never read: panic: held",
+        )
+        .expect("compiles");
+        let out = crate::vm::Buffer::new();
+        let mut vm = Vm::new(HostIo::buffer(&out));
+        // Taken once, when the stages have ended: a report while they
+        // run could show a `stream.map`'s failure that its
+        // `stream.buffered` had not read yet.
+        vm.collect_unread_failures();
+        assert_eq!(vm.run_program(&program).map_err(|e| e.message), Ok(()));
+        vm.settle();
+        let taken = vm.take_unread_failures();
+        let counted: usize = taken.not_shown.iter().map(|n| n.count).sum();
+        assert_eq!(taken.failures.len(), super::MAX_SHOWN_FAILURES);
+        assert_eq!(taken.failures.len() + counted, 100);
+        assert!(
+            (taken.failures.iter()).all(|f| f.stage == Some("stream.buffered")),
+            "{:?}",
+            taken.failures
         );
-        // (Over the reports of the program: one when `main` returns,
-        // one when its stages have ended.)
-        assert!(shown >= super::MAX_SHOWN_FAILURES, "{shown} shown: {printed}");
-        assert_eq!(shown + counted, 100, "{printed}");
+        assert_eq!(
+            out.take(),
+            "",
+            "nothing is printed while the failures are collected"
+        );
     }
 
     /// A failed stage that the program lets go of is stopped, and the

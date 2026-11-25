@@ -194,7 +194,7 @@ fn a_run_that_fails_where_success_is_expected_is_a_finding() {
     );
     // A stage that fails and whose output nobody reads makes `silt run`
     // fail.
-    let unread = "import stream\nlet s = stream.map(stream.from_list([0])) { x -> 10 / x }\nfn main() {\n  ()\n}\n";
+    let unread = "import stream\nlet s = stream.from_list([0]) |> stream.map { x -> 10 / x } |> stream.buffered(1)\nfn main() {\n  ()\n}\n";
     assert_finding(
         verdict_with(unread, succeeds()),
         Kind::Expectation,

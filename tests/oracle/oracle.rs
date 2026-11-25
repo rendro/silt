@@ -856,7 +856,8 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
                 }
                 (end, failures_of(&vm))
             }));
-            let ended_with = ran.unwrap_or_else(|panic| (End::Panic(panic_text(&panic)), Vec::new()));
+            let ended_with =
+                ran.unwrap_or_else(|panic| (End::Panic(panic_text(&panic)), Vec::new()));
             let _ = ended.send(ended_with);
         })
         .expect("a thread for the run");
