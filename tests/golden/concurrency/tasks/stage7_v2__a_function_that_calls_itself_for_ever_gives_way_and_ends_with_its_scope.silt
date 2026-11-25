@@ -1,7 +1,11 @@
--- A task that calls itself for ever gives way like any other: with
--- every worker busy in such a task, the body of the `task.background`
--- around them still gets its turn. When the body has returned, its scope
--- stops them, and the program goes on behind it and ends.
+-- A task that calls itself for ever gives way like any other: 64 tasks
+-- that never end are started before a 65th that sends a mark, and the
+-- body of the `task.background` waits for that mark. With every worker
+-- busy in a spinner, the 65th task gets its turn only because the
+-- spinners give way; the body then has the mark. When the body has
+-- returned, its scope stops the spinners, and the program goes on behind
+-- it and ends.
+import channel
 import list
 import task
 
@@ -10,11 +14,10 @@ fn spin(n: Int) {
 }
 
 fn main() {
+  let mark: Channel(Int) = channel.new(0)
   let spinners = list.map(1..64) { _ -> { -> spin(0) } }
-  let said = task.background(spinners) { ->
-    println("the body runs")
-    "the body returned"
-  }
+  let last = { -> channel.send(mark, 1) }
+  let said = task.background([..spinners, last]) { -> channel.receive(mark) }
   println(said)
   println("the scope stopped every spinner")
 }
