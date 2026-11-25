@@ -11,15 +11,16 @@ fn program() {
   let results = channel.new(20)
 
   -- Send 9 jobs
-  loop i = 1 {
+  let step = { i ->
     match i > 9 {
-      true -> channel.close(jobs)
+      true -> return channel.close(jobs)
       _ -> {
         channel.send(jobs, i)
-        loop(i + 1)
+        step(i + 1)
       }
     }
   }
+  step(1)
 
   -- Spawn 3 workers
   let w1 = { -> channel.each(jobs) { n -> channel.send(results, n * 10) } }
@@ -29,17 +30,18 @@ fn program() {
   task.join([w1, w2, w3])
 
   -- Collect all results and sum
-  loop i = 0, total = 0 {
+  let go = { i, total ->
     match i >= 9 {
       true -> total
       _ -> {
         when let Some(v) = channel.receive(results) else {
           panic("pattern did not match")
         }
-        loop(i + 1, total + v)
+        go(i + 1, total + v)
       }
     }
   }
+  go(0, 0)
 }
 
 fn main() {

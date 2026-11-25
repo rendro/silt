@@ -17,18 +17,19 @@ fn main() {
     task.join(list.map([1, 2, 3, 4, 5, 6]) { i -> { -> channel.send(ch, i) } })
   }
   time.sleep(time.ms(200))
-  loop n = 0 {
+  let go = { n ->
     match n < 6 {
       true -> {
         match channel.receive(ch) {
           Some(_) -> println("got one")
           None -> println("got none")
         }
-        loop(n + 1)
+        go(n + 1)
       }
       false -> ()
     }
   }
+  go(0)
   let _ = stream.collect(senders)
   println("done")
 }

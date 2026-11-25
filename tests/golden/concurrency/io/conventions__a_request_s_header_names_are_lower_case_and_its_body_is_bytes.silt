@@ -41,15 +41,16 @@ fn ask(port: Int, body: Bytes) -> String {
   let cr = string.from_char_code(13) |> option.unwrap_or("")
   let head = "POST /upload HTTP/1.1{cr}\nHost: x{cr}\nX-ReQuEsT-Id: 42{cr}\nContent-Length: {bytes.length(body)}{cr}\nConnection: close{cr}\n{cr}\n"
   let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), body))
-  let answer = loop got = bytes.empty() {
+  let go = { got ->
     match tcp.read(conn, 4096) {
       Ok(more) -> match bytes.length(more) {
         0 -> got
-        _ -> loop(bytes.concat(got, more))
+        _ -> go(bytes.concat(got, more))
       }
       Err(_) -> got
     }
   }
+  let answer = go(bytes.empty())
   tcp.close(conn)
   -- The last line of the response is its body.
   bytes.to_string(answer)

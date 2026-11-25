@@ -9,12 +9,13 @@ type T {
 }
 fn build(n) {
   let leaf = Leaf
-  loop i = 0, acc = leaf {
+  let go = { i, acc ->
     match i >= n {
       true -> acc
-      false -> loop(i + 1, Node([acc]))
+      false -> go(i + 1, Node([acc]))
     }
   }
+  go(0, leaf)
 }
 fn work() {
   let a = build(10000)

@@ -35,18 +35,19 @@ fn main() {
 
   -- Drain a, b, d via select (c never delivers).
   let drain = { ->
-    let sum = loop collected = 0, acc = 0 {
+    let go = { collected, acc ->
       match collected >= 3 {
         true -> acc
         _ -> match channel.select(
           [channel.Recv(a), channel.Recv(b), channel.Recv(c), channel.Recv(d)],
         ) {
-          channel.Received(_, Some(v)) -> loop(collected + 1, acc + v)
+          channel.Received(_, Some(v)) -> go(collected + 1, acc + v)
           channel.Received(_, None) -> acc
           channel.Sent(_) -> acc
         }
       }
     }
+    let sum = go(0, 0)
     println("sum={sum}")
   }
   task.join([sa, sb, sc, sd, drain])

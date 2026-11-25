@@ -15,13 +15,14 @@ import tcp
 
 fn head(conn: tcp.TcpStream) -> List(String) {
   let lines = stream.tcp_lines(conn)
-  loop got = [] {
+  let go = { got ->
     match channel.receive(lines) {
       Some(Ok("")) -> got
-      Some(Ok(line)) -> loop(list.append(got, line))
+      Some(Ok(line)) -> go(list.append(got, line))
       _ -> got
     }
   }
+  go([])
 }
 
 fn serve(l: tcp.TcpListener) -> String {

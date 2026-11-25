@@ -7,7 +7,7 @@ import channel
 import task
 
 fn main() {
-  let stale = loop left = 300, stale = 0 {
+  let go = { left, stale ->
     match left {
       0 -> stale
       _ -> {
@@ -19,11 +19,12 @@ fn main() {
           let _ = channel.try_send(ch, left)
         }
         match channel.try_send(ch, left) {
-          true -> loop(left - 1, stale + 1)
-          false -> loop(left - 1, stale)
+          true -> go(left - 1, stale + 1)
+          false -> go(left - 1, stale)
         }
       }
     }
   }
+  let stale = go(300, 0)
   println("receivers left after a stop: {stale}")
 }

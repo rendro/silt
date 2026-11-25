@@ -10,29 +10,31 @@ fn program() {
   let ch = channel.new(0)
 
   -- 20 senders
-  let senders = loop i = 0, acc = [] {
+  let step = { i, acc ->
     match i >= 20 {
       true -> acc
       _ -> {
         let s = { -> channel.send(ch, i) }
-        loop(i + 1, list.append(acc, s))
+        step(i + 1, list.append(acc, s))
       }
     }
   }
+  let senders = step(0, [])
 
   -- Receive all 20 messages and sum them, while every sender runs
   let total = task.background(senders) { ->
-    loop i = 0, acc = 0 {
+    let go = { i, acc ->
       match i >= 20 {
         true -> acc
         _ -> {
           when let Some(val) = channel.receive(ch) else {
             panic("pattern did not match")
           }
-          loop(i + 1, acc + val)
+          go(i + 1, acc + val)
         }
       }
     }
+    go(0, 0)
   }
 
   -- Sum of 0..19 = 190

@@ -11,10 +11,10 @@ import time
 fn round(dur, before) {
   let ch: Channel(Int) = channel.new(1)
   channel.send(ch, 7)
-  let out = task.deadline(dur, { ->
+  let out = task.deadline(dur) { ->
     time.sleep(before)
     channel.receive(ch)
-  })
+  }
   match (out, channel.try_receive(ch)) {
     (Some(Some(7)), channel.Empty) -> 0
     (None, channel.Message(7)) -> 0
@@ -23,15 +23,18 @@ fn round(dur, before) {
 }
 
 fn wrong(dur, before) {
-  loop i = 0, wrong = 0 {
+  let go = { i, wrong ->
     match i >= 500 {
       true -> wrong
-      false -> loop(i + 1, wrong + round(dur, before))
+      false -> go(i + 1, wrong + round(dur, before))
     }
   }
+  go(0, 0)
 }
 
 fn main() {
-  println("the value neither received nor left, deadline about the sleep: {wrong(time.micros(300), time.micros(300))}")
+  println(
+    "the value neither received nor left, deadline about the sleep: {wrong(time.micros(300), time.micros(300))}",
+  )
   println("the value neither received nor left, deadline zero: {wrong(time.ms(0), time.ms(0))}")
 }

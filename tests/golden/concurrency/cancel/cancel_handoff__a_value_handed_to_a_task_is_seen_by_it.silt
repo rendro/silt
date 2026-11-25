@@ -48,15 +48,16 @@ fn round(i, capacity) {
 }
 
 fn rounds(capacity) {
-  loop i = 0, found = 0, sent = 0 {
+  let go = { i, found, sent ->
     match i >= 300 {
       true -> found == sent
       false -> {
         let n = round(i, capacity)
-        loop(i + 1, found + n, sent + n)
+        go(i + 1, found + n, sent + n)
       }
     }
   }
+  go(0, 0, 0)
 }
 
 fn main() {

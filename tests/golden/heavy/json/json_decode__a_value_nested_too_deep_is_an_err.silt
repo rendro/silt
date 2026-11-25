@@ -1,14 +1,16 @@
 import json
+
 -- json.decode reads a json.Value nested up to 1000 levels deep; one
 -- nested deeper is an Err, as a document nested too deep is for
 -- json.parse, and the program goes on.
 fn nest(n: Int) -> json.Value {
-  loop i = 0, v = json.Null {
+  let go = { i, v ->
     match i == n {
       true -> v
-      false -> loop(i + 1, json.Array([v]))
+      false -> go(i + 1, json.Array([v]))
     }
   }
+  go(0, json.Null)
 }
 
 fn main() {

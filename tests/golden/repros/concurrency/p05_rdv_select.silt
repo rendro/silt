@@ -31,11 +31,12 @@ fn main() {
     println(channel.receive(took) |> option.unwrap_or(""))
     time.sleep(time.ms(200))
     -- rendezvous: exactly one sender can have completed
-    loop _ = () {
+    let go = { ->
       match channel.try_receive(done) {
-        channel.Message(m) -> { println(m)  loop(()) }
+        channel.Message(m) -> { println(m)  go() }
         _ -> ()
       }
     }
+    go()
   })
 }

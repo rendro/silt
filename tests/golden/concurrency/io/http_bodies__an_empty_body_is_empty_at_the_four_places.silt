@@ -30,7 +30,7 @@ fn body_of(message: Bytes) -> Option(Bytes) {
 -- Reads a message from `conn`: until its head is there and its body
 -- has `length` bytes, or until the other end has closed. All of it.
 fn read_message(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
-  loop got = bytes.empty() {
+  let go = { got ->
     let whole = match body_of(got) {
       Some(body) -> length == Some(bytes.length(body))
       None -> false
@@ -40,12 +40,13 @@ fn read_message(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
       false -> match tcp.read(conn, 4096) {
         Ok(more) -> match bytes.length(more) {
           0 -> got
-          _ -> loop(bytes.concat(got, more))
+          _ -> go(bytes.concat(got, more))
         }
         Err(_) -> got
       }
     }
   }
+  go(bytes.empty())
 }
 
 fn read_body(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {

@@ -21,23 +21,24 @@ fn main() {
   -- `loop _ = () { ... loop(()) }` re-enters explicitly; a bare `loop {}`
   -- without a `loop(...)` recursion runs its body only once.
   let handler = fn() {
-    loop _ = () {
+    let go = { ->
       match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
         channel.Received(^alerts, Some(msg)) -> {
           println("alert: {msg}")
-          loop(())
+          go()
         }
         channel.Received(^logs, Some(msg)) -> {
           println("log: {msg}")
-          loop(())
+          go()
         }
         channel.Received(_, None) -> {
           println("a channel closed")
           return ()
         }
-        _ -> loop(())
+        _ -> go()
       }
     }
+    go()
   }
 
   task.join([log_source, alert_source, handler])

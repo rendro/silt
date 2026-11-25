@@ -10,24 +10,26 @@ fn program() {
   let ch = channel.new(10)
 
   let producer = { ->
-    loop i = 1 {
+    let step = { i ->
       match i > 10 {
-        true -> channel.close(ch)
+        true -> return channel.close(ch)
         _ -> {
           channel.send(ch, i)
-          loop(i + 1)
+          step(i + 1)
         }
       }
     }
+    step(1)
   }
 
   task.background([producer]) { ->
-    loop total = 0 {
+    let go = { total ->
       match channel.receive(ch) {
-        Some(val) -> loop(total + val)
+        Some(val) -> go(total + val)
         None -> total
       }
     }
+    go(0)
   }
 }
 

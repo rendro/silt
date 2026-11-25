@@ -20,17 +20,18 @@ fn program() {
   }
 
   task.background([producer]) { ->
-    loop i = 0, acc = [] {
+    let go = { i, acc ->
       match i >= 5 {
         true -> acc
         _ -> {
           when let Some(val) = channel.receive(ch) else {
             panic("pattern did not match")
           }
-          loop(i + 1, list.append(acc, val))
+          go(i + 1, list.append(acc, val))
         }
       }
     }
+    go(0, [])
   }
 }
 

@@ -12,18 +12,19 @@ fn main() {
   task.background(senders, fn() {
     time.sleep(time.ms(200))
     -- now 2 values buffered, 4 senders parked
-    loop n = 0 {
+    let go = { n ->
       match n < 6 {
         true -> {
           match channel.receive(ch) {
             Some(v) -> println("got {v}")
             None -> println("other")
           }
-          loop(n + 1)
+          go(n + 1)
         }
         false -> ()
       }
     }
+    go(0)
   })
   println("done")
 }

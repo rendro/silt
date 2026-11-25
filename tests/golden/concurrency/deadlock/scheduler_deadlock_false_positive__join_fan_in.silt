@@ -6,12 +6,13 @@ import list
 import task
 
 fn busy(id, n) {
-  loop i = 0, acc = id {
+  let go = { i, acc ->
     match i >= n {
       true -> acc
-      _ -> loop(i + 1, acc + i)
+      _ -> go(i + 1, acc + i)
     }
   }
+  go(0, id)
 }
 
 fn main() {

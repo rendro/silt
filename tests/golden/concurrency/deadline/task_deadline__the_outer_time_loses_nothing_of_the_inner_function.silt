@@ -13,29 +13,31 @@ import time
 fn main() {
   let ch: Channel(Int) = channel.new(0)
   let producer = { ->
-    loop i = 0 {
+    let step = { i ->
       match i >= 100 {
-        true -> channel.close(ch)
+        true -> return channel.close(ch)
         false -> {
           time.sleep(time.ms(3))
           channel.send(ch, i)
-          loop(i + 1)
+          step(i + 1)
         }
       }
     }
+    step(0)
   }
   let consumer = { ->
-    let r = loop got = 0, sum = 0, inner_timeouts = 0 {
+    let go = { got, sum, inner_timeouts ->
       let out = task.deadline(time.ms(3)) { ->
         task.deadline(time.hours(1)) { -> channel.receive(ch) }
       }
       match out {
-        Some(Some(Some(v))) -> loop(got + 1, sum + v, inner_timeouts)
+        Some(Some(Some(v))) -> go(got + 1, sum + v, inner_timeouts)
         Some(Some(None)) -> (got, sum, inner_timeouts)
-        Some(None) -> loop(got, sum, inner_timeouts + 1)
-        None -> loop(got, sum, inner_timeouts)
+        Some(None) -> go(got, sum, inner_timeouts + 1)
+        None -> go(got, sum, inner_timeouts)
       }
     }
+    let r = go(0, 0, 0)
     match r {
       (got, sum, inner_timeouts) -> {
         println("sent 100 (sum 4950), received {got} (sum {sum})")

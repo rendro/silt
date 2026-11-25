@@ -30,15 +30,16 @@ fn quick(_req: http.Request) -> http.Response {
 
 -- Read what comes on `conn` until it is closed.
 fn read_all(conn: tcp.TcpStream) -> String {
-  let got = loop got = bytes.empty() {
+  let go = { got ->
     match tcp.read(conn, 4096) {
       Ok(more) -> match bytes.length(more) {
         0 -> got
-        _ -> loop(bytes.concat(got, more))
+        _ -> go(bytes.concat(got, more))
       }
       Err(_) -> got
     }
   }
+  let got = go(bytes.empty())
   bytes.to_string(got) |> result.unwrap_or("")
 }
 

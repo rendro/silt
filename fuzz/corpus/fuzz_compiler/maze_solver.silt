@@ -68,7 +68,7 @@ fn get_neighbors(maze, pos) {
 -- Reconstruct path by following parent indices from goal back to start
 
 fn reconstruct_path(visited, goal_idx) {
-  loop idx = goal_idx, path = [] {
+  let step = { idx, path ->
     let entry = visited
     |> list.get(idx)
     |> option.unwrap_or((Pos { row: 0, col: 0 }, -1))
@@ -76,15 +76,16 @@ fn reconstruct_path(visited, goal_idx) {
     let new_path = list.prepend(path, pos)
     match parent_idx == -1 {
       true -> new_path
-      _ -> loop(parent_idx, new_path)
+      _ -> step(parent_idx, new_path)
     }
   }
+  step(goal_idx, [])
 }
 
 -- BFS using loop: bind queue and visited, iterate until found or exhausted
 
 fn bfs(maze, start, goal) {
-  loop queue = [(start, -1)], visited = [(start, -1)] {
+  let go = { queue, visited ->
     match queue {
       [] -> None
       [(node, _parent_idx), ..rest] -> {
@@ -129,12 +130,13 @@ fn bfs(maze, start, goal) {
             let new_queue_entries = new_neighbors
             |> list.map { n -> (n, node_idx) }
             let updated_queue = list.concat(rest, new_queue_entries)
-            loop(updated_queue, updated_visited)
+            go(updated_queue, updated_visited)
           }
         }
       }
     }
   }
+  go([(start, -1)], [(start, -1)])
   -- Found the goal! Find its index in visited and reconstruct path
   -- Find index of current node in visited list
   -- Filter to unvisited neighbors

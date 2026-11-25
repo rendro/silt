@@ -10,10 +10,11 @@ fn closes_and_waits() {
   stream.from_fn { ch ->
     channel.send(ch, 1)
     channel.close(ch)
-    loop {
+    let go = { ->
       time.sleep(time.ms(5))
-      loop()
+      go()
     }
+    go()
   }
 }
 

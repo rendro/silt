@@ -12,7 +12,7 @@ import option
 -- Returns Some(goal) if reachable from start, None otherwise.
 
 fn bfs(graph, start, goal) {
-  loop queue = [start], visited = [start] {
+  let step = { queue, visited ->
     match queue {
       [] -> None
       [node, ..rest] -> match node == goal {
@@ -22,18 +22,19 @@ fn bfs(graph, start, goal) {
           |> option.unwrap_or([])
           let new = neighbors
           |> list.filter { n -> !list.contains(visited, n) }
-          loop(list.concat(rest, new), list.concat(visited, new))
+          step(list.concat(rest, new), list.concat(visited, new))
         }
       }
     }
   }
+  step([start], [start])
 }
 
 -- Depth-first search (same graph representation).
 -- Uses the queue as a stack (prepend instead of append) for DFS order.
 
 fn dfs(graph, start, goal) {
-  loop stack = [start], visited = [start] {
+  let go = { stack, visited ->
     match stack {
       [] -> None
       [node, ..rest] -> match node == goal {
@@ -43,11 +44,12 @@ fn dfs(graph, start, goal) {
           |> option.unwrap_or([])
           let new = neighbors
           |> list.filter { n -> !list.contains(visited, n) }
-          loop(list.concat(new, rest), list.concat(visited, new))
+          go(list.concat(new, rest), list.concat(visited, new))
         }
       }
     }
   }
+  go([start], [start])
 }
 
 fn main() {

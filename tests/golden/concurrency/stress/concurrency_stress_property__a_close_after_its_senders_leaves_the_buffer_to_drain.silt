@@ -16,13 +16,14 @@ fn main() {
     |> list.filter { ok -> ok }
     |> list.length
   channel.close(ch)
-  let drained = loop c = 0 {
+  let go = { c ->
     match channel.try_receive(ch) {
-      channel.Message(_v) -> loop(c + 1)
+      channel.Message(_v) -> go(c + 1)
       channel.Empty -> c
       channel.Closed -> c
     }
   }
+  let drained = go(0)
   match sent == drained {
     true -> println("drained={drained}")
     false -> println("sent {sent}, drained {drained}")

@@ -12,12 +12,13 @@ fn work(n: Int) -> Int {
 
 -- How many values a closed channel still holds.
 fn count(ch: Channel(Int)) -> Int {
-  loop n = 0 {
+  let go = { n ->
     match channel.try_receive(ch) {
-      channel.Message(_) -> loop(n + 1)
+      channel.Message(_) -> go(n + 1)
       _ -> n
     }
   }
+  go(0)
 }
 
 fn main() {

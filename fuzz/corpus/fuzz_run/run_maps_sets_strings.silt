@@ -15,7 +15,7 @@ fn main() {
 }
 
 fn list_count(words) {
-  loop rest = words, acc = #{} {
+  let go = { rest, acc ->
     match rest {
       [] -> acc
       [w, ..tail] -> {
@@ -23,8 +23,9 @@ fn list_count(words) {
           Some(k) -> k + 1
           None -> 1
         }
-        loop(tail, map.set(acc, w, n))
+        go(tail, map.set(acc, w, n))
       }
     }
   }
+  go(words, #{})
 }

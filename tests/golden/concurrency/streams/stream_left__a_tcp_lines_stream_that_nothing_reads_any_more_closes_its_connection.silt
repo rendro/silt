@@ -12,13 +12,14 @@ import tcp
 
 fn handle(conn: tcp.TcpStream) -> Int {
   let lines = stream.tcp_lines(conn)
-  loop n = 0 {
+  let go = { n ->
     match channel.receive(lines) {
       Some(Ok("")) -> n
-      Some(Ok(_)) -> loop(n + 1)
+      Some(Ok(_)) -> go(n + 1)
       _ -> n
     }
   }
+  go(0)
 }
 
 fn main() {
