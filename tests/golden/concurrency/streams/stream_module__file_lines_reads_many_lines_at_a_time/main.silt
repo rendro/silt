@@ -46,19 +46,20 @@ fn main() {
     Err(e) -> panic("{e}")
   }
   let ch = stream.file_lines("bad.txt")
-  loop {
+  let go = { ->
     match channel.receive(ch) {
       Some(Ok(l)) -> {
         println("ok {l}")
-        loop()
+        go()
       }
       Some(Err(e)) -> {
         println("err {e}")
-        loop()
+        go()
       }
-      None -> println("end")
+      None -> return println("end")
     }
   }
+  go()
   -- (The files go again: run by hand, the program leaves nothing.)
   let _ = fs.remove("many.txt")
   let _ = fs.remove("bad.txt")

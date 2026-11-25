@@ -23,25 +23,27 @@ import time
 
 -- How many values `ch` holds, taken out of it.
 fn drained(ch) {
-  loop n = 0 {
+  let turn = { n ->
     match channel.try_receive(ch) {
-      channel.Message(_) -> loop(n + 1)
+      channel.Message(_) -> turn(n + 1)
       _ -> n
     }
   }
+  turn(0)
 }
 
 fn filled(n) {
   let ch: Channel(Int) = channel.new(n)
-  loop i = 0 {
+  let again = { i ->
     match i >= n {
       true -> ch
       false -> {
         channel.send(ch, i)
-        loop(i + 1)
+        again(i + 1)
       }
     }
   }
+  again(0)
 }
 
 fn count(n, acc) {
@@ -53,16 +55,17 @@ fn count(n, acc) {
 
 -- `round(i)` 300,000 times, with a mark for each round that was done.
 fn rounds(marks, round) {
-  loop i = 0 {
+  let step = { i ->
     match i >= 300000 {
       true -> i
       false -> {
         round(i)
         let _ = channel.try_send(marks, i)
-        loop(i + 1)
+        step(i + 1)
       }
     }
   }
+  step(0)
 }
 
 -- What became of a function that is `rounds` of `round` under `dur`.
@@ -70,7 +73,7 @@ fn rounds(marks, round) {
 -- over from the start, their number is no matter of the clock.
 fn fate(label, dur, few, round) {
   let marks: Channel(Int) = channel.new(20000)
-  let out = task.deadline(dur, { -> rounds(marks, round) })
+  let out = task.deadline(dur) { -> rounds(marks, round) }
   let n = drained(marks)
   let ended = match out {
     None -> "ended"
@@ -102,67 +105,68 @@ fn cases(dur, few) {
   let full = filled(12000)
   let timed_out = channel.timeout(time.ms(0))
   let _ = channel.receive(timed_out)
-  let _ = fate("a select with a Recv arm on a closed channel", dur, few, { _ ->
+  let _ = fate("a select with a Recv arm on a closed channel", dur, few) { _ ->
     let _ = channel.select([channel.Recv(closed)])
-  })
-  let marked = fate("a select with a Send arm into a buffer with room", dur, few, { i ->
+  }
+  let marked = fate("a select with a Send arm into a buffer with room", dur, few) { i ->
     let _ = channel.select([channel.Send(sink, i)])
-  })
+  }
   kept("sent", drained(sink), marked)
-  let marked = fate("a select with a Recv arm on a channel that is full", dur, few, { _ ->
+  let marked = fate("a select with a Recv arm on a channel that is full", dur, few) { _ ->
     let _ = channel.select([channel.Recv(full)])
-  })
+  }
   kept("taken", 12000 - drained(full), marked)
-  let _ = fate("a select on a timeout channel that has closed", dur, few, { _ ->
+  let _ = fate("a select on a timeout channel that has closed", dur, few) { _ ->
     let _ = channel.select([channel.Recv(timed_out)])
-  })
-  let _ = fate("a receive of a closed channel", dur, few, { _ ->
+  }
+  let _ = fate("a receive of a closed channel", dur, few) { _ ->
     let _ = channel.receive(closed)
-  })
-  let _ = fate("try_receive", dur, few, { _ ->
+  }
+  let _ = fate("try_receive", dur, few) { _ ->
     let _ = channel.try_receive(closed)
-  })
-  let _ = fate("try_send", dur, few, { i ->
+  }
+  let _ = fate("try_send", dur, few) { i ->
     let _ = channel.try_send(sink, i)
-  })
-  let _ = fate("ready selects and computing", dur, few, { _ ->
+  }
+  let _ = fate("ready selects and computing", dur, few) { _ ->
     let _ = channel.select([channel.Recv(closed)])
     let _ = count(40, 0)
-  })
-  let _ = fate("an inner deadline of an hour", dur, few, { i ->
-    let _ = task.deadline(time.hours(1), { -> i })
-  })
-  let _ = fate("an inner deadline of no time", dur, few, { i ->
-    let _ = task.deadline(time.ms(0), { -> i })
-  })
-  let _ = fate("three deadlines in each other", dur, few, { i ->
-    let _ = task.deadline(time.hours(1), { ->
-      task.deadline(time.hours(2), { -> task.deadline(time.hours(3), { -> i }) })
-    })
-  })
-  let _ = fate("an inner deadline around ready selects", dur, few, { _ ->
-    let _ = task.deadline(time.hours(1), { ->
-      loop j = 0 {
+  }
+  let _ = fate("an inner deadline of an hour", dur, few) { i ->
+    let _ = task.deadline(time.hours(1)) { -> i }
+  }
+  let _ = fate("an inner deadline of no time", dur, few) { i ->
+    let _ = task.deadline(time.ms(0)) { -> i }
+  }
+  let _ = fate("three deadlines in each other", dur, few) { i ->
+    let _ = task.deadline(time.hours(1)) { ->
+      task.deadline(time.hours(2)) { -> task.deadline(time.hours(3)) { -> i } }
+    }
+  }
+  let _ = fate("an inner deadline around ready selects", dur, few) { _ ->
+    let _ = task.deadline(time.hours(1)) { ->
+      let go = { j ->
         match j >= 50 {
           true -> j
           false -> {
             let _ = channel.select([channel.Recv(closed)])
-            loop(j + 1)
+            go(j + 1)
           }
         }
       }
-    })
-  })
-  let _ = fate("a sink of a stream the function reads", dur, few, { _ ->
+      go(0)
+    }
+  }
+  let _ = fate("a sink of a stream the function reads", dur, few) { _ ->
     let _ = stream.from_list([1, 2, 3]) |> stream.length
-  })
-  let _ = fate("a read of a file", dur, few, { _ ->
+  }
+  let _ = fate("a read of a file", dur, few) { _ ->
     let _ = io.read_file("/no/such/file")
-  })
+  }
   let more = filled(12000)
-  let _ = fate("channel.each over a channel that is full", dur, few, { _ ->
-    channel.each(more, { _ -> () })
-  })
+  let _ = fate("channel.each over a channel that is full", dur, few) { _ ->
+    channel.each(more) { _ -> () }
+  }
 }
 
 fn main() {

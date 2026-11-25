@@ -12,25 +12,27 @@ import time
 fn main() {
   let ch: Channel(Int) = channel.new(0)
   let producer = { ->
-    loop i = 0 {
+    let step = { i ->
       match i >= 150 {
-        true -> channel.close(ch)
+        true -> return channel.close(ch)
         false -> {
           time.sleep(time.ms(3))
           channel.send(ch, i)
-          loop(i + 1)
+          step(i + 1)
         }
       }
     }
+    step(0)
   }
   let consumer = { ->
-    let r = loop got = 0, sum = 0 {
+    let go = { got, sum ->
       match task.deadline(time.ms(3), { -> channel.receive(ch) }) {
-        Some(Some(v)) -> loop(got + 1, sum + v)
+        Some(Some(v)) -> go(got + 1, sum + v)
         Some(None) -> (got, sum)
-        None -> loop(got, sum)
+        None -> go(got, sum)
       }
     }
+    let r = go(0, 0)
     match r {
       (got, sum) -> println("sent 150 (sum 11175), received {got} (sum {sum}), lost {150 - got}")
     }

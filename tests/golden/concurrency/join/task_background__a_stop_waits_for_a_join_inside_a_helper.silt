@@ -20,12 +20,13 @@ fn work(n: Int) -> Int {
 
 -- How many values a closed channel still holds.
 fn count(ch: Channel(Int)) -> Int {
-  loop n = 0 {
+  let step = { n ->
     match channel.try_receive(ch) {
-      channel.Message(_) -> loop(n + 1)
+      channel.Message(_) -> step(n + 1)
       _ -> n
     }
   }
+  step(0)
 }
 
 fn forever() {
@@ -50,11 +51,12 @@ fn round() -> Int {
 -- reached shows in a few rounds in a hundred, so one run of the program
 -- catches it.
 fn main() {
-  let missed = loop i = 0, missed = 0 {
+  let go = { i, missed ->
     match i == 150 {
       true -> missed
-      false -> loop(i + 1, missed + 1 - round())
+      false -> go(i + 1, missed + 1 - round())
     }
   }
+  let missed = go(0, 0)
   println("rounds without the work after the stop: {missed} of 150")
 }

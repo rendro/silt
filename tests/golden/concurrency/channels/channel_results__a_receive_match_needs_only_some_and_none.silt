@@ -7,13 +7,14 @@ fn main() {
   let ch = channel.new(1)
   channel.send(ch, 1)
   channel.close(ch)
-  loop {
+  let go = { ->
     match channel.receive(ch) {
       Some(v) -> {
         println("got {v}")
-        loop()
+        go()
       }
-      None -> println("closed")
+      None -> return println("closed")
     }
   }
+  go()
 }

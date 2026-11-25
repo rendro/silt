@@ -29,11 +29,11 @@ fn main() {
   let out: Channel(Int) = channel.new(0)
   let never: Channel(Int) = channel.new(0)
   let producer = { ->
-    loop i = 0 {
+    let again = { i ->
       match i >= 100 {
         true -> {
           channel.close(a)
-          channel.close(b)
+          return channel.close(b)
         }
         false -> {
           time.sleep(time.ms(3))
@@ -41,25 +41,27 @@ fn main() {
             0 -> channel.send(a, i)
             _ -> channel.send(b, i)
           }
-          loop(i + 1)
+          again(i + 1)
         }
       }
     }
+    again(0)
   }
   let consumer = { ->
-    let r = loop n = 0, sum = 0 {
+    let step = { n, sum ->
       time.sleep(time.ms(3))
       match channel.receive(out) {
-        Some(v) -> loop(n + 1, sum + v)
+        Some(v) -> step(n + 1, sum + v)
         None -> (n, sum)
       }
     }
+    let r = step(0, 0)
     match r {
       (got, sum) -> println("sent 100 (sum 4950), arrived {got} (sum {sum})")
     }
   }
   let middle = { ->
-    loop {
+    let go = { ->
       let got = task.deadline(time.ms(3)) { ->
         match channel.select([channel.Recv(a), channel.Recv(b)]) {
           channel.Received(_, value) -> value
@@ -69,12 +71,13 @@ fn main() {
       match got {
         Some(Some(v)) -> {
           pass(out, never, v)
-          loop()
+          go()
         }
-        Some(None) -> channel.close(out)
-        None -> loop()
+        Some(None) -> return channel.close(out)
+        None -> go()
       }
     }
+    go()
   }
   task.join([producer, middle, consumer])
 }

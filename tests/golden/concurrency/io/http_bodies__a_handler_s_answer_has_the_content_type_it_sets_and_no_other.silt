@@ -58,15 +58,16 @@ fn main() {
       conn,
       bytes.from_string("TRACE / HTTP/1.1{cr}\nHost: x{cr}\nConnection: close{cr}\n{cr}\n"),
     )
-    let answered = loop got = bytes.empty() {
+    let go = { got ->
       match tcp.read(conn, 4096) {
         Ok(more) -> match bytes.length(more) {
           0 -> got
-          _ -> loop(bytes.concat(got, more))
+          _ -> go(bytes.concat(got, more))
         }
         Err(_) -> got
       }
     }
+    let answered = go(bytes.empty())
     tcp.close(conn)
     bytes.to_string(answered)
       |> result.unwrap_or("")

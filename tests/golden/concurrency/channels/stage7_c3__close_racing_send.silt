@@ -17,22 +17,24 @@ fn main() {
       }
     }
   let receiver = { ->
-    let before = loop left = 100, acc = 0 {
+    let step = { left, acc ->
       match left {
         0 -> acc
         _ -> match channel.receive(ch) {
-          Some(v) -> loop(left - 1, acc + v)
+          Some(v) -> step(left - 1, acc + v)
           None -> acc
         }
       }
     }
+    let before = step(100, 0)
     channel.close(ch)
-    let after = loop acc = 0 {
+    let go = { acc ->
       match channel.receive(ch) {
-        Some(v) -> loop(acc + v)
+        Some(v) -> go(acc + v)
         None -> acc
       }
     }
+    let after = go(0)
     println("before={before} after<=4: {after <= 4} closed: {channel.receive(ch)}")
   }
   task.join(list.append(senders, receiver))

@@ -9,10 +9,11 @@ import time
 fn test_closes_and_goes_on() {
   let s = stream.from_fn { ch ->
     channel.close(ch)
-    loop {
+    let go = { ->
       time.sleep(time.ms(5))
-      loop()
+      go()
     }
+    go()
   }
   test.assert_eq(stream.collect(s), [])
 }

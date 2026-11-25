@@ -11,15 +11,16 @@ fn main() {
   let ch = channel.new(0)
   let senders = 1..16 |> list.map { i -> { -> channel.send(ch, i) } }
   let receiver = { ->
-    let sum = loop c = 0, acc = 0 {
+    let go = { c, acc ->
       match c >= 16 {
         true -> acc
         _ -> match channel.receive(ch) {
-          Some(v) -> loop(c + 1, acc + v)
+          Some(v) -> go(c + 1, acc + v)
           None -> acc
         }
       }
     }
+    let sum = go(0, 0)
     println("sum={sum}")
   }
   task.join(list.append(senders, receiver))

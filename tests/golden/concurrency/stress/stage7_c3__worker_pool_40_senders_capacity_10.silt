@@ -18,15 +18,16 @@ fn main() {
   }
   let work = { -> task.each(jobs, 4) { n -> channel.send(results, n * 2) } }
   let collect = { ->
-    let sum = loop left = 1000, acc = 0 {
+    let go = { left, acc ->
       match left {
         0 -> acc
         _ -> match channel.receive(results) {
-          Some(v) -> loop(left - 1, acc + v)
+          Some(v) -> go(left - 1, acc + v)
           None -> acc
         }
       }
     }
+    let sum = go(1000, 0)
     println("sum={sum}")
   }
   task.join([send_all, work, collect])

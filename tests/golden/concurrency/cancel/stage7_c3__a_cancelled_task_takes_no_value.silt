@@ -37,15 +37,16 @@ fn main() {
     channel.send(started, ())
     until_go(go)
     spin(100000)
-    loop {
+    let step = { ->
       match channel.receive(buf) {
         Some(v) -> {
           channel.send(taken, v)
-          loop()
+          step()
         }
         None -> ()
       }
     }
+    step()
   }
   task.background([helper]) { ->
     let _ = channel.receive(started)

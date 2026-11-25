@@ -9,26 +9,27 @@ import time
 
 fn main() {
   let sent: Channel(Int) = channel.new(4)
-  let wrong = loop i = 0, wrong = 0 {
+  let go = { i, wrong ->
     match i >= 200 {
       true -> wrong
       false -> {
-        let out = task.deadline(time.micros(3000), { ->
+        let out = task.deadline(time.micros(3000)) { ->
           time.sleep(time.micros(2000 + i % 5 * 250))
           channel.send(sent, i)
           i
-        })
+        }
         let was_sent = match channel.try_receive(sent) {
           channel.Message(_) -> true
           _ -> false
         }
         match (out, was_sent) {
-          (Some(_), true) -> loop(i + 1, wrong)
-          (None, false) -> loop(i + 1, wrong)
-          _ -> loop(i + 1, wrong + 1)
+          (Some(_), true) -> go(i + 1, wrong)
+          (None, false) -> go(i + 1, wrong)
+          _ -> go(i + 1, wrong + 1)
         }
       }
     }
   }
+  let wrong = go(0, 0)
   println("Some without the value, or None with it: {wrong}")
 }

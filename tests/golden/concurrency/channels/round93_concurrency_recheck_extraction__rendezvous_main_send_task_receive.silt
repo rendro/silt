@@ -7,9 +7,9 @@ import channel
 import stream
 
 fn main() {
-  loop i = 0 {
+  let go = { i ->
     match i >= 20 {
-      true -> println("done")
+      true -> return println("done")
       _ -> {
         let ch = channel.new(0)
         let consumer = stream.from_fn { out ->
@@ -24,10 +24,11 @@ fn main() {
           None -> -1
         }
         match r == 42 {
-          true -> loop(i + 1)
-          _ -> println("iteration {i}: rendezvous send lost, got {r}")
+          true -> go(i + 1)
+          _ -> return println("iteration {i}: rendezvous send lost, got {r}")
         }
       }
     }
   }
+  go(0)
 }

@@ -9,10 +9,11 @@ import stream
 
 fn counting() {
   stream.from_fn { ch ->
-    loop i = 0 {
+    let go = { i ->
       channel.send(ch, i)
-      loop(i + 1)
+      go(i + 1)
     }
+    go(0)
   }
 }
 

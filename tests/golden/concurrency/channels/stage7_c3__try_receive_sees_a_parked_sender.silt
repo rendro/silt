@@ -14,7 +14,7 @@ fn main() {
     "sent"
   }
   let taker = { ->
-    loop tries = 5000 {
+    let go = { tries ->
       match channel.try_receive(ch) {
         channel.Message(v) -> "Message({v})"
         channel.Closed -> "Closed"
@@ -22,11 +22,12 @@ fn main() {
           0 -> "Empty"
           _ -> {
             time.sleep(time.ms(1))
-            loop(tries - 1)
+            go(tries - 1)
           }
         }
       }
     }
+    go(5000)
   }
   list.each(task.map([taker, sender], 2) { f -> f() }) { line -> println(line) }
 }

@@ -14,15 +14,16 @@ fn main() {
   let senders = stream.from_fn { _ ->
     task.join(list.map(1..8) { i -> { -> channel.send(ch, i) } })
   }
-  let total = loop c = 0, acc = 0 {
+  let go = { c, acc ->
     match c >= 8 {
       true -> acc
       _ -> match channel.receive_timeout(ch, time.ms(5000)) {
-        channel.Message(v) -> loop(c + 1, acc + v)
+        channel.Message(v) -> go(c + 1, acc + v)
         _ -> -1
       }
     }
   }
+  let total = go(0, 0)
   let _ = stream.collect(senders)
   println("{total}")
 }

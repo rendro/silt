@@ -15,21 +15,23 @@ fn main() {
   let senders = stream.from_fn { _ ->
     task.join(list.map(1..16) { i -> { -> channel.send(ch, i) } })
   }
-  let sum = loop c = 0, acc = 0 {
-    let _busy = loop k = 0 {
+  let step = { c, acc ->
+    let go = { k ->
       match k >= 5000 {
         true -> 0
-        _ -> loop(k + 1)
+        _ -> go(k + 1)
       }
     }
+    let _ = go(0)
     match c >= 16 {
       true -> acc
       _ -> match channel.receive(ch) {
-        Some(v) -> loop(c + 1, acc + v)
+        Some(v) -> step(c + 1, acc + v)
         None -> acc
       }
     }
   }
+  let sum = step(0, 0)
   let _ = stream.collect(senders)
   println(sum)
 }
