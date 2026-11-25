@@ -1,12 +1,13 @@
 -- verdict: same
 import list
 fn sum(xs) {
-  loop remaining = xs, total = 0 {
+  let go = { remaining, total ->
     match remaining {
       [] -> total
-      [head, ..tail] -> loop(tail, total + head)
+      [head, ..tail] -> go(tail, total + head)
     }
   }
+  go(xs, 0)
 }
 fn main() {
   let xs = list.map(1..20000) { x -> x }

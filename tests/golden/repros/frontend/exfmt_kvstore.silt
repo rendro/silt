@@ -117,35 +117,35 @@ fn main() {
   println("=== Key-Value Store ===")
   println("Commands: GET <key>, SET <key> <value>, DEL <key>, KEYS, COUNT, SAVE, LOAD, QUIT")
   println("")
-  loop store = #{} {
+  let go = { store ->
     print("kvstore> ")
     match io.read_line() {
       Err(_) | Ok(None) -> {
-        println("Goodbye!")
+        return println("Goodbye!")
       }
       Ok(Some(line)) -> {
         let trimmed = string.trim(line)
         match string.is_empty(trimmed) {
-          true -> loop(store)
+          true -> go(store)
           _ -> {
             let parts = string.split(trimmed, " ")
             match list.get(parts, 0) {
-              None -> loop(store)
+              None -> go(store)
               Some(cmd) -> {
                 let command = string.to_upper(cmd)
                 match command {
-                  "QUIT" -> println("Goodbye!")
-                  "GET" -> loop(handle_get(store, parts))
-                  "SET" -> loop(handle_set(store, parts))
-                  "DEL" -> loop(handle_del(store, parts))
-                  "KEYS" -> loop(handle_keys(store))
-                  "COUNT" -> loop(handle_count(store))
-                  "SAVE" -> loop(handle_save(store))
-                  "LOAD" -> loop(handle_load())
+                  "QUIT" -> return println("Goodbye!")
+                  "GET" -> go(handle_get(store, parts))
+                  "SET" -> go(handle_set(store, parts))
+                  "DEL" -> go(handle_del(store, parts))
+                  "KEYS" -> go(handle_keys(store))
+                  "COUNT" -> go(handle_count(store))
+                  "SAVE" -> go(handle_save(store))
+                  "LOAD" -> go(handle_load())
                   _ -> {
                     println("Unknown command: {command}")
                     println("Commands: GET, SET, DEL, KEYS, COUNT, SAVE, LOAD, QUIT")
-                    loop(store)
+                    go(store)
                   }
                 }
               }
@@ -155,4 +155,5 @@ fn main() {
       }
     }
   }
+  go(#{})
 }
