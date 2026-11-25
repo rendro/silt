@@ -1,0 +1,28 @@
+error[type]: this call of `chained` takes a frame for every round
+ --> shape__a_plain_alias_is_what_it_names.silt:12:7
+    |
+ 12 |   1 + again(n + 1)
+    |       ^^^^^^^^^^^^ this call of `chained` takes a frame for every round
+  = note: not the last thing `chained` does, and `n + 1` is not a part of `n`
+  = note: `again` is `chained`: an alias is the function it names
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn chained`
+
+error[type]: this call of `copied` takes a frame for every round
+ --> shape__a_plain_alias_is_what_it_names.silt:21:7
+    |
+ 21 |   1 + h(n + 1)
+    |       ^^^^^^^^ this call of `copied` takes a frame for every round
+  = note: not the last thing `copied` does, and `n + 1` is not a part of `n`
+  = note: `h` is `copied`: an alias is the function it names
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn copied`
+
+error[type]: `passed` is passed to `call` as a value, so the compiler cannot see how it is called
+ --> shape__a_plain_alias_is_what_it_names.silt:27:12
+    |
+ 27 |   1 + call(other, n + 1)
+    |            ^^^^^ `passed` is passed to `call` as a value, so the compiler cannot see how it is called
+  = note: `other` is `passed`: an alias is the function it names
+  = help: call `passed` where it is named
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn passed`
