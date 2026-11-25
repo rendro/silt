@@ -3787,6 +3787,22 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
+        // `deep fn` declares a top-level function, and no function is
+        // declared inside another.
+        if self.deep_fn_at(self.pos) {
+            let name = match self.tokens.get(self.pos + 2).map(|tok| &tok.kind) {
+                Some(Token::Ident(name)) => intern::resolve(*name).to_string(),
+                _ => "name".to_string(),
+            };
+            return Err(Diagnostic::error(
+                Code::UnsupportedSyntax,
+                self.span(),
+                "`deep fn` declares a top-level function: a function cannot be declared inside another",
+            )
+            .with_help(format!(
+                "move it to the top level, `deep fn {name}(...)`; a closure bound by a `let` cannot be `deep`"
+            )));
+        }
         // Emit targeted hints for keywords silt doesn't have (`if`, `while`,
         // `for`, `break`, `continue`) and for mutable reassignment (`x = ...`).
         // Only fires at statement-start positions to avoid hijacking legitimate

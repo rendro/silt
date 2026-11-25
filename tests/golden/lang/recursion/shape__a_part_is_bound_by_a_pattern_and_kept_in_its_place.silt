@@ -2,7 +2,8 @@
 -- place the function descends on is accepted: the rest of a list, what a
 -- constructor or a record pattern binds, a field, a part of an element
 -- of a tuple written out, and two functions that descend in different
--- places. A tail call may pass the parameter back
+-- places. A copy of the parameter under another name is the parameter.
+-- A tail call may pass the parameter back
 -- as it is.
 
 type Tree {
@@ -65,6 +66,14 @@ fn skip(xs: List(Int), skipping: Bool) -> Int {
   }
 }
 
+fn copied(xs: List(Int)) -> Int {
+  let ys = xs
+  match ys {
+    [_, ..rest] -> 1 + copied(rest)
+    [] -> 0
+  }
+}
+
 fn main() {
   println(len(1..50000))
   println(sum(Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))))
@@ -72,4 +81,5 @@ fn main() {
   println(zip_len([1, 2, 3], 0))
   println(evens([1, 2, 3], 0))
   println(skip([1, 2, 3], true))
+  println(copied([1, 2, 3, 4]))
 }

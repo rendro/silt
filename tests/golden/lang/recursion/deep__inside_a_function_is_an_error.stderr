@@ -1,0 +1,6 @@
+error[parse]: `deep fn` declares a top-level function: a function cannot be declared inside another
+ --> deep__inside_a_function_is_an_error.silt:6:3
+   |
+ 6 |   deep fn inner(n: Int) -> Int { n }
+   |   ^^^^ `deep fn` declares a top-level function: a function cannot be declared inside another
+  = help: move it to the top level, `deep fn inner(...)`; a closure bound by a `let` cannot be `deep`

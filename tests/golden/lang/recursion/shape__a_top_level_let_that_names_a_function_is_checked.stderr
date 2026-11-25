@@ -1,0 +1,12 @@
+error[type]: `f` is used here as a value, so the compiler cannot see how it is called
+ --> shape__a_top_level_let_that_names_a_function_is_checked.silt:11:9
+    |
+ 11 | let g = f
+    |         ^ `f` is used here as a value, so the compiler cannot see how it is called
+ ::: shape__a_top_level_let_that_names_a_function_is_checked.silt:8:7
+   |
+ 8 |   1 + g(n + 1)
+   |       -------- `f` calls `g` here
+  = note: `f` and `g` call each other, so they are checked together
+  = help: call `f` where it is named
+  = help: if its depth is bounded by something the compiler cannot see, write `g` as a top-level `deep fn` that calls `f`

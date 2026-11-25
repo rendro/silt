@@ -110,6 +110,9 @@ struct Node<'a> {
     deep: Option<Span>,
     /// A top-level function (or `let`).
     top: bool,
+    /// A top-level `let` of a value that is no closure (`let g = f`):
+    /// what it names is named by it.
+    value: bool,
     params: &'a [Param],
     body: &'a Expr,
 }
@@ -209,20 +212,27 @@ impl<'a, 'd> Walk<'a, 'd> {
                         name_span: f.name_span,
                         deep: f.deep,
                         top: true,
+                        value: false,
                         params: &f.params,
                         body: &f.body,
                     });
                 }
+                // A top-level `let` is a node whatever its value: `let g = f`
+                // names `f` as `g` does, and naming a function must not
+                // switch the check off.
                 Decl::Let { pattern, value, .. } => {
-                    if let (PatternKind::Ident(name), ExprKind::Lambda { params, body }) =
-                        (&pattern.kind, &value.kind)
-                    {
+                    if let PatternKind::Ident(name) = &pattern.kind {
+                        let (params, body, is_value) = match &value.kind {
+                            ExprKind::Lambda { params, body } => (&params[..], &**body, false),
+                            _ => (&[][..], value, true),
+                        };
                         top.insert(*name, nodes.len());
                         nodes.push(Node {
                             name: *name,
                             name_span: pattern.span,
                             deep: None,
                             top: true,
+                            value: is_value,
                             params,
                             body,
                         });
@@ -252,7 +262,9 @@ impl<'a, 'd> Walk<'a, 'd> {
         }
         for decl in &program.decls {
             match decl {
-                Decl::Let { value, .. } if !matches!(value.kind, ExprKind::Lambda { .. }) => {
+                Decl::Let { pattern, value, .. }
+                    if !matches!(pattern.kind, PatternKind::Ident(_)) =>
+                {
                     self.expr(value, false);
                 }
                 Decl::TraitImpl(ti) => {
@@ -543,11 +555,25 @@ impl<'a, 'd> Walk<'a, 'd> {
                                 name_span: pattern.span,
                                 deep: None,
                                 top: false,
+                                value: false,
                                 params,
                                 body,
                             });
                             self.scopes.push((*name, Origin::Node(n)));
                             self.function(n);
+                        }
+                        // A copy of the parameter under another name is the
+                        // parameter (a copy of a part is a part, by `bind`).
+                        (PatternKind::Ident(name), ExprKind::Ident(_))
+                            if matches!(
+                                self.measure(value),
+                                Some(Measure { strict: false, .. })
+                            ) =>
+                        {
+                            let (Some(n), Some(m)) = (self.node, self.measure(value)) else {
+                                unreachable!("a measure is of the node the walk is in")
+                            };
+                            self.scopes.push((*name, Origin::Param(n, m.param)));
                         }
                         _ => {
                             self.expr(value, false);
@@ -683,6 +709,12 @@ impl<'a, 'd> Walk<'a, 'd> {
         args: Vec<Span>,
         passed_to: Option<Span>,
     ) {
+        // A top-level `let` of a value (`let routes = [home, help]`) is
+        // reached through a call of its name (`let g = f`, `g(n)`): to
+        // read it (a table its handlers read) calls nothing.
+        if matches!(kind, SiteKind::Value { .. }) && self.nodes[to].value {
+            return;
+        }
         if let Some(from) = self.node {
             self.sites.push(Site {
                 from,
@@ -994,19 +1026,22 @@ impl<'a, 'd> Walk<'a, 'd> {
         let d_from = best[at(site.from)];
         let d_to = best[at(site.to)];
         let arg = d_to.and_then(|i| site.args.get(i)).map(|s| self.shown(*s));
-        let deep_help = match from.top {
-            true => format!(
+        let deep_help = match (from.top, from.value) {
+            (true, true) => {
+                let to = to_name;
+                format!(
+                    "if its depth is bounded by something the compiler cannot see, write \
+                     `{from_name}` as a top-level `deep fn` that calls `{to}`"
+                )
+            }
+            (true, false) => format!(
                 "if its depth is bounded by something the compiler cannot see, write \
                  `deep fn {from_name}`"
             ),
-            false => format!(
+            (false, _) => format!(
                 "if its depth is bounded by something the compiler cannot see, make \
                  `{from_name}` a top-level `deep fn`"
             ),
-        };
-        let descends_on = |n: usize, d: Option<usize>| match d {
-            Some(i) => self.param_name(n, i),
-            None => "nothing".to_string(),
         };
         let mut d = match &site.kind {
             SiteKind::Value { .. } => {
@@ -1046,9 +1081,8 @@ impl<'a, 'd> Walk<'a, 'd> {
                     Code::RecursionShape,
                     site.span,
                     format!(
-                        "this call of `{to_name}` passes `{arg}` where `{to_name}` descends \
-                         on `{}`",
-                        descends_on(site.to, d_to)
+                        "this call of `{to_name}` passes `{arg}`, which is no part of a \
+                         parameter of `{from_name}`"
                     ),
                 )
                 .with_note(
