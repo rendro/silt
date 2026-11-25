@@ -3773,7 +3773,10 @@ mod tests {
         };
         // The function of each stream holds the stream itself, so
         // that it is not stopped when `main` lets go of it: the tasks
-        // stay when the program has returned.
+        // stay when the program has returned. It holds it past `work`:
+        // with `work()` its tail call, the function let go of its own
+        // stream there, whose stop then ended it, maybe before its send
+        // to `ready` (a false deadlock of `main`, now and then).
         let leaves_tasks = compile(
             r#"
 import channel
@@ -3782,8 +3785,9 @@ import time
 fn kept(work: Fn() -> ()) -> () {
   let hand: Channel(Channel(Int)) = channel.new(1)
   let s = stream.from_fn { _ ->
-    let _mine = channel.receive(hand)
+    let mine = channel.receive(hand)
     work()
+    let _ = mine
   }
   channel.send(hand, s)
 }
