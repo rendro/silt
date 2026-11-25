@@ -1,9 +1,9 @@
 -- cmd: check
 -- exit: 1
--- A top-level `let` is a function of the graph whatever its value:
--- `let g = f` names `f` as a value, so a recursion through a call of
--- `g` is checked (here refused), not switched off. A table that its
--- handlers only read calls nothing (init_order__a_plain_value_runs_nothing).
+-- A top-level `let` whose value is a function's name is that function:
+-- `let g = f` is `f`, so a recursion through `g` is checked (here
+-- refused), not switched off. A table that its handlers only read calls
+-- nothing (init_order__a_plain_value_runs_nothing).
 fn f(n: Int) -> Int {
   1 + g(n + 1)
 }
