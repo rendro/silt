@@ -1,0 +1,16 @@
+-- exit: 1
+-- A variant `Stop` of the program without a value, given as the step of
+-- a fold, is the program's: the mismatch names `Step.Stop`, which
+-- reaches the prelude's.
+import list
+
+type Light { Go, Stop }
+
+fn main() {
+  println(list.fold_until(1..5, 0) { acc, x ->
+    match x {
+      3 -> Stop
+      _ -> Continue(acc + x)
+    }
+  })
+}

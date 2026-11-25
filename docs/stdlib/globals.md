@@ -19,6 +19,8 @@ No import or qualification needed.
 | `Err` | `(e) -> Result(a, e)` | Construct an error Result |
 | `Some` | `(a) -> Option(a)` | Construct a present Option |
 | `None` | `Option(a)` | The absent Option value (not a function) |
+| `Stop` | `(a) -> Step(a)` | End a `fold_until` with this value |
+| `Continue` | `(a) -> Step(a)` | Go on with a `fold_until`, with this state |
 
 A type written as a value is its **type descriptor**, for a `type a`
 parameter (`json.parse(text, Int)`, a function of your own) and for
@@ -29,7 +31,7 @@ need no import:
 |------|-------------|
 | `Int`, `Float`, `String`, `Bool` | The primitive types |
 | `List`, `Map`, `Set`, `Channel` | The container types, of any element types |
-| `Option`, `Result` | The prelude's enums |
+| `Option`, `Result`, `Step` | The prelude's enums |
 | `Bytes` | Byte strings |
 
 A type of a builtin module is a value through its module, as its other
@@ -43,24 +45,21 @@ functions: reach a variant through the module, or import it by name.
 
 ```silt
 import channel
-import list
-import list.{ Stop }
+import channel.{ Message }
 
 fn main() {
   let ch = channel.new(1)
   channel.send(ch, 1)
-  match channel.receive(ch) {
-    Some(v) -> println(v)
-    None -> println("no value")
+  match channel.try_receive(ch) {
+    Message(v) -> println(v)
+    channel.Empty -> println("no value yet")
+    channel.Closed -> println("closed")
   }
-  println(list.fold_until([1, 2, 3], 0) { acc, x -> Stop(acc + x) })
 }
 ```
 
 | Name | Signature | Description |
 |------|-----------|-------------|
-| `list.Stop` | `(a) -> list.Step(a)` | Signal early termination in `list.fold_until` |
-| `list.Continue` | `(a) -> list.Step(a)` | Signal continuation in `list.fold_until` |
 | `channel.Message` | `(a) -> channel.ChannelResult(a)` | Wraps a received channel value |
 | `channel.Closed` | `channel.ChannelResult(a)` | Channel is closed |
 | `channel.Empty` | `channel.ChannelResult(a)` | Channel buffer empty (non-blocking receive) |
@@ -213,15 +212,15 @@ fn main() {
 ```
 
 
-## `list.Stop`
+## `Stop`
 
 ```
-list.Stop(value: a) -> list.Step(a)
+Stop(value: a) -> Step(a)
 ```
 
-A variant of `list`: write `list.Stop(acc)`, or `import list.{ Stop }`.
-Signals early termination from `list.fold_until`. The value becomes the final
-accumulator result.
+The step that ends a fold that can end early (`list.fold_until`,
+`channel.fold_until`, `stream.fold_until`): the value is what the fold
+gives.
 
 ```silt
 import list
@@ -229,24 +228,27 @@ import list
 fn main() {
   let capped_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
     match {
-      acc + x > 6 -> list.Stop(acc)
-      _ -> list.Continue(acc + x)
+      acc + x > 6 -> Stop(acc)
+      _ -> Continue(acc + x)
     }
   }
   println(capped_sum) -- 6
 }
 ```
 
+A program's own variant named `Stop` (a message that ends an actor)
+hides this one in its module; write the prelude's as `Step.Stop(value)`
+there.
 
-## `list.Continue`
+
+## `Continue`
 
 ```
-list.Continue(value: a) -> list.Step(a)
+Continue(value: a) -> Step(a)
 ```
 
-A variant of `list`: write `list.Continue(acc)`, or `import list.{ Continue }`.
-Signals continuation in `list.fold_until`. The value becomes the next
-accumulator.
+The step that goes on with a fold that can end early: the value is the
+state the next element is folded into.
 
 
 ## `channel.Message`

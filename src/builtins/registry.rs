@@ -704,7 +704,7 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
 /// type used as a value (`Int`, a `type a` parameter).
 pub(crate) const PRELUDE_OPAQUE: &[(&str, usize)] = &[("Bytes", 0), (crate::defs::TYPE_OF, 1)];
 
-/// `Option` and `Result` derive no `Compare`.
+/// `Option` and `Result` derive no `Compare`; `Step` derives all four.
 const PRELUDE_DERIVES: &[(&str, &[&str])] = &[
     ("Result", &["Equal", "Hash", "Display"]),
     ("Option", &["Equal", "Hash", "Display"]),
@@ -714,12 +714,13 @@ const PRELUDE_DERIVES: &[(&str, &[&str])] = &[
 pub(crate) const PRELUDE_TYPES: &str = "\
 pub type Result(a, e) { Ok(a), Err(e) }
 pub type Option(a) { Some(a), None }
+pub type Step(a) { Stop(a), Continue(a) }
 ";
 
 /// Whether `name` is the name of a type of the prelude, which every
 /// module sees by its bare name: a builtin type that no builtin module
 /// declares (`Int`, `List`, `Never`; [`is_prelude_name`]) or an enum of
-/// [`PRELUDE_TYPES`] (`Option`, `Result`). The unit type `()` is no name.
+/// [`PRELUDE_TYPES`] (`Option`, `Result`, `Step`). The unit type `()` is no name.
 ///
 /// [`is_prelude_name`]: crate::types::builtins::is_prelude_name
 pub(crate) fn is_prelude_type(name: &str) -> bool {
@@ -727,8 +728,17 @@ pub(crate) fn is_prelude_type(name: &str) -> bool {
         || registry().prelude_types.iter().any(|ty| ty.name == name)
 }
 
+/// The enum of [`PRELUDE_TYPES`] whose variant is named `name`: `Step`
+/// for `Stop`.
+pub(crate) fn prelude_enum_of(name: &str) -> Option<&'static str> {
+    (registry().prelude_types.iter())
+        .find(|ty| ty.variants().iter().any(|(variant, _)| *variant == name))
+        .map(|ty| ty.name)
+}
+
 /// Whether `name` is a variant of an enum of [`PRELUDE_TYPES`] (`Some`,
-/// `None`, `Ok`, `Err`), which every module sees by its bare name.
+/// `None`, `Ok`, `Err`, `Stop`, `Continue`), which every module sees by
+/// its bare name.
 pub(crate) fn is_prelude_variant(name: &str) -> bool {
     (registry().prelude_types.iter())
         .any(|ty| ty.variants().iter().any(|(variant, _)| *variant == name))

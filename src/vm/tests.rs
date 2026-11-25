@@ -2716,7 +2716,7 @@ fn a_builtin_calls_its_function_again_in_the_frame_of_the_last_call() {
         ),
         (
             "",
-            "list.fold_until(1..10000, 0) { acc, i -> list.Continue(acc + i) }",
+            "list.fold_until(1..10000, 0) { acc, i -> Continue(acc + i) }",
             sum.clone(),
         ),
         ("", "list.each(1..10000) { i -> () }", Value::Unit),
@@ -2745,6 +2745,30 @@ fn a_builtin_calls_its_function_again_in_the_frame_of_the_last_call() {
     let (given, made) = frames_made(depth, "depth(1000)");
     assert_eq!(given, Value::Int(1000));
     assert!(made > 1000, "a recursion 1000 deep made {made} frames");
+}
+
+/// `channel.fold_until` and `stream.fold_until` take the next value
+/// themselves between two calls and, when it is there, call again in
+/// the frame of the last call: a fold over ten thousand values that wait
+/// in the channel makes no frame for each.
+#[test]
+fn a_fold_of_a_channel_calls_again_in_the_frame_of_the_last_call() {
+    let filled = "import channel\nimport stream\nfn filled() {\n  let ch = channel.new(10000)\n  \
+        list.each(1..10000) { i -> channel.send(ch, i) }\n  channel.close(ch)\n  ch\n}";
+    for call in [
+        "channel.fold_until(filled(), 0) { acc, i -> Continue(acc + i) }",
+        "stream.fold_until(filled(), 0) { acc, i -> Continue(acc + i) }",
+    ] {
+        let (given, made) = frames_made(filled, call);
+        assert_eq!(given, Value::Int(50_005_000), "{call}");
+        assert!(made < 100, "{call} made {made} frames");
+    }
+    // A Stop in a later round ends the fold there.
+    let (given, _) = frames_made(
+        filled,
+        "channel.fold_until(filled(), 0) { acc, i ->\n    match i {\n      5000 -> Stop(acc)\n      _ -> Continue(acc + i)\n    }\n  }",
+    );
+    assert_eq!(given, Value::Int(12_497_500));
 }
 
 #[test]
@@ -3665,20 +3689,20 @@ fn main() {
 type C {
   n: Int,
 }
-trait Step {
+trait Turn {
   fn go(self, k: Int) -> Int
 }
-trait Step for C {
+trait Turn for C {
   fn go(self, k: Int) -> Int {
     match k {
       0 -> 1 / k
-      _ -> Step.go(self, k - 1)
+      _ -> Turn.go(self, k - 1)
     }
   }
 }
 fn main() {
   let c = C { n: 1 }
-  println(Step.go(c, 5))
+  println(Turn.go(c, 5))
 }
 ";
         assert_eq!(

@@ -25,11 +25,11 @@ trait Shape for Vec2 {
   }
 }
 
-trait Step {
+trait Move {
   fn add(self, o: Vec2) -> Vec2
 }
 
-trait Step for Vec2 {
+trait Move for Vec2 {
   fn add(self, o: Vec2) -> Vec2 {
     Vec2 { x: self.x + o.x, y: self.y + o.y }
   }
@@ -38,7 +38,7 @@ trait Step for Vec2 {
 fn walk(v: Vec2, n: Int, acc: Int) -> Int {
   match n {
     0 -> acc
-    _ -> walk(Step.add(v, Vec2 { x: 1, y: 0 }), n - 1, acc + Shape.area(v) % 7)
+    _ -> walk(Move.add(v, Vec2 { x: 1, y: 0 }), n - 1, acc + Shape.area(v) % 7)
   }
 }
 

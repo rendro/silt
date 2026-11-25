@@ -385,7 +385,7 @@ module with its types and the signature of each function.
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
 `channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
-`io.NotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`,
+`io.NotFound(path)`, `tcp.TcpStream`,
 `task.RuntimeError`, `postgres.PgPool` (and `PgTx`, `PgCursor(a)`). Two
 modules may have a variant of one name (`tcp.Timeout`,
 `http.Timeout`): the module says which. A selective import works for
@@ -395,8 +395,8 @@ The **prelude** needs no import: the primitive and container types (`Int`,
 `Float`, `Bool`, `String`, `()`, `Bytes`, `List`, `Map`, `Set`, `Channel`, `Fn`),
 `Never` (the type of what never returns),
 `TypeOf(a)` (the type of a type used as a value, like `Int` or a
-`type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
-`panic`. The primitive and container types, `Never` and `TypeOf` cannot be declared
+`type a` parameter), `Option`, `Result`, `Step`, `Some`, `None`, `Ok`, `Err`, `Stop`,
+`Continue`, `print`, `println` and `panic`. The primitive and container types, `Never` and `TypeOf` cannot be declared
 again: `type List { ... }` is an error, "type 'List' shadows builtin type
 'List'", and so is `type Never { ... }`. No trait may take the name of a type
 of the prelude, `Option` and `Result` included: `trait Int { ... }` is an error,
@@ -405,9 +405,10 @@ of the prelude, `Option` and `Result` included: `trait Int { ... }` is an error,
 its own `type Regex` or `type Weekday`, a type apart from `regex.Regex` and
 `time.Weekday`, and use both; with `import regex.{ Regex }` as well, the name is
 bound twice. The other names of the prelude can be declared again: a module's
-own declaration or import of `Option`, `Result`, one of their variants,
+own declaration or import of `Option`, `Result`, `Step`, one of their variants,
 `print`, `println` or `panic` shadows the prelude. After `type Maybe(a) { Some(a), None }`, a
-bare `None` is `Maybe.None`, and the prelude's is still `Option.None`.
+bare `None` is `Maybe.None`, and the prelude's is still `Option.None`; after
+`type Msg { Add(Int), Stop }`, the prelude's `Stop` is `Step.Stop`.
 
 
 ## When modules are initialised

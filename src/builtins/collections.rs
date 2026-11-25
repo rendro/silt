@@ -347,18 +347,12 @@ fn filter_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
 }
 
 fn fold_until_step(acc: &mut Value, _item: Value, result: Value) -> Flow {
-    match result {
-        Value::Variant(variant) if variant.is(bv::CONTINUE) && variant.fields().len() == 1 => {
-            *acc = variant.fields()[0].clone();
+    match super::common::fold_step(result) {
+        std::ops::ControlFlow::Continue(state) => {
+            *acc = state;
             next()
         }
-        Value::Variant(variant) if variant.is(bv::STOP) && variant.fields().len() == 1 => {
-            stop(variant.fields()[0].clone())
-        }
-        other => {
-            *acc = other;
-            next()
-        }
+        std::ops::ControlFlow::Break(value) => stop(value),
     }
 }
 

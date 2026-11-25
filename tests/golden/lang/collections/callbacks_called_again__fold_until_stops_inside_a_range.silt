@@ -5,13 +5,13 @@ import list
 fn main() {
   let first_over = list.fold_until(1..1000, 0) { acc, i ->
     match acc + i > 100 {
-      true -> list.Stop(i)
-      _ -> list.Continue(acc + i)
+      true -> Stop(i)
+      _ -> Continue(acc + i)
     }
   }
   println(first_over)
-  let all = list.fold_until(1..10, 0) { acc, i -> list.Continue(acc + i) }
+  let all = list.fold_until(1..10, 0) { acc, i -> Continue(acc + i) }
   println(all)
-  let none = list.fold_until(1..0, 7) { acc, i -> list.Stop(acc + i) }
+  let none = list.fold_until(1..0, 7) { acc, i -> Stop(acc + i) }
   println(none)
 }

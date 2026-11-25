@@ -289,8 +289,8 @@ state:
 -- fold_until: accumulator IS the result
 [1, 2, 3] |> list.fold_until(0) { acc, x ->
   match acc + x > 6 {
-    true -> list.Stop(acc)
-    _ -> list.Continue(acc + x)
+    true -> Stop(acc)
+    _ -> Continue(acc + x)
   }
 }
 

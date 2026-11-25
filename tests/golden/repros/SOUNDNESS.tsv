@@ -137,7 +137,7 @@ repros/type_soundness/i9.silt	-	obsolete	fn lambda; ported: lang/soundness/i9.si
 repros/type_soundness/j1.silt	holds	reject E0202	a bare variant two enums share is ambiguous at its use
 repros/type_soundness/j2.silt	holds	reject E0301	a local `Ok` is not the prelude's
 repros/type_soundness/j3.silt	holds	reject E0301	a local `Some` is not the prelude's
-repros/type_soundness/j4.silt	holds	reject E0301	a local `Stop` is not list.Stop
+repros/type_soundness/j4.silt	holds	reject E0301	a local `Stop` is not the prelude's Stop
 repros/type_soundness/j5.silt	holds	accept	two enums may share a variant name
 repros/type_soundness/j6.silt	holds	accept	a user variant named `Ok`
 repros/type_soundness/j7.silt	holds	accept	`A.Foo` and `B.Foo` disambiguate
@@ -335,7 +335,7 @@ repros/typechecker_arch/t_anno_method.silt	holds	accept	TCA-8: `http.Method` in 
 repros/typechecker_arch/t_anno_pgcursor.silt	holds	reject E0201	TCA-8: a bare `PgCursor` names nothing
 repros/typechecker_arch/t_anno_pgpool.silt	holds	reject E0201	TCA-8: a bare `PgPool` names nothing
 repros/typechecker_arch/t_anno_pgtx.silt	holds	reject E0201	TCA-8: a bare `PgTx` names nothing
-repros/typechecker_arch/t_anno_step.silt	holds	accept	TCA-8: `list.Step` in an annotation
+repros/typechecker_arch/t_anno_step.silt	holds	accept	TCA-8: `Step` in an annotation
 repros/typechecker_arch/t_anno_tcpstream.silt	holds	reject E0201	TCA-8: a bare `TcpStream` names nothing
 repros/typechecker_arch/t_anno_value.silt	holds	reject E0201	TCA-8: a bare `Value` names nothing
 repros/typechecker_arch/t_anno_weekday.silt	holds	accept	TCA-8: `time.Weekday` in an annotation

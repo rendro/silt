@@ -10,7 +10,6 @@
 -- list of the elements (`list.map`, `list.filter`, ...) still needs
 -- them to be few enough for a list: the last line.
 import list
-import list.{ Continue, Stop }
 
 fn main() {
   let all = 1..9223372036854775807

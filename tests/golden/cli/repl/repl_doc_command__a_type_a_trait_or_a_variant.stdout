@@ -1,6 +1,7 @@
 Silt REPL (type :quit to exit, :help for commands)
 type Option(a) { Some(a), None }
 type Result(a, e) { Ok(a), Err(e) }
+type Step(a) { Stop(a), Continue(a) }
 type List(a)  -- builtin
 Functions for working with ordered, immutable lists (`List(a)`).
 type Map(a, b)  -- builtin
@@ -48,9 +49,9 @@ Indicates the channel buffer is currently empty but not closed.
 type ChannelResult(a) { Message(a), Empty, Closed }
 Wraps a value received from a channel.
 type Step(a) { Stop(a), Continue(a) }
-Signals early termination from `list.fold_until`.
+The step that ends a fold that can end early (`list.fold_until`, `channel.fold_until`, `stream.fold_until`): the value is what the fold gives.
 type Step(a) { Stop(a), Continue(a) }
-Signals continuation in `list.fold_until`.
+The step that goes on with a fold that can end early: the value is the state the next element is folded into.
 type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
 type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
 file or directory missing

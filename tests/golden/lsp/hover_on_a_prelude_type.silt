@@ -1,18 +1,19 @@
 -- cmd: lsp
--- lsp: hover 24:12
--- lsp: hover 24:17
--- lsp: hover 26:18
--- lsp: hover 26:33
--- lsp: hover 26:46
--- lsp: hover 28:18
--- lsp: hover 28:30
--- lsp: hover 28:42
--- lsp: hover 30:9
--- lsp: hover 30:25
--- lsp: hover 30:50
--- lsp: hover 30:64
--- lsp: hover 32:16
--- lsp: hover 37:61
+-- lsp: hover 25:12
+-- lsp: hover 25:17
+-- lsp: hover 27:18
+-- lsp: hover 27:33
+-- lsp: hover 27:46
+-- lsp: hover 29:18
+-- lsp: hover 29:30
+-- lsp: hover 29:42
+-- lsp: hover 31:9
+-- lsp: hover 31:25
+-- lsp: hover 31:50
+-- lsp: hover 31:64
+-- lsp: hover 31:74
+-- lsp: hover 33:16
+-- lsp: hover 38:61
 -- Hover on a type of the prelude in a type position shows its
 -- declaration, as a builtin module's type does (see
 -- `hover_on_a_builtin_module_type`): an enum one variant a line, another
@@ -27,7 +28,7 @@ type Row { name: String, score: Float, tags: Set(String) }
 
 type Cell { Full(Bool), Many(Map(String, Bytes)) }
 
-fn f(o: Option(Int), r: Result(Int, String), ch: Channel(Int), u: ()) -> Int {
+fn f(o: Option(Int), r: Result(Int, String), ch: Channel(Int), u: (), s: Step(Int)) -> Int {
   let n: Int = 1
   let g = { x: Int -> x + n }
   g(0)
@@ -36,5 +37,5 @@ fn f(o: Option(Int), r: Result(Int, String), ch: Channel(Int), u: ()) -> Int {
 fn main() {
   let parsed: Result(Int, json.JsonError) = json.parse("1", Int)
   println(parsed)
-  println(f(None, Ok(1), channel.new(1), ()))
+  println(f(None, Ok(1), channel.new(1), (), Continue(2)))
 }

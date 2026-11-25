@@ -46,7 +46,7 @@ import http
 import int
 import io
 import json
-import list
+import csv
 import regex
 import task
 import time
@@ -56,7 +56,7 @@ import uuid
 fn f0(x: io.IoError) -> Int { 0 }
 fn f1(x: int.IntError) -> Int { 0 }
 fn f2(x: float.FloatError) -> Int { 0 }
-fn f3(x: list.Step(Int)) -> Int { 0 }
+fn f3(x: csv.CsvError) -> Int { 0 }
 fn f4(x: channel.ChannelResult(Int)) -> Int { 0 }
 fn f5(x: channel.ChannelOp(Int)) -> Int { 0 }
 fn f6(x: channel.Selected(Int)) -> Int { 0 }

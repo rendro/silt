@@ -207,6 +207,12 @@ struct Pipe {
     /// it stops reading, also before the source has run. It is disarmed
     /// when the source ends by itself.
     armed: Option<Arc<Armed>>,
+    /// For a sink that calls a function for each value
+    /// (`stream.fold_until`): what it takes the next value with between
+    /// two calls, without being resumed ([`Native::again`]).
+    taking: Option<super::common::Taking>,
+    /// The function such a sink calls again (`Again::Call`).
+    callee: Option<Arc<crate::bytecode::VmClosure>>,
 }
 
 /// The stop that a stage on a connection is stopped with: run
@@ -284,6 +290,8 @@ impl Pipe {
             stop: None,
             timed_out: None,
             armed: None,
+            taking: None,
+            callee: None,
         }
     }
 
@@ -522,6 +530,50 @@ impl Native for Pipe {
         };
         let next = (self.logic)(got)?;
         self.run(vm, next)
+    }
+
+    /// A sink that calls a function for each value (`taking`): its
+    /// call returned. The logic reads the value; when it asks for the
+    /// next value and that is there, and asks to call the function with
+    /// it, the call is made in the frame of the call that returned. Any
+    /// other next thing is done when the pipe is resumed.
+    fn again<'a>(
+        &'a mut self,
+        input: Value,
+        stack: &mut Vec<Value>,
+    ) -> Result<crate::vm::Again<'a>, VmError> {
+        use crate::vm::Again;
+        if self.taking.is_none() || self.out.is_some() || !matches!(self.state, State::Calling) {
+            return Ok(Again::No(input));
+        }
+        let next = (self.logic)(Got::Returned(input))?;
+        let next = match next {
+            Next::Take(index) => match &self.taking {
+                Some(taking) if !self.drains && !taking.takes_nothing_new() => {
+                    match self.inputs[index].try_receive(taking.wake()) {
+                        TryReceive::Value(value) => (self.logic)(Got::Value(index, value))?,
+                        TryReceive::Closed(close) => {
+                            let got = self.ended(index, close)?;
+                            (self.logic)(got)?
+                        }
+                        TryReceive::Empty => Next::Take(index),
+                    }
+                }
+                _ => Next::Take(index),
+            },
+            other => other,
+        };
+        match next {
+            Next::Call(Value::VmClosure(callee), args) => {
+                stack.extend(args);
+                self.state = State::Calling;
+                Ok(Again::Call(&*self.callee.insert(callee)))
+            }
+            other => {
+                self.state = State::Then(other);
+                Ok(Again::No(Value::Unit))
+            }
+        }
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
@@ -2058,6 +2110,39 @@ builtins! {
                 _ => return unexpected(),
             })
         })
+    }
+
+    // A fold that may stop asks for one value at a time, as `first`
+    // does; at `Stop` the sink is over, which stops the stage that
+    // feeds it.
+    fn fold_until(vm, ch: Chan, init: &Value, f: &Value) -> Result<Step, VmError> {
+        let ch = ch.clone();
+        let mut acc = init.clone();
+        let callback = f.clone();
+        let mut pipe = Pipe::new("stream.fold_until", vec![ch], move |got| {
+            Ok(match got {
+                Got::Start => Next::Take(0),
+                // The call is given the state, so a state the call
+                // alone holds can be changed in place.
+                Got::Value(_, v) => {
+                    let state = std::mem::replace(&mut acc, Value::Unit);
+                    Next::Call(callback.clone(), vec![state, v])
+                }
+                Got::Returned(step) => match super::common::fold_step(step) {
+                    std::ops::ControlFlow::Continue(next) => {
+                        acc = next;
+                        Next::Take(0)
+                    }
+                    std::ops::ControlFlow::Break(value) => Next::Done(value),
+                },
+                Got::End => Next::Done(std::mem::replace(&mut acc, Value::Unit)),
+                _ => return unexpected(),
+            })
+        });
+        // Between two calls it takes the next value itself when it is
+        // there, and calls again in the frame of the call that returned.
+        pipe.taking = Some(super::common::Taking::of(vm));
+        Ok(Step::Run(Box::new(pipe)))
     }
 
     fn length(ch: Chan) -> Result<Step, VmError> {

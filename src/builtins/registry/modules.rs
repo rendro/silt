@@ -188,9 +188,6 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "list",
             page: "list.md",
-            types: "\
-                pub type Step(a) { Stop(a), Continue(a) }\n\
-            ",
             rows: [
                 f("fn all(xs: List(a), f: Fn(a) -> Bool) -> Bool", "True if predicate holds for every element", list::all),
                 f("fn any(xs: List(a), f: Fn(a) -> Bool) -> Bool", "True if predicate holds for at least one element", list::any),
@@ -315,6 +312,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 f("fn close(ch: Channel(a)) -> ()", "Close the channel", concurrency::channel::close),
                 f("fn each(ch: Channel(a), f: Fn(a) -> ()) -> ()", "Call a function with each message until the channel closes", concurrency::channel::each),
+                f("fn fold_until(ch: Channel(a), init: b, f: Fn(b, a) -> Step(b)) -> b", "Fold the messages until a step gives `Stop` or the channel closes; leaves the channel open", concurrency::channel::fold_until),
                 f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new),
                 f("fn receive(ch: Channel(a)) -> Option(a)", "Blocking receive: `None` once the channel is closed and empty", concurrency::channel::receive),
                 f("fn receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)", "Receive, waiting no longer than a duration", concurrency::channel::receive_timeout),
@@ -707,6 +705,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn zip(a: Channel(a), b: Channel(b)) -> Channel((a, b))", "Pair elements of two streams", stream::zip),
                 f("fn collect(ch: Channel(a)) -> List(a)", "Drain into a list", stream::collect),
                 f("fn fold(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> b", "Reduce to a single value", stream::fold),
+                f("fn fold_until(ch: Channel(a), init: b, f: Fn(b, a) -> Step(b)) -> b", "Fold until a step gives `Stop` or the stream ends; a `Stop` stops the stream", stream::fold_until),
                 f("fn length(ch: Channel(a)) -> Int", "Number of elements", stream::length),
                 f("fn first(ch: Channel(a)) -> Option(a)", "The first element, or `None`", stream::first),
                 f("fn last(ch: Channel(a)) -> Option(a)", "The last element, or `None`", stream::last),

@@ -1,0 +1,5 @@
+error[runtime]: division by zero
+ --> fold_until__a_stream_that_fails_mid_fold_is_one_report.silt:8:71
+   |
+ 8 |   let quotients = stream.from_list([2, 1, 0, 5]) |> stream.map({ x -> 10 / x })
+   |                                                                       ^^^^^^ division by zero

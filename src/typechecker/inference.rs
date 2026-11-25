@@ -4181,6 +4181,20 @@ impl TypeChecker {
                             r.name
                         ));
                     }
+                    // A variant of the program's own named like one of
+                    // the prelude's (`Stop` of a message type) hides it;
+                    // the prelude's is reached through its type.
+                    if let ExprKind::Ident(name) = &callee.kind
+                        && let Some(prelude) =
+                            crate::builtins::registry::prelude_enum_of(&resolve(*name))
+                        && !other.is_builtin(prelude)
+                    {
+                        d = d.with_help(format!(
+                            "`{name}` here is the variant of `{}`, which hides the prelude's \
+                             `{name}`: write `{prelude}.{name}`",
+                            self.show_type(other)
+                        ));
+                    }
                     self.errors.push(d);
                     self.fresh_var()
                 }
@@ -4431,6 +4445,7 @@ impl TypeChecker {
     // ── Expression type inference ───────────────────────────────────
 
     pub(super) fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
+        self.note_prelude_variant_use(expr);
         if !matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
             return self.infer_expr_kind(expr, env);
         }
@@ -4441,6 +4456,66 @@ impl TypeChecker {
             self.ev.refs.insert(expr.span, owed);
         }
         ty
+    }
+
+    /// Keep the place of `expr` when it writes a prelude variant's name
+    /// bare, as a value or a call (`Stop`, `Stop(n)`): see
+    /// [`TypeChecker::prelude_variant_uses`].
+    fn note_prelude_variant_use(&mut self, expr: &Expr) {
+        let name = match &expr.kind {
+            ExprKind::Ident(name) => *name,
+            ExprKind::Call(callee, _) => match &callee.kind {
+                ExprKind::Ident(name) => *name,
+                _ => return,
+            },
+            _ => return,
+        };
+        if crate::builtins::registry::is_prelude_variant(&resolve(name)) {
+            self.prelude_variant_uses.push((expr.span, name));
+        }
+    }
+
+    /// A mismatch at a bare prelude variant's name that a variant of the
+    /// program hides (`Stop(n)` given as a fold's step beside a
+    /// `type Msg { Add(Int), Stop(Int) }`, or a pattern `Stop(v)` of a
+    /// `Step`): "expected Step(Int), got Msg" gets the help line that
+    /// names the prelude's, as a call of a hidden nullary one does.
+    pub(super) fn help_for_hidden_prelude_variants(&mut self) {
+        let uses = std::mem::take(&mut self.prelude_variant_uses);
+        if uses.is_empty() {
+            return;
+        }
+        for d in &mut self.errors {
+            if d.code != Code::TypeMismatch {
+                continue;
+            }
+            let Some((_, name)) = uses.iter().find(|(span, _)| *span == d.span) else {
+                continue;
+            };
+            let name = resolve(*name);
+            let Some(prelude) = crate::builtins::registry::prelude_enum_of(&name) else {
+                continue;
+            };
+            let first = d.message.lines().next().unwrap_or_default();
+            let Some((expected, got)) = first
+                .strip_prefix("type mismatch: expected ")
+                .and_then(|rest| rest.split_once(", got "))
+            else {
+                continue;
+            };
+            let head = |ty: &str| ty.split('(').next().unwrap_or_default().to_string();
+            let (expected, got) = (head(expected), head(got));
+            if expected != prelude || got == prelude || got.is_empty() {
+                continue;
+            }
+            let help = format!(
+                "`{name}` here is the variant of `{got}`, which hides the prelude's \
+                 `{name}`: write `{prelude}.{name}`"
+            );
+            if !d.help.contains(&help) {
+                d.help.push(help);
+            }
+        }
     }
 
     /// `infer_expr` for a name or a field access.

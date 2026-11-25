@@ -1,0 +1,21 @@
+-- A message type of the program with a variant `Stop` hides the
+-- prelude's in its module; `Step.Stop` is the prelude's there.
+import channel
+
+type Msg { Add(Int), Stop }
+
+fn counter(inbox: Channel(Msg)) -> Int {
+  channel.fold_until(inbox, 0) { count, msg ->
+    match msg {
+      Add(n) -> Continue(count + n)
+      Stop -> Step.Stop(count)
+    }
+  }
+}
+
+fn main() {
+  let inbox = channel.new(4)
+  channel.send(inbox, Add(4))
+  channel.send(inbox, Stop)
+  println(counter(inbox))
+}

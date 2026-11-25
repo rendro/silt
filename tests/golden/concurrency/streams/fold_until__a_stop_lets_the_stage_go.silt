@@ -1,0 +1,38 @@
+-- repeat: 20
+-- stderr-not-contains: deadlock
+-- A `Stop` of `stream.fold_until` cuts the stream short, as `stream.take`
+-- does: the endless sources are stopped, and a stage over a channel of
+-- the program takes nothing after the value that stopped the fold, so
+-- the channel keeps the rest.
+import channel
+import list
+import stream
+
+fn first_three(s: Channel(Int)) -> Int {
+  let (_, total) = stream.fold_until(s, (0, 0)) { (n, acc), x ->
+    match n {
+      2 -> Stop((3, acc + x))
+      _ -> Continue((n + 1, acc + x))
+    }
+  }
+  total
+}
+
+fn main() {
+  let sums = 1..20 |> list.map { i -> stream.repeat(i) |> stream.map({ x -> x + 1 }) |> first_three }
+  println(list.sum(sums))
+  let c = channel.new(5)
+  list.each(1..5) { x -> channel.send(c, x) }
+  channel.close(c)
+  let s = c |> stream.map { x ->
+    println("map ran on {x}")
+    x
+  }
+  println(stream.fold_until(s, 0) { acc, x ->
+    match x {
+      2 -> Stop(acc + x)
+      _ -> Continue(acc + x)
+    }
+  })
+  println("the input still holds {stream.length(c)} of 5")
+}

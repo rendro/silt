@@ -7,11 +7,11 @@ argument 1: a
 > signature 19:37
 Err(e)
 argument 1: e
-> signature 20:22
-list.Stop(a)
+> signature 20:17
+Stop(a)
 argument 1: a
-> signature 21:21
-list.Continue(a)
+> signature 21:20
+channel.Message(a)
 argument 1: a
 > signature 22:23
 json.Array(List(json.Value))

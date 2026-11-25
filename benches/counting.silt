@@ -94,8 +94,8 @@ fn by_each(n) {
 fn by_fold_until(n) {
   list.fold_until(0..n - 1, 0) { acc, i ->
     match i == n {
-      true -> list.Stop(acc)
-      _ -> list.Continue(acc + i)
+      true -> Stop(acc)
+      _ -> Continue(acc + i)
     }
   }
 }
