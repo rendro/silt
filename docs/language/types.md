@@ -166,7 +166,7 @@ parameter names the parameter's type,
 nothing in the function decides is an error that asks for the
 annotation.
 
-In the header of a `match` or a `loop`, braces that hold one name alone
+In the header of a `match`, braces that hold one name alone
 are the header's block, as `match x { y }` would be: there a literal
 with a single field written alone goes in parentheses,
 `match (User { name }) { ... }`, or writes the field out,

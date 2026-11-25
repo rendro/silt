@@ -41,7 +41,8 @@ applies to the whole pipeline, so `x |> f |> g?` parses as
 ## `fold_until` Same-Type Constraint
 
 `Stop(value)` and `Continue(value)` carry the same accumulator type. For
-search where the result type differs from state, use `loop`.
+a search whose result type differs from its state, write a function that
+calls itself with the state as its parameters and gives the result.
 
 ## Integer Overflow
 
@@ -115,7 +116,8 @@ fn main() {
 
 ## Immutability Cost
 
-DP and graph algorithms must thread state through `loop` or `fold`. More
+DP and graph algorithms must thread state through a fold or a function
+that calls itself. More
 verbose, but enables concurrency safety and reasoning guarantees.
 
 ## Newline Sensitivity

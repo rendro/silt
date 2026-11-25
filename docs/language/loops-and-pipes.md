@@ -1,10 +1,10 @@
 ---
-title: "Loops, Pipes, and Other Features"
+title: "Repeating, Pipes, and Other Features"
 section: "Language"
 order: 6
 ---
 
-# Loops, Pipes, and Other Features
+# Repeating, Pipes, and Other Features
 
 ## Pipe Operator
 
@@ -166,85 +166,130 @@ multi-fragment messages punctuation-light. For pipeline contexts, use
 `string.join`.
 
 
-## Infinite Loops
-
-`loop { body }` runs the body **once** -- it is not an implicit infinite loop.
-The `loop` form only re-enters its body when the body explicitly calls
-`loop(...)` (the labeled re-entry call). To loop indefinitely, bind a sentinel
-state variable and recur with `loop(...)` from inside the body:
-
-```silt
-loop _ = () {
-  match channel.receive(ch) {
-    Some(val) -> {
-      process(val)
-      loop(()) -- re-enter to keep going
-    }
-    None -> () -- fall through; loop returns
-  }
-}
-```
-
-`return` from an enclosing `fn` works as well. If you find yourself reaching
-for "infinite loop" semantics, a recursive `fn` is often clearer:
-
-```silt
-fn drain(ch) {
-  match channel.receive(ch) {
-    Some(val) -> {
-      process(val)
-      drain(ch)
-    }
-    None -> ()
-  }
-}
-```
-
-This form is useful in concurrency patterns where a task should keep running
-until a channel closes or some condition is met.
-
-A call of a function to itself in tail position, as `drain(ch)` is here, is
-a jump back to the start of the function, as `loop(...)` is: a round costs
-what a round of a loop costs, it takes no frame however many rounds there
-are, and the call stack of an error shows the function once. A tail call of
-another function (`idle` handing over to `running`, which hands back) takes
-no frame either, but it is a call, which costs more than a jump, and the
-call stack shows the latest of those hand-overs. In the REPL a top-level
-function's call of itself is a call too: it reads the function's
-definition each round, as every use of a top-level name there does.
-
-A call whose result is still used, as in `x + sum(rest)`, takes a frame
-until it returns. The frames of a program, its tasks' included, may take
-128 MiB in all: about 700,000 levels of `x + sum(rest)` over a list (a
-frame and the values it holds, about 190 bytes), more of a function with
-fewer values. The data the values point to is not counted, and the first
-64 KiB of each task's frames are its own. A recursion that would take more
-ends with a runtime error and its call stack:
-
-```
-error[runtime]: stack overflow: call frames take more than 128 MiB; this task holds 128 MiB
-```
-
-The budget is the program's, so where tasks recurse at the same time, the
-one whose frames ask for more once it is used up gets the error, and the
-error says how much of it that task holds itself. Each task gives back
-what its frames took as they shrink and when it ends.
-
-The `SILT_FRAME_BUDGET` environment variable sets another budget, in MiB,
-read once when the program starts: `SILT_FRAME_BUDGET=16 silt run main.silt`
-ends a runaway recursion sooner. A value silt cannot read (`abc`, `0`,
-`64MiB`) is refused: `silt run`, `silt test` and `silt repl` do not
-start, and the error says why.
-
-
 ## Repeating
+
+silt has no `loop`, `while` or `for`. A program repeats in two ways:
+the library walks a list, a range or a channel, and a function calls
+itself.
+
+### The library first
+
+Most repeating is a walk over something that is already there. A range
+`1..n` is a list that holds no element until one is read, so counting
+is a walk too:
+
+```silt
+import list
+
+fn main() {
+  list.each(1..3) { i -> println("round {i}") }
+  let total = list.fold(1..100, 0) { acc, i -> acc + i }
+  println(total) -- 5050
+  let first_big = [3, 8, 12, 5] |> list.fold_until(None) { _, x ->
+    match x > 10 {
+      true -> Stop(Some(x))
+      _ -> Continue(None)
+    }
+  }
+  println(first_big) -- Some(12)
+}
+```
+
+- `list.each`, `list.map`, `list.filter` and `list.fold` go over every
+  element; `list.fold_until` stops at the first `Stop(value)` and goes on
+  at each `Continue(state)`.
+- `channel.each` takes every message until the channel is closed, and
+  `channel.fold_until` keeps a state over the messages, with the same
+  `Continue` and `Stop`: it is how an actor keeps its state, and an arm
+  that forgets to say whether it goes on does not type-check
+  ([channel.fold_until](../stdlib/channel-task.md#channelfold_until)).
+  `stream.fold_until` does the same over a stream.
+
+Each round of a fold is a call of its closure. A step budget and a
+deadline count those rounds as they count any other code, so a long fold
+in a task gives way to other tasks and stops at its deadline.
+
+### A function that calls itself
+
+When there is nothing to walk ("ask until the answer is right", "serve
+until the channel closes"), a function calls itself. A top-level `fn` may
+call itself and any other top-level function, and a closure bound by a
+`let` may call itself by its name:
+
+```silt
+import channel
+
+fn drain(ch: Channel(Int), seen: Int) -> Int {
+  match channel.receive(ch) {
+    Some(_) -> drain(ch, seen + 1)
+    None -> seen
+  }
+}
+
+fn main() {
+  let ch = channel.new(4)
+  channel.send(ch, 1)
+  channel.send(ch, 2)
+  channel.close(ch)
+  println(drain(ch, 0)) -- 2
+  let limit = 3
+  let count = { i, acc ->
+    match i > limit {
+      true -> acc
+      false -> count(i + 1, acc + i)
+    }
+  }
+  println(count(1, 0)) -- 6
+}
+```
+
+The closure `count` sees the names around it (`limit`), so what stays the
+same from round to round is not passed along. What changes is passed as
+arguments, and the call that starts the repeating gives the first values.
+A `return` or a `?` inside a closure ends the closure, not the function
+around it. Two closures cannot call each other; functions that call each
+other are top-level functions.
+
+**A call that comes last is a jump.** A call of a function to itself as
+the last thing it does (a tail call), as `drain(ch, seen + 1)` is here,
+jumps back to the start of the function: it takes no frame however many
+rounds there are, every round costs the same, and the call stack of an
+error shows the function once. A tail call of another function (`idle`
+handing over to `running`, which hands back) takes no frame either, but
+it is a call, which costs more than a jump, and the call stack shows the
+latest of those hand-overs. In the REPL a top-level function's call of
+itself is a call too: it reads the function's definition each round, as
+every use of a top-level name there does.
+
+A call comes last as the last statement of the body, as the value of a
+match arm or of a block that comes last, and behind `return`. The else of
+a `when` must end, so a `when` whose else goes on writes `return` before
+the call:
+
+```silt
+fn sum_even(i: Int, n: Int, acc: Int) -> Int {
+  when i < n else { return acc }
+  when i % 2 == 0 else { return sum_even(i + 1, n, acc) }
+  sum_even(i + 1, n, acc + i)
+}
+
+fn main() {
+  println(sum_even(0, 10, 0)) -- 20
+}
+```
+
+A function that calls itself for ever (a server, a worker) is stopped as
+any other code is: a deadline ends it, and the scope of its task stops it
+when the scope ends.
+
+### What the compiler checks
 
 A function that calls itself, or a group of functions that call each
 other, is checked for what it costs in stack. The editor shows the
 verdict on the function's name:
 
-- **constant stack**: every call between them is a tail call (the last
-  thing the function does). It runs for as many rounds as it likes.
+- **constant stack**: every call between them is a tail call. It runs
+  for as many rounds as it likes.
 - **depth follows the data**: each one descends on a parameter. Every
   call that is not a tail call passes a *part* of the caller's parameter
   in the callee's place, and every tail call passes the parameter itself
@@ -261,6 +306,8 @@ again by a `let`. A closure handed to `list.each`, `list.map`,
 `list.map(kids, walk)` passes it each element:
 
 ```silt
+import list
+
 type Tree {
   Node(Int, List(Tree)),
 }
@@ -269,6 +316,10 @@ fn size(t: Tree) -> Int {
   match t {
     Node(_, kids) -> 1 + list.fold(kids, 0) { total, kid -> total + size(kid) }
   }
+}
+
+fn main() {
+  println(size(Node(1, [Node(2, []), Node(3, [Node(4, [])])]))) -- 4
 }
 ```
 
@@ -296,6 +347,8 @@ in parsers and interpreters. `deep` is a word of its own only there; a
 check would not need is a warning (`W0301`).
 
 ```silt
+import list
+
 deep fn quicksort(xs: List(Int)) -> List(Int) {
   match xs {
     [] -> []
@@ -305,29 +358,42 @@ deep fn quicksort(xs: List(Int)) -> List(Int) {
     )
   }
 }
-```
 
-**A `()` loop says where it ends.** When every call of a group is a tail
-call and a function of it gives `()`, each place it ends without calling
-on must be `()`, `return e`, or a call of a function that gives
-`Never`. A call that gives `()` there, or a block that ends in a `let`,
-is an error (`E0346`): it is where a forgotten call to go on hides.
-
-```silt
-fn serve(inbox: Channel(String)) {
-  match channel.receive(inbox) {
-    Some("flush") -> {
-      flush()
-      serve(inbox)
-    }
-    Some(line) -> return println(line) -- stops here, and says so
-    None -> ()
-  }
+fn main() {
+  println(quicksort([3, 1, 2])) -- [1, 2, 3]
 }
 ```
 
-The rule is about loops that give `()`; one that gives a value (a
-`Result`, an `Option`) is not checked for it.
+**A function that gives `()` says where it ends.** When every call of a
+group is a tail call and a function of it gives `()`, each place it ends
+without calling on must be `()`, `return e`, or a call of a function that
+gives `Never`. A call that gives `()` there, or a block that ends in a
+`let`, is an error (`E0346`): it is where a forgotten call to go on
+hides.
+
+```silt
+import channel
+
+fn serve(inbox: Channel(String), seen: Int) {
+  match channel.receive(inbox) {
+    -- It ends here, and says so.
+    Some("stop") -> return println("stopped after {seen}")
+    Some(_) -> serve(inbox, seen + 1)
+    None -> ()
+  }
+}
+
+fn main() {
+  let inbox = channel.new(4)
+  channel.send(inbox, "a")
+  channel.send(inbox, "stop")
+  serve(inbox, 0)
+}
+```
+
+The rule is about functions that give `()`; one that gives a value (a
+`Result`, an `Option`) is not checked for it. For an actor that gives
+a value, `channel.fold_until` asks every arm to say `Continue` or `Stop`.
 
 **What the check does not see.** It reads direct calls. A call through
 a trait (`Show.show(left)`, `x.show()`) is a call of the impl of the
@@ -345,104 +411,30 @@ function's place, so what the function holds is let go before the call
 runs. A `let` whose name starts with `_` (a value kept only for as long
 as it lives) that is in scope at such a call gets a warning (`W0302`).
 
+### The frame budget
 
-## Loop with State
+A call whose result is still used, as in `x + sum(rest)`, takes a frame
+until it returns. The frames of a program, its tasks' included, may take
+128 MiB in all: about 700,000 levels of `x + sum(rest)` over a list (a
+frame and the values it holds, about 190 bytes), more of a function with
+fewer values. The data the values point to is not counted, and the first
+64 KiB of each task's frames are its own. A recursion that would take more
+ends with a runtime error and its call stack:
 
-`loop` is an expression that binds state variables and re-enters via
-`loop(new_values)`:
-
-```silt
-fn sum(xs) {
-  loop remaining = xs, total = 0 {
-    match remaining {
-      [] -> total
-      [head, ..tail] -> loop(tail, total + head)
-    }
-  }
-}
+```
+error[runtime]: stack overflow: call frames take more than 128 MiB; this task holds 128 MiB
 ```
 
-The initial values are read where the `loop` stands, all of them, before
-any of the loop's names exists: in `loop n = n + 1, acc = n` both `n` on
-the right are the one outside, as the arguments of `loop(...)` are the
-values of the round before. The loop's names are known in its body only.
+The budget is the program's, so where tasks recurse at the same time, the
+one whose frames ask for more once it is used up gets the error, and the
+error says how much of it that task holds itself. Each task gives back
+what its frames took as they shrink and when it ends.
 
-When the body produces a value without calling `loop(...)`, that value is the
-result of the entire expression. `loop` is composable -- you can bind its
-result, return it, or use it in a pipeline.
-
-**`loop(...)` must be in tail position.** It jumps back to the top of the
-loop with new values and never produces a value where it is written (its
-type is `Never`), so nothing may use its result. It may appear only as the
-last expression of the loop body, or of a block, a match arm or a `when`
-else body that is itself in tail position:
-
-```silt
-fn fact(n) {
-  loop i = n, acc = 1 {
-    match i {
-      0 -> acc
-      _ -> loop(i - 1, acc * i) -- OK: last expression of a tail arm
-    }
-  }
-}
-```
-
-`i * loop(i - 1)` is a type error: carry the running value in a binding
-instead, as `acc` does above.
-
-**Loops and closures.** A closure's body can hold a `loop` of its own. A
-`loop(...)` written inside a closure cannot go on with a loop outside the
-closure: the closure runs when it is called, not as the loop's body, so
-that is an error. Call the closure in the loop's body and decide there, as
-this search does with its predicate:
-
-```silt
-fn find_index(xs, predicate) {
-  loop remaining = xs, idx = 0 {
-    match remaining {
-      [] -> None
-      [head, ..tail] -> match predicate(head) {
-        true -> Some(idx)
-        _ -> loop(tail, idx + 1)
-      }
-    }
-  }
-}
-```
-
-### Loop vs. `fold_until`
-
-`list.fold_until` requires `Stop(value)` and `Continue(value)` to carry the
-**same type**. Use `loop` when the result type differs from the iteration
-state:
-
-```silt
--- fold_until: accumulator IS the result
-[1, 2, 3] |> list.fold_until(0) { acc, x ->
-  match acc + x > 6 {
-    true -> Stop(acc)
-    _ -> Continue(acc + x)
-  }
-}
-
--- loop: state is (queue, visited) but result is Option(node)
-fn bfs(graph, start, goal) {
-  loop queue = [start], visited = [start] {
-    match queue {
-      [] -> None
-      [node, ..rest] -> match node == goal {
-        true -> Some(node)
-        _ -> {
-          let neighbors = map.get(graph, node) |> option.unwrap_or([])
-          let new = neighbors |> list.filter { n -> !list.contains(visited, n) }
-          loop(list.concat(rest, new), list.concat(visited, new))
-        }
-      }
-    }
-  }
-}
-```
+The `SILT_FRAME_BUDGET` environment variable sets another budget, in MiB,
+read once when the program starts: `SILT_FRAME_BUDGET=16 silt run main.silt`
+ends a runaway recursion sooner. A value silt cannot read (`abc`, `0`,
+`64MiB`) is refused: `silt run`, `silt test` and `silt repl` do not
+start, and the error says why.
 
 
 ## Ranges

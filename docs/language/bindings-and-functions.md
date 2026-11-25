@@ -13,8 +13,8 @@ order: 1
 Silt has a small, fixed keyword set. The full keyword list is:
 
 ```
-as  else  fn  import  let  loop  match
-opaque  pub  return  trait  type  when  where
+as  else  fn  import  let  match  opaque
+pub  return  trait  type  when  where
 ```
 
 This is a forcing function, not an aesthetic choice. Every time we considered
@@ -23,8 +23,9 @@ adding a keyword (`if`, `for`, `while`, `mut`, `async`, `await`,
 answer was almost always yes.
 
 - `if`/`else` is subsumed by `match`.
-- General-purpose iteration uses `loop`, collection traversal uses
-  higher-order functions (`list.map`, `list.filter`, `list.fold`).
+- Collection traversal uses higher-order functions (`list.map`,
+  `list.filter`, `list.fold`); anything else repeats by a function that
+  calls itself.
 - `mut` does not exist because nothing is mutable.
 - `async`/`await` does not exist because concurrency is CSP-based.
 - `try`/`catch` does not exist because errors are values.
@@ -128,8 +129,9 @@ can exit early, the syntax (`?` or `when`-`else`) says so.
 
 ### One Way to Do Things
 
-`match` subsumes `if`. `loop` subsumes `while`. String interpolation
-`"{a}{b}"` subsumes concatenation. Module-qualified functions subsume bare
+`match` subsumes `if`. A function that calls itself subsumes `while`.
+String interpolation `"{a}{b}"` subsumes concatenation. Module-qualified
+functions subsume bare
 globals. When there is one way, every Silt program reads the same way.
 
 
@@ -412,7 +414,7 @@ fn count_at_most(tree, limit) {
 Inside its own body the closure has one type; it is generalised after,
 as any `let` closure is. A call of itself in tail position is a jump back
 to its start, as a function's is (see
-[Infinite Loops](loops-and-pipes.md#infinite-loops)).
+[Repeating](loops-and-pipes.md#repeating)).
 
 Only the closure the `let` binds is its own name: in
 `let f = memo({ n -> f(n - 1) })` the closure is handed to `memo`, and
@@ -450,7 +452,7 @@ let total = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 pairs |> list.each { (n, word) -> println("{n} is {word}") }
 ```
 
-In the header of a `match` or a `loop`, `silt fmt` writes a closure
+In the header of a `match`, `silt fmt` writes a closure
 inside the call's parentheses:
 
 ```silt
@@ -466,7 +468,7 @@ call's closure when another `{` follows them on their line, and that
 `{` opens the arms. Without one they are the arms.
 
 A `match` that stands in another header, `match match f(x) { .. } { .. }`,
-`loop v = match f(x) { .. } { .. } {`, or in the value of a `when`, reads
+or in the value of a `when`, reads
 the braces behind a call as its arms, whatever follows them: there the
 `{` behind them belongs to the outer header (or is a closure given to the
 match's value), as it always has.
@@ -508,7 +510,7 @@ function of its own: a `return` inside a closure ends that call of the
 closure, not the function around it. So a callback cannot end a
 `list.each` or a `list.fold` early. To stop at the first match, use
 `list.find`, `list.fold_until` (it stops at `Stop(value)`) or a
-`loop`:
+function that calls itself:
 
 ```silt
 import list

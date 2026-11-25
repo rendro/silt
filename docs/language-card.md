@@ -45,8 +45,8 @@ ends the program with status 1. `silt run main.silt
 ## Lexical
 
 - Comments: `-- to the end of the line`, `{- a block, {- nested -} -}`.
-- Keywords: `as else fn import let loop match opaque pub return trait type
-  when where`. `true` and `false` are literals.
+- Keywords: `as else fn import let match opaque pub return trait type when
+  where`. `true` and `false` are literals.
 - Names: values and functions `snake_case`; types, traits and variants
   `CamelCase`; a type variable is a lowercase name (`a`, `e`, `item`).
 - Each statement and declaration starts on a line of its own.
@@ -72,7 +72,7 @@ ends the program with status 1. `silt run main.silt
 | set, ordered | `#[1, 2, 3]` |
 | record | `User { name: "A", age: 3 }`, `User { name, age }` (= `name: name`); a keyword may name a field: `e.type`, `Event { type: t }` |
 | record update | `user.{ age: 4 }`, `user.{ age }` |
-| in a `match`/`loop` header | a lone field written alone in parentheses: `match (P { x }) { ... }` |
+| in a `match` header | a lone field written alone in parentheses: `match (P { x }) { ... }` |
 | variant | `Some(1)`, `None`, `Ok(x)`, `Err(e)`, `Circle(2)` |
 | closure | `{ x -> x * 2 }`, `{ a, b -> a + b }`, `{ (k, v) -> v }`, `{ -> 42 }` |
 
@@ -134,7 +134,7 @@ List(a)) -> Option(a)`. A function whose result type is chosen by its
 caller takes the type as a last parameter, `fn parse(s: String, type a)`,
 called as `json.parse(text, User)`.
 
-## Branching and loops
+## Branching and repeating
 
 `match` is how silt branches (there is no `if`), and it must be
 exhaustive. `when ... else`, below, leaves a block early.
@@ -171,14 +171,15 @@ fn main() {
   `_ -> ...` arm.
 - `when let Some(x) = e else { return d }` binds `x` for the rest of the
   block; `when cond else { ... }` checks a condition. The `else` block
-  must leave: `return`, `panic(...)`, a call of a function that returns
-  `Never`, or `loop(...)`.
-- `loop i = 0, acc = [] { ... loop(i + 1, next) ... }` binds state and
-  starts again where `loop(...)` is called, in tail position; its value
-  is that of a round that does not call it.
-- A tail call of a function to itself (or of a `let` closure by its
-  name) is the same jump: it takes no frame, and a call stack shows the
-  function once. A tail call of another function takes no frame either.
+  must leave: `return`, `panic(...)` or a call of a function that returns
+  `Never`.
+- silt has no `loop`, `while` or `for`. `list.each`, `list.fold` and
+  `list.fold_until` walk a list or a range (`1..n`), `channel.each` and
+  `channel.fold_until` a channel; anything else repeats by a function
+  that calls itself: a top-level `fn`, or a `let` closure by its name.
+- A tail call of a function to itself is a jump: it takes no frame, and
+  a call stack shows the function once. A tail call of another function
+  takes no frame either.
 - Any other call takes a frame until it returns. The frames of a program
   and its tasks may take 128 MiB in all (`SILT_FRAME_BUDGET` sets
   another, in MiB), about 700,000 levels of `x + sum(rest)`; a recursion
@@ -188,8 +189,8 @@ fn main() {
   frame must pass a part of a parameter (`rest` of `[x, ..rest]`, a
   field, what a constructor pattern binds), "depth follows the data";
   anything else is an error (`E0345`) unless the function is written
-  `deep fn name(...)`. A `()` loop of tail calls ends with `()`,
-  `return e` or a call that gives `Never` (`E0346`).
+  `deep fn name(...)`. A function of such a group that gives `()` ends
+  with `()`, `return e` or a call that gives `Never` (`E0346`).
 
 ## Errors
 
@@ -201,7 +202,7 @@ error enums of the standard library as their message (`"{e}"`), a type
 of the program by its structure or its `Display` impl. `panic(msg)` stops the
 program. A function declared `-> Never` (the one place `Never` is
 written) never returns either: its body ends in `panic`, in a call of
-another such function or in an endless `loop`.
+another such function or in a call of itself that never ends.
 
 ## Traits
 

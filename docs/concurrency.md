@@ -1241,7 +1241,7 @@ stages.
 
 - **A piece that never returns keeps its call, and the program, going.**
   A server in a piece of a `task.join` serves until its listener is
-  closed. A loop that never ends belongs in a helper of
+  closed. A function that calls itself for ever belongs in a helper of
   `task.background`, which stops it when the body returns, or under a
   `task.deadline`.
 - **A failure of `main` is the program's.** If `main` fails, with a
@@ -1562,7 +1562,7 @@ its I/O and its `time.sleep` are waits too.
   recursion asks for more once it is used up ends with "stack overflow:
   call frames take more than 128 MiB; this task holds 2 MiB", whichever
   tasks hold the rest (see
-  [Infinite Loops](language/loops-and-pipes.md#infinite-loops)).
+  [Repeating](language/loops-and-pipes.md#repeating)).
 
 
 ## Quick Reference
