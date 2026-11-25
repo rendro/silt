@@ -1,5 +1,7 @@
 -- exit: 1
--- stderr-contains: stack overflow
+-- stderr-contains: stack overflow: call frames take more than 128 MiB; this task holds 128 MiB
+-- A runaway recursion with silt's own frame budget ends as a runtime
+-- error with its call stack, well before a memory cap of the machine.
 fn deep(n) {
   1 + deep(n + 1)
 }

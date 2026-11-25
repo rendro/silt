@@ -1,9 +1,10 @@
 -- exit: 1
 -- timeout: 60
--- stderr-contains: error[runtime]: stack overflow: recursion depth exceeded 100000 frames
+-- frame-budget: 1
+-- stderr-contains: error[runtime]: stack overflow: call frames take more than 1 MiB
 -- stderr-not-contains: overflowed its stack
 -- A Display impl that shows the value it is given recurses like any
--- function that calls itself: the frame limit ends it with an error.
+-- function that calls itself: the frame budget ends it with an error.
 type Loop {
   n: Int,
 }

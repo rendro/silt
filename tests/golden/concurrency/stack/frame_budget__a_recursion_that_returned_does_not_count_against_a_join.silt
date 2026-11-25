@@ -1,0 +1,24 @@
+-- frame-budget: 16
+-- The program's own code recurses 150,000 levels (about 14 MiB of the
+-- frame budget of 16 MiB), and the recursion returns. A task of a join
+-- it starts next recurses 60,000 levels: what the returned recursion
+-- took is given back before the program starts the task and waits, so
+-- the task has the budget. (silt's own budget of 128 MiB shows the same
+-- with 1,200,000 and 500,000 levels.)
+import channel
+import task
+
+fn deep(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + deep(n - 1)
+  }
+}
+
+fn main() {
+  let a = deep(150000)
+  println(a)
+  let out: Channel(Int) = channel.new(4)
+  task.join([{ -> channel.send(out, deep(60000)) }])
+  println(channel.receive(out))
+}

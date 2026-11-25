@@ -690,6 +690,24 @@ ended, and a deadlock that follows (the task waited for is gone). A
 fault of the program itself, a division by zero or a `panic`, keeps it
 `false` even when a task has used the budget up.
 
+**Frame budget.** `vm.set_frame_budget(mib)` lets the calls in progress
+of the program, and of its tasks, take that many MiB in all: 128 until it
+is called, or what `SILT_FRAME_BUDGET` in the environment says. A
+recursion that would take more ends with a `VmError` whose message is
+`stack overflow: call frames take more than <mib> MiB; this task holds
+<size>`. A call counts its frame and the values it holds on the stack (24
+bytes each), not the data they point to. The first 64 KiB of the
+program's own frames, and of each task's, are outside the budget; the
+rest is taken in pieces of 1 MiB and given back as the frames shrink and
+when the task ends.
+
+The budget belongs to the `Vm` that `Vm::new` made, and the program's
+tasks share it; it is not one budget for the process. Two `Vm`s in one
+process have one each, of 128 MiB unless set otherwise, so a host that
+runs programs side by side gives each the share it can spare, as a test
+that pins an overflow sets a small one. (`silt run`, `silt test` and
+`silt repl` run one program, so there the budget is the process's.)
+
 ## Error Surfacing
 
 - **Static errors** (type errors, unknown names, bad host signatures)

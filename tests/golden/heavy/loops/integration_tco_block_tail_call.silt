@@ -1,3 +1,4 @@
+-- frame-budget: 1
 -- Tail call as the last expression in a block.
 import io
 fn count(n, acc) {

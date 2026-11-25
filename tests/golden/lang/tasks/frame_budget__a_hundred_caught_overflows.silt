@@ -1,0 +1,26 @@
+-- frame-budget: 2
+-- A supervisor that catches one runaway recursion after another: each
+-- is a runtime error that `task.guard` gives as a value, and none of
+-- them keeps its frames or its call stack, so the program does not grow
+-- with the count. The last error is shown as its report.
+import list
+import string
+import task
+
+fn runaway(n: Int) -> Int {
+  1 + runaway(n + 1)
+}
+
+fn main() {
+  let errors = list.fold(1..100, []) { kept, _ ->
+    match task.guard({ -> runaway(0) }) {
+      Ok(_) -> kept
+      Err(e) -> [e, ..kept]
+    }
+  }
+  println(list.length(errors))
+  match list.first(errors) {
+    Some(e) -> println(string.starts_with("{e}", "error[runtime]: stack overflow: call frames take more than 2 MiB"))
+    None -> println("none")
+  }
+}

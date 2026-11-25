@@ -1,11 +1,12 @@
 -- timeout: 90
+-- frame-budget: 1
 -- A call in tail position inside a loop's body is a tail call when the
 -- loop is in tail position: a supervisor that restarts by calling itself
 -- from inside its loop runs in one frame however often it restarts. A
 -- loop whose value is still used (`let x = loop ...`, `1 + loop ...`)
 -- is not in tail position, and a call in its body returns to it.
--- Each count is more than the 100,000 frames a stack may hold, and few
--- enough that the oracle's full sweep runs the program to its end.
+-- Each count is more than a frame budget of 1 MiB holds, and few enough
+-- that the oracle's full sweep runs the program to its end.
 import list
 import task
 

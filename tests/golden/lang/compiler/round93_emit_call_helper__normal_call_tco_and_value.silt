@@ -1,6 +1,7 @@
 -- stderr-not-contains: stack overflow
+-- frame-budget: 1
 -- the non-tail call's value is usable; the tail call recurses 200k deep,
--- far past the VM's 100k frame cap
+-- far past what a frame budget of 1 MiB holds
 fn countdown(n) {
   match n {
     0 -> 0

@@ -11,6 +11,23 @@ fn run_it(source: &str) -> silt_playground::Run {
     run(source, SystemClock, STEP_BUDGET)
 }
 
+/// A runaway recursion ends with the playground's frame budget, not
+/// silt's own.
+#[test]
+fn a_runaway_recursion_ends_at_the_playgrounds_frame_budget() {
+    let ran = run_it(
+        "fn deep(n: Int) -> Int {\n  1 + deep(n + 1)\n}\nfn main() {\n  println(deep(0))\n}\n",
+    );
+    assert!(!ran.ok);
+    assert!(
+        ran.error.starts_with(
+            "error[runtime]: stack overflow: call frames take more than 32 MiB; this task holds 32 MiB"
+        ),
+        "{}",
+        ran.error
+    );
+}
+
 #[test]
 fn a_program_runs_and_its_output_is_collected() {
     let ran = run_it("import list\nfn main() {\n  list.each(1..3) { n -> println(n) }\n}\n");

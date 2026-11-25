@@ -213,6 +213,29 @@ call stack shows the latest of those hand-overs. In the REPL a top-level
 function's call of itself is a call too: it reads the function's
 definition each round, as every use of a top-level name there does.
 
+A call whose result is still used, as in `x + sum(rest)`, takes a frame
+until it returns. The frames of a program, its tasks' included, may take
+128 MiB in all: about 700,000 levels of `x + sum(rest)` over a list (a
+frame and the values it holds, about 190 bytes), more of a function with
+fewer values. The data the values point to is not counted, and the first
+64 KiB of each task's frames are its own. A recursion that would take more
+ends with a runtime error and its call stack:
+
+```
+error[runtime]: stack overflow: call frames take more than 128 MiB; this task holds 128 MiB
+```
+
+The budget is the program's, so where tasks recurse at the same time, the
+one whose frames ask for more once it is used up gets the error, and the
+error says how much of it that task holds itself. Each task gives back
+what its frames took as they shrink and when it ends.
+
+The `SILT_FRAME_BUDGET` environment variable sets another budget, in MiB,
+read once when the program starts: `SILT_FRAME_BUDGET=16 silt run main.silt`
+ends a runaway recursion sooner. A value silt cannot read (`abc`, `0`,
+`64MiB`) is refused: `silt run`, `silt test` and `silt repl` do not
+start, and the error says why.
+
 
 ## Loop with State
 

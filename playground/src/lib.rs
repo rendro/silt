@@ -31,6 +31,12 @@ const FILE: &str = "main.silt";
 /// one thread, and a program that loops for ever would hold it for ever.
 pub const STEP_BUDGET: u64 = 200_000_000;
 
+/// The MiB a program's call frames may take before a recursion that is
+/// not a tail call ends with "stack overflow" (`Vm::set_frame_budget`):
+/// smaller than silt's own 128, so that a runaway in a phone's browser
+/// stops at about 100 MB of the page's memory.
+pub const FRAME_BUDGET_MIB: usize = 32;
+
 /// The most bytes of output a run keeps: past it, a `print` or a
 /// `println` is a runtime error, and what goes to stderr is dropped. A
 /// program that prints in a loop would otherwise fill the page's
@@ -146,6 +152,7 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
     let out = PageOutput::default();
     let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()).clock(clock));
     vm.set_step_budget(steps);
+    vm.set_frame_budget(FRAME_BUDGET_MIB);
     // A `process.exit` ends the run with its code: 0 is a program that
     // ended well, any other code one that failed.
     let mut exited = None;

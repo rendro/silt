@@ -1,7 +1,7 @@
 //! The runtime's settings in the environment (`SILT_IO_TIMEOUT`,
-//! `SILT_TIME_SLICE`): a value silt cannot read refuses the start of
-//! `silt run`, `silt test` and `silt repl`, naming the variable, the
-//! value and the forms it takes. (They were ignored without a word:
+//! `SILT_TIME_SLICE`, `SILT_FRAME_BUDGET`): a value silt cannot read
+//! refuses the start of `silt run`, `silt test` and `silt repl`, naming
+//! the variable, the value and the forms it takes. (They were ignored without a word:
 //! a safety setting with a typo was silently not there.)
 
 use std::process::{Command, Stdio};
@@ -32,6 +32,7 @@ fn silt(name: &str, args: &[&str], vars: &[(&str, &str)]) -> (Option<i32>, Strin
         .current_dir(&dir)
         .env_remove("SILT_IO_TIMEOUT")
         .env_remove("SILT_TIME_SLICE")
+        .env_remove("SILT_FRAME_BUDGET")
         .stdin(Stdio::null());
     for (var, value) in vars {
         command.env(var, value);
@@ -48,6 +49,7 @@ fn silt(name: &str, args: &[&str], vars: &[(&str, &str)]) -> (Option<i32>, Strin
 const IO_FORMS: &str =
     "is not a duration: write a whole number above 0 with a unit, as in 500ms, 5s, 2m or 1h";
 const SLICE_FORMS: &str = "is not a number of steps: write a whole number above 0, as in 500";
+const BUDGET_FORMS: &str = "is not a number of MiB: write a whole number above 0, as in 64";
 
 #[test]
 fn an_io_timeout_silt_cannot_read_refuses_the_start() {
@@ -116,6 +118,24 @@ fn a_time_slice_silt_cannot_read_refuses_the_start() {
 }
 
 #[test]
+fn a_frame_budget_silt_cannot_read_refuses_the_start() {
+    for (i, value) in ["abc", "0", "-5", "1.5", "64MiB"].into_iter().enumerate() {
+        let (code, out, err) = silt(
+            &format!("budget{i}"),
+            &["run", "main.silt"],
+            &[("SILT_FRAME_BUDGET", value)],
+        );
+        assert_eq!(code, Some(1), "{value}: {err}");
+        assert_eq!(out, "", "{value}: the program did not run");
+        assert_eq!(
+            err,
+            format!("error: silt run: SILT_FRAME_BUDGET='{value}' {BUDGET_FORMS}\n"),
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn silt_test_and_the_repl_refuse_the_same() {
     let (code, out, err) = silt(
         "test",
@@ -147,7 +167,8 @@ fn values_silt_reads_and_empty_ones_start() {
     for (i, vars) in [
         &[("SILT_IO_TIMEOUT", "200ms"), ("SILT_TIME_SLICE", "500")][..],
         &[("SILT_IO_TIMEOUT", " 5s "), ("SILT_TIME_SLICE", "1")],
-        &[("SILT_IO_TIMEOUT", "2m")],
+        &[("SILT_IO_TIMEOUT", "2m"), ("SILT_FRAME_BUDGET", "64")],
+        &[("SILT_FRAME_BUDGET", " 1 ")],
         &[("SILT_IO_TIMEOUT", ""), ("SILT_TIME_SLICE", "")],
     ]
     .into_iter()
