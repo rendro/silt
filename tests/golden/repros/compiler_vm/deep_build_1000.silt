@@ -5,20 +5,22 @@ type L {
 }
 fn build(n) {
   let nil = Nil
-  loop i = 0, acc = nil {
+  let step = { i, acc ->
     match i >= n {
       true -> acc
-      false -> loop(i + 1, Cons(i, acc))
+      false -> step(i + 1, Cons(i, acc))
     }
   }
+  step(0, nil)
 }
 fn len(xs) {
-  loop cur = xs, n = 0 {
+  let go = { cur, n ->
     match cur {
       Nil -> n
-      Cons(_, rest) -> loop(rest, n + 1)
+      Cons(_, rest) -> go(rest, n + 1)
     }
   }
+  go(xs, 0)
 }
 fn main() {
   let a = build(1000)

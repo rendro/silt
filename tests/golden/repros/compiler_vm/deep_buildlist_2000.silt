@@ -1,12 +1,13 @@
 -- verdict: same
 import list
 fn build(n) {
-  loop i = 0, acc = [] {
+  let go = { i, acc ->
     match i >= n {
       true -> acc
-      false -> loop(i + 1, [i, ..acc])
+      false -> go(i + 1, [i, ..acc])
     }
   }
+  go(0, [])
 }
 fn main() {
   let a = build(2000)
