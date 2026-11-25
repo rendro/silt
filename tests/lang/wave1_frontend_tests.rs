@@ -626,12 +626,13 @@ fn classify(n) {
 }
 
 fn sum_to(n) {
-  loop i = n, acc = 0 {
+  let add = { i, acc ->
     match i {
       0 -> acc
-      _ -> loop(i - 1, acc + i)
+      _ -> add(i - 1, acc + i)
     }
   }
+  add(n, 0)
 }
 
 fn main() {

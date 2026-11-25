@@ -22,33 +22,30 @@ fn url() -> String {
 -- What the stream of `sql` gives, element by element.
 fn drain(db: postgres.PgPool, sql: String) {
   match postgres.stream(db, sql, (3,), N) {
-    Ok(rows) -> loop {
-      match channel.receive(rows) {
-        Some(Ok(row)) -> {
-          println("  Ok({row})")
-          loop()
+    Ok(rows) -> {
+      channel.each(rows) { row ->
+        match row {
+          Ok(row) -> println("  Ok({row})")
+          Err(e) -> println("  Err: {e}")
         }
-        Some(Err(e)) -> {
-          println("  Err: {e}")
-          loop()
-        }
-        None -> println("  closed")
       }
+      println("  closed")
     }
     Err(e) -> println("  stream: {e}")
   }
 }
 
 fn batches(c: postgres.PgCursor(N)) -> Result(Int, postgres.PostgresError) {
-  loop count = 0 {
+  let next = { count ->
     match postgres.cursor_next(c)? {
       [] -> Ok(count)
       batch -> {
         println("  batch: {batch}")
-        loop(count + 1)
+        next(count + 1)
       }
     }
   }
+  next(0)
 }
 
 fn main() {

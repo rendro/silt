@@ -28,14 +28,13 @@ fn url() -> String {
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
   match postgres.stream(pool, sql, (), json.Value) {
-    Ok(rows) -> loop n = 0 {
-      match channel.receive(rows) {
-        Some(Ok(_)) -> loop(n + 1)
-        Some(Err(e)) -> {
+    Ok(rows) -> channel.fold_until(rows, 0) { n, row ->
+      match row {
+        Ok(_) -> Continue(n + 1)
+        Err(e) -> {
           println("count: {e}")
-          -1
+          Stop(-1)
         }
-        _ -> n
       }
     }
     Err(e) -> {
@@ -97,15 +96,16 @@ fn main() {
           }
           -- Until the server shows the helper's statement waiting.
           task.background([t]) { ->
-            loop seen = count(pool, waiting()) {
-              match seen == 1 {
+            let wait = { ->
+              match count(pool, waiting()) == 1 {
                 true -> ()
                 false -> {
                   time.sleep(time.ms(5))
-                  loop(count(pool, waiting()))
+                  wait()
                 }
               }
             }
+            wait()
           }
           println("the helper is stopped")
           Ok(())

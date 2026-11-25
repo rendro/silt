@@ -53,12 +53,13 @@ deep fn fib(n) {
 }
 
 fn sum_to(n) {
-  loop i = 0, acc = 0 {
+  let add = { i, acc ->
     match i > n {
       true -> acc
-      false -> loop(i + 1, acc + i)
+      false -> add(i + 1, acc + i)
     }
   }
+  add(0, 0)
 }
 
 fn main() {
@@ -105,7 +106,7 @@ fn a_program_runs_the_same_at_every_time_slice() {
 /// up, with an error that says so apart from its message.
 #[test]
 fn a_step_budget_ends_a_program_that_does_not_end() {
-    let endless = "fn main() {\n  loop {\n    loop()\n  }\n}\n";
+    let endless = "fn spin() {\n  spin()\n}\n\nfn main() {\n  spin()\n}\n";
     let (result, _) = run_whole(endless, |vm| vm.set_step_budget(100_000));
     let error = result.unwrap_err();
     assert!(error.out_of_steps, "{error:?}");
@@ -123,7 +124,7 @@ fn a_step_budget_ends_a_program_that_does_not_end() {
 /// is the same in every run, and more steps write more.
 #[test]
 fn at_slice_one_the_budget_is_exact() {
-    let counting = "fn main() {\n  loop i = 0 {\n    println(i)\n    loop(i + 1)\n  }\n}\n";
+    let counting = "fn count(i) {\n  println(i)\n  count(i + 1)\n}\n\nfn main() {\n  count(0)\n}\n";
     let lines = |steps: u64| {
         let (result, output) = run_whole(counting, |vm| {
             vm.set_time_slice(1);
@@ -135,7 +136,7 @@ fn at_slice_one_the_budget_is_exact() {
     let (few, more) = (lines(1_000), lines(2_000));
     assert!(few > 10, "{few} lines in 1,000 steps");
     assert_eq!(few, lines(1_000));
-    // The loop costs the same number of steps each time round.
+    // A self tail call costs the same number of steps each time round.
     assert!((few * 2).abs_diff(more) <= 2, "{few} lines, then {more}");
     // No step, no line.
     assert_eq!(lines(0), 0);
@@ -198,7 +199,7 @@ fn a_program_within_its_budget_runs_as_without_one() {
 /// by it, and the join of the task gives the error on.
 #[test]
 fn the_budget_ends_the_tasks_of_a_program_too() {
-    let spin = "fn spin() {\n  loop {\n    loop()\n  }\n}\n";
+    let spin = "fn spin() {\n  spin()\n}\n";
     let joined = format!("import task\n{spin}fn main() {{\n  task.join([spin])\n}}\n");
     let (result, _) = run_whole(&joined, |vm| vm.set_step_budget(100_000));
     let error = result.unwrap_err();
@@ -218,13 +219,11 @@ import channel
 import task
 
 fn relay(from, to) {
-  loop {
-    match channel.receive(from) {
-      Some(n) -> channel.send(to, n + 1)
-      None -> ()
-    }
-    loop()
+  match channel.receive(from) {
+    Some(n) -> channel.send(to, n + 1)
+    None -> ()
   }
+  relay(from, to)
 }
 
 fn main() {
@@ -333,32 +332,28 @@ fn a_deadline_ends_its_function_at_every_slice() {
 /// that, whatever the slice of the VM.
 #[test]
 fn a_deadline_loses_nothing_at_every_slice() {
-    const HEAD: &str = "import channel\nimport task\nimport time\n\n";
+    const HEAD: &str = "import channel\nimport list\nimport task\nimport time\n\n";
     // A receive: every number a rendezvous send handed over is
     // received.
     let receive = r#"
 fn main() {
   let ch: Channel(Int) = channel.new(0)
   let producer = { ->
-    loop i = 0 {
-      match i >= 60 {
-        true -> channel.close(ch)
-        false -> {
-          time.sleep(time.ms(2))
-          channel.send(ch, i)
-          loop(i + 1)
-        }
-      }
+    list.each(0..59) { i ->
+      time.sleep(time.ms(2))
+      channel.send(ch, i)
     }
+    channel.close(ch)
   }
   let r = task.background([producer]) { ->
-    loop got = 0, sum = 0 {
+    let take = { got, sum ->
       match task.deadline(time.ms(2), { -> channel.receive(ch) }) {
-        Some(Some(v)) -> loop(got + 1, sum + v)
+        Some(Some(v)) -> take(got + 1, sum + v)
         Some(None) -> (got, sum)
-        None -> loop(got, sum)
+        None -> take(got, sum)
       }
     }
+    take(0, 0)
   }
   host.give(match r {
     (got, sum) -> "received {got}, sum {sum}"
@@ -372,25 +367,26 @@ fn main() {
   let ch: Channel(Int) = channel.new(0)
   let counted = channel.new(1)
   let consumer = { ->
-    let r = loop n = 0, sum = 0 {
+    let take = { n, sum ->
       time.sleep(time.ms(2))
       match channel.receive(ch) {
-        Some(v) -> loop(n + 1, sum + v)
+        Some(v) -> take(n + 1, sum + v)
         None -> (n, sum)
       }
     }
-    channel.send(counted, r)
+    channel.send(counted, take(0, 0))
   }
   let sender = { ->
-    loop i = 0 {
+    let send = { i ->
       match i >= 60 {
         true -> ()
         false -> match task.deadline(time.ms(2), { -> channel.send(ch, i) }) {
-          Some(_) -> loop(i + 1)
-          None -> loop(i)
+          Some(_) -> send(i + 1)
+          None -> send(i)
         }
       }
     }
+    send(0)
     channel.close(ch)
   }
   task.join([consumer, sender])
@@ -418,12 +414,7 @@ fn round(dur, before) {
 }
 
 fn wrong(dur, before) {
-  loop i = 0, wrong = 0 {
-    match i >= 150 {
-      true -> wrong
-      false -> loop(i + 1, wrong + round(dur, before))
-    }
-  }
+  list.fold(1..150, 0) { wrong, _ -> wrong + round(dur, before) }
 }
 
 fn main() {
@@ -436,25 +427,20 @@ import host
     let late = r#"
 fn main() {
   let sent: Channel(Int) = channel.new(4)
-  let wrong = loop i = 0, wrong = 0 {
-    match i >= 100 {
-      true -> wrong
-      false -> {
-        let out = task.deadline(time.micros(2000), { ->
-          time.sleep(time.micros(1200 + i % 5 * 200))
-          channel.send(sent, i)
-          i
-        })
-        let was_sent = match channel.try_receive(sent) {
-          channel.Message(_) -> true
-          _ -> false
-        }
-        match (out, was_sent) {
-          (Some(_), true) -> loop(i + 1, wrong)
-          (None, false) -> loop(i + 1, wrong)
-          _ -> loop(i + 1, wrong + 1)
-        }
-      }
+  let wrong = list.fold(0..99, 0) { wrong, i ->
+    let out = task.deadline(time.micros(2000), { ->
+      time.sleep(time.micros(1200 + i % 5 * 200))
+      channel.send(sent, i)
+      i
+    })
+    let was_sent = match channel.try_receive(sent) {
+      channel.Message(_) -> true
+      _ -> false
+    }
+    match (out, was_sent) {
+      (Some(_), true) -> wrong
+      (None, false) -> wrong
+      _ -> wrong + 1
     }
   }
   host.give("wrong {wrong}")
@@ -481,44 +467,37 @@ fn main() {
   let out: Channel(Int) = channel.new(0)
   let never: Channel(Int) = channel.new(0)
   let producer = { ->
-    loop i = 0 {
-      match i >= 40 {
-        true -> channel.close(a)
-        false -> {
-          time.sleep(time.ms(2))
-          channel.send(a, i)
-          loop(i + 1)
-        }
-      }
+    list.each(0..39) { i ->
+      time.sleep(time.ms(2))
+      channel.send(a, i)
     }
+    channel.close(a)
   }
   let counted = channel.new(1)
   let consumer = { ->
-    let r = loop n = 0, sum = 0 {
+    let take = { n, sum ->
       time.sleep(time.ms(2))
       match channel.receive(out) {
-        Some(v) -> loop(n + 1, sum + v)
+        Some(v) -> take(n + 1, sum + v)
         None -> (n, sum)
       }
     }
-    channel.send(counted, r)
+    channel.send(counted, take(0, 0))
   }
   let middle = { ->
-    loop {
-      let got = task.deadline(time.ms(2), { ->
-        match channel.select([channel.Recv(a), channel.Recv(never)]) {
-          channel.Received(_, value) -> value
-          channel.Sent(_) -> None
-        }
-      })
-      match got {
-        Some(Some(v)) -> {
-          pass(out, never, v)
-          loop()
-        }
-        Some(None) -> channel.close(out)
-        None -> loop()
+    let got = task.deadline(time.ms(2), { ->
+      match channel.select([channel.Recv(a), channel.Recv(never)]) {
+        channel.Received(_, value) -> value
+        channel.Sent(_) -> None
       }
+    })
+    match got {
+      Some(Some(v)) -> {
+        pass(out, never, v)
+        middle()
+      }
+      Some(None) -> return channel.close(out)
+      None -> middle()
     }
   }
   task.join([producer, consumer, middle])
@@ -534,29 +513,25 @@ import host
 fn main() {
   let ch: Channel(Int) = channel.new(0)
   let producer = { ->
-    loop i = 0 {
-      match i >= 60 {
-        true -> channel.close(ch)
-        false -> {
-          time.sleep(time.ms(2))
-          channel.send(ch, i)
-          loop(i + 1)
-        }
-      }
+    list.each(0..59) { i ->
+      time.sleep(time.ms(2))
+      channel.send(ch, i)
     }
+    channel.close(ch)
   }
   let r = task.background([producer]) { ->
-    loop got = 0, sum = 0, inner = 0 {
+    let take = { got, sum, inner ->
       let out = task.deadline(time.ms(2), { ->
         task.deadline(time.hours(1), { -> channel.receive(ch) })
       })
       match out {
-        Some(Some(Some(v))) -> loop(got + 1, sum + v, inner)
+        Some(Some(Some(v))) -> take(got + 1, sum + v, inner)
         Some(Some(None)) -> (got, sum, inner)
-        Some(None) -> loop(got, sum, inner + 1)
-        None -> loop(got, sum, inner)
+        Some(None) -> take(got, sum, inner + 1)
+        None -> take(got, sum, inner)
       }
     }
+    take(0, 0, 0)
   }
   host.give(match r {
     (got, sum, inner) -> "received {got}, sum {sum}, inner timeouts {inner}"
@@ -626,25 +601,19 @@ import time
 
 -- How many values `ch` holds, taken out of it.
 fn drained(ch) {
-  loop n = 0 {
+  let more = { n ->
     match channel.try_receive(ch) {
-      channel.Message(_) -> loop(n + 1)
+      channel.Message(_) -> more(n + 1)
       _ -> n
     }
   }
+  more(0)
 }
 
 fn filled(n) {
   let ch: Channel(Int) = channel.new(n)
-  loop i = 0 {
-    match i >= n {
-      true -> ch
-      false -> {
-        channel.send(ch, i)
-        loop(i + 1)
-      }
-    }
-  }
+  list.each(0..n - 1) { i -> channel.send(ch, i) }
+  ch
 }
 
 fn count(n, acc) {
@@ -656,16 +625,17 @@ fn count(n, acc) {
 
 -- `round(i)` 300,000 times, with a mark for each round that was done.
 fn rounds(marks, round) {
-  loop i = 0 {
+  let next = { i ->
     match i >= 300000 {
       true -> i
       false -> {
         round(i)
         let _ = channel.try_send(marks, i)
-        loop(i + 1)
+        next(i + 1)
       }
     }
   }
+  next(0)
 }
 
 -- The rounds a function that is `rounds` of `round` did under a
@@ -798,44 +768,33 @@ import host
 fn a_late_worker_loses_no_item_at_every_slice() {
     let source = r#"
 import channel
+import list
 import task
 import time
 
 fn count(ch) {
-  loop n = 0 {
+  let more = { n ->
     match channel.try_receive(ch) {
-      channel.Message(_) -> loop(n + 1)
+      channel.Message(_) -> more(n + 1)
       _ -> n
     }
   }
+  more(0)
 }
 
 fn fill(ch, n) {
-  loop i = 0 {
-    match i >= n {
-      true -> ()
-      false -> {
-        channel.send(ch, i)
-        loop(i + 1)
-      }
-    }
-  }
+  list.each(0..n - 1) { i -> channel.send(ch, i) }
 }
 
 fn main() {
-  host.give(loop k = 0, lost = 0 {
-    match k >= 10 {
-      true -> lost
-      false -> {
-        let input: Channel(Int) = channel.new(20000)
-        let out: Channel(Int) = channel.new(20000)
-        fill(input, 20000)
-        let _ = task.deadline(time.ms(1), { ->
-          channel.each(input) { v -> channel.send(out, v) }
-        })
-        loop(k + 1, lost + 20000 - count(input) - count(out))
-      }
-    }
+  host.give(list.fold(1..10, 0) { lost, _ ->
+    let input: Channel(Int) = channel.new(20000)
+    let out: Channel(Int) = channel.new(20000)
+    fill(input, 20000)
+    let _ = task.deadline(time.ms(1), { ->
+      channel.each(input) { v -> channel.send(out, v) }
+    })
+    lost + 20000 - count(input) - count(out)
   })
 }
 import host
@@ -858,6 +817,7 @@ import host
 fn an_accept_under_a_deadline_loses_no_connection_at_every_slice() {
     let source = r#"
 import channel
+import list
 import task
 import tcp
 import time
@@ -867,38 +827,34 @@ fn main() {
   let port = tcp.local_port(listener)
   let done: Channel(Int) = channel.new(1)
   let client = { ->
-    let made = loop i = 0, made = 0 {
-      match i >= 40 {
-        true -> made
-        false -> {
-          time.sleep(time.ms(3))
-          match tcp.connect("127.0.0.1:{port}") {
-            Ok(_) -> loop(i + 1, made + 1)
-            Err(_) -> loop(i + 1, made)
-          }
-        }
+    let made = list.fold(1..40, 0) { made, _ ->
+      time.sleep(time.ms(3))
+      match tcp.connect("127.0.0.1:{port}") {
+        Ok(_) -> made + 1
+        Err(_) -> made
       }
     }
     channel.close(done)
     made
   }
   let server = { ->
-    loop given = 0, idle = 0 {
+    let serve = { given, idle ->
       match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
         Some(Ok(c)) -> {
           tcp.close(c)
-          loop(given + 1, 0)
+          serve(given + 1, 0)
         }
         Some(Err(e)) -> panic("accept failed: {e}")
         None -> match channel.try_receive(done) {
           channel.Closed -> match idle >= 20 {
             true -> given
-            false -> loop(given, idle + 1)
+            false -> serve(given, idle + 1)
           }
-          _ -> loop(given, idle)
+          _ -> serve(given, idle)
         }
       }
     }
+    serve(0, 0)
   }
   match task.map([client, server], 2) { f -> f() } {
     [made, given] -> host.give(made - given)
@@ -935,7 +891,7 @@ import host
 /// often than woken and not yet run, and the rule is the same.
 #[test]
 fn a_cancel_loses_nothing_that_was_handed_over_at_every_slice() {
-    const HEAD: &str = "import channel\nimport task\nimport time\n\n";
+    const HEAD: &str = "import channel\nimport list\nimport task\nimport time\n\n";
     // A receive: whenever the sender was told "sent", the number was
     // seen by the receiver's code or still lies in the channel.
     let receive = r#"
@@ -969,12 +925,7 @@ fn round(i, capacity) {
 }
 
 fn main() {
-  host.give(loop i = 0, all = true {
-    match i >= 120 {
-      true -> all
-      false -> loop(i + 1, all && round(i, 0) && round(i, 1))
-    }
-  })
+  host.give(list.fold(0..119, true) { all, i -> all && round(i, 0) && round(i, 1) })
 }
 import host
 "#;
@@ -1016,12 +967,7 @@ fn round(i) {
 }
 
 fn main() {
-  host.give(loop i = 0, all = true {
-    match i >= 200 {
-      true -> all
-      false -> loop(i + 1, all && round(i))
-    }
-  })
+  host.give(list.fold(0..199, true) { all, i -> all && round(i) })
 }
 import host
 "#;
@@ -1188,7 +1134,7 @@ import task
 import time
 
 fn main() {{
-  host.give(loop i = 0 {{
+  let rounds = {{ i ->
     match i >= 60 {{
       true -> i
       false -> {{
@@ -1200,12 +1146,13 @@ fn main() {{
         }})
         time.sleep(time.ms(1))
         match channel.receive(ch) {{
-          Some(5) -> loop(i + 1)
+          Some(5) -> rounds(i + 1)
           _ -> -1
         }}
       }}
     }}
-  }})
+  }}
+  host.give(rounds(0))
 }}
 import host
 "#
@@ -1243,44 +1190,39 @@ import host
 fn a_cancelled_worker_loses_no_item_at_every_slice() {
     const HEAD: &str = r#"
 import channel
+import list
 import task
 import time
 
 fn fill(ch, n) {
-  loop i = 0 {
-    match i >= n {
-      true -> ()
-      false -> {
-        channel.send(ch, i)
-        loop(i + 1)
-      }
-    }
-  }
+  list.each(0..n - 1) { i -> channel.send(ch, i) }
 }
 
 -- How many values `ch` holds, taken out of it.
 fn count(ch) {
-  loop n = 0 {
+  let more = { n ->
     match channel.try_receive(ch) {
-      channel.Message(_) -> loop(n + 1)
+      channel.Message(_) -> more(n + 1)
       _ -> n
     }
   }
+  more(0)
 }
 
 -- How many of `n` items were taken out of `input` and not put into
 -- `out`: 0, or `main` waits for ever for the rest.
 fn missing(input, out, n) {
   time.sleep(time.ms(3))
-  loop found = count(input) + count(out) {
+  let wait = { found ->
     match found >= n {
       true -> found - n
       false -> match channel.select([channel.Recv(input), channel.Recv(out)]) {
-        channel.Received(_, Some(_)) -> loop(found + 1)
+        channel.Received(_, Some(_)) -> wait(found + 1)
         _ -> n - found
       }
     }
   }
+  wait(count(input) + count(out))
 }
 
 fn work(v, n) {
@@ -1295,31 +1237,24 @@ fn each_worker(input, out, steps) {
 }
 
 fn receive_worker(input, out, steps) {
-  loop {
-    match channel.receive(input) {
-      Some(v) -> {
-        channel.send(out, work(v, steps))
-        loop()
-      }
-      None -> ()
+  match channel.receive(input) {
+    Some(v) -> {
+      channel.send(out, work(v, steps))
+      receive_worker(input, out, steps)
     }
+    None -> ()
   }
 }
 
 -- A worker whose deadline passes a moment after it began, with
 -- `items` in its input.
 fn from_outside(worker, items, rounds) {
-  loop k = 0, lost = 0 {
-    match k >= rounds {
-      true -> lost
-      false -> {
-        let input: Channel(Int) = channel.new(items)
-        let out: Channel(Int) = channel.new(items)
-        fill(input, items)
-        let _ = task.deadline(time.ms(1), { -> worker(input, out, 0) })
-        loop(k + 1, lost + missing(input, out, items))
-      }
-    }
+  list.fold(1..rounds, 0) { lost, _ ->
+    let input: Channel(Int) = channel.new(items)
+    let out: Channel(Int) = channel.new(items)
+    fill(input, items)
+    let _ = task.deadline(time.ms(1), { -> worker(input, out, 0) })
+    lost + missing(input, out, items)
   }
 }
 
@@ -1327,21 +1262,16 @@ fn from_outside(worker, items, rounds) {
 -- and that goes on: 40 rounds, `k` sends before the work begins, so
 -- the end falls at another step of a slice each time.
 fn by_itself(worker, items, steps) {
-  loop k = 0, lost = 0 {
-    match k >= 40 {
-      true -> lost
-      false -> {
-        let input: Channel(Int) = channel.new(700)
-        let out: Channel(Int) = channel.new(700)
-        let sink: Channel(Int) = channel.new(100)
-        fill(input, items)
-        let _ = task.deadline(time.ms(0), { ->
-          fill(sink, k)
-          worker(input, out, steps)
-        })
-        loop(k + 1, lost + missing(input, out, items))
-      }
-    }
+  list.fold(0..39, 0) { lost, k ->
+    let input: Channel(Int) = channel.new(700)
+    let out: Channel(Int) = channel.new(700)
+    let sink: Channel(Int) = channel.new(100)
+    fill(input, items)
+    let _ = task.deadline(time.ms(0), { ->
+      fill(sink, k)
+      worker(input, out, steps)
+    })
+    lost + missing(input, out, items)
   }
 }
 "#;
@@ -1392,53 +1322,50 @@ fn by_itself(worker, items, steps) {
 fn a_cancelled_worker_passes_on_the_item_it_holds_at_every_slice() {
     let holds = r#"
 import channel
+import list
 import task
 import time
 
 fn count(ch) {
-  loop n = 0 {
+  let more = { n ->
     match channel.try_receive(ch) {
-      channel.Message(_) -> loop(n + 1)
+      channel.Message(_) -> more(n + 1)
       _ -> n
     }
   }
+  more(0)
 }
 
 fn main() {
   let input: Channel(Int) = channel.new(700)
   let out: Channel(Int) = channel.new(700)
-  loop i = 0 {
-    match i >= 700 {
-      true -> ()
-      false -> {
-        channel.send(input, i)
-        loop(i + 1)
-      }
-    }
-  }
-  loop {
+  list.each(0..699) { i -> channel.send(input, i) }
+  let work = { ->
     match channel.receive(input) {
       Some(3) -> {
         let _ = task.deadline(time.ms(0), { ->
           channel.send(out, 3)
           channel.each(input) { v -> channel.send(out, v) }
         })
+        return
       }
       Some(v) -> {
         channel.send(out, v)
-        loop()
+        work()
       }
       None -> ()
     }
   }
+  work()
   -- The four items come, however long that takes.
-  let put_out = loop got = [] {
+  let take = { got ->
     match channel.receive(out) {
       Some(3) -> [..got, 3]
-      Some(v) -> loop([..got, v])
+      Some(v) -> take([..got, v])
       None -> got
     }
   }
+  let put_out = take([])
   -- The worker took no fifth: the next item is still the input's.
   when let Some(next) = channel.receive(input) else { panic("no item") }
   host.give("put out {put_out}, the input's next {next}, {count(input)} more")
@@ -1447,44 +1374,39 @@ import host
 "#;
     let rendezvous = r#"
 import channel
+import list
 import task
 import time
 
 fn main() {
-  host.give(loop k = 0, all = true {
-    match k >= 30 {
-      true -> all
-      false -> {
-        let jobs: Channel(Int) = channel.new(0)
-        let sent: Channel(Int) = channel.new(100000)
-        let out: Channel(Int) = channel.new(100000)
-        let producer = { ->
-          let _ = task.deadline(time.ms(4), { ->
-            loop i = 0 {
-              channel.send(jobs, i)
-              channel.send(sent, i)
-              loop(i + 1)
-            }
-          })
+  host.give(list.fold(1..30, true) { all, _ ->
+    let jobs: Channel(Int) = channel.new(0)
+    let sent: Channel(Int) = channel.new(100000)
+    let out: Channel(Int) = channel.new(100000)
+    let produce = { i ->
+      channel.send(jobs, i)
+      channel.send(sent, i)
+      produce(i + 1)
+    }
+    let producer = { ->
+      let _ = task.deadline(time.ms(4), { -> produce(0) })
+    }
+    let worker = { ->
+      let _ = task.deadline(time.ms(2), { -> channel.each(jobs) { v -> channel.send(out, v) } })
+    }
+    task.join([producer, worker])
+    -- For every send that was noted, the worker's output: in the
+    -- order of the sends.
+    let check = { ok ->
+      match channel.try_receive(sent) {
+        channel.Message(i) -> match channel.receive(out) {
+          Some(^i) -> check(ok)
+          _ -> check(false)
         }
-        let worker = { ->
-          let _ = task.deadline(time.ms(2), { -> channel.each(jobs) { v -> channel.send(out, v) } })
-        }
-        task.join([producer, worker])
-        -- For every send that was noted, the worker's output: in the
-        -- order of the sends.
-        let ok = loop ok = true {
-          match channel.try_receive(sent) {
-            channel.Message(i) -> match channel.receive(out) {
-              Some(^i) -> loop(ok)
-              _ -> loop(false)
-            }
-            _ -> ok
-          }
-        }
-        loop(k + 1, all && ok)
+        _ -> ok
       }
     }
+    all && check(true)
   })
 }
 import host
@@ -1622,62 +1544,59 @@ fn count(n, acc) {
 
 -- How many connections `passed_on` holds, each closed.
 fn drained(passed_on) {
-  loop n = 0 {
+  let more = { n ->
     match channel.try_receive(passed_on) {
       channel.Message(c) -> {
         tcp.close(c)
-        loop(n + 1)
+        more(n + 1)
       }
       _ -> n
     }
   }
+  more(0)
 }
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let port = tcp.local_port(listener)
   let passed_on = channel.new(64)
-  let made = loop i = 0, made = 0 {
-    match i >= 40 {
-      true -> made
-      false -> {
-        let acceptor = { ->
-          let _ = task.deadline(time.ms(2), { ->
-            match tcp.accept(listener) {
-              Ok(c) -> {
-                let _ = count(120, 0)
-                channel.send(passed_on, c)
-              }
-              Err(_) -> ()
-            }
-          })
-          0
-        }
-        let client = { ->
-          time.sleep(time.ms(2))
-          match tcp.connect("127.0.0.1:{port}") {
-            Ok(_) -> 1
-            Err(_) -> 0
+  let made = list.fold(1..40, 0) { made, _ ->
+    let acceptor = { ->
+      let _ = task.deadline(time.ms(2), { ->
+        match tcp.accept(listener) {
+          Ok(c) -> {
+            let _ = count(120, 0)
+            channel.send(passed_on, c)
           }
+          Err(_) -> ()
         }
-        let connected = task.map([acceptor, client], 2) { f -> f() }
-        loop(i + 1, made + list.fold(connected, 0) { acc, n -> acc + n })
+      })
+      0
+    }
+    let client = { ->
+      time.sleep(time.ms(2))
+      match tcp.connect("127.0.0.1:{port}") {
+        Ok(_) -> 1
+        Err(_) -> 0
       }
     }
+    let connected = task.map([acceptor, client], 2) { f -> f() }
+    made + list.fold(connected, 0) { acc, n -> acc + n }
   }
-  let left = loop left = 0, idle = 0 {
+  let accept_left = { left, idle ->
     match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
       Some(Ok(c)) -> {
         tcp.close(c)
-        loop(left + 1, 0)
+        accept_left(left + 1, 0)
       }
       Some(Err(e)) -> panic("accept failed: {e}")
       None -> match idle >= 20 {
         true -> left
-        false -> loop(left, idle + 1)
+        false -> accept_left(left, idle + 1)
       }
     }
   }
+  let left = accept_left(0, 0)
   host.give(made - left - drained(passed_on))
 }
 import host
@@ -1714,11 +1633,12 @@ import task
 fn main() {
   let started: Channel(Int) = channel.new(1)
   let busy = { ->
-    loop i = 0 {
+    let round = { i ->
       let _ = channel.try_send(started, i)
       println("round")
-      loop(i + 1)
+      round(i + 1)
     }
+    round(0)
   }
   task.background([busy]) { ->
     let _ = channel.receive(started)
@@ -1766,14 +1686,12 @@ import channel
 import task
 import time
 
-fn rounds() {{
-  loop i = 0 {{
-    match i >= 300000 {{
-      true -> i
-      false -> {{
-        println("round")
-        loop(i + 1)
-      }}
+fn rounds(i) {{
+  match i >= 300000 {{
+    true -> i
+    false -> {{
+      println("round")
+      rounds(i + 1)
     }}
   }}
 }}
@@ -1783,7 +1701,7 @@ fn main() {{
   let around = {{ ->
     let _ = task.deadline(time.ms(0), {{ ->
       let _ = channel.try_send(started, 0)
-      rounds()
+      rounds(0)
     }})
   }}
   {end}
@@ -1882,14 +1800,14 @@ fn assert_ended_by_budget(source: &str, steps: u64) {
 /// receive with a timeout.
 #[test]
 fn the_budget_ends_a_main_that_only_waits_for_a_timeout() {
-    let source = "import channel\nimport time\n\nfn main() {\n  let ch = channel.new(0)\n  loop i = 0 {\n    let _ = channel.receive_timeout(ch, time.ms(1))\n    loop(i + 1)\n  }\n}\n";
+    let source = "import channel\nimport time\n\nfn wait(ch, i) {\n  let _ = channel.receive_timeout(ch, time.ms(1))\n  wait(ch, i + 1)\n}\n\nfn main() {\n  wait(channel.new(0), 0)\n}\n";
     assert_ended_by_budget(source, 100);
 }
 
 /// The same with a receive on a channel that a timer closes.
 #[test]
 fn the_budget_ends_a_main_that_only_waits_for_timer_channels() {
-    let source = "import channel\nimport time\n\nfn main() {\n  loop i = 0 {\n    match channel.receive(channel.timeout(time.ms(1))) {\n      _ -> loop(i + 1)\n    }\n  }\n}\n";
+    let source = "import channel\nimport time\n\nfn wait(i) {\n  match channel.receive(channel.timeout(time.ms(1))) {\n    _ -> wait(i + 1)\n  }\n}\n\nfn main() {\n  wait(0)\n}\n";
     assert_ended_by_budget(source, 100);
 }
 
@@ -1903,7 +1821,7 @@ fn the_budget_ends_a_main_that_only_waits_for_io() {
     std::fs::write(&file, "text\n").unwrap();
     let path = file.to_string_lossy().replace('\\', "/");
     let source = format!(
-        "import io\n\nfn main() {{\n  loop i = 0 {{\n    let _ = io.read_file(\"{path}\")\n    loop(i + 1)\n  }}\n}}\n"
+        "import io\n\nfn read(i) {{\n  let _ = io.read_file(\"{path}\")\n  read(i + 1)\n}}\n\nfn main() {{\n  read(0)\n}}\n"
     );
     assert_ended_by_budget(&source, 100);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1931,7 +1849,7 @@ fn a_budget_of_no_steps_runs_nothing() {
 /// step, and at slice 1 it does not.
 #[test]
 fn a_program_may_run_one_slice_more_than_its_budget() {
-    let source = "fn main() {\n  println(\"ran\")\n  host.give(loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  })\n}\nimport host\n";
+    let source = "fn count(i) {\n  match i >= 100 {\n    true -> i\n    false -> count(i + 1)\n  }\n}\n\nfn main() {\n  println(\"ran\")\n  host.give(count(0))\n}\nimport host\n";
     let (result, output) = run_whole(source, |vm| vm.set_step_budget(1));
     assert_eq!(result.unwrap(), Value::Int(100));
     assert_eq!(output, "ran\n");
@@ -1951,7 +1869,7 @@ fn a_program_may_run_one_slice_more_than_its_budget() {
 /// the case it is about.)
 #[test]
 fn a_fault_of_the_program_is_not_the_budgets() {
-    let spin = "import stream\nimport time\n\nfn spin() {\n  loop {\n    loop()\n  }\n}\n";
+    let spin = "import stream\nimport time\n\nfn spin() {\n  spin()\n}\n";
     for (fault, message) in [
         ("10 / (3 - 3)", "division by zero"),
         (
@@ -1980,12 +1898,12 @@ fn a_fault_of_the_program_is_not_the_budgets() {
 /// they would need six million.
 #[test]
 fn a_slice_given_away_costs_one_step_at_any_slice() {
-    let feed = "fn feed(ch) {\n  loop i = 0 {\n    match i >= 3000 {\n      true -> channel.close(ch)\n      false -> {\n        channel.send(ch, i)\n        loop(i + 1)\n      }\n    }\n  }\n}\n";
+    let feed = "fn feed(ch) {\n  list.each(0..2999) { i -> channel.send(ch, i) }\n  channel.close(ch)\n}\n";
     let on_main = format!(
-        "import channel\nimport stream\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = stream.from_fn {{ _ -> feed(ch) }}\n  channel.each(ch) {{ n -> let _ = n + 1 }}\n  let _ = stream.collect(feeder)\n  println(\"done\")\n}}\n"
+        "import channel\nimport list\nimport stream\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = stream.from_fn {{ _ -> feed(ch) }}\n  channel.each(ch) {{ n -> let _ = n + 1 }}\n  let _ = stream.collect(feeder)\n  println(\"done\")\n}}\n"
     );
     let in_a_task = format!(
-        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  task.join([{{ -> feed(ch) }}, {{ -> channel.each(ch) {{ n -> let _ = n + 1 }} }}])\n  println(\"done\")\n}}\n"
+        "import channel\nimport list\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  task.join([{{ -> feed(ch) }}, {{ -> channel.each(ch) {{ n -> let _ = n + 1 }} }}])\n  println(\"done\")\n}}\n"
     );
     let stages = "import stream\n\nfn main() {\n  let total = stream.from_range(1, 3000)\n    |> stream.map { n -> n + 1 }\n    |> stream.filter { n -> n % 2 == 0 }\n    |> stream.fold(0) { acc, n -> acc + n }\n  println(total)\n  println(\"done\")\n}\n";
     for (what, source) in [

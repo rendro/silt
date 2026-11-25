@@ -59,9 +59,9 @@ what the loop relies on.
   longer, a jump the processor predicts badly, code that falls on a
   worse address.
 - A round it does not run: only a plain loop and one with an add are
-  counted, each written as a `loop` and as a function that calls itself
-  in tail position (which is the same jump), not a call of another
-  function, a method call or a Float.
+  counted, each written as a function that calls itself in tail
+  position and as a closure that does (both calls are a jump), not a
+  call of another function, a method call or a Float.
 - Any other target. The releases for aarch64, macOS and Windows are
   built from the same source and are not looked at.
 - What a real processor does. The rule for "cannot be forwarded" (an
@@ -74,7 +74,8 @@ what the loop relies on.
   each instruction ran and the registers before each step.
 - `count.py`: makes the two numbers of a round from that and the
   binary's disassembly.
-- `plain_loop.silt`, `add_round.silt`: the two loops, written with `loop`.
-- `plain_self_call.silt`, `add_self_call.silt`: the same two, written as
+- `plain_self_call.silt`, `add_self_call.silt`: the two loops, written as
   a function that calls itself.
+- `plain_closure.silt`, `add_closure.silt`: the same two, written as a
+  closure that calls itself, with the bound captured.
 - `run.sh`: builds `step`, runs the four loops, fails on a waiting load.

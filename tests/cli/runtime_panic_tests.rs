@@ -474,10 +474,11 @@ import time
 
 fn main() {
   let _ticker: Channel(Int) = stream.from_fn { _ ->
-    loop {
+    let tick = { ->
       time.sleep(time.ms(1))
-      loop()
+      tick()
     }
+    tick()
   }
   println("before")
   panic("main gives up")
@@ -492,10 +493,11 @@ fn step() -> Result(Int, String) {
 
 fn main() -> Result((), String) {
   let _ticker: Channel(Int) = stream.from_fn { _ ->
-    loop {
+    let tick = { ->
       time.sleep(time.ms(1))
-      loop()
+      tick()
     }
+    tick()
   }
   println("before")
   let _ = step()?

@@ -229,14 +229,14 @@ fn two_runs_that_write_different_output_are_a_finding() {
 /// finding, and nothing compared.
 #[test]
 fn a_program_that_does_not_end_is_cut_short() {
-    let endless = verdict("fn main() {\n  loop {\n    loop()\n  }\n}\n");
+    let endless = verdict("fn spin() {\n  spin()\n}\n\nfn main() {\n  spin()\n}\n");
     assert!(
         matches!(endless, Verdict::Cut(Cut::OutOfSteps)),
         "{endless:?}"
     );
     // So is one whose task does not end: a piece of a join, or a
     // helper beside a body that does not end either.
-    let spin = "import task\nfn spin() {\n  loop {\n    loop()\n  }\n}\n";
+    let spin = "import task\nfn spin() {\n  spin()\n}\n";
     for main in [
         "fn main() {\n  task.join([spin])\n}\n",
         "fn main() {\n  task.background([spin], spin)\n}\n",
@@ -254,7 +254,7 @@ fn a_program_that_does_not_end_is_cut_short() {
 /// the two runs.
 #[test]
 fn what_a_program_wrote_before_it_was_cut_short_is_not_compared() {
-    let counting = "fn main() {\n  loop i = 0 {\n    println(i)\n    loop(i + 1)\n  }\n}\n";
+    let counting = "fn count(i) {\n  println(i)\n  count(i + 1)\n}\n\nfn main() {\n  count(0)\n}\n";
     let cut = verdict(counting);
     assert!(matches!(cut, Verdict::Cut(Cut::OutOfSteps)), "{cut:?}");
 }
@@ -286,7 +286,7 @@ fn a_program_that_ends_at_one_slice_only_is_a_finding() {
         "{passed:?}"
     );
     // And one that is still cut short then is the finding.
-    let longer = "fn main() {\n  let _ = loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  }\n}\n";
+    let longer = "fn count(i) {\n  match i >= 100 {\n    true -> i\n    false -> count(i + 1)\n  }\n}\n\nfn main() {\n  let _ = count(0)\n}\n";
     let source = Source::Memory(vec![("main.silt".to_string(), longer.to_string())]);
     let short = Steps { each: 1, again: 50 };
     assert_finding(

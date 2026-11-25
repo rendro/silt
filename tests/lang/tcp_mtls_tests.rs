@@ -521,13 +521,14 @@ import time
 
 fn head(conn: tcp.TcpStream) -> List(String) {{
   let lines = stream.tcp_lines(conn)
-  loop got = [] {{
+  let read = {{ got ->
     match channel.receive(lines) {{
       Some(Ok("")) -> got
-      Some(Ok(line)) -> loop(list.append(got, line))
+      Some(Ok(line)) -> read(list.append(got, line))
       _ -> got
     }}
   }}
+  read([])
 }}
 
 {handle}

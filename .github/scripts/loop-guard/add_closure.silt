@@ -1,0 +1,13 @@
+-- A closure that calls itself to count and add, with the bound
+-- captured: the round the guard counts. (It is stopped long before it
+-- ends.)
+fn main() {
+  let n = 400000000
+  let sum = { i, acc ->
+    match i >= n {
+      true -> acc
+      false -> sum(i + 1, acc + i)
+    }
+  }
+  println(sum(0, 0))
+}

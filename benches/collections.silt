@@ -7,7 +7,7 @@
 --
 -- benches/vm_bench.rs runs the same functions in its collection rows.
 -- The build rows keep the old version alive while they make the new
--- one, as a fold or a loop does.
+-- one, as a fold or a function that calls itself does.
 
 import int
 import io
@@ -16,88 +16,96 @@ import map
 import set
 
 fn prepend(n) {
-  loop i = 0, acc = [] {
+  let build = { i, acc ->
     match i == n {
       true -> list.length(acc)
-      false -> loop(i + 1, [i, ..acc])
+      false -> build(i + 1, [i, ..acc])
     }
   }
+  build(0, [])
 }
 
 fn append(n) {
-  loop i = 0, acc = [] {
+  let build = { i, acc ->
     match i == n {
       true -> list.length(acc)
-      false -> loop(i + 1, list.append(acc, i))
+      false -> build(i + 1, list.append(acc, i))
     }
   }
+  build(0, [])
 }
 
 fn mapset(n) {
-  loop i = 0, acc = #{} {
+  let build = { i, acc ->
     match i == n {
       true -> map.length(acc)
-      false -> loop(i + 1, map.set(acc, i, i))
+      false -> build(i + 1, map.set(acc, i, i))
     }
   }
+  build(0, #{})
 }
 
 fn setins(n) {
-  loop i = 0, acc = #[] {
+  let build = { i, acc ->
     match i == n {
       true -> set.length(acc)
-      false -> loop(i + 1, set.insert(acc, i))
+      false -> build(i + 1, set.insert(acc, i))
     }
   }
+  build(0, #[])
 }
 
 fn listset(n) {
   let xs = 0..n - 1 |> list.map { x -> x }
-  loop i = 0, acc = xs {
+  let build = { i, acc ->
     match i == n {
       true -> list.length(acc)
       false -> match list.set(acc, i, 0) {
-        Some(next) -> loop(i + 1, next)
+        Some(next) -> build(i + 1, next)
         None -> 0
       }
     }
   }
+  build(0, xs)
 }
 
 fn walk(n) {
   let xs = 0..n - 1 |> list.map { x -> x }
-  loop rest = xs, acc = 0 {
+  let add = { rest, acc ->
     match rest {
-      [x, ..more] -> loop(more, acc + x)
+      [x, ..more] -> add(more, acc + x)
       [] -> acc
     }
   }
+  add(xs, 0)
 }
 
 fn getall(n) {
   let xs = 0..n - 1 |> list.map { x -> x }
-  loop i = 0, acc = 0 {
+  let add = { i, acc ->
     match i == n {
       true -> acc
       false -> match list.get(xs, i) {
-        Some(x) -> loop(i + 1, acc + x)
+        Some(x) -> add(i + 1, acc + x)
         None -> 0
       }
     }
   }
+  add(0, 0)
 }
 
 fn mapget(n) {
   let m = 0..n - 1 |> list.map { x -> (x, x) } |> map.from_entries
-  loop i = 0, acc = 0 {
+  let add = { i, acc ->
     match i == n {
       true -> acc
       false -> match map.get(m, i) {
-        Some(x) -> loop(i + 1, acc + x)
+        Some(x) -> add(i + 1, acc + x)
         None -> 0
       }
     }
   }
+  add(0, 0)
 }
 
 fn mapeach(n) {

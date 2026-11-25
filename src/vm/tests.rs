@@ -7538,24 +7538,24 @@ mod fused_steps {
         }
     }
 
-    /// Nine functions that count in a loop of fused instructions (a
-    /// round of nine steps, three of them first parts), each with two
-    /// steps more before the loop than the one before: whatever step a
+    /// Nine functions that count in a self tail call of fused
+    /// instructions (a round of nine steps, three of them first parts),
+    /// each with two steps more before the first round than the one
+    /// before: whatever step a
     /// count of steps ends a function at, three of them are ended
     /// between the two parts of a fused instruction. A function whose
     /// time is over runs a slice of one step at a time and is ended
     /// when its late steps are used up; a cancelled task the same, at
     /// a place the cancel happens to come.
     const COUNTING: &str = "
+import list
 import task
 import time
 
-fn spin(n: Int) -> Int {
-  loop i = n {
-    match i < 1000000000 {
-      true -> loop(i + 1)
-      false -> i
-    }
+fn spin(i: Int) -> Int {
+  match i < 1000000000 {
+    true -> spin(i + 1)
+    false -> i
   }
 }
 
@@ -7574,32 +7574,19 @@ fn spins(k: Int) -> Int {
 }
 
 fn total(n: Int) -> Int {
-  loop i = 0, acc = 0 {
-    match i < n {
-      true -> loop(i + 1, acc + i - 1)
-      false -> acc
-    }
-  }
+  list.fold(0..n - 1, 0) { acc, i -> acc + i - 1 }
 }
 
 fn main() {
-  let ended = loop k = 0, timeouts = 0 {
-    match k < 9 {
-      true -> match task.deadline(time.ms(0), { -> spins(k) }) {
-        Some(_) -> loop(k + 1, timeouts)
-        None -> loop(k + 1, timeouts + 1)
-      }
-      false -> timeouts
+  let ended = list.fold(0..8, 0) { timeouts, k ->
+    match task.deadline(time.ms(0), { -> spins(k) }) {
+      Some(_) -> timeouts
+      None -> timeouts + 1
     }
   }
-  let cancelled = loop k = 0 {
-    match k < 9 {
-      true -> {
-        task.background([{ -> let _ = spins(k) }], { -> time.sleep(time.ms(1)) })
-        loop(k + 1)
-      }
-      false -> k
-    }
+  let cancelled = list.fold(0..8, 0) { started, k ->
+    task.background([{ -> let _ = spins(k) }], { -> time.sleep(time.ms(1)) })
+    started + 1
   }
   println(\"{ended} {cancelled} {total(1000)}\")
 }
@@ -7630,7 +7617,7 @@ fn main() {
         );
         // The program's own code ended at every step of a stretch of
         // rounds by the budget, then run to its end.
-        let counting = "fn main() {\n  let r = loop i = 0, acc = 0 {\n    match i < 50 {\n      true -> loop(i + 1, acc + i - 1)\n      false -> acc\n    }\n  }\n  println(r)\n}\n";
+        let counting = "fn count(i, acc) {\n  match i < 50 {\n    true -> count(i + 1, acc + i - 1)\n    false -> acc\n  }\n}\n\nfn main() {\n  let r = count(0, 0)\n  println(r)\n}\n";
         for steps in 1..40 {
             vm.set_step_budget(steps);
             assert_eq!(

@@ -4058,10 +4058,11 @@ import stream
 import time
 fn counting() {
   stream.from_fn { ch ->
-    loop i = 0 {
+    let send = { i ->
       channel.send(ch, i)
-      loop(i + 1)
+      send(i + 1)
     }
+    send(0)
   }
 }
 fn first_of(s) {
@@ -4077,10 +4078,11 @@ fn main() {
   -- A feed that closed its channel and waits on is stopped too.
   let _ = stream.from_fn({ ch ->
     channel.close(ch)
-    loop {
+    let wait = { ->
       time.sleep(time.ms(1))
-      loop()
+      wait()
     }
+    wait()
   }) |> stream.collect
   host.give(list.length(taken))
 }
@@ -4448,12 +4450,7 @@ fn busy(stop) {{
 
 fn main() {{
   let stop = channel.new(1)
-  let busy_ones = loop i = 0, acc = [] {{
-    match i == {workers} {{
-      true -> acc
-      false -> loop(i + 1, [{{ -> busy(stop) }}, ..acc])
-    }}
-  }}
+  let busy_ones = list.map(1..{workers}) {{ _ -> {{ -> busy(stop) }} }}
   task.join([..busy_ones, {{ -> channel.close(stop) }}])
   println("all ended")
 }}

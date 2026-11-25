@@ -3,8 +3,8 @@
 #
 # The guard of the instruction loop's code. SILT is a release binary of
 # silt, built as the release job builds it. For each of the four loops
-# beside this file (two `loop`s and two functions that call themselves
-# in tail position, whose call is the same jump) the binary is started,
+# beside this file (two functions and two closures that call themselves
+# in tail position, a call that is a jump) the binary is started,
 # stopped in the loop, and
 # stepped for 200,000 instructions; then the round of the loop must
 # have no load that cannot be forwarded from the store buffer. The
@@ -23,7 +23,7 @@ trap 'rm -rf "$work"' EXIT
 cc -O2 -o "$work/step" "$here/step.c"
 
 failed=0
-for name in plain_loop add_round plain_self_call add_self_call; do
+for name in plain_self_call add_self_call plain_closure add_closure; do
   # 300 ms after its start the program is in its loop; 200,000
   # instructions are stepped, the registers of 40,000 of them kept.
   "$work/step" "$work/$name.counts" "$work/$name.trace" 300 200000 40000 \

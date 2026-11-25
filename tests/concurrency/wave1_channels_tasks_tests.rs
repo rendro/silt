@@ -131,8 +131,10 @@ fn run_program(label: &str, src: &str) -> Outcome {
 
 // ── H1 ──────────────────────────────────────────────────────────────
 
-/// The documented multiplexing example, in the documented
-/// `loop _ = () { ... loop(()) }` form, on the main thread. Which
+/// The documented multiplexing example on the main thread: a let
+/// closure that calls itself after each message and returns when a
+/// channel reports `Closed`; `main` binds its result, so its feeds
+/// live until the closure has returned. Which
 /// messages it prints before a channel reports `Closed` depends on the
 /// order in which the two tasks (the functions of two `stream.from_fn`,
 /// which run beside the main thread) run, so only the end is pinned.
@@ -157,23 +159,25 @@ fn main() {
     channel.close(alerts)
   }
 
-  loop _ = () {
+  let next = { ->
     match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
       channel.Received(^alerts, Some(msg)) -> {
         println("alert: {msg}")
-        loop(())
+        next()
       }
       channel.Received(^logs, Some(msg)) -> {
         println("log: {msg}")
-        loop(())
+        next()
       }
       channel.Received(_, None) -> {
         println("a channel closed")
         return ()
       }
-      _ -> loop(())
+      _ -> next()
     }
   }
+  let result = next()
+  result
 }
 "#;
     for run in 1..=HANG_REPEATS {

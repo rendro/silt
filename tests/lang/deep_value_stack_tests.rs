@@ -45,9 +45,9 @@ fn program_of(depth_a: usize, depth_b: usize, uses: &[&str]) -> String {
         .map(|used| format!("  println({used})\n"))
         .collect();
     format!(
-        "import io\nimport set\nimport string\n\
+        "import io\nimport list\nimport set\nimport string\n\
          type T {{\n  Leaf,\n  Node(List(T))\n}}\n\
-         fn build(n) {{\n  loop i = 0, acc = Leaf {{\n    match i >= n {{\n      true -> acc\n      false -> loop(i + 1, Node([acc]))\n    }}\n  }}\n}}\n\
+         fn build(n) {{\n  list.fold(1..n, Leaf) {{ acc, _ -> Node([acc]) }}\n}}\n\
          fn main() {{\n  let a = build({depth_a})\n  let b = build({depth_b})\n{uses}}}\n"
     )
 }
