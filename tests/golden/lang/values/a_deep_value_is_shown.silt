@@ -5,6 +5,7 @@
 -- down the value on the native stack. (Showing a value half as deep
 -- overflowed it and aborted the program.)
 import io
+import list
 import string
 
 type Chain {
@@ -28,21 +29,11 @@ type Tagged {
 }
 
 fn chain(n: Int) -> Chain {
-  loop i = 0, acc = End {
-    match i >= n {
-      true -> acc
-      false -> loop(i + 1, Link(i % 10, acc))
-    }
-  }
+  list.fold(0..n - 1, End) { acc, i -> Link(i % 10, acc) }
 }
 
 fn tagged(n: Int) -> Tagged {
-  loop i = 0, acc = Stop {
-    match i >= n {
-      true -> acc
-      false -> loop(i + 1, Go(Tag { n: i }, acc))
-    }
-  }
+  list.fold(0..n - 1, Stop) { acc, i -> Go(Tag { n: i }, acc) }
 }
 
 fn main() {

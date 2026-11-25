@@ -1,6 +1,8 @@
 -- `==` and `!=` of two Ints are compared in the instruction loop (the
 -- other kinds by a call): as a value and as the branch of a match, of
 -- equal, unequal, negative and extreme Ints, and beside other kinds.
+import list
+
 fn same(a: Int, b: Int) -> String {
   match a == b {
     true -> "same"
@@ -11,16 +13,15 @@ fn same(a: Int, b: Int) -> String {
 fn main() {
   let big = 9223372036854775807
   let least = -big - 1
-  println("{1 == 1} {1 == 2} {1 != 2} {2 != 2} {-5 == -5} {big == big} {big == least} {least != big}")
+  println(
+    "{1 == 1} {1 == 2} {1 != 2} {2 != 2} {-5 == -5} {big == big} {big == least} {least != big}",
+  )
   println("{same(3, 3)} {same(3, -3)} {same(least, least)}")
   let n = 1000
-  let count = loop i = 0, acc = 0 {
-    match i >= n {
-      true -> acc
-      false -> loop(i + 1, acc + (match i % 3 == 0 {
-        true -> 1
-        false -> 0
-      }))
+  let count = list.fold(0..n - 1, 0) { acc, i ->
+    match i % 3 == 0 {
+      true -> acc + 1
+      false -> acc
     }
   }
   println(count)

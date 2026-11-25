@@ -5,14 +5,15 @@
 import io
 
 fn main() {
-  loop {
+  let read = { ->
     match io.read_line() {
       Ok(Some(line)) -> {
         println(io.inspect(line))
-        loop()
+        read()
       }
-      Ok(None) -> println("end")
-      Err(e) -> println("error: {e}")
+      Ok(None) -> return println("end")
+      Err(e) -> return println("error: {e}")
     }
   }
+  read()
 }

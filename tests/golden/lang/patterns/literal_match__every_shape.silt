@@ -114,12 +114,7 @@ fn countdown(n: Int, acc: List(Int)) -> List(Int) {
 }
 
 fn sum_to(n: Int) -> Int {
-  loop i = 0, acc = 0 {
-    match i > n {
-      true -> acc
-      false -> loop(i + 1, acc + i)
-    }
-  }
+  list.fold(0..n, 0) { acc, i -> acc + i }
 }
 
 fn three(a: Int, b: Int, c: Int) -> Int {

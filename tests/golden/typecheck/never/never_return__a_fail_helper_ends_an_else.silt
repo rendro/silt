@@ -1,15 +1,15 @@
 -- exit: 1
 -- A function declared `-> Never` never returns, so a call of it ends
--- an `else` that must leave, as `panic` does; a loop that never stops
--- is such a body too.
+-- an `else` that must leave, as `panic` does; a function that calls
+-- itself without end is such a body too.
 fn fail(message: String) -> Never {
   panic("failed: {message}")
 }
 
 fn forever() -> Never {
-  loop n = 0 {
-    loop(n + 1)
-  }
+  -- The call comes last, so it is a jump: forever runs without end
+  -- and keeps one frame.
+  forever()
 }
 
 fn first(xs: List(Int)) -> Int {

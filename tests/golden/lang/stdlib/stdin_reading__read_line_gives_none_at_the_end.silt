@@ -4,15 +4,16 @@
 import io
 
 fn main() {
-  loop count = 0 {
+  let read = { count ->
     match io.read_line() {
       Ok(Some(line)) -> {
         println("[{line}]")
-        loop(count + 1)
+        read(count + 1)
       }
-      Ok(None) -> println("end after {count} lines")
-      Err(e) -> println("error: {e}")
+      Ok(None) -> return println("end after {count} lines")
+      Err(e) -> return println("error: {e}")
     }
   }
+  read(0)
   println(io.read_line())
 }

@@ -8,43 +8,31 @@
 import list
 
 fn by_prepend(n: Int) -> List(Int) {
-  loop i = 0, acc = [] {
-    match i == n {
-      true -> acc
-      false -> loop(i + 1, [i, ..acc])
-    }
-  }
+  list.fold(0..n - 1, []) { acc, i -> [i, ..acc] }
 }
 
 fn by_append(n: Int) -> List(Int) {
-  loop i = 0, acc = [] {
-    match i == n {
-      true -> acc
-      false -> loop(i + 1, list.append(acc, i))
-    }
-  }
+  list.fold(0..n - 1, []) { acc, i -> list.append(acc, i) }
 }
 
 fn by_prepend_fn(n: Int) -> List(Int) {
-  loop i = 0, acc = [] {
-    match i == n {
-      true -> acc
-      false -> loop(i + 1, list.prepend(acc, i))
-    }
-  }
+  list.fold(0..n - 1, []) { acc, i -> list.prepend(acc, i) }
 }
 
 fn by_set(xs: List(Int)) -> List(Int) {
-  loop i = 0, acc = xs {
+  let go = { i, acc ->
     match list.set(acc, i, i * 2) {
-      Some(next) -> loop(i + 1, next)
+      Some(next) -> go(i + 1, next)
       None -> acc
     }
   }
+  go(0, xs)
 }
 
 fn show(name: String, xs: List(Int)) {
-  println("{name}: {list.length(xs)} {list.first(xs)} {list.get(xs, 1000)} {list.last(xs)} {list.sum(xs)}")
+  println(
+    "{name}: {list.length(xs)} {list.first(xs)} {list.get(xs, 1000)} {list.last(xs)} {list.sum(xs)}",
+  )
 }
 
 fn main() {

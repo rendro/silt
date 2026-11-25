@@ -12,33 +12,23 @@ import map
 import set
 
 fn changes_of_map(m: Map(Int, Int), n: Int) -> Int {
-  loop i = 0, total = 0 {
-    match i == n {
-      true -> total
-      false -> {
-        let changed = map.set(m, i, 0 - 1)
-        let added = map.set(m, 0 - i - 1, i)
-        let deleted = map.remove(m, i)
-        let got = match map.get(changed, i) {
-          Some(v) -> v
-          None -> 0
-        }
-        loop(i + 1, total + map.length(added) - map.length(deleted) + got)
-      }
+  list.fold(0..n - 1, 0) { total, i ->
+    let changed = map.set(m, i, 0 - 1)
+    let added = map.set(m, 0 - i - 1, i)
+    let deleted = map.remove(m, i)
+    let got = match map.get(changed, i) {
+      Some(v) -> v
+      None -> 0
     }
+    total + map.length(added) - map.length(deleted) + got
   }
 }
 
 fn changes_of_set(s: Set(Int), n: Int) -> Int {
-  loop i = 0, total = 0 {
-    match i == n {
-      true -> total
-      false -> {
-        let inserted = set.insert(s, 0 - i - 1)
-        let removed = set.remove(s, i)
-        loop(i + 1, total + set.length(inserted) - set.length(removed))
-      }
-    }
+  list.fold(0..n - 1, 0) { total, i ->
+    let inserted = set.insert(s, 0 - i - 1)
+    let removed = set.remove(s, i)
+    total + set.length(inserted) - set.length(removed)
   }
 }
 
