@@ -15,14 +15,12 @@ import time
 
 -- Read from `conn` until the client closes it.
 fn until_closed(conn: tcp.TcpStream) -> String {
-  loop {
-    match tcp.read(conn, 4096) {
-      Ok(got) -> match bytes.length(got) {
-        0 -> "the client closed the connection"
-        _ -> loop()
-      }
-      Err(e) -> "the read failed: {e}"
+  match tcp.read(conn, 4096) {
+    Ok(got) -> match bytes.length(got) {
+      0 -> "the client closed the connection"
+      _ -> until_closed(conn)
     }
+    Err(e) -> "the read failed: {e}"
   }
 }
 

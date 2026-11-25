@@ -31,14 +31,13 @@ fn url() -> String {
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
   match postgres.stream(pool, sql, (), json.Value) {
-    Ok(rows) -> loop n = 0 {
-      match channel.receive(rows) {
-        Some(Ok(_)) -> loop(n + 1)
-        Some(Err(e)) -> {
+    Ok(rows) -> channel.fold_until(rows, 0) { n, row ->
+      match row {
+        Ok(_) -> Continue(n + 1)
+        Err(e) -> {
           println("count: {e}")
-          -1
+          Stop(-1)
         }
-        _ -> n
       }
     }
     Err(e) -> {
@@ -50,13 +49,12 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
 
 -- Count the rows of `sql` again and again, until there are `n`.
 fn until(pool: postgres.PgPool, sql: String, n: Int) -> Int {
-  loop seen = count(pool, sql) {
-    match seen == n {
-      true -> seen
-      false -> {
-        time.sleep(time.ms(5))
-        loop(count(pool, sql))
-      }
+  let seen = count(pool, sql)
+  match seen == n {
+    true -> seen
+    false -> {
+      time.sleep(time.ms(5))
+      until(pool, sql, n)
     }
   }
 }

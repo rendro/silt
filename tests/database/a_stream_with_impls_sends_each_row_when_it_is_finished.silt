@@ -15,6 +15,7 @@ import env
 import fs
 import io
 import json
+import list
 import postgres
 import task
 import time
@@ -61,19 +62,19 @@ trait json.Decode for Step {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.Int(n) -> {
-        let seen = loop tries = 0 {
+        let wait = { tries ->
           match n == 1 || fs.exists(marker(n - 1)) {
             true -> true
             false -> match tries < 400 {
               true -> {
                 time.sleep(time.ms(5))
-                loop(tries + 1)
+                wait(tries + 1)
               }
               false -> false
             }
           }
         }
-        match seen {
+        match wait(0) {
           true -> Ok(Step { n: n })
           false -> Err(json.Other("row {n - 1} was not read before row {n}'s impl ran"))
         }
@@ -121,14 +122,8 @@ fn main() {
         }
         Err(e) -> println("{e}")
       }
-      loop n = 1 {
-        match n <= 5 {
-          true -> {
-            let _ = fs.remove(marker(n))
-            loop(n + 1)
-          }
-          false -> ()
-        }
+      list.each(1..5) { n ->
+        let _ = fs.remove(marker(n))
       }
       println("an impl that sleeps, read under a deadline:")
       match postgres.stream(db, "SELECT to_jsonb(g) AS sleepy FROM generate_series(1, 3) g", (), Z) {

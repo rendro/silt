@@ -22,19 +22,20 @@ fn url() -> String {
 
 -- Wait until the session `pid` has ended in the server.
 fn wait_gone(observer: postgres.PgPool, pid: Int) -> Result((), postgres.PostgresError) {
-  loop tries = 0 {
+  let wait = { tries ->
     let sql = "SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1::int4) AS gone"
     match postgres.query(observer, sql, (pid,), Gone)? {
       [row] when row.gone -> Ok(())
       _ -> match tries < 1000 {
         true -> {
           time.sleep(time.ms(5))
-          loop(tries + 1)
+          wait(tries + 1)
         }
         false -> Err(postgres.Other("the session {pid} did not end"))
       }
     }
   }
+  wait(0)
 }
 
 -- One round: the session of the pool's one connection is ended while

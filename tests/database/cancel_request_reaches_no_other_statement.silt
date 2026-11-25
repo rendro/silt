@@ -12,6 +12,7 @@
 -- run tried (2 to 8 of them, in six runs).
 import env
 import json
+import list
 import postgres
 import task
 import time
@@ -26,27 +27,17 @@ fn url() -> String {
 fn main() {
   match postgres.connect_with(url(), #{ "max_pool_size": 1 }) {
     Ok(pool) -> {
-      let failed = loop i = 0, failed = 0 {
-        match i < 300 {
-          true -> {
-            let _ = task.deadline(time.ms(1 + i % 5)) { ->
-              postgres.transact(pool) { tx ->
-                let _ = postgres.query(
-                  tx,
-                  "SELECT pg_sleep({i % 4}::float8 / 1000)",
-                  (),
-                  json.Value,
-                )?
-                time.sleep(time.ms(i / 4 % 3))
-                postgres.query(tx, "SELECT pg_sleep({i / 2 % 3}::float8 / 1000)", (), json.Value)
-              }
-            }
-            match postgres.query(pool, "SELECT 1", (), json.Value) {
-              Ok(_) -> loop(i + 1, failed)
-              Err(_) -> loop(i + 1, failed + 1)
-            }
+      let failed = list.fold(0..299, 0) { failed, i ->
+        let _ = task.deadline(time.ms(1 + i % 5)) { ->
+          postgres.transact(pool) { tx ->
+            let _ = postgres.query(tx, "SELECT pg_sleep({i % 4}::float8 / 1000)", (), json.Value)?
+            time.sleep(time.ms(i / 4 % 3))
+            postgres.query(tx, "SELECT pg_sleep({i / 2 % 3}::float8 / 1000)", (), json.Value)
           }
-          false -> failed
+        }
+        match postgres.query(pool, "SELECT 1", (), json.Value) {
+          Ok(_) -> failed
+          Err(_) -> failed + 1
         }
       }
       println("rounds in which main's statement failed: {failed}")

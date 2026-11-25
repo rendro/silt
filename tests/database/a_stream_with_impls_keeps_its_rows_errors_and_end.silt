@@ -78,16 +78,17 @@ fn is_row(row: R, n: Int) -> Bool {
 
 -- Read `rows` to their end: how many came in order, and what ended them.
 fn drain(rows: Channel(Result(R, postgres.PostgresError))) {
-  let (n, end) = loop n = 0 {
+  let read = { n ->
     match channel.receive(rows) {
       Some(Ok(row)) -> match is_row(row, n + 1) {
-        true -> loop(n + 1)
+        true -> read(n + 1)
         false -> (n, "row {n + 1} is out of order: {row}")
       }
       Some(Err(e)) -> (n, "Err({e})")
       None -> (n, "(end)")
     }
   }
+  let (n, end) = read(0)
   println("  {n} rows in order, then {end}")
   match end == "(end)" {
     true -> ()
@@ -123,15 +124,16 @@ fn main() {
         R,
       ) {
         Ok(rows) -> {
-          let n = loop n = 0 {
+          let read = { n ->
             match n {
               300 -> n
               _ -> match channel.receive(rows) {
-                Some(Ok(_)) -> loop(n + 1)
+                Some(Ok(_)) -> read(n + 1)
                 _ -> n
               }
             }
           }
+          let n = read(0)
           channel.close(rows)
           println("  {n} rows, closed")
         }
@@ -163,9 +165,9 @@ fn main() {
         S,
       ) {
         Ok(rows) -> {
-          let (n, sum) = loop n = 0, sum = 0 {
+          let read = { n, sum ->
             match channel.receive(rows) {
-              Some(Ok(row)) -> loop(n + 1, sum + row.slow.n)
+              Some(Ok(row)) -> read(n + 1, sum + row.slow.n)
               Some(Err(e)) -> {
                 println("{e}")
                 (n, sum)
@@ -173,6 +175,7 @@ fn main() {
               None -> (n, sum)
             }
           }
+          let (n, sum) = read(0, 0)
           println("  {n} rows, their sum {sum}")
         }
         Err(e) -> println("{e}")

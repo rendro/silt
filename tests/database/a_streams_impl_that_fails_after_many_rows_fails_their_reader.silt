@@ -34,7 +34,7 @@ fn main() {
   match postgres.connect(url()) {
     Ok(db) -> match postgres.stream(db, sql, (), R) {
       Ok(rows) -> {
-        let n = loop n = 0 {
+        let read = { n ->
           match channel.receive(rows) {
             Some(Ok(row)) -> match row.n == n + 1 {
               true -> {
@@ -42,13 +42,14 @@ fn main() {
                   true -> println("599 rows in order")
                   false -> ()
                 }
-                loop(n + 1)
+                read(n + 1)
               }
               false -> n
             }
             _ -> n
           }
         }
+        let n = read(0)
         println("not reached: {n} rows")
       }
       Err(e) -> println("{e}")
