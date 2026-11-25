@@ -8251,6 +8251,64 @@ fn main() {
         assert_eq!(vm.runtime.frame_budget.taken(), 0);
     }
 
+    /// A fold makes each call of its function in the frame of the one
+    /// that returned: a function that recurses beyond the allowance in
+    /// every round takes chunks and gives them back round by round.
+    #[test]
+    fn a_fold_of_a_deep_recursion_gives_back_round_by_round() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let main = "\
+fn main() {
+  host.give(list.fold(1..50, 0) { acc, _ -> acc + deep(8000) })
+}
+";
+        assert_eq!(run_on(&mut vm, main).unwrap(), Value::Int(400000));
+        assert_eq!(vm.held, 0);
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// A recursion through a fold's function takes two frames a level
+    /// (the function's and the fold's), counted as any: it overflows
+    /// where they run out, and the run gives back what they took.
+    #[test]
+    fn a_recursion_inside_a_fold_callback_is_counted() {
+        let walk = "\
+fn walk(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> list.fold([n - 1], 1) { acc, m -> acc + walk(m) }
+  }
+}
+";
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let given = run_on(
+            &mut vm,
+            &format!("{walk}fn main() {{\n  host.give(walk(3000))\n}}\n"),
+        );
+        assert_eq!(given.unwrap(), Value::Int(3000));
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+        let error = run_on(
+            &mut vm,
+            &format!("{walk}fn main() {{\n  host.give(walk(100000))\n}}\n"),
+        )
+        .expect_err("the recursion overflows");
+        assert!(
+            error
+                .message
+                .starts_with("stack overflow: call frames take more than 1 MiB"),
+            "{}",
+            error.message
+        );
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+        let given = run_on(
+            &mut vm,
+            &format!("{walk}fn main() {{\n  host.give(walk(3000))\n}}\n"),
+        );
+        assert_eq!(given.unwrap(), Value::Int(3000));
+    }
+
     /// The budget is each program's: an embedder that runs two in one
     /// process sets each its own, and a test that pins an overflow with a
     /// small one leaves the others' as they are.

@@ -1716,7 +1716,6 @@ impl Vm {
         self.stack.truncate(base - 1);
         let value = back?;
         self.frames.pop();
-        self.native_frames -= 1;
         Ok(Back::Done(value))
     }
 

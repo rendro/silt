@@ -169,7 +169,7 @@ fn main() {
   println(depth(100000000))
 }
 `);
-  assert.match(ran.error, /^error\[runtime\]: stack overflow/);
+  assert.match(ran.error, /^error\[runtime\]: stack overflow: call frames take more than 32 MiB/);
 });
 
 await test('the page gives the time and the randomness', (mod) => {

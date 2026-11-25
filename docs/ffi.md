@@ -696,11 +696,17 @@ is called, or what `SILT_FRAME_BUDGET` in the environment says. A
 recursion that would take more ends with a `VmError` whose message is
 `stack overflow: call frames take more than <mib> MiB; this task holds
 <size>`. A call counts its frame and the values it holds on the stack (24
-bytes each), not the data they point to; each VM's first 64 KiB are its
-own, and the rest is taken in pieces of 1 MiB and given back as its
-frames shrink and when it ends. The budget is each `Vm`'s: two VMs in one
-process each have their own, so a host that runs programs side by side
-sets a smaller one on each, as a test that pins an overflow does.
+bytes each), not the data they point to. The first 64 KiB of the
+program's own frames, and of each task's, are outside the budget; the
+rest is taken in pieces of 1 MiB and given back as the frames shrink and
+when the task ends.
+
+The budget belongs to the `Vm` that `Vm::new` made, and the program's
+tasks share it; it is not one budget for the process. Two `Vm`s in one
+process have one each, of 128 MiB unless set otherwise, so a host that
+runs programs side by side gives each the share it can spare, as a test
+that pins an overflow sets a small one. (`silt run`, `silt test` and
+`silt repl` run one program, so there the budget is the process's.)
 
 ## Error Surfacing
 
