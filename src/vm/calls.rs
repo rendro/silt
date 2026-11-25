@@ -9,7 +9,7 @@ use crate::value::Value;
 
 use super::dispatch::{catch_builtin_panic, invoke_host_fn};
 use super::run::push_with;
-use super::runtime::{CallFrame, Frame, Native, Room, Step, chunks_for, frame_bytes};
+use super::runtime::{CallFrame, FRAME_UNIT, Frame, Native, Step, chunks_for, room_for};
 use super::{Vm, VmError};
 
 /// The error of a call whose frame the frame budget has no room for
@@ -54,14 +54,15 @@ impl Vm {
     /// for it. Every call of a silt function takes a frame, however it
     /// is made: by a call, by a method call, or by a builtin that was
     /// passed the function (`list.map`), whose own frame is counted too.
+    /// The one compare here is all a call pays while the VM's frames
+    /// stay in the room of what it holds (`frame_room`).
     fn push_code_frame(
         &mut self,
         closure: std::sync::Arc<crate::bytecode::VmClosure>,
         base_slot: usize,
     ) -> Result<(), VmError> {
-        let bytes = frame_bytes(self.frames.len() + 1, self.stack.len());
-        if !self.room.fits(bytes) {
-            self.make_room(bytes)?;
+        if self.frames.len() + self.stack.len() >= self.frame_room {
+            self.make_room()?;
         }
         #[cfg(test)]
         CODE_FRAMES_MADE.with(|made| made.set(made.get() + 1));
@@ -76,36 +77,37 @@ impl Vm {
         Ok(())
     }
 
-    /// Take from the frame budget what frames of `bytes` need beyond
-    /// what this VM holds, or give back what they do not: a call's
-    /// frames are outside the VM's room (`Room`).
+    /// Take from the frame budget what the frames and slots need, with
+    /// the frame of the call being made, beyond what this VM holds.
+    /// (What they no longer need is given back where they have shrunk:
+    /// `give_back_frames`.)
     #[cold]
     #[inline(never)]
-    fn make_room(&mut self, bytes: usize) -> Result<(), VmError> {
-        let need = chunks_for(bytes);
-        let budget = &self.runtime.frame_budget;
+    fn make_room(&mut self) -> Result<(), VmError> {
+        let units = self.frames.len() + 1 + self.stack.len();
+        let need = chunks_for(units);
         if need > self.held {
+            let budget = &self.runtime.frame_budget;
             if !budget.take(need - self.held) {
-                return Err(stack_overflow_error(budget.limit(), bytes));
+                return Err(stack_overflow_error(budget.limit(), units * FRAME_UNIT));
             }
-        } else {
-            budget.give(self.held - need);
+            self.held = need;
+            self.frame_room = room_for(need);
         }
-        self.held = need;
-        self.room = Room::holding(need);
         Ok(())
     }
 
     /// Give back to the frame budget what this VM's frames do not need
-    /// now, all of it beyond `keep` chunks: where its frames have
-    /// shrunk: a slice of a task ends, a run ends or fails (a REPL
-    /// entry is over), the VM ends.
-    pub(super) fn give_back_frames(&mut self) {
-        let need = chunks_for(frame_bytes(self.frames.len(), self.stack.len()));
+    /// now: where they have shrunk or may wait a long time (a slice of
+    /// a task ends; the program's own thread ends a slice or waits; the
+    /// VM starts a task; a run ends or fails, a REPL entry with it; an
+    /// error is caught; the VM ends).
+    pub(crate) fn give_back_frames(&mut self) {
+        let need = chunks_for(self.frames.len() + self.stack.len());
         if need < self.held {
             self.runtime.frame_budget.give(self.held - need);
             self.held = need;
-            self.room = Room::holding(need);
+            self.frame_room = room_for(need);
         }
     }
 

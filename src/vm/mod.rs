@@ -161,9 +161,10 @@ pub struct Vm {
     /// The calls in progress, the innermost last: functions, and
     /// builtins that call functions or wait ([`Native`]).
     pub(crate) frames: Vec<Frame>,
-    /// The sizes of the frames between which a call need not look at
-    /// the frame budget ([`runtime::Room`]): those of what `held` allows.
-    room: runtime::Room,
+    /// How many frames and stack slots the VM may have before a call
+    /// looks at the frame budget: what `held` allows
+    /// ([`runtime::room_for`]).
+    frame_room: usize,
     /// The value the builtin's frame on top is resumed with, when a
     /// slice ended between the value and the frame.
     pending_input: Option<Value>,
@@ -317,7 +318,7 @@ impl Vm {
             pending_input: None,
             display_failed: None,
             half: None,
-            room: runtime::Room::holding(0),
+            frame_room: runtime::room_for(0),
             stack: Vec::new(),
             builtin_args: Vec::new(),
             view: Default::default(),
@@ -777,7 +778,12 @@ impl Vm {
     /// Create a child VM that shares runtime state (the scheduler, timers, the I/O pool)
     /// and the program's (its global slots, its types) via Arc.
     /// Used for thread-per-task spawning.
-    pub(crate) fn spawn_child(&self) -> Self {
+    ///
+    /// The VM that starts the task first gives back what its frames no
+    /// longer take of the frame budget: a recursion of its own that has
+    /// returned does not count against the task it starts.
+    pub(crate) fn spawn_child(&mut self) -> Self {
+        self.give_back_frames();
         Vm {
             runtime: self.runtime.clone(), // Arc clone = cheap
             owns_runtime: false,
@@ -785,7 +791,7 @@ impl Vm {
             pending_input: None,
             display_failed: None,
             half: None,
-            room: runtime::Room::holding(0),
+            frame_room: runtime::room_for(0),
             stack: Vec::new(),
             builtin_args: Vec::new(),
             view: self.view_of_a_task(),

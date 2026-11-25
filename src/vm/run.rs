@@ -1890,6 +1890,11 @@ impl Vm {
         let ran = start(self);
         let mut run = self.caught(floor, ran)?;
         loop {
+            // What the frames no longer take goes back to the budget
+            // after each slice, and before the thread waits, as a
+            // task's does (`execute_slice`): a recursion that has
+            // returned does not count against the tasks it waits for.
+            self.give_back_frames();
             crate::scheduler::run_deferred();
             if program {
                 scheduler.give_panic_on();

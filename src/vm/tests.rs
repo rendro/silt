@@ -3010,7 +3010,7 @@ fn a_pattern_compiles_to_at_most_the_size_limit() {
 fn the_tasks_of_a_program_share_its_compiled_patterns() {
     // A pattern a task compiled is kept for the program: its parent and
     // the other tasks find it, and do not compile it again.
-    let parent = Vm::new(crate::HostIo::process());
+    let mut parent = Vm::new(crate::HostIo::process());
     let child = parent.spawn_child();
     let compiled = child.regex("shared[0-9]+").expect("the pattern compiles");
     let found = parent
@@ -8307,6 +8307,54 @@ fn walk(n: Int) -> Int {
             &format!("{walk}fn main() {{\n  host.give(walk(3000))\n}}\n"),
         );
         assert_eq!(given.unwrap(), Value::Int(3000));
+    }
+
+    /// An error caught at the depth of an overflow does not keep its
+    /// million lines of call stack for its report: a supervisor that
+    /// catches one runaway after another stays the size it was.
+    #[test]
+    fn a_caught_overflow_keeps_no_frames() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let main = "\
+fn runaway(n: Int) -> Int {
+  1 + runaway(n + 1)
+}
+fn main() {
+  let caught = list.fold(1..20, []) { kept, _ ->
+    match task.guard({ -> runaway(0) }) {
+      Ok(_) -> kept
+      Err(e) -> [e, ..kept]
+    }
+  }
+  host.give(list.length(caught))
+  println(\"{list.first(caught)}\")
+}
+";
+        let before = crate::builtins::guard::frames_kept();
+        assert_eq!(run_on(&mut vm, main).unwrap(), Value::Int(20));
+        // (Other tests of the process may keep a few lines meanwhile;
+        // twenty overflows kept would be 230,000.)
+        assert!(crate::builtins::guard::frames_kept() < before + 1000);
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// The program's own thread gives back what a recursion that has
+    /// returned took before it waits for the tasks it starts, and a VM
+    /// gives it back when it starts a task.
+    #[test]
+    fn a_recursion_that_returned_does_not_count_against_a_task() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(16);
+        let main = "\
+fn main() {
+  let a = deep(150000)
+  let b = task.map([1, 2], 2) { _ -> deep(30000) }
+  host.give(a + list.fold(b, 0) { acc, v -> acc + v })
+}
+";
+        assert_eq!(run_on(&mut vm, main).unwrap(), Value::Int(210000));
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
     }
 
     /// The budget is each program's: an embedder that runs two in one

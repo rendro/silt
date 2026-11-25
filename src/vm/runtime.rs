@@ -578,22 +578,24 @@ pub(crate) const FRAME_ALLOWANCE: usize = 64 << 10;
 /// million levels of a small function's recursion.
 pub(crate) const FRAME_BUDGET_MIB: usize = 128;
 
-/// How far below the chunk it last took a VM's frames must shrink before
-/// it gives that chunk back on a call: a recursion that goes up and down
-/// across the edge of a chunk does not take it and give it back on every
-/// call.
-const FRAME_SLACK: usize = 16 << 10;
+/// The bytes the budget counts for each frame and each slot of a VM's
+/// stack: a slot is a `Value`, and a frame takes no more (on 64-bit
+/// targets both are 24 bytes). Not counted: what the slots point to.
+pub(crate) const FRAME_UNIT: usize = std::mem::size_of::<Value>();
+const _: () = assert!(std::mem::size_of::<Frame>() <= FRAME_UNIT);
 
-/// The bytes of a VM's frames that the budget counts: each frame
-/// (`size_of::<Frame>()`) and each slot of the stack (`size_of::<Value>()`),
-/// not what the slots point to.
-pub(crate) const fn frame_bytes(frames: usize, slots: usize) -> usize {
-    frames * std::mem::size_of::<Frame>() + slots * std::mem::size_of::<Value>()
+/// The chunks a VM whose frames and slots number `units` needs from the
+/// budget.
+pub(crate) const fn chunks_for(units: usize) -> usize {
+    (units * FRAME_UNIT)
+        .saturating_sub(FRAME_ALLOWANCE)
+        .div_ceil(FRAME_CHUNK)
 }
 
-/// The chunks a VM whose frames take `bytes` needs from the budget.
-pub(crate) const fn chunks_for(bytes: usize) -> usize {
-    bytes.saturating_sub(FRAME_ALLOWANCE).div_ceil(FRAME_CHUNK)
+/// How many frames and slots a VM that holds `held` chunks may have: a
+/// call that would have more looks at the budget.
+pub(crate) const fn room_for(held: usize) -> usize {
+    (FRAME_ALLOWANCE + held * FRAME_CHUNK) / FRAME_UNIT
 }
 
 /// What the call frames of a program, its tasks' included, may take
@@ -659,34 +661,6 @@ impl FrameBudget {
     #[cfg(test)]
     pub(crate) fn taken(&self) -> usize {
         self.taken.load(std::sync::atomic::Ordering::Acquire)
-    }
-}
-
-/// The sizes (`frame_bytes`) between which a VM's frames need nothing
-/// of the budget beyond what the VM holds, and hold nothing it should
-/// give back: a call compares the size of its frames with them, and
-/// only outside them looks at the budget.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Room {
-    pub(crate) low: usize,
-    pub(crate) high: usize,
-}
-
-impl Room {
-    /// The room of a VM that holds `held` chunks.
-    pub(crate) const fn holding(held: usize) -> Room {
-        let high = FRAME_ALLOWANCE + held * FRAME_CHUNK;
-        let low = match held {
-            0 => 0,
-            _ => (high - FRAME_CHUNK).saturating_sub(FRAME_SLACK),
-        };
-        Room { low, high }
-    }
-
-    /// Whether frames of `bytes` fit it.
-    #[inline(always)]
-    pub(crate) fn fits(self, bytes: usize) -> bool {
-        bytes.wrapping_sub(self.low) <= self.high - self.low
     }
 }
 

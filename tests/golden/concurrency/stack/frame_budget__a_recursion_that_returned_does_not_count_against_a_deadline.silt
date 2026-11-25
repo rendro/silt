@@ -1,0 +1,18 @@
+-- frame-budget: 16
+-- A recursion of the program's own code that has returned does not
+-- count against the function `task.deadline` runs: together the two
+-- would take more than the budget of 16 MiB.
+import task
+import time
+
+fn deep(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + deep(n - 1)
+  }
+}
+
+fn main() {
+  println(deep(150000))
+  println(task.deadline(time.seconds(60)) { -> deep(60000) })
+}
