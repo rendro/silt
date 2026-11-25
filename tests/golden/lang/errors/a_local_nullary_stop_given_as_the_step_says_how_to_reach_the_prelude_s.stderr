@@ -1,0 +1,16 @@
+error[type]: type mismatch: expected Step(Int), got Light
+ --> a_local_nullary_stop_given_as_the_step_says_how_to_reach_the_prelude_s.silt:12:12
+    |
+ 12 |       3 -> Stop
+    |            ^^^^ type mismatch: expected Step(Int), got Light
+ ::: a_local_nullary_stop_given_as_the_step_says_how_to_reach_the_prelude_s.silt:10:36
+    |
+ 10 |   println(list.fold_until(1..5, 0) { acc, x ->
+    |                                    ----------- the result of this closure is to be Step(Int)
+  = help: `Stop` here is the variant of `Light`, which hides the prelude's `Stop`: write `Step.Stop`
+
+error[type]: type mismatch: expected Light, got Step(Int)
+ --> a_local_nullary_stop_given_as_the_step_says_how_to_reach_the_prelude_s.silt:13:12
+    |
+ 13 |       _ -> Continue(acc + x)
+    |            ^^^^^^^^^^^^^^^^^ type mismatch: expected Light, got Step(Int)

@@ -30,7 +30,7 @@ pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, after_args, call_then, item_arg, iterate, next, stop};
 pub(crate) use runtime::Runtime;
-pub(crate) use runtime::{CallFrame, FileView, Frame, Native, Step};
+pub(crate) use runtime::{Again, CallFrame, FileView, Frame, Native, Step};
 
 /// Test-only: what a test is told of the writes of a connection that
 /// take their turn, and how it holds one of them in its turn.

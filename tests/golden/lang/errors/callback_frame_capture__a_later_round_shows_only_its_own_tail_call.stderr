@@ -1,0 +1,10 @@
+error[runtime]: division by zero
+ --> callback_frame_capture__a_later_round_shows_only_its_own_tail_call.silt:8:9
+   |
+ 8 |   acc + 100 / (5 - i)
+   |         ^^^^^^^^^^^^^ division by zero
+
+call stack:
+  -> divide  at callback_frame_capture__a_later_round_shows_only_its_own_tail_call.silt:8:9
+  -> step  at callback_frame_capture__a_later_round_shows_only_its_own_tail_call.silt:12:3
+  -> main  at callback_frame_capture__a_later_round_shows_only_its_own_tail_call.silt:16:11

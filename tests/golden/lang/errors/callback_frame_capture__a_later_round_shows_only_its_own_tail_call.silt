@@ -1,0 +1,17 @@
+-- exit: 1
+-- Every round of the fold ends in a tail call of `divide`; the stack of
+-- the round that fails shows that one call, not those of the rounds
+-- before it.
+import list
+
+fn divide(acc, i) {
+  acc + 100 / (5 - i)
+}
+
+fn step(acc, i) {
+  divide(acc, i)
+}
+
+fn main() {
+  let _ = list.fold(1..10, 0, step)
+}

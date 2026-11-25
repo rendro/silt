@@ -1,0 +1,31 @@
+-- A top-level function with a bound, passed as the function of
+-- `list.map` and `list.fold`, has its dictionary in every round.
+import list
+
+trait Score {
+  fn score(self) -> Int
+}
+
+type P {
+  n: Int,
+}
+
+trait Score for P {
+  fn score(self) -> Int {
+    self.n * 2
+  }
+}
+
+fn twice(x: a) -> Int where a: Score {
+  Score.score(x) * 2
+}
+
+fn add_score(acc: Int, x: a) -> Int where a: Score {
+  acc + Score.score(x)
+}
+
+fn main() {
+  let ps = list.map(1..4) { n -> P { n: n } }
+  println(list.map(ps, twice))
+  println(list.fold(ps, 0, add_score))
+}

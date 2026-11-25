@@ -1,0 +1,20 @@
+-- exit: 1
+-- A message type of the program with a variant `Stop` that carries a
+-- value hides the prelude's `Stop` in its module: giving it as the step
+-- of a fold is a mismatch that names `Step.Stop`, which reaches the
+-- prelude's.
+import channel
+
+type Msg { Add(Int), Stop(Int) }
+
+fn main() {
+  let inbox: Channel(Msg) = channel.new(4)
+  channel.send(inbox, Add(2))
+  channel.send(inbox, Stop(1))
+  println(channel.fold_until(inbox, 0) { count, msg ->
+    match msg {
+      Add(n) -> Continue(count + n)
+      Stop(_) -> Stop(count)
+    }
+  })
+}

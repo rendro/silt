@@ -1,0 +1,24 @@
+-- stderr-not-contains: deadlock
+-- A fold that would not end by itself, in a function that a deadline
+-- bounds, is stopped there: a `channel.fold_until` waiting on a channel
+-- that never closes, and a `stream.fold_until` over an endless stream
+-- that never gives `Stop`. The deadline gives `None`.
+import channel
+import stream
+import task
+import time
+
+fn main() {
+  let ch = channel.new(4)
+  channel.send(ch, 1)
+  channel.send(ch, 2)
+  let waited = task.deadline(time.ms(50)) { ->
+    channel.fold_until(ch, 0) { acc, x -> Continue(acc + x) }
+  }
+  println(waited)
+  let spun = task.deadline(time.ms(50)) { ->
+    stream.repeat(1) |> stream.fold_until(0) { acc, x -> Continue(acc + x) }
+  }
+  println(spun)
+  println("done")
+}

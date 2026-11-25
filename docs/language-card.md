@@ -286,7 +286,11 @@ none gives a handle.
 `task.deadline(d) { -> ... }` gives `Some` of the value, or `None` when
 the time passed and the work was stopped. Tasks talk over channels:
 `channel.new(n)`, `channel.send`, `channel.receive` (`None` once closed
-and empty), `channel.close`, `channel.select`. I/O inside a task does not
+and empty), `channel.close`, `channel.select`. `channel.fold_until(ch,
+init) { state, msg -> ... }` runs an actor: each message gives
+`Continue(next)` or `Stop(value)`, and the call gives the value, or the
+last state when the channel closes (`list.fold_until` and
+`stream.fold_until` take the same steps). I/O inside a task does not
 block the others. `stream.from_fn { ch -> ... }` runs a function as the
 source of a stream, which closes when it returns. `task.guard { -> ... }`
 runs a function and gives `Ok` of its value, or `Err(e)` for a runtime
@@ -335,6 +339,7 @@ constants. A function of a cargo feature is in builds with that feature.
 ```
 type Result(a, e) { Ok(a), Err(e) }
 type Option(a) { Some(a), None }
+type Step(a) { Stop(a), Continue(a) }
 type Bytes  -- opaque
 trait Number { fn from_int(n: Int) -> Self }
 trait Functor { fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b) }
@@ -448,7 +453,6 @@ float.to_int(f: Float) -> Int
 ### list
 
 ```
-type Step(a) { Stop(a), Continue(a) }
 list.all(xs: List(a), f: Fn(a) -> Bool) -> Bool
 list.any(xs: List(a), f: Fn(a) -> Bool) -> Bool
 list.append(xs: List(a), elem: a) -> List(a)
@@ -564,6 +568,7 @@ type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }
 type Selected(a) { Received(Channel(a), Option(a)), Sent(Channel(a)) }
 channel.close(ch: Channel(a)) -> ()
 channel.each(ch: Channel(a), f: Fn(a) -> ()) -> ()
+channel.fold_until(ch: Channel(a), init: b, f: Fn(b, a) -> Step(b)) -> b
 channel.new(capacity: Int) -> Channel(a)
 channel.receive(ch: Channel(a)) -> Option(a)
 channel.receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)
@@ -891,6 +896,7 @@ stream.filter(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
 stream.first(ch: Channel(a)) -> Option(a)
 stream.flat_map(ch: Channel(a), f: Fn(a) -> List(b)) -> Channel(b)
 stream.fold(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> b
+stream.fold_until(ch: Channel(a), init: b, f: Fn(b, a) -> Step(b)) -> b
 stream.from_fn(feed: Fn(Channel(a)) -> ()) -> Channel(a)
 stream.from_list(xs: List(a)) -> Channel(a)
 stream.from_range(lo: Int, hi: Int) -> Channel(Int)

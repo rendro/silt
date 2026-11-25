@@ -1,0 +1,19 @@
+-- Each call of the fold's function ends in a tail call of `add`, which
+-- takes its frame over; the next round runs the fold's function again.
+import list
+
+fn add(acc, x) {
+  acc + x
+}
+
+fn main() {
+  let total = list.fold(1..5, 0) { acc, i -> add(acc, i * 10) }
+  println(total)
+  let marked = list.map(1..4) { i ->
+    match i % 2 == 0 {
+      true -> add(i, 100)
+      _ -> i
+    }
+  }
+  println(marked)
+}

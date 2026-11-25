@@ -4,7 +4,6 @@
 -- Every type and every enum of the builtin modules can be imported by
 -- name: a type has no value at run time, so the import binds nothing
 -- the program has to load.
-import list.{ Step, Stop, Continue }
 import channel.{ ChannelResult, ChannelOp, Message }
 import time.{ Instant, Date, Time, DateTime, Duration, Weekday, TimeError, Monday }
 import http.{ Method, Response, Request, HttpError, GET }

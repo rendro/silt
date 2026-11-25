@@ -1,0 +1,21 @@
+-- A `Stop` of `channel.fold_until` leaves the channel as it is, a stream
+-- too: its stages are not stopped, and the next reader gets the values
+-- after the one that stopped the fold. The fold asks for one value at a
+-- time, so the stage ran on no value the fold did not take.
+import channel
+import stream
+
+fn main() {
+  let s = stream.from_list([1, 2, 3, 4, 5]) |> stream.map { x ->
+    println("map ran on {x}")
+    x * 10
+  }
+  let first_two = channel.fold_until(s, []) { seen, x ->
+    match seen {
+      [_] -> Stop([..seen, x])
+      _ -> Continue([..seen, x])
+    }
+  }
+  println(first_two)
+  println(stream.collect(s))
+}

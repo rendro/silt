@@ -69,11 +69,24 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `NotFinite` | — | a spelled-out infinity or NaN (`"inf"`, `"NaN"`): a `Float` is always finite |
 > hover 59:15
 ```silt
-type list.Step(a) {
-  Stop(a),
-  Continue(a),
+type csv.CsvError {
+  Syntax(String, Int),
+  TypeMismatch(String, String),
+  MissingField(String),
+  Other(String),
 }
 ```
+
+---
+
+Returned by `csv.split_line` and `csv.parse`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Syntax(String, Int)` | message, byte offset | the text is no CSV: a quoted field that is not closed, text after a closing quote; a row with another number of fields than the header |
+| `TypeMismatch(String, String)` | expected, got | a cell that is no value of its field's type, with its line and column |
+| `MissingField(String)` | name | the header has no column for a field that is no `Option` |
+| `Other(String)` | message | unclassified failure |
 > hover 60:18
 ```silt
 type channel.ChannelResult(a) {

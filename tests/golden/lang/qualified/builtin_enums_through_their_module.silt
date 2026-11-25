@@ -53,8 +53,8 @@ fn main() {
   println(io_message(io.NotFound("x.txt")))
   let total = list.fold_until([1, 2, 3, 4], 0, { acc, n ->
     match acc + n > 4 {
-      true -> list.Stop(acc)
-      false -> list.Step.Continue(acc + n)
+      true -> Stop(acc)
+      false -> Step.Continue(acc + n)
     }
   })
   println(total)

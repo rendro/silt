@@ -1,6 +1,7 @@
 -- verdict: same
--- A variant named like a builtin module's variant is the file's own:
--- `list.Stop` and `channel.Message` are no bare names to collide with.
+-- A variant named like a builtin variant is the file's own: a local
+-- `Stop` hides the prelude's, and `channel.Message` is no bare name to
+-- collide with.
 type T { Stop, Go }
 type U { Message(Int), Other }
 fn main() {

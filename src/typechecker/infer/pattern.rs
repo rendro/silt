@@ -646,7 +646,16 @@ impl TypeChecker {
                     .collect();
                 self.ctor_pat(CtorId::Tuple, subs)
             }
-            PatternKind::Constructor { .. } => {
+            PatternKind::Constructor {
+                qualifier, name, ..
+            } => {
+                // A prelude variant's name, bare: see
+                // `TypeChecker::prelude_variant_uses`.
+                if qualifier.is_empty()
+                    && crate::builtins::registry::is_prelude_variant(&crate::intern::resolve(*name))
+                {
+                    self.prelude_variant_uses.push((pattern_span, *name));
+                }
                 self.type_constructor_pattern(pattern, expected, env, cx)
             }
             PatternKind::List(pats, rest) => {

@@ -1,0 +1,16 @@
+-- exit: 1
+-- A pattern `Stop(v)` on a step, beside a type of the program with a
+-- variant `Stop` that hides the prelude's, is the program's variant: the
+-- mismatch names `Step.Stop`, which reaches the prelude's.
+type Msg { Add(Int), Stop(Int) }
+
+fn read(step: Step(Int)) -> Int {
+  match step {
+    Stop(v) -> v
+    Continue(v) -> v
+  }
+}
+
+fn main() {
+  println(read(Step.Stop(1)))
+}

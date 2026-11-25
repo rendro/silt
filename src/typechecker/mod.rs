@@ -133,6 +133,12 @@ pub(crate) struct TypeChecker {
     /// the mismatches the patterns of its earlier arms reported, which
     /// `unify_pattern` does not report again.
     pub(super) arm_mismatches: Option<std::collections::HashSet<String>>,
+    /// The places that write a prelude variant's name bare, as a value,
+    /// a call or a pattern (`Stop`, `Stop(n)`), with the name: where a
+    /// variant of the program by that name hides the prelude's, a
+    /// mismatch there says how to reach the prelude's
+    /// (`help_for_hidden_prelude_variants`).
+    pub(super) prelude_variant_uses: Vec<(Span, Symbol)>,
     /// The bounds in scope: for each annotation variable of a declaration
     /// whose body was or is being checked (by the variable it is in the
     /// declaration's scheme), the traits its `where` clauses declare and
@@ -844,6 +850,7 @@ impl TypeChecker {
         TypeChecker {
             errors: Vec::new(),
             arm_mismatches: None,
+            prelude_variant_uses: Vec::new(),
             loop_binding_types: None,
             bounds: HashMap::new(),
             written_bounds: HashMap::new(),
@@ -2588,6 +2595,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.drop_ambiguities_over_errors();
+    checker.help_for_hidden_prelude_variants();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);
