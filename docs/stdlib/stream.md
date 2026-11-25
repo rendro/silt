@@ -972,12 +972,13 @@ import stream
 
 fn main() {
   -- The sum of the values before the first one above 3.
-  let total = stream.from_range(1, 1000000) |> stream.fold_until(0) { acc, n ->
-    match n > 3 {
-      true -> Stop(acc)
-      false -> Continue(acc + n)
+  let total = stream.from_range(1, 1000000)
+    |> stream.fold_until(0) { acc, n ->
+      match n > 3 {
+        true -> Stop(acc)
+        false -> Continue(acc + n)
+      }
     }
-  }
   println(total) -- 6
 }
 ```

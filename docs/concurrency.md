@@ -180,7 +180,11 @@ state. A `Stop` leaves the channel open, with what is still in it.
 import channel
 import task
 
-type Msg { Add(Int), Get(Channel(Int)), Quit }
+type Msg {
+  Add(Int),
+  Get(Channel(Int)),
+  Stop,
+}
 
 fn counter(inbox: Channel(Msg)) -> Int {
   channel.fold_until(inbox, 0) { count, msg ->
@@ -190,7 +194,7 @@ fn counter(inbox: Channel(Msg)) -> Int {
         channel.send(reply, count)
         Continue(count)
       }
-      Quit -> Stop(count)
+      Stop -> Step.Stop(count)
     }
   }
 }
@@ -206,7 +210,7 @@ fn main() {
         channel.send(inbox, Add(3))
         channel.send(inbox, Get(reply))
         println("count is {channel.receive(reply)}")
-        channel.send(inbox, Quit)
+        channel.send(inbox, Stop)
       },
     ],
   )
@@ -217,9 +221,9 @@ fn main() {
 ```
 
 `Continue` and `Stop` are the prelude's, the same steps `list.fold_until`
-and `stream.fold_until` take. A message type of your own with a variant
-named `Stop` hides the prelude's in its module; write that one as
-`Step.Stop(value)` there.
+and `stream.fold_until` take. Here the message type has a variant named
+`Stop` of its own, which hides the prelude's in this module: the step is
+written `Step.Stop(count)`, and a bare `Stop` is the message.
 ([`channel.fold_until`](stdlib/channel-task.md#channelfold_until))
 
 ### Unbuffered channels (true rendezvous)

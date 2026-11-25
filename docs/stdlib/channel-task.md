@@ -103,7 +103,11 @@ makes the fold raise the failure, as `channel.each` does.
 import channel
 import task
 
-type Msg { Add(Int), Get(Channel(Int)), Quit }
+type Msg {
+  Add(Int),
+  Get(Channel(Int)),
+  Quit,
+}
 
 fn counter(inbox: Channel(Msg)) -> Int {
   channel.fold_until(inbox, 0) { count, msg ->
