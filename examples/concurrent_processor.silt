@@ -106,7 +106,7 @@ fn collect(jobs, file_paths, results_1, results_2, num_workers) {
   println("Workers: {num_workers}")
   println("Files to process: {num_files}")
   println("")
-  loop collected = 0, successes = 0, failures = 0 {
+  let gather = { collected, successes, failures ->
     match collected >= num_files {
       true -> (successes, failures)
       _ ->
@@ -119,12 +119,12 @@ fn collect(jobs, file_paths, results_1, results_2, num_workers) {
                 let (path, lines, words, dept, revenue) = info
                 println("[Worker {worker_id}] {path}")
                 println("  Lines: {lines}, Words: {words}, Dept: {dept}, Revenue: {revenue}")
-                loop(collected + 1, successes + 1, failures)
+                gather(collected + 1, successes + 1, failures)
               }
               Err(err_info) -> {
                 let (path, err) = err_info
                 println("[Worker {worker_id}] FAILED {path}: {err}")
-                loop(collected + 1, successes, failures + 1)
+                gather(collected + 1, successes, failures + 1)
               }
             }
           }
@@ -139,4 +139,5 @@ fn collect(jobs, file_paths, results_1, results_2, num_workers) {
         }
     }
   }
+  gather(0, 0, 0)
 }

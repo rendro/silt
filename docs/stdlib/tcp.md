@@ -76,15 +76,16 @@ fn main() {
       -- task.join returns.
       let conns = channel.new(0)
       let accept = { ->
-        loop {
+        let take = { ->
           match tcp.accept(listener) {
             Ok(conn) -> {
               channel.send(conns, conn)
-              loop()
+              take()
             }
-            Err(e) -> println("accept error: {e}")
+            Err(e) -> return println("accept error: {e}")
           }
         }
+        take()
         channel.close(conns)
       }
       task.join([accept, { -> task.each(conns, 64) { conn -> echo(conn) } }])
@@ -319,15 +320,16 @@ fn main() {
   -- failed accept closes the channel, which ends the workers and the join.
   let conns = channel.new(0)
   let accept = { ->
-    loop {
+    let take = { ->
       match tcp.accept(listener) {
         Ok(conn) -> {
           channel.send(conns, conn)
-          loop()
+          take()
         }
-        Err(e) -> println("accept failed: {e}")
+        Err(e) -> return println("accept failed: {e}")
       }
     }
+    take()
     channel.close(conns)
   }
   task.join([accept, { -> task.each(conns, 64) { conn -> serve(conn, cert, key) } }])

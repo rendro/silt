@@ -344,11 +344,9 @@ import time
 fn main() {
   let ticks = channel.new(8)
   let ticker = { ->
-    loop {
-      time.sleep(time.ms(10))
-      let _ = channel.try_send(ticks, ())
-      loop()
-    }
+    time.sleep(time.ms(10))
+    let _ = channel.try_send(ticks, ())
+    ticker()
   }
   let seen = task.background([ticker]) { ->
     let _ = channel.receive(ticks)
@@ -1172,20 +1170,21 @@ fn main() {
       },
       { ->
         -- Merge both inputs into one handler, until one of them closes.
-        loop {
+        let merge = { ->
           match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
             channel.Received(^alerts, Some(msg)) -> {
               println("alert: {msg}")
-              loop()
+              merge()
             }
             channel.Received(^logs, Some(msg)) -> {
               println("log: {msg}")
-              loop()
+              merge()
             }
-            channel.Received(_, None) -> println("a channel closed")
-            _ -> loop()
+            channel.Received(_, None) -> return println("a channel closed")
+            _ -> merge()
           }
         }
+        merge()
       },
     ],
   )

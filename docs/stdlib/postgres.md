@@ -239,12 +239,13 @@ type Row {
 
 fn count(tx: postgres.PgTx) -> Result(Int, postgres.PostgresError) {
   let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 1000) AS n", (), 100, Row)?
-  let total = loop total = 0 {
+  let add = { total ->
     match postgres.cursor_next(c)? {
-      [] -> total
-      batch -> loop(total + list.length(batch))
+      [] -> Ok(total)
+      batch -> add(total + list.length(batch))
     }
   }
+  let total = add(0)?
   postgres.cursor_close(c)?
   Ok(total)
 }

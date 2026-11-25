@@ -111,7 +111,7 @@ fn main() {
   println("=== Todo List Manager ===")
   print_help()
   println("")
-  loop todos = [] {
+  let step = { todos ->
     print("todo> ")
     match io.read_line() {
       Ok(Some(input)) -> {
@@ -120,38 +120,38 @@ fn main() {
           "add" -> match rest {
             "" -> {
               println("  Usage: add <text>")
-              loop(todos)
+              step(todos)
             }
             _ -> {
               let new_todos = add_todo(todos, rest)
               println("  Added: {rest}")
-              loop(new_todos)
+              step(new_todos)
             }
           }
           "list" -> {
             show_todos(todos)
-            loop(todos)
+            step(todos)
           }
           "done" -> match int.parse(rest) {
             Ok(id) -> {
               let new_todos = mark_done(todos, id)
               println("  Marked #{id} as done")
-              loop(new_todos)
+              step(new_todos)
             }
             _ -> {
               println("  Usage: done <id>")
-              loop(todos)
+              step(todos)
             }
           }
           "remove" -> match int.parse(rest) {
             Ok(id) -> {
               let new_todos = remove_todo(todos, id)
               println("  Removed #{id}")
-              loop(new_todos)
+              step(new_todos)
             }
             _ -> {
               println("  Usage: remove <id>")
-              loop(todos)
+              step(todos)
             }
           }
           "save" -> {
@@ -160,7 +160,7 @@ fn main() {
               _ -> rest
             }
             save_todos(todos, file)
-            loop(todos)
+            step(todos)
           }
           "load" -> {
             let file = match rest {
@@ -168,21 +168,22 @@ fn main() {
               _ -> rest
             }
             let new_todos = load_todos(file)
-            loop(new_todos)
+            step(new_todos)
           }
           "help" -> {
             print_help()
-            loop(todos)
+            step(todos)
           }
-          "quit" -> println("Goodbye!")
-          "" -> loop(todos)
+          "quit" -> return println("Goodbye!")
+          "" -> step(todos)
           _ -> {
             println("  Unknown command: {cmd}. Type 'help' for commands.")
-            loop(todos)
+            step(todos)
           }
         }
       }
-      Err(_) | Ok(None) -> println("Goodbye!")
+      Err(_) | Ok(None) -> return println("Goodbye!")
     }
   }
+  step([])
 }
