@@ -254,21 +254,41 @@ impl<'a, 'd> Walk<'a, 'd> {
             }
         }
         // Each alias is what the end of its chain is (a cycle of aliases
-        // names no node).
-        let mut top_alias = HashMap::new();
-        for &(name, span, target) in &aliases {
-            let mut at = target;
-            for _ in 0..=aliases.len() {
-                if let Some(&n) = top.get(&at) {
-                    top_alias.insert(name, (span, n));
-                    break;
+        // names no node). Each is resolved once: a walk stops at an alias
+        // already resolved, and what it finds is written on every alias
+        // it passed, so a long chain of them costs its length, not its
+        // length squared.
+        let target_of: HashMap<Symbol, Symbol> = aliases
+            .iter()
+            .map(|&(name, _, target)| (name, target))
+            .collect();
+        let mut resolved: HashMap<Symbol, Option<usize>> = HashMap::new();
+        for &(name, _, _) in &aliases {
+            let mut path = Vec::new();
+            let mut on_path = std::collections::HashSet::new();
+            let mut at = name;
+            let end = loop {
+                if let Some(&known) = resolved.get(&at) {
+                    break known;
                 }
-                match aliases.iter().find(|(alias, _, _)| *alias == at) {
-                    Some(&(_, _, next)) => at = next,
-                    None => break,
+                if !on_path.insert(at) {
+                    break None;
                 }
+                match target_of.get(&at) {
+                    Some(&next) => {
+                        path.push(at);
+                        at = next;
+                    }
+                    None => break top.get(&at).copied(),
+                }
+            };
+            for passed in path {
+                resolved.insert(passed, end);
             }
         }
+        let top_alias: HashMap<Symbol, (Span, usize)> = (aliases.iter())
+            .filter_map(|&(name, span, _)| Some((name, (span, resolved.get(&name).copied()??))))
+            .collect();
         Walk {
             text,
             defs,
