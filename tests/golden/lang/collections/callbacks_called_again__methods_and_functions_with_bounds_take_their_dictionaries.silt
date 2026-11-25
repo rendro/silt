@@ -1,0 +1,47 @@
+-- A trait method and functions with bounds as the functions of the
+-- callback builtins, over several rounds: each call has its dictionary.
+import list
+
+trait Score {
+  fn score(self) -> Int
+}
+
+type P {
+  n: Int,
+}
+
+trait Score for P {
+  fn score(self) -> Int {
+    self.n * 2
+  }
+}
+
+type Bx(a) {
+  Bx(a),
+}
+
+trait Score for Bx(a) where a: Score {
+  fn score(self) -> Int {
+    match self {
+      Bx(x) -> Score.score(x) + 1
+    }
+  }
+}
+
+fn pick(acc: Int, x: a) -> Int where a: Score {
+  match Score.score(x) > acc {
+    true -> Score.score(x)
+    _ -> acc
+  }
+}
+
+fn main() {
+  let ps = list.map(1..5) { n -> P { n: n } }
+  println(list.map(ps, Score.score))
+  let bs = list.map(ps) { p -> Bx(p) }
+  println(list.map(bs, Score.score))
+  println(list.fold(bs, 0, pick))
+  println(list.filter(bs) { b -> Score.score(b) > 5 } |> list.length)
+  list.each(bs) { b -> print("{Score.score(b)} ") }
+  println("")
+}

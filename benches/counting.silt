@@ -2,7 +2,9 @@
 -- each form a counting loop can take. A `loop`; a function that calls
 -- itself in tail position; a closure that does, `n` captured; two
 -- functions that call each other in tail position; and `list.fold`,
--- `list.each` and `list.fold_until` over a range.
+-- `list.each` and `list.fold_until` over a range, and `list.fold` with a
+-- top-level function that has a bound (its dictionary comes with each
+-- call).
 --
 -- main runs the one its arguments name, `n` rounds:
 --
@@ -66,6 +68,24 @@ fn by_fold(n) {
   list.fold(0..n - 1, 0) { acc, i -> acc + i }
 }
 
+trait Counted {
+  fn counted(self) -> Int
+}
+
+trait Counted for Int {
+  fn counted(self) -> Int {
+    self
+  }
+}
+
+fn add_counted(acc: Int, i: a) -> Int where a: Counted {
+  acc + Counted.counted(i)
+}
+
+fn by_fold_bound(n) {
+  list.fold(0..n - 1, 0, add_counted)
+}
+
 fn by_each(n) {
   list.each(0..n - 1) { i -> () }
   n
@@ -99,6 +119,7 @@ fn main() {
     "closure" -> by_closure(n)
     "mutual_calls" -> by_mutual_calls(n)
     "fold" -> by_fold(n)
+    "fold_bound" -> by_fold_bound(n)
     "each" -> by_each(n)
     "fold_until" -> by_fold_until(n)
     _ -> 0

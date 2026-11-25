@@ -115,15 +115,11 @@ impl<S: Send> Native for Iterate<S> {
 
     /// The round of [`Iterate::resume`] after a call, with the next
     /// call made in the frame of the one that returned: the step, the
-    /// next item and its arguments, and the callback again. A callback
-    /// with dictionaries bound to it is called as `resume` calls it.
+    /// next item and its arguments, and the callback again.
     fn again<'a>(&'a mut self, input: Value, stack: &mut Vec<Value>) -> Result<Again<'a>, VmError> {
         let Value::VmClosure(callback) = &self.callback else {
             return Ok(Again::No(input));
         };
-        if !callback.bound.is_empty() {
-            return Ok(Again::No(input));
-        }
         let Some(item) = self.current.take() else {
             return Ok(Again::No(input));
         };

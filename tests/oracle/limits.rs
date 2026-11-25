@@ -153,9 +153,14 @@ fn a_round_of_a_fold_costs_the_same_steps_at_every_slice() {
         "list.each(1..1000000) { i -> println(i) }",
         "let _ = list.fold_until(1..1000000, 0) { acc, i ->\n    println(i)\n    list.Continue(acc + i)\n  }",
         "let _ = list.map(1..1000000) { i -> println(i) }",
+        // A function with a bound, whose dictionary comes with each call.
+        "let _ = list.fold(1..1000000, 0, shown)",
     ];
+    let shown = "trait Score {\n  fn score(self) -> Int\n}\n\
+        trait Score for Int {\n  fn score(self) -> Int {\n    self\n  }\n}\n\
+        fn shown(acc: Int, x: a) -> Int where a: Score {\n  println(Score.score(x))\n  acc + 1\n}\n";
     for call in calls {
-        let source = format!("import list\nfn main() {{\n  {call}\n}}\n");
+        let source = format!("import list\n{shown}fn main() {{\n  {call}\n}}\n");
         let lines = |slice: usize, steps: u64| {
             let (result, output) = run_whole(&source, |vm| {
                 vm.set_time_slice(slice);

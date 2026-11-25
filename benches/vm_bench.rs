@@ -481,6 +481,7 @@ fn main() {
         ("counting: capturing closure 1M", "by_closure"),
         ("counting: mutual tail calls 1M", "by_mutual_calls"),
         ("counting: list.fold over a range 1M", "by_fold"),
+        ("counting: fold, function with a bound 1M", "by_fold_bound"),
         ("counting: list.each over a range 1M", "by_each"),
         ("counting: fold_until over a range 1M", "by_fold_until"),
     ] {

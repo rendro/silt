@@ -1682,6 +1682,13 @@ impl Vm {
                 let [Frame::Code(frame)] = top else {
                     unreachable!("the frame on top is a function's")
                 };
+                // The call as a call of the closure makes it: its own
+                // slot, unit until a method's dictionary goes there,
+                // and the dictionaries bound to it before the
+                // arguments (`Vm::call_closure`).
+                put(&mut self.stack[base - 1], Value::Unit);
+                let argc = self.stack.len() - base;
+                super::dicts::with_bound(&mut self.stack, callee, base, argc);
                 // (The frame may run another function by now: a tail
                 // call.)
                 if !Arc::ptr_eq(&frame.closure, callee) {
