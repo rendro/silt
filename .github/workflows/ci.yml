@@ -330,8 +330,8 @@ jobs:
   loop-guard:
     # The machine code of the instruction loop, in the binary the
     # releases ship: built as release.yml builds it, with `stable`,
-    # which moves. The binary is stopped in four loops (two `loop`s and
-    # the same two as a function that calls itself) and stepped; a
+    # which moves. The binary is stopped in four loops (two functions
+    # and two closures that call themselves) and stepped; a
     # round must have no load that waits for a store. It keeps no
     # cache: the repository's cache is over its limit, and an entry
     # here would push out the test partitions'. See
