@@ -1,6 +1,6 @@
 -- exit: 1
 -- A closure in a method is named after the method as the method's own
--- frame is: `closure in Half.size`, `closure in Sized.twice`.
+-- frame is: `halve in Half.size`, `double in Sized.twice`.
 type Half {
   n: Int,
 }

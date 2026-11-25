@@ -5,9 +5,9 @@ error[runtime]: division by zero
    |                  ^^^^^ division by zero
 
 call stack:
-  -> closure in inner  at closure_frames__the_chain_through_three_closures.silt:7:18
+  -> f in inner  at closure_frames__the_chain_through_three_closures.silt:7:18
   -> inner  at closure_frames__the_chain_through_three_closures.silt:8:3
-  -> closure in outer  at closure_frames__the_chain_through_three_closures.silt:12:18
+  -> g in outer  at closure_frames__the_chain_through_three_closures.silt:12:18
   -> outer  at closure_frames__the_chain_through_three_closures.silt:13:3
   -> closure in main  at closure_frames__the_chain_through_three_closures.silt:17:32
   -> main  at closure_frames__the_chain_through_three_closures.silt:17:11

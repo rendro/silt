@@ -1,6 +1,6 @@
 -- exit: 1
--- A closure is named after the nearest named function around it,
--- however deep it is written: each of the three is `closure in build`.
+-- A closure is named after the nearest named function around it, however
+-- deep it is written, and by its `let`: `third in build`, `first in build`.
 fn build(x) {
   let first = { a ->
     let second = { b ->

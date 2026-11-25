@@ -96,15 +96,19 @@ impl Compiler<'_> {
             unreachable!("compile_lambda of another form");
         };
         let own_name = self.closure_name.take();
+        let label = self.closure_label.take();
         // A closure is named after what it is written in, and
-        // so are the closures in it.
-        let name = match self.contexts.last() {
-            Some(around) => around.closures.clone(),
+        // so are the closures in it; one a `let` binds directly
+        // is named by its binding.
+        let (closures, place) = match self.contexts.last() {
+            Some(around) => (around.closures.clone(), around.place.clone()),
             None => return Err(checker_missed(span, "a closure outside any code")),
         };
-        self.begin_function(name.clone(), params.len(), span)?;
+        let name = label.unwrap_or_else(|| closures.clone());
+        self.begin_function(name, params.len(), span)?;
         if let Some(closure) = self.contexts.last_mut() {
-            closure.closures = name;
+            closure.closures = closures;
+            closure.place = place;
         }
 
         self.compile_params(params, span)?;
