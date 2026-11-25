@@ -176,6 +176,9 @@ fn main() {
 - `loop i = 0, acc = [] { ... loop(i + 1, next) ... }` binds state and
   starts again where `loop(...)` is called, in tail position; its value
   is that of a round that does not call it.
+- A tail call of a function to itself (or of a `let` closure by its
+  name) is the same jump: it takes no frame, and a call stack shows the
+  function once. A tail call of another function takes no frame either.
 
 ## Errors
 
