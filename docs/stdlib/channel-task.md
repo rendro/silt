@@ -99,6 +99,9 @@ for one message at a time, so a stream read with it is not read ahead (to
 stop a stream at `Stop`, use `stream.fold_until`). A stream that fails
 makes the fold raise the failure, as `channel.each` does.
 
+In the example the message type has a `Stop` of its own, which hides
+the prelude's in its module: there the step is written `Step.Stop(count)`.
+
 ```silt
 import channel
 import task
@@ -106,7 +109,7 @@ import task
 type Msg {
   Add(Int),
   Get(Channel(Int)),
-  Quit,
+  Stop,
 }
 
 fn counter(inbox: Channel(Msg)) -> Int {
@@ -117,7 +120,7 @@ fn counter(inbox: Channel(Msg)) -> Int {
         channel.send(reply, count)
         Continue(count)
       }
-      Quit -> Stop(count)
+      Stop -> Step.Stop(count)
     }
   }
 }
@@ -134,7 +137,7 @@ fn main() {
         channel.send(inbox, Add(3))
         channel.send(inbox, Get(reply))
         println(channel.receive(reply)) -- Some(5)
-        channel.send(inbox, Quit)
+        channel.send(inbox, Stop)
       },
     ],
   )

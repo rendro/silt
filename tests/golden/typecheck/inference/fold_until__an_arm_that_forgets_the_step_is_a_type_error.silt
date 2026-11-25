@@ -4,13 +4,13 @@
 -- gives the bare state does not type-check.
 import channel
 
-type Msg { Add(Int), Quit }
+type Msg { Add(Int), Stop }
 
 fn counter(inbox: Channel(Msg)) -> Int {
   channel.fold_until(inbox, 0) { count, msg ->
     match msg {
       Add(n) -> count + n
-      Quit -> Stop(count)
+      Stop -> Step.Stop(count)
     }
   }
 }
