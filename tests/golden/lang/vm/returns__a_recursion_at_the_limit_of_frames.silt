@@ -4,14 +4,18 @@
 -- stderr-contains: FAIL returns__a_recursion_at_the_limit_of_frames.silt::test_an_int_at_the_limit
 -- stderr-contains: PASS returns__a_recursion_at_the_limit_of_frames.silt::test_a_string_one_call_under_the_limit
 -- stderr-contains: FAIL returns__a_recursion_at_the_limit_of_frames.silt::test_a_string_at_the_limit
--- stderr-contains: error[runtime]: stack overflow: recursion depth exceeded 100000 frames
--- stderr-contains:  --> returns__a_recursion_at_the_limit_of_frames.silt:18:14
--- stderr-contains:  --> returns__a_recursion_at_the_limit_of_frames.silt:26:15
--- stderr-contains: ... (99984 more frames)
+-- frame-budget: 1
+-- stderr-contains: error[runtime]: stack overflow: call frames take more than 1 MiB
+-- stderr-contains:  --> returns__a_recursion_at_the_limit_of_frames.silt:22:14
+-- stderr-contains:  --> returns__a_recursion_at_the_limit_of_frames.silt:30:15
+-- stderr-contains: ... (11590 more frames)
+-- stderr-contains: ... (15458 more frames)
 -- stderr-contains: 4 tests: 2 passed, 2 failed, 0 skipped
--- A recursion may be 100,000 frames deep. One call under that limit every
--- frame returns its result, an Int (written into the caller's slot) or a
--- String (taken off the stack and pushed again); one call more is refused.
+-- A recursion may be as deep as the frame budget allows: with 1 MiB,
+-- 11,603 levels of `down` and 15,471 of `downs` beside the frames of the
+-- test. One call under that limit every frame returns its result, an Int
+-- (written into the caller's slot) or a String (taken off the stack and
+-- pushed again); one call more is refused.
 deep fn down(n: Int) -> Int {
   match n {
     0 -> 0
@@ -30,17 +34,17 @@ deep fn downs(n: Int) -> String {
 }
 
 fn test_an_int_one_call_under_the_limit() {
-  println(down(99997))
+  println(down(11603))
 }
 
 fn test_an_int_at_the_limit() {
-  println(down(99998))
+  println(down(11604))
 }
 
 fn test_a_string_one_call_under_the_limit() {
-  println(downs(99997))
+  println(downs(15471))
 }
 
 fn test_a_string_at_the_limit() {
-  println(downs(99998))
+  println(downs(15472))
 }

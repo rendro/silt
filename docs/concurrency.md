@@ -1556,6 +1556,14 @@ its I/O and its `time.sleep` are waits too.
   100000 tasks running (max 100000)". The tasks of every call count: the
   pieces and workers of the `task` calls, the work of `task.deadline`, the
   stages of the `stream` functions and the connections of `http.serve`.
+- **One frame budget for all tasks.** The call frames of a program and of
+  all its tasks may take 128 MiB in all (`SILT_FRAME_BUDGET` sets another),
+  beyond the first 64 KiB of each task's, which are its own: a hundred
+  thousand tasks of ordinary depth take nothing of it. A task whose
+  recursion asks for more once it is used up ends with "stack overflow:
+  call frames take more than 128 MiB; this task holds 2 MiB", whichever
+  tasks hold the rest (see
+  [Infinite Loops](language/loops-and-pipes.md#infinite-loops)).
 
 
 ## Quick Reference

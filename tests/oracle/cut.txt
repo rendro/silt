@@ -11,6 +11,7 @@
 # what it cuts short is not listed; it fails, like the full sweep, on a
 # program that ends at one slice and not at the other.)
 
+tests/golden/concurrency/stack/frame_budget__200_tasks_50000_deep_share_the_budget.silt | a frame budget test: 200 tasks recurse 50,000 levels each, then 600,000 levels
 tests/golden/heavy/compute/stage6_perf__method_calls.silt | a speed measurement: a million method calls
 tests/golden/heavy/compute/stage7_perf__loop_sum.silt | a speed measurement: a loop of millions of rounds
 tests/golden/heavy/compute/stage7_perf__tail_calls.silt | a speed measurement: millions of tail calls

@@ -1,4 +1,5 @@
 -- stderr-not-contains: stack overflow
+-- frame-budget: 1
 -- 200k rounds only complete if both the module-qualified call and
 -- bounce's call back emit TailCall
 import helper

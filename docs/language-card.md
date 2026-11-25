@@ -179,6 +179,10 @@ fn main() {
 - A tail call of a function to itself (or of a `let` closure by its
   name) is the same jump: it takes no frame, and a call stack shows the
   function once. A tail call of another function takes no frame either.
+- Any other call takes a frame until it returns. The frames of a program
+  and its tasks may take 128 MiB in all (`SILT_FRAME_BUDGET` sets
+  another, in MiB), about 700,000 levels of `x + sum(rest)`; a recursion
+  that would take more is the runtime error "stack overflow".
 - Functions that call themselves (or each other) are checked: every call
   among them a tail call is "constant stack"; else each call that keeps a
   frame must pass a part of a parameter (`rest` of `[x, ..rest]`, a

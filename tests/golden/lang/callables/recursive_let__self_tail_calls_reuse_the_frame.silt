@@ -1,3 +1,4 @@
+-- frame-budget: 1
 -- A closure's tail call of itself runs in its own frame: a million of
 -- them take no more room than one.
 fn main() {

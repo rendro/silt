@@ -1,0 +1,13 @@
+-- A recursion that is not a tail call takes a frame and its slots at
+-- each level: about 190 bytes for `x + sum(rest)`, so silt's frame
+-- budget of 128 MiB holds a recursion over a list of 600,000.
+fn sum(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [x, ..rest] -> x + sum(rest)
+  }
+}
+
+fn main() {
+  println(sum(1..600000))
+}

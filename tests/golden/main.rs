@@ -63,6 +63,8 @@ struct Directives {
     verdict: Option<verdict::Mark>,
     /// The requests of an LSP case, in order (`-- lsp: references 3:5`).
     lsp_requests: Vec<String>,
+    /// The frame budget the case runs with, in MiB (`SILT_FRAME_BUDGET`).
+    frame_budget: Option<String>,
 }
 
 /// Whether the cargo feature `name` is enabled. The golden test binary
@@ -176,6 +178,7 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
                     .map_err(|_| format!("bad `-- repeat:` value {value:?}"))?
             }
             "lsp" => d.lsp_requests.push(value),
+            "frame-budget" => d.frame_budget = Some(value),
             "verdict" => d.verdict = Some(verdict::Mark::parse(&value)?),
             // An ordinary comment that happens to contain a colon.
             _ => {}
@@ -389,6 +392,11 @@ fn run_in(case: &Case, dir: &Path) -> Output {
     if case.directives.cmd.first().map(String::as_str) != Some("repl") && !case.file.is_empty() {
         command.arg(&case.file);
     }
+    // A case runs with the frame budget it names, or with silt's own.
+    match &case.directives.frame_budget {
+        Some(mib) => command.env("SILT_FRAME_BUDGET", mib),
+        None => command.env_remove("SILT_FRAME_BUDGET"),
+    };
     command
         .current_dir(dir)
         .env("NO_COLOR", "1")

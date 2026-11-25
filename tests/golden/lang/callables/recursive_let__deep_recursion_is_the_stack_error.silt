@@ -1,5 +1,6 @@
 -- exit: 1
--- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
+-- frame-budget: 1
+-- stderr-contains: stack overflow: call frames take more than 1 MiB
 -- stderr-contains: deep in main
 -- A call of itself whose result is still used takes a frame, as a
 -- function's does: down a range of twenty million, the frames run out

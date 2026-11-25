@@ -1,4 +1,5 @@
 -- exit: 1
+-- frame-budget: 1
 -- A recursive `let` general in a bound makes its value at each use: a
 -- recursion that overflows is labelled at the call, as for a function.
 trait Nm { fn nm(self) -> Int }

@@ -96,9 +96,39 @@ pub(crate) fn runtime_error(vm: &Vm, error: VmError) -> Value {
         ],
     );
     if let Value::Record(record) = &value {
-        Reports::keep(record, Report::Due(Box::new(error), files));
+        // The report of an error whose call stack it cuts short is
+        // written now: the error holds a line for every frame it was
+        // raised under, a million or more for a recursion that ran out
+        // of the frame budget, and the table keeps a report until its
+        // record has gone and the table is swept.
+        let cut = lines.iter().any(|line| line.starts_with("  ... ("));
+        let report = match cut {
+            true => Report::Text(
+                error
+                    .render_in(&*files, &crate::diagnostic::COLORS_OFF)
+                    .into(),
+            ),
+            false => Report::Due(Box::new(error), files),
+        };
+        Reports::keep(record, report);
     }
     value
+}
+
+/// How many lines of call stacks the reports not written yet hold, in
+/// every program of the process: what the table keeps of the errors
+/// themselves.
+#[cfg(test)]
+pub(crate) fn frames_kept() -> usize {
+    REPORTS
+        .lock()
+        .by_record
+        .values()
+        .map(|(_, report)| match report {
+            Report::Due(error, _) => error.call_stack.len(),
+            Report::Text(_) => 0,
+        })
+        .sum()
 }
 
 /// The report of an error `task.guard` caught.

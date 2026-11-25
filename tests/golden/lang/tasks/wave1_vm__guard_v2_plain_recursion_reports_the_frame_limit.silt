@@ -1,8 +1,9 @@
 -- exit: 1
 -- stderr-contains: error[runtime]
--- stderr-contains: stack overflow: recursion depth exceeded
+-- frame-budget: 1
+-- stderr-contains: stack overflow: call frames take more than
 -- stderr-not-contains: overflowed its stack
--- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
+-- stderr-contains: stack overflow: call frames take more than 1 MiB; this task holds 1 MiB
 deep fn deep(n) {
   match n {
     0 -> 0

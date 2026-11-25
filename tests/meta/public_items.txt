@@ -1425,6 +1425,7 @@ src/vm/mod.rs: pub fn new
 src/vm/mod.rs: pub fn panic_for_test
 src/vm/mod.rs: pub fn run_program
 src/vm/mod.rs: pub fn set_exit
+src/vm/mod.rs: pub fn set_frame_budget
 src/vm/mod.rs: pub fn set_step_budget
 src/vm/mod.rs: pub fn set_time_slice
 src/vm/mod.rs: pub fn settle

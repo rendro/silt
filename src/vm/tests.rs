@@ -3034,7 +3034,7 @@ fn a_pattern_compiles_to_at_most_the_size_limit() {
 fn the_tasks_of_a_program_share_its_compiled_patterns() {
     // A pattern a task compiled is kept for the program: its parent and
     // the other tasks find it, and do not compile it again.
-    let parent = Vm::new(crate::HostIo::process());
+    let mut parent = Vm::new(crate::HostIo::process());
     let child = parent.spawn_child();
     let compiled = child.regex("shared[0-9]+").expect("the pattern compiles");
     let found = parent
@@ -3330,6 +3330,10 @@ mod error_places {
         };
         let run = |slice: Option<usize>| {
             let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+            // (A recursion that overflows runs out of 1 MiB, some
+            // thousand levels deep, and the tests that run beside this
+            // one in the process are not slowed by a million levels.)
+            vm.set_frame_budget(1);
             if let Some(steps) = slice {
                 vm.set_time_slice(steps);
             }
@@ -4009,7 +4013,7 @@ fn main() {
     }
 
     #[test]
-    fn at_the_frame_limit() {
+    fn at_the_frame_budget() {
         let source = "\
 deep fn deep(n: Int) -> Int {
   1 + deep(n + 1)
@@ -4020,7 +4024,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "stack overflow: recursion depth exceeded 100000 frames at 2:7; deep 2:7 (99998 times); main 5:11; <script> 4:1"
+            "stack overflow: call frames take more than 1 MiB; this task holds 1 MiB at 2:7; deep 2:7 (11604 times); main 5:11; <script> 4:1"
         );
     }
 
@@ -8162,5 +8166,232 @@ fn main() {
         );
         assert!(given.last().is_none());
         assert_eq!(vm.guards, 0);
+    }
+}
+
+/// The frame budget (`runtime::FrameBudget`): a recursion that is not a
+/// tail call takes the bytes of its frames from one budget of the
+/// program, beyond an allowance of each VM, and gives them back.
+mod frame_budget {
+    use super::*;
+    use crate::session::testing::compile_given;
+
+    const DEEP: &str = "\
+import host
+import list
+import string
+import task
+fn deep(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + deep(n - 1)
+  }
+}
+";
+
+    /// Run `main` (after [`DEEP`]) on `vm`: what it gave, or its error.
+    fn run_on(vm: &mut Vm, main: &str) -> Result<Value, VmError> {
+        let source = format!("{DEEP}{main}");
+        let (program, given) = compile_given(&source).unwrap_or_else(|e| panic!("{e:?}"));
+        vm.run_program(&program)?;
+        vm.settle();
+        Ok(given.last().unwrap_or(Value::Unit))
+    }
+
+    /// A recursion beyond the allowance takes chunks, and the end of the
+    /// run gives every one back.
+    #[test]
+    fn a_run_gives_back_what_its_frames_took() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(4);
+        let given = run_on(&mut vm, "fn main() {\n  host.give(deep(20000))\n}\n");
+        assert_eq!(given.unwrap(), Value::Int(20000));
+        assert_eq!(vm.held, 0);
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// The error of a run that ran out of the budget gives it back too,
+    /// and the next run on the VM (a REPL's next entry) recurses again.
+    #[test]
+    fn a_run_that_overflows_gives_back_what_its_frames_took() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let error = run_on(&mut vm, "fn main() {\n  host.give(deep(1000000))\n}\n")
+            .expect_err("the recursion overflows");
+        assert_eq!(
+            error.message,
+            "stack overflow: call frames take more than 1 MiB; this task holds 1 MiB"
+        );
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+        let given = run_on(&mut vm, "fn main() {\n  host.give(deep(10000))\n}\n");
+        assert_eq!(given.unwrap(), Value::Int(10000));
+    }
+
+    /// Tasks take from the budget of their program, and each gives back
+    /// what it took when it ends: those whose frames asked when it was
+    /// used up end with the overflow, the others with their value.
+    #[test]
+    fn the_tasks_of_a_program_share_its_budget() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(4);
+        let main = "\
+fn main() {
+  let results = task.map(list.map(1..40) { i -> i }, 40) { _ ->
+    task.guard({ -> deep(5000) })
+  }
+  let ok = list.filter(results) { r ->
+    match r {
+      Ok(v) -> v == 5000
+      Err(_) -> false
+    }
+  }
+  let overflows = list.filter(results) { r ->
+    match r {
+      Ok(_) -> false
+      Err(e) -> string.starts_with(e.message, \"stack overflow: call frames take more than 4 MiB; this task holds \")
+    }
+  }
+  host.give(list.length(ok) + list.length(overflows))
+}
+";
+        let given = run_on(&mut vm, main);
+        assert_eq!(given.unwrap(), Value::Int(40));
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// The first 64 KiB of each VM's frames are its own: three hundred
+    /// tasks each 500 levels deep at once need none of a budget of 1 MiB.
+    #[test]
+    fn a_task_inside_its_allowance_takes_nothing() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let main = "\
+fn main() {
+  let results = task.map(list.map(1..300) { i -> i }, 300) { _ -> deep(500) }
+  host.give(list.fold(results, 0) { acc, v -> acc + v })
+}
+";
+        assert_eq!(run_on(&mut vm, main).unwrap(), Value::Int(150000));
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// A fold makes each call of its function in the frame of the one
+    /// that returned: a function that recurses beyond the allowance in
+    /// every round takes chunks and gives them back round by round.
+    #[test]
+    fn a_fold_of_a_deep_recursion_gives_back_round_by_round() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let main = "\
+fn main() {
+  host.give(list.fold(1..50, 0) { acc, _ -> acc + deep(8000) })
+}
+";
+        assert_eq!(run_on(&mut vm, main).unwrap(), Value::Int(400000));
+        assert_eq!(vm.held, 0);
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// A recursion through a fold's function takes two frames a level
+    /// (the function's and the fold's), counted as any: it overflows
+    /// where they run out, and the run gives back what they took.
+    #[test]
+    fn a_recursion_inside_a_fold_callback_is_counted() {
+        let walk = "\
+fn walk(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> list.fold([n - 1], 1) { acc, m -> acc + walk(m) }
+  }
+}
+";
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let given = run_on(
+            &mut vm,
+            &format!("{walk}fn main() {{\n  host.give(walk(3000))\n}}\n"),
+        );
+        assert_eq!(given.unwrap(), Value::Int(3000));
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+        let error = run_on(
+            &mut vm,
+            &format!("{walk}fn main() {{\n  host.give(walk(100000))\n}}\n"),
+        )
+        .expect_err("the recursion overflows");
+        assert!(
+            error
+                .message
+                .starts_with("stack overflow: call frames take more than 1 MiB"),
+            "{}",
+            error.message
+        );
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+        let given = run_on(
+            &mut vm,
+            &format!("{walk}fn main() {{\n  host.give(walk(3000))\n}}\n"),
+        );
+        assert_eq!(given.unwrap(), Value::Int(3000));
+    }
+
+    /// An error caught at the depth of an overflow does not keep its
+    /// million lines of call stack for its report: a supervisor that
+    /// catches one runaway after another stays the size it was.
+    #[test]
+    fn a_caught_overflow_keeps_no_frames() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(1);
+        let main = "\
+fn runaway(n: Int) -> Int {
+  1 + runaway(n + 1)
+}
+fn main() {
+  let caught = list.fold(1..20, []) { kept, _ ->
+    match task.guard({ -> runaway(0) }) {
+      Ok(_) -> kept
+      Err(e) -> [e, ..kept]
+    }
+  }
+  host.give(list.length(caught))
+  println(\"{list.first(caught)}\")
+}
+";
+        let before = crate::builtins::guard::frames_kept();
+        assert_eq!(run_on(&mut vm, main).unwrap(), Value::Int(20));
+        // (Other tests of the process may keep a few lines meanwhile;
+        // twenty overflows kept would be 230,000.)
+        assert!(crate::builtins::guard::frames_kept() < before + 1000);
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// The program's own thread gives back what a recursion that has
+    /// returned took before it waits for the tasks it starts, and a VM
+    /// gives it back when it starts a task.
+    #[test]
+    fn a_recursion_that_returned_does_not_count_against_a_task() {
+        let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+        vm.set_frame_budget(16);
+        let main = "\
+fn main() {
+  let a = deep(150000)
+  let b = task.map([1, 2], 2) { _ -> deep(30000) }
+  host.give(a + list.fold(b, 0) { acc, v -> acc + v })
+}
+";
+        assert_eq!(run_on(&mut vm, main).unwrap(), Value::Int(210000));
+        assert_eq!(vm.runtime.frame_budget.taken(), 0);
+    }
+
+    /// The budget is each program's: an embedder that runs two in one
+    /// process sets each its own, and a test that pins an overflow with a
+    /// small one leaves the others' as they are.
+    #[test]
+    fn each_program_has_a_budget_of_its_own() {
+        let mut small = Vm::new(HostIo::buffer(&Buffer::new()));
+        small.set_frame_budget(1);
+        let mut large = Vm::new(HostIo::buffer(&Buffer::new()));
+        large.set_frame_budget(16);
+        let main = "fn main() {\n  host.give(deep(50000))\n}\n";
+        assert!(run_on(&mut small, main).is_err());
+        assert_eq!(run_on(&mut large, main).unwrap(), Value::Int(50000));
     }
 }
