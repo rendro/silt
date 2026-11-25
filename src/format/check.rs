@@ -771,6 +771,7 @@ impl ShapeWriter {
     fn fn_decl(&mut self, f: &FnDecl, top_level: bool) {
         self.open("fn");
         self.flag(f.is_pub);
+        self.flag(f.deep.is_some());
         self.sym(f.name);
         self.params(&f.params);
         let dropped = top_level && unit_return_dropped(f);

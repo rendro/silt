@@ -1,0 +1,75 @@
+-- A call that keeps a frame and passes a part of the parameter in the
+-- place the function descends on is accepted: the rest of a list, what a
+-- constructor or a record pattern binds, a field, a part of an element
+-- of a tuple written out, and two functions that descend in different
+-- places. A tail call may pass the parameter back
+-- as it is.
+
+type Tree {
+  Leaf,
+  Node(Tree, Int, Tree),
+}
+
+type Box {
+  inner: Option(Box),
+  n: Int,
+}
+
+fn len(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..rest] -> 1 + len(rest)
+  }
+}
+
+fn sum(t: Tree) -> Int {
+  match t {
+    Leaf -> 0
+    Node(l, v, r) -> sum(l) + v + sum(r)
+  }
+}
+
+fn depth(b: Box) -> Int {
+  match b.inner {
+    Some(inner) -> 1 + depth(inner)
+    None -> b.n
+  }
+}
+
+fn zip_len(xs: List(Int), n: Int) -> Int {
+  match (xs, n) {
+    ([_, ..rest], k) -> 1 + zip_len(rest, k + 1)
+    (_, k) -> k
+  }
+}
+
+fn evens(xs: List(Int), n: Int) -> Int {
+  match xs {
+    [] -> n
+    [_, ..rest] -> 1 + odds(n, rest)
+  }
+}
+
+fn odds(n: Int, ys: List(Int)) -> Int {
+  match ys {
+    [] -> n
+    [_, ..rest] -> 1 + evens(rest, n)
+  }
+}
+
+fn skip(xs: List(Int), skipping: Bool) -> Int {
+  match (skipping, xs) {
+    (true, _) -> skip(xs, false)
+    (_, []) -> 0
+    (_, [_, ..rest]) -> 1 + skip(rest, true)
+  }
+}
+
+fn main() {
+  println(len(1..50000))
+  println(sum(Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))))
+  println(depth(Box { inner: Some(Box { inner: None, n: 5 }), n: 0 }))
+  println(zip_len([1, 2, 3], 0))
+  println(evens([1, 2, 3], 0))
+  println(skip([1, 2, 3], true))
+}

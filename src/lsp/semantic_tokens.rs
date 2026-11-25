@@ -32,6 +32,7 @@ pub(super) const TOKEN_LEGEND: &[SemanticTokenType] = &[
     SemanticTokenType::PARAMETER,   // 5
     SemanticTokenType::VARIABLE,    // 6
     SemanticTokenType::PROPERTY,    // 7
+    SemanticTokenType::KEYWORD,     // 8
 ];
 
 const TT_FUNCTION: u32 = 0;
@@ -42,6 +43,8 @@ const TT_INTERFACE: u32 = 4;
 const TT_PARAMETER: u32 = 5;
 const TT_VARIABLE: u32 = 6;
 const TT_PROPERTY: u32 = 7;
+/// A word that is a keyword only where it stands: `deep` before `fn`.
+const TT_KEYWORD: u32 = 8;
 
 pub(super) fn semantic_tokens_legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
@@ -165,6 +168,11 @@ fn collect_tokens(server: &Server, doc: &Document, program: &Program, out: &mut 
 }
 
 fn emit_fn_decl_tokens(f: &FnDecl, source: &SourceFile, out: &mut Vec<RawToken>) {
+    // `deep` of `deep fn` is a keyword there (a name everywhere else,
+    // so the grammar does not know it).
+    if let Some(deep) = f.deep {
+        push_token_at_offset(source, deep.start as usize, "deep", TT_KEYWORD, out);
+    }
     // Emit FUNCTION on the fn name ident.
     emit_binding_token(source, &f.name_span, f.name, TT_FUNCTION, out);
 

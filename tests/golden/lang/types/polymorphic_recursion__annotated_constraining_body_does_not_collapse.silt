@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 0
 -- stderr-not-contains: error
-fn announce(x: a) -> String where a: Display {
+deep fn announce(x: a) -> String where a: Display {
   let label = "{x}"
   let _ = announce("nested")
   label

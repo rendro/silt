@@ -1,0 +1,25 @@
+-- A call through a trait is a call of the impl of its argument's type:
+-- the check does not see it, so recursion through a trait method is
+-- neither refused nor accepted (the editor says "not checked: trait
+-- call" on the method).
+type Tree {
+  Leaf,
+  Node(Tree, Int, Tree),
+}
+
+trait Size {
+  fn size(self) -> Int
+}
+
+trait Size for Tree {
+  fn size(self) -> Int {
+    match self {
+      Leaf -> 0
+      Node(l, _, r) -> Size.size(l) + 1 + Size.size(r)
+    }
+  }
+}
+
+fn main() {
+  println(Size.size(Node(Node(Leaf, 1, Leaf), 2, Leaf)))
+}

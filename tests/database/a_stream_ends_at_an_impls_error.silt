@@ -39,7 +39,7 @@ fn drain(rows: Channel(Result(R, postgres.PostgresError))) {
       println("  {row}")
       drain(rows)
     }
-    None -> println("  (end)")
+    None -> return println("  (end)")
   }
 }
 

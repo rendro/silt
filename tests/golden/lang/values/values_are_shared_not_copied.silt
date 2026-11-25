@@ -40,7 +40,7 @@ fn length(c: Chain) -> Int {
 }
 
 -- A tree whose every node holds the same long string.
-fn tree(depth: Int, label: String) -> Tree {
+deep fn tree(depth: Int, label: String) -> Tree {
   match depth {
     0 -> Leaf
     _ -> {

@@ -28,6 +28,7 @@ mod opaque;
 mod order;
 mod resolve;
 mod scheme;
+pub(crate) mod shape;
 mod show;
 mod solve;
 mod structural;

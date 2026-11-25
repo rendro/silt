@@ -512,6 +512,11 @@ pub struct FnDecl {
     pub where_clauses: Vec<WhereClause>,
     pub body: Expr,
     pub is_pub: bool,
+    /// The span of the word `deep` of `deep fn name(...)`, which turns
+    /// the recursion check off for the function's calls of the functions
+    /// it calls back (`crate::typechecker::shape`); `None` for a function
+    /// written without it. Only a top-level function has one.
+    pub deep: Option<Span>,
     pub span: Span,
     /// Span of the declared name identifier itself (the `foo` in
     /// `fn foo(...)`). Distinct from `span`, which currently points at

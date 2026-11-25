@@ -1,0 +1,43 @@
+-- cmd: check
+-- exit: 1
+-- A group of tail calls that gives (): each place a function of it ends
+-- without going on must be (), a return or a call that gives Never. A
+-- call that gives () there, or a block that ends in a let, is where a
+-- forgotten call to go on hides; so is a hand-off to another loop.
+import channel
+
+fn serve(inbox: Channel(String)) {
+  match channel.receive(inbox) {
+    Some("flush") -> {
+      println("flushed")
+      serve(inbox)
+    }
+    Some(line) -> println(line)
+    None -> ()
+  }
+}
+
+fn count(n: Int) {
+  match n {
+    0 -> {
+      let _done = println("done")
+    }
+    _ -> count(n - 1)
+  }
+}
+
+fn handshake(inbox: Channel(String)) {
+  match channel.receive(inbox) {
+    Some("hello") -> handshake(inbox)
+    Some(_) -> serve(inbox)
+    None -> ()
+  }
+}
+
+fn main() {
+  let inbox = channel.new(4)
+  channel.close(inbox)
+  serve(inbox)
+  count(1)
+  handshake(inbox)
+}

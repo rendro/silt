@@ -1,0 +1,12 @@
+-- cmd: fmt
+-- `deep` stays where it is written, before `fn` and after `pub`.
+deep fn walk(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [x, ..rest] -> x + walk(list.filter(rest) { y -> y > x })
+  }
+}
+
+pub deep fn other(n: Int) -> Int {
+  n
+}

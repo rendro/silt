@@ -3664,12 +3664,13 @@ mod tests {
         );
         assert!(jumps(find_fn(&fns, "top"), 0, 1));
         // A call that is no tail call.
-        let fns =
-            compile("fn down(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + down(n - 1)\n  }\n}\n");
+        let fns = compile(
+            "deep fn down(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + down(n - 1)\n  }\n}\n",
+        );
         assert!(!has_op(find_fn(&fns, "down").chunk(), Op::Recur));
         // A call of the function from a closure inside it: the closure's.
         let fns = compile(
-            "import list\nfn f(n) {\n  match n {\n    0 -> 0\n    _ -> list.fold([n], 0) { _, m -> f(m - 1) }\n  }\n}\n",
+            "import list\ndeep fn f(n) {\n  match n {\n    0 -> 0\n    _ -> list.fold([n], 0) { _, m -> f(m - 1) }\n  }\n}\n",
         );
         assert!(!has_op(find_fn(&fns, "f").chunk(), Op::Recur));
         let inside = find_fn(&fns, "closure in f");

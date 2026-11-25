@@ -1,0 +1,28 @@
+error[type]: `f` is passed to `call` as a value, so the compiler cannot see how it is called
+ --> shape__a_call_inside_a_closure_or_a_function_passed_is_refused.silt:20:12
+    |
+ 20 |       call(f)
+    |            ^ `f` is passed to `call` as a value, so the compiler cannot see how it is called
+ ::: shape__a_call_inside_a_closure_or_a_function_passed_is_refused.silt:19:20
+    |
+ 19 |       let f = { -> guarded(n - 1) }
+    |                    -------------- `f` calls `guarded` here
+  = note: `guarded` and `f` call each other, so they are checked together
+  = help: call `f` where it is named
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn guarded`
+
+error[type]: `passed` is passed to `list.flat_map` as a value, so the compiler cannot see how it is called
+ --> shape__a_call_inside_a_closure_or_a_function_passed_is_refused.silt:31:55
+    |
+ 31 |     Node(v, kids) -> [v, ..list.flat_map([t, ..kids], passed)]
+    |                                                       ^^^^^^ `passed` is passed to `list.flat_map` as a value, so the compiler cannot see how it is called
+  = help: call `passed` where it is named
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn passed`
+
+error[type]: this call of `on_the_sum` is inside a closure: it takes a frame for the closure and one for the call
+ --> shape__a_call_inside_a_closure_or_a_function_passed_is_refused.silt:37:59
+    |
+ 37 |     Node(_, kids) -> list.fold(kids, t) { acc, _k -> Node(on_the_sum(acc), []) } |> size
+    |                                                           ^^^^^^^^^^^^^^^ this call of `on_the_sum` is inside a closure: it takes a frame for the closure and one for the call
+  = help: a closure may call it only when it is handed to `list.each`, `list.map`, `list.flat_map`, `list.fold`, `list.filter`, `list.find`, `list.any` or `list.all` over a part of a parameter, with the element
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn on_the_sum`

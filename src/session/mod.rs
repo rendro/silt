@@ -847,6 +847,21 @@ impl Session {
             ) && p.code != Code::DuplicateTopLevel
                 && !p.is_warning()
         };
+        // The recursion check reads a module that type-checked: no
+        // syntax error, no error of its names or of its types.
+        let checked = !module.incomplete
+            && !module.cut_short
+            && !module.problems.iter().any(Diagnostic::is_error)
+            && errors.is_empty()
+            && !check.diagnostics.iter().any(Diagnostic::is_error);
+        if checked {
+            let text = text.map_or("", |file| &file.text);
+            let shape = typechecker::shape::check(&ast, text, &self.defs);
+            if !shape.diagnostics.is_empty() {
+                check.diagnostics.extend(shape.diagnostics);
+                check.diagnostics.sort_by_key(|d| d.span.start);
+            }
+        }
         if module.incomplete || module.problems.iter().any(syntax_error) {
             warnings.retain(|d| !matches!(d.code, Code::UnusedName | Code::UnusedImport));
         }

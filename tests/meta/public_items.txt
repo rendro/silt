@@ -18,6 +18,7 @@ src/ast.rs: pub const RANGE
 src/ast.rs: pub const TRAILING_CLOSURE
 src/ast.rs: pub const UNARY
 src/ast.rs: pub decls
+src/ast.rs: pub deep
 src/ast.rs: pub dict_owners
 src/ast.rs: pub doc
 src/ast.rs: pub doc

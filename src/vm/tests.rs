@@ -941,7 +941,7 @@ fn test_e2e_multiple_functions() {
 fn test_e2e_recursion() {
     let result = run_vm(
         r#"
-            fn factorial(n) {
+            deep fn factorial(n) {
                 match n {
                     0 -> 1
                     _ -> n * factorial(n - 1)
@@ -3921,7 +3921,7 @@ fn main() {
     #[test]
     fn at_the_frame_limit() {
         let source = "\
-fn deep(n: Int) -> Int {
+deep fn deep(n: Int) -> Int {
   1 + deep(n + 1)
 }
 fn main() {
@@ -5992,7 +5992,7 @@ mod calls_and_returns {
                 "depth(3000)"
             };
             let source = format!(
-                "import string\nfn step() {{ {step} }}\nfn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ host.give(\"{{{shown}}}\") }}\nimport host"
+                "import string\nfn step() {{ {step} }}\ndeep fn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ host.give(\"{{{shown}}}\") }}\nimport host"
             );
             assert_eq!(run_vm(&source), Value::string(expected), "{source}");
         }

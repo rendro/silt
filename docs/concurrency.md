@@ -1150,8 +1150,8 @@ fn drain(ch) {
       println("got: {val}")
       drain(ch)
     }
-    channel.Empty -> println("no more data (channel still open)")
-    channel.Closed -> println("channel closed, all done")
+    channel.Empty -> return println("no more data (channel still open)")
+    channel.Closed -> return println("channel closed, all done")
   }
 }
 

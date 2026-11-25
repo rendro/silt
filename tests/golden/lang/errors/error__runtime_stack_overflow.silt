@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: stack overflow
-fn deep(n) {
+deep fn deep(n) {
   1 + deep(n + 1)
 }
 fn main() { let _ = deep(0) }

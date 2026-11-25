@@ -13,7 +13,7 @@ trait Deep for Int {
 }
 
 
-fn deep(n) {
+deep fn deep(n) {
   match n {
     0 -> 0
     _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }

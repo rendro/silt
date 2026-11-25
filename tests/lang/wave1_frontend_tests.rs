@@ -785,7 +785,7 @@ fn chains_of_200_links_still_work() {
         MAIN,
         &format!(
             "type R {{ next: Fn() -> R, n: Int }}\n\
-             fn mk(n: Int) -> R {{ R {{ next: {{ -> mk(n + 1) }}, n: n }} }}\n\
+             deep fn mk(n: Int) -> R {{ R {{ next: {{ -> mk(n + 1) }}, n: n }} }}\n\
              fn main() {{\n  let r = mk(0){links}\n  println(\"{{r.n}}\")\n}}\n"
         ),
     );

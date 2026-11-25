@@ -1,0 +1,27 @@
+-- cmd: check
+-- A value kept only for its lifetime (a let whose name starts with _)
+-- is let go at a tail call that ends its block: the call runs in the
+-- function's place. A warning; a parameter named _x is not one, nor is
+-- a call whose value is bound first.
+fn work(n: Int) -> Int {
+  n * 2
+}
+
+fn held(n: Int) -> Int {
+  let _guard = [n]
+  work(n)
+}
+
+fn kept(n: Int) -> Int {
+  let _guard = [n]
+  let result = work(n)
+  result
+}
+
+fn param(_unused: Int, n: Int) -> Int {
+  work(n)
+}
+
+fn main() {
+  println(held(1) + kept(2) + param(0, 3))
+}

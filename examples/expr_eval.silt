@@ -38,7 +38,7 @@ fn eval(expr) {
 }
 
 -- Algebraic simplification
-fn simplify(expr) {
+deep fn simplify(expr) {
   match expr {
     Num(n) -> Num(n)
 

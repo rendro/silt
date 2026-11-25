@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- The recursion check reads a module that type-checked: with a type
+-- error, that error is reported and nothing of the check.
+fn sum_to(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> n + sum_to(n - 1)
+  }
+}
+
+fn main() {
+  let s: String = sum_to(3)
+  println(s)
+}

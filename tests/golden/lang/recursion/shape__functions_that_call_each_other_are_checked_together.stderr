@@ -1,0 +1,14 @@
+error[type]: this call of `pong` takes a frame for every round
+ --> shape__functions_that_call_each_other_are_checked_together.silt:8:14
+   |
+ 8 |     _ -> 1 + pong(n - 1)
+   |              ^^^^^^^^^^^ this call of `pong` takes a frame for every round
+ ::: shape__functions_that_call_each_other_are_checked_together.silt:15:10
+    |
+ 15 |     _ -> ping(n)
+    |          ------- `pong` calls `ping` here
+  = note: not the last thing `ping` does, and `n - 1` is not a part of `n`
+  = note: `ping` and `pong` call each other, so they are checked together
+  = help: count with the library: `list.fold(1..n, start) { acc, i -> ... }`
+  = help: or carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn ping`

@@ -1,0 +1,7 @@
+error[type]: this call of `simplify` passes `Neg(Add(a, b))` where `simplify` descends on `e`
+ --> shape__a_tail_call_that_does_not_pass_a_part_is_refused.silt:17:28
+    |
+ 17 |     Add(Neg(a), Neg(b)) -> simplify(Neg(Add(a, b)))
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^ this call of `simplify` passes `Neg(Add(a, b))` where `simplify` descends on `e`
+  = note: a tail call that does not pass a part lets the other calls of the group go deeper than the data
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn simplify`

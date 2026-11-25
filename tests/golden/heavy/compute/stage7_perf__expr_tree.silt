@@ -65,7 +65,7 @@ fn next(seed, k) {
   (seed * k + k + 1) % 10007
 }
 
-fn build(depth, seed) {
+deep fn build(depth, seed) {
   match depth {
     0 -> match seed % 3 {
       0 -> Num(seed % 5 + 1)

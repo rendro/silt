@@ -22,7 +22,7 @@ let top = { n ->
   }
 }
 
-fn each_down(n: Int) -> Int {
+deep fn each_down(n: Int) -> Int {
   match n {
     0 -> count(5)
     _ -> list.fold([n - 1], 0) { _, m -> each_down(m) }

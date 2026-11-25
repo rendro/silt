@@ -1,0 +1,15 @@
+-- `deep` is a word of its own only right before `fn`: a function, a
+-- parameter, a let and a field may be named deep.
+type Level {
+  deep: Int,
+}
+
+fn deep(deep: Int) -> Int {
+  deep + 1
+}
+
+fn main() {
+  let deep = deep(1)
+  let level = Level { deep }
+  println(level.deep)
+}

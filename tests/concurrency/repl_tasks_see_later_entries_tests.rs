@@ -139,7 +139,7 @@ fn session(workers: Workers, earlier: &str, later: &str, job: &str) -> String {
         Workers::Polling => {
             "fn work() {
   match channel.try_receive(jobs) {
-    channel.Message(job) -> channel.send(outs, job())
+    channel.Message(job) -> return channel.send(outs, job())
     _ -> work()
   }
 }"

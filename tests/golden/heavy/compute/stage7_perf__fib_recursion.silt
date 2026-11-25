@@ -1,7 +1,7 @@
 -- timeout: 60
 -- A compute program of the stage 7 performance guard: calls, integer
 -- patterns and arithmetic. 600,000 calls.
-fn fib(n) {
+deep fn fib(n) {
   match n {
     0 -> 0
     1 -> 1

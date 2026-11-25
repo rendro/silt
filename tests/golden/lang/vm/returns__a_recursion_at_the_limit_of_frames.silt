@@ -12,14 +12,14 @@
 -- A recursion may be 100,000 frames deep. One call under that limit every
 -- frame returns its result, an Int (written into the caller's slot) or a
 -- String (taken off the stack and pushed again); one call more is refused.
-fn down(n: Int) -> Int {
+deep fn down(n: Int) -> Int {
   match n {
     0 -> 0
     _ -> 1 + down(n - 1)
   }
 }
 
-fn downs(n: Int) -> String {
+deep fn downs(n: Int) -> String {
   match n {
     0 -> "s"
     _ -> {

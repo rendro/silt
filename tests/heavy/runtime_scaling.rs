@@ -222,14 +222,14 @@ fn hop(n) {{
   plain(n)
 }}
 
-fn plain(n) {{
+deep fn plain(n) {{
   match n {{
     0 -> 0
     _ -> 1 + hop(n - 1)
   }}
 }}
 
-fn folded(n) {{
+deep fn folded(n) {{
   match n {{
     0 -> 0
     _ -> 1 + list.fold([n - 1], 0) {{ _, x -> folded(x) }}

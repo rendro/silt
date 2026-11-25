@@ -179,6 +179,13 @@ fn main() {
 - A tail call of a function to itself (or of a `let` closure by its
   name) is the same jump: it takes no frame, and a call stack shows the
   function once. A tail call of another function takes no frame either.
+- Functions that call themselves (or each other) are checked: every call
+  among them a tail call is "constant stack"; else each call that keeps a
+  frame must pass a part of a parameter (`rest` of `[x, ..rest]`, a
+  field, what a constructor pattern binds), "depth follows the data";
+  anything else is an error (`E0345`) unless the function is written
+  `deep fn name(...)`. A `()` loop of tail calls ends with `()`,
+  `return e` or a call that gives `Never` (`E0346`).
 
 ## Errors
 

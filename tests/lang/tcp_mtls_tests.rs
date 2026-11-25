@@ -532,7 +532,7 @@ fn head(conn: tcp.TcpStream) -> List(String) {{
 
 {handle}
 
-fn serve_from(listener: tcp.TcpListener, cert: Bytes, key: Bytes, i: Int, n: Int) -> () {{
+deep fn serve_from(listener: tcp.TcpListener, cert: Bytes, key: Bytes, i: Int, n: Int) -> () {{
   match i > n {{
     true -> ()
     false -> {{

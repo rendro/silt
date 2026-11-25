@@ -540,7 +540,8 @@ impl<'src> Parser<'src> {
                 | Token::Opaque
                 | Token::Import
                 | Token::Let
-        ) {
+        ) || self.deep_fn_at(self.pos)
+        {
             return self.parse_program_recovering();
         }
         let start = self.span();
@@ -561,6 +562,7 @@ impl<'src> Parser<'src> {
             where_clauses: Vec::new(),
             body,
             is_pub: false,
+            deep: None,
             span,
             name_span: span,
             is_recovery_stub: false,
@@ -1298,9 +1300,8 @@ impl<'src> Parser<'src> {
                 break;
             }
             let start = self.pos;
-            let is_fn = self.at(&Token::Fn)
-                || self.at(&Token::Pub)
-                    && matches!(self.tokens.get(start + 1), Some(tok) if tok.kind == Token::Fn);
+            let is_fn =
+                self.fn_decl_at(start) || self.at(&Token::Pub) && self.fn_decl_at(start + 1);
             self.fn_stub = None;
             match self.parse_decl() {
                 Ok(decl) => {
@@ -1479,7 +1480,7 @@ impl<'src> Parser<'src> {
                 | Token::Opaque
                 | Token::Import
                 | Token::Let
-        );
+        ) || self.deep_fn_at(self.pos);
         let after_foreign_keyword = matches!(
             self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
             Some(Tok { kind: Token::Ident(prev), .. }) if Self::foreign_keyword_hint(&intern::resolve(*prev)).is_some()
@@ -1518,6 +1519,14 @@ impl<'src> Parser<'src> {
                 | Token::Import
                 | Token::Let
                     if !first && self.nl_before() && (open == 0 || self.at_margin()) =>
+                {
+                    break;
+                }
+                Token::Ident(_)
+                    if self.deep_fn_at(self.pos)
+                        && !first
+                        && self.nl_before()
+                        && (open == 0 || self.at_margin()) =>
                 {
                     break;
                 }
@@ -1747,8 +1756,8 @@ impl<'src> Parser<'src> {
                 let pub_doc = self.doc_for_span(span);
                 self.advance();
                 match self.peek() {
-                    Token::Fn => {
-                        let parsed = self.parse_fn_decl(self.top_level_body());
+                    Token::Fn | Token::Ident(_) if self.fn_decl_at(self.pos) => {
+                        let parsed = self.parse_top_fn_decl();
                         // The function, or the stub that stands in for
                         // it, is public and starts at its `pub`. If
                         // pub's line carries a doc, that takes
@@ -1882,6 +1891,7 @@ impl<'src> Parser<'src> {
                 ))
             }
             Token::Fn => Ok(Decl::Fn(self.parse_fn_decl(self.top_level_body())?)),
+            Token::Ident(_) if self.deep_fn_at(self.pos) => Ok(Decl::Fn(self.parse_top_fn_decl()?)),
             Token::Type => Ok(Decl::Type(self.parse_type_decl()?)),
             Token::Trait => self.parse_trait_or_impl(),
             Token::Import => self.parse_import(),
@@ -1906,6 +1916,45 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Whether the tokens from `at` on are `deep fn`: the word `deep`
+    /// is a marker only right before `fn` (everywhere else it is a name).
+    fn deep_fn_at(&self, at: usize) -> bool {
+        matches!(
+            self.tokens.get(at).map(|tok| &tok.kind),
+            Some(Token::Ident(word)) if intern::resolve(*word) == "deep"
+        ) && matches!(
+            self.tokens.get(at + 1).map(|tok| &tok.kind),
+            Some(Token::Fn)
+        )
+    }
+
+    /// Whether a top-level function starts at token `at`: `fn` or
+    /// `deep fn`.
+    fn fn_decl_at(&self, at: usize) -> bool {
+        matches!(self.tokens.get(at).map(|tok| &tok.kind), Some(Token::Fn)) || self.deep_fn_at(at)
+    }
+
+    /// A top-level function, `fn name(...)` or `deep fn name(...)`; for
+    /// the second the declaration starts at `deep`, and so does its
+    /// recovery stub.
+    fn parse_top_fn_decl(&mut self) -> Result<FnDecl> {
+        if !self.deep_fn_at(self.pos) {
+            return self.parse_fn_decl(self.top_level_body());
+        }
+        let deep = self.advance().span;
+        let mark = |f: &mut FnDecl| {
+            f.deep = Some(deep);
+            f.span = deep.to(f.span);
+        };
+        let parsed = self.parse_fn_decl(self.top_level_body());
+        if let Some(stub) = &mut self.fn_stub {
+            mark(stub);
+        }
+        let mut f = parsed?;
+        mark(&mut f);
+        Ok(f)
+    }
+
     /// A function declaration. When it fails behind its name, what was
     /// read of its header is left in `fn_stub` as a recovery stub: a
     /// function of that name, those parameters and that return type
@@ -1924,6 +1973,7 @@ impl<'src> Parser<'src> {
             where_clauses: Vec::new(),
             body: Expr::new(ExprKind::Block(Vec::new()), span),
             is_pub: false,
+            deep: None,
             span,
             name_span,
             is_recovery_stub: true,

@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: deep fn grow(xs: List(Int)) -> Int { 1 + grow([1, ..xs]) }\ngrow\nfn f(n: Int) -> Int { 1 + f(n) }\n:quit\n
+-- stdout-contains: <fn:grow>
+-- stderr-contains: this call of `f` takes a frame for every round
+-- An entry of the REPL is checked as a file is: `deep fn` is a
+-- declaration there, and an entry the check refuses is an error.

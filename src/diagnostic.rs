@@ -217,6 +217,14 @@ codes! {
     /// What only an opaque type's own module may do with its values
     /// (build, take apart, update, read), done in another module.
     OpaqueType = "E0344", Type;
+    /// A function, or a group of functions that call each other, whose
+    /// calls take a frame for every round without descending on a
+    /// parameter (see `docs/language/loops-and-pipes.md`).
+    RecursionShape = "E0345", Type;
+    /// A loop of tail calls that gives `()`, one of whose endings does
+    /// not say it ends (a call that gives `()`, a block that ends in a
+    /// `let`).
+    UnsaidEnding = "E0346", Type;
     // ── compile ──
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;
@@ -295,6 +303,12 @@ codes! {
     UnusedImport = "W0202", Resolve;
     /// A `let` or pattern name that nothing uses.
     UnusedName = "W0203", Resolve;
+    /// A `deep fn` whose calls the recursion check would accept without
+    /// it.
+    NeedlessDeep = "W0301", Type;
+    /// A `let`-bound `_name` in scope at a tail call that ends its block:
+    /// the tail call lets it go before the call runs.
+    LetGoAtTailCall = "W0302", Type;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────

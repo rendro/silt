@@ -1,7 +1,7 @@
 -- repeat: 3
 import list
 import stream
-fn deep(n) {
+deep fn deep(n) {
   match n {
     0 -> 0
     _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }

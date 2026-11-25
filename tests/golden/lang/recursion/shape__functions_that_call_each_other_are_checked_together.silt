@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- A group of functions that call each other is checked as one: the
+-- error names them and where each calls the other.
+fn ping(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + pong(n - 1)
+  }
+}
+
+fn pong(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> ping(n)
+  }
+}
+
+fn main() {
+  println(ping(4))
+}

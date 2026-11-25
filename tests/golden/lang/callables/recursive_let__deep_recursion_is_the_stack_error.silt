@@ -2,13 +2,14 @@
 -- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
 -- stderr-contains: deep in main
 -- A call of itself whose result is still used takes a frame, as a
--- function's does.
+-- function's does: down a range of twenty million, the frames run out
+-- before the data.
 fn main() {
-  let deep = { n ->
-    match n {
-      0 -> 0
-      _ -> 1 + deep(n - 1)
+  let deep = { xs ->
+    match xs {
+      [] -> 0
+      [_, ..rest] -> 1 + deep(rest)
     }
   }
-  println(deep(200000))
+  println(deep(1..20000000))
 }

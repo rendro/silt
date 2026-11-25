@@ -2,7 +2,7 @@
 -- captures a variable from the enclosing scope.
 -- sum_with_base(100, 5) = 5 + 4 + 3 + 2 + 1 + 100 = 115
 import io
-fn sum_with_base(base, n) {
+deep fn sum_with_base(base, n) {
   match n {
     0 -> base
     _ -> n + sum_with_base(base, n - 1)

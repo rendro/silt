@@ -34,7 +34,7 @@ fn drain(rows: Channel(Result(R, postgres.PostgresError))) {
       println(row)
       drain(rows)
     }
-    None -> println("not reached")
+    None -> return println("not reached")
   }
 }
 

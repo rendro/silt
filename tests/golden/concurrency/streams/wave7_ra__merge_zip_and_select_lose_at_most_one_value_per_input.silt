@@ -14,7 +14,7 @@ fn filled(n) {
 
 fn fill(ch, i, n) {
   match i > n {
-    true -> channel.close(ch)
+    true -> return channel.close(ch)
     false -> {
       channel.send(ch, i)
       fill(ch, i + 1, n)

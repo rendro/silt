@@ -15,6 +15,7 @@ const TT_FUNCTION: u64 = 0;
 const TT_TYPE: u64 = 1;
 const TT_ENUM: u64 = 2;
 const TT_INTERFACE: u64 = 4;
+const TT_KEYWORD: u64 = 8;
 
 #[test]
 fn semantic_tokens_full_returns_classified_tokens() {
@@ -174,5 +175,41 @@ fn semantic_tokens_of_a_call_through_a_trait_of_a_module() {
         tokens.contains(&(1, 32, 6, TT_FUNCTION)),
         "the method's name: {tokens:?}"
     );
+    client.shutdown();
+}
+
+/// `deep` right before `fn` is a keyword there (the grammar cannot
+/// know: everywhere else it is a name), so the server marks it; a
+/// `deep` that is a name is not marked.
+#[test]
+fn deep_before_fn_is_a_keyword_token() {
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_sem_tokens_deep.silt";
+    let src = "deep fn walk(n) { walk(n) }\nfn deep(n) { n }\n";
+    client.did_open_and_wait(uri, src);
+    let resp = client.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let data = resp
+        .pointer("/result/data")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("expected /result/data array; got: {resp}"));
+    let (mut line, mut start) = (0u64, 0u64);
+    let mut keywords = Vec::new();
+    for chunk in data.as_chunks::<5>().0 {
+        let dl = chunk[0].as_u64().expect("deltaLine");
+        let ds = chunk[1].as_u64().expect("deltaStart");
+        if dl == 0 {
+            start += ds;
+        } else {
+            line += dl;
+            start = ds;
+        }
+        if chunk[3].as_u64() == Some(TT_KEYWORD) {
+            keywords.push((line, start, chunk[2].as_u64().expect("length")));
+        }
+    }
+    assert_eq!(keywords, vec![(0, 0, 4)], "{resp}");
     client.shutdown();
 }

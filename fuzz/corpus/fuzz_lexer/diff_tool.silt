@@ -58,7 +58,7 @@ fn build_lcs_table(old_lines, new_lines) {
 -- Returns a list of (String, String) tuples: (marker, line)
 -- where marker is " " (context), "-" (removed), "+" (added)
 
-fn trace_diff(table, old_lines, new_lines, i, j) {
+deep fn trace_diff(table, old_lines, new_lines, i, j) {
   let old_len = list.length(old_lines)
   let new_len = list.length(new_lines)
   match {

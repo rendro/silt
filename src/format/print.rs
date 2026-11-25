@@ -908,6 +908,10 @@ impl Printer<'_> {
             docs.push(self.tok(Token::Pub));
             docs.push(space());
         }
+        if f.deep.is_some() {
+            docs.push(self.name());
+            docs.push(space());
+        }
         docs.push(self.tok(Token::Fn));
         docs.push(space());
         docs.push(self.name());

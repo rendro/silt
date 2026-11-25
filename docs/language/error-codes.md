@@ -2,7 +2,7 @@
 title: "Error Codes"
 section: "Language"
 order: 14
-description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warnings W0201 to W0203."
+description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warnings W0201 to W0302."
 ---
 
 # Error Codes
@@ -97,6 +97,8 @@ missing belong to codes that are gone.
 | `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type without its type arguments, ...), or an opaque type decoded or json-encoded outside its module without the module's impl. |
 | `E0343` | A type constructor where a type is needed, or a type where a type constructor is needed. |
 | `E0344` | A value of an opaque type built, taken apart, updated or read outside its module. |
+| `E0345` | A function, or a group of functions that call each other, that takes a frame for every round without descending on a parameter: a call that is not a tail call and does not pass a part of a parameter, a tail call that passes something bigger than a part, a call inside a closure, a function passed as a value (see [Repeating](loops-and-pipes.md#repeating)). |
+| `E0346` | A loop of tail calls that gives `()` and ends somewhere without saying so: a call that gives `()`, or a block that ends in a `let`. |
 
 ## Compiling and the entry point (4xx, 5xx)
 
@@ -157,3 +159,5 @@ line names the fix, which is the one way to silence it.
 | `W0201` | A local that hides an imported module, an alias or an imported name. |
 | `W0202` | An import that nothing in the file uses. |
 | `W0203` | A `let` name or a pattern name that nothing reads. |
+| `W0301` | A `deep fn` the recursion check would accept without `deep`. |
+| `W0302` | A `let`-bound `_name` in scope at a tail call that ends its block: the call lets it go before it runs. |
