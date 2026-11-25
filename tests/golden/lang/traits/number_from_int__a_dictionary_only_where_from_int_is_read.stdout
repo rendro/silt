@@ -61,16 +61,14 @@
 0003  Constant             0     ; 0
 0006  JumpIfNotEq          8     -> 0017
 0009  GetLocal             0
-0012  Jump                 19    -> 0036
-0017  GetGlobal            4     ; down
+0012  Jump                 21    -> 0038
+0017  GetLocal             0
 0020  GetLocal             0
-0023  GetLocal             0
-0026  Sub
-0027  GetLocal             1
-0030  SubConst             1     ; 1
-0033  TailCall             2
-0035  Return
-0036  Return
+0023  Sub
+0024  GetLocal             1
+0027  SubConst             1     ; 1
+0030  Recur                2  slot 0  -38   -> 0000
+0038  Return
 
 == inc (arity=1, dictionaries=1, upvalues=0) ==
 0000  GetLocal             1

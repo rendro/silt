@@ -2,12 +2,15 @@
 0000  Constant             0     ; <fn:count>
 0003  SetGlobal            0     ; count
 0006  Pop
-0007  Constant             1     ; <fn:main>
-0010  SetGlobal            1     ; main
+0007  Constant             1     ; <fn:start>
+0010  SetGlobal            1     ; start
 0013  Pop
-0014  GetGlobal            1     ; main
-0017  Call                 0
-0019  Return
+0014  Constant             2     ; <fn:main>
+0017  SetGlobal            2     ; main
+0020  Pop
+0021  GetGlobal            2     ; main
+0024  Call                 0
+0026  Return
 
 == count (arity=2, upvalues=0) ==
 0000  GetLocal             0
@@ -15,23 +18,35 @@
 0006  JumpIfFalse          9     -> 0018
 0009  Pop
 0010  GetLocal             1
-0013  Jump                 19    -> 0037
+0013  Jump                 21    -> 0039
+0018  Pop
+0019  GetLocal             0
+0022  SubConst             1     ; 1
+0025  GetLocal             1
+0028  AddConst             1     ; 1
+0031  Recur                2  slot 0  -39   -> 0000
+0039  Return
+
+== start (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  TestEqual            0     ; 0
+0006  JumpIfFalse          9     -> 0018
+0009  Pop
+0010  Constant             0     ; 0
+0013  Jump                 13    -> 0031
 0018  Pop
 0019  GetGlobal            0     ; count
 0022  GetLocal             0
-0025  SubConst             1     ; 1
-0028  GetLocal             1
-0031  AddConst             1     ; 1
-0034  TailCall             2
-0036  Return
-0037  Return
+0025  Constant             0     ; 0
+0028  TailCall             2
+0030  Return
+0031  Return
 
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>
-0003  GetGlobal            0     ; count
+0003  GetGlobal            1     ; start
 0006  Constant             1     ; 3
-0009  Constant             2     ; 0
-0012  Call                 2
-0014  TailCall             1
-0016  Return
+0009  Call                 1
+0011  TailCall             1
+0013  Return
 

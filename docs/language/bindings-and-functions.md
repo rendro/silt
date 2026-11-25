@@ -410,8 +410,9 @@ fn count_at_most(tree, limit) {
 ```
 
 Inside its own body the closure has one type; it is generalised after,
-as any `let` closure is. A call of itself in tail position reuses the
-frame, as a function's does.
+as any `let` closure is. A call of itself in tail position is a jump back
+to its start, as a function's is (see
+[Infinite Loops](loops-and-pipes.md#infinite-loops)).
 
 Only the closure the `let` binds is its own name: in
 `let f = memo({ n -> f(n - 1) })` the closure is handed to `memo`, and

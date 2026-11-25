@@ -32,6 +32,13 @@ fn stack_overflow_error() -> VmError {
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only: how many frames of functions the VMs of this thread
+    /// have made.
+    pub(super) static CODE_FRAMES_MADE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// What a call did.
 pub(super) enum Entered {
     /// It is finished, with this value.
@@ -54,6 +61,8 @@ impl Vm {
         if self.frames.len() - self.native_frames >= MAX_FRAMES {
             return Err(stack_overflow_error());
         }
+        #[cfg(test)]
+        CODE_FRAMES_MADE.with(|made| made.set(made.get() + 1));
         // (Built where it goes, as the values the loop pushes.)
         push_with(&mut self.frames, || {
             Frame::Code(CallFrame {

@@ -1,0 +1,34 @@
+error[runtime]: division by zero
+ --> <repl:1>:3:10
+   |
+ 3 |     0 -> 1 / n
+   |          ^^^^^ division by zero
+
+call stack:
+  -> down  at <repl:1>:3:10
+  -> down  at <repl:1>:4:10
+  -> down  at <repl:1>:4:10
+  -> down  at <repl:1>:4:10
+  -> <repl:2>  at <repl:2>:1:1
+error[runtime]: division by zero
+ --> <repl:3>:3:10
+   |
+ 3 |     0 -> 1 / n
+   |          ^^^^^ division by zero
+
+call stack:
+  -> go  at <repl:3>:3:10
+  -> go  at <repl:3>:4:10
+  -> go  at <repl:3>:4:10
+  -> go  at <repl:3>:4:10
+  -> <repl:4>  at <repl:4>:1:1
+error[runtime]: division by zero
+ --> <repl:5>:4:12
+   |
+ 4 |       0 -> 1 / n
+   |            ^^^^^ division by zero
+
+call stack:
+  -> g in inside  at <repl:5>:4:12
+  -> inside  at <repl:5>:8:3
+  -> <repl:6>  at <repl:6>:1:1

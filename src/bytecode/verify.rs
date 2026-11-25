@@ -795,6 +795,37 @@ mod tests {
         );
     }
 
+    /// A closure's tail call of itself jumps to offset 0 with the frame
+    /// cut back to its argument, so its `GetClosure` runs again: the
+    /// paths into offset 0 leave one height. Cut to no value, or to one
+    /// more than its parameters, it is refused.
+    #[test]
+    fn a_recur_to_the_start_of_a_closure_of_one_parameter() {
+        let [a, b, c, d] = (-12i32).to_le_bytes();
+        // GetClosure; GetLocal 0; Recur 1 0 -> 0.
+        let code = |first: u8| {
+            vec![
+                op(Op::GetClosure),
+                op(Op::GetLocal),
+                0,
+                0,
+                op(Op::Recur),
+                1,
+                first,
+                0,
+                a,
+                b,
+                c,
+                d,
+            ]
+        };
+        assert_eq!(verify(&Function::unverified(1, 0, code(0), vec![])), Ok(()));
+        assert_eq!(
+            rejected_fn(Function::unverified(1, 0, code(1), vec![])),
+            "at offset 0: `GetClosure` runs where the paths into it leave different heights"
+        );
+    }
+
     #[test]
     fn bad_15_jump_back_before_the_start_of_the_code() {
         let [a, b, c, d] = (-9i32).to_le_bytes();

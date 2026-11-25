@@ -203,6 +203,16 @@ fn drain(ch) {
 This form is useful in concurrency patterns where a task should keep running
 until a channel closes or some condition is met.
 
+A call of a function to itself in tail position, as `drain(ch)` is here, is
+a jump back to the start of the function, as `loop(...)` is: a round costs
+what a round of a loop costs, it takes no frame however many rounds there
+are, and the call stack of an error shows the function once. A tail call of
+another function (`idle` handing over to `running`, which hands back) takes
+no frame either, but it is a call, which costs more than a jump, and the
+call stack shows the latest of those hand-overs. In the REPL a top-level
+function's call of itself is a call too: it reads the function's
+definition each round, as every use of a top-level name there does.
+
 
 ## Loop with State
 

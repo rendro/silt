@@ -1,0 +1,14 @@
+-- A fold whose function folds and maps, each to its end, and a fold
+-- whose list is the last thing a call of another fold's function makes.
+import list
+
+fn main() {
+  let sums = list.fold(1..4, []) { acc, i -> [list.fold(1..i, 0) { a, j -> a + j }, ..acc] }
+  println(sums)
+  let grid = list.map(1..3) { row -> list.map(1..3) { col -> row * col } }
+  println(grid)
+  let flat = list.fold(grid, 0) { acc, row -> acc + list.fold(row, 0) { a, x -> a + x } }
+  println(flat)
+  list.each(1..3) { i -> list.each(1..i) { j -> print("{i}{j} ") } }
+  println("")
+}

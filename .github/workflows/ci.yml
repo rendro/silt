@@ -330,7 +330,8 @@ jobs:
   loop-guard:
     # The machine code of the instruction loop, in the binary the
     # releases ship: built as release.yml builds it, with `stable`,
-    # which moves. The binary is stopped in two loops and stepped; a
+    # which moves. The binary is stopped in four loops (two `loop`s and
+    # the same two as a function that calls itself) and stepped; a
     # round must have no load that waits for a store. It keeps no
     # cache: the repository's cache is over its limit, and an entry
     # here would push out the test partitions'. See
@@ -347,7 +348,7 @@ jobs:
           targets: x86_64-unknown-linux-gnu
       - name: cargo build --release (as the release job)
         run: cargo build --locked --release --target x86_64-unknown-linux-gnu
-      - name: Count a round of two loops
+      - name: Count a round of four loops
         run: bash .github/scripts/loop-guard/run.sh target/x86_64-unknown-linux-gnu/release/silt
       # The smoke run the release job makes of each binary, here on every
       # push, so a change that breaks it is seen before a tag is pushed.
