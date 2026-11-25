@@ -1,0 +1,55 @@
+-- timeout: 90
+-- frame-budget: 1
+-- A supervisor that restarts by calling itself last runs in one frame
+-- however often it restarts: from an arm inside an arm, after a `let`,
+-- as a top-level function, as a closure and inside a task. A call whose
+-- value is still used (`let x = again(n - 1)`, `1 + again(n - 1)`)
+-- returns to its caller and keeps a frame, so such a function is `deep`.
+-- 300,000 restarts are more than a frame budget of 1 MiB holds.
+import list
+import task
+
+fn supervise(n: Int, restarts: Int) -> Int {
+  match n {
+    0 -> restarts
+    _ -> match n % 2 {
+      0 -> {
+        let next = restarts + 1
+        supervise(n - 1, next)
+      }
+      _ -> supervise(n - 1, restarts + 1)
+    }
+  }
+}
+
+deep fn used_by_let(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> {
+      let x = used_by_let(n - 1)
+      x + 1
+    }
+  }
+}
+
+deep fn used_by_plus(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + used_by_plus(n - 1)
+  }
+}
+
+fn main() {
+  println(supervise(300000, 0))
+  let restart = { n: Int ->
+    match n {
+      0 -> "closure done"
+      _ -> restart(n - 1)
+    }
+  }
+  println(restart(300000))
+  let in_a_task = task.map([300000], 1) { n -> supervise(n, 0) }
+  list.each(in_a_task) { v -> println(v) }
+  println(used_by_let(10))
+  println(used_by_plus(10))
+}

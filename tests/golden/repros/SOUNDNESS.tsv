@@ -199,7 +199,6 @@ repros/type_soundness/p3.silt	holds	reject E0301	a top-level channel is monomorp
 repros/type_soundness/p4.silt	-	obsolete	fn lambda; ported: lang/soundness/p4.silt
 repros/type_soundness/q1.silt	holds	reject E0301	`return` inside a closure is the closure's
 repros/type_soundness/q2.silt	holds	reject E0324	`?` inside a closure is the closure's
-repros/type_soundness/q3.silt	-	obsolete	`loop (i = 0, ...)` is not the loop syntax; ported: lang/soundness/q3.silt
 repros/type_soundness/q4.silt	holds	reject E0301	a generic record keeps its arguments
 repros/type_soundness/q5.silt	holds	reject E0301	a generic record keeps its arguments through an update
 repros/type_soundness/r1.silt	holds	reject E0301	two nominal records with the same fields are two types
@@ -258,7 +257,6 @@ repros/type_soundness/xr2.silt	holds	reject E0331	TS-13: Equal and Compare are s
 repros/type_soundness/xr3.silt	holds	reject E0322	refutable patterns in `let`
 repros/type_soundness/xr4.silt	holds	reject E0322	a refutable pattern as a function parameter
 repros/type_soundness/xr5.silt	holds	reject E0322	a list pattern as a closure parameter
-repros/type_soundness/xr6.silt	-	obsolete	a pattern as a `loop` binding is not syntax
 repros/type_soundness/xr7.silt	holds	reject E0322	a literal inside a record pattern as a closure parameter
 repros/type_soundness/y1.silt	holds	accept	control: json.parse into a record type
 repros/type_soundness/y2.silt	holds	reject E0301	a `type a` descriptor fixes the result type
@@ -400,7 +398,7 @@ lang/soundness/k4.silt	holds	reject E0320	Float and String literals never cover
 lang/soundness/k6.silt	holds	reject E0320	a map pattern and a pin never cover
 lang/soundness/p2.silt	holds	accept	control: a `let`-bound closure is polymorphic, a channel is not
 lang/soundness/p4.silt	holds	reject E0301	a channel from a local closure is monomorphic
-lang/soundness/q3.silt	holds	reject E0301	`loop(...)` arguments have the bindings' types
+lang/soundness/q3.silt	holds	reject E0301	the arguments of a self call have the parameters' types
 lang/soundness/se2.silt	holds	reject E0201	TS-7.3: `self` in a closure outside a method
 lang/soundness/t_poly_method.silt	holds	reject E0314	TCA-4: `show(f) + 1` over `fn show(x) { "{x}" }`
 lang/soundness/u5.silt	holds	accept	destructuring a tuple of values generalises each binding: `f(1)` and `f("s")` (false rejection)

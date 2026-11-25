@@ -3,13 +3,11 @@
 -- scrutinee for a test or for an arm, none of a list for each level of
 -- its pattern, and a name of a part is the part where it was taken
 -- out. A step of this walk is ten instructions: the scrutinee, two
--- tests, the rest, and the loop's arguments.
-fn walk(cs: List(String)) -> Int {
-  loop cs = cs, n = 0 {
-    match cs {
-      [] -> n
-      [_, ..rest] -> loop(rest, n + 1)
-    }
+-- tests, the rest, and the arguments of the self call.
+fn walk(cs: List(String), n: Int) -> Int {
+  match cs {
+    [] -> n
+    [_, ..rest] -> walk(rest, n + 1)
   }
 }
 
@@ -21,5 +19,5 @@ fn pairs(xs: List((Int, Int))) -> Int {
 }
 
 fn main() {
-  println(walk(["a", "b"]) + pairs([(1, 2)]))
+  println(walk(["a", "b"], 0) + pairs([(1, 2)]))
 }

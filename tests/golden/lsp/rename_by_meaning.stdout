@@ -5,7 +5,7 @@ rename_by_meaning.silt:40:7-40:12 => Sizable
 rename_by_meaning.silt:51:32-51:37 => Sizable
 rename_by_meaning.silt:52:3-52:8 => Sizable
 rename_by_meaning.silt:52:23-52:28 => Sizable
-rename_by_meaning.silt:100:86-100:91 => Sizable
+rename_by_meaning.silt:101:86-101:91 => Sizable
 > rename 52:10 resize
 rename_by_meaning.silt:34:6-34:11 => resize
 rename_by_meaning.silt:52:9-52:14 => resize
@@ -13,7 +13,7 @@ rename_by_meaning.silt:52:9-52:14 => resize
 rename_by_meaning.silt:34:6-34:11
 > definition 52:30
 rename_by_meaning.silt:37:6-37:10
-> definition 100:93
+> definition 101:93
 rename_by_meaning.silt:41:6-41:10
 > rename 34:12 me
 error: `self` is the receiver of a method and cannot be renamed: a method's first parameter is `self`
@@ -49,16 +49,16 @@ rename_by_meaning.silt:75:5-75:6 => inner
 rename_by_meaning.silt:72:11-72:12
 rename_by_meaning.silt:74:13-74:14
 rename_by_meaning.silt:77:3-77:4
-> references 81:8
-rename_by_meaning.silt:81:8-81:9
+> references 81:14
+rename_by_meaning.silt:81:14-81:15
 rename_by_meaning.silt:82:11-82:12
 rename_by_meaning.silt:83:15-83:16
-rename_by_meaning.silt:84:21-84:22
+rename_by_meaning.silt:84:19-84:20
 > references 80:10
 rename_by_meaning.silt:80:10-80:11
-rename_by_meaning.silt:81:12-81:13
-rename_by_meaning.silt:81:25-81:26
-> rename 94:31 Holder
-rename_by_meaning.silt:89:7-89:16 => Holder
-rename_by_meaning.silt:94:31-94:40 => Holder
-rename_by_meaning.silt:95:3-95:12 => Holder
+rename_by_meaning.silt:87:6-87:7
+rename_by_meaning.silt:87:13-87:14
+> rename 95:31 Holder
+rename_by_meaning.silt:90:7-90:16 => Holder
+rename_by_meaning.silt:95:31-95:40 => Holder
+rename_by_meaning.silt:96:3-96:12 => Holder

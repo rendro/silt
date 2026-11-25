@@ -12,24 +12,22 @@
 0024  Call                 0
 0026  Return
 
-== walk (arity=1, upvalues=0) ==
+== walk (arity=2, upvalues=0) ==
 0000  GetLocal             0
-0003  Constant             0     ; 0
-0006  GetLocal             1
-0009  TestListExact        0
-0011  JumpIfFalse          8     -> 0022
-0014  GetLocal             2
-0017  Jump                 28    -> 0050
-0022  TestListMin          1
-0024  JumpIfFalse          19    -> 0046
-0027  DestructListRest     1
-0029  GetLocal             4
-0032  GetLocal             2
-0035  AddConst             1     ; 1
-0038  Recur                2  slot 1  -40   -> 0006
-0046  Constant             2     ; "non-exhaustive match: no arm matched"
-0049  Panic
-0050  Return
+0003  TestListExact        0
+0005  JumpIfFalse          8     -> 0016
+0008  GetLocal             1
+0011  Jump                 28    -> 0044
+0016  TestListMin          1
+0018  JumpIfFalse          19    -> 0040
+0021  DestructListRest     1
+0023  GetLocal             3
+0026  GetLocal             1
+0029  AddConst             0     ; 1
+0032  Recur                2  slot 0  -40   -> 0000
+0040  Constant             1     ; "non-exhaustive match: no arm matched"
+0043  Panic
+0044  Return
 
 == pairs (arity=1, upvalues=0) ==
 0000  GetLocal             0
@@ -61,14 +59,15 @@
 0006  Constant             1     ; "a"
 0009  Constant             2     ; "b"
 0012  MakeList             2
-0015  Call                 1
-0017  GetGlobal            1     ; pairs
-0020  Constant             3     ; 1
-0023  Constant             4     ; 2
-0026  MakeTuple            2
-0028  MakeList             1
-0031  Call                 1
-0033  Add
-0034  TailCall             1
-0036  Return
+0015  Constant             3     ; 0
+0018  Call                 2
+0020  GetGlobal            1     ; pairs
+0023  Constant             4     ; 1
+0026  Constant             5     ; 2
+0029  MakeTuple            2
+0031  MakeList             1
+0034  Call                 1
+0036  Add
+0037  TailCall             1
+0039  Return
 

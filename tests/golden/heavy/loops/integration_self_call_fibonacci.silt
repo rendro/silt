@@ -1,0 +1,14 @@
+import io
+fn program() {
+  let fib = { n, a, b ->
+    match n == 0 {
+      true -> a
+      _ -> fib(n - 1, b, a + b)
+    }
+  }
+  fib(10, 0, 1)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

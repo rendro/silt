@@ -3,14 +3,12 @@ import channel
 let ch = channel.new(10)
 
 fn drain(unused) {
-  loop {
-    match channel.try_receive(ch) {
-      channel.Message(v) -> {
-        println("got {v}")
-        loop()
-      }
-      _ -> "done"
+  match channel.try_receive(ch) {
+    channel.Message(v) -> {
+      println("got {v}")
+      drain(unused)
     }
+    _ -> "done"
   }
 }
 

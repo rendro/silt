@@ -1,0 +1,16 @@
+import io
+import list
+fn program() {
+  let go = { n, acc ->
+    match {
+      n > 5 -> acc
+      n % 2 == 0 -> go(n + 1, list.append(acc, n))
+      _ -> go(n + 1, acc)
+    }
+  }
+  go(1, [])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

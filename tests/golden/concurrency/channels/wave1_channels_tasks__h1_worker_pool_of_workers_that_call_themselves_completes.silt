@@ -1,0 +1,47 @@
+-- repeat: 10
+-- stderr-not-contains: deadlock
+-- A worker pool of workers that call themselves after each job: three
+-- workers take jobs and send results, both channels are
+-- smaller than the number of jobs. Without the fix two of the three
+-- workers stay parked on the results channel with their results, and
+-- the collector waits for results that never arrive.
+import channel
+import list
+import task
+
+fn collect(ch, n, acc) {
+  match n {
+    0 -> acc
+    _ -> match channel.receive(ch) {
+      Some(v) -> collect(ch, n - 1, acc + v)
+      None -> acc
+    }
+  }
+}
+
+fn main() {
+  let jobs = channel.new(4)
+  let results = channel.new(4)
+
+  let workers = [1, 2, 3]
+    |> list.map { id ->
+      let work = { ->
+        match channel.receive(jobs) {
+          Some(n) -> {
+            channel.send(results, n * 2)
+            work()
+          }
+          None -> ()
+        }
+      }
+      work
+    }
+
+  let producer = { ->
+    1..30 |> list.each { n -> channel.send(jobs, n) }
+    channel.close(jobs)
+  }
+
+  let collector = { -> println("total {collect(results, 30, 0)}") }
+  task.join(list.append(workers, producer) |> list.append(collector))
+}

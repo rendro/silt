@@ -2,15 +2,16 @@ import channel
 
 fn drain(ch, label) {
   let prefix = "got"
-  loop {
+  let go = { ->
     match channel.try_receive(ch) {
       channel.Message(v) -> {
         println("{prefix} {label} {v}")
-        loop()
+        go()
       }
       _ -> "done {label}"
     }
   }
+  go()
 }
 
 fn main() {

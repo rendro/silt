@@ -3,17 +3,15 @@
 -- the length once and take the head out once: each arm tests the head
 -- that stays on top, and one that matches takes the rest only if it
 -- binds it. (`..` binds nothing.)
-fn count(cs: List(String)) -> Int {
-  loop cs = cs, commas = 0 {
-    match cs {
-      [] -> commas
-      [",", ..rest] -> loop(rest, commas + 1)
-      ["\"", ..] -> commas
-      [_, ..rest] -> loop(rest, commas)
-    }
+fn count(cs: List(String), commas: Int) -> Int {
+  match cs {
+    [] -> commas
+    [",", ..rest] -> count(rest, commas + 1)
+    ["\"", ..] -> commas
+    [_, ..rest] -> count(rest, commas)
   }
 }
 
 fn main() {
-  println(count(["a", ",", "b"]))
+  println(count(["a", ",", "b"], 0))
 }

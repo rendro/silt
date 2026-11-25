@@ -1,0 +1,20 @@
+-- A task that calls itself for ever gives way like any other: with
+-- every worker busy in such a task, the body of the `task.background`
+-- around them still gets its turn. When the body has returned, its scope
+-- stops them, and the program goes on behind it and ends.
+import list
+import task
+
+fn spin(n: Int) {
+  spin(n + 1)
+}
+
+fn main() {
+  let spinners = list.map(1..64) { _ -> { -> spin(0) } }
+  let said = task.background(spinners) { ->
+    println("the body runs")
+    "the body returned"
+  }
+  println(said)
+  println("the scope stopped every spinner")
+}

@@ -12,21 +12,20 @@
 0024  Call                 0
 0026  Return
 
-== sum (arity=1, upvalues=0) ==
-0000  Constant             0     ; 0
-0003  Constant             0     ; 0
-0006  GetLocal             1
-0009  GetLocal             0
-0012  JumpIfNotGeq         8     -> 0023
-0015  GetLocal             2
-0018  Jump                 21    -> 0044
+== sum (arity=3, upvalues=0) ==
+0000  GetLocal             0
+0003  GetLocal             1
+0006  JumpIfNotGeq         8     -> 0017
+0009  GetLocal             2
+0012  Jump                 24    -> 0041
+0017  GetLocal             0
+0020  AddConst             0     ; 1
 0023  GetLocal             1
-0026  AddConst             1     ; 1
-0029  GetLocal             2
-0032  GetLocal             1
-0035  Add
-0036  Recur                2  slot 1  -38   -> 0006
-0044  Return
+0026  GetLocal             2
+0029  GetLocal             0
+0032  Add
+0033  Recur                3  slot 0  -41   -> 0000
+0041  Return
 
 == fib (arity=1, upvalues=0) ==
 0000  GetLocal             0
@@ -55,12 +54,14 @@
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>
 0003  GetGlobal            0     ; sum
-0006  Constant             1     ; 10
-0009  Call                 1
-0011  GetGlobal            1     ; fib
-0014  Constant             1     ; 10
-0017  Call                 1
-0019  Add
-0020  TailCall             1
-0022  Return
+0006  Constant             1     ; 0
+0009  Constant             2     ; 10
+0012  Constant             1     ; 0
+0015  Call                 3
+0017  GetGlobal            1     ; fib
+0020  Constant             2     ; 10
+0023  Call                 1
+0025  Add
+0026  TailCall             1
+0028  Return
 

@@ -1,0 +1,15 @@
+import io
+fn program() {
+  let sum = { i, acc ->
+    match i > 5 {
+      true -> acc
+      _ -> sum(i + 1, acc + i)
+    }
+  }
+  let total = sum(1, 0)
+  total * 2
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

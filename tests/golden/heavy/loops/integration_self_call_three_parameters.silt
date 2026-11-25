@@ -1,0 +1,14 @@
+import io
+fn program() {
+  let go = { i, sum, product ->
+    match i >= 4 {
+      true -> (sum, product)
+      _ -> go(i + 1, sum + i, product * (i + 1))
+    }
+  }
+  go(0, 0, 1)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,13 +1,12 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: type mismatch: expected String, got Int
--- Port of repros/type_soundness/q3.silt, in the loop syntax.
-fn f() {
-  loop i = 0, acc = "" {
-    match i {
-      3 -> acc
-      _ -> loop(i + 1, i)
-    }
+-- Port of repros/type_soundness/q3.silt: the arguments of a self call
+-- have the types of the parameters.
+fn f(i: Int, acc: String) -> String {
+  match i {
+    3 -> acc
+    _ -> f(i + 1, i)
   }
 }
-fn main() { println(f()) }
+fn main() { println(f(0, "")) }

@@ -50,15 +50,16 @@ fn recs(p: P) -> Int {
 }
 
 fn loops(n: Int) -> Int {
-  loop i = n, acc = 0 {
+  let go = { i, acc ->
     match i {
       0 -> acc
       i -> {
         let acc = acc + i
-        loop(i - 1, acc)
+        go(i - 1, acc)
       }
     }
   }
+  go(n, 0)
 }
 
 fn pipes(n: Int) -> Int {

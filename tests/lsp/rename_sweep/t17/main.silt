@@ -1,21 +1,23 @@
 import list
 
 fn loopy(n: Int) -> Int {
-  loop n = n + 1, acc = n {
+  let go = { n, acc ->
     match n > 5 {
       true -> acc + n
-      false -> loop(n + 1, acc + 1)
+      false -> go(n + 1, acc + 1)
     }
   }
+  go(n + 1, n)
 }
 
 fn after(n: Int) -> Int {
-  let r = loop n = 0 {
+  let count = { n ->
     match n {
       3 -> n
-      _ -> loop(n + 1)
+      _ -> count(n + 1)
     }
   }
+  let r = count(0)
   r + n
 }
 
