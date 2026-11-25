@@ -11,7 +11,7 @@ use crate::value::{Float, List, MAX_TEXT_LEN, Record, Value};
 
 use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
-use super::runtime::{Frame, Step};
+use super::runtime::{Again, Frame, Step};
 use super::show::write_plain;
 use super::{Vm, VmError};
 use crate::runtime::sync::Wait;
@@ -488,6 +488,16 @@ fn fuses_two(byte: u8) -> bool {
     ]
     .iter()
     .any(|op| *op as u8 == byte)
+}
+
+/// What became of a `Return` to a builtin's frame ([`Vm::call_again`]).
+pub(super) enum Back {
+    /// The frame on top runs the function again.
+    Again,
+    /// The builtin's frame is resumed with this value.
+    Resume(Value),
+    /// The builtin is finished, with this value.
+    Done(Value),
 }
 
 /// How a run of the instruction loop ended ([`Vm::run_frames`]).
@@ -1113,6 +1123,21 @@ impl Vm {
                     ok!(self.tail_call_keep(argc, keep));
                     load!();
                 }
+                // To a builtin's frame that calls the function again
+                // (`list.fold`): the next call runs in this frame
+                // ([`Vm::call_again`]).
+                Instr::Return
+                    if budget > 0
+                        && self.frames.len() >= 2
+                        && self.frames.len() - 1 != floor
+                        && matches!(self.frames[self.frames.len() - 2], Frame::Native(_)) =>
+                {
+                    match self.call_again(base, &mut budget)? {
+                        Back::Again => load!(),
+                        Back::Resume(value) => returned!(value),
+                        Back::Done(value) => deliver!(value),
+                    }
+                }
                 Instr::Return => {
                     let frames = self.frames.len();
                     let top = self.stack.len() - 1;
@@ -1626,6 +1651,76 @@ impl Vm {
                 Entered::Code => return Ok(None),
             };
         }
+    }
+
+    /// `Return` of the function's frame on top to the builtin's frame
+    /// under it, whose `base` is the frame's first slot. The stack is
+    /// cut back to the arguments' place and the builtin is handed the
+    /// value ([`Native::again`]). When it calls the function again,
+    /// the frame is the call's, at its first instruction, with the
+    /// arguments the builtin pushed (`Again`): a frame of the call is
+    /// not let go of and made again. When it is finished, both frames
+    /// are gone and its value is for the frame under them (`Done`); an
+    /// error is the builtin's, with its frame on top. A builtin that
+    /// does neither is resumed with the value as after any return
+    /// (`Resume`). Taking the value is a step of the budget, as
+    /// resuming the frame is, so the slice has one left.
+    #[inline(never)]
+    fn call_again(&mut self, base: usize, budget: &mut usize) -> Result<Back, VmError> {
+        let value = pop(&mut self.stack);
+        self.stack.truncate(base);
+        let frames = self.frames.len();
+        let (below, top) = self.frames.split_at_mut(frames - 1);
+        let Some(Frame::Native(native)) = below.last_mut() else {
+            unreachable!("the frame under the function's is a builtin's")
+        };
+        let again = super::dispatch::again_native(native.as_mut(), value, &mut self.stack);
+        let back = match again {
+            Ok(Ok(Again::No(value))) => return Ok(Back::Resume(value)),
+            Ok(Ok(Again::Call(callee))) => {
+                *budget -= 1;
+                let [Frame::Code(frame)] = top else {
+                    unreachable!("the frame on top is a function's")
+                };
+                // The call as a call of the closure makes it: its own
+                // slot, unit until a method's dictionary goes there,
+                // and the dictionaries bound to it before the
+                // arguments (`Vm::call_closure`).
+                put(&mut self.stack[base - 1], Value::Unit);
+                let argc = self.stack.len() - base;
+                super::dicts::with_bound(&mut self.stack, callee, base, argc);
+                // (The frame may run another function by now: a tail
+                // call.)
+                if !Arc::ptr_eq(&frame.closure, callee) {
+                    frame.closure = Arc::clone(callee);
+                }
+                frame.ip = 0;
+                if !self.tco_elided.is_empty() {
+                    self.tco_elided.prune(frames - 1);
+                }
+                return Ok(Back::Again);
+            }
+            Ok(Ok(Again::Done(value))) => Ok(value),
+            Ok(Err(error)) => Err(error),
+            Err(payload) => {
+                let Some(Frame::Native(native)) = self.frames.get(frames - 2) else {
+                    unreachable!("the frame under the function's is a builtin's")
+                };
+                Err(super::dispatch::native_panicked(native.as_ref(), &payload))
+            }
+        };
+        // The function's frame goes, as after a return; an error leaves
+        // the builtin's on top, as a resumption that fails does.
+        *budget -= 1;
+        self.frames.pop();
+        if !self.tco_elided.is_empty() {
+            self.tco_elided.prune(frames - 1);
+        }
+        self.stack.truncate(base - 1);
+        let value = back?;
+        self.frames.pop();
+        self.native_frames -= 1;
+        Ok(Back::Done(value))
     }
 
     /// Drop the frames above the first `floor` and the stack above

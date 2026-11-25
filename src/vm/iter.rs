@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 
 use crate::value::{IntoIter, List, Map, MapIntoIter, Set, SetIntoIter, Value};
 
-use super::runtime::{Native, Step};
+use super::runtime::{Again, Native, Step};
 use super::{Vm, VmError};
 
 /// What an iteration does after a call: go on to the next item, or
@@ -111,6 +111,27 @@ impl<S: Send> Native for Iterate<S> {
         });
         self.current = Some(item);
         Ok(call)
+    }
+
+    /// The round of [`Iterate::resume`] after a call, with the next
+    /// call made in the frame of the one that returned: the step, the
+    /// next item and its arguments, and the callback again.
+    fn again<'a>(&'a mut self, input: Value, stack: &mut Vec<Value>) -> Result<Again<'a>, VmError> {
+        let Value::VmClosure(callback) = &self.callback else {
+            return Ok(Again::No(input));
+        };
+        let Some(item) = self.current.take() else {
+            return Ok(Again::No(input));
+        };
+        if let ControlFlow::Break(value) = (self.step)(&mut self.state, item, input)? {
+            return Ok(Again::Done(value));
+        }
+        let Some(item) = self.items.next() else {
+            return (self.finish)(&mut self.state).map(Again::Done);
+        };
+        (self.args)(&mut self.state, &item, stack);
+        self.current = Some(item);
+        Ok(Again::Call(callback))
     }
 }
 

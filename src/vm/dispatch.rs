@@ -2,7 +2,7 @@
 
 use std::panic::AssertUnwindSafe;
 
-use super::runtime::{Native, Step};
+use super::runtime::{Again, Native, Step};
 use super::{Vm, VmError};
 use crate::value::{HostCall, HostFault, HostFn, HostShape, Value, given_type, witness_type};
 
@@ -131,14 +131,31 @@ pub(super) fn resume_native(
 ) -> Result<Step, VmError> {
     match crate::scheduler::catch_as_error(AssertUnwindSafe(|| native.resume(vm, input))) {
         Ok(step) => step,
-        Err(payload) => {
-            let msg = decode_panic_payload(&payload);
-            let module = native.name().split('.').next().unwrap_or_default();
-            Err(VmError::ending(format!(
-                "builtin module '{module}' panicked: {msg}"
-            )))
-        }
+        Err(payload) => Err(native_panicked(native, &payload)),
     }
+}
+
+/// [`Native::again`] of `native`, while catching panics that escape
+/// it, as [`resume_native`] does. A panic is given back as it was
+/// caught, for [`native_panicked`]: the frame went into the call, and
+/// the function the frame calls again is borrowed from it.
+pub(super) fn again_native<'a>(
+    native: &'a mut dyn Native,
+    input: Value,
+    stack: &mut Vec<Value>,
+) -> std::thread::Result<Result<Again<'a>, VmError>> {
+    crate::scheduler::catch_as_error(AssertUnwindSafe(move || native.again(input, stack)))
+}
+
+/// The error of the builtin's frame `native`, which panicked with
+/// `payload`.
+pub(super) fn native_panicked(
+    native: &dyn Native,
+    payload: &Box<dyn std::any::Any + Send>,
+) -> VmError {
+    let msg = decode_panic_payload(payload);
+    let module = native.name().split('.').next().unwrap_or_default();
+    VmError::ending(format!("builtin module '{module}' panicked: {msg}"))
 }
 
 impl Vm {

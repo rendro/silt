@@ -44,11 +44,22 @@ fn bench(name: &str, source: &str) -> Duration {
 /// The program of benches/collections.silt that `kind` names, run on
 /// `n` elements.
 fn collections_program(kind: &str, n: usize) -> String {
-    let source = include_str!("collections.silt");
+    file_program(include_str!("collections.silt"), kind, n)
+}
+
+/// The program of benches/counting.silt that counts to `n` by the
+/// function `kind`.
+fn counting_program(kind: &str, n: usize) -> String {
+    file_program(include_str!("counting.silt"), kind, n)
+}
+
+/// The functions of `source`, a file of benches/ whose `main` runs the
+/// one its arguments name, and a `main` that runs `kind` on `n`.
+fn file_program(source: &str, kind: &str, n: usize) -> String {
     let body = source
         .split("\nfn main()")
         .next()
-        .expect("benches/collections.silt has a main");
+        .expect("the file has a main");
     format!("{body}\nfn main() {{\n  {kind}({n})\n}}\n")
 }
 
@@ -454,6 +465,27 @@ fn main() {
         ("collections: map.filter 10K", "mapfilter", 10_000),
     ] {
         bench(name, &collections_program(kind, n));
+    }
+
+    println!();
+
+    // ── Counting ────────────────────────────────────────────────────
+    // Each row counts to 1,000,000 by one form of a counting loop.
+    // benches/counting.silt runs the same programs to any count, one
+    // process per run.
+    println!("── Counting ───────────────────────────────────────────────────");
+
+    for (name, kind) in [
+        ("counting: loop 1M", "by_loop"),
+        ("counting: self tail call 1M", "by_self_call"),
+        ("counting: capturing closure 1M", "by_closure"),
+        ("counting: mutual tail calls 1M", "by_mutual_calls"),
+        ("counting: list.fold over a range 1M", "by_fold"),
+        ("counting: fold, function with a bound 1M", "by_fold_bound"),
+        ("counting: list.each over a range 1M", "by_each"),
+        ("counting: fold_until over a range 1M", "by_fold_until"),
+    ] {
+        bench(name, &counting_program(kind, 1_000_000));
     }
 
     println!();

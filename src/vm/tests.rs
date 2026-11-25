@@ -2681,6 +2681,72 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
     assert_eq!(result, Value::string("abc"));
 }
 
+// ── A builtin that calls its function again ──────────────────────
+//
+// `list.fold` and the other builtins of `vm::iterate` call their
+// function for each element in the frame of the last call
+// (`Native::again`): a fold over ten thousand elements makes no frame
+// for each.
+
+/// A function `add_score` with a bound, as a fold's function.
+const BOUND_ADD: &str = "trait Score {\n  fn score(self) -> Int\n}\n\
+    trait Score for Int {\n  fn score(self) -> Int {\n    self\n  }\n}\n\
+    fn add_score(acc: Int, x: a) -> Int where a: Score {\n  acc + Score.score(x)\n}";
+
+/// The value `call` gives, run in `main` after `decls`, and how many
+/// frames of functions it made.
+fn frames_made(decls: &str, call: &str) -> (Value, usize) {
+    use super::calls::CODE_FRAMES_MADE;
+    let source =
+        format!("import list\nimport host\n{decls}\nfn main() {{\n  host.give({call})\n}}\n");
+    let before = CODE_FRAMES_MADE.with(std::cell::Cell::get);
+    let value = run_vm(&source);
+    (value, CODE_FRAMES_MADE.with(std::cell::Cell::get) - before)
+}
+
+#[test]
+fn a_builtin_calls_its_function_again_in_the_frame_of_the_last_call() {
+    let sum = Value::Int(50_005_000);
+    let step = "fn add(acc, x) {\n  acc + x\n}\nfn step(acc, x) {\n  add(acc, x)\n}";
+    for (decls, call, value) in [
+        (
+            "",
+            "list.fold(1..10000, 0) { acc, i -> acc + i }",
+            sum.clone(),
+        ),
+        (
+            "",
+            "list.fold_until(1..10000, 0) { acc, i -> list.Continue(acc + i) }",
+            sum.clone(),
+        ),
+        ("", "list.each(1..10000) { i -> () }", Value::Unit),
+        (
+            "",
+            "list.length(list.map(1..10000) { i -> i * 2 })",
+            Value::Int(10_000),
+        ),
+        // A function whose body is a tail call of another.
+        (step, "list.fold(1..10000, 0, step)", sum.clone()),
+    ] {
+        let (given, made) = frames_made(decls, call);
+        assert_eq!(given, value, "{call}");
+        assert!(made < 10, "{call} made {made} frames");
+    }
+    // A function with a bound, whose dictionary comes with each call:
+    // the frames are those of its calls of `Score.score`, one a round.
+    let (given, made) = frames_made(BOUND_ADD, "list.fold(1..10000, 0, add_score)");
+    assert_eq!(given, sum);
+    assert!(
+        made < 10_010,
+        "a fold of a function with a bound made {made} frames"
+    );
+    // (Frames are counted: a recursion makes one for each call.)
+    let depth = "fn depth(n) {\n  match n {\n    0 -> 0\n    _ -> 1 + depth(n - 1)\n  }\n}";
+    let (given, made) = frames_made(depth, "depth(1000)");
+    assert_eq!(given, Value::Int(1000));
+    assert!(made > 1000, "a recursion 1000 deep made {made} frames");
+}
+
 #[test]
 fn test_scheduler_list_filter_with_yielding_predicate() {
     // list.filter with a yielding predicate. Verifies both the count and
