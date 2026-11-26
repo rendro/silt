@@ -918,7 +918,7 @@ fn stat_gives_a_time_before_1970() {
     let (_, fields) = record_fields(stat);
     assert_eq!(
         fields["modified"].to_string(),
-        "Some(1960-01-01T00:00:00.500000000)"
+        "Some(1960-01-01T00:00:00.500)"
     );
 }
 

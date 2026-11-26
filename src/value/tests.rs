@@ -999,8 +999,17 @@ fn display_time_record() {
 fn display_time_record_with_ns() {
     assert_eq!(
         format!("{}", make_time(14, 30, 0, 123000000)),
-        "14:30:00.123000000"
+        "14:30:00.123"
     );
+    assert_eq!(
+        format!("{}", make_time(14, 30, 0, 123456000)),
+        "14:30:00.123456"
+    );
+    assert_eq!(
+        format!("{}", make_time(14, 30, 0, 123456789)),
+        "14:30:00.123456789"
+    );
+    assert_eq!(format!("{}", make_time(14, 30, 0, 1000)), "14:30:00.000001");
 }
 
 #[test]

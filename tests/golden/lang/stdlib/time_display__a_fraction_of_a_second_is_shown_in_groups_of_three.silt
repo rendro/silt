@@ -1,0 +1,18 @@
+-- A time and a datetime show a fraction of a second in groups of three
+-- digits, as few as the value needs: milliseconds, microseconds or
+-- nanoseconds; none for a whole second. json writes the same text, and
+-- it reads back as the same value.
+import json
+import list
+import time
+
+type At { t: time.Time, dt: time.DateTime }
+
+fn main() {
+  list.each([0, 123000000, 123456000, 123456789, 1000, 1, 100000000, 999999999]) { ns ->
+    let dt = time.to_datetime(time.Instant { epoch_ns: 1793512800000000000 + ns }, 0)
+    let t = dt.time
+    let text = json.stringify(At { t, dt })
+    println("{ns}: {t} {dt} {text} {json.parse(text, At) == Ok(At { t, dt })}")
+  }
+}

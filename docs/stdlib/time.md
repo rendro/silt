@@ -48,7 +48,9 @@ type Weekday {
 }
 ```
 
-`Date`, `Time`, and `DateTime` display as ISO 8601 in string interpolation.
+`Date`, `Time`, and `DateTime` display as ISO 8601 in string interpolation,
+a fraction of a second only when the value has one, in groups of three
+digits (`12:30:00.250`, `12:30:00.250001`, `12:30:00.250000001`).
 `Duration` displays in human-readable form (`2h30m15s`, `500ms`, `42ns`):
 every unit from the largest it has down to the smallest it has, zeros
 between included (`1h0m5s`, but `1h` and `1h1m`), and what lies below a
@@ -349,7 +351,7 @@ fn main() {
   let dt = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
   println(dt) -- Ok(2024-07-04T12:00:00)
   let half = time.parse("2024-07-04 12:00:00.5", "%Y-%m-%d %H:%M:%S.%f")
-  println(half) -- Ok(2024-07-04T12:00:00.500000000)
+  println(half) -- Ok(2024-07-04T12:00:00.500)
 }
 ```
 

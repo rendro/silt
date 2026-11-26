@@ -13,13 +13,13 @@ Err(invalid time '1979-05-27T07:32:00Z' (expected HH:MM:SS): input contains inva
 == 1979-05-27T00:32:00.999999-07:00
 Err(invalid date '1979-05-27T00:32:00.999999-07:00' (expected YYYY-MM-DD): trailing input at v)
 Err(invalid time '1979-05-27T00:32:00.999999-07:00' (expected HH:MM:SS): input contains invalid characters at v)
-Ok(DT {v: 1979-05-27T07:32:00.999999000})
+Ok(DT {v: 1979-05-27T07:32:00.999999})
 Err(toml type mismatch: expected String, got datetime at v)
 Err(toml type mismatch: expected Int, got datetime at v)
 Err(toml type mismatch: expected Float, got datetime at v)
 Err(invalid date '1979-05-27T00:32:00.999999-07:00' (expected YYYY-MM-DD): trailing input at v)
 Err(invalid date '1979-05-27T00:32:00.999999-07:00' (expected YYYY-MM-DD): trailing input at v[0])
-Ok(MD {v: #{"a": 1979-05-27T07:32:00.999999000, "b": 1979-05-28T00:00:00}})
+Ok(MD {v: #{"a": 1979-05-27T07:32:00.999999, "b": 1979-05-28T00:00:00}})
 Err(invalid date '1979-05-27T00:32:00.999999-07:00' (expected YYYY-MM-DD): trailing input at a.v)
 Err(invalid time '1979-05-27T00:32:00.999999-07:00' (expected HH:MM:SS): input contains invalid characters at xs[0].v)
 == 1979-05-27 07:32:00Z
@@ -49,13 +49,13 @@ Err(invalid time '1979-05-27T07:32:00' (expected HH:MM:SS): input contains inval
 == 1979-05-27T07:32:00.5
 Err(invalid date '1979-05-27T07:32:00.5' (expected YYYY-MM-DD): trailing input at v)
 Err(invalid time '1979-05-27T07:32:00.5' (expected HH:MM:SS): input contains invalid characters at v)
-Ok(DT {v: 1979-05-27T07:32:00.500000000})
+Ok(DT {v: 1979-05-27T07:32:00.500})
 Err(toml type mismatch: expected String, got datetime at v)
 Err(toml type mismatch: expected Int, got datetime at v)
 Err(toml type mismatch: expected Float, got datetime at v)
 Err(invalid date '1979-05-27T07:32:00.5' (expected YYYY-MM-DD): trailing input at v)
 Err(invalid date '1979-05-27T07:32:00.5' (expected YYYY-MM-DD): trailing input at v[0])
-Ok(MD {v: #{"a": 1979-05-27T07:32:00.500000000, "b": 1979-05-28T00:00:00}})
+Ok(MD {v: #{"a": 1979-05-27T07:32:00.500, "b": 1979-05-28T00:00:00}})
 Err(invalid date '1979-05-27T07:32:00.5' (expected YYYY-MM-DD): trailing input at a.v)
 Err(invalid time '1979-05-27T07:32:00.5' (expected HH:MM:SS): input contains invalid characters at xs[0].v)
 == 1979-05-27
@@ -84,7 +84,7 @@ Err(invalid date '07:32:00' (expected YYYY-MM-DD): input contains invalid charac
 Ok([T {v: 07:32:00}])
 == 00:32:00.999999
 Err(invalid date '00:32:00.999999' (expected YYYY-MM-DD): input contains invalid characters at v)
-Ok(T {v: 00:32:00.999999000})
+Ok(T {v: 00:32:00.999999})
 Err(invalid datetime '00:32:00.999999' at v)
 Err(toml type mismatch: expected String, got datetime at v)
 Err(toml type mismatch: expected Int, got datetime at v)
@@ -93,7 +93,7 @@ Err(invalid date '00:32:00.999999' (expected YYYY-MM-DD): input contains invalid
 Err(invalid date '00:32:00.999999' (expected YYYY-MM-DD): input contains invalid characters at v[0])
 Err(invalid datetime '00:32:00.999999' at v.a)
 Err(invalid date '00:32:00.999999' (expected YYYY-MM-DD): input contains invalid characters at a.v)
-Ok([T {v: 00:32:00.999999000}])
+Ok([T {v: 00:32:00.999999}])
 == 1979-02-30
 Err(invalid date '1979-02-30': the day is out of range: February 1979 has 28 days at v)
 Err(invalid time '1979-02-30' (expected HH:MM:SS): input contains invalid characters at v)

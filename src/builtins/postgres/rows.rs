@@ -1519,8 +1519,8 @@ mod tests {
         assert_eq!(text(day(10000, 1, 1)), "10000-01-01");
         assert_eq!(text(day(-43, 3, 15)), "0044-03-15 BC");
         assert_eq!(text(day(0, 12, 31)), "0001-12-31 BC");
-        assert_eq!(text(at(2026, 10, 19)), "2026-10-19T12:00:00.250000000+00");
-        assert_eq!(text(at(-43, 3, 15)), "0044-03-15T12:00:00.250000000+00 BC");
+        assert_eq!(text(at(2026, 10, 19)), "2026-10-19T12:00:00.250+00");
+        assert_eq!(text(at(-43, 3, 15)), "0044-03-15T12:00:00.250+00 BC");
         let time = make_time(NaiveTime::from_hms_opt(1, 2, 3).expect("a time"));
         assert_eq!(text(time), "01:02:03");
     }
