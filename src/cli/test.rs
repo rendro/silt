@@ -187,12 +187,23 @@ fn check_package_first(dir: &Path) {
 
 fn run_tests(given: &[String], filter: Option<String>) {
     // Each path given is what the commands that take one make of it
-    // (`paths::path_arg`); one that is none of them is refused before
-    // anything runs.
+    // (`paths::path_arg`); one that is none of them, or names nothing
+    // (a misspelled file or directory), is refused before anything runs.
     let args: Vec<PathArg> = given.iter().map(|arg| path_arg(arg)).collect();
     for arg in &args {
-        if let PathArg::NotSilt(f) = arg {
-            refuse_path("test", f, FILE_OR_DIRECTORY);
+        match arg {
+            PathArg::NotSilt(f) => refuse_path("test", f, FILE_OR_DIRECTORY),
+            PathArg::File(f) => {
+                if let Err(e) = std::fs::metadata(f) {
+                    eprintln!(
+                        "error reading {}: {}",
+                        crate::source::shown_path(f),
+                        crate::diagnostic::io_error_text(&e)
+                    );
+                    process::exit(1);
+                }
+            }
+            PathArg::Package(_) | PathArg::Dir(_) => {}
         }
     }
     // The package each path is in (or the working directory is in) is

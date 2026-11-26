@@ -256,7 +256,8 @@ fn check_watch_refuses_stdin() {
 
 /// `silt test` takes several paths, files and directories, runs the
 /// tests of each with one summary, runs a file given twice once, and
-/// refuses a path that is neither before any test runs. FAIL on the
+/// refuses a path that is neither, or that names nothing, before any
+/// test runs. FAIL on the
 /// base commit: a second path was an unexpected extra argument.
 #[test]
 fn test_takes_several_paths() {
@@ -288,5 +289,17 @@ fn test_takes_several_paths() {
         "{out:?}"
     );
     assert!(!text(&out.stderr).contains("PASS"), "{out:?}");
+
+    // A path that names nothing (a misspelled file or directory): refused
+    // before any test runs, as `silt check` reports it.
+    for missing in ["missing_test.silt", "nodir"] {
+        let out = silt(&dir, &["test", "b_test.silt", missing], "");
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        assert_eq!(
+            text(&out.stderr),
+            format!("error reading {missing}: no such file\n"),
+            "{out:?}"
+        );
+    }
     let _ = fs::remove_dir_all(&dir);
 }
