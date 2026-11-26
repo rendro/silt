@@ -1,0 +1,14 @@
+-- exit: 1
+-- A variant with fields written as a record literal: the error says
+-- whose variant it is and shows the call that builds it, for a variant
+-- of the program and for one of the prelude.
+type Slot { Full(Int), Pair(Int, String), Empty }
+
+fn main() {
+  let a = Full { x: 1 }
+  let b = Pair { x: 1, y: "two" }
+  let c = Some { x: 1 }
+  println(a)
+  println(b)
+  println(c)
+}

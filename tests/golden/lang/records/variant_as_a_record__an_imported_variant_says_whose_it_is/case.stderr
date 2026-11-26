@@ -1,0 +1,33 @@
+error[type]: 'Go' is a variant of 'Light', not a record type
+ --> main.silt:8:15
+   |
+ 8 |   let light = Go { x: 1 }
+   |               ^^ 'Go' is a variant of 'Light', not a record type
+  = help: `Go` has no fields: write `Go`
+
+error[type]: 'Full' is a variant of 'Slot', not a record type
+ --> main.silt:9:14
+   |
+ 9 |   let slot = Full { x: 1 }
+   |              ^^^^ 'Full' is a variant of 'Slot', not a record type
+  = help: `Full` takes 1 field: write `Full(a)`
+
+error[type]: 'lights.Stop' is a variant of 'Light', not a record type
+ --> main.silt:10:15
+    |
+ 10 |   let other = lights.Stop { x: 1 }
+    |               ^^^^^^^^^^^^^^^^^^^^ 'lights.Stop' is a variant of 'Light', not a record type
+  = help: `lights.Stop` has no fields: write `lights.Stop`
+
+error[type]: 'Go' is a variant of 'Light', not a record type
+ --> main.silt:11:9
+    |
+ 11 |   match Go { x } {
+    |         ^^ 'Go' is a variant of 'Light', not a record type
+  = help: `Go` has no fields: write `Go`
+
+error[type]: undefined variable 'x'
+ --> main.silt:11:14
+    |
+ 11 |   match Go { x } {
+    |              ^ undefined variable 'x'

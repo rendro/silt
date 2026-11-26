@@ -3022,6 +3022,14 @@ impl Resolver<'_> {
             None => match self.lookup_type(name) {
                 Some(binding) => Some(self.binding_res(&binding)),
                 None => {
+                    if !self.is_local(name)
+                        && let Some(binding) = self.lookup_global_value(name)
+                        && let Some(d) =
+                            self.variant_not_record(&binding, &resolve(name), name_span)
+                    {
+                        self.error(d);
+                        return Some(Res::Error);
+                    }
                     let elsewhere = self.elsewhere(name);
                     if elsewhere.is_empty() {
                         return None;
@@ -3078,7 +3086,12 @@ impl Resolver<'_> {
                 match exports.types.get(&name).cloned() {
                     Some(binding) => Some(self.binding_res(&binding)),
                     None => {
-                        let d = if exports.private.contains_key(&name) {
+                        let written = format!("{}.{name}", q.name);
+                        let variant = (exports.values.get(&name))
+                            .and_then(|binding| self.variant_not_record(binding, &written, span));
+                        let d = if let Some(d) = variant {
+                            d
+                        } else if exports.private.contains_key(&name) {
                             Diagnostic::error(
                                 Code::PrivateItem,
                                 span,
@@ -3112,6 +3125,49 @@ impl Resolver<'_> {
                 }
             }
         }
+    }
+
+    /// The error for a record literal or pattern whose name, written
+    /// `written`, is a variant (`binding`): it names no record type,
+    /// and a variant is written alone or called with its fields.
+    fn variant_not_record(
+        &self,
+        binding: &Binding,
+        written: &str,
+        span: Span,
+    ) -> Option<Diagnostic> {
+        let Binding::Def(id) = binding else {
+            return None;
+        };
+        let DefKind::Variant { ty, arity, .. } = self.defs.get(*id).kind else {
+            return None;
+        };
+        let enum_name = self.defs.get(ty.0).name;
+        let help = match arity {
+            0 => format!("`{written}` has no fields: write `{written}`"),
+            n => {
+                let fields: Vec<String> = (0..n)
+                    .map(|i| char::from(b'a' + (i % 26) as u8).to_string())
+                    .collect();
+                let count = if n == 1 {
+                    "1 field".to_string()
+                } else {
+                    format!("{n} fields")
+                };
+                format!(
+                    "`{written}` takes {count}: write `{written}({})`",
+                    fields.join(", ")
+                )
+            }
+        };
+        Some(
+            Diagnostic::error(
+                Code::UndefinedType,
+                span,
+                format!("'{written}' is a variant of '{enum_name}', not a record type"),
+            )
+            .with_help(help),
+        )
     }
 
     // ── Expressions ──
