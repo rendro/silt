@@ -936,10 +936,20 @@ pub(crate) mod list {
             xs.is_empty()
         }
 
-        fn append(xs: List, elem: &Value) -> Result<Value, VmError> {
+        fn append(xs: List, elem: &Value) -> Result<Step, VmError> {
             xs.writable()?;
             fits("list.append", Kind::List, xs.len().saturating_add(1))?;
-            Ok(Value::List(xs.push_back(elem.clone())?))
+            let elem = elem.clone();
+            // A list in a tree that this call's argument alone holds is
+            // changed in place once the argument is let go of, as by
+            // `map.set`.
+            if xs.held_alone_in_tree() {
+                let xs = xs.clone();
+                return Ok(after_args("list.append", move || {
+                    Ok(Value::List(xs.put_back(elem)?))
+                }));
+            }
+            Ok(Step::Done(Value::List(xs.push_back(elem)?)))
         }
 
         fn prepend(xs: List, elem: &Value) -> Result<Value, VmError> {
@@ -958,11 +968,21 @@ pub(crate) mod list {
             xs.get(usize::try_from(i).ok()?)
         }
 
-        fn set(xs: List, index: i64, value: &Value) -> Result<Option<Value>, VmError> {
-            let Ok(index) = usize::try_from(index) else {
-                return Ok(None);
+        fn set(xs: List, index: i64, value: &Value) -> Result<Step, VmError> {
+            let index = usize::try_from(index).ok().filter(|&index| index < xs.len());
+            let Some(index) = index else {
+                return Ok(Step::Done(Value::variant(bv::NONE, [])));
             };
-            Ok(xs.set(index, value.clone())?.map(Value::List))
+            // (In place as `list.append`.)
+            if xs.held_alone_in_tree() {
+                let (xs, value) = (xs.clone(), value.clone());
+                return Ok(after_args("list.set", move || {
+                    let set = xs.put_at(index, value)?.map(Value::List);
+                    Ok(Value::variant(bv::SOME, set))
+                }));
+            }
+            let set = xs.set(index, value.clone())?.map(Value::List);
+            Ok(Step::Done(Value::variant(bv::SOME, set)))
         }
 
         // A count is cut to the list: a negative one is 0, one past
@@ -1339,12 +1359,20 @@ pub(crate) mod set {
             Ok(s.contains(elem))
         }
 
-        fn insert(s: Set, elem: &Value) -> Result<Value, VmError> {
+        fn insert(s: Set, elem: &Value) -> Result<Step, VmError> {
             ensure_no_fn("set.insert", "Compare", [elem])?;
-            if !s.contains(elem) {
-                fits("set.insert", Kind::Set, s.len() + 1)?;
+            // (A member it has stays: the set is the one given.)
+            if s.contains(elem) {
+                return Ok(Step::Done(Value::Set(s.clone())));
             }
-            Ok(Value::Set(s.insert(elem.clone())))
+            fits("set.insert", Kind::Set, s.len() + 1)?;
+            let elem = elem.clone();
+            // (In place as `map.set`.)
+            if s.held_alone_in_tree() {
+                let s = s.clone();
+                return Ok(after_args("set.insert", move || Ok(Value::Set(s.put(elem)))));
+            }
+            Ok(Step::Done(Value::Set(s.insert(elem))))
         }
 
         fn remove(s: Set, elem: &Value) -> Result<Value, VmError> {

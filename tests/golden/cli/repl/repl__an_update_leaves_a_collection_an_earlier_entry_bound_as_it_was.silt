@@ -1,0 +1,8 @@
+-- cmd: repl
+-- stdin: import list\nimport map\nimport set\nlet m = list.fold(0..99, #{}) { a, i -> map.set(a, i, i) }\nlet s = list.fold(0..99, #[]) { a, i -> set.insert(a, i) }\nlet l = list.fold(0..199, []) { a, i -> list.append(a, i) }\nlet m2 = list.fold([1, 2, 3], m) { a, x -> map.set(a, x, 0) }\nlet m3 = list.fold([1, 2, 3], m) { a, x -> map.update(a, x, 0) { v -> v + 1000 } }\nlet s2 = list.fold([1000, 1001], s) { a, x -> set.insert(a, x) }\nlet l2 = list.fold([1, 2], l) { a, x -> list.append(a, x) }\nfn grow(i: Int, acc: List(Int)) -> List(Int) {\n  match i == 0 {\n    true -> acc\n    false -> grow(i - 1, list.append(acc, i))\n  }\n}\nfn put(i: Int, acc: Map(Int, Int)) -> Map(Int, Int) {\n  match i == 0 {\n    true -> acc\n    false -> put(i - 1, map.set(acc, i, -i))\n  }\n}\nlet l3 = grow(5, l)\nlet m4 = put(5, m)\nlet l4 = match list.set(l, 1, -1) {\n  Some(x) -> x\n  None -> []\n}\n(map.get(m, 1), map.get(m2, 1), map.get(m3, 1), map.get(m4, 1), set.length(s), set.length(s2))\n(list.length(l), list.get(l, 1), list.length(l2), list.length(l3), list.get(l4, 1), list.sum(l))\n:quit\n
+-- stdout-contains: (Some(1), Some(0), Some(1001), Some(-1), 100, 102)
+-- stdout-contains: (200, Some(1), 202, 205, Some(-1), 19900)
+-- A collection an earlier entry binds stays as it was when a later
+-- entry makes an update of it, by a fold or by a function that calls
+-- itself: map.set, map.update, set.insert, list.append and list.set
+-- change a collection in place only when nothing else holds it.

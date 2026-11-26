@@ -11,6 +11,7 @@ use crate::value::{Float, List, MAX_TEXT_LEN, Record, Value};
 
 use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
+use super::give;
 use super::runtime::{Again, Frame, Step};
 use super::show::write_plain;
 use super::{Vm, VmError};
@@ -444,31 +445,6 @@ pub(super) enum Half {
     Branch(usize),
     /// Jump to the offset (`Recur`).
     Jump(usize),
-}
-
-/// Before a call of a builtin whose value the frame returns at once
-/// (the instruction after the call is `Return`): the frame's slots
-/// below the arguments are read no more, and each copy there of a map
-/// that is an argument is let go of, so that the builtin may be the
-/// map's one holder and change it where it is (`map.update` and
-/// `map.set` of the map a fold hands it, [`crate::value::Map::put`]). The map lives on
-/// in the argument: nothing is dropped, and nothing kept elsewhere
-/// changes. (A call, not a part of the loop: see `interpolate`.)
-#[inline(never)]
-fn let_go_of_map_copies(stack: &mut [Value], base: usize, args_at: usize) {
-    let (slots, args) = stack.split_at_mut(args_at);
-    for arg in args.iter() {
-        let Value::Map(map) = arg else {
-            continue;
-        };
-        for slot in &mut slots[base..] {
-            if let Value::Map(copy) = slot
-                && copy.shares(map)
-            {
-                *slot = Value::Unit;
-            }
-        }
-    }
 }
 
 /// Whether the opcode `byte` is of an instruction that fuses two (see
@@ -1174,12 +1150,11 @@ impl Vm {
                     }
                 }
                 Instr::CallBuiltin { builtin, argc } => {
-                    let returns = code.get(ip) == Some(&(Op::Return as u8));
-                    save!();
                     let args_at = self.stack.len() - argc;
-                    if returns {
-                        let_go_of_map_copies(&mut self.stack, base, args_at);
+                    if give::puts(builtin) {
+                        give::let_go_of_copies(&mut self.stack, chunk, ip, base, args_at);
                     }
+                    save!();
                     let entered =
                         ok!(self.with_args(args_at, |vm, args| vm.enter_builtin(builtin, args)));
                     go_on!(self.entered(entered));

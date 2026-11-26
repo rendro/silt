@@ -1,0 +1,2178 @@
+-- A collection that a program holds anywhere else stays as it was when an
+-- update is made of it: a let, a function's frame, a closure, a record,
+-- a tuple, a list, an Option, a channel, another task, a fold's state, a
+-- function that calls itself with it (with the old one, with it twice,
+-- with a history of them), a record that holds it in such a function.
+-- Each row prints the held one before and after ("same") and the one
+-- made. map.set, map.update, set.insert, list.append and list.set may
+-- change a collection in place when nothing else holds it; this file's
+-- output is what it was when each was a copy.
+import channel
+import list
+import map
+import option
+import set
+import task
+
+-- ── map.set ───────────────────────────────────────────────
+
+type BoxM {
+  label: String,
+  c: Map(Int, Int),
+  d: Map(Int, Int),
+}
+
+fn fpM(c: Map(Int, Int)) -> String {
+  "{map.length(c)}/{map.fold(c, 0) { a, k, v -> a + k * 7 + v }}"
+}
+
+fn treeM() -> Map(Int, Int) {
+  list.fold(0..99, #{}) { a, i -> map.set(a, i, i) }
+}
+
+fn flatM() -> Map(Int, Int) {
+  #{ 1: 10, 2: 20, 3: 30 }
+}
+
+fn tailM(c: Map(Int, Int)) -> Map(Int, Int) {
+  map.set(c, 1, 1 * 3 + 1)
+}
+
+fn viaM(c: Map(Int, Int)) -> Map(Int, Int) {
+  tailM(c)
+}
+
+fn localsM(c: Map(Int, Int)) -> Map(Int, Int) {
+  let a = c
+  let b = a
+  match b {
+    e -> map.set(e, 2, 2 * 3 + 1)
+  }
+}
+
+fn foldM(c: Map(Int, Int), xs: List(Int)) -> Map(Int, Int) {
+  list.fold(xs, c) { acc, x -> map.set(acc, x, x * 3 + 1) }
+}
+
+-- a function that calls itself with the collection as its last argument
+fn lastM(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> lastM(i + 1, n, map.set(acc, i % 3, i % 3 * 3 + 1))
+  }
+}
+
+-- with it as its first argument
+fn firstM(acc: Map(Int, Int), i: Int, n: Int) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> firstM(map.set(acc, i % 3, i % 3 * 3 + 1), i + 1, n)
+  }
+}
+
+-- through a let
+fn namedM(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = map.set(acc, i % 3, i % 3 * 3 + 1)
+      namedM(i + 1, n, next)
+    }
+  }
+}
+
+-- the old one handed on too
+fn oldM(i: Int, n: Int, acc: Map(Int, Int), old: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpM(acc)} old {fpM(old)}"
+    false -> oldM(i + 1, n, map.set(acc, i % 3, i % 3 * 3 + 1), acc)
+  }
+}
+
+-- the same one handed on twice
+fn twiceM(i: Int, n: Int, acc: Map(Int, Int), same: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpM(acc)} same {fpM(same)}"
+    false -> twiceM(i + 1, n, acc, map.set(acc, i % 3, i % 3 * 3 + 1))
+  }
+}
+
+-- every old one kept in a list
+fn histM(i: Int, n: Int, acc: Map(Int, Int), olds: List(Map(Int, Int))) -> String {
+  match i == n {
+    true -> "{fpM(acc)} olds {list.map(olds) { o -> fpM(o) }}"
+    false -> histM(i + 1, n, map.set(acc, i % 3, i % 3 * 3 + 1), [acc, ..olds])
+  }
+}
+
+-- a closure of each round keeps the old one
+fn seenM(i: Int, n: Int, acc: Map(Int, Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpM(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> seenM(i + 1, n, map.set(acc, i % 3, i % 3 * 3 + 1), [{ -> fpM(acc) }, ..looks])
+  }
+}
+
+-- an arm that does not change it reads it
+fn armM(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> match i % 2 == 0 {
+      true -> armM(i + 1, n, map.set(acc, i % 3, i % 3 * 3 + 1))
+      false -> armM(i + 1, n, acc)
+    }
+  }
+}
+
+-- each old one sent on a channel
+fn sentM(i: Int, n: Int, acc: Map(Int, Int), ch: Channel(Map(Int, Int))) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      channel.send(ch, acc)
+      sentM(i + 1, n, map.set(acc, i % 3, i % 3 * 3 + 1), ch)
+    }
+  }
+}
+
+-- a record that holds it, handed on
+fn recM(i: Int, n: Int, b: BoxM) -> BoxM {
+  match i == n {
+    true -> b
+    false -> recM(i + 1, n, b.{ c: map.set(b.c, i % 3, i % 3 * 3 + 1) })
+  }
+}
+
+-- the record handed on, and the old record too
+fn recoldM(i: Int, n: Int, b: BoxM, old: BoxM) -> String {
+  match i == n {
+    true -> "{fpM(b.c)} old {fpM(old.c)} {old.label}"
+    false -> recoldM(i + 1, n, b.{ c: map.set(b.c, i % 3, i % 3 * 3 + 1), label: "r{i}" }, b)
+  }
+}
+
+-- a field updated from another one
+fn recotherM(i: Int, n: Int, b: BoxM) -> BoxM {
+  match i == n {
+    true -> b
+    false -> recotherM(i + 1, n, b.{ d: map.set(b.c, i % 3, i % 3 * 3 + 1) })
+  }
+}
+
+-- two updates of the record in a row
+fn rectwoM(i: Int, n: Int, b: BoxM) -> BoxM {
+  match i == n {
+    true -> b
+    false -> rectwoM(
+      i + 1,
+      n,
+      b.{ c: map.set(b.c, i % 3, i % 3 * 3 + 1) }
+        .{ d: map.set(b.d, (i + 1) % 3, (i + 1) % 3 * 3 + 1) },
+    )
+  }
+}
+
+-- a record whose function reads it again in an arm
+fn recarmM(i: Int, n: Int, b: BoxM) -> BoxM {
+  match i == n {
+    true -> b
+    false -> match i % 2 == 0 {
+      true -> recarmM(i + 1, n, b.{ c: map.set(b.c, i % 3, i % 3 * 3 + 1) })
+      false -> recarmM(i + 1, n, b.{ label: "{b.label}." })
+    }
+  }
+}
+
+fn rowM(name: String, before: String, after: String, made: String) {
+  let verdict = match before == after {
+    true -> "same"
+    false -> "CHANGED UNDER ITS HOLDER"
+  }
+  println("map.set {name}: {verdict} {before} -> {after}; made {made}")
+}
+
+fn eachM(kind: String, make: Fn() -> Map(Int, Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpM(c)
+  let n = map.set(c, 1, 1 * 3 + 1)
+  rowM("{kind} 1 a let read after", before, fpM(c), fpM(n))
+  rowM("{kind} 2 returned at once", before, fpM(c), fpM(tailM(c)))
+  rowM("{kind} 2 through a tail call", before, fpM(c), fpM(viaM(c)))
+  rowM("{kind} 2 copies in the frame", before, fpM(c), fpM(localsM(c)))
+  let look = { -> fpM(c) }
+  rowM("{kind} 3 a closure", before, look(), fpM(foldM(c, xs)))
+  let box = BoxM { label: "b", c: c, d: c }
+  let pair = (c, 1)
+  let items = [c, c]
+  let maybe = Some(c)
+  rowM("{kind} 4 a record field", before, fpM(box.c), fpM(foldM(box.c, xs)))
+  let (first, _) = pair
+  let made = foldM(first, xs)
+  let (again, _) = pair
+  rowM("{kind} 4 a tuple", before, fpM(again), fpM(made))
+  let changed = list.map(items) { it -> tailM(it) }
+  rowM(
+    "{kind} 4 list elements",
+    "{[before, before]}",
+    "{list.map(items) { it -> fpM(it) }}",
+    "{list.map(changed) { it -> fpM(it) }}",
+  )
+  let changed = option.map(maybe) { it -> tailM(it) }
+  rowM(
+    "{kind} 4 an Option",
+    before,
+    fpM(option.unwrap_or(maybe, #{})),
+    fpM(option.unwrap_or(changed, #{})),
+  )
+  let updated = box.{ c: map.set(box.c, 1, 1 * 3 + 1) }
+  rowM(
+    "{kind} 4 a record update",
+    "{before} {before}",
+    "{fpM(box.c)} {fpM(box.d)}",
+    "{fpM(updated.c)} {fpM(updated.d)}",
+  )
+  let ch = channel.new(4)
+  channel.send(ch, c)
+  let made = foldM(c, xs)
+  let got = match channel.receive(ch) {
+    Some(v) -> fpM(v)
+    None -> "closed"
+  }
+  rowM("{kind} 5 a channel message", before, got, fpM(made))
+  let go = channel.new(1)
+  let seen = channel.new(1)
+  let results = channel.new(2)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(go)
+        channel.send(seen, fpM(c))
+      },
+      { ->
+        channel.send(results, foldM(c, xs))
+        channel.send(results, lastM(0, 5, c))
+        channel.send(go, ())
+      },
+    ],
+  )
+  let got = match channel.receive(seen) {
+    Some(v) -> v
+    None -> "closed"
+  }
+  let made = list.map(0..1) { _ ->
+    match channel.receive(results) {
+      Some(v) -> fpM(v)
+      None -> "closed"
+    }
+  }
+  rowM("{kind} 5 another task", before, got, "{made}")
+  let made = task.map([c, c], 2) { it -> lastM(0, 6, foldM(it, xs)) }
+  rowM("{kind} 5 changed in other tasks", before, fpM(c), "{list.map(made) { it -> fpM(it) }}")
+  let made = list.fold_until(xs, c) { acc, x ->
+    match x == 0 {
+      true -> Stop(map.set(acc, x, x * 3 + 1))
+      false -> Continue(map.set(acc, x, x * 3 + 1))
+    }
+  }
+  rowM("{kind} 6 fold_until", before, fpM(c), fpM(made))
+  let made = set.fold(set.from_list(xs), c) { acc, x -> map.set(acc, x, x * 3 + 1) }
+  rowM("{kind} 6 set.fold", before, fpM(c), fpM(made))
+  let olds = channel.new(16)
+  let made = list.fold(xs, c) { acc, x ->
+    channel.send(olds, acc)
+    map.set(acc, x, x * 3 + 1)
+  }
+  channel.close(olds)
+  let kept = list.map(0..6) { _ ->
+    match channel.receive(olds) {
+      Some(v) -> fpM(v)
+      None -> "closed"
+    }
+  }
+  println("map.set {kind} 7 a step that sends the old one away: {kept}; made {fpM(made)}")
+  let (made, history) = list.fold(xs, (c, [])) { (acc, hist), x ->
+    let next = map.set(acc, x, x * 3 + 1)
+    (next, [acc, ..hist])
+  }
+  println(
+    "map.set {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpM(h) }}; made {fpM(made)}",
+  )
+  let snapshots = list.scan(xs, c) { acc, x -> map.set(acc, x, x * 3 + 1) }
+  println("map.set {kind} 7 list.scan: {list.map(snapshots) { s -> fpM(s) }}")
+  let made = list.fold(xs, c) { acc, x ->
+    match x == 1 {
+      true -> acc
+      false -> map.set(acc, x, x * 3 + 1)
+    }
+  }
+  rowM("{kind} 7 a step that sometimes gives it back", before, fpM(c), fpM(made))
+  let made = list.fold(xs, c) { acc, x ->
+    list.fold(xs, acc) { inner, y -> map.set(inner, (x + y) % 3, (x + y) % 3 * 3 + 1) }
+  }
+  rowM("{kind} 7 a fold in a fold", before, fpM(c), fpM(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let size = fpM(acc)
+    let next = map.set(acc, x, x * 3 + 1)
+    match size == fpM(acc) {
+      true -> next
+      false -> #{}
+    }
+  }
+  rowM("{kind} 7 a step that reads it after the change", before, fpM(c), fpM(made))
+  rowM("{kind} 8 a loop, last argument", before, fpM(c), fpM(lastM(0, 7, c)))
+  rowM("{kind} 8 a loop, first argument", before, fpM(c), fpM(firstM(c, 0, 7)))
+  rowM("{kind} 8 a loop through a let", before, fpM(c), fpM(namedM(0, 7, c)))
+  rowM("{kind} 8 a loop with the old one", before, fpM(c), oldM(0, 7, c, c))
+  rowM("{kind} 8 a loop with it twice", before, fpM(c), twiceM(0, 7, c, c))
+  rowM("{kind} 8 a loop that keeps the old ones", before, fpM(c), histM(0, 4, c, []))
+  rowM("{kind} 8 a loop whose closures keep the old ones", before, fpM(c), seenM(0, 4, c, []))
+  rowM("{kind} 8 a loop whose other arm reads it", before, fpM(c), fpM(armM(0, 7, c)))
+  let ch = channel.new(16)
+  let made = sentM(0, 4, c, ch)
+  channel.close(ch)
+  let got = list.map(0..3) { _ ->
+    match channel.receive(ch) {
+      Some(v) -> fpM(v)
+      None -> "closed"
+    }
+  }
+  rowM("{kind} 8 a loop that sends the old ones", before, fpM(c), "{fpM(made)} sent {got}")
+  let start = BoxM { label: "s", c: c, d: c }
+  let made = recM(0, 7, start)
+  rowM(
+    "{kind} 9 a record in a loop",
+    "{before} {before}",
+    "{fpM(start.c)} {fpM(start.d)}",
+    "{fpM(made.c)} {fpM(made.d)}",
+  )
+  rowM(
+    "{kind} 9 a record in a loop, its old one too",
+    before,
+    fpM(start.c),
+    recoldM(0, 5, start, start),
+  )
+  let made = recotherM(0, 7, start)
+  rowM(
+    "{kind} 9 a record field from another",
+    "{before} {before}",
+    "{fpM(start.c)} {fpM(start.d)}",
+    "{fpM(made.c)} {fpM(made.d)}",
+  )
+  let made = rectwoM(0, 7, start)
+  rowM(
+    "{kind} 9 two record updates",
+    "{before} {before}",
+    "{fpM(start.c)} {fpM(start.d)}",
+    "{fpM(made.c)} {fpM(made.d)}",
+  )
+  let made = recarmM(0, 7, start)
+  rowM("{kind} 9 a record read in another arm", before, fpM(start.c), "{fpM(made.c)} {made.label}")
+  let made = recM(0, 3, BoxM { label: "own", c: make(), d: #{} })
+  rowM("{kind} 9 a record held nowhere else", before, fpM(c), fpM(made.c))
+  let made = list.fold(xs, start) { b, x -> b.{ c: map.set(b.c, x, x * 3 + 1) } }
+  rowM(
+    "{kind} 9 a record in a fold",
+    "{before} {before}",
+    "{fpM(start.c)} {fpM(start.d)}",
+    fpM(made.c),
+  )
+  let kept = [start]
+  let made = list.fold(xs, start) { b, x -> b.{ d: map.set(b.d, x, x * 3 + 1) } }
+  rowM(
+    "{kind} 9 a record in a fold, held in a list",
+    before,
+    fpM(option.unwrap_or(list.first(kept), start).d),
+    fpM(made.d),
+  )
+  let failing = task.guard { ->
+    list.fold(xs, c) { acc, x ->
+      match x == 0 {
+        true -> panic("stop")
+        false -> map.set(acc, x, x * 3 + 1)
+      }
+    }
+  }
+  let ended = match failing {
+    Ok(_) -> "done"
+    Err(_) -> "failed"
+  }
+  rowM("{kind} 10 a task that fails part way", before, fpM(c), ended)
+  let other = make()
+  let by = #{ c: "first" }
+  let members = set.from_list([c])
+  let made = foldM(c, xs)
+  let made2 = lastM(0, 5, other)
+  println(
+    "map.set {kind} 11 a key and a member: {map.get(by, c)} {set.contains(members, c)} {c == other} {made == foldM(make(), xs)} {made2 == lastM(0, 5, make())} {map.get(#{ made: 1 }, foldM(make(), xs))}",
+  )
+}
+
+-- ── map.update ───────────────────────────────────────────────
+
+type BoxU {
+  label: String,
+  c: Map(Int, Int),
+  d: Map(Int, Int),
+}
+
+fn fpU(c: Map(Int, Int)) -> String {
+  "{map.length(c)}/{map.fold(c, 0) { a, k, v -> a + k * 7 + v }}"
+}
+
+fn treeU() -> Map(Int, Int) {
+  list.fold(0..99, #{}) { a, i -> map.set(a, i, i) }
+}
+
+fn flatU() -> Map(Int, Int) {
+  #{ 1: 10, 2: 20, 3: 30 }
+}
+
+fn tailU(c: Map(Int, Int)) -> Map(Int, Int) {
+  map.update(c, 1, 0) { v -> v + 1 }
+}
+
+fn viaU(c: Map(Int, Int)) -> Map(Int, Int) {
+  tailU(c)
+}
+
+fn localsU(c: Map(Int, Int)) -> Map(Int, Int) {
+  let a = c
+  let b = a
+  match b {
+    e -> map.update(e, 2, 0) { v -> v + 1 }
+  }
+}
+
+fn foldU(c: Map(Int, Int), xs: List(Int)) -> Map(Int, Int) {
+  list.fold(xs, c) { acc, x -> map.update(acc, x, 0) { v -> v + 1 } }
+}
+
+-- a function that calls itself with the collection as its last argument
+fn lastU(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> lastU(i + 1, n, map.update(acc, i % 3, 0) { v -> v + 1 })
+  }
+}
+
+-- with it as its first argument
+fn firstU(acc: Map(Int, Int), i: Int, n: Int) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> firstU(map.update(acc, i % 3, 0) { v -> v + 1 }, i + 1, n)
+  }
+}
+
+-- through a let
+fn namedU(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = map.update(acc, i % 3, 0) { v -> v + 1 }
+      namedU(i + 1, n, next)
+    }
+  }
+}
+
+-- the old one handed on too
+fn oldU(i: Int, n: Int, acc: Map(Int, Int), old: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpU(acc)} old {fpU(old)}"
+    false -> oldU(i + 1, n, map.update(acc, i % 3, 0) { v -> v + 1 }, acc)
+  }
+}
+
+-- the same one handed on twice
+fn twiceU(i: Int, n: Int, acc: Map(Int, Int), same: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpU(acc)} same {fpU(same)}"
+    false -> twiceU(i + 1, n, acc, map.update(acc, i % 3, 0) { v -> v + 1 })
+  }
+}
+
+-- every old one kept in a list
+fn histU(i: Int, n: Int, acc: Map(Int, Int), olds: List(Map(Int, Int))) -> String {
+  match i == n {
+    true -> "{fpU(acc)} olds {list.map(olds) { o -> fpU(o) }}"
+    false -> histU(i + 1, n, map.update(acc, i % 3, 0) { v -> v + 1 }, [acc, ..olds])
+  }
+}
+
+-- a closure of each round keeps the old one
+fn seenU(i: Int, n: Int, acc: Map(Int, Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpU(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> seenU(i + 1, n, map.update(acc, i % 3, 0) { v -> v + 1 }, [{ -> fpU(acc) }, ..looks])
+  }
+}
+
+-- an arm that does not change it reads it
+fn armU(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> match i % 2 == 0 {
+      true -> armU(i + 1, n, map.update(acc, i % 3, 0) { v -> v + 1 })
+      false -> armU(i + 1, n, acc)
+    }
+  }
+}
+
+-- each old one sent on a channel
+fn sentU(i: Int, n: Int, acc: Map(Int, Int), ch: Channel(Map(Int, Int))) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      channel.send(ch, acc)
+      sentU(i + 1, n, map.update(acc, i % 3, 0) { v -> v + 1 }, ch)
+    }
+  }
+}
+
+-- a record that holds it, handed on
+fn recU(i: Int, n: Int, b: BoxU) -> BoxU {
+  match i == n {
+    true -> b
+    false -> recU(i + 1, n, b.{ c: map.update(b.c, i % 3, 0) { v -> v + 1 } })
+  }
+}
+
+-- the record handed on, and the old record too
+fn recoldU(i: Int, n: Int, b: BoxU, old: BoxU) -> String {
+  match i == n {
+    true -> "{fpU(b.c)} old {fpU(old.c)} {old.label}"
+    false -> recoldU(i + 1, n, b.{ c: map.update(b.c, i % 3, 0) { v -> v + 1 }, label: "r{i}" }, b)
+  }
+}
+
+-- a field updated from another one
+fn recotherU(i: Int, n: Int, b: BoxU) -> BoxU {
+  match i == n {
+    true -> b
+    false -> recotherU(i + 1, n, b.{ d: map.update(b.c, i % 3, 0) { v -> v + 1 } })
+  }
+}
+
+-- two updates of the record in a row
+fn rectwoU(i: Int, n: Int, b: BoxU) -> BoxU {
+  match i == n {
+    true -> b
+    false -> rectwoU(
+      i + 1,
+      n,
+      b.{ c: map.update(b.c, i % 3, 0) { v -> v + 1 } }
+        .{ d: map.update(b.d, (i + 1) % 3, 0) { v -> v + 1 } },
+    )
+  }
+}
+
+-- a record whose function reads it again in an arm
+fn recarmU(i: Int, n: Int, b: BoxU) -> BoxU {
+  match i == n {
+    true -> b
+    false -> match i % 2 == 0 {
+      true -> recarmU(i + 1, n, b.{ c: map.update(b.c, i % 3, 0) { v -> v + 1 } })
+      false -> recarmU(i + 1, n, b.{ label: "{b.label}." })
+    }
+  }
+}
+
+fn rowU(name: String, before: String, after: String, made: String) {
+  let verdict = match before == after {
+    true -> "same"
+    false -> "CHANGED UNDER ITS HOLDER"
+  }
+  println("map.update {name}: {verdict} {before} -> {after}; made {made}")
+}
+
+fn eachU(kind: String, make: Fn() -> Map(Int, Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpU(c)
+  let n = map.update(c, 1, 0) { v -> v + 1 }
+  rowU("{kind} 1 a let read after", before, fpU(c), fpU(n))
+  rowU("{kind} 2 returned at once", before, fpU(c), fpU(tailU(c)))
+  rowU("{kind} 2 through a tail call", before, fpU(c), fpU(viaU(c)))
+  rowU("{kind} 2 copies in the frame", before, fpU(c), fpU(localsU(c)))
+  let look = { -> fpU(c) }
+  rowU("{kind} 3 a closure", before, look(), fpU(foldU(c, xs)))
+  let box = BoxU { label: "b", c: c, d: c }
+  let pair = (c, 1)
+  let items = [c, c]
+  let maybe = Some(c)
+  rowU("{kind} 4 a record field", before, fpU(box.c), fpU(foldU(box.c, xs)))
+  let (first, _) = pair
+  let made = foldU(first, xs)
+  let (again, _) = pair
+  rowU("{kind} 4 a tuple", before, fpU(again), fpU(made))
+  let changed = list.map(items) { it -> tailU(it) }
+  rowU(
+    "{kind} 4 list elements",
+    "{[before, before]}",
+    "{list.map(items) { it -> fpU(it) }}",
+    "{list.map(changed) { it -> fpU(it) }}",
+  )
+  let changed = option.map(maybe) { it -> tailU(it) }
+  rowU(
+    "{kind} 4 an Option",
+    before,
+    fpU(option.unwrap_or(maybe, #{})),
+    fpU(option.unwrap_or(changed, #{})),
+  )
+  let updated = box.{ c: map.update(box.c, 1, 0) { v -> v + 1 } }
+  rowU(
+    "{kind} 4 a record update",
+    "{before} {before}",
+    "{fpU(box.c)} {fpU(box.d)}",
+    "{fpU(updated.c)} {fpU(updated.d)}",
+  )
+  let ch = channel.new(4)
+  channel.send(ch, c)
+  let made = foldU(c, xs)
+  let got = match channel.receive(ch) {
+    Some(v) -> fpU(v)
+    None -> "closed"
+  }
+  rowU("{kind} 5 a channel message", before, got, fpU(made))
+  let go = channel.new(1)
+  let seen = channel.new(1)
+  let results = channel.new(2)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(go)
+        channel.send(seen, fpU(c))
+      },
+      { ->
+        channel.send(results, foldU(c, xs))
+        channel.send(results, lastU(0, 5, c))
+        channel.send(go, ())
+      },
+    ],
+  )
+  let got = match channel.receive(seen) {
+    Some(v) -> v
+    None -> "closed"
+  }
+  let made = list.map(0..1) { _ ->
+    match channel.receive(results) {
+      Some(v) -> fpU(v)
+      None -> "closed"
+    }
+  }
+  rowU("{kind} 5 another task", before, got, "{made}")
+  let made = task.map([c, c], 2) { it -> lastU(0, 6, foldU(it, xs)) }
+  rowU("{kind} 5 changed in other tasks", before, fpU(c), "{list.map(made) { it -> fpU(it) }}")
+  let made = list.fold_until(xs, c) { acc, x ->
+    match x == 0 {
+      true -> Stop(map.update(acc, x, 0) { v -> v + 1 })
+      false -> Continue(map.update(acc, x, 0) { v -> v + 1 })
+    }
+  }
+  rowU("{kind} 6 fold_until", before, fpU(c), fpU(made))
+  let made = set.fold(set.from_list(xs), c) { acc, x -> map.update(acc, x, 0) { v -> v + 1 } }
+  rowU("{kind} 6 set.fold", before, fpU(c), fpU(made))
+  let olds = channel.new(16)
+  let made = list.fold(xs, c) { acc, x ->
+    channel.send(olds, acc)
+    map.update(acc, x, 0) { v -> v + 1 }
+  }
+  channel.close(olds)
+  let kept = list.map(0..6) { _ ->
+    match channel.receive(olds) {
+      Some(v) -> fpU(v)
+      None -> "closed"
+    }
+  }
+  println("map.update {kind} 7 a step that sends the old one away: {kept}; made {fpU(made)}")
+  let (made, history) = list.fold(xs, (c, [])) { (acc, hist), x ->
+    let next = map.update(acc, x, 0) { v -> v + 1 }
+    (next, [acc, ..hist])
+  }
+  println(
+    "map.update {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpU(h) }}; made {fpU(made)}",
+  )
+  let snapshots = list.scan(xs, c) { acc, x -> map.update(acc, x, 0) { v -> v + 1 } }
+  println("map.update {kind} 7 list.scan: {list.map(snapshots) { s -> fpU(s) }}")
+  let made = list.fold(xs, c) { acc, x ->
+    match x == 1 {
+      true -> acc
+      false -> map.update(acc, x, 0) { v -> v + 1 }
+    }
+  }
+  rowU("{kind} 7 a step that sometimes gives it back", before, fpU(c), fpU(made))
+  let made = list.fold(xs, c) { acc, x ->
+    list.fold(xs, acc) { inner, y -> map.update(inner, (x + y) % 3, 0) { v -> v + 1 } }
+  }
+  rowU("{kind} 7 a fold in a fold", before, fpU(c), fpU(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let size = fpU(acc)
+    let next = map.update(acc, x, 0) { v -> v + 1 }
+    match size == fpU(acc) {
+      true -> next
+      false -> #{}
+    }
+  }
+  rowU("{kind} 7 a step that reads it after the change", before, fpU(c), fpU(made))
+  rowU("{kind} 8 a loop, last argument", before, fpU(c), fpU(lastU(0, 7, c)))
+  rowU("{kind} 8 a loop, first argument", before, fpU(c), fpU(firstU(c, 0, 7)))
+  rowU("{kind} 8 a loop through a let", before, fpU(c), fpU(namedU(0, 7, c)))
+  rowU("{kind} 8 a loop with the old one", before, fpU(c), oldU(0, 7, c, c))
+  rowU("{kind} 8 a loop with it twice", before, fpU(c), twiceU(0, 7, c, c))
+  rowU("{kind} 8 a loop that keeps the old ones", before, fpU(c), histU(0, 4, c, []))
+  rowU("{kind} 8 a loop whose closures keep the old ones", before, fpU(c), seenU(0, 4, c, []))
+  rowU("{kind} 8 a loop whose other arm reads it", before, fpU(c), fpU(armU(0, 7, c)))
+  let ch = channel.new(16)
+  let made = sentU(0, 4, c, ch)
+  channel.close(ch)
+  let got = list.map(0..3) { _ ->
+    match channel.receive(ch) {
+      Some(v) -> fpU(v)
+      None -> "closed"
+    }
+  }
+  rowU("{kind} 8 a loop that sends the old ones", before, fpU(c), "{fpU(made)} sent {got}")
+  let start = BoxU { label: "s", c: c, d: c }
+  let made = recU(0, 7, start)
+  rowU(
+    "{kind} 9 a record in a loop",
+    "{before} {before}",
+    "{fpU(start.c)} {fpU(start.d)}",
+    "{fpU(made.c)} {fpU(made.d)}",
+  )
+  rowU(
+    "{kind} 9 a record in a loop, its old one too",
+    before,
+    fpU(start.c),
+    recoldU(0, 5, start, start),
+  )
+  let made = recotherU(0, 7, start)
+  rowU(
+    "{kind} 9 a record field from another",
+    "{before} {before}",
+    "{fpU(start.c)} {fpU(start.d)}",
+    "{fpU(made.c)} {fpU(made.d)}",
+  )
+  let made = rectwoU(0, 7, start)
+  rowU(
+    "{kind} 9 two record updates",
+    "{before} {before}",
+    "{fpU(start.c)} {fpU(start.d)}",
+    "{fpU(made.c)} {fpU(made.d)}",
+  )
+  let made = recarmU(0, 7, start)
+  rowU("{kind} 9 a record read in another arm", before, fpU(start.c), "{fpU(made.c)} {made.label}")
+  let made = recU(0, 3, BoxU { label: "own", c: make(), d: #{} })
+  rowU("{kind} 9 a record held nowhere else", before, fpU(c), fpU(made.c))
+  let made = list.fold(xs, start) { b, x -> b.{ c: map.update(b.c, x, 0) { v -> v + 1 } } }
+  rowU(
+    "{kind} 9 a record in a fold",
+    "{before} {before}",
+    "{fpU(start.c)} {fpU(start.d)}",
+    fpU(made.c),
+  )
+  let kept = [start]
+  let made = list.fold(xs, start) { b, x -> b.{ d: map.update(b.d, x, 0) { v -> v + 1 } } }
+  rowU(
+    "{kind} 9 a record in a fold, held in a list",
+    before,
+    fpU(option.unwrap_or(list.first(kept), start).d),
+    fpU(made.d),
+  )
+  let failing = task.guard { ->
+    list.fold(xs, c) { acc, x ->
+      match x == 0 {
+        true -> panic("stop")
+        false -> map.update(acc, x, 0) { v -> v + 1 }
+      }
+    }
+  }
+  let ended = match failing {
+    Ok(_) -> "done"
+    Err(_) -> "failed"
+  }
+  rowU("{kind} 10 a task that fails part way", before, fpU(c), ended)
+  let other = make()
+  let by = #{ c: "first" }
+  let members = set.from_list([c])
+  let made = foldU(c, xs)
+  let made2 = lastU(0, 5, other)
+  println(
+    "map.update {kind} 11 a key and a member: {map.get(by, c)} {set.contains(members, c)} {c == other} {made == foldU(make(), xs)} {made2 == lastU(0, 5, make())} {map.get(#{ made: 1 }, foldU(make(), xs))}",
+  )
+}
+
+-- ── set.insert ───────────────────────────────────────────────
+
+type BoxS {
+  label: String,
+  c: Set(Int),
+  d: Set(Int),
+}
+
+fn fpS(c: Set(Int)) -> String {
+  "{set.length(c)}/{set.fold(c, 0) { a, x -> a + x }}"
+}
+
+fn treeS() -> Set(Int) {
+  list.fold(0..99, #[]) { a, i -> set.insert(a, i) }
+}
+
+fn flatS() -> Set(Int) {
+  #[1, 2, 3]
+}
+
+fn tailS(c: Set(Int)) -> Set(Int) {
+  set.insert(c, 1 + 500)
+}
+
+fn viaS(c: Set(Int)) -> Set(Int) {
+  tailS(c)
+}
+
+fn localsS(c: Set(Int)) -> Set(Int) {
+  let a = c
+  let b = a
+  match b {
+    e -> set.insert(e, 2 + 500)
+  }
+}
+
+fn foldS(c: Set(Int), xs: List(Int)) -> Set(Int) {
+  list.fold(xs, c) { acc, x -> set.insert(acc, x + 500) }
+}
+
+-- a function that calls itself with the collection as its last argument
+fn lastS(i: Int, n: Int, acc: Set(Int)) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> lastS(i + 1, n, set.insert(acc, i % 3 + 500))
+  }
+}
+
+-- with it as its first argument
+fn firstS(acc: Set(Int), i: Int, n: Int) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> firstS(set.insert(acc, i % 3 + 500), i + 1, n)
+  }
+}
+
+-- through a let
+fn namedS(i: Int, n: Int, acc: Set(Int)) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = set.insert(acc, i % 3 + 500)
+      namedS(i + 1, n, next)
+    }
+  }
+}
+
+-- the old one handed on too
+fn oldS(i: Int, n: Int, acc: Set(Int), old: Set(Int)) -> String {
+  match i == n {
+    true -> "{fpS(acc)} old {fpS(old)}"
+    false -> oldS(i + 1, n, set.insert(acc, i % 3 + 500), acc)
+  }
+}
+
+-- the same one handed on twice
+fn twiceS(i: Int, n: Int, acc: Set(Int), same: Set(Int)) -> String {
+  match i == n {
+    true -> "{fpS(acc)} same {fpS(same)}"
+    false -> twiceS(i + 1, n, acc, set.insert(acc, i % 3 + 500))
+  }
+}
+
+-- every old one kept in a list
+fn histS(i: Int, n: Int, acc: Set(Int), olds: List(Set(Int))) -> String {
+  match i == n {
+    true -> "{fpS(acc)} olds {list.map(olds) { o -> fpS(o) }}"
+    false -> histS(i + 1, n, set.insert(acc, i % 3 + 500), [acc, ..olds])
+  }
+}
+
+-- a closure of each round keeps the old one
+fn seenS(i: Int, n: Int, acc: Set(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpS(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> seenS(i + 1, n, set.insert(acc, i % 3 + 500), [{ -> fpS(acc) }, ..looks])
+  }
+}
+
+-- an arm that does not change it reads it
+fn armS(i: Int, n: Int, acc: Set(Int)) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> match i % 2 == 0 {
+      true -> armS(i + 1, n, set.insert(acc, i % 3 + 500))
+      false -> armS(i + 1, n, acc)
+    }
+  }
+}
+
+-- each old one sent on a channel
+fn sentS(i: Int, n: Int, acc: Set(Int), ch: Channel(Set(Int))) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      channel.send(ch, acc)
+      sentS(i + 1, n, set.insert(acc, i % 3 + 500), ch)
+    }
+  }
+}
+
+-- a record that holds it, handed on
+fn recS(i: Int, n: Int, b: BoxS) -> BoxS {
+  match i == n {
+    true -> b
+    false -> recS(i + 1, n, b.{ c: set.insert(b.c, i % 3 + 500) })
+  }
+}
+
+-- the record handed on, and the old record too
+fn recoldS(i: Int, n: Int, b: BoxS, old: BoxS) -> String {
+  match i == n {
+    true -> "{fpS(b.c)} old {fpS(old.c)} {old.label}"
+    false -> recoldS(i + 1, n, b.{ c: set.insert(b.c, i % 3 + 500), label: "r{i}" }, b)
+  }
+}
+
+-- a field updated from another one
+fn recotherS(i: Int, n: Int, b: BoxS) -> BoxS {
+  match i == n {
+    true -> b
+    false -> recotherS(i + 1, n, b.{ d: set.insert(b.c, i % 3 + 500) })
+  }
+}
+
+-- two updates of the record in a row
+fn rectwoS(i: Int, n: Int, b: BoxS) -> BoxS {
+  match i == n {
+    true -> b
+    false -> rectwoS(
+      i + 1,
+      n,
+      b.{ c: set.insert(b.c, i % 3 + 500) }.{ d: set.insert(b.d, (i + 1) % 3 + 500) },
+    )
+  }
+}
+
+-- a record whose function reads it again in an arm
+fn recarmS(i: Int, n: Int, b: BoxS) -> BoxS {
+  match i == n {
+    true -> b
+    false -> match i % 2 == 0 {
+      true -> recarmS(i + 1, n, b.{ c: set.insert(b.c, i % 3 + 500) })
+      false -> recarmS(i + 1, n, b.{ label: "{b.label}." })
+    }
+  }
+}
+
+fn rowS(name: String, before: String, after: String, made: String) {
+  let verdict = match before == after {
+    true -> "same"
+    false -> "CHANGED UNDER ITS HOLDER"
+  }
+  println("set.insert {name}: {verdict} {before} -> {after}; made {made}")
+}
+
+fn eachS(kind: String, make: Fn() -> Set(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpS(c)
+  let n = set.insert(c, 1 + 500)
+  rowS("{kind} 1 a let read after", before, fpS(c), fpS(n))
+  rowS("{kind} 2 returned at once", before, fpS(c), fpS(tailS(c)))
+  rowS("{kind} 2 through a tail call", before, fpS(c), fpS(viaS(c)))
+  rowS("{kind} 2 copies in the frame", before, fpS(c), fpS(localsS(c)))
+  let look = { -> fpS(c) }
+  rowS("{kind} 3 a closure", before, look(), fpS(foldS(c, xs)))
+  let box = BoxS { label: "b", c: c, d: c }
+  let pair = (c, 1)
+  let items = [c, c]
+  let maybe = Some(c)
+  rowS("{kind} 4 a record field", before, fpS(box.c), fpS(foldS(box.c, xs)))
+  let (first, _) = pair
+  let made = foldS(first, xs)
+  let (again, _) = pair
+  rowS("{kind} 4 a tuple", before, fpS(again), fpS(made))
+  let changed = list.map(items) { it -> tailS(it) }
+  rowS(
+    "{kind} 4 list elements",
+    "{[before, before]}",
+    "{list.map(items) { it -> fpS(it) }}",
+    "{list.map(changed) { it -> fpS(it) }}",
+  )
+  let changed = option.map(maybe) { it -> tailS(it) }
+  rowS(
+    "{kind} 4 an Option",
+    before,
+    fpS(option.unwrap_or(maybe, #[])),
+    fpS(option.unwrap_or(changed, #[])),
+  )
+  let updated = box.{ c: set.insert(box.c, 1 + 500) }
+  rowS(
+    "{kind} 4 a record update",
+    "{before} {before}",
+    "{fpS(box.c)} {fpS(box.d)}",
+    "{fpS(updated.c)} {fpS(updated.d)}",
+  )
+  let ch = channel.new(4)
+  channel.send(ch, c)
+  let made = foldS(c, xs)
+  let got = match channel.receive(ch) {
+    Some(v) -> fpS(v)
+    None -> "closed"
+  }
+  rowS("{kind} 5 a channel message", before, got, fpS(made))
+  let go = channel.new(1)
+  let seen = channel.new(1)
+  let results = channel.new(2)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(go)
+        channel.send(seen, fpS(c))
+      },
+      { ->
+        channel.send(results, foldS(c, xs))
+        channel.send(results, lastS(0, 5, c))
+        channel.send(go, ())
+      },
+    ],
+  )
+  let got = match channel.receive(seen) {
+    Some(v) -> v
+    None -> "closed"
+  }
+  let made = list.map(0..1) { _ ->
+    match channel.receive(results) {
+      Some(v) -> fpS(v)
+      None -> "closed"
+    }
+  }
+  rowS("{kind} 5 another task", before, got, "{made}")
+  let made = task.map([c, c], 2) { it -> lastS(0, 6, foldS(it, xs)) }
+  rowS("{kind} 5 changed in other tasks", before, fpS(c), "{list.map(made) { it -> fpS(it) }}")
+  let made = list.fold_until(xs, c) { acc, x ->
+    match x == 0 {
+      true -> Stop(set.insert(acc, x + 500))
+      false -> Continue(set.insert(acc, x + 500))
+    }
+  }
+  rowS("{kind} 6 fold_until", before, fpS(c), fpS(made))
+  let made = set.fold(set.from_list(xs), c) { acc, x -> set.insert(acc, x + 500) }
+  rowS("{kind} 6 set.fold", before, fpS(c), fpS(made))
+  let olds = channel.new(16)
+  let made = list.fold(xs, c) { acc, x ->
+    channel.send(olds, acc)
+    set.insert(acc, x + 500)
+  }
+  channel.close(olds)
+  let kept = list.map(0..6) { _ ->
+    match channel.receive(olds) {
+      Some(v) -> fpS(v)
+      None -> "closed"
+    }
+  }
+  println("set.insert {kind} 7 a step that sends the old one away: {kept}; made {fpS(made)}")
+  let (made, history) = list.fold(xs, (c, [])) { (acc, hist), x ->
+    let next = set.insert(acc, x + 500)
+    (next, [acc, ..hist])
+  }
+  println(
+    "set.insert {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpS(h) }}; made {fpS(made)}",
+  )
+  let snapshots = list.scan(xs, c) { acc, x -> set.insert(acc, x + 500) }
+  println("set.insert {kind} 7 list.scan: {list.map(snapshots) { s -> fpS(s) }}")
+  let made = list.fold(xs, c) { acc, x ->
+    match x == 1 {
+      true -> acc
+      false -> set.insert(acc, x + 500)
+    }
+  }
+  rowS("{kind} 7 a step that sometimes gives it back", before, fpS(c), fpS(made))
+  let made = list.fold(xs, c) { acc, x ->
+    list.fold(xs, acc) { inner, y -> set.insert(inner, (x + y) % 3 + 500) }
+  }
+  rowS("{kind} 7 a fold in a fold", before, fpS(c), fpS(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let size = fpS(acc)
+    let next = set.insert(acc, x + 500)
+    match size == fpS(acc) {
+      true -> next
+      false -> #[]
+    }
+  }
+  rowS("{kind} 7 a step that reads it after the change", before, fpS(c), fpS(made))
+  rowS("{kind} 8 a loop, last argument", before, fpS(c), fpS(lastS(0, 7, c)))
+  rowS("{kind} 8 a loop, first argument", before, fpS(c), fpS(firstS(c, 0, 7)))
+  rowS("{kind} 8 a loop through a let", before, fpS(c), fpS(namedS(0, 7, c)))
+  rowS("{kind} 8 a loop with the old one", before, fpS(c), oldS(0, 7, c, c))
+  rowS("{kind} 8 a loop with it twice", before, fpS(c), twiceS(0, 7, c, c))
+  rowS("{kind} 8 a loop that keeps the old ones", before, fpS(c), histS(0, 4, c, []))
+  rowS("{kind} 8 a loop whose closures keep the old ones", before, fpS(c), seenS(0, 4, c, []))
+  rowS("{kind} 8 a loop whose other arm reads it", before, fpS(c), fpS(armS(0, 7, c)))
+  let ch = channel.new(16)
+  let made = sentS(0, 4, c, ch)
+  channel.close(ch)
+  let got = list.map(0..3) { _ ->
+    match channel.receive(ch) {
+      Some(v) -> fpS(v)
+      None -> "closed"
+    }
+  }
+  rowS("{kind} 8 a loop that sends the old ones", before, fpS(c), "{fpS(made)} sent {got}")
+  let start = BoxS { label: "s", c: c, d: c }
+  let made = recS(0, 7, start)
+  rowS(
+    "{kind} 9 a record in a loop",
+    "{before} {before}",
+    "{fpS(start.c)} {fpS(start.d)}",
+    "{fpS(made.c)} {fpS(made.d)}",
+  )
+  rowS(
+    "{kind} 9 a record in a loop, its old one too",
+    before,
+    fpS(start.c),
+    recoldS(0, 5, start, start),
+  )
+  let made = recotherS(0, 7, start)
+  rowS(
+    "{kind} 9 a record field from another",
+    "{before} {before}",
+    "{fpS(start.c)} {fpS(start.d)}",
+    "{fpS(made.c)} {fpS(made.d)}",
+  )
+  let made = rectwoS(0, 7, start)
+  rowS(
+    "{kind} 9 two record updates",
+    "{before} {before}",
+    "{fpS(start.c)} {fpS(start.d)}",
+    "{fpS(made.c)} {fpS(made.d)}",
+  )
+  let made = recarmS(0, 7, start)
+  rowS("{kind} 9 a record read in another arm", before, fpS(start.c), "{fpS(made.c)} {made.label}")
+  let made = recS(0, 3, BoxS { label: "own", c: make(), d: #[] })
+  rowS("{kind} 9 a record held nowhere else", before, fpS(c), fpS(made.c))
+  let made = list.fold(xs, start) { b, x -> b.{ c: set.insert(b.c, x + 500) } }
+  rowS(
+    "{kind} 9 a record in a fold",
+    "{before} {before}",
+    "{fpS(start.c)} {fpS(start.d)}",
+    fpS(made.c),
+  )
+  let kept = [start]
+  let made = list.fold(xs, start) { b, x -> b.{ d: set.insert(b.d, x + 500) } }
+  rowS(
+    "{kind} 9 a record in a fold, held in a list",
+    before,
+    fpS(option.unwrap_or(list.first(kept), start).d),
+    fpS(made.d),
+  )
+  let failing = task.guard { ->
+    list.fold(xs, c) { acc, x ->
+      match x == 0 {
+        true -> panic("stop")
+        false -> set.insert(acc, x + 500)
+      }
+    }
+  }
+  let ended = match failing {
+    Ok(_) -> "done"
+    Err(_) -> "failed"
+  }
+  rowS("{kind} 10 a task that fails part way", before, fpS(c), ended)
+  let other = make()
+  let by = #{ c: "first" }
+  let members = set.from_list([c])
+  let made = foldS(c, xs)
+  let made2 = lastS(0, 5, other)
+  println(
+    "set.insert {kind} 11 a key and a member: {map.get(by, c)} {set.contains(members, c)} {c == other} {made == foldS(make(), xs)} {made2 == lastS(0, 5, make())} {map.get(#{ made: 1 }, foldS(make(), xs))}",
+  )
+}
+
+-- ── list.append ───────────────────────────────────────────────
+
+type BoxA {
+  label: String,
+  c: List(Int),
+  d: List(Int),
+}
+
+fn fpA(c: List(Int)) -> String {
+  "{list.length(c)}/{list.sum(c)}/{list.get(c, list.length(c) - 1)}"
+}
+
+fn treeA() -> List(Int) {
+  list.fold(0..199, []) { a, i -> list.append(a, i) }
+}
+
+fn flatA() -> List(Int) {
+  [1, 2, 3]
+}
+
+fn tailA(c: List(Int)) -> List(Int) {
+  list.append(c, 1)
+}
+
+fn viaA(c: List(Int)) -> List(Int) {
+  tailA(c)
+}
+
+fn localsA(c: List(Int)) -> List(Int) {
+  let a = c
+  let b = a
+  match b {
+    e -> list.append(e, 2)
+  }
+}
+
+fn foldA(c: List(Int), xs: List(Int)) -> List(Int) {
+  list.fold(xs, c) { acc, x -> list.append(acc, x) }
+}
+
+-- a function that calls itself with the collection as its last argument
+fn lastA(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> lastA(i + 1, n, list.append(acc, i % 3))
+  }
+}
+
+-- with it as its first argument
+fn firstA(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> firstA(list.append(acc, i % 3), i + 1, n)
+  }
+}
+
+-- through a let
+fn namedA(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = list.append(acc, i % 3)
+      namedA(i + 1, n, next)
+    }
+  }
+}
+
+-- the old one handed on too
+fn oldA(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpA(acc)} old {fpA(old)}"
+    false -> oldA(i + 1, n, list.append(acc, i % 3), acc)
+  }
+}
+
+-- the same one handed on twice
+fn twiceA(i: Int, n: Int, acc: List(Int), same: List(Int)) -> String {
+  match i == n {
+    true -> "{fpA(acc)} same {fpA(same)}"
+    false -> twiceA(i + 1, n, acc, list.append(acc, i % 3))
+  }
+}
+
+-- every old one kept in a list
+fn histA(i: Int, n: Int, acc: List(Int), olds: List(List(Int))) -> String {
+  match i == n {
+    true -> "{fpA(acc)} olds {list.map(olds) { o -> fpA(o) }}"
+    false -> histA(i + 1, n, list.append(acc, i % 3), [acc, ..olds])
+  }
+}
+
+-- a closure of each round keeps the old one
+fn seenA(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpA(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> seenA(i + 1, n, list.append(acc, i % 3), [{ -> fpA(acc) }, ..looks])
+  }
+}
+
+-- an arm that does not change it reads it
+fn armA(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> match i % 2 == 0 {
+      true -> armA(i + 1, n, list.append(acc, i % 3))
+      false -> armA(i + 1, n, acc)
+    }
+  }
+}
+
+-- each old one sent on a channel
+fn sentA(i: Int, n: Int, acc: List(Int), ch: Channel(List(Int))) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      channel.send(ch, acc)
+      sentA(i + 1, n, list.append(acc, i % 3), ch)
+    }
+  }
+}
+
+-- a record that holds it, handed on
+fn recA(i: Int, n: Int, b: BoxA) -> BoxA {
+  match i == n {
+    true -> b
+    false -> recA(i + 1, n, b.{ c: list.append(b.c, i % 3) })
+  }
+}
+
+-- the record handed on, and the old record too
+fn recoldA(i: Int, n: Int, b: BoxA, old: BoxA) -> String {
+  match i == n {
+    true -> "{fpA(b.c)} old {fpA(old.c)} {old.label}"
+    false -> recoldA(i + 1, n, b.{ c: list.append(b.c, i % 3), label: "r{i}" }, b)
+  }
+}
+
+-- a field updated from another one
+fn recotherA(i: Int, n: Int, b: BoxA) -> BoxA {
+  match i == n {
+    true -> b
+    false -> recotherA(i + 1, n, b.{ d: list.append(b.c, i % 3) })
+  }
+}
+
+-- two updates of the record in a row
+fn rectwoA(i: Int, n: Int, b: BoxA) -> BoxA {
+  match i == n {
+    true -> b
+    false ->
+      rectwoA(i + 1, n, b.{ c: list.append(b.c, i % 3) }.{ d: list.append(b.d, (i + 1) % 3) })
+  }
+}
+
+-- a record whose function reads it again in an arm
+fn recarmA(i: Int, n: Int, b: BoxA) -> BoxA {
+  match i == n {
+    true -> b
+    false -> match i % 2 == 0 {
+      true -> recarmA(i + 1, n, b.{ c: list.append(b.c, i % 3) })
+      false -> recarmA(i + 1, n, b.{ label: "{b.label}." })
+    }
+  }
+}
+
+fn rowA(name: String, before: String, after: String, made: String) {
+  let verdict = match before == after {
+    true -> "same"
+    false -> "CHANGED UNDER ITS HOLDER"
+  }
+  println("list.append {name}: {verdict} {before} -> {after}; made {made}")
+}
+
+fn eachA(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpA(c)
+  let n = list.append(c, 1)
+  rowA("{kind} 1 a let read after", before, fpA(c), fpA(n))
+  rowA("{kind} 2 returned at once", before, fpA(c), fpA(tailA(c)))
+  rowA("{kind} 2 through a tail call", before, fpA(c), fpA(viaA(c)))
+  rowA("{kind} 2 copies in the frame", before, fpA(c), fpA(localsA(c)))
+  let look = { -> fpA(c) }
+  rowA("{kind} 3 a closure", before, look(), fpA(foldA(c, xs)))
+  let box = BoxA { label: "b", c: c, d: c }
+  let pair = (c, 1)
+  let items = [c, c]
+  let maybe = Some(c)
+  rowA("{kind} 4 a record field", before, fpA(box.c), fpA(foldA(box.c, xs)))
+  let (first, _) = pair
+  let made = foldA(first, xs)
+  let (again, _) = pair
+  rowA("{kind} 4 a tuple", before, fpA(again), fpA(made))
+  let changed = list.map(items) { it -> tailA(it) }
+  rowA(
+    "{kind} 4 list elements",
+    "{[before, before]}",
+    "{list.map(items) { it -> fpA(it) }}",
+    "{list.map(changed) { it -> fpA(it) }}",
+  )
+  let changed = option.map(maybe) { it -> tailA(it) }
+  rowA(
+    "{kind} 4 an Option",
+    before,
+    fpA(option.unwrap_or(maybe, [])),
+    fpA(option.unwrap_or(changed, [])),
+  )
+  let updated = box.{ c: list.append(box.c, 1) }
+  rowA(
+    "{kind} 4 a record update",
+    "{before} {before}",
+    "{fpA(box.c)} {fpA(box.d)}",
+    "{fpA(updated.c)} {fpA(updated.d)}",
+  )
+  let ch = channel.new(4)
+  channel.send(ch, c)
+  let made = foldA(c, xs)
+  let got = match channel.receive(ch) {
+    Some(v) -> fpA(v)
+    None -> "closed"
+  }
+  rowA("{kind} 5 a channel message", before, got, fpA(made))
+  let go = channel.new(1)
+  let seen = channel.new(1)
+  let results = channel.new(2)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(go)
+        channel.send(seen, fpA(c))
+      },
+      { ->
+        channel.send(results, foldA(c, xs))
+        channel.send(results, lastA(0, 5, c))
+        channel.send(go, ())
+      },
+    ],
+  )
+  let got = match channel.receive(seen) {
+    Some(v) -> v
+    None -> "closed"
+  }
+  let made = list.map(0..1) { _ ->
+    match channel.receive(results) {
+      Some(v) -> fpA(v)
+      None -> "closed"
+    }
+  }
+  rowA("{kind} 5 another task", before, got, "{made}")
+  let made = task.map([c, c], 2) { it -> lastA(0, 6, foldA(it, xs)) }
+  rowA("{kind} 5 changed in other tasks", before, fpA(c), "{list.map(made) { it -> fpA(it) }}")
+  let made = list.fold_until(xs, c) { acc, x ->
+    match x == 0 {
+      true -> Stop(list.append(acc, x))
+      false -> Continue(list.append(acc, x))
+    }
+  }
+  rowA("{kind} 6 fold_until", before, fpA(c), fpA(made))
+  let made = set.fold(set.from_list(xs), c) { acc, x -> list.append(acc, x) }
+  rowA("{kind} 6 set.fold", before, fpA(c), fpA(made))
+  let olds = channel.new(16)
+  let made = list.fold(xs, c) { acc, x ->
+    channel.send(olds, acc)
+    list.append(acc, x)
+  }
+  channel.close(olds)
+  let kept = list.map(0..6) { _ ->
+    match channel.receive(olds) {
+      Some(v) -> fpA(v)
+      None -> "closed"
+    }
+  }
+  println("list.append {kind} 7 a step that sends the old one away: {kept}; made {fpA(made)}")
+  let (made, history) = list.fold(xs, (c, [])) { (acc, hist), x ->
+    let next = list.append(acc, x)
+    (next, [acc, ..hist])
+  }
+  println(
+    "list.append {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpA(h) }}; made {fpA(made)}",
+  )
+  let snapshots = list.scan(xs, c) { acc, x -> list.append(acc, x) }
+  println("list.append {kind} 7 list.scan: {list.map(snapshots) { s -> fpA(s) }}")
+  let made = list.fold(xs, c) { acc, x ->
+    match x == 1 {
+      true -> acc
+      false -> list.append(acc, x)
+    }
+  }
+  rowA("{kind} 7 a step that sometimes gives it back", before, fpA(c), fpA(made))
+  let made = list.fold(xs, c) { acc, x ->
+    list.fold(xs, acc) { inner, y -> list.append(inner, (x + y) % 3) }
+  }
+  rowA("{kind} 7 a fold in a fold", before, fpA(c), fpA(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let size = fpA(acc)
+    let next = list.append(acc, x)
+    match size == fpA(acc) {
+      true -> next
+      false -> []
+    }
+  }
+  rowA("{kind} 7 a step that reads it after the change", before, fpA(c), fpA(made))
+  rowA("{kind} 8 a loop, last argument", before, fpA(c), fpA(lastA(0, 7, c)))
+  rowA("{kind} 8 a loop, first argument", before, fpA(c), fpA(firstA(c, 0, 7)))
+  rowA("{kind} 8 a loop through a let", before, fpA(c), fpA(namedA(0, 7, c)))
+  rowA("{kind} 8 a loop with the old one", before, fpA(c), oldA(0, 7, c, c))
+  rowA("{kind} 8 a loop with it twice", before, fpA(c), twiceA(0, 7, c, c))
+  rowA("{kind} 8 a loop that keeps the old ones", before, fpA(c), histA(0, 4, c, []))
+  rowA("{kind} 8 a loop whose closures keep the old ones", before, fpA(c), seenA(0, 4, c, []))
+  rowA("{kind} 8 a loop whose other arm reads it", before, fpA(c), fpA(armA(0, 7, c)))
+  let ch = channel.new(16)
+  let made = sentA(0, 4, c, ch)
+  channel.close(ch)
+  let got = list.map(0..3) { _ ->
+    match channel.receive(ch) {
+      Some(v) -> fpA(v)
+      None -> "closed"
+    }
+  }
+  rowA("{kind} 8 a loop that sends the old ones", before, fpA(c), "{fpA(made)} sent {got}")
+  let start = BoxA { label: "s", c: c, d: c }
+  let made = recA(0, 7, start)
+  rowA(
+    "{kind} 9 a record in a loop",
+    "{before} {before}",
+    "{fpA(start.c)} {fpA(start.d)}",
+    "{fpA(made.c)} {fpA(made.d)}",
+  )
+  rowA(
+    "{kind} 9 a record in a loop, its old one too",
+    before,
+    fpA(start.c),
+    recoldA(0, 5, start, start),
+  )
+  let made = recotherA(0, 7, start)
+  rowA(
+    "{kind} 9 a record field from another",
+    "{before} {before}",
+    "{fpA(start.c)} {fpA(start.d)}",
+    "{fpA(made.c)} {fpA(made.d)}",
+  )
+  let made = rectwoA(0, 7, start)
+  rowA(
+    "{kind} 9 two record updates",
+    "{before} {before}",
+    "{fpA(start.c)} {fpA(start.d)}",
+    "{fpA(made.c)} {fpA(made.d)}",
+  )
+  let made = recarmA(0, 7, start)
+  rowA("{kind} 9 a record read in another arm", before, fpA(start.c), "{fpA(made.c)} {made.label}")
+  let made = recA(0, 3, BoxA { label: "own", c: make(), d: [] })
+  rowA("{kind} 9 a record held nowhere else", before, fpA(c), fpA(made.c))
+  let made = list.fold(xs, start) { b, x -> b.{ c: list.append(b.c, x) } }
+  rowA(
+    "{kind} 9 a record in a fold",
+    "{before} {before}",
+    "{fpA(start.c)} {fpA(start.d)}",
+    fpA(made.c),
+  )
+  let kept = [start]
+  let made = list.fold(xs, start) { b, x -> b.{ d: list.append(b.d, x) } }
+  rowA(
+    "{kind} 9 a record in a fold, held in a list",
+    before,
+    fpA(option.unwrap_or(list.first(kept), start).d),
+    fpA(made.d),
+  )
+  let failing = task.guard { ->
+    list.fold(xs, c) { acc, x ->
+      match x == 0 {
+        true -> panic("stop")
+        false -> list.append(acc, x)
+      }
+    }
+  }
+  let ended = match failing {
+    Ok(_) -> "done"
+    Err(_) -> "failed"
+  }
+  rowA("{kind} 10 a task that fails part way", before, fpA(c), ended)
+  let other = make()
+  let by = #{ c: "first" }
+  let members = set.from_list([c])
+  let made = foldA(c, xs)
+  let made2 = lastA(0, 5, other)
+  println(
+    "list.append {kind} 11 a key and a member: {map.get(by, c)} {set.contains(members, c)} {c == other} {made == foldA(make(), xs)} {made2 == lastA(0, 5, make())} {map.get(#{ made: 1 }, foldA(make(), xs))}",
+  )
+}
+
+-- ── list.set ───────────────────────────────────────────────
+
+type BoxL {
+  label: String,
+  c: List(Int),
+  d: List(Int),
+}
+
+fn fpL(c: List(Int)) -> String {
+  "{list.length(c)}/{list.sum(c)}/{list.get(c, 1)}"
+}
+
+fn treeL() -> List(Int) {
+  list.fold(0..199, []) { a, i -> list.append(a, i) }
+}
+
+fn flatL() -> List(Int) {
+  [1, 2, 3]
+}
+
+fn tailL(c: List(Int)) -> List(Int) {
+  match list.set(c, 1, 1 * 5 + 7) {
+    Some(next) -> next
+    None -> []
+  }
+}
+
+fn viaL(c: List(Int)) -> List(Int) {
+  tailL(c)
+}
+
+fn localsL(c: List(Int)) -> List(Int) {
+  let a = c
+  let b = a
+  match b {
+    e -> match list.set(e, 2, 2 * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+  }
+}
+
+fn foldL(c: List(Int), xs: List(Int)) -> List(Int) {
+  list.fold(xs, c) { acc, x ->
+    match list.set(acc, x, x * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+  }
+}
+
+-- a function that calls itself with the collection as its last argument
+fn lastL(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> lastL(
+      i + 1,
+      n,
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+    )
+  }
+}
+
+-- with it as its first argument
+fn firstL(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> firstL(
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+      i + 1,
+      n,
+    )
+  }
+}
+
+-- through a let
+fn namedL(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      }
+      namedL(i + 1, n, next)
+    }
+  }
+}
+
+-- the old one handed on too
+fn oldL(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpL(acc)} old {fpL(old)}"
+    false -> oldL(
+      i + 1,
+      n,
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+      acc,
+    )
+  }
+}
+
+-- the same one handed on twice
+fn twiceL(i: Int, n: Int, acc: List(Int), same: List(Int)) -> String {
+  match i == n {
+    true -> "{fpL(acc)} same {fpL(same)}"
+    false -> twiceL(
+      i + 1,
+      n,
+      acc,
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+    )
+  }
+}
+
+-- every old one kept in a list
+fn histL(i: Int, n: Int, acc: List(Int), olds: List(List(Int))) -> String {
+  match i == n {
+    true -> "{fpL(acc)} olds {list.map(olds) { o -> fpL(o) }}"
+    false -> histL(
+      i + 1,
+      n,
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+      [acc, ..olds],
+    )
+  }
+}
+
+-- a closure of each round keeps the old one
+fn seenL(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpL(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> seenL(
+      i + 1,
+      n,
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+      [{ -> fpL(acc) }, ..looks],
+    )
+  }
+}
+
+-- an arm that does not change it reads it
+fn armL(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> match i % 2 == 0 {
+      true -> armL(
+        i + 1,
+        n,
+        match list.set(acc, i % 3, i % 3 * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      )
+      false -> armL(i + 1, n, acc)
+    }
+  }
+}
+
+-- each old one sent on a channel
+fn sentL(i: Int, n: Int, acc: List(Int), ch: Channel(List(Int))) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      channel.send(ch, acc)
+      sentL(
+        i + 1,
+        n,
+        match list.set(acc, i % 3, i % 3 * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+        ch,
+      )
+    }
+  }
+}
+
+-- a record that holds it, handed on
+fn recL(i: Int, n: Int, b: BoxL) -> BoxL {
+  match i == n {
+    true -> b
+    false -> recL(
+      i + 1,
+      n,
+      b.{
+        c: match list.set(b.c, i % 3, i % 3 * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      },
+    )
+  }
+}
+
+-- the record handed on, and the old record too
+fn recoldL(i: Int, n: Int, b: BoxL, old: BoxL) -> String {
+  match i == n {
+    true -> "{fpL(b.c)} old {fpL(old.c)} {old.label}"
+    false -> recoldL(
+      i + 1,
+      n,
+      b.{
+        c: match list.set(b.c, i % 3, i % 3 * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+        label: "r{i}",
+      },
+      b,
+    )
+  }
+}
+
+-- a field updated from another one
+fn recotherL(i: Int, n: Int, b: BoxL) -> BoxL {
+  match i == n {
+    true -> b
+    false -> recotherL(
+      i + 1,
+      n,
+      b.{
+        d: match list.set(b.c, i % 3, i % 3 * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      },
+    )
+  }
+}
+
+-- two updates of the record in a row
+fn rectwoL(i: Int, n: Int, b: BoxL) -> BoxL {
+  match i == n {
+    true -> b
+    false -> rectwoL(
+      i + 1,
+      n,
+      b.{
+          c: match list.set(b.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        }
+        .{
+          d: match list.set(b.d, (i + 1) % 3, (i + 1) % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+    )
+  }
+}
+
+-- a record whose function reads it again in an arm
+fn recarmL(i: Int, n: Int, b: BoxL) -> BoxL {
+  match i == n {
+    true -> b
+    false -> match i % 2 == 0 {
+      true -> recarmL(
+        i + 1,
+        n,
+        b.{
+          c: match list.set(b.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+      )
+      false -> recarmL(i + 1, n, b.{ label: "{b.label}." })
+    }
+  }
+}
+
+fn rowL(name: String, before: String, after: String, made: String) {
+  let verdict = match before == after {
+    true -> "same"
+    false -> "CHANGED UNDER ITS HOLDER"
+  }
+  println("list.set {name}: {verdict} {before} -> {after}; made {made}")
+}
+
+fn eachL(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpL(c)
+  let n = match list.set(c, 1, 1 * 5 + 7) {
+    Some(next) -> next
+    None -> []
+  }
+  rowL("{kind} 1 a let read after", before, fpL(c), fpL(n))
+  rowL("{kind} 2 returned at once", before, fpL(c), fpL(tailL(c)))
+  rowL("{kind} 2 through a tail call", before, fpL(c), fpL(viaL(c)))
+  rowL("{kind} 2 copies in the frame", before, fpL(c), fpL(localsL(c)))
+  let look = { -> fpL(c) }
+  rowL("{kind} 3 a closure", before, look(), fpL(foldL(c, xs)))
+  let box = BoxL { label: "b", c: c, d: c }
+  let pair = (c, 1)
+  let items = [c, c]
+  let maybe = Some(c)
+  rowL("{kind} 4 a record field", before, fpL(box.c), fpL(foldL(box.c, xs)))
+  let (first, _) = pair
+  let made = foldL(first, xs)
+  let (again, _) = pair
+  rowL("{kind} 4 a tuple", before, fpL(again), fpL(made))
+  let changed = list.map(items) { it -> tailL(it) }
+  rowL(
+    "{kind} 4 list elements",
+    "{[before, before]}",
+    "{list.map(items) { it -> fpL(it) }}",
+    "{list.map(changed) { it -> fpL(it) }}",
+  )
+  let changed = option.map(maybe) { it -> tailL(it) }
+  rowL(
+    "{kind} 4 an Option",
+    before,
+    fpL(option.unwrap_or(maybe, [])),
+    fpL(option.unwrap_or(changed, [])),
+  )
+  let updated = box.{
+    c: match list.set(box.c, 1, 1 * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    },
+  }
+  rowL(
+    "{kind} 4 a record update",
+    "{before} {before}",
+    "{fpL(box.c)} {fpL(box.d)}",
+    "{fpL(updated.c)} {fpL(updated.d)}",
+  )
+  let ch = channel.new(4)
+  channel.send(ch, c)
+  let made = foldL(c, xs)
+  let got = match channel.receive(ch) {
+    Some(v) -> fpL(v)
+    None -> "closed"
+  }
+  rowL("{kind} 5 a channel message", before, got, fpL(made))
+  let go = channel.new(1)
+  let seen = channel.new(1)
+  let results = channel.new(2)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(go)
+        channel.send(seen, fpL(c))
+      },
+      { ->
+        channel.send(results, foldL(c, xs))
+        channel.send(results, lastL(0, 5, c))
+        channel.send(go, ())
+      },
+    ],
+  )
+  let got = match channel.receive(seen) {
+    Some(v) -> v
+    None -> "closed"
+  }
+  let made = list.map(0..1) { _ ->
+    match channel.receive(results) {
+      Some(v) -> fpL(v)
+      None -> "closed"
+    }
+  }
+  rowL("{kind} 5 another task", before, got, "{made}")
+  let made = task.map([c, c], 2) { it -> lastL(0, 6, foldL(it, xs)) }
+  rowL("{kind} 5 changed in other tasks", before, fpL(c), "{list.map(made) { it -> fpL(it) }}")
+  let made = list.fold_until(xs, c) { acc, x ->
+    match x == 0 {
+      true -> Stop(
+        match list.set(acc, x, x * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      )
+      false -> Continue(
+        match list.set(acc, x, x * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      )
+    }
+  }
+  rowL("{kind} 6 fold_until", before, fpL(c), fpL(made))
+  let made = set.fold(set.from_list(xs), c) { acc, x ->
+    match list.set(acc, x, x * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+  }
+  rowL("{kind} 6 set.fold", before, fpL(c), fpL(made))
+  let olds = channel.new(16)
+  let made = list.fold(xs, c) { acc, x ->
+    channel.send(olds, acc)
+    match list.set(acc, x, x * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+  }
+  channel.close(olds)
+  let kept = list.map(0..6) { _ ->
+    match channel.receive(olds) {
+      Some(v) -> fpL(v)
+      None -> "closed"
+    }
+  }
+  println("list.set {kind} 7 a step that sends the old one away: {kept}; made {fpL(made)}")
+  let (made, history) = list.fold(xs, (c, [])) { (acc, hist), x ->
+    let next = match list.set(acc, x, x * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+    (next, [acc, ..hist])
+  }
+  println(
+    "list.set {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpL(h) }}; made {fpL(made)}",
+  )
+  let snapshots = list.scan(xs, c) { acc, x ->
+    match list.set(acc, x, x * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+  }
+  println("list.set {kind} 7 list.scan: {list.map(snapshots) { s -> fpL(s) }}")
+  let made = list.fold(xs, c) { acc, x ->
+    match x == 1 {
+      true -> acc
+      false -> match list.set(acc, x, x * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      }
+    }
+  }
+  rowL("{kind} 7 a step that sometimes gives it back", before, fpL(c), fpL(made))
+  let made = list.fold(xs, c) { acc, x ->
+    list.fold(xs, acc) { inner, y ->
+      match list.set(inner, (x + y) % 3, (x + y) % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      }
+    }
+  }
+  rowL("{kind} 7 a fold in a fold", before, fpL(c), fpL(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let size = fpL(acc)
+    let next = match list.set(acc, x, x * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+    match size == fpL(acc) {
+      true -> next
+      false -> []
+    }
+  }
+  rowL("{kind} 7 a step that reads it after the change", before, fpL(c), fpL(made))
+  rowL("{kind} 8 a loop, last argument", before, fpL(c), fpL(lastL(0, 7, c)))
+  rowL("{kind} 8 a loop, first argument", before, fpL(c), fpL(firstL(c, 0, 7)))
+  rowL("{kind} 8 a loop through a let", before, fpL(c), fpL(namedL(0, 7, c)))
+  rowL("{kind} 8 a loop with the old one", before, fpL(c), oldL(0, 7, c, c))
+  rowL("{kind} 8 a loop with it twice", before, fpL(c), twiceL(0, 7, c, c))
+  rowL("{kind} 8 a loop that keeps the old ones", before, fpL(c), histL(0, 4, c, []))
+  rowL("{kind} 8 a loop whose closures keep the old ones", before, fpL(c), seenL(0, 4, c, []))
+  rowL("{kind} 8 a loop whose other arm reads it", before, fpL(c), fpL(armL(0, 7, c)))
+  let ch = channel.new(16)
+  let made = sentL(0, 4, c, ch)
+  channel.close(ch)
+  let got = list.map(0..3) { _ ->
+    match channel.receive(ch) {
+      Some(v) -> fpL(v)
+      None -> "closed"
+    }
+  }
+  rowL("{kind} 8 a loop that sends the old ones", before, fpL(c), "{fpL(made)} sent {got}")
+  let start = BoxL { label: "s", c: c, d: c }
+  let made = recL(0, 7, start)
+  rowL(
+    "{kind} 9 a record in a loop",
+    "{before} {before}",
+    "{fpL(start.c)} {fpL(start.d)}",
+    "{fpL(made.c)} {fpL(made.d)}",
+  )
+  rowL(
+    "{kind} 9 a record in a loop, its old one too",
+    before,
+    fpL(start.c),
+    recoldL(0, 5, start, start),
+  )
+  let made = recotherL(0, 7, start)
+  rowL(
+    "{kind} 9 a record field from another",
+    "{before} {before}",
+    "{fpL(start.c)} {fpL(start.d)}",
+    "{fpL(made.c)} {fpL(made.d)}",
+  )
+  let made = rectwoL(0, 7, start)
+  rowL(
+    "{kind} 9 two record updates",
+    "{before} {before}",
+    "{fpL(start.c)} {fpL(start.d)}",
+    "{fpL(made.c)} {fpL(made.d)}",
+  )
+  let made = recarmL(0, 7, start)
+  rowL("{kind} 9 a record read in another arm", before, fpL(start.c), "{fpL(made.c)} {made.label}")
+  let made = recL(0, 3, BoxL { label: "own", c: make(), d: [] })
+  rowL("{kind} 9 a record held nowhere else", before, fpL(c), fpL(made.c))
+  let made = list.fold(xs, start) { b, x ->
+    b.{
+      c: match list.set(b.c, x, x * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+    }
+  }
+  rowL(
+    "{kind} 9 a record in a fold",
+    "{before} {before}",
+    "{fpL(start.c)} {fpL(start.d)}",
+    fpL(made.c),
+  )
+  let kept = [start]
+  let made = list.fold(xs, start) { b, x ->
+    b.{
+      d: match list.set(b.d, x, x * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+    }
+  }
+  rowL(
+    "{kind} 9 a record in a fold, held in a list",
+    before,
+    fpL(option.unwrap_or(list.first(kept), start).d),
+    fpL(made.d),
+  )
+  let failing = task.guard { ->
+    list.fold(xs, c) { acc, x ->
+      match x == 0 {
+        true -> panic("stop")
+        false -> match list.set(acc, x, x * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        }
+      }
+    }
+  }
+  let ended = match failing {
+    Ok(_) -> "done"
+    Err(_) -> "failed"
+  }
+  rowL("{kind} 10 a task that fails part way", before, fpL(c), ended)
+  let other = make()
+  let by = #{ c: "first" }
+  let members = set.from_list([c])
+  let made = foldL(c, xs)
+  let made2 = lastL(0, 5, other)
+  println(
+    "list.set {kind} 11 a key and a member: {map.get(by, c)} {set.contains(members, c)} {c == other} {made == foldL(make(), xs)} {made2 == lastL(0, 5, make())} {map.get(#{ made: 1 }, foldL(make(), xs))}",
+  )
+}
+
+fn main() {
+  eachM("tree", treeM)
+  eachM("small", flatM)
+  eachU("tree", treeU)
+  eachU("small", flatU)
+  eachS("tree", treeS)
+  eachS("small", flatS)
+  eachA("tree", treeA)
+  eachA("small", flatA)
+  eachL("tree", treeL)
+  eachL("small", flatL)
+}

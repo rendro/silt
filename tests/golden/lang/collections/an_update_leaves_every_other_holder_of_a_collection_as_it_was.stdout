@@ -1,0 +1,400 @@
+map.set tree 1 a let read after: same 100/39600 -> 100/39600; made 100/39603
+map.set tree 2 returned at once: same 100/39600 -> 100/39600; made 100/39603
+map.set tree 2 through a tail call: same 100/39600 -> 100/39600; made 100/39603
+map.set tree 2 copies in the frame: same 100/39600 -> 100/39600; made 100/39605
+map.set tree 3 a closure: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 4 a record field: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 4 a tuple: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 4 list elements: same ["100/39600", "100/39600"] -> ["100/39600", "100/39600"]; made ["100/39603", "100/39603"]
+map.set tree 4 an Option: same 100/39600 -> 100/39600; made 100/39603
+map.set tree 4 a record update: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39603 100/39600
+map.set tree 5 a channel message: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 5 another task: same 100/39600 -> 100/39600; made ["100/39609", "100/39609"]
+map.set tree 5 changed in other tasks: same 100/39600 -> 100/39600; made ["100/39609", "100/39609"]
+map.set tree 6 fold_until: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 6 set.fold: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 7 a step that sends the old one away: ["100/39600", "100/39603", "100/39608", "100/39609", "100/39609", "100/39609", "100/39609"]; made 100/39609
+map.set tree 7 a step that keeps the old ones: ["100/39609", "100/39609", "100/39609", "100/39609", "100/39608", "100/39603", "100/39600"]; made 100/39609
+map.set tree 7 list.scan: ["100/39600", "100/39603", "100/39608", "100/39609", "100/39609", "100/39609", "100/39609", "100/39609"]
+map.set tree 7 a step that sometimes gives it back: same 100/39600 -> 100/39600; made 100/39606
+map.set tree 7 a fold in a fold: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 7 a step that reads it after the change: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 8 a loop, last argument: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 8 a loop, first argument: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 8 a loop through a let: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 8 a loop with the old one: same 100/39600 -> 100/39600; made 100/39609 old 100/39609
+map.set tree 8 a loop with it twice: same 100/39600 -> 100/39600; made 100/39600 same 100/39601
+map.set tree 8 a loop that keeps the old ones: same 100/39600 -> 100/39600; made 100/39609 olds ["100/39609", "100/39604", "100/39601", "100/39600"]
+map.set tree 8 a loop whose closures keep the old ones: same 100/39600 -> 100/39600; made 100/39609 looks ["100/39609", "100/39604", "100/39601", "100/39600"]
+map.set tree 8 a loop whose other arm reads it: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 8 a loop that sends the old ones: same 100/39600 -> 100/39600; made 100/39609 sent ["100/39600", "100/39601", "100/39604", "100/39609"]
+map.set tree 9 a record in a loop: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39609 100/39600
+map.set tree 9 a record in a loop, its old one too: same 100/39600 -> 100/39600; made 100/39609 old 100/39609 r3
+map.set tree 9 a record field from another: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39600 100/39601
+map.set tree 9 two record updates: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39609 100/39609
+map.set tree 9 a record read in another arm: same 100/39600 -> 100/39600; made 100/39609 s...
+map.set tree 9 a record held nowhere else: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 9 a record in a fold: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39609
+map.set tree 9 a record in a fold, held in a list: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 10 a task that fails part way: same 100/39600 -> 100/39600; made failed
+map.set tree 11 a key and a member: Some("first") true true true true Some(1)
+map.set small 1 a let read after: same 3/102 -> 3/102; made 3/96
+map.set small 2 returned at once: same 3/102 -> 3/102; made 3/96
+map.set small 2 through a tail call: same 3/102 -> 3/102; made 3/96
+map.set small 2 copies in the frame: same 3/102 -> 3/102; made 3/89
+map.set small 3 a closure: same 3/102 -> 3/102; made 4/84
+map.set small 4 a record field: same 3/102 -> 3/102; made 4/84
+map.set small 4 a tuple: same 3/102 -> 3/102; made 4/84
+map.set small 4 list elements: same ["3/102", "3/102"] -> ["3/102", "3/102"]; made ["3/96", "3/96"]
+map.set small 4 an Option: same 3/102 -> 3/102; made 3/96
+map.set small 4 a record update: same 3/102 3/102 -> 3/102 3/102; made 3/96 3/102
+map.set small 5 a channel message: same 3/102 -> 3/102; made 4/84
+map.set small 5 another task: same 3/102 -> 3/102; made ["4/84", "4/84"]
+map.set small 5 changed in other tasks: same 3/102 -> 3/102; made ["4/84", "4/84"]
+map.set small 6 fold_until: same 3/102 -> 3/102; made 4/84
+map.set small 6 set.fold: same 3/102 -> 3/102; made 4/84
+map.set small 7 a step that sends the old one away: ["3/102", "3/96", "3/83", "4/84", "4/84", "4/84", "4/84"]; made 4/84
+map.set small 7 a step that keeps the old ones: ["4/84", "4/84", "4/84", "4/84", "3/83", "3/96", "3/102"]; made 4/84
+map.set small 7 list.scan: ["3/102", "3/96", "3/83", "4/84", "4/84", "4/84", "4/84", "4/84"]
+map.set small 7 a step that sometimes gives it back: same 3/102 -> 3/102; made 4/90
+map.set small 7 a fold in a fold: same 3/102 -> 3/102; made 4/84
+map.set small 7 a step that reads it after the change: same 3/102 -> 3/102; made 4/84
+map.set small 8 a loop, last argument: same 3/102 -> 3/102; made 4/84
+map.set small 8 a loop, first argument: same 3/102 -> 3/102; made 4/84
+map.set small 8 a loop through a let: same 3/102 -> 3/102; made 4/84
+map.set small 8 a loop with the old one: same 3/102 -> 3/102; made 4/84 old 4/84
+map.set small 8 a loop with it twice: same 3/102 -> 3/102; made 3/102 same 4/103
+map.set small 8 a loop that keeps the old ones: same 3/102 -> 3/102; made 4/84 olds ["4/84", "4/97", "4/103", "3/102"]
+map.set small 8 a loop whose closures keep the old ones: same 3/102 -> 3/102; made 4/84 looks ["4/84", "4/97", "4/103", "3/102"]
+map.set small 8 a loop whose other arm reads it: same 3/102 -> 3/102; made 4/84
+map.set small 8 a loop that sends the old ones: same 3/102 -> 3/102; made 4/84 sent ["3/102", "4/103", "4/97", "4/84"]
+map.set small 9 a record in a loop: same 3/102 3/102 -> 3/102 3/102; made 4/84 3/102
+map.set small 9 a record in a loop, its old one too: same 3/102 -> 3/102; made 4/84 old 4/84 r3
+map.set small 9 a record field from another: same 3/102 3/102 -> 3/102 3/102; made 3/102 4/103
+map.set small 9 two record updates: same 3/102 3/102 -> 3/102 3/102; made 4/84 4/84
+map.set small 9 a record read in another arm: same 3/102 -> 3/102; made 4/84 s...
+map.set small 9 a record held nowhere else: same 3/102 -> 3/102; made 4/84
+map.set small 9 a record in a fold: same 3/102 3/102 -> 3/102 3/102; made 4/84
+map.set small 9 a record in a fold, held in a list: same 3/102 -> 3/102; made 4/84
+map.set small 10 a task that fails part way: same 3/102 -> 3/102; made failed
+map.set small 11 a key and a member: Some("first") true true true true Some(1)
+map.update tree 1 a let read after: same 100/39600 -> 100/39600; made 100/39601
+map.update tree 2 returned at once: same 100/39600 -> 100/39600; made 100/39601
+map.update tree 2 through a tail call: same 100/39600 -> 100/39600; made 100/39601
+map.update tree 2 copies in the frame: same 100/39600 -> 100/39600; made 100/39601
+map.update tree 3 a closure: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 4 a record field: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 4 a tuple: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 4 list elements: same ["100/39600", "100/39600"] -> ["100/39600", "100/39600"]; made ["100/39601", "100/39601"]
+map.update tree 4 an Option: same 100/39600 -> 100/39600; made 100/39601
+map.update tree 4 a record update: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39601 100/39600
+map.update tree 5 a channel message: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 5 another task: same 100/39600 -> 100/39600; made ["100/39607", "100/39605"]
+map.update tree 5 changed in other tasks: same 100/39600 -> 100/39600; made ["100/39613", "100/39613"]
+map.update tree 6 fold_until: same 100/39600 -> 100/39600; made 100/39603
+map.update tree 6 set.fold: same 100/39600 -> 100/39600; made 100/39603
+map.update tree 7 a step that sends the old one away: ["100/39600", "100/39601", "100/39602", "100/39603", "100/39604", "100/39605", "100/39606"]; made 100/39607
+map.update tree 7 a step that keeps the old ones: ["100/39606", "100/39605", "100/39604", "100/39603", "100/39602", "100/39601", "100/39600"]; made 100/39607
+map.update tree 7 list.scan: ["100/39600", "100/39601", "100/39602", "100/39603", "100/39604", "100/39605", "100/39606", "100/39607"]
+map.update tree 7 a step that sometimes gives it back: same 100/39600 -> 100/39600; made 100/39605
+map.update tree 7 a fold in a fold: same 100/39600 -> 100/39600; made 100/39649
+map.update tree 7 a step that reads it after the change: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 8 a loop, last argument: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 8 a loop, first argument: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 8 a loop through a let: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 8 a loop with the old one: same 100/39600 -> 100/39600; made 100/39607 old 100/39606
+map.update tree 8 a loop with it twice: same 100/39600 -> 100/39600; made 100/39600 same 100/39601
+map.update tree 8 a loop that keeps the old ones: same 100/39600 -> 100/39600; made 100/39604 olds ["100/39603", "100/39602", "100/39601", "100/39600"]
+map.update tree 8 a loop whose closures keep the old ones: same 100/39600 -> 100/39600; made 100/39604 looks ["100/39603", "100/39602", "100/39601", "100/39600"]
+map.update tree 8 a loop whose other arm reads it: same 100/39600 -> 100/39600; made 100/39604
+map.update tree 8 a loop that sends the old ones: same 100/39600 -> 100/39600; made 100/39604 sent ["100/39600", "100/39601", "100/39602", "100/39603"]
+map.update tree 9 a record in a loop: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39607 100/39600
+map.update tree 9 a record in a loop, its old one too: same 100/39600 -> 100/39600; made 100/39605 old 100/39604 r3
+map.update tree 9 a record field from another: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39600 100/39601
+map.update tree 9 two record updates: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39607 100/39607
+map.update tree 9 a record read in another arm: same 100/39600 -> 100/39600; made 100/39604 s...
+map.update tree 9 a record held nowhere else: same 100/39600 -> 100/39600; made 100/39603
+map.update tree 9 a record in a fold: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39607
+map.update tree 9 a record in a fold, held in a list: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 10 a task that fails part way: same 100/39600 -> 100/39600; made failed
+map.update tree 11 a key and a member: Some("first") true true true true Some(1)
+map.update small 1 a let read after: same 3/102 -> 3/102; made 3/103
+map.update small 2 returned at once: same 3/102 -> 3/102; made 3/103
+map.update small 2 through a tail call: same 3/102 -> 3/102; made 3/103
+map.update small 2 copies in the frame: same 3/102 -> 3/102; made 3/103
+map.update small 3 a closure: same 3/102 -> 3/102; made 4/109
+map.update small 4 a record field: same 3/102 -> 3/102; made 4/109
+map.update small 4 a tuple: same 3/102 -> 3/102; made 4/109
+map.update small 4 list elements: same ["3/102", "3/102"] -> ["3/102", "3/102"]; made ["3/103", "3/103"]
+map.update small 4 an Option: same 3/102 -> 3/102; made 3/103
+map.update small 4 a record update: same 3/102 3/102 -> 3/102 3/102; made 3/103 3/102
+map.update small 5 a channel message: same 3/102 -> 3/102; made 4/109
+map.update small 5 another task: same 3/102 -> 3/102; made ["4/109", "4/107"]
+map.update small 5 changed in other tasks: same 3/102 -> 3/102; made ["4/115", "4/115"]
+map.update small 6 fold_until: same 3/102 -> 3/102; made 4/105
+map.update small 6 set.fold: same 3/102 -> 3/102; made 4/105
+map.update small 7 a step that sends the old one away: ["3/102", "3/103", "3/104", "4/105", "4/106", "4/107", "4/108"]; made 4/109
+map.update small 7 a step that keeps the old ones: ["4/108", "4/107", "4/106", "4/105", "3/104", "3/103", "3/102"]; made 4/109
+map.update small 7 list.scan: ["3/102", "3/103", "3/104", "4/105", "4/106", "4/107", "4/108", "4/109"]
+map.update small 7 a step that sometimes gives it back: same 3/102 -> 3/102; made 4/107
+map.update small 7 a fold in a fold: same 3/102 -> 3/102; made 4/151
+map.update small 7 a step that reads it after the change: same 3/102 -> 3/102; made 4/109
+map.update small 8 a loop, last argument: same 3/102 -> 3/102; made 4/109
+map.update small 8 a loop, first argument: same 3/102 -> 3/102; made 4/109
+map.update small 8 a loop through a let: same 3/102 -> 3/102; made 4/109
+map.update small 8 a loop with the old one: same 3/102 -> 3/102; made 4/109 old 4/108
+map.update small 8 a loop with it twice: same 3/102 -> 3/102; made 3/102 same 4/103
+map.update small 8 a loop that keeps the old ones: same 3/102 -> 3/102; made 4/106 olds ["4/105", "4/104", "4/103", "3/102"]
+map.update small 8 a loop whose closures keep the old ones: same 3/102 -> 3/102; made 4/106 looks ["4/105", "4/104", "4/103", "3/102"]
+map.update small 8 a loop whose other arm reads it: same 3/102 -> 3/102; made 4/106
+map.update small 8 a loop that sends the old ones: same 3/102 -> 3/102; made 4/106 sent ["3/102", "4/103", "4/104", "4/105"]
+map.update small 9 a record in a loop: same 3/102 3/102 -> 3/102 3/102; made 4/109 3/102
+map.update small 9 a record in a loop, its old one too: same 3/102 -> 3/102; made 4/107 old 4/106 r3
+map.update small 9 a record field from another: same 3/102 3/102 -> 3/102 3/102; made 3/102 4/103
+map.update small 9 two record updates: same 3/102 3/102 -> 3/102 3/102; made 4/109 4/109
+map.update small 9 a record read in another arm: same 3/102 -> 3/102; made 4/106 s...
+map.update small 9 a record held nowhere else: same 3/102 -> 3/102; made 4/105
+map.update small 9 a record in a fold: same 3/102 3/102 -> 3/102 3/102; made 4/109
+map.update small 9 a record in a fold, held in a list: same 3/102 -> 3/102; made 4/109
+map.update small 10 a task that fails part way: same 3/102 -> 3/102; made failed
+map.update small 11 a key and a member: Some("first") true true true true Some(1)
+set.insert tree 1 a let read after: same 100/4950 -> 100/4950; made 101/5451
+set.insert tree 2 returned at once: same 100/4950 -> 100/4950; made 101/5451
+set.insert tree 2 through a tail call: same 100/4950 -> 100/4950; made 101/5451
+set.insert tree 2 copies in the frame: same 100/4950 -> 100/4950; made 101/5452
+set.insert tree 3 a closure: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 4 a record field: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 4 a tuple: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 4 list elements: same ["100/4950", "100/4950"] -> ["100/4950", "100/4950"]; made ["101/5451", "101/5451"]
+set.insert tree 4 an Option: same 100/4950 -> 100/4950; made 101/5451
+set.insert tree 4 a record update: same 100/4950 100/4950 -> 100/4950 100/4950; made 101/5451 100/4950
+set.insert tree 5 a channel message: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 5 another task: same 100/4950 -> 100/4950; made ["103/6453", "103/6453"]
+set.insert tree 5 changed in other tasks: same 100/4950 -> 100/4950; made ["103/6453", "103/6453"]
+set.insert tree 6 fold_until: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 6 set.fold: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 7 a step that sends the old one away: ["100/4950", "101/5451", "102/5953", "103/6453", "103/6453", "103/6453", "103/6453"]; made 103/6453
+set.insert tree 7 a step that keeps the old ones: ["103/6453", "103/6453", "103/6453", "103/6453", "102/5953", "101/5451", "100/4950"]; made 103/6453
+set.insert tree 7 list.scan: ["100/4950", "101/5451", "102/5953", "103/6453", "103/6453", "103/6453", "103/6453", "103/6453"]
+set.insert tree 7 a step that sometimes gives it back: same 100/4950 -> 100/4950; made 102/5952
+set.insert tree 7 a fold in a fold: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 7 a step that reads it after the change: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 8 a loop, last argument: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 8 a loop, first argument: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 8 a loop through a let: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 8 a loop with the old one: same 100/4950 -> 100/4950; made 103/6453 old 103/6453
+set.insert tree 8 a loop with it twice: same 100/4950 -> 100/4950; made 100/4950 same 101/5450
+set.insert tree 8 a loop that keeps the old ones: same 100/4950 -> 100/4950; made 103/6453 olds ["103/6453", "102/5951", "101/5450", "100/4950"]
+set.insert tree 8 a loop whose closures keep the old ones: same 100/4950 -> 100/4950; made 103/6453 looks ["103/6453", "102/5951", "101/5450", "100/4950"]
+set.insert tree 8 a loop whose other arm reads it: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 8 a loop that sends the old ones: same 100/4950 -> 100/4950; made 103/6453 sent ["100/4950", "101/5450", "102/5951", "103/6453"]
+set.insert tree 9 a record in a loop: same 100/4950 100/4950 -> 100/4950 100/4950; made 103/6453 100/4950
+set.insert tree 9 a record in a loop, its old one too: same 100/4950 -> 100/4950; made 103/6453 old 103/6453 r3
+set.insert tree 9 a record field from another: same 100/4950 100/4950 -> 100/4950 100/4950; made 100/4950 101/5450
+set.insert tree 9 two record updates: same 100/4950 100/4950 -> 100/4950 100/4950; made 103/6453 103/6453
+set.insert tree 9 a record read in another arm: same 100/4950 -> 100/4950; made 103/6453 s...
+set.insert tree 9 a record held nowhere else: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 9 a record in a fold: same 100/4950 100/4950 -> 100/4950 100/4950; made 103/6453
+set.insert tree 9 a record in a fold, held in a list: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 10 a task that fails part way: same 100/4950 -> 100/4950; made failed
+set.insert tree 11 a key and a member: Some("first") true true true true Some(1)
+set.insert small 1 a let read after: same 3/6 -> 3/6; made 4/507
+set.insert small 2 returned at once: same 3/6 -> 3/6; made 4/507
+set.insert small 2 through a tail call: same 3/6 -> 3/6; made 4/507
+set.insert small 2 copies in the frame: same 3/6 -> 3/6; made 4/508
+set.insert small 3 a closure: same 3/6 -> 3/6; made 6/1509
+set.insert small 4 a record field: same 3/6 -> 3/6; made 6/1509
+set.insert small 4 a tuple: same 3/6 -> 3/6; made 6/1509
+set.insert small 4 list elements: same ["3/6", "3/6"] -> ["3/6", "3/6"]; made ["4/507", "4/507"]
+set.insert small 4 an Option: same 3/6 -> 3/6; made 4/507
+set.insert small 4 a record update: same 3/6 3/6 -> 3/6 3/6; made 4/507 3/6
+set.insert small 5 a channel message: same 3/6 -> 3/6; made 6/1509
+set.insert small 5 another task: same 3/6 -> 3/6; made ["6/1509", "6/1509"]
+set.insert small 5 changed in other tasks: same 3/6 -> 3/6; made ["6/1509", "6/1509"]
+set.insert small 6 fold_until: same 3/6 -> 3/6; made 6/1509
+set.insert small 6 set.fold: same 3/6 -> 3/6; made 6/1509
+set.insert small 7 a step that sends the old one away: ["3/6", "4/507", "5/1009", "6/1509", "6/1509", "6/1509", "6/1509"]; made 6/1509
+set.insert small 7 a step that keeps the old ones: ["6/1509", "6/1509", "6/1509", "6/1509", "5/1009", "4/507", "3/6"]; made 6/1509
+set.insert small 7 list.scan: ["3/6", "4/507", "5/1009", "6/1509", "6/1509", "6/1509", "6/1509", "6/1509"]
+set.insert small 7 a step that sometimes gives it back: same 3/6 -> 3/6; made 5/1008
+set.insert small 7 a fold in a fold: same 3/6 -> 3/6; made 6/1509
+set.insert small 7 a step that reads it after the change: same 3/6 -> 3/6; made 6/1509
+set.insert small 8 a loop, last argument: same 3/6 -> 3/6; made 6/1509
+set.insert small 8 a loop, first argument: same 3/6 -> 3/6; made 6/1509
+set.insert small 8 a loop through a let: same 3/6 -> 3/6; made 6/1509
+set.insert small 8 a loop with the old one: same 3/6 -> 3/6; made 6/1509 old 6/1509
+set.insert small 8 a loop with it twice: same 3/6 -> 3/6; made 3/6 same 4/506
+set.insert small 8 a loop that keeps the old ones: same 3/6 -> 3/6; made 6/1509 olds ["6/1509", "5/1007", "4/506", "3/6"]
+set.insert small 8 a loop whose closures keep the old ones: same 3/6 -> 3/6; made 6/1509 looks ["6/1509", "5/1007", "4/506", "3/6"]
+set.insert small 8 a loop whose other arm reads it: same 3/6 -> 3/6; made 6/1509
+set.insert small 8 a loop that sends the old ones: same 3/6 -> 3/6; made 6/1509 sent ["3/6", "4/506", "5/1007", "6/1509"]
+set.insert small 9 a record in a loop: same 3/6 3/6 -> 3/6 3/6; made 6/1509 3/6
+set.insert small 9 a record in a loop, its old one too: same 3/6 -> 3/6; made 6/1509 old 6/1509 r3
+set.insert small 9 a record field from another: same 3/6 3/6 -> 3/6 3/6; made 3/6 4/506
+set.insert small 9 two record updates: same 3/6 3/6 -> 3/6 3/6; made 6/1509 6/1509
+set.insert small 9 a record read in another arm: same 3/6 -> 3/6; made 6/1509 s...
+set.insert small 9 a record held nowhere else: same 3/6 -> 3/6; made 6/1509
+set.insert small 9 a record in a fold: same 3/6 3/6 -> 3/6 3/6; made 6/1509
+set.insert small 9 a record in a fold, held in a list: same 3/6 -> 3/6; made 6/1509
+set.insert small 10 a task that fails part way: same 3/6 -> 3/6; made failed
+set.insert small 11 a key and a member: Some("first") true true true true Some(1)
+list.append tree 1 a let read after: same 200/19900/Some(199) -> 200/19900/Some(199); made 201/19901/Some(1)
+list.append tree 2 returned at once: same 200/19900/Some(199) -> 200/19900/Some(199); made 201/19901/Some(1)
+list.append tree 2 through a tail call: same 200/19900/Some(199) -> 200/19900/Some(199); made 201/19901/Some(1)
+list.append tree 2 copies in the frame: same 200/19900/Some(199) -> 200/19900/Some(199); made 201/19902/Some(2)
+list.append tree 3 a closure: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 4 a record field: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 4 a tuple: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 4 list elements: same ["200/19900/Some(199)", "200/19900/Some(199)"] -> ["200/19900/Some(199)", "200/19900/Some(199)"]; made ["201/19901/Some(1)", "201/19901/Some(1)"]
+list.append tree 4 an Option: same 200/19900/Some(199) -> 200/19900/Some(199); made 201/19901/Some(1)
+list.append tree 4 a record update: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 201/19901/Some(1) 200/19900/Some(199)
+list.append tree 5 a channel message: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 5 another task: same 200/19900/Some(199) -> 200/19900/Some(199); made ["207/19908/Some(2)", "205/19904/Some(1)"]
+list.append tree 5 changed in other tasks: same 200/19900/Some(199) -> 200/19900/Some(199); made ["213/19914/Some(2)", "213/19914/Some(2)"]
+list.append tree 6 fold_until: same 200/19900/Some(199) -> 200/19900/Some(199); made 203/19903/Some(0)
+list.append tree 6 set.fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 203/19903/Some(2)
+list.append tree 7 a step that sends the old one away: ["200/19900/Some(199)", "201/19901/Some(1)", "202/19903/Some(2)", "203/19903/Some(0)", "204/19905/Some(2)", "205/19906/Some(1)", "206/19906/Some(0)"]; made 207/19908/Some(2)
+list.append tree 7 a step that keeps the old ones: ["206/19906/Some(0)", "205/19906/Some(1)", "204/19905/Some(2)", "203/19903/Some(0)", "202/19903/Some(2)", "201/19901/Some(1)", "200/19900/Some(199)"]; made 207/19908/Some(2)
+list.append tree 7 list.scan: ["200/19900/Some(199)", "201/19901/Some(1)", "202/19903/Some(2)", "203/19903/Some(0)", "204/19905/Some(2)", "205/19906/Some(1)", "206/19906/Some(0)", "207/19908/Some(2)"]
+list.append tree 7 a step that sometimes gives it back: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19906/Some(2)
+list.append tree 7 a fold in a fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 249/19949/Some(1)
+list.append tree 7 a step that reads it after the change: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 8 a loop, last argument: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0)
+list.append tree 8 a loop, first argument: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0)
+list.append tree 8 a loop through a let: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0)
+list.append tree 8 a loop with the old one: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0) old 206/19906/Some(2)
+list.append tree 8 a loop with it twice: same 200/19900/Some(199) -> 200/19900/Some(199); made 200/19900/Some(199) same 201/19900/Some(0)
+list.append tree 8 a loop that keeps the old ones: same 200/19900/Some(199) -> 200/19900/Some(199); made 204/19903/Some(0) olds ["203/19903/Some(2)", "202/19901/Some(1)", "201/19900/Some(0)", "200/19900/Some(199)"]
+list.append tree 8 a loop whose closures keep the old ones: same 200/19900/Some(199) -> 200/19900/Some(199); made 204/19903/Some(0) looks ["203/19903/Some(2)", "202/19901/Some(1)", "201/19900/Some(0)", "200/19900/Some(199)"]
+list.append tree 8 a loop whose other arm reads it: same 200/19900/Some(199) -> 200/19900/Some(199); made 204/19903/Some(0)
+list.append tree 8 a loop that sends the old ones: same 200/19900/Some(199) -> 200/19900/Some(199); made 204/19903/Some(0) sent ["200/19900/Some(199)", "201/19900/Some(0)", "202/19901/Some(1)", "203/19903/Some(2)"]
+list.append tree 9 a record in a loop: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 207/19906/Some(0) 200/19900/Some(199)
+list.append tree 9 a record in a loop, its old one too: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19904/Some(1) old 204/19903/Some(0) r3
+list.append tree 9 a record field from another: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 200/19900/Some(199) 201/19900/Some(0)
+list.append tree 9 two record updates: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 207/19906/Some(0) 207/19907/Some(1)
+list.append tree 9 a record read in another arm: same 200/19900/Some(199) -> 200/19900/Some(199); made 204/19903/Some(0) s...
+list.append tree 9 a record held nowhere else: same 200/19900/Some(199) -> 200/19900/Some(199); made 203/19903/Some(2)
+list.append tree 9 a record in a fold: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 9 a record in a fold, held in a list: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 10 a task that fails part way: same 200/19900/Some(199) -> 200/19900/Some(199); made failed
+list.append tree 11 a key and a member: Some("first") true true true true Some(1)
+list.append small 1 a let read after: same 3/6/Some(3) -> 3/6/Some(3); made 4/7/Some(1)
+list.append small 2 returned at once: same 3/6/Some(3) -> 3/6/Some(3); made 4/7/Some(1)
+list.append small 2 through a tail call: same 3/6/Some(3) -> 3/6/Some(3); made 4/7/Some(1)
+list.append small 2 copies in the frame: same 3/6/Some(3) -> 3/6/Some(3); made 4/8/Some(2)
+list.append small 3 a closure: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 4 a record field: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 4 a tuple: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 4 list elements: same ["3/6/Some(3)", "3/6/Some(3)"] -> ["3/6/Some(3)", "3/6/Some(3)"]; made ["4/7/Some(1)", "4/7/Some(1)"]
+list.append small 4 an Option: same 3/6/Some(3) -> 3/6/Some(3); made 4/7/Some(1)
+list.append small 4 a record update: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 4/7/Some(1) 3/6/Some(3)
+list.append small 5 a channel message: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 5 another task: same 3/6/Some(3) -> 3/6/Some(3); made ["10/14/Some(2)", "8/10/Some(1)"]
+list.append small 5 changed in other tasks: same 3/6/Some(3) -> 3/6/Some(3); made ["16/20/Some(2)", "16/20/Some(2)"]
+list.append small 6 fold_until: same 3/6/Some(3) -> 3/6/Some(3); made 6/9/Some(0)
+list.append small 6 set.fold: same 3/6/Some(3) -> 3/6/Some(3); made 6/9/Some(2)
+list.append small 7 a step that sends the old one away: ["3/6/Some(3)", "4/7/Some(1)", "5/9/Some(2)", "6/9/Some(0)", "7/11/Some(2)", "8/12/Some(1)", "9/12/Some(0)"]; made 10/14/Some(2)
+list.append small 7 a step that keeps the old ones: ["9/12/Some(0)", "8/12/Some(1)", "7/11/Some(2)", "6/9/Some(0)", "5/9/Some(2)", "4/7/Some(1)", "3/6/Some(3)"]; made 10/14/Some(2)
+list.append small 7 list.scan: ["3/6/Some(3)", "4/7/Some(1)", "5/9/Some(2)", "6/9/Some(0)", "7/11/Some(2)", "8/12/Some(1)", "9/12/Some(0)", "10/14/Some(2)"]
+list.append small 7 a step that sometimes gives it back: same 3/6/Some(3) -> 3/6/Some(3); made 8/12/Some(2)
+list.append small 7 a fold in a fold: same 3/6/Some(3) -> 3/6/Some(3); made 52/55/Some(1)
+list.append small 7 a step that reads it after the change: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 8 a loop, last argument: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0)
+list.append small 8 a loop, first argument: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0)
+list.append small 8 a loop through a let: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0)
+list.append small 8 a loop with the old one: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0) old 9/12/Some(2)
+list.append small 8 a loop with it twice: same 3/6/Some(3) -> 3/6/Some(3); made 3/6/Some(3) same 4/6/Some(0)
+list.append small 8 a loop that keeps the old ones: same 3/6/Some(3) -> 3/6/Some(3); made 7/9/Some(0) olds ["6/9/Some(2)", "5/7/Some(1)", "4/6/Some(0)", "3/6/Some(3)"]
+list.append small 8 a loop whose closures keep the old ones: same 3/6/Some(3) -> 3/6/Some(3); made 7/9/Some(0) looks ["6/9/Some(2)", "5/7/Some(1)", "4/6/Some(0)", "3/6/Some(3)"]
+list.append small 8 a loop whose other arm reads it: same 3/6/Some(3) -> 3/6/Some(3); made 7/9/Some(0)
+list.append small 8 a loop that sends the old ones: same 3/6/Some(3) -> 3/6/Some(3); made 7/9/Some(0) sent ["3/6/Some(3)", "4/6/Some(0)", "5/7/Some(1)", "6/9/Some(2)"]
+list.append small 9 a record in a loop: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 10/12/Some(0) 3/6/Some(3)
+list.append small 9 a record in a loop, its old one too: same 3/6/Some(3) -> 3/6/Some(3); made 8/10/Some(1) old 7/9/Some(0) r3
+list.append small 9 a record field from another: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 3/6/Some(3) 4/6/Some(0)
+list.append small 9 two record updates: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 10/12/Some(0) 10/13/Some(1)
+list.append small 9 a record read in another arm: same 3/6/Some(3) -> 3/6/Some(3); made 7/9/Some(0) s...
+list.append small 9 a record held nowhere else: same 3/6/Some(3) -> 3/6/Some(3); made 6/9/Some(2)
+list.append small 9 a record in a fold: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 10/14/Some(2)
+list.append small 9 a record in a fold, held in a list: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 10 a task that fails part way: same 3/6/Some(3) -> 3/6/Some(3); made failed
+list.append small 11 a key and a member: Some("first") true true true true Some(1)
+list.set tree 1 a let read after: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19911/Some(12)
+list.set tree 2 returned at once: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19911/Some(12)
+list.set tree 2 through a tail call: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19911/Some(12)
+list.set tree 2 copies in the frame: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19915/Some(1)
+list.set tree 3 a closure: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 4 a record field: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 4 a tuple: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 4 list elements: same ["200/19900/Some(1)", "200/19900/Some(1)"] -> ["200/19900/Some(1)", "200/19900/Some(1)"]; made ["200/19911/Some(12)", "200/19911/Some(12)"]
+list.set tree 4 an Option: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19911/Some(12)
+list.set tree 4 a record update: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19911/Some(12) 200/19900/Some(1)
+list.set tree 5 a channel message: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 5 another task: same 200/19900/Some(1) -> 200/19900/Some(1); made ["200/19933/Some(12)", "200/19933/Some(12)"]
+list.set tree 5 changed in other tasks: same 200/19900/Some(1) -> 200/19900/Some(1); made ["200/19933/Some(12)", "200/19933/Some(12)"]
+list.set tree 6 fold_until: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 6 set.fold: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 7 a step that sends the old one away: ["200/19900/Some(1)", "200/19911/Some(12)", "200/19926/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)"]; made 200/19933/Some(12)
+list.set tree 7 a step that keeps the old ones: ["200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19926/Some(12)", "200/19911/Some(12)", "200/19900/Some(1)"]; made 200/19933/Some(12)
+list.set tree 7 list.scan: ["200/19900/Some(1)", "200/19911/Some(12)", "200/19926/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)"]
+list.set tree 7 a step that sometimes gives it back: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19922/Some(1)
+list.set tree 7 a fold in a fold: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 7 a step that reads it after the change: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 8 a loop, last argument: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 8 a loop, first argument: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 8 a loop through a let: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 8 a loop with the old one: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) old 200/19933/Some(12)
+list.set tree 8 a loop with it twice: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19900/Some(1) same 200/19907/Some(1)
+list.set tree 8 a loop that keeps the old ones: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) olds ["200/19933/Some(12)", "200/19918/Some(12)", "200/19907/Some(1)", "200/19900/Some(1)"]
+list.set tree 8 a loop whose closures keep the old ones: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) looks ["200/19933/Some(12)", "200/19918/Some(12)", "200/19907/Some(1)", "200/19900/Some(1)"]
+list.set tree 8 a loop whose other arm reads it: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 8 a loop that sends the old ones: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) sent ["200/19900/Some(1)", "200/19907/Some(1)", "200/19918/Some(12)", "200/19933/Some(12)"]
+list.set tree 9 a record in a loop: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19933/Some(12) 200/19900/Some(1)
+list.set tree 9 a record in a loop, its old one too: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) old 200/19933/Some(12) r3
+list.set tree 9 a record field from another: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19900/Some(1) 200/19907/Some(1)
+list.set tree 9 two record updates: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19933/Some(12) 200/19933/Some(12)
+list.set tree 9 a record read in another arm: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) s...
+list.set tree 9 a record held nowhere else: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 9 a record in a fold: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 9 a record in a fold, held in a list: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 10 a task that fails part way: same 200/19900/Some(1) -> 200/19900/Some(1); made failed
+list.set tree 11 a key and a member: Some("first") true true true true Some(1)
+list.set small 1 a let read after: same 3/6/Some(2) -> 3/6/Some(2); made 3/16/Some(12)
+list.set small 2 returned at once: same 3/6/Some(2) -> 3/6/Some(2); made 3/16/Some(12)
+list.set small 2 through a tail call: same 3/6/Some(2) -> 3/6/Some(2); made 3/16/Some(12)
+list.set small 2 copies in the frame: same 3/6/Some(2) -> 3/6/Some(2); made 3/20/Some(2)
+list.set small 3 a closure: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 4 a record field: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 4 a tuple: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 4 list elements: same ["3/6/Some(2)", "3/6/Some(2)"] -> ["3/6/Some(2)", "3/6/Some(2)"]; made ["3/16/Some(12)", "3/16/Some(12)"]
+list.set small 4 an Option: same 3/6/Some(2) -> 3/6/Some(2); made 3/16/Some(12)
+list.set small 4 a record update: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/16/Some(12) 3/6/Some(2)
+list.set small 5 a channel message: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 5 another task: same 3/6/Some(2) -> 3/6/Some(2); made ["3/36/Some(12)", "3/36/Some(12)"]
+list.set small 5 changed in other tasks: same 3/6/Some(2) -> 3/6/Some(2); made ["3/36/Some(12)", "3/36/Some(12)"]
+list.set small 6 fold_until: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 6 set.fold: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 7 a step that sends the old one away: ["3/6/Some(2)", "3/16/Some(12)", "3/30/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)"]; made 3/36/Some(12)
+list.set small 7 a step that keeps the old ones: ["3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/30/Some(12)", "3/16/Some(12)", "3/6/Some(2)"]; made 3/36/Some(12)
+list.set small 7 list.scan: ["3/6/Some(2)", "3/16/Some(12)", "3/30/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)"]
+list.set small 7 a step that sometimes gives it back: same 3/6/Some(2) -> 3/6/Some(2); made 3/26/Some(2)
+list.set small 7 a fold in a fold: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 7 a step that reads it after the change: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 8 a loop, last argument: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 8 a loop, first argument: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 8 a loop through a let: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 8 a loop with the old one: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) old 3/36/Some(12)
+list.set small 8 a loop with it twice: same 3/6/Some(2) -> 3/6/Some(2); made 3/6/Some(2) same 3/12/Some(2)
+list.set small 8 a loop that keeps the old ones: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) olds ["3/36/Some(12)", "3/22/Some(12)", "3/12/Some(2)", "3/6/Some(2)"]
+list.set small 8 a loop whose closures keep the old ones: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) looks ["3/36/Some(12)", "3/22/Some(12)", "3/12/Some(2)", "3/6/Some(2)"]
+list.set small 8 a loop whose other arm reads it: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 8 a loop that sends the old ones: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) sent ["3/6/Some(2)", "3/12/Some(2)", "3/22/Some(12)", "3/36/Some(12)"]
+list.set small 9 a record in a loop: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/36/Some(12) 3/6/Some(2)
+list.set small 9 a record in a loop, its old one too: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) old 3/36/Some(12) r3
+list.set small 9 a record field from another: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/6/Some(2) 3/12/Some(2)
+list.set small 9 two record updates: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/36/Some(12) 3/36/Some(12)
+list.set small 9 a record read in another arm: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) s...
+list.set small 9 a record held nowhere else: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 9 a record in a fold: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/36/Some(12)
+list.set small 9 a record in a fold, held in a list: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 10 a task that fails part way: same 3/6/Some(2) -> 3/6/Some(2); made failed
+list.set small 11 a key and a member: Some("first") true true true true Some(1)
