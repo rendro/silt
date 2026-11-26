@@ -770,6 +770,45 @@ fn test_fs_remove_all_removes_links_not_what_they_lead_to() {
     );
 }
 
+/// A link given with separators at its end (`link/`, `link//`, on
+/// Windows `link\`) is removed itself by fs.remove_all and fs.remove,
+/// as without them: the system would follow it (`link/` is the directory
+/// it leads to), and remove_all emptied that directory.
+#[test]
+fn test_a_link_given_with_a_separator_at_its_end_is_removed_itself() {
+    let dir = TempDir::new("remove_link_slash");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    let mut endings = vec!["/", "//"];
+    if cfg!(windows) {
+        endings.push("\\\\");
+    }
+    for function in ["remove_all", "remove"] {
+        for ending in &endings {
+            let link = dir.path().join("link");
+            if dir_link(&outside, &link).is_none() {
+                eprintln!("skipped: the system does not let this test make a link");
+                return;
+            }
+            let at = format!("{}{ending}", link.to_string_lossy().replace('\\', "/"));
+            let input = format!(
+                "import fs\nimport host\nfn main() {{\n  host.give(fs.{function}(\"{at}\"))\n}}\n"
+            );
+            assert_eq!(ok_inner(run(&input)), Value::Unit, "fs.{function}({at})");
+            assert!(
+                std::fs::symlink_metadata(&link).is_err(),
+                "fs.{function}({at}): the link is gone"
+            );
+            assert_eq!(
+                std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+                "keep",
+                "fs.{function}({at}) keeps what the link leads to"
+            );
+        }
+    }
+}
+
 // ── fs.copy, fs.rename: a fault of a directory ──────────────────────
 
 /// A fault of `fs.copy` or `fs.rename` that comes of a directory names

@@ -642,8 +642,9 @@ fs.remove(path: String) -> Result((), IoError)
 Removes a file or an empty directory. Returns `Ok(())` on success or
 `Err(IoError)` on failure. A symlink is removed itself, never what it
 points to: a link to a directory is removed as a link to a file is,
-and the directory stays. To remove a directory with what is in it, use
-`fs.remove_all`.
+and the directory stays. A separator at the end of `path` changes nothing:
+`fs.remove("link/")` removes the link, as `fs.remove("link")` does. To remove a
+directory with what is in it, use `fs.remove_all`.
 
 ```silt
 import fs
@@ -666,14 +667,17 @@ fs.remove_all(path: String) -> Result((), IoError)
 Removes a file, or a directory and everything in it, at any depth: this can
 delete a lot, and nothing asks first. A symlink is removed itself, never what
 it points to, also inside the tree (as `fs.walk` lists a link as itself): a
-link to a directory elsewhere goes, and that directory stays. A path that does
+link to a directory elsewhere goes, and that directory stays. So does a link
+given as `path`, with a separator at its end or without (`link/`, `link`):
+the link goes, and what it points to stays. A path that does
 not exist is `Err(NotFound(path))`; a program that wants "gone either way"
 matches it. An error from inside the tree (a directory that may not be
 changed) names `path`, and what was removed before it stays removed.
 
-A `path` whose last part is `.` or `..` (`.`, `out/.`, `../`) or that is a
-root (`/`, `C:\`) is refused, as `rm -r` refuses it, and nothing is removed:
-`Err(InvalidInput("fs.remove_all does not remove ., .. or a root: .."))`.
+A `path` whose last part is `.` or `..` (`.`, `out/.`, `../`), that is a
+root (`/`, `C:\`), or on Windows a drive alone (`C:`, the current directory of
+that drive) is refused, as `rm -r` refuses it, and nothing is removed:
+`Err(InvalidInput("fs.remove_all does not remove ., .., a root or a drive: .."))`.
 
 ```silt
 import fs

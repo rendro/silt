@@ -514,14 +514,95 @@ pub(crate) mod fs {
         }
     }
 
+    /// A separator of the parts of a path: `/`, and `\` on Windows too.
+    fn separator(c: char) -> bool {
+        c == '/' || (cfg!(windows) && c == '\\')
+    }
+
+    /// `path` without the separators at its end, where a name is left
+    /// before them (`link/` is `link`; `/` and `C:\` stay as they are).
+    /// A separator at the end makes the system follow a link (`link/`
+    /// is the directory it leads to): `fs.remove` and `fs.remove_all`
+    /// look at the path and remove it without them, so a link given so
+    /// is removed itself, never what it leads to.
+    fn without_trailing_separators(path: &str) -> &str {
+        let trimmed = path.trim_end_matches(separator);
+        match Path::new(trimmed).components().next_back() {
+            Some(std::path::Component::Normal(_)) => trimmed,
+            _ => path,
+        }
+    }
+
     /// Whether `fs.remove_all` refuses `path`: its last part is `.` or
-    /// `..` (`out/.`, `..`), or it is a root (`/`, `C:\`).
+    /// `..` (`out/.`, `..`), it is a root (`/`, `C:\`), or on Windows
+    /// it is a drive alone (`C:`, the current directory of that drive,
+    /// as `.` is of the current one).
     fn refused_by_remove_all(path: &str) -> bool {
-        let separator = |c: char| c == '/' || (cfg!(windows) && c == '\\');
         let trimmed = path.trim_end_matches(separator);
         let last = trimmed.rsplit(separator).next().unwrap_or(trimmed);
         let at = Path::new(path);
-        matches!(last, "." | "..") || (at.has_root() && at.parent().is_none())
+        let mut parts = at.components().peekable();
+        // (A drive alone, or a drive and `.`: `C:`, `C:.`.)
+        let a_drive_alone = parts.peek().is_some()
+            && parts.all(|part| {
+                matches!(
+                    part,
+                    std::path::Component::Prefix(_) | std::path::Component::CurDir
+                )
+            });
+        matches!(last, "." | "..") || (at.has_root() && at.parent().is_none()) || a_drive_alone
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{refused_by_remove_all, without_trailing_separators};
+
+        /// What `fs.remove_all` refuses, on every system: `.`, `..` and a
+        /// root; on Windows a drive alone too, which elsewhere is a name.
+        #[test]
+        fn remove_all_refuses_dot_dot_dot_a_root_and_a_drive_alone() {
+            for refused in [
+                ".",
+                "..",
+                "./",
+                "../",
+                "out/.",
+                "out/sub/..",
+                "a/./",
+                "/",
+                "//",
+                "/..",
+            ] {
+                assert!(refused_by_remove_all(refused), "{refused} is refused");
+            }
+            for removed in ["out", "out/", "a//", "link/", "", "C:x", "a/C:"] {
+                assert!(!refused_by_remove_all(removed), "{removed} is not refused");
+            }
+            for drive in ["C:", "c:", "C:\\", "C:/", "C:."] {
+                assert_eq!(refused_by_remove_all(drive), cfg!(windows), "{drive}");
+            }
+        }
+
+        /// A path that ends in separators is looked at without them, where
+        /// a name is left; a root and a drive stay as they are.
+        #[test]
+        fn trailing_separators_go_where_a_name_is_left() {
+            for (given, looked_at) in [
+                ("link/", "link"),
+                ("link//", "link"),
+                ("a/b/", "a/b"),
+                ("link", "link"),
+                ("/", "/"),
+                ("//", "//"),
+                ("", ""),
+            ] {
+                assert_eq!(without_trailing_separators(given), looked_at, "{given}");
+            }
+            #[cfg(windows)]
+            for (given, looked_at) in [("link\\", "link"), ("a\\b\\/", "a\\b"), ("C:\\", "C:\\")] {
+                assert_eq!(without_trailing_separators(given), looked_at, "{given}");
+            }
+        }
     }
 
     builtins! {
@@ -562,25 +643,28 @@ pub(crate) mod fs {
         }
 
         fn remove(path: &str) -> Value {
-            result(remove_one(Path::new(path)), path, unit)
+            let at = Path::new(without_trailing_separators(path));
+            result(remove_one(at), path, unit)
         }
 
         // A directory goes with everything in it; a file or a link goes
         // as `fs.remove` removes it, and no link is followed, also inside
         // the tree (`remove_dir_all` follows none). An error names the
         // path given, wherever in the tree it happened. A path that ends
-        // in `.` or `..`, or is a root, is refused, as `rm -r` refuses
-        // it: nothing is removed.
+        // in `.` or `..`, or is a root or a drive alone, is refused, as
+        // `rm -r` refuses it: nothing is removed. A link given with a
+        // separator at its end (`link/`) is removed itself: the system
+        // would follow it, and empty what it leads to.
         fn remove_all(path: &str) -> Value {
             if refused_by_remove_all(path) {
                 return io_err(Value::variant(
                     bv::IO_INVALID_INPUT,
                     [Value::string(format!(
-                        "fs.remove_all does not remove ., .. or a root: {path}"
+                        "fs.remove_all does not remove ., .., a root or a drive: {path}"
                     ))],
                 ));
             }
-            let at = Path::new(path);
+            let at = Path::new(without_trailing_separators(path));
             let removed = match std::fs::symlink_metadata(at) {
                 Ok(md) if md.is_dir() => std::fs::remove_dir_all(at),
                 Ok(_) => remove_one(at),
