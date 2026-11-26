@@ -63,7 +63,10 @@ import bytes
 import list
 import toml
 
-type Meta { title: String, tags: List(String) }
+type Meta {
+  title: String,
+  tags: List(String),
+}
 
 -- The line of the text `text` that the byte `offset` is on, from 1.
 fn line_of(text: String, offset: Int) -> Int {
@@ -75,7 +78,8 @@ fn main() {
   let text = "title = \"T\"\ntags = 3\n"
   match toml.parse(text, Meta) {
     Ok(meta) -> println(meta.title)
-    Err(toml.TypeMismatch(expected, actual, at)) -> println("a.md:{line_of(text, at)}: expected {expected}, got {actual}") -- a.md:2: expected List, got integer at tags
+    Err(toml.TypeMismatch(expected, actual, at)) ->
+      println("a.md:{line_of(text, at)}: expected {expected}, got {actual}") -- a.md:2: expected List, got integer at tags
     Err(e) -> println("a.md: {e}")
   }
 }

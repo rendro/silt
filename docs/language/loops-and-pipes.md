@@ -173,7 +173,10 @@ the escapes; build HTML with single-quoted attributes, which a
 ```silt
 import json
 
-type Event { kind: String, count: Int }
+type Event {
+  kind: String,
+  count: Int,
+}
 
 fn main() {
   let kind = "fail"

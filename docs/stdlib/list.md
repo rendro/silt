@@ -1041,7 +1041,7 @@ import map
 import option
 
 fn main() {
-  let stock = #{"pen": 2, "ink": 0}
+  let stock = #{ "pen": 2, "ink": 0 }
   let take = { item -> map.get(stock, item) |> option.map { _ -> println("took {item}") } }
   println(list.try_each_option(["pen", "cap", "ink"], take)) -- None
 }
