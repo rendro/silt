@@ -642,8 +642,9 @@ fs.remove(path: String) -> Result((), IoError)
 Removes a file or an empty directory. Returns `Ok(())` on success or
 `Err(IoError)` on failure. A symlink is removed itself, never what it
 points to: a link to a directory is removed as a link to a file is,
-and the directory stays. A separator at the end of `path` changes nothing:
-`fs.remove("link/")` removes the link, as `fs.remove("link")` does. To remove a
+and the directory stays. A link to a directory given with a separator at its end
+is removed as the link: `fs.remove("link/")` removes it as `fs.remove("link")`
+does. A file given so (`f/`) is no directory: `Err(not a directory: f/)`. To remove a
 directory with what is in it, use `fs.remove_all`.
 
 ```silt
@@ -668,8 +669,10 @@ Removes a file, or a directory and everything in it, at any depth: this can
 delete a lot, and nothing asks first. A symlink is removed itself, never what
 it points to, also inside the tree (as `fs.walk` lists a link as itself): a
 link to a directory elsewhere goes, and that directory stays. So does a link
-given as `path`, with a separator at its end or without (`link/`, `link`):
-the link goes, and what it points to stays. A path that does
+to a directory given as `path`, with a separator at its end or without
+(`link/`, `link`): the link goes, and what it points to stays. A file or a
+link to a file given with a separator at its end is no directory, and
+nothing is removed. A path that does
 not exist is `Err(NotFound(path))`; a program that wants "gone either way"
 matches it. An error from inside the tree (a directory that may not be
 changed) names `path`, and what was removed before it stays removed.

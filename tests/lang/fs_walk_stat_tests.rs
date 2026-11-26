@@ -770,12 +770,13 @@ fn test_fs_remove_all_removes_links_not_what_they_lead_to() {
     );
 }
 
-/// A link given with separators at its end (`link/`, `link//`, on
-/// Windows `link\`) is removed itself by fs.remove_all and fs.remove,
-/// as without them: the system would follow it (`link/` is the directory
-/// it leads to), and remove_all emptied that directory.
+/// A link to a directory given with separators at its end (`link/`,
+/// `link//`, on Windows `link\`) is removed itself by fs.remove_all and
+/// fs.remove, as without them: the system would follow it (`link/` is
+/// the directory it leads to), and remove_all emptied that directory. A
+/// file or a link to a file given so is no directory, as before.
 #[test]
-fn test_a_link_given_with_a_separator_at_its_end_is_removed_itself() {
+fn test_a_link_to_a_directory_given_with_a_separator_at_its_end_is_removed_itself() {
     let dir = TempDir::new("remove_link_slash");
     let outside = dir.path().join("outside");
     std::fs::create_dir(&outside).unwrap();
@@ -806,6 +807,38 @@ fn test_a_link_given_with_a_separator_at_its_end_is_removed_itself() {
                 "fs.{function}({at}) keeps what the link leads to"
             );
         }
+    }
+    // A file, or a link to a file, given with a separator at its end is
+    // no directory: the system's own check stays, and nothing is
+    // removed (as `rm -r f/` refuses). (Unix: what Windows says of a
+    // file with a separator after it is its own.)
+    #[cfg(unix)]
+    {
+        let file = dir.path().join("f");
+        std::fs::write(&file, "f").unwrap();
+        let file_link = dir.path().join("flink");
+        std::os::unix::fs::symlink(outside.join("keep.txt"), &file_link).unwrap();
+        for function in ["remove_all", "remove"] {
+            for kept in [&file, &file_link] {
+                let at = format!("{}/", kept.to_string_lossy());
+                let input = format!(
+                    "import fs\nimport host\nfn main() {{\n  host.give(fs.{function}(\"{at}\"))\n}}\n"
+                );
+                assert_eq!(
+                    err_msg(run(&input)),
+                    format!("not a directory: {at}"),
+                    "fs.{function}({at})"
+                );
+                assert!(
+                    std::fs::symlink_metadata(kept).is_ok(),
+                    "fs.{function}({at}) removes nothing"
+                );
+            }
+        }
+        assert_eq!(
+            std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+            "keep"
+        );
     }
 }
 

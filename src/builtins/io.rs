@@ -521,15 +521,28 @@ pub(crate) mod fs {
 
     /// `path` without the separators at its end, where a name is left
     /// before them (`link/` is `link`; `/` and `C:\` stay as they are).
-    /// A separator at the end makes the system follow a link (`link/`
-    /// is the directory it leads to): `fs.remove` and `fs.remove_all`
-    /// look at the path and remove it without them, so a link given so
-    /// is removed itself, never what it leads to.
     fn without_trailing_separators(path: &str) -> &str {
         let trimmed = path.trim_end_matches(separator);
         match Path::new(trimmed).components().next_back() {
             Some(std::path::Component::Normal(_)) => trimmed,
             _ => path,
+        }
+    }
+
+    /// The path `fs.remove` and `fs.remove_all` remove for `path`. A
+    /// separator at the end makes the system follow a link (`link/` is
+    /// the directory it leads to, which `remove_dir_all` would empty):
+    /// a link to a directory given so is removed as the link, without
+    /// the separators. Any other path is as given, so the system's own
+    /// check stays: `f/` of a file, or of a link to a file, is "not a
+    /// directory", and nothing is removed.
+    fn removed_as(path: &str) -> &str {
+        let trimmed = without_trailing_separators(path);
+        let a_link = trimmed != path
+            && std::fs::symlink_metadata(trimmed).is_ok_and(|md| md.file_type().is_symlink());
+        match a_link && std::fs::metadata(path).is_ok_and(|md| md.is_dir()) {
+            true => trimmed,
+            false => path,
         }
     }
 
@@ -643,7 +656,7 @@ pub(crate) mod fs {
         }
 
         fn remove(path: &str) -> Value {
-            let at = Path::new(without_trailing_separators(path));
+            let at = Path::new(removed_as(path));
             result(remove_one(at), path, unit)
         }
 
@@ -652,9 +665,9 @@ pub(crate) mod fs {
         // the tree (`remove_dir_all` follows none). An error names the
         // path given, wherever in the tree it happened. A path that ends
         // in `.` or `..`, or is a root or a drive alone, is refused, as
-        // `rm -r` refuses it: nothing is removed. A link given with a
-        // separator at its end (`link/`) is removed itself: the system
-        // would follow it, and empty what it leads to.
+        // `rm -r` refuses it: nothing is removed. A link to a directory
+        // given with a separator at its end (`link/`) is removed itself:
+        // the system would follow it, and empty what it leads to.
         fn remove_all(path: &str) -> Value {
             if refused_by_remove_all(path) {
                 return io_err(Value::variant(
@@ -664,7 +677,7 @@ pub(crate) mod fs {
                     ))],
                 ));
             }
-            let at = Path::new(without_trailing_separators(path));
+            let at = Path::new(removed_as(path));
             let removed = match std::fs::symlink_metadata(at) {
                 Ok(md) if md.is_dir() => std::fs::remove_dir_all(at),
                 Ok(_) => remove_one(at),
