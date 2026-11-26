@@ -1,0 +1,25 @@
+-- Braces that hold arms are the match body, behind a name, a nullary
+-- variant or a record literal: `match q { x -> ... }` binds `x`, and an
+-- arm whose body is a block stays one.
+type Light { Go, Halt }
+type Q { x: Int }
+
+fn main() {
+  let q = 3
+  match q { x -> println("name {x}") }
+  match Go { _ -> println("go") }
+  match Go {
+    Go -> {
+      let n = q + 1
+      println("block {n}")
+    }
+    Halt -> println("halt")
+  }
+  let x = 5
+  match Q { x } {
+    Q { x } -> {
+      let y = x + 1
+      println("literal block {y}")
+    }
+  }
+}

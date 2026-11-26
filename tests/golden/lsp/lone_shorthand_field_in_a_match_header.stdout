@@ -1,0 +1,10 @@
+> hover 11:15
+```silt
+Int
+```
+> references 11:15
+lone_shorthand_field_in_a_match_header.silt:10:7-10:8
+lone_shorthand_field_in_a_match_header.silt:11:15-11:16
+> rename 11:15 n
+lone_shorthand_field_in_a_match_header.silt:10:7-10:8 => n
+lone_shorthand_field_in_a_match_header.silt:11:15-11:16 => x: n

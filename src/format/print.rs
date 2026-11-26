@@ -247,17 +247,15 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
 /// Whether `expr`, printed in a `match` header without
 /// parentheses around it, would show a `{` that is not in brackets: a
 /// block, a closure that is not an argument, or
-/// a record literal without fields or with one field written alone
-/// (`Q { x }`). The parser takes such a `{` for the block of the header
+/// a record literal without fields (`Q {}`). The parser takes such a
+/// `{` for the block of the header
 /// (or the `match` for one without a scrutinee), so parentheses around
 /// `expr` stay. (A closure argument is no danger: in a header it is
 /// written between the call's parentheses.)
 fn opens_brace_in_header(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Lambda { .. } | ExprKind::Block(_) => true,
-        ExprKind::RecordCreate { fields, punned, .. } => {
-            fields.is_empty() || (fields.len() == 1 && !punned.is_empty())
-        }
+        ExprKind::RecordCreate { fields, .. } => fields.is_empty(),
         ExprKind::Binary(left, _, right)
         | ExprKind::Pipe(left, right)
         | ExprKind::Range(left, right) => {

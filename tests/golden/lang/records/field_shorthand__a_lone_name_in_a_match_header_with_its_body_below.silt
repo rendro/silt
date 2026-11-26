@@ -1,12 +1,10 @@
--- cmd: check
--- exit: 1
--- The match body's `{` on the next line: the lone shorthand literal
--- still gets the header help.
+-- The match body's `{` on the next line: the braces behind `Q` are
+-- still the literal `Q { x }`.
 type Q { x: Int }
 fn main() {
   let x = 1
   match Q { x }
   {
-    Q { x } -> println("{x}")
+    Q { x } -> println("below {x}")
   }
 }

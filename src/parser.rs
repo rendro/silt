@@ -4232,16 +4232,6 @@ impl<'src> Parser<'src> {
                                 );
                                 continue;
                             }
-                            if let ExprKind::Ident(module) = &left.kind
-                                && self.header_lone_shorthand()
-                            {
-                                let ty = format!(
-                                    "{}.{}",
-                                    intern::resolve(*module),
-                                    intern::resolve(field)
-                                );
-                                return Err(self.header_lone_shorthand_error(&ty));
-                            }
                             // Imports take a single module ident, so only a
                             // one-segment qualifier can ever resolve. A
                             // deeper dotted path (`a.b.Pt { ... }`) or an
@@ -4408,8 +4398,6 @@ impl<'src> Parser<'src> {
                         },
                         span,
                     ))
-                } else if !self.nl_before() && self.header_lone_shorthand() {
-                    Err(self.header_lone_shorthand_error(&intern::resolve(name)))
                 } else {
                     Ok(self.mk_expr(ExprKind::Ident(name), span))
                 }
@@ -4855,12 +4843,12 @@ impl<'src> Parser<'src> {
     /// of the scrutinee expression. But a record literal
     /// `Ctor { field: v, ... }` is syntactically distinct from a match
     /// body `{ pattern -> body }`: the former has `Ident Colon`, or
-    /// `Ident Comma` (a shorthand field and more), immediately after
-    /// `{`; the latter has `Pattern Arrow`, and a block never starts
-    /// with either. This bounded lookahead lets a record literal through
-    /// inside scrutinee position without breaking match-body
-    /// suppression. A lone shorthand field (`P { x }`) is not let
-    /// through: `header_lone_shorthand` says how to write it.
+    /// `Ident Comma` (a shorthand field and more), or one name alone
+    /// (`P { x }`), immediately after `{`; the latter has `Pattern
+    /// Arrow`, and a block never starts with any of these that the
+    /// header could mean. This bounded lookahead lets a record literal
+    /// through inside scrutinee position without breaking match-body
+    /// suppression.
     fn scrutinee_lbrace_is_record_literal(&self) -> bool {
         if self.peek() != &Token::LBrace {
             return false;
@@ -4870,43 +4858,10 @@ impl<'src> Parser<'src> {
             return true;
         }
         matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_)))
-            && matches!(self.tokens.get(i + 1).map(|t| &t.kind), Some(Token::Comma))
-    }
-
-    /// In a header, at braces behind a type name that hold one name
-    /// alone and are followed on their line by another `{`: `match Q {
-    /// x } {`. The braces were meant as the literal `Q { x }`, but in a header they are its block (see
-    /// `scrutinee_lbrace_is_record_literal`), and the `{` behind them
-    /// is the real one.
-    fn header_lone_shorthand(&self) -> bool {
-        let kind = |i: usize| self.tokens.get(self.pos + i).map(|t| &t.kind);
-        let lone = matches!(kind(0), Some(Token::LBrace))
-            && matches!(kind(1), Some(Token::Ident(name)) if !is_constructor(*name))
-            && matches!(kind(2), Some(Token::RBrace));
-        if !lone {
-            return false;
-        }
-        // A match body is never `{ x }`: the braces were meant as the
-        // literal, wherever the header goes on behind them.
-        self.header_here().is_some()
-    }
-
-    /// The error at `header_lone_shorthand`, for the type `ty` as
-    /// written (`Q`, `util.Q`).
-    fn header_lone_shorthand_error(&self, ty: &str) -> Diagnostic {
-        let field = match self.tokens.get(self.pos + 1).map(|t| &t.kind) {
-            Some(Token::Ident(name)) => intern::resolve(*name),
-            _ => String::new(),
-        };
-        Diagnostic::error(
-            Code::ExpectedToken,
-            self.span(),
-            format!(
-                "in a `match`'s header, the braces of `{ty} {{ {field} }}` are read as its body: \
-                 write `{ty} {{ {field}: {field} }}`, or the literal in parentheses, \
-                 `({ty} {{ {field} }})`"
-            ),
-        )
+            && matches!(
+                self.tokens.get(i + 1).map(|t| &t.kind),
+                Some(Token::Comma | Token::RBrace)
+            )
     }
 
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,

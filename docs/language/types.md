@@ -166,11 +166,9 @@ parameter names the parameter's type,
 nothing in the function decides is an error that asks for the
 annotation.
 
-In the header of a `match`, braces that hold one name alone
-are the header's block, as `match x { y }` would be: there a literal
-with a single field written alone goes in parentheses,
-`match (User { name }) { ... }`, or writes the field out,
-`match User { name: name } { ... }`.
+A literal reads the same in the header of a `match`:
+`match User { name } { ... }` matches on the literal, and the `{`
+behind it opens the arms.
 
 Records declared in another module can be constructed with a
 **module-qualified path** — no selective import needed. The qualifier is

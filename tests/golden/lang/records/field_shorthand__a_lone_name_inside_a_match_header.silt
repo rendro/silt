@@ -1,12 +1,14 @@
--- cmd: check
--- exit: 1
--- A lone shorthand literal that does not end the `match` header gets the
--- header help.
+-- A lone shorthand literal that does not end the `match` header is the
+-- literal too, and so is one behind a field access.
 type Q { x: Int }
 fn main() {
   let x = 1
   match Q { x } == Q { x: 1 } {
     true -> println("eq")
     false -> println("ne")
+  }
+  match Q { x }.x {
+    1 -> println("field 1")
+    _ -> println("field other")
   }
 }
