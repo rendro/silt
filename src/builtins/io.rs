@@ -465,6 +465,38 @@ pub(crate) mod fs {
 
     use super::*;
 
+    /// Remove the path itself, never what a link leads to: a link to a
+    /// directory is unlinked as a link to a file is (on Windows such a
+    /// link is removed as a directory is, which is how the system
+    /// removes it). A directory must be empty.
+    fn remove_one(at: &Path) -> std::io::Result<()> {
+        let directory = std::fs::symlink_metadata(at).is_ok_and(|md| {
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::FileTypeExt;
+                md.is_dir() || md.file_type().is_symlink_dir()
+            }
+            #[cfg(not(windows))]
+            {
+                md.is_dir()
+            }
+        });
+        match directory {
+            true => std::fs::remove_dir(at),
+            false => std::fs::remove_file(at),
+        }
+    }
+
+    /// Whether `fs.remove_all` refuses `path`: its last part is `.` or
+    /// `..` (`out/.`, `..`), or it is a root (`/`, `C:\`).
+    fn refused_by_remove_all(path: &str) -> bool {
+        let separator = |c: char| c == '/' || (cfg!(windows) && c == '\\');
+        let trimmed = path.trim_end_matches(separator);
+        let last = trimmed.rsplit(separator).next().unwrap_or(trimmed);
+        let at = Path::new(path);
+        matches!(last, "." | "..") || (at.has_root() && at.parent().is_none())
+    }
+
     builtins! {
         fn exists(path: &str) -> bool {
             Path::new(path).exists()
@@ -502,26 +534,30 @@ pub(crate) mod fs {
             result(made, path, unit)
         }
 
-        // The path itself is removed, never what a link leads to: a link
-        // to a directory is unlinked as a link to a file is (on Windows
-        // such a link is removed as a directory is, which is how the
-        // system removes it).
         fn remove(path: &str) -> Value {
+            result(remove_one(Path::new(path)), path, unit)
+        }
+
+        // A directory goes with everything in it; a file or a link goes
+        // as `fs.remove` removes it, and no link is followed, also inside
+        // the tree (`remove_dir_all` follows none). An error names the
+        // path given, wherever in the tree it happened. A path that ends
+        // in `.` or `..`, or is a root, is refused, as `rm -r` refuses
+        // it: nothing is removed.
+        fn remove_all(path: &str) -> Value {
+            if refused_by_remove_all(path) {
+                return io_err(Value::variant(
+                    bv::IO_INVALID_INPUT,
+                    [Value::string(format!(
+                        "fs.remove_all does not remove ., .. or a root: {path}"
+                    ))],
+                ));
+            }
             let at = Path::new(path);
-            let directory = std::fs::symlink_metadata(at).is_ok_and(|md| {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::FileTypeExt;
-                    md.is_dir() || md.file_type().is_symlink_dir()
-                }
-                #[cfg(not(windows))]
-                {
-                    md.is_dir()
-                }
-            });
-            let removed = match directory {
-                true => std::fs::remove_dir(at),
-                false => std::fs::remove_file(at),
+            let removed = match std::fs::symlink_metadata(at) {
+                Ok(md) if md.is_dir() => std::fs::remove_dir_all(at),
+                Ok(_) => remove_one(at),
+                Err(e) => Err(e),
             };
             result(removed, path, unit)
         }

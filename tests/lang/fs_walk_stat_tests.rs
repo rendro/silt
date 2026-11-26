@@ -744,6 +744,39 @@ fn test_fs_remove_removes_a_link_to_a_directory_not_the_directory() {
     }
 }
 
+/// fs.remove_all removes a tree and the links in it, never what a link
+/// leads to: a link to a directory outside the tree goes, and that
+/// directory and what is in it stay. A link given as the path goes
+/// itself.
+#[test]
+fn test_fs_remove_all_removes_links_not_what_they_lead_to() {
+    let dir = TempDir::new("remove_all_links");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(tree.join("sub")).unwrap();
+    std::fs::write(tree.join("sub/own.txt"), "own").unwrap();
+    if dir_link(&outside, &tree.join("sub/link")).is_none() {
+        eprintln!("skipped: the system does not let this test make a link");
+        return;
+    }
+    let alias = dir.path().join("alias");
+    dir_link(&outside, &alias).unwrap();
+    for gone in [&alias, &tree] {
+        let at = gone.to_string_lossy().replace('\\', "/");
+        let input = format!(
+            "import fs\nimport host\nfn main() {{\n  host.give(fs.remove_all(\"{at}\"))\n}}\n"
+        );
+        assert_eq!(ok_inner(run(&input)), Value::Unit, "{at}");
+        assert!(std::fs::symlink_metadata(gone).is_err(), "{at} is gone");
+    }
+    assert_eq!(
+        std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+        "keep"
+    );
+}
+
 // ── fs.copy, fs.rename: a fault of a directory ──────────────────────
 
 /// A fault of `fs.copy` or `fs.rename` that comes of a directory names

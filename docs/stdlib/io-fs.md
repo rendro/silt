@@ -487,6 +487,7 @@ Filesystem operations: queries, directory management, and file manipulation.
 | `mkdir` | `(String) -> Result((), IoError)` | Create a directory (and parents) |
 | `read_link` | `(String) -> Result(String, IoError)` | Read a symlink's target (without following) |
 | `remove` | `(String) -> Result((), IoError)` | Remove a file or empty directory |
+| `remove_all` | `(String) -> Result((), IoError)` | Remove a file, or a directory and everything in it |
 | `rename` | `(String, String) -> Result((), IoError)` | Rename / move a file or directory |
 | `stat` | `(String) -> Result(FileStat, IoError)` | Fetch filesystem metadata for a path |
 | `walk` | `(String) -> Result(List(String), IoError)` | Recursively list all paths under a directory |
@@ -637,7 +638,8 @@ fs.remove(path: String) -> Result((), IoError)
 Removes a file or an empty directory. Returns `Ok(())` on success or
 `Err(IoError)` on failure. A symlink is removed itself, never what it
 points to: a link to a directory is removed as a link to a file is,
-and the directory stays.
+and the directory stays. To remove a directory with what is in it, use
+`fs.remove_all`.
 
 ```silt
 import fs
@@ -645,6 +647,37 @@ import fs
 fn main() {
   match fs.remove("temp.txt") {
     Ok(_) -> println("removed")
+    Err(e) -> println("Error: {e}")
+  }
+}
+```
+
+
+## `fs.remove_all`
+
+```
+fs.remove_all(path: String) -> Result((), IoError)
+```
+
+Removes a file, or a directory and everything in it, at any depth: this can
+delete a lot, and nothing asks first. A symlink is removed itself, never what
+it points to, also inside the tree (as `fs.walk` lists a link as itself): a
+link to a directory elsewhere goes, and that directory stays. A path that does
+not exist is `Err(NotFound(path))`; a program that wants "gone either way"
+matches it. An error from inside the tree (a directory that may not be
+changed) names `path`, and what was removed before it stays removed.
+
+A `path` whose last part is `.` or `..` (`.`, `out/.`, `../`) or that is a
+root (`/`, `C:\`) is refused, as `rm -r` refuses it, and nothing is removed:
+`Err(InvalidInput("fs.remove_all does not remove ., .. or a root: .."))`.
+
+```silt
+import fs
+import io
+
+fn main() {
+  match fs.remove_all("out") {
+    Ok(_) | Err(io.NotFound(_)) -> println("out is gone")
     Err(e) -> println("Error: {e}")
   }
 }

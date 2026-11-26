@@ -523,6 +523,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn mkdir(path: String) -> Result((), IoError)", "Create a directory (and parents)", io::fs::mkdir),
                 f("fn read_link(path: String) -> Result(String, IoError)", "Read a symlink's target (without following)", io::fs::read_link),
                 f("fn remove(path: String) -> Result((), IoError)", "Remove a file or empty directory", io::fs::remove),
+                f("fn remove_all(path: String) -> Result((), IoError)", "Remove a file, or a directory and everything in it", io::fs::remove_all),
                 f("fn rename(from: String, to: String) -> Result((), IoError)", "Rename / move a file or directory", io::fs::rename),
                 f("fn stat(path: String) -> Result(FileStat, IoError)", "Fetch filesystem metadata for a path", io::fs::stat),
                 f("fn walk(root: String) -> Result(List(String), IoError)", "Recursively list all paths under a directory", io::fs::walk),
