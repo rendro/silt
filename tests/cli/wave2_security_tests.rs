@@ -151,14 +151,20 @@ fn update_escapes_an_unknown_flag() {
 }
 
 /// FAILS on the base commit: the argument was echoed with a raw tab.
+/// (`silt update <name>` takes the names of dependencies.)
 #[test]
-fn update_escapes_an_extra_argument() {
+fn update_escapes_an_unknown_name() {
     let ws = fresh_workspace("update_extra");
+    fs::write(
+        ws.join("silt.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     let out = silt(&ws, &ws, &["update", "sec\tond"]);
-    assert_failed_printably(&out, "extra argument");
+    assert_failed_printably(&out, "unknown name");
     assert!(
         out.stderr
-            .contains("silt update: unexpected extra argument 'sec\\tond'"),
+            .contains("silt update: no dependency 'sec\\tond' in silt.toml"),
         "{out:?}"
     );
     let _ = fs::remove_dir_all(&ws);

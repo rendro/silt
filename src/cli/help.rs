@@ -73,8 +73,8 @@ pub(crate) fn usage_text() -> String {
         "Update the silt binary to the latest release",
     ));
     out.push_str(&line(
-        "silt update",
-        "Regenerate silt.lock for the current package's dependencies",
+        "silt update [<name>...]",
+        "Regenerate silt.lock for the current package's dependencies (only those named)",
     ));
     out.push_str(&line(
         "silt add <name> --path <path>",

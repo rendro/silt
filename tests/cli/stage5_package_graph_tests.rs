@@ -1260,6 +1260,81 @@ fn silt_update_says_what_moved() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// `silt update <name>...` resolves only the named dependencies again:
+/// the others keep the commits the lock pins, and a name that is no
+/// dependency is an error that leaves the lock alone. FAILS on the base:
+/// a name was an unexpected extra argument.
+#[test]
+fn silt_update_with_names_moves_only_those() {
+    let ws = fresh_workspace("update_names");
+    if !git_installed() {
+        return;
+    }
+    let remote_first = sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let other_repo = ws.join("other");
+    write_package(&other_repo, "other", &[], "lib.silt", "pub fn w() { 1 }\n");
+    let other_first = commit_all(&ws, &other_repo, "one");
+    let app = ws.join("app");
+    let deps = [
+        "remote = { git = \"../lib\", branch = \"main\" }",
+        "other = { git = \"../other\", branch = \"main\" }",
+    ];
+    write_package(&app, "app", &deps, "main.silt", "fn main() {}\n");
+    let update = |args: &[&str]| {
+        let out = silt(&ws, &app, args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        stderr(&out)
+    };
+    assert_eq!(
+        update(&["update"]),
+        format!(
+            "other: added, branch `main` at {}\nremote: added, branch `main` at {}\n",
+            &other_first[..7],
+            &remote_first[..7]
+        )
+    );
+
+    // Both branches move; only the one named moves in the lock.
+    fs::write(ws.join("lib/src/lib.silt"), "pub fn v() { 2 }\n").unwrap();
+    let remote_second = commit_all(&ws, &ws.join("lib"), "two");
+    fs::write(other_repo.join("src/lib.silt"), "pub fn w() { 2 }\n").unwrap();
+    let other_second = commit_all(&ws, &other_repo, "two");
+    assert_eq!(
+        update(&["update", "remote"]),
+        format!(
+            "remote: {} -> {} (branch `main` moved)\n",
+            &remote_first[..7],
+            &remote_second[..7]
+        )
+    );
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert!(lock.contains(&other_first), "{lock}");
+    assert!(!lock.contains(&other_second), "{lock}");
+
+    // An unknown name: nothing is resolved, the lock stays.
+    let out = silt(&ws, &app, &["update", "other", "nope"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out),
+        "error: silt update: no dependency 'nope' in silt.toml\n"
+    );
+    assert_eq!(fs::read_to_string(app.join("silt.lock")).unwrap(), lock);
+
+    assert_eq!(
+        update(&["update", "other"]),
+        format!(
+            "other: {} -> {} (branch `main` moved)\n",
+            &other_first[..7],
+            &other_second[..7]
+        )
+    );
+    assert_eq!(
+        update(&["update", "remote", "other"]),
+        "silt.lock is up to date.\n"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── The lockfile's checksum of a git dependency ──────────────────────
 
 /// An app beside the repository `lib` (the package `remote`) that pins
