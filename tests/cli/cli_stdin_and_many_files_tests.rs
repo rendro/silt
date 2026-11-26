@@ -268,8 +268,9 @@ fn test_takes_several_paths() {
 
     let out = silt(&dir, &["test", "a", "b_test.silt"], "");
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    // (The results are written to stderr.)
-    let results = text(&out.stderr);
+    // (The results are written to stderr, each file as the system writes
+    // its path: `a\x_test.silt` on Windows.)
+    let results = text(&out.stderr).replace('\\', "/");
     assert!(results.contains("PASS a/x_test.silt::test_one"), "{out:?}");
     assert!(results.contains("PASS b_test.silt::test_two"), "{out:?}");
     assert!(results.contains("2 tests: 2 passed"), "{out:?}");
