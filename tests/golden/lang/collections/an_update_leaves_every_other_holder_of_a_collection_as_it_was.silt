@@ -6,7 +6,9 @@
 -- Each row prints the held one before and after ("same") and the one
 -- made. map.set, map.update, set.insert, list.append and list.set may
 -- change a collection in place when nothing else holds it; this file's
--- output is what it was when each was a copy.
+-- output is what it was when each was a copy. Rows 12 to 15: the update
+-- made by a function of the program or a method, a method called after
+-- it, the builtin as a value, a record in a record.
 import channel
 import list
 import map
@@ -2164,6 +2166,1539 @@ fn eachL(kind: String, make: Fn() -> List(Int)) {
   )
 }
 
+-- ── map.set: through calls, as a value, in nested records ──
+
+type NestM {
+  label: String,
+  inner: BoxM,
+  spare: BoxM,
+}
+
+type DeepM {
+  top: NestM,
+  n: Int,
+}
+
+trait StepM {
+  fn step(self, x: Int) -> BoxM
+}
+
+trait StepM for BoxM {
+  fn step(self, x: Int) -> BoxM {
+    self.{ c: map.set(self.c, x, x * 3 + 1) }
+  }
+}
+
+trait CountM {
+  fn count(self) -> Int
+}
+
+trait CountM for Int {
+  fn count(self) -> Int {
+    self + 1
+  }
+}
+
+-- a function of the program that makes the update
+fn wrapM(c: Map(Int, Int), x: Int) -> Map(Int, Int) {
+  map.set(c, x, x * 3 + 1)
+}
+
+fn wlastM(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> wlastM(i + 1, n, wrapM(acc, i % 3))
+  }
+}
+
+fn wletM(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = wrapM(acc, i % 3)
+      wletM(i + 1, n, next)
+    }
+  }
+}
+
+fn woldM(i: Int, n: Int, acc: Map(Int, Int), old: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpM(acc)} old {fpM(old)}"
+    false -> woldM(i + 1, n, wrapM(acc, i % 3), acc)
+  }
+}
+
+-- the old one read by a call after the update
+fn wreadM(i: Int, n: Int, acc: Map(Int, Int), seen: List(String)) -> String {
+  match i == n {
+    true -> "{fpM(acc)} seen {seen}"
+    false -> wreadM(i + 1, n, wrapM(acc, i % 3), [fpM(acc), ..seen])
+  }
+}
+
+-- a closure made before the call keeps the old one
+fn wlookM(i: Int, n: Int, acc: Map(Int, Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpM(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> {
+      let look = { -> fpM(acc) }
+      wlookM(i + 1, n, wrapM(acc, i % 3), [look, ..looks])
+    }
+  }
+}
+
+-- a method that makes the update of a record
+fn mstepM(i: Int, n: Int, b: BoxM) -> BoxM {
+  match i == n {
+    true -> b
+    false -> mstepM(i + 1, n, StepM.step(b, i % 3))
+  }
+}
+
+fn mstepoldM(i: Int, n: Int, b: BoxM, old: BoxM) -> String {
+  match i == n {
+    true -> "{fpM(b.c)} old {fpM(old.c)}"
+    false -> mstepoldM(i + 1, n, StepM.step(b, i % 3), b)
+  }
+}
+
+-- a method called after the update
+fn mafterM(acc: Map(Int, Int), i: Int, n: Int) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> mafterM(map.set(acc, i % 3, i % 3 * 3 + 1), CountM.count(i), n)
+  }
+}
+
+fn mafteroldM(acc: Map(Int, Int), i: Int, n: Int, old: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpM(acc)} old {fpM(old)}"
+    false -> mafteroldM(map.set(acc, i % 3, i % 3 * 3 + 1), CountM.count(i), n, acc)
+  }
+}
+
+-- the builtin as a value
+fn vloopM(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  let f = map.set
+  match i == n {
+    true -> acc
+    false -> vloopM(i + 1, n, f(acc, i % 3, i % 3 * 3 + 1))
+  }
+}
+
+fn voldM(i: Int, n: Int, acc: Map(Int, Int), old: Map(Int, Int)) -> String {
+  let f = map.set
+  match i == n {
+    true -> "{fpM(acc)} old {fpM(old)}"
+    false -> voldM(i + 1, n, f(acc, i % 3, i % 3 * 3 + 1), acc)
+  }
+}
+
+-- a record in a record
+fn nloopM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> nloopM(i + 1, n, o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) } })
+  }
+}
+
+fn noldM(i: Int, n: Int, o: NestM, old: NestM) -> String {
+  match i == n {
+    true -> "{fpM(o.inner.c)} old {fpM(old.inner.c)} {old.label}"
+    false -> noldM(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }, label: "n{i}" },
+      o,
+    )
+  }
+}
+
+fn ndeepM(i: Int, n: Int, d: DeepM) -> DeepM {
+  match i == n {
+    true -> d
+    false -> ndeepM(
+      i + 1,
+      n,
+      d.{ top: d.top.{ inner: d.top.inner.{ c: map.set(d.top.inner.c, i % 3, i % 3 * 3 + 1) } } },
+    )
+  }
+}
+
+fn notherM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> notherM(i + 1, n, o.{ inner: o.inner.{ d: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) } })
+  }
+}
+
+fn moreM(kind: String, make: Fn() -> Map(Int, Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpM(c)
+  rowM("{kind} 12 a function's update, last argument", before, fpM(c), fpM(wlastM(0, 7, c)))
+  rowM("{kind} 12 a function's update through a let", before, fpM(c), fpM(wletM(0, 7, c)))
+  rowM("{kind} 12 a function's update with the old one", before, fpM(c), woldM(0, 5, c, c))
+  rowM("{kind} 12 a function's update, the old one read after", before, fpM(c), wreadM(0, 4, c, []))
+  rowM(
+    "{kind} 12 a function's update, a closure keeps the old one",
+    before,
+    fpM(c),
+    wlookM(0, 4, c, []),
+  )
+  let made = list.fold(xs, c) { acc, x -> wrapM(acc, x) }
+  rowM("{kind} 12 a function's update in a fold", before, fpM(c), fpM(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let next = wrapM(acc, x)
+    match fpM(acc) == fpM(acc) {
+      true -> next
+      false -> acc
+    }
+  }
+  rowM("{kind} 12 a function's update in a fold, the old one read after", before, fpM(c), fpM(made))
+  let box = BoxM { label: "b", c: c, d: c }
+  let made = mstepM(0, 7, box)
+  rowM(
+    "{kind} 13 a method's update of a record",
+    "{before} {before}",
+    "{fpM(box.c)} {fpM(box.d)}",
+    "{fpM(made.c)} {fpM(made.d)}",
+  )
+  rowM(
+    "{kind} 13 a method's update, the old record too",
+    before,
+    fpM(box.c),
+    mstepoldM(0, 5, box, box),
+  )
+  rowM("{kind} 13 a method after the update", before, fpM(c), fpM(mafterM(c, 0, 7)))
+  rowM(
+    "{kind} 13 a method after the update, the old one too",
+    before,
+    fpM(c),
+    mafteroldM(c, 0, 5, c),
+  )
+  let made = list.fold(xs, box) { b, x -> StepM.step(b, x) }
+  rowM("{kind} 13 a method's update in a fold", before, fpM(box.c), fpM(made.c))
+  rowM("{kind} 14 the builtin as a value", before, fpM(c), fpM(vloopM(0, 7, c)))
+  rowM("{kind} 14 the builtin as a value, the old one too", before, fpM(c), voldM(0, 5, c, c))
+  let f = map.set
+  let made = list.fold(xs, c) { acc, x -> f(acc, x, x * 3 + 1) }
+  rowM("{kind} 14 the builtin as a value in a fold", before, fpM(c), fpM(made))
+  let fs = [f, f]
+  let made = list.fold(xs, c) { acc, x ->
+    match list.get(fs, x % 2) {
+      Some(g) -> g(acc, x, x * 3 + 1)
+      None -> acc
+    }
+  }
+  rowM("{kind} 14 the builtin from a list", before, fpM(c), fpM(made))
+  let nest = NestM { label: "o", inner: box, spare: box }
+  let made = nloopM(0, 7, nest)
+  rowM(
+    "{kind} 15 a record in a record",
+    "{before} {before} {before}",
+    "{fpM(nest.inner.c)} {fpM(nest.spare.c)} {fpM(box.c)}",
+    "{fpM(made.inner.c)} {fpM(made.inner.d)} {fpM(made.spare.c)}",
+  )
+  rowM(
+    "{kind} 15 a record in a record, the old one too",
+    before,
+    fpM(nest.inner.c),
+    noldM(0, 5, nest, nest),
+  )
+  let deep = DeepM { top: nest, n: 0 }
+  let made = ndeepM(0, 7, deep)
+  rowM(
+    "{kind} 15 three records deep",
+    "{before} {before}",
+    "{fpM(deep.top.inner.c)} {fpM(nest.inner.c)}",
+    "{fpM(made.top.inner.c)} {fpM(made.top.spare.c)}",
+  )
+  let made = notherM(0, 7, nest)
+  rowM(
+    "{kind} 15 a record in a record, a field from another",
+    before,
+    fpM(nest.inner.c),
+    "{fpM(made.inner.c)} {fpM(made.inner.d)}",
+  )
+  let own = nloopM(
+    0,
+    3,
+    NestM {
+      label: "own",
+      inner: BoxM { label: "i", c: make(), d: #{} },
+      spare: BoxM { label: "s", c: #{}, d: #{} },
+    },
+  )
+  rowM("{kind} 15 a record in a record held nowhere else", before, fpM(c), fpM(own.inner.c))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.set(o.inner.c, x, x * 3 + 1) } }
+  }
+  rowM(
+    "{kind} 15 a record in a record in a fold",
+    "{before} {before}",
+    "{fpM(nest.inner.c)} {fpM(box.c)}",
+    fpM(made.inner.c),
+  )
+  let kept = [nest.inner]
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.set(o.inner.c, x, x * 3 + 1) } }
+  }
+  rowM(
+    "{kind} 15 a record in a record, its inner one in a list",
+    before,
+    fpM(option.unwrap_or(list.first(kept), box).c),
+    fpM(made.inner.c),
+  )
+}
+
+-- ── map.update: through calls, as a value, in nested records ──
+
+type NestU {
+  label: String,
+  inner: BoxU,
+  spare: BoxU,
+}
+
+type DeepU {
+  top: NestU,
+  n: Int,
+}
+
+trait StepU {
+  fn step(self, x: Int) -> BoxU
+}
+
+trait StepU for BoxU {
+  fn step(self, x: Int) -> BoxU {
+    self.{ c: map.update(self.c, x, 0) { v -> v + 1 } }
+  }
+}
+
+trait CountU {
+  fn count(self) -> Int
+}
+
+trait CountU for Int {
+  fn count(self) -> Int {
+    self + 1
+  }
+}
+
+-- a function of the program that makes the update
+fn wrapU(c: Map(Int, Int), x: Int) -> Map(Int, Int) {
+  map.update(c, x, 0) { v -> v + 1 }
+}
+
+fn wlastU(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> wlastU(i + 1, n, wrapU(acc, i % 3))
+  }
+}
+
+fn wletU(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = wrapU(acc, i % 3)
+      wletU(i + 1, n, next)
+    }
+  }
+}
+
+fn woldU(i: Int, n: Int, acc: Map(Int, Int), old: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpU(acc)} old {fpU(old)}"
+    false -> woldU(i + 1, n, wrapU(acc, i % 3), acc)
+  }
+}
+
+-- the old one read by a call after the update
+fn wreadU(i: Int, n: Int, acc: Map(Int, Int), seen: List(String)) -> String {
+  match i == n {
+    true -> "{fpU(acc)} seen {seen}"
+    false -> wreadU(i + 1, n, wrapU(acc, i % 3), [fpU(acc), ..seen])
+  }
+}
+
+-- a closure made before the call keeps the old one
+fn wlookU(i: Int, n: Int, acc: Map(Int, Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpU(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> {
+      let look = { -> fpU(acc) }
+      wlookU(i + 1, n, wrapU(acc, i % 3), [look, ..looks])
+    }
+  }
+}
+
+-- a method that makes the update of a record
+fn mstepU(i: Int, n: Int, b: BoxU) -> BoxU {
+  match i == n {
+    true -> b
+    false -> mstepU(i + 1, n, StepU.step(b, i % 3))
+  }
+}
+
+fn mstepoldU(i: Int, n: Int, b: BoxU, old: BoxU) -> String {
+  match i == n {
+    true -> "{fpU(b.c)} old {fpU(old.c)}"
+    false -> mstepoldU(i + 1, n, StepU.step(b, i % 3), b)
+  }
+}
+
+-- a method called after the update
+fn mafterU(acc: Map(Int, Int), i: Int, n: Int) -> Map(Int, Int) {
+  match i == n {
+    true -> acc
+    false -> mafterU(map.update(acc, i % 3, 0) { v -> v + 1 }, CountU.count(i), n)
+  }
+}
+
+fn mafteroldU(acc: Map(Int, Int), i: Int, n: Int, old: Map(Int, Int)) -> String {
+  match i == n {
+    true -> "{fpU(acc)} old {fpU(old)}"
+    false -> mafteroldU(map.update(acc, i % 3, 0) { v -> v + 1 }, CountU.count(i), n, acc)
+  }
+}
+
+-- the builtin as a value
+fn vloopU(i: Int, n: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  let f = map.update
+  match i == n {
+    true -> acc
+    false -> vloopU(i + 1, n, f(acc, i % 3, 0) { v -> v + 1 })
+  }
+}
+
+fn voldU(i: Int, n: Int, acc: Map(Int, Int), old: Map(Int, Int)) -> String {
+  let f = map.update
+  match i == n {
+    true -> "{fpU(acc)} old {fpU(old)}"
+    false -> voldU(i + 1, n, f(acc, i % 3, 0) { v -> v + 1 }, acc)
+  }
+}
+
+-- a record in a record
+fn nloopU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false ->
+      nloopU(i + 1, n, o.{ inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } } })
+  }
+}
+
+fn noldU(i: Int, n: Int, o: NestU, old: NestU) -> String {
+  match i == n {
+    true -> "{fpU(o.inner.c)} old {fpU(old.inner.c)} {old.label}"
+    false -> noldU(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } }, label: "n{i}" },
+      o,
+    )
+  }
+}
+
+fn ndeepU(i: Int, n: Int, d: DeepU) -> DeepU {
+  match i == n {
+    true -> d
+    false -> ndeepU(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{ inner: d.top.inner.{ c: map.update(d.top.inner.c, i % 3, 0) { v -> v + 1 } } },
+      },
+    )
+  }
+}
+
+fn notherU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false ->
+      notherU(i + 1, n, o.{ inner: o.inner.{ d: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } } })
+  }
+}
+
+fn moreU(kind: String, make: Fn() -> Map(Int, Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpU(c)
+  rowU("{kind} 12 a function's update, last argument", before, fpU(c), fpU(wlastU(0, 7, c)))
+  rowU("{kind} 12 a function's update through a let", before, fpU(c), fpU(wletU(0, 7, c)))
+  rowU("{kind} 12 a function's update with the old one", before, fpU(c), woldU(0, 5, c, c))
+  rowU("{kind} 12 a function's update, the old one read after", before, fpU(c), wreadU(0, 4, c, []))
+  rowU(
+    "{kind} 12 a function's update, a closure keeps the old one",
+    before,
+    fpU(c),
+    wlookU(0, 4, c, []),
+  )
+  let made = list.fold(xs, c) { acc, x -> wrapU(acc, x) }
+  rowU("{kind} 12 a function's update in a fold", before, fpU(c), fpU(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let next = wrapU(acc, x)
+    match fpU(acc) == fpU(acc) {
+      true -> next
+      false -> acc
+    }
+  }
+  rowU("{kind} 12 a function's update in a fold, the old one read after", before, fpU(c), fpU(made))
+  let box = BoxU { label: "b", c: c, d: c }
+  let made = mstepU(0, 7, box)
+  rowU(
+    "{kind} 13 a method's update of a record",
+    "{before} {before}",
+    "{fpU(box.c)} {fpU(box.d)}",
+    "{fpU(made.c)} {fpU(made.d)}",
+  )
+  rowU(
+    "{kind} 13 a method's update, the old record too",
+    before,
+    fpU(box.c),
+    mstepoldU(0, 5, box, box),
+  )
+  rowU("{kind} 13 a method after the update", before, fpU(c), fpU(mafterU(c, 0, 7)))
+  rowU(
+    "{kind} 13 a method after the update, the old one too",
+    before,
+    fpU(c),
+    mafteroldU(c, 0, 5, c),
+  )
+  let made = list.fold(xs, box) { b, x -> StepU.step(b, x) }
+  rowU("{kind} 13 a method's update in a fold", before, fpU(box.c), fpU(made.c))
+  rowU("{kind} 14 the builtin as a value", before, fpU(c), fpU(vloopU(0, 7, c)))
+  rowU("{kind} 14 the builtin as a value, the old one too", before, fpU(c), voldU(0, 5, c, c))
+  let f = map.update
+  let made = list.fold(xs, c) { acc, x -> f(acc, x, 0) { v -> v + 1 } }
+  rowU("{kind} 14 the builtin as a value in a fold", before, fpU(c), fpU(made))
+  let fs = [f, f]
+  let made = list.fold(xs, c) { acc, x ->
+    match list.get(fs, x % 2) {
+      Some(g) -> g(acc, x, 0) { v -> v + 1 }
+      None -> acc
+    }
+  }
+  rowU("{kind} 14 the builtin from a list", before, fpU(c), fpU(made))
+  let nest = NestU { label: "o", inner: box, spare: box }
+  let made = nloopU(0, 7, nest)
+  rowU(
+    "{kind} 15 a record in a record",
+    "{before} {before} {before}",
+    "{fpU(nest.inner.c)} {fpU(nest.spare.c)} {fpU(box.c)}",
+    "{fpU(made.inner.c)} {fpU(made.inner.d)} {fpU(made.spare.c)}",
+  )
+  rowU(
+    "{kind} 15 a record in a record, the old one too",
+    before,
+    fpU(nest.inner.c),
+    noldU(0, 5, nest, nest),
+  )
+  let deep = DeepU { top: nest, n: 0 }
+  let made = ndeepU(0, 7, deep)
+  rowU(
+    "{kind} 15 three records deep",
+    "{before} {before}",
+    "{fpU(deep.top.inner.c)} {fpU(nest.inner.c)}",
+    "{fpU(made.top.inner.c)} {fpU(made.top.spare.c)}",
+  )
+  let made = notherU(0, 7, nest)
+  rowU(
+    "{kind} 15 a record in a record, a field from another",
+    before,
+    fpU(nest.inner.c),
+    "{fpU(made.inner.c)} {fpU(made.inner.d)}",
+  )
+  let own = nloopU(
+    0,
+    3,
+    NestU {
+      label: "own",
+      inner: BoxU { label: "i", c: make(), d: #{} },
+      spare: BoxU { label: "s", c: #{}, d: #{} },
+    },
+  )
+  rowU("{kind} 15 a record in a record held nowhere else", before, fpU(c), fpU(own.inner.c))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.update(o.inner.c, x, 0) { v -> v + 1 } } }
+  }
+  rowU(
+    "{kind} 15 a record in a record in a fold",
+    "{before} {before}",
+    "{fpU(nest.inner.c)} {fpU(box.c)}",
+    fpU(made.inner.c),
+  )
+  let kept = [nest.inner]
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.update(o.inner.c, x, 0) { v -> v + 1 } } }
+  }
+  rowU(
+    "{kind} 15 a record in a record, its inner one in a list",
+    before,
+    fpU(option.unwrap_or(list.first(kept), box).c),
+    fpU(made.inner.c),
+  )
+}
+
+-- ── set.insert: through calls, as a value, in nested records ──
+
+type NestS {
+  label: String,
+  inner: BoxS,
+  spare: BoxS,
+}
+
+type DeepS {
+  top: NestS,
+  n: Int,
+}
+
+trait StepS {
+  fn step(self, x: Int) -> BoxS
+}
+
+trait StepS for BoxS {
+  fn step(self, x: Int) -> BoxS {
+    self.{ c: set.insert(self.c, x + 500) }
+  }
+}
+
+trait CountS {
+  fn count(self) -> Int
+}
+
+trait CountS for Int {
+  fn count(self) -> Int {
+    self + 1
+  }
+}
+
+-- a function of the program that makes the update
+fn wrapS(c: Set(Int), x: Int) -> Set(Int) {
+  set.insert(c, x + 500)
+}
+
+fn wlastS(i: Int, n: Int, acc: Set(Int)) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> wlastS(i + 1, n, wrapS(acc, i % 3))
+  }
+}
+
+fn wletS(i: Int, n: Int, acc: Set(Int)) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = wrapS(acc, i % 3)
+      wletS(i + 1, n, next)
+    }
+  }
+}
+
+fn woldS(i: Int, n: Int, acc: Set(Int), old: Set(Int)) -> String {
+  match i == n {
+    true -> "{fpS(acc)} old {fpS(old)}"
+    false -> woldS(i + 1, n, wrapS(acc, i % 3), acc)
+  }
+}
+
+-- the old one read by a call after the update
+fn wreadS(i: Int, n: Int, acc: Set(Int), seen: List(String)) -> String {
+  match i == n {
+    true -> "{fpS(acc)} seen {seen}"
+    false -> wreadS(i + 1, n, wrapS(acc, i % 3), [fpS(acc), ..seen])
+  }
+}
+
+-- a closure made before the call keeps the old one
+fn wlookS(i: Int, n: Int, acc: Set(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpS(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> {
+      let look = { -> fpS(acc) }
+      wlookS(i + 1, n, wrapS(acc, i % 3), [look, ..looks])
+    }
+  }
+}
+
+-- a method that makes the update of a record
+fn mstepS(i: Int, n: Int, b: BoxS) -> BoxS {
+  match i == n {
+    true -> b
+    false -> mstepS(i + 1, n, StepS.step(b, i % 3))
+  }
+}
+
+fn mstepoldS(i: Int, n: Int, b: BoxS, old: BoxS) -> String {
+  match i == n {
+    true -> "{fpS(b.c)} old {fpS(old.c)}"
+    false -> mstepoldS(i + 1, n, StepS.step(b, i % 3), b)
+  }
+}
+
+-- a method called after the update
+fn mafterS(acc: Set(Int), i: Int, n: Int) -> Set(Int) {
+  match i == n {
+    true -> acc
+    false -> mafterS(set.insert(acc, i % 3 + 500), CountS.count(i), n)
+  }
+}
+
+fn mafteroldS(acc: Set(Int), i: Int, n: Int, old: Set(Int)) -> String {
+  match i == n {
+    true -> "{fpS(acc)} old {fpS(old)}"
+    false -> mafteroldS(set.insert(acc, i % 3 + 500), CountS.count(i), n, acc)
+  }
+}
+
+-- the builtin as a value
+fn vloopS(i: Int, n: Int, acc: Set(Int)) -> Set(Int) {
+  let f = set.insert
+  match i == n {
+    true -> acc
+    false -> vloopS(i + 1, n, f(acc, i % 3 + 500))
+  }
+}
+
+fn voldS(i: Int, n: Int, acc: Set(Int), old: Set(Int)) -> String {
+  let f = set.insert
+  match i == n {
+    true -> "{fpS(acc)} old {fpS(old)}"
+    false -> voldS(i + 1, n, f(acc, i % 3 + 500), acc)
+  }
+}
+
+-- a record in a record
+fn nloopS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> nloopS(i + 1, n, o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) } })
+  }
+}
+
+fn noldS(i: Int, n: Int, o: NestS, old: NestS) -> String {
+  match i == n {
+    true -> "{fpS(o.inner.c)} old {fpS(old.inner.c)} {old.label}"
+    false -> noldS(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }, label: "n{i}" },
+      o,
+    )
+  }
+}
+
+fn ndeepS(i: Int, n: Int, d: DeepS) -> DeepS {
+  match i == n {
+    true -> d
+    false -> ndeepS(
+      i + 1,
+      n,
+      d.{ top: d.top.{ inner: d.top.inner.{ c: set.insert(d.top.inner.c, i % 3 + 500) } } },
+    )
+  }
+}
+
+fn notherS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> notherS(i + 1, n, o.{ inner: o.inner.{ d: set.insert(o.inner.c, i % 3 + 500) } })
+  }
+}
+
+fn moreS(kind: String, make: Fn() -> Set(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpS(c)
+  rowS("{kind} 12 a function's update, last argument", before, fpS(c), fpS(wlastS(0, 7, c)))
+  rowS("{kind} 12 a function's update through a let", before, fpS(c), fpS(wletS(0, 7, c)))
+  rowS("{kind} 12 a function's update with the old one", before, fpS(c), woldS(0, 5, c, c))
+  rowS("{kind} 12 a function's update, the old one read after", before, fpS(c), wreadS(0, 4, c, []))
+  rowS(
+    "{kind} 12 a function's update, a closure keeps the old one",
+    before,
+    fpS(c),
+    wlookS(0, 4, c, []),
+  )
+  let made = list.fold(xs, c) { acc, x -> wrapS(acc, x) }
+  rowS("{kind} 12 a function's update in a fold", before, fpS(c), fpS(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let next = wrapS(acc, x)
+    match fpS(acc) == fpS(acc) {
+      true -> next
+      false -> acc
+    }
+  }
+  rowS("{kind} 12 a function's update in a fold, the old one read after", before, fpS(c), fpS(made))
+  let box = BoxS { label: "b", c: c, d: c }
+  let made = mstepS(0, 7, box)
+  rowS(
+    "{kind} 13 a method's update of a record",
+    "{before} {before}",
+    "{fpS(box.c)} {fpS(box.d)}",
+    "{fpS(made.c)} {fpS(made.d)}",
+  )
+  rowS(
+    "{kind} 13 a method's update, the old record too",
+    before,
+    fpS(box.c),
+    mstepoldS(0, 5, box, box),
+  )
+  rowS("{kind} 13 a method after the update", before, fpS(c), fpS(mafterS(c, 0, 7)))
+  rowS(
+    "{kind} 13 a method after the update, the old one too",
+    before,
+    fpS(c),
+    mafteroldS(c, 0, 5, c),
+  )
+  let made = list.fold(xs, box) { b, x -> StepS.step(b, x) }
+  rowS("{kind} 13 a method's update in a fold", before, fpS(box.c), fpS(made.c))
+  rowS("{kind} 14 the builtin as a value", before, fpS(c), fpS(vloopS(0, 7, c)))
+  rowS("{kind} 14 the builtin as a value, the old one too", before, fpS(c), voldS(0, 5, c, c))
+  let f = set.insert
+  let made = list.fold(xs, c) { acc, x -> f(acc, x + 500) }
+  rowS("{kind} 14 the builtin as a value in a fold", before, fpS(c), fpS(made))
+  let fs = [f, f]
+  let made = list.fold(xs, c) { acc, x ->
+    match list.get(fs, x % 2) {
+      Some(g) -> g(acc, x + 500)
+      None -> acc
+    }
+  }
+  rowS("{kind} 14 the builtin from a list", before, fpS(c), fpS(made))
+  let made = list.fold(xs, c, set.insert)
+  rowS("{kind} 14 the builtin given to a fold", before, fpS(c), fpS(made))
+  let made = list.fold([c, c], [], list.append)
+  rowS("{kind} 14 list.append given to a fold of it", before, fpS(c), "{list.length(made)}")
+  let nest = NestS { label: "o", inner: box, spare: box }
+  let made = nloopS(0, 7, nest)
+  rowS(
+    "{kind} 15 a record in a record",
+    "{before} {before} {before}",
+    "{fpS(nest.inner.c)} {fpS(nest.spare.c)} {fpS(box.c)}",
+    "{fpS(made.inner.c)} {fpS(made.inner.d)} {fpS(made.spare.c)}",
+  )
+  rowS(
+    "{kind} 15 a record in a record, the old one too",
+    before,
+    fpS(nest.inner.c),
+    noldS(0, 5, nest, nest),
+  )
+  let deep = DeepS { top: nest, n: 0 }
+  let made = ndeepS(0, 7, deep)
+  rowS(
+    "{kind} 15 three records deep",
+    "{before} {before}",
+    "{fpS(deep.top.inner.c)} {fpS(nest.inner.c)}",
+    "{fpS(made.top.inner.c)} {fpS(made.top.spare.c)}",
+  )
+  let made = notherS(0, 7, nest)
+  rowS(
+    "{kind} 15 a record in a record, a field from another",
+    before,
+    fpS(nest.inner.c),
+    "{fpS(made.inner.c)} {fpS(made.inner.d)}",
+  )
+  let own = nloopS(
+    0,
+    3,
+    NestS {
+      label: "own",
+      inner: BoxS { label: "i", c: make(), d: #[] },
+      spare: BoxS { label: "s", c: #[], d: #[] },
+    },
+  )
+  rowS("{kind} 15 a record in a record held nowhere else", before, fpS(c), fpS(own.inner.c))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: set.insert(o.inner.c, x + 500) } }
+  }
+  rowS(
+    "{kind} 15 a record in a record in a fold",
+    "{before} {before}",
+    "{fpS(nest.inner.c)} {fpS(box.c)}",
+    fpS(made.inner.c),
+  )
+  let kept = [nest.inner]
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: set.insert(o.inner.c, x + 500) } }
+  }
+  rowS(
+    "{kind} 15 a record in a record, its inner one in a list",
+    before,
+    fpS(option.unwrap_or(list.first(kept), box).c),
+    fpS(made.inner.c),
+  )
+}
+
+-- ── list.append: through calls, as a value, in nested records ──
+
+type NestA {
+  label: String,
+  inner: BoxA,
+  spare: BoxA,
+}
+
+type DeepA {
+  top: NestA,
+  n: Int,
+}
+
+trait StepA {
+  fn step(self, x: Int) -> BoxA
+}
+
+trait StepA for BoxA {
+  fn step(self, x: Int) -> BoxA {
+    self.{ c: list.append(self.c, x) }
+  }
+}
+
+trait CountA {
+  fn count(self) -> Int
+}
+
+trait CountA for Int {
+  fn count(self) -> Int {
+    self + 1
+  }
+}
+
+-- a function of the program that makes the update
+fn wrapA(c: List(Int), x: Int) -> List(Int) {
+  list.append(c, x)
+}
+
+fn wlastA(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> wlastA(i + 1, n, wrapA(acc, i % 3))
+  }
+}
+
+fn wletA(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = wrapA(acc, i % 3)
+      wletA(i + 1, n, next)
+    }
+  }
+}
+
+fn woldA(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpA(acc)} old {fpA(old)}"
+    false -> woldA(i + 1, n, wrapA(acc, i % 3), acc)
+  }
+}
+
+-- the old one read by a call after the update
+fn wreadA(i: Int, n: Int, acc: List(Int), seen: List(String)) -> String {
+  match i == n {
+    true -> "{fpA(acc)} seen {seen}"
+    false -> wreadA(i + 1, n, wrapA(acc, i % 3), [fpA(acc), ..seen])
+  }
+}
+
+-- a closure made before the call keeps the old one
+fn wlookA(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpA(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> {
+      let look = { -> fpA(acc) }
+      wlookA(i + 1, n, wrapA(acc, i % 3), [look, ..looks])
+    }
+  }
+}
+
+-- a method that makes the update of a record
+fn mstepA(i: Int, n: Int, b: BoxA) -> BoxA {
+  match i == n {
+    true -> b
+    false -> mstepA(i + 1, n, StepA.step(b, i % 3))
+  }
+}
+
+fn mstepoldA(i: Int, n: Int, b: BoxA, old: BoxA) -> String {
+  match i == n {
+    true -> "{fpA(b.c)} old {fpA(old.c)}"
+    false -> mstepoldA(i + 1, n, StepA.step(b, i % 3), b)
+  }
+}
+
+-- a method called after the update
+fn mafterA(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> mafterA(list.append(acc, i % 3), CountA.count(i), n)
+  }
+}
+
+fn mafteroldA(acc: List(Int), i: Int, n: Int, old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpA(acc)} old {fpA(old)}"
+    false -> mafteroldA(list.append(acc, i % 3), CountA.count(i), n, acc)
+  }
+}
+
+-- the builtin as a value
+fn vloopA(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  let f = list.append
+  match i == n {
+    true -> acc
+    false -> vloopA(i + 1, n, f(acc, i % 3))
+  }
+}
+
+fn voldA(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  let f = list.append
+  match i == n {
+    true -> "{fpA(acc)} old {fpA(old)}"
+    false -> voldA(i + 1, n, f(acc, i % 3), acc)
+  }
+}
+
+-- a record in a record
+fn nloopA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false -> nloopA(i + 1, n, o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) } })
+  }
+}
+
+fn noldA(i: Int, n: Int, o: NestA, old: NestA) -> String {
+  match i == n {
+    true -> "{fpA(o.inner.c)} old {fpA(old.inner.c)} {old.label}"
+    false ->
+      noldA(i + 1, n, o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, label: "n{i}" }, o)
+  }
+}
+
+fn ndeepA(i: Int, n: Int, d: DeepA) -> DeepA {
+  match i == n {
+    true -> d
+    false -> ndeepA(
+      i + 1,
+      n,
+      d.{ top: d.top.{ inner: d.top.inner.{ c: list.append(d.top.inner.c, i % 3) } } },
+    )
+  }
+}
+
+fn notherA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false -> notherA(i + 1, n, o.{ inner: o.inner.{ d: list.append(o.inner.c, i % 3) } })
+  }
+}
+
+fn moreA(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpA(c)
+  rowA("{kind} 12 a function's update, last argument", before, fpA(c), fpA(wlastA(0, 7, c)))
+  rowA("{kind} 12 a function's update through a let", before, fpA(c), fpA(wletA(0, 7, c)))
+  rowA("{kind} 12 a function's update with the old one", before, fpA(c), woldA(0, 5, c, c))
+  rowA("{kind} 12 a function's update, the old one read after", before, fpA(c), wreadA(0, 4, c, []))
+  rowA(
+    "{kind} 12 a function's update, a closure keeps the old one",
+    before,
+    fpA(c),
+    wlookA(0, 4, c, []),
+  )
+  let made = list.fold(xs, c) { acc, x -> wrapA(acc, x) }
+  rowA("{kind} 12 a function's update in a fold", before, fpA(c), fpA(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let next = wrapA(acc, x)
+    match fpA(acc) == fpA(acc) {
+      true -> next
+      false -> acc
+    }
+  }
+  rowA("{kind} 12 a function's update in a fold, the old one read after", before, fpA(c), fpA(made))
+  let box = BoxA { label: "b", c: c, d: c }
+  let made = mstepA(0, 7, box)
+  rowA(
+    "{kind} 13 a method's update of a record",
+    "{before} {before}",
+    "{fpA(box.c)} {fpA(box.d)}",
+    "{fpA(made.c)} {fpA(made.d)}",
+  )
+  rowA(
+    "{kind} 13 a method's update, the old record too",
+    before,
+    fpA(box.c),
+    mstepoldA(0, 5, box, box),
+  )
+  rowA("{kind} 13 a method after the update", before, fpA(c), fpA(mafterA(c, 0, 7)))
+  rowA(
+    "{kind} 13 a method after the update, the old one too",
+    before,
+    fpA(c),
+    mafteroldA(c, 0, 5, c),
+  )
+  let made = list.fold(xs, box) { b, x -> StepA.step(b, x) }
+  rowA("{kind} 13 a method's update in a fold", before, fpA(box.c), fpA(made.c))
+  rowA("{kind} 14 the builtin as a value", before, fpA(c), fpA(vloopA(0, 7, c)))
+  rowA("{kind} 14 the builtin as a value, the old one too", before, fpA(c), voldA(0, 5, c, c))
+  let f = list.append
+  let made = list.fold(xs, c) { acc, x -> f(acc, x) }
+  rowA("{kind} 14 the builtin as a value in a fold", before, fpA(c), fpA(made))
+  let fs = [f, f]
+  let made = list.fold(xs, c) { acc, x ->
+    match list.get(fs, x % 2) {
+      Some(g) -> g(acc, x)
+      None -> acc
+    }
+  }
+  rowA("{kind} 14 the builtin from a list", before, fpA(c), fpA(made))
+  let made = list.fold(xs, c, list.append)
+  rowA("{kind} 14 the builtin given to a fold", before, fpA(c), fpA(made))
+  let made = list.fold([c, c], [], list.append)
+  rowA("{kind} 14 list.append given to a fold of it", before, fpA(c), "{list.length(made)}")
+  let nest = NestA { label: "o", inner: box, spare: box }
+  let made = nloopA(0, 7, nest)
+  rowA(
+    "{kind} 15 a record in a record",
+    "{before} {before} {before}",
+    "{fpA(nest.inner.c)} {fpA(nest.spare.c)} {fpA(box.c)}",
+    "{fpA(made.inner.c)} {fpA(made.inner.d)} {fpA(made.spare.c)}",
+  )
+  rowA(
+    "{kind} 15 a record in a record, the old one too",
+    before,
+    fpA(nest.inner.c),
+    noldA(0, 5, nest, nest),
+  )
+  let deep = DeepA { top: nest, n: 0 }
+  let made = ndeepA(0, 7, deep)
+  rowA(
+    "{kind} 15 three records deep",
+    "{before} {before}",
+    "{fpA(deep.top.inner.c)} {fpA(nest.inner.c)}",
+    "{fpA(made.top.inner.c)} {fpA(made.top.spare.c)}",
+  )
+  let made = notherA(0, 7, nest)
+  rowA(
+    "{kind} 15 a record in a record, a field from another",
+    before,
+    fpA(nest.inner.c),
+    "{fpA(made.inner.c)} {fpA(made.inner.d)}",
+  )
+  let own = nloopA(
+    0,
+    3,
+    NestA {
+      label: "own",
+      inner: BoxA { label: "i", c: make(), d: [] },
+      spare: BoxA { label: "s", c: [], d: [] },
+    },
+  )
+  rowA("{kind} 15 a record in a record held nowhere else", before, fpA(c), fpA(own.inner.c))
+  let made = list.fold(xs, nest) { o, x -> o.{ inner: o.inner.{ c: list.append(o.inner.c, x) } } }
+  rowA(
+    "{kind} 15 a record in a record in a fold",
+    "{before} {before}",
+    "{fpA(nest.inner.c)} {fpA(box.c)}",
+    fpA(made.inner.c),
+  )
+  let kept = [nest.inner]
+  let made = list.fold(xs, nest) { o, x -> o.{ inner: o.inner.{ c: list.append(o.inner.c, x) } } }
+  rowA(
+    "{kind} 15 a record in a record, its inner one in a list",
+    before,
+    fpA(option.unwrap_or(list.first(kept), box).c),
+    fpA(made.inner.c),
+  )
+}
+
+-- ── list.set: through calls, as a value, in nested records ──
+
+type NestL {
+  label: String,
+  inner: BoxL,
+  spare: BoxL,
+}
+
+type DeepL {
+  top: NestL,
+  n: Int,
+}
+
+trait StepL {
+  fn step(self, x: Int) -> BoxL
+}
+
+trait StepL for BoxL {
+  fn step(self, x: Int) -> BoxL {
+    self.{
+      c: match list.set(self.c, x, x * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+    }
+  }
+}
+
+trait CountL {
+  fn count(self) -> Int
+}
+
+trait CountL for Int {
+  fn count(self) -> Int {
+    self + 1
+  }
+}
+
+-- a function of the program that makes the update
+fn wrapL(c: List(Int), x: Int) -> List(Int) {
+  match list.set(c, x, x * 5 + 7) {
+    Some(next) -> next
+    None -> []
+  }
+}
+
+fn wlastL(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> wlastL(i + 1, n, wrapL(acc, i % 3))
+  }
+}
+
+fn wletL(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = wrapL(acc, i % 3)
+      wletL(i + 1, n, next)
+    }
+  }
+}
+
+fn woldL(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpL(acc)} old {fpL(old)}"
+    false -> woldL(i + 1, n, wrapL(acc, i % 3), acc)
+  }
+}
+
+-- the old one read by a call after the update
+fn wreadL(i: Int, n: Int, acc: List(Int), seen: List(String)) -> String {
+  match i == n {
+    true -> "{fpL(acc)} seen {seen}"
+    false -> wreadL(i + 1, n, wrapL(acc, i % 3), [fpL(acc), ..seen])
+  }
+}
+
+-- a closure made before the call keeps the old one
+fn wlookL(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpL(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> {
+      let look = { -> fpL(acc) }
+      wlookL(i + 1, n, wrapL(acc, i % 3), [look, ..looks])
+    }
+  }
+}
+
+-- a method that makes the update of a record
+fn mstepL(i: Int, n: Int, b: BoxL) -> BoxL {
+  match i == n {
+    true -> b
+    false -> mstepL(i + 1, n, StepL.step(b, i % 3))
+  }
+}
+
+fn mstepoldL(i: Int, n: Int, b: BoxL, old: BoxL) -> String {
+  match i == n {
+    true -> "{fpL(b.c)} old {fpL(old.c)}"
+    false -> mstepoldL(i + 1, n, StepL.step(b, i % 3), b)
+  }
+}
+
+-- a method called after the update
+fn mafterL(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> mafterL(
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+      CountL.count(i),
+      n,
+    )
+  }
+}
+
+fn mafteroldL(acc: List(Int), i: Int, n: Int, old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpL(acc)} old {fpL(old)}"
+    false -> mafteroldL(
+      match list.set(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+      CountL.count(i),
+      n,
+      acc,
+    )
+  }
+}
+
+-- the builtin as a value
+fn vloopL(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  let f = list.set
+  match i == n {
+    true -> acc
+    false -> vloopL(
+      i + 1,
+      n,
+      match f(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+    )
+  }
+}
+
+fn voldL(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  let f = list.set
+  match i == n {
+    true -> "{fpL(acc)} old {fpL(old)}"
+    false -> voldL(
+      i + 1,
+      n,
+      match f(acc, i % 3, i % 3 * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      },
+      acc,
+    )
+  }
+}
+
+-- a record in a record
+fn nloopL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> nloopL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+      },
+    )
+  }
+}
+
+fn noldL(i: Int, n: Int, o: NestL, old: NestL) -> String {
+  match i == n {
+    true -> "{fpL(o.inner.c)} old {fpL(old.inner.c)} {old.label}"
+    false -> noldL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+        label: "n{i}",
+      },
+      o,
+    )
+  }
+}
+
+fn ndeepL(i: Int, n: Int, d: DeepL) -> DeepL {
+  match i == n {
+    true -> d
+    false -> ndeepL(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{
+          inner: d.top.inner.{
+            c: match list.set(d.top.inner.c, i % 3, i % 3 * 5 + 7) {
+              Some(next) -> next
+              None -> []
+            },
+          },
+        },
+      },
+    )
+  }
+}
+
+fn notherL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> notherL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          d: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+      },
+    )
+  }
+}
+
+fn moreL(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpL(c)
+  rowL("{kind} 12 a function's update, last argument", before, fpL(c), fpL(wlastL(0, 7, c)))
+  rowL("{kind} 12 a function's update through a let", before, fpL(c), fpL(wletL(0, 7, c)))
+  rowL("{kind} 12 a function's update with the old one", before, fpL(c), woldL(0, 5, c, c))
+  rowL("{kind} 12 a function's update, the old one read after", before, fpL(c), wreadL(0, 4, c, []))
+  rowL(
+    "{kind} 12 a function's update, a closure keeps the old one",
+    before,
+    fpL(c),
+    wlookL(0, 4, c, []),
+  )
+  let made = list.fold(xs, c) { acc, x -> wrapL(acc, x) }
+  rowL("{kind} 12 a function's update in a fold", before, fpL(c), fpL(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let next = wrapL(acc, x)
+    match fpL(acc) == fpL(acc) {
+      true -> next
+      false -> acc
+    }
+  }
+  rowL("{kind} 12 a function's update in a fold, the old one read after", before, fpL(c), fpL(made))
+  let box = BoxL { label: "b", c: c, d: c }
+  let made = mstepL(0, 7, box)
+  rowL(
+    "{kind} 13 a method's update of a record",
+    "{before} {before}",
+    "{fpL(box.c)} {fpL(box.d)}",
+    "{fpL(made.c)} {fpL(made.d)}",
+  )
+  rowL(
+    "{kind} 13 a method's update, the old record too",
+    before,
+    fpL(box.c),
+    mstepoldL(0, 5, box, box),
+  )
+  rowL("{kind} 13 a method after the update", before, fpL(c), fpL(mafterL(c, 0, 7)))
+  rowL(
+    "{kind} 13 a method after the update, the old one too",
+    before,
+    fpL(c),
+    mafteroldL(c, 0, 5, c),
+  )
+  let made = list.fold(xs, box) { b, x -> StepL.step(b, x) }
+  rowL("{kind} 13 a method's update in a fold", before, fpL(box.c), fpL(made.c))
+  rowL("{kind} 14 the builtin as a value", before, fpL(c), fpL(vloopL(0, 7, c)))
+  rowL("{kind} 14 the builtin as a value, the old one too", before, fpL(c), voldL(0, 5, c, c))
+  let f = list.set
+  let made = list.fold(xs, c) { acc, x ->
+    match f(acc, x, x * 5 + 7) {
+      Some(next) -> next
+      None -> []
+    }
+  }
+  rowL("{kind} 14 the builtin as a value in a fold", before, fpL(c), fpL(made))
+  let fs = [f, f]
+  let made = list.fold(xs, c) { acc, x ->
+    match list.get(fs, x % 2) {
+      Some(g) -> match g(acc, x, x * 5 + 7) {
+        Some(next) -> next
+        None -> []
+      }
+      None -> acc
+    }
+  }
+  rowL("{kind} 14 the builtin from a list", before, fpL(c), fpL(made))
+  let nest = NestL { label: "o", inner: box, spare: box }
+  let made = nloopL(0, 7, nest)
+  rowL(
+    "{kind} 15 a record in a record",
+    "{before} {before} {before}",
+    "{fpL(nest.inner.c)} {fpL(nest.spare.c)} {fpL(box.c)}",
+    "{fpL(made.inner.c)} {fpL(made.inner.d)} {fpL(made.spare.c)}",
+  )
+  rowL(
+    "{kind} 15 a record in a record, the old one too",
+    before,
+    fpL(nest.inner.c),
+    noldL(0, 5, nest, nest),
+  )
+  let deep = DeepL { top: nest, n: 0 }
+  let made = ndeepL(0, 7, deep)
+  rowL(
+    "{kind} 15 three records deep",
+    "{before} {before}",
+    "{fpL(deep.top.inner.c)} {fpL(nest.inner.c)}",
+    "{fpL(made.top.inner.c)} {fpL(made.top.spare.c)}",
+  )
+  let made = notherL(0, 7, nest)
+  rowL(
+    "{kind} 15 a record in a record, a field from another",
+    before,
+    fpL(nest.inner.c),
+    "{fpL(made.inner.c)} {fpL(made.inner.d)}",
+  )
+  let own = nloopL(
+    0,
+    3,
+    NestL {
+      label: "own",
+      inner: BoxL { label: "i", c: make(), d: [] },
+      spare: BoxL { label: "s", c: [], d: [] },
+    },
+  )
+  rowL("{kind} 15 a record in a record held nowhere else", before, fpL(c), fpL(own.inner.c))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{
+      inner: o.inner.{
+        c: match list.set(o.inner.c, x, x * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      },
+    }
+  }
+  rowL(
+    "{kind} 15 a record in a record in a fold",
+    "{before} {before}",
+    "{fpL(nest.inner.c)} {fpL(box.c)}",
+    fpL(made.inner.c),
+  )
+  let kept = [nest.inner]
+  let made = list.fold(xs, nest) { o, x ->
+    o.{
+      inner: o.inner.{
+        c: match list.set(o.inner.c, x, x * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      },
+    }
+  }
+  rowL(
+    "{kind} 15 a record in a record, its inner one in a list",
+    before,
+    fpL(option.unwrap_or(list.first(kept), box).c),
+    fpL(made.inner.c),
+  )
+}
+
 fn main() {
   eachM("tree", treeM)
   eachM("small", flatM)
@@ -2175,4 +3710,14 @@ fn main() {
   eachA("small", flatA)
   eachL("tree", treeL)
   eachL("small", flatL)
+  moreM("tree", treeM)
+  moreM("small", flatM)
+  moreU("tree", treeU)
+  moreU("small", flatU)
+  moreS("tree", treeS)
+  moreS("small", flatS)
+  moreA("tree", treeA)
+  moreA("small", flatA)
+  moreL("tree", treeL)
+  moreL("small", flatL)
 }

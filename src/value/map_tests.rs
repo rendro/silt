@@ -903,6 +903,100 @@ import host
     assert!(lists < 20, "{lists} changes of lists copied a shared tree");
 }
 
+/// An update made by a function of the program or by a method, of the
+/// collection a function hands to itself, changes it in place, and so
+/// does an update with a method call after it: 15,000 changes of maps,
+/// sets and lists find each held nowhere else. (The caller's slot held
+/// the old one while the function ran, or the reading ahead gave up at
+/// the method call: each change copied the path of the tree.)
+#[test]
+fn an_update_through_a_function_or_a_method_changes_it_in_place() {
+    let (given, shared, lists) = run_counting_shared(
+        r#"
+import list
+import map
+import set
+type Bag {
+  s: Set(Int),
+}
+trait Fill {
+  fn fill(self, x: Int) -> Bag
+}
+trait Fill for Bag {
+  fn fill(self, x: Int) -> Bag {
+    self.{ s: set.insert(self.s, x) }
+  }
+}
+trait Next {
+  fn next(self) -> Int
+}
+trait Next for Int {
+  fn next(self) -> Int {
+    self - 1
+  }
+}
+fn add(s: Set(Int), x: Int) -> Set(Int) {
+  set.insert(s, x)
+}
+fn put(m: Map(Int, Int), k: Int) -> Map(Int, Int) {
+  map.set(m, k, k)
+}
+fn push(l: List(Int), x: Int) -> List(Int) {
+  list.append(l, x)
+}
+fn wrapped(i: Int, acc: Set(Int)) -> Set(Int) {
+  match i == 0 {
+    true -> acc
+    false -> wrapped(i - 1, add(acc, i))
+  }
+}
+fn named(i: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == 0 {
+    true -> acc
+    false -> {
+      let next = put(acc, i)
+      named(i - 1, next)
+    }
+  }
+}
+fn pushed(i: Int, acc: List(Int)) -> List(Int) {
+  match i == 0 {
+    true -> acc
+    false -> pushed(i - 1, push(acc, i))
+  }
+}
+fn filled(i: Int, b: Bag) -> Bag {
+  match i == 0 {
+    true -> b
+    false -> filled(i - 1, Fill.fill(b, i))
+  }
+}
+fn counted(acc: Map(Int, Int), i: Int) -> Map(Int, Int) {
+  match i == 0 {
+    true -> acc
+    false -> counted(map.set(acc, i, 0), Next.next(i))
+  }
+}
+fn main() {
+  let a = wrapped(3000, #[])
+  let b = named(3000, #{})
+  let c = pushed(3000, [])
+  let d = filled(3000, Bag { s: #[] })
+  let e = counted(#{}, 3000)
+  host.give([set.length(a), map.length(b), list.length(c), set.length(d.s), map.length(e)])
+}
+import host
+"#,
+    );
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    assert_eq!(given, ints(&[3_000, 3_000, 3_000, 3_000, 3_000]));
+    assert!(
+        shared < 20,
+        "{shared} changes of maps and sets copied a shared tree"
+    );
+    assert!(lists < 20, "{lists} changes of lists copied a shared tree");
+}
+
 // ── Deep values ────────────────────────────────────────────────────
 
 /// A value nested 10,000 levels deep through maps and sets kept in

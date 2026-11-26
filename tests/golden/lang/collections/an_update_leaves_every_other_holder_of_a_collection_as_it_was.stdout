@@ -398,3 +398,241 @@ list.set small 9 a record in a fold: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2)
 list.set small 9 a record in a fold, held in a list: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
 list.set small 10 a task that fails part way: same 3/6/Some(2) -> 3/6/Some(2); made failed
 list.set small 11 a key and a member: Some("first") true true true true Some(1)
+map.set tree 12 a function's update, last argument: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 12 a function's update through a let: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 12 a function's update with the old one: same 100/39600 -> 100/39600; made 100/39609 old 100/39609
+map.set tree 12 a function's update, the old one read after: same 100/39600 -> 100/39600; made 100/39609 seen ["100/39609", "100/39604", "100/39601", "100/39600"]
+map.set tree 12 a function's update, a closure keeps the old one: same 100/39600 -> 100/39600; made 100/39609 looks ["100/39609", "100/39604", "100/39601", "100/39600"]
+map.set tree 12 a function's update in a fold: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 12 a function's update in a fold, the old one read after: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 13 a method's update of a record: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39609 100/39600
+map.set tree 13 a method's update, the old record too: same 100/39600 -> 100/39600; made 100/39609 old 100/39609
+map.set tree 13 a method after the update: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 13 a method after the update, the old one too: same 100/39600 -> 100/39600; made 100/39609 old 100/39609
+map.set tree 13 a method's update in a fold: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 14 the builtin as a value: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 14 the builtin as a value, the old one too: same 100/39600 -> 100/39600; made 100/39609 old 100/39609
+map.set tree 14 the builtin as a value in a fold: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 14 the builtin from a list: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 15 a record in a record: same 100/39600 100/39600 100/39600 -> 100/39600 100/39600 100/39600; made 100/39609 100/39600 100/39600
+map.set tree 15 a record in a record, the old one too: same 100/39600 -> 100/39600; made 100/39609 old 100/39609 n3
+map.set tree 15 three records deep: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39609 100/39600
+map.set tree 15 a record in a record, a field from another: same 100/39600 -> 100/39600; made 100/39600 100/39601
+map.set tree 15 a record in a record held nowhere else: same 100/39600 -> 100/39600; made 100/39609
+map.set tree 15 a record in a record in a fold: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39609
+map.set tree 15 a record in a record, its inner one in a list: same 100/39600 -> 100/39600; made 100/39609
+map.set small 12 a function's update, last argument: same 3/102 -> 3/102; made 4/84
+map.set small 12 a function's update through a let: same 3/102 -> 3/102; made 4/84
+map.set small 12 a function's update with the old one: same 3/102 -> 3/102; made 4/84 old 4/84
+map.set small 12 a function's update, the old one read after: same 3/102 -> 3/102; made 4/84 seen ["4/84", "4/97", "4/103", "3/102"]
+map.set small 12 a function's update, a closure keeps the old one: same 3/102 -> 3/102; made 4/84 looks ["4/84", "4/97", "4/103", "3/102"]
+map.set small 12 a function's update in a fold: same 3/102 -> 3/102; made 4/84
+map.set small 12 a function's update in a fold, the old one read after: same 3/102 -> 3/102; made 4/84
+map.set small 13 a method's update of a record: same 3/102 3/102 -> 3/102 3/102; made 4/84 3/102
+map.set small 13 a method's update, the old record too: same 3/102 -> 3/102; made 4/84 old 4/84
+map.set small 13 a method after the update: same 3/102 -> 3/102; made 4/84
+map.set small 13 a method after the update, the old one too: same 3/102 -> 3/102; made 4/84 old 4/84
+map.set small 13 a method's update in a fold: same 3/102 -> 3/102; made 4/84
+map.set small 14 the builtin as a value: same 3/102 -> 3/102; made 4/84
+map.set small 14 the builtin as a value, the old one too: same 3/102 -> 3/102; made 4/84 old 4/84
+map.set small 14 the builtin as a value in a fold: same 3/102 -> 3/102; made 4/84
+map.set small 14 the builtin from a list: same 3/102 -> 3/102; made 4/84
+map.set small 15 a record in a record: same 3/102 3/102 3/102 -> 3/102 3/102 3/102; made 4/84 3/102 3/102
+map.set small 15 a record in a record, the old one too: same 3/102 -> 3/102; made 4/84 old 4/84 n3
+map.set small 15 three records deep: same 3/102 3/102 -> 3/102 3/102; made 4/84 3/102
+map.set small 15 a record in a record, a field from another: same 3/102 -> 3/102; made 3/102 4/103
+map.set small 15 a record in a record held nowhere else: same 3/102 -> 3/102; made 4/84
+map.set small 15 a record in a record in a fold: same 3/102 3/102 -> 3/102 3/102; made 4/84
+map.set small 15 a record in a record, its inner one in a list: same 3/102 -> 3/102; made 4/84
+map.update tree 12 a function's update, last argument: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 12 a function's update through a let: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 12 a function's update with the old one: same 100/39600 -> 100/39600; made 100/39605 old 100/39604
+map.update tree 12 a function's update, the old one read after: same 100/39600 -> 100/39600; made 100/39604 seen ["100/39603", "100/39602", "100/39601", "100/39600"]
+map.update tree 12 a function's update, a closure keeps the old one: same 100/39600 -> 100/39600; made 100/39604 looks ["100/39603", "100/39602", "100/39601", "100/39600"]
+map.update tree 12 a function's update in a fold: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 12 a function's update in a fold, the old one read after: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 13 a method's update of a record: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39607 100/39600
+map.update tree 13 a method's update, the old record too: same 100/39600 -> 100/39600; made 100/39605 old 100/39604
+map.update tree 13 a method after the update: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 13 a method after the update, the old one too: same 100/39600 -> 100/39600; made 100/39605 old 100/39604
+map.update tree 13 a method's update in a fold: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 14 the builtin as a value: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 14 the builtin as a value, the old one too: same 100/39600 -> 100/39600; made 100/39605 old 100/39604
+map.update tree 14 the builtin as a value in a fold: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 14 the builtin from a list: same 100/39600 -> 100/39600; made 100/39607
+map.update tree 15 a record in a record: same 100/39600 100/39600 100/39600 -> 100/39600 100/39600 100/39600; made 100/39607 100/39600 100/39600
+map.update tree 15 a record in a record, the old one too: same 100/39600 -> 100/39600; made 100/39605 old 100/39604 n3
+map.update tree 15 three records deep: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39607 100/39600
+map.update tree 15 a record in a record, a field from another: same 100/39600 -> 100/39600; made 100/39600 100/39601
+map.update tree 15 a record in a record held nowhere else: same 100/39600 -> 100/39600; made 100/39603
+map.update tree 15 a record in a record in a fold: same 100/39600 100/39600 -> 100/39600 100/39600; made 100/39607
+map.update tree 15 a record in a record, its inner one in a list: same 100/39600 -> 100/39600; made 100/39607
+map.update small 12 a function's update, last argument: same 3/102 -> 3/102; made 4/109
+map.update small 12 a function's update through a let: same 3/102 -> 3/102; made 4/109
+map.update small 12 a function's update with the old one: same 3/102 -> 3/102; made 4/107 old 4/106
+map.update small 12 a function's update, the old one read after: same 3/102 -> 3/102; made 4/106 seen ["4/105", "4/104", "4/103", "3/102"]
+map.update small 12 a function's update, a closure keeps the old one: same 3/102 -> 3/102; made 4/106 looks ["4/105", "4/104", "4/103", "3/102"]
+map.update small 12 a function's update in a fold: same 3/102 -> 3/102; made 4/109
+map.update small 12 a function's update in a fold, the old one read after: same 3/102 -> 3/102; made 4/109
+map.update small 13 a method's update of a record: same 3/102 3/102 -> 3/102 3/102; made 4/109 3/102
+map.update small 13 a method's update, the old record too: same 3/102 -> 3/102; made 4/107 old 4/106
+map.update small 13 a method after the update: same 3/102 -> 3/102; made 4/109
+map.update small 13 a method after the update, the old one too: same 3/102 -> 3/102; made 4/107 old 4/106
+map.update small 13 a method's update in a fold: same 3/102 -> 3/102; made 4/109
+map.update small 14 the builtin as a value: same 3/102 -> 3/102; made 4/109
+map.update small 14 the builtin as a value, the old one too: same 3/102 -> 3/102; made 4/107 old 4/106
+map.update small 14 the builtin as a value in a fold: same 3/102 -> 3/102; made 4/109
+map.update small 14 the builtin from a list: same 3/102 -> 3/102; made 4/109
+map.update small 15 a record in a record: same 3/102 3/102 3/102 -> 3/102 3/102 3/102; made 4/109 3/102 3/102
+map.update small 15 a record in a record, the old one too: same 3/102 -> 3/102; made 4/107 old 4/106 n3
+map.update small 15 three records deep: same 3/102 3/102 -> 3/102 3/102; made 4/109 3/102
+map.update small 15 a record in a record, a field from another: same 3/102 -> 3/102; made 3/102 4/103
+map.update small 15 a record in a record held nowhere else: same 3/102 -> 3/102; made 4/105
+map.update small 15 a record in a record in a fold: same 3/102 3/102 -> 3/102 3/102; made 4/109
+map.update small 15 a record in a record, its inner one in a list: same 3/102 -> 3/102; made 4/109
+set.insert tree 12 a function's update, last argument: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 12 a function's update through a let: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 12 a function's update with the old one: same 100/4950 -> 100/4950; made 103/6453 old 103/6453
+set.insert tree 12 a function's update, the old one read after: same 100/4950 -> 100/4950; made 103/6453 seen ["103/6453", "102/5951", "101/5450", "100/4950"]
+set.insert tree 12 a function's update, a closure keeps the old one: same 100/4950 -> 100/4950; made 103/6453 looks ["103/6453", "102/5951", "101/5450", "100/4950"]
+set.insert tree 12 a function's update in a fold: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 12 a function's update in a fold, the old one read after: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 13 a method's update of a record: same 100/4950 100/4950 -> 100/4950 100/4950; made 103/6453 100/4950
+set.insert tree 13 a method's update, the old record too: same 100/4950 -> 100/4950; made 103/6453 old 103/6453
+set.insert tree 13 a method after the update: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 13 a method after the update, the old one too: same 100/4950 -> 100/4950; made 103/6453 old 103/6453
+set.insert tree 13 a method's update in a fold: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 14 the builtin as a value: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 14 the builtin as a value, the old one too: same 100/4950 -> 100/4950; made 103/6453 old 103/6453
+set.insert tree 14 the builtin as a value in a fold: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 14 the builtin from a list: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 14 the builtin given to a fold: same 100/4950 -> 100/4950; made 100/4950
+set.insert tree 14 list.append given to a fold of it: same 100/4950 -> 100/4950; made 2
+set.insert tree 15 a record in a record: same 100/4950 100/4950 100/4950 -> 100/4950 100/4950 100/4950; made 103/6453 100/4950 100/4950
+set.insert tree 15 a record in a record, the old one too: same 100/4950 -> 100/4950; made 103/6453 old 103/6453 n3
+set.insert tree 15 three records deep: same 100/4950 100/4950 -> 100/4950 100/4950; made 103/6453 100/4950
+set.insert tree 15 a record in a record, a field from another: same 100/4950 -> 100/4950; made 100/4950 101/5450
+set.insert tree 15 a record in a record held nowhere else: same 100/4950 -> 100/4950; made 103/6453
+set.insert tree 15 a record in a record in a fold: same 100/4950 100/4950 -> 100/4950 100/4950; made 103/6453
+set.insert tree 15 a record in a record, its inner one in a list: same 100/4950 -> 100/4950; made 103/6453
+set.insert small 12 a function's update, last argument: same 3/6 -> 3/6; made 6/1509
+set.insert small 12 a function's update through a let: same 3/6 -> 3/6; made 6/1509
+set.insert small 12 a function's update with the old one: same 3/6 -> 3/6; made 6/1509 old 6/1509
+set.insert small 12 a function's update, the old one read after: same 3/6 -> 3/6; made 6/1509 seen ["6/1509", "5/1007", "4/506", "3/6"]
+set.insert small 12 a function's update, a closure keeps the old one: same 3/6 -> 3/6; made 6/1509 looks ["6/1509", "5/1007", "4/506", "3/6"]
+set.insert small 12 a function's update in a fold: same 3/6 -> 3/6; made 6/1509
+set.insert small 12 a function's update in a fold, the old one read after: same 3/6 -> 3/6; made 6/1509
+set.insert small 13 a method's update of a record: same 3/6 3/6 -> 3/6 3/6; made 6/1509 3/6
+set.insert small 13 a method's update, the old record too: same 3/6 -> 3/6; made 6/1509 old 6/1509
+set.insert small 13 a method after the update: same 3/6 -> 3/6; made 6/1509
+set.insert small 13 a method after the update, the old one too: same 3/6 -> 3/6; made 6/1509 old 6/1509
+set.insert small 13 a method's update in a fold: same 3/6 -> 3/6; made 6/1509
+set.insert small 14 the builtin as a value: same 3/6 -> 3/6; made 6/1509
+set.insert small 14 the builtin as a value, the old one too: same 3/6 -> 3/6; made 6/1509 old 6/1509
+set.insert small 14 the builtin as a value in a fold: same 3/6 -> 3/6; made 6/1509
+set.insert small 14 the builtin from a list: same 3/6 -> 3/6; made 6/1509
+set.insert small 14 the builtin given to a fold: same 3/6 -> 3/6; made 4/6
+set.insert small 14 list.append given to a fold of it: same 3/6 -> 3/6; made 2
+set.insert small 15 a record in a record: same 3/6 3/6 3/6 -> 3/6 3/6 3/6; made 6/1509 3/6 3/6
+set.insert small 15 a record in a record, the old one too: same 3/6 -> 3/6; made 6/1509 old 6/1509 n3
+set.insert small 15 three records deep: same 3/6 3/6 -> 3/6 3/6; made 6/1509 3/6
+set.insert small 15 a record in a record, a field from another: same 3/6 -> 3/6; made 3/6 4/506
+set.insert small 15 a record in a record held nowhere else: same 3/6 -> 3/6; made 6/1509
+set.insert small 15 a record in a record in a fold: same 3/6 3/6 -> 3/6 3/6; made 6/1509
+set.insert small 15 a record in a record, its inner one in a list: same 3/6 -> 3/6; made 6/1509
+list.append tree 12 a function's update, last argument: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0)
+list.append tree 12 a function's update through a let: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0)
+list.append tree 12 a function's update with the old one: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19904/Some(1) old 204/19903/Some(0)
+list.append tree 12 a function's update, the old one read after: same 200/19900/Some(199) -> 200/19900/Some(199); made 204/19903/Some(0) seen ["203/19903/Some(2)", "202/19901/Some(1)", "201/19900/Some(0)", "200/19900/Some(199)"]
+list.append tree 12 a function's update, a closure keeps the old one: same 200/19900/Some(199) -> 200/19900/Some(199); made 204/19903/Some(0) looks ["203/19903/Some(2)", "202/19901/Some(1)", "201/19900/Some(0)", "200/19900/Some(199)"]
+list.append tree 12 a function's update in a fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 12 a function's update in a fold, the old one read after: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 13 a method's update of a record: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 207/19906/Some(0) 200/19900/Some(199)
+list.append tree 13 a method's update, the old record too: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19904/Some(1) old 204/19903/Some(0)
+list.append tree 13 a method after the update: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0)
+list.append tree 13 a method after the update, the old one too: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19904/Some(1) old 204/19903/Some(0)
+list.append tree 13 a method's update in a fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 14 the builtin as a value: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19906/Some(0)
+list.append tree 14 the builtin as a value, the old one too: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19904/Some(1) old 204/19903/Some(0)
+list.append tree 14 the builtin as a value in a fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 14 the builtin from a list: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 14 the builtin given to a fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 14 list.append given to a fold of it: same 200/19900/Some(199) -> 200/19900/Some(199); made 2
+list.append tree 15 a record in a record: same 200/19900/Some(199) 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199) 200/19900/Some(199); made 207/19906/Some(0) 200/19900/Some(199) 200/19900/Some(199)
+list.append tree 15 a record in a record, the old one too: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19904/Some(1) old 204/19903/Some(0) n3
+list.append tree 15 three records deep: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 207/19906/Some(0) 200/19900/Some(199)
+list.append tree 15 a record in a record, a field from another: same 200/19900/Some(199) -> 200/19900/Some(199); made 200/19900/Some(199) 201/19900/Some(0)
+list.append tree 15 a record in a record held nowhere else: same 200/19900/Some(199) -> 200/19900/Some(199); made 203/19903/Some(2)
+list.append tree 15 a record in a record in a fold: same 200/19900/Some(199) 200/19900/Some(199) -> 200/19900/Some(199) 200/19900/Some(199); made 207/19908/Some(2)
+list.append tree 15 a record in a record, its inner one in a list: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
+list.append small 12 a function's update, last argument: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0)
+list.append small 12 a function's update through a let: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0)
+list.append small 12 a function's update with the old one: same 3/6/Some(3) -> 3/6/Some(3); made 8/10/Some(1) old 7/9/Some(0)
+list.append small 12 a function's update, the old one read after: same 3/6/Some(3) -> 3/6/Some(3); made 7/9/Some(0) seen ["6/9/Some(2)", "5/7/Some(1)", "4/6/Some(0)", "3/6/Some(3)"]
+list.append small 12 a function's update, a closure keeps the old one: same 3/6/Some(3) -> 3/6/Some(3); made 7/9/Some(0) looks ["6/9/Some(2)", "5/7/Some(1)", "4/6/Some(0)", "3/6/Some(3)"]
+list.append small 12 a function's update in a fold: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 12 a function's update in a fold, the old one read after: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 13 a method's update of a record: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 10/12/Some(0) 3/6/Some(3)
+list.append small 13 a method's update, the old record too: same 3/6/Some(3) -> 3/6/Some(3); made 8/10/Some(1) old 7/9/Some(0)
+list.append small 13 a method after the update: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0)
+list.append small 13 a method after the update, the old one too: same 3/6/Some(3) -> 3/6/Some(3); made 8/10/Some(1) old 7/9/Some(0)
+list.append small 13 a method's update in a fold: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 14 the builtin as a value: same 3/6/Some(3) -> 3/6/Some(3); made 10/12/Some(0)
+list.append small 14 the builtin as a value, the old one too: same 3/6/Some(3) -> 3/6/Some(3); made 8/10/Some(1) old 7/9/Some(0)
+list.append small 14 the builtin as a value in a fold: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 14 the builtin from a list: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 14 the builtin given to a fold: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.append small 14 list.append given to a fold of it: same 3/6/Some(3) -> 3/6/Some(3); made 2
+list.append small 15 a record in a record: same 3/6/Some(3) 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3) 3/6/Some(3); made 10/12/Some(0) 3/6/Some(3) 3/6/Some(3)
+list.append small 15 a record in a record, the old one too: same 3/6/Some(3) -> 3/6/Some(3); made 8/10/Some(1) old 7/9/Some(0) n3
+list.append small 15 three records deep: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 10/12/Some(0) 3/6/Some(3)
+list.append small 15 a record in a record, a field from another: same 3/6/Some(3) -> 3/6/Some(3); made 3/6/Some(3) 4/6/Some(0)
+list.append small 15 a record in a record held nowhere else: same 3/6/Some(3) -> 3/6/Some(3); made 6/9/Some(2)
+list.append small 15 a record in a record in a fold: same 3/6/Some(3) 3/6/Some(3) -> 3/6/Some(3) 3/6/Some(3); made 10/14/Some(2)
+list.append small 15 a record in a record, its inner one in a list: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
+list.set tree 12 a function's update, last argument: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 12 a function's update through a let: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 12 a function's update with the old one: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) old 200/19933/Some(12)
+list.set tree 12 a function's update, the old one read after: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) seen ["200/19933/Some(12)", "200/19918/Some(12)", "200/19907/Some(1)", "200/19900/Some(1)"]
+list.set tree 12 a function's update, a closure keeps the old one: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) looks ["200/19933/Some(12)", "200/19918/Some(12)", "200/19907/Some(1)", "200/19900/Some(1)"]
+list.set tree 12 a function's update in a fold: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 12 a function's update in a fold, the old one read after: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 13 a method's update of a record: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19933/Some(12) 200/19900/Some(1)
+list.set tree 13 a method's update, the old record too: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) old 200/19933/Some(12)
+list.set tree 13 a method after the update: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 13 a method after the update, the old one too: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) old 200/19933/Some(12)
+list.set tree 13 a method's update in a fold: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 14 the builtin as a value: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 14 the builtin as a value, the old one too: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) old 200/19933/Some(12)
+list.set tree 14 the builtin as a value in a fold: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 14 the builtin from a list: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 15 a record in a record: same 200/19900/Some(1) 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1) 200/19900/Some(1); made 200/19933/Some(12) 200/19900/Some(1) 200/19900/Some(1)
+list.set tree 15 a record in a record, the old one too: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12) old 200/19933/Some(12) n3
+list.set tree 15 three records deep: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19933/Some(12) 200/19900/Some(1)
+list.set tree 15 a record in a record, a field from another: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19900/Some(1) 200/19907/Some(1)
+list.set tree 15 a record in a record held nowhere else: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 15 a record in a record in a fold: same 200/19900/Some(1) 200/19900/Some(1) -> 200/19900/Some(1) 200/19900/Some(1); made 200/19933/Some(12)
+list.set tree 15 a record in a record, its inner one in a list: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
+list.set small 12 a function's update, last argument: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 12 a function's update through a let: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 12 a function's update with the old one: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) old 3/36/Some(12)
+list.set small 12 a function's update, the old one read after: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) seen ["3/36/Some(12)", "3/22/Some(12)", "3/12/Some(2)", "3/6/Some(2)"]
+list.set small 12 a function's update, a closure keeps the old one: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) looks ["3/36/Some(12)", "3/22/Some(12)", "3/12/Some(2)", "3/6/Some(2)"]
+list.set small 12 a function's update in a fold: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 12 a function's update in a fold, the old one read after: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 13 a method's update of a record: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/36/Some(12) 3/6/Some(2)
+list.set small 13 a method's update, the old record too: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) old 3/36/Some(12)
+list.set small 13 a method after the update: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 13 a method after the update, the old one too: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) old 3/36/Some(12)
+list.set small 13 a method's update in a fold: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 14 the builtin as a value: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 14 the builtin as a value, the old one too: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) old 3/36/Some(12)
+list.set small 14 the builtin as a value in a fold: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 14 the builtin from a list: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 15 a record in a record: same 3/6/Some(2) 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2) 3/6/Some(2); made 3/36/Some(12) 3/6/Some(2) 3/6/Some(2)
+list.set small 15 a record in a record, the old one too: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12) old 3/36/Some(12) n3
+list.set small 15 three records deep: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/36/Some(12) 3/6/Some(2)
+list.set small 15 a record in a record, a field from another: same 3/6/Some(2) -> 3/6/Some(2); made 3/6/Some(2) 3/12/Some(2)
+list.set small 15 a record in a record held nowhere else: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
+list.set small 15 a record in a record in a fold: same 3/6/Some(2) 3/6/Some(2) -> 3/6/Some(2) 3/6/Some(2); made 3/36/Some(12)
+list.set small 15 a record in a record, its inner one in a list: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)

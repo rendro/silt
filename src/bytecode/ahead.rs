@@ -268,7 +268,11 @@ impl Follow {
 /// takes off it (each counted as read: one it looks at and puts back,
 /// as a pattern's test does, too), and goes to no place but the next
 /// instruction or its target. (`QuestionMark` may end the frame
-/// instead, with the value it took.)
+/// instead, with the value it took.) A call of a function, a method or
+/// a builtin sees the values it takes and nothing of the frame; a
+/// closure that holds a value of the frame captured it, a read, when it
+/// was made. `FrameDict` reads the dictionary below the frame, which is
+/// none of the frame's values.
 fn takes_what_it_pops(instr: &Instr) -> bool {
     matches!(
         instr,
@@ -333,6 +337,22 @@ fn takes_what_it_pops(instr: &Instr) -> bool {
             | Instr::TestMapHasKey { .. }
             | Instr::DestructMapValue { .. }
             | Instr::QuestionMark
+            | Instr::CallMethod { .. }
+            | Instr::TailCallMethod { .. }
+            | Instr::CallDict { .. }
+            | Instr::TailCallDict { .. }
+            | Instr::CallChecked { .. }
+            | Instr::TailCallChecked { .. }
+            | Instr::MakeType { .. }
+            | Instr::MakeDict { .. }
+            | Instr::DictMethod { .. }
+            | Instr::DictSub { .. }
+            | Instr::SuperDict { .. }
+            | Instr::WhereDict { .. }
+            | Instr::DictType
+            | Instr::TypeArg { .. }
+            | Instr::Bind { .. }
+            | Instr::FrameDict
     )
 }
 
@@ -392,15 +412,22 @@ pub(crate) fn read(code: &[u8], ip: usize, olds: usize) -> Option<Ahead> {
 }
 
 /// The places in `code` just after each call of a builtin that changes
-/// a collection in place, each with what the code after it reads, once
-/// a call there has been made ([`super::Chunk::ahead_at`]).
+/// a collection in place, and of each call of a function or a method,
+/// each with what the code after it reads, once a call there has been
+/// made ([`super::Chunk::ahead_at`]).
 pub(crate) fn sites(code: &[u8]) -> Box<[(usize, OnceLock<Option<Ahead>>)]> {
     let mut sites = Vec::new();
     let mut at = 0;
     while let Some((instr, next)) = decode(code, at) {
-        if let Instr::CallBuiltin { builtin, .. } = instr
-            && puts(builtin)
-        {
+        let site = match instr {
+            Instr::CallBuiltin { builtin, .. } => puts(builtin),
+            Instr::Call { .. }
+            | Instr::CallChecked { .. }
+            | Instr::CallMethod { .. }
+            | Instr::CallDict { .. } => true,
+            _ => false,
+        };
+        if site {
             sites.push((next, OnceLock::new()));
         }
         at = next;
