@@ -1,0 +1,20 @@
+error[type]: 'Go' is an enum type, not a record type
+ --> enum_as_a_record__a_type_and_its_variant_of_one_name.silt:9:11
+   |
+ 9 |   let g = Go { x: 1 }
+   |           ^^ 'Go' is an enum type, not a record type
+  = help: `Go` is also the name of its variant: write `Go(a)`
+
+error[type]: 'Tag' is an enum type, not a record type
+ --> enum_as_a_record__a_type_and_its_variant_of_one_name.silt:10:11
+    |
+ 10 |   let t = Tag { name: "a" }
+    |           ^^^ 'Tag' is an enum type, not a record type
+  = help: `Tag` is also the name of its variant: write `Tag`
+
+error[type]: 'Go' is an enum type, not a record type
+ --> enum_as_a_record__a_type_and_its_variant_of_one_name.silt:12:5
+    |
+ 12 |     Go { x } -> println(x)
+    |     ^^ 'Go' is an enum type, not a record type
+  = help: `Go` is also the name of its variant: write `Go(a)`

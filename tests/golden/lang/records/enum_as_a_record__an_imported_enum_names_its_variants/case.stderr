@@ -1,0 +1,27 @@
+error[type]: 'Light' is an enum type, not a record type
+ --> main.silt:10:11
+    |
+ 10 |   let a = Light { x: 1 }
+    |           ^^^^^ 'Light' is an enum type, not a record type
+  = help: a value of `Light` is one of its variants: write `Light.Go` or `Light.Stop`
+
+error[type]: 'lights.Light' is an enum type, not a record type
+ --> main.silt:11:11
+    |
+ 11 |   let b = lights.Light { x: 1 }
+    |           ^^^^^^^^^^^^^^^^^^^^^ 'lights.Light' is an enum type, not a record type
+  = help: a value of `lights.Light` is one of its variants: write `lights.Go` or `lights.Stop`
+
+error[type]: 'Slot' is an enum type, not a record type
+ --> main.silt:12:11
+    |
+ 12 |   let c = Slot { x: 1 }
+    |           ^^^^ 'Slot' is an enum type, not a record type
+  = help: a value of `Slot` is one of its variants: write `Full(a)` or `Empty`
+
+error[type]: 'lights.Slot' is an enum type, not a record type
+ --> main.silt:13:11
+    |
+ 13 |   let d = lights.Slot { x: 1 }
+    |           ^^^^^^^^^^^^^^^^^^^^ 'lights.Slot' is an enum type, not a record type
+  = help: a value of `lights.Slot` is one of its variants: write `lights.Full(a)` or `lights.Empty`

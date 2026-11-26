@@ -1,0 +1,18 @@
+-- exit: 1
+-- An enum type of another module written as a record literal: the help
+-- writes each variant as it is reached here, through the module when
+-- the type was (lights.Go), bare when the variant was imported by name
+-- (Full), and through the type when only the type was (Light.Go).
+import lights
+import lights.{ Light, Slot, Full, Empty }
+
+fn main() {
+  let a = Light { x: 1 }
+  let b = lights.Light { x: 1 }
+  let c = Slot { x: 1 }
+  let d = lights.Slot { x: 1 }
+  println(a)
+  println(b)
+  println(c)
+  println(d)
+}

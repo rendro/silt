@@ -1,0 +1,26 @@
+-- exit: 1
+-- An enum type's own name written as a record literal or pattern: the
+-- error says it is an enum type, not a record type, and names the
+-- variants that build its values, each as it is written (with its
+-- fields as a call), for the program's enums and the prelude's.
+type Light { Go, Stop }
+type Slot { Full(Int), Pair(Int, String), Empty }
+type One { Only(Int) }
+type Big { A, B, C, D, E, F, G, H }
+
+fn main() {
+  let a = Light { x: 1 }
+  let b = Slot { x: 1 }
+  let c = One { x: 1 }
+  let d = Big { x: 1 }
+  let e = Option { v: 1 }
+  match Go {
+    Light { x } -> println(x)
+    _ -> println("go")
+  }
+  println(a)
+  println(b)
+  println(c)
+  println(d)
+  println(e)
+}

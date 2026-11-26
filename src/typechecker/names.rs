@@ -3020,7 +3020,14 @@ impl Resolver<'_> {
     ) -> Option<Res> {
         match module {
             None => match self.lookup_type(name) {
-                Some(binding) => Some(self.binding_res(&binding)),
+                Some(binding) => {
+                    if let Some(d) = self.enum_not_record(&binding, &resolve(name), None, name_span)
+                    {
+                        self.error(d);
+                        return Some(Res::Error);
+                    }
+                    Some(self.binding_res(&binding))
+                }
                 None => {
                     if !self.is_local(name)
                         && let Some(binding) = self.lookup_global_value(name)
@@ -3084,7 +3091,16 @@ impl Resolver<'_> {
                     return Some(Res::Error);
                 };
                 match exports.types.get(&name).cloned() {
-                    Some(binding) => Some(self.binding_res(&binding)),
+                    Some(binding) => {
+                        let written = format!("{}.{name}", q.name);
+                        if let Some(d) =
+                            self.enum_not_record(&binding, &written, Some(q.name), span)
+                        {
+                            self.error(d);
+                            return Some(Res::Error);
+                        }
+                        Some(self.binding_res(&binding))
+                    }
                     None => {
                         let written = format!("{}.{name}", q.name);
                         let variant = (exports.values.get(&name))
@@ -3125,6 +3141,93 @@ impl Resolver<'_> {
                 }
             }
         }
+    }
+
+    /// The error for a record literal or pattern whose name, written
+    /// `written`, is an enum type (`binding`): it names no record type,
+    /// and a value of it is one of its variants. The help names the
+    /// variant of the type's own name if it has one (`type Go { Go(Int),
+    /// Other }`), else its variants, each as it is written here: through
+    /// the module `module` if the type was, bare if the name reaches the
+    /// variant, else through the type (`Light.Go`).
+    fn enum_not_record(
+        &self,
+        binding: &Binding,
+        written: &str,
+        module: Option<Symbol>,
+        span: Span,
+    ) -> Option<Diagnostic> {
+        let Binding::Def(id) = binding else {
+            return None;
+        };
+        let def = self.defs.get(*id);
+        if !matches!(def.kind, DefKind::Type(_)) {
+            return None;
+        }
+        let variants = self.defs.variants(*id);
+        if variants.is_empty() {
+            return None;
+        }
+        let as_written = |variant: DefId| {
+            let vname = self.defs.get(variant).name;
+            match module {
+                Some(m) => format!("{m}.{vname}"),
+                None => match self.lookup_global_value(vname) {
+                    Some(Binding::Def(found)) if found == variant && !self.is_local(vname) => {
+                        resolve(vname)
+                    }
+                    _ => format!("{written}.{vname}"),
+                },
+            }
+        };
+        let call = |variant: DefId| {
+            let shown = as_written(variant);
+            match self.defs.get(variant).kind {
+                DefKind::Variant { arity, .. } if arity > 0 => {
+                    let fields: Vec<String> = (0..arity)
+                        .map(|i| char::from(b'a' + (i % 26) as u8).to_string())
+                        .collect();
+                    format!("{shown}({})", fields.join(", "))
+                }
+                _ => shown,
+            }
+        };
+        let help = if let Some(&own) = variants
+            .iter()
+            .find(|v| self.defs.get(**v).name == def.name)
+        {
+            format!(
+                "`{}` is also the name of its variant: write `{}`",
+                as_written(own),
+                call(own)
+            )
+        } else {
+            const SHOWN: usize = 6;
+            let mut shown: Vec<String> = variants
+                .iter()
+                .take(SHOWN)
+                .map(|v| format!("`{}`", call(*v)))
+                .collect();
+            if variants.len() > SHOWN {
+                shown.push(format!("{} more", variants.len() - SHOWN));
+            }
+            match shown.split_last() {
+                Some((last, [])) => format!("a value of `{written}` is its variant: write {last}"),
+                Some((last, rest)) => format!(
+                    "a value of `{written}` is one of its variants: write {} or {last}",
+                    rest.join(", ")
+                ),
+                None => String::new(),
+            }
+        };
+        Some(
+            Diagnostic::error(
+                Code::UndefinedType,
+                span,
+                format!("'{written}' is an enum type, not a record type"),
+            )
+            .with_help(help),
+        )
     }
 
     /// The error for a record literal or pattern whose name, written
