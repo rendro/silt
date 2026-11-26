@@ -92,6 +92,9 @@ pub struct Channel {
     /// not hold the channel; a channel that is dropped before its time
     /// takes its entry out.
     timer: OnceLock<(Weak<Timer>, TimerId)>,
+    /// Something outside the program sends into it (a stop signal,
+    /// `process.stop_signals`): set once, when it is made.
+    from_outside: OnceLock<()>,
     /// The stream function whose stage feeds it (`stream.map`, ...):
     /// a stream's channel is only read ([`Channel::fed_by`]).
     fed_by: OnceLock<&'static str>,
@@ -284,6 +287,20 @@ impl Channel {
         self.timer.get().is_some()
     }
 
+    /// Something outside the program may send into the channel at any
+    /// time (`process.stop_signals`): a wait on it ends without anybody's
+    /// doing, as one on a channel a timer closes. Told once, when it is
+    /// made, before anybody else has the channel.
+    pub(crate) fn set_fed_from_outside(&self) {
+        let _ = self.from_outside.set(());
+    }
+
+    /// Whether something outside the program may send into the channel
+    /// ([`Channel::set_fed_from_outside`]).
+    pub(crate) fn fed_from_outside(&self) -> bool {
+        self.from_outside.get().is_some()
+    }
+
     /// A channel that buffers up to `capacity` values. With capacity 0
     /// a send completes only when a receiver takes the value.
     pub fn new(id: usize, capacity: usize) -> Arc<Channel> {
@@ -300,6 +317,7 @@ impl Channel {
             on_abandon: OnceLock::new(),
             on_drain: OnceLock::new(),
             timer: OnceLock::new(),
+            from_outside: OnceLock::new(),
             fed_by: OnceLock::new(),
             state: Mutex::new(State {
                 capacity,

@@ -937,7 +937,9 @@ uuid.v7() -> String
 ### process
 
 ```
+type Signal { Interrupt, Terminate }
 process.exit(code: Int) -> Never
+process.stop_signals() -> Channel(Signal)
 ```
 
 ### csv

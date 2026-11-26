@@ -23,7 +23,7 @@
 //! code count (`Vm::set_task_owner_within`). The tasks of an owner have
 //! come to a stop when each has ended or waits, none of the waits
 //! will end by itself (it has no deadline, and it is not on a channel
-//! that a timer will close), and no I/O operation that one of them
+//! that a timer will close or that a stop signal is sent into), and no I/O operation that one of them
 //! waits for is in flight (`Scheduler::external`). That is checked
 //! when one of them parks or ends and when something external of
 //! theirs ends; it is exact and stays true, so the event that
@@ -2601,10 +2601,11 @@ impl Inner {
                 main.groups().map(|g| of(g).load(Ordering::SeqCst)).sum()
             };
             // A wait that will end without anybody's doing: one with a
-            // deadline, or one on a channel that a timer will close. A
-            // timer whose channel nobody waits on wakes nobody.
+            // deadline, or one on a channel that a timer will close or
+            // that a stop signal is sent into. A timer whose channel
+            // nobody waits on wakes nobody.
             let will_end = |waiting: &&Waiting<'_, Sleeper>| {
-                waiting.deadline.is_some() || waiting.on.iter().any(Source::closes_by_timer)
+                waiting.deadline.is_some() || waiting.on.iter().any(Source::ends_by_itself)
             };
             let stopped = own.len() == count(|g| &g.live)
                 && !own.iter().any(will_end)

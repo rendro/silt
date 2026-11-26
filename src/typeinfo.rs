@@ -615,6 +615,7 @@ pub(crate) mod ty {
     pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(34));
     pub(crate) const URL_ERROR: TypeId = TypeId(DefId(35));
     pub(crate) const RUNTIME_ERROR: TypeId = TypeId(DefId(36));
+    pub(crate) const SIGNAL: TypeId = TypeId(DefId(37));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -739,6 +740,8 @@ pub mod bv {
     pub(crate) const JSON_STRING: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 4);
     pub(crate) const JSON_ARRAY: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 5);
     pub(crate) const JSON_OBJECT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 6);
+    pub(crate) const SIGNAL_INTERRUPT: BuiltinVariant = BuiltinVariant::new(ty::SIGNAL, 0);
+    pub(crate) const SIGNAL_TERMINATE: BuiltinVariant = BuiltinVariant::new(ty::SIGNAL, 1);
 }
 
 /// The builtin types whose ids are the constants of [`ty`], in that
@@ -781,6 +784,7 @@ pub(crate) const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "CsvError",
     "UrlError",
     "RuntimeError",
+    "Signal",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -1060,6 +1064,8 @@ mod tests {
             (bv::PG_POOL, "PgPool"),
             (bv::PG_TX, "PgTx"),
             (bv::PG_CURSOR, "PgCursor"),
+            (bv::SIGNAL_INTERRUPT, "Interrupt"),
+            (bv::SIGNAL_TERMINATE, "Terminate"),
         ];
         for (variant, name) in constants {
             let tag = variant.tag();

@@ -1,0 +1,20 @@
+-- process.stop_signals gives a channel of process.Signal: nothing is in it
+-- until a stop signal comes (tests/cli/stop_signals_tests.rs sends real
+-- ones), a wait on it with a timeout ends with Empty, and the program may
+-- send its own stop into it. Each call gives a channel of its own.
+import channel
+import process
+import time
+
+fn main() {
+  let stop: Channel(process.Signal) = process.stop_signals()
+  println(channel.try_receive(stop))
+  println(channel.receive_timeout(stop, time.ms(20)))
+  channel.send(stop, process.Terminate)
+  println(channel.receive(stop))
+  let other = process.stop_signals()
+  channel.send(other, process.Interrupt)
+  println(channel.try_receive(stop))
+  println(channel.receive(other))
+  println([process.Interrupt, process.Terminate])
+}

@@ -64,8 +64,9 @@ pub(crate) struct Counts {
     /// The committed entries.
     pub waiting: AtomicUsize,
     /// Of those, the ones whose wait will end without anybody's doing:
-    /// it has a deadline, or is on a channel that a timer closes. (A
-    /// channel says so from the time it is made, and for good.)
+    /// it has a deadline, or is on a channel that a timer closes or
+    /// that something outside the program sends into. (A channel says
+    /// so from the time it is made, and for good.)
     pub ending: AtomicUsize,
 }
 
@@ -76,7 +77,7 @@ pub(crate) trait Counted {
 
 /// Whether the wait `parked` will end without anybody's doing.
 fn ends(parked: &Parked) -> bool {
-    parked.deadline().is_some() || parked.sources().iter().any(Source::closes_by_timer)
+    parked.deadline().is_some() || parked.sources().iter().any(Source::ends_by_itself)
 }
 
 /// The hash of a task's name is the name, spread over the word: names

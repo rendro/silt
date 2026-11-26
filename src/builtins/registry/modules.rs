@@ -733,8 +733,12 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "process",
             page: "process.md",
+            types: "\
+                pub type Signal { Interrupt, Terminate }\n\
+            ",
             rows: [
                 f("fn exit(code: Int) -> Never", "End the program with an exit code", process::exit),
+                f("fn stop_signals() -> Channel(Signal)", "A channel that the first SIGINT or SIGTERM is sent into, instead of ending the process", process::stop_signals),
             ],
         },
         module! {

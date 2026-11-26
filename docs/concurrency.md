@@ -1506,7 +1506,9 @@ tasks, their timers and deadlines go on, and a `task.deadline` around a print
 that waits ends it (its text is not written). Everything printed is written out
 before the program ends, and before `process.exit` ends it, as long as the
 reader takes it. (A process ended by a signal, such as Ctrl-C, loses what the
-writer still held: up to 64 KiB of prints that had returned.)
+writer still held: up to 64 KiB of prints that had returned. A program that
+asks for its stop signals with `process.stop_signals` gets the signal as a
+message instead, and ends as it chooses, with its output written.)
 
 One order has a price: while stdout is stuck, the program's own
 `io.eprintln` lines wait behind it too, and a task that logs to stderr waits

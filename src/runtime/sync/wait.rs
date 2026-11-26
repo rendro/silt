@@ -165,10 +165,12 @@ pub(crate) enum Source {
 }
 
 impl Source {
-    /// Whether this is a wait on a channel that a timer will close.
-    pub(crate) fn closes_by_timer(&self) -> bool {
+    /// Whether this is a wait that ends without any task's doing: on a
+    /// channel that a timer will close, or that something outside the
+    /// program sends into (a stop signal).
+    pub(crate) fn ends_by_itself(&self) -> bool {
         self.channel()
-            .is_some_and(|channel| channel.closes_by_timer())
+            .is_some_and(|channel| channel.closes_by_timer() || channel.fed_from_outside())
     }
 
     /// The channel it is on; `None` for a cell, and for a channel that
