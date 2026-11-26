@@ -194,6 +194,34 @@ impl Record {
         RecordId(Arc::downgrade(&self.0))
     }
 
+    /// Whether the two records are one: clones of each other.
+    pub(crate) fn shares(&self, other: &Record) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// When this is the record's one holder: each of its fields
+    /// `names` whose value is `gone` is let go of, unit in its place.
+    /// (Of a record an update is about to replace those fields of, so
+    /// that the value a field held may be the one holder of a
+    /// collection, changed in place: `crate::vm`'s `give`.) A record
+    /// held elsewhere too stays as it is.
+    pub(crate) fn let_go_of_fields<'a>(
+        &mut self,
+        names: impl Iterator<Item = &'a str>,
+        gone: impl Fn(&Value) -> bool,
+    ) {
+        let Some(obj) = Arc::get_mut(&mut self.0) else {
+            return;
+        };
+        for name in names {
+            if let Some(index) = obj.ty.field_index(name)
+                && gone(&obj.fields[index])
+            {
+                obj.fields[index] = Value::Unit;
+            }
+        }
+    }
+
     /// Whether this is the record `id` is of.
     pub(crate) fn is(&self, id: &RecordId) -> bool {
         std::ptr::eq(Arc::as_ptr(&self.0), id.0.as_ptr())

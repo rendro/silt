@@ -803,6 +803,106 @@ import host
     );
 }
 
+/// A function that calls itself with the collection it grows, or with
+/// a record that holds it, changes it in place, whether the update is
+/// its last argument, its first, a local's value or a record's field,
+/// and so does a fold's step whose record holds it, or that matches on
+/// what `list.set` gives: 24,000 changes of maps, sets and lists of
+/// thousands find each held nowhere else. (The function's own slot
+/// held the old one while the update was made: each change copied the
+/// path of the tree.)
+#[test]
+fn a_function_that_calls_itself_with_a_collection_changes_it_in_place() {
+    let (given, shared, lists) = run_counting_shared(
+        r#"
+import list
+import map
+import set
+type Tally {
+  n: Int,
+  m: Map(Int, Int),
+  seen: Set(Int),
+}
+fn last(i: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  match i == 0 {
+    true -> acc
+    false -> last(i - 1, map.set(acc, i % 1000, i))
+  }
+}
+fn first(acc: Map(Int, Int), i: Int) -> Map(Int, Int) {
+  match i == 0 {
+    true -> acc
+    false -> first(map.update(acc, i % 1000, 0) { n -> n + 1 }, i - 1)
+  }
+}
+fn named(i: Int, acc: Set(Int)) -> Set(Int) {
+  match i == 0 {
+    true -> acc
+    false -> {
+      let next = set.insert(acc, i)
+      named(i - 1, next)
+    }
+  }
+}
+fn grow(i: Int, acc: List(Int)) -> List(Int) {
+  match i == 0 {
+    true -> acc
+    false -> grow(i - 1, list.append(acc, i))
+  }
+}
+fn put(i: Int, acc: List(Int)) -> List(Int) {
+  match i == 0 {
+    true -> acc
+    false -> match list.set(acc, i % 1000, i) {
+      Some(next) -> put(i - 1, next)
+      None -> []
+    }
+  }
+}
+fn count(i: Int, t: Tally) -> Tally {
+  match i == 0 {
+    true -> t
+    false -> count(i - 1, t.{ m: map.update(t.m, i % 1000, 0) { n -> n + 1 } })
+  }
+}
+fn main() {
+  let a = last(3000, #{})
+  let b = first(#{}, 3000)
+  let c = named(3000, #[])
+  let d = grow(3000, [])
+  let e = put(3000, d)
+  let f = count(3000, Tally { n: 0, m: #{}, seen: #[] })
+  let g = list.fold(list.map(1..3000) { i -> i }, f) { t, x -> t.{ n: t.n + 1, seen: set.insert(t.seen, x) } }
+  let h = list.fold(list.map(1..3000) { i -> i % 1000 }, e) { acc, x ->
+    match list.set(acc, x, 0) {
+      Some(next) -> next
+      None -> []
+    }
+  }
+  host.give([map.length(a), map.length(b), set.length(c), list.length(d), list.sum(e), map.length(f.m), set.length(g.seen), g.n, list.sum(h)])
+}
+import host
+"#,
+    );
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    // `put` writes index k last with k (1,000 for 0); `grow` left 2,000
+    // down to 1 after the first 1,000; the last fold zeroes the first
+    // 1,000.
+    let rest: i64 = (1..=2_000).sum();
+    let put_sum = (1..1_000).sum::<i64>() + 1_000 + rest;
+    assert_eq!(
+        given,
+        ints(&[
+            1_000, 1_000, 3_000, 3_000, put_sum, 1_000, 3_000, 3_000, rest
+        ])
+    );
+    assert!(
+        shared < 20,
+        "{shared} changes of maps and sets copied a shared tree"
+    );
+    assert!(lists < 20, "{lists} changes of lists copied a shared tree");
+}
+
 // ── Deep values ────────────────────────────────────────────────────
 
 /// A value nested 10,000 levels deep through maps and sets kept in

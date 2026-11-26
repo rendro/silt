@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::defs::BuiltinId;
 use crate::defs::{DefId, ImplArgs, TraitId, TypeId};
@@ -18,6 +18,7 @@ use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
+pub(crate) mod ahead;
 pub(crate) mod dict;
 pub(crate) mod emit;
 pub(crate) mod ops;
@@ -648,6 +649,10 @@ pub struct Chunk {
     spans: Vec<(usize, Span)>,
     /// O(1) lookup for deduplicating simple constants.
     constant_dedup: HashMap<ConstantKey, u16>,
+    /// The places just after the calls of builtins that change a
+    /// collection in place, and what the code after each reads of the
+    /// frame ([`Chunk::ahead_at`]): found at the first such call.
+    ahead: OnceLock<Box<[(usize, OnceLock<Option<ahead::Ahead>>)]>>,
 }
 
 impl Chunk {
@@ -657,7 +662,22 @@ impl Chunk {
             constants: Vec::new(),
             spans: Vec::new(),
             constant_dedup: HashMap::new(),
+            ahead: OnceLock::new(),
         }
+    }
+
+    /// What the code from `ip`, just after a call of a builtin that
+    /// changes a collection in place ([`ahead::puts`]), reads of the
+    /// frame's `olds` values below the call's arguments: read at the
+    /// first call there, and kept. `None` where the reading gives no
+    /// answer, and where no such call is.
+    pub(crate) fn ahead_at(&self, ip: usize, olds: usize) -> Option<&ahead::Ahead> {
+        let sites = self.ahead.get_or_init(|| ahead::sites(&self.code));
+        let at = sites.binary_search_by_key(&ip, |(at, _)| *at).ok()?;
+        let ahead = sites[at]
+            .1
+            .get_or_init(|| ahead::read(&self.code, ip, olds));
+        ahead.as_ref().filter(|ahead| ahead.olds() == olds)
     }
 
     /// The encoded instructions.
@@ -886,6 +906,7 @@ impl Function {
                 constants,
                 spans: Vec::new(),
                 constant_dedup: HashMap::new(),
+                ahead: OnceLock::new(),
             },
             hidden: 0,
             dict_slot: false,
@@ -910,6 +931,7 @@ impl Function {
                 constants,
                 spans: Vec::new(),
                 constant_dedup: HashMap::new(),
+                ahead: OnceLock::new(),
             },
             hidden: 0,
             dict_slot: false,
