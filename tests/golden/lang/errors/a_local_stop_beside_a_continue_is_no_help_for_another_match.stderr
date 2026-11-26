@@ -1,0 +1,27 @@
+error[type]: type mismatch: expected Step(Int), got Light
+ --> a_local_stop_beside_a_continue_is_no_help_for_another_match.silt:13:12
+    |
+ 13 |       3 -> Stop
+    |            ^^^^ type mismatch: expected Step(Int), got Light
+ ::: a_local_stop_beside_a_continue_is_no_help_for_another_match.silt:11:36
+    |
+ 11 |   println(list.fold_until(1..5, 0) { acc, x ->
+    |                                    ----------- the result of this closure is to be Step(Int)
+  = help: `Stop` here is the variant of `Light`, which hides the prelude's `Stop`: write `Step.Stop`
+
+error[type]: type mismatch: expected Light, got Step(Int)
+ --> a_local_stop_beside_a_continue_is_no_help_for_another_match.silt:14:12
+    |
+ 14 |       _ -> Continue(acc + x)
+    |            ^^^^^^^^^^^^^^^^^ type mismatch: expected Light, got Step(Int)
+ ::: a_local_stop_beside_a_continue_is_no_help_for_another_match.silt:13:12
+    |
+ 13 |       3 -> Stop
+    |            ---- this `Stop` is the variant of `Light`
+  = help: the variant `Stop` of `Light` hides the prelude's `Stop`: write `Step.Stop`
+
+error[type]: type mismatch: expected Light, got Step(Int)
+ --> a_local_stop_beside_a_continue_is_no_help_for_another_match.silt:19:10
+    |
+ 19 |     _ -> Step.Continue(1)
+    |          ^^^^^^^^^^^^^^^^ type mismatch: expected Light, got Step(Int)

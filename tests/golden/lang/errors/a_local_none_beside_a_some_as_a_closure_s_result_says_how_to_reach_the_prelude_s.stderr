@@ -1,0 +1,21 @@
+error[type]: type mismatch: expected Option(_), got Slot
+ --> a_local_none_beside_a_some_as_a_closure_s_result_says_how_to_reach_the_prelude_s.silt:13:12
+    |
+ 13 |       2 -> None
+    |            ^^^^ type mismatch: expected Option(_), got Slot
+ ::: a_local_none_beside_a_some_as_a_closure_s_result_says_how_to_reach_the_prelude_s.silt:11:41
+    |
+ 11 |   let kept = list.filter_map([1, 2, 3]) { x ->
+    |                                         ------ the result of this closure is to be Option(_)
+  = help: `None` here is the variant of `Slot`, which hides the prelude's `None`: write `Option.None`
+
+error[type]: type mismatch: expected Slot, got Option(Int)
+ --> a_local_none_beside_a_some_as_a_closure_s_result_says_how_to_reach_the_prelude_s.silt:14:12
+    |
+ 14 |       _ -> Some(x)
+    |            ^^^^^^^ type mismatch: expected Slot, got Option(Int)
+ ::: a_local_none_beside_a_some_as_a_closure_s_result_says_how_to_reach_the_prelude_s.silt:13:12
+    |
+ 13 |       2 -> None
+    |            ---- this `None` is the variant of `Slot`
+  = help: the variant `None` of `Slot` hides the prelude's `None`: write `Option.None`

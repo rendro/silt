@@ -1,0 +1,22 @@
+-- exit: 1
+-- A local `Stop` as one arm of a fold's step gets the help that names
+-- `Step.Stop`, and so does the arm beside it; a `Step` given where a
+-- `Light` is wanted in another `match` of the same function is not
+-- beside it and gets none.
+import list
+
+type Light { Go, Stop }
+
+fn main() {
+  println(list.fold_until(1..5, 0) { acc, x ->
+    match x {
+      3 -> Stop
+      _ -> Continue(acc + x)
+    }
+  })
+  let light = match 1 {
+    1 -> Go
+    _ -> Step.Continue(1)
+  }
+  println(light)
+}

@@ -1,7 +1,8 @@
 -- exit: 1
 -- A variant `Stop` of the program without a value, given as the step of
 -- a fold, is the program's: the mismatch names `Step.Stop`, which
--- reaches the prelude's.
+-- reaches the prelude's. So does the mismatch at the arm beside it,
+-- `Continue(acc + x)`, which the first arm made a `Light`.
 import list
 
 type Light { Go, Stop }

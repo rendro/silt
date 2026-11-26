@@ -1,0 +1,18 @@
+-- exit: 1
+-- A variant `None` of the program's `Slot` hides the prelude's `None`:
+-- as one arm of a closure that is to give an `Option`, it is a mismatch
+-- at the name, and the arm beside it, `Some(x)`, is one too. Both name
+-- `Option.None`, which reaches the prelude's.
+import list
+
+type Slot { Full(Int), None }
+
+fn main() {
+  let kept = list.filter_map([1, 2, 3]) { x ->
+    match x {
+      2 -> None
+      _ -> Some(x)
+    }
+  }
+  println(kept)
+}
