@@ -346,6 +346,15 @@ fn filter_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
     next()
 }
 
+/// `list.try_each` and `list.try_each_option`: an `Err` or a `None`
+/// the function gave is the result, and no element after it is called.
+fn until_failed(_: &mut (), _item: Value, result: Value) -> Flow {
+    match &result {
+        Value::Variant(variant) if variant.is(bv::ERR) || variant.is(bv::NONE) => stop(result),
+        _ => next(),
+    }
+}
+
 fn fold_until_step(acc: &mut Value, _item: Value, result: Value) -> Flow {
     match super::common::fold_step(result) {
         std::ops::ControlFlow::Continue(state) => {
@@ -766,6 +775,18 @@ pub(crate) mod list {
                 },
                 |(_, kept)| as_list(kept),
             ))
+        }
+
+        fn try_each(xs: List, f: &Value) -> Step {
+            iterate("list.try_each", xs.clone(), f.clone(), (), item_arg, until_failed, |_| {
+                Ok(Value::variant(bv::OK, [Value::Unit]))
+            })
+        }
+
+        fn try_each_option(xs: List, f: &Value) -> Step {
+            iterate("list.try_each_option", xs.clone(), f.clone(), (), item_arg, until_failed, |_| {
+                Ok(Value::variant(bv::SOME, [Value::Unit]))
+            })
         }
 
         fn fold_until(xs: List, init: &Value, f: &Value) -> Step {

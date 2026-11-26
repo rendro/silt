@@ -1,0 +1,16 @@
+read 1
+read 2
+Ok(())
+read 1
+Err(invalid digit at byte 0)
+Ok(())
+read 4
+Err(invalid digit at byte 0)
+read 6
+Ok(1)
+ok 1
+ok 2
+Some(())
+ok 1
+None
+Some(())

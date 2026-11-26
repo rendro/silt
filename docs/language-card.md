@@ -502,6 +502,8 @@ list.tail(xs: List(a)) -> List(a)
 list.take(xs: List(a), n: Int) -> List(a)
 list.take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 list.traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative
+list.try_each(xs: List(a), f: Fn(a) -> Result((), e)) -> Result((), e)
+list.try_each_option(xs: List(a), f: Fn(a) -> Option(())) -> Option(())
 list.unfold(seed: a, f: Fn(a) -> Option((b, a))) -> List(b)
 list.unique(xs: List(a)) -> List(a) where a: Equal
 list.unique_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Hash

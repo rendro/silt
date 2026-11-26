@@ -3019,12 +3019,17 @@ impl TypeChecker {
                     Type::Generic(n, _) if n.is_builtin("Option") => "None",
                     _ => "Err",
                 };
+                let try_each = match fails {
+                    "None" => self.written_builtin("list.try_each_option"),
+                    _ => self.written_builtin("list.try_each"),
+                };
                 diagnostic = diagnostic.with_help(format!(
                     "a `?` in a closure ends the closure, not the function; over a list, \
+                     `{}(xs) {{ x -> ... }}?` stops at the first `{fails}`, and \
                      `{}(xs) {{ x -> ... }}?` calls the closure on every element, then gives \
-                     the first `{fails}`; to stop at the first `{fails}`, use `{}` or a function that calls itself",
+                     the list of its values or the first `{fails}`",
+                    try_each,
                     self.written_builtin("list.traverse"),
-                    self.written_builtin("list.fold_until"),
                 ));
             }
             self.errors.push(diagnostic);

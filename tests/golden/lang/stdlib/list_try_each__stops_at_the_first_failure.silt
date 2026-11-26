@@ -1,0 +1,36 @@
+-- list.try_each calls the function on the elements up to the first that
+-- gives an Err, which is the result; no element after it is called.
+-- list.try_each_option does the same with None. With every call Ok(()) or
+-- Some(()), the result is Ok(()) or Some(()); an empty list calls nothing.
+-- With `?` the first failure ends the function too.
+import int
+import list
+
+fn check(s: String) -> Result((), int.IntError) {
+  let _ = int.parse(s)?
+  println("read {s}")
+  Ok(())
+}
+
+fn all(xs: List(String)) -> Result(Int, int.IntError) {
+  list.try_each(xs, check)?
+  Ok(list.length(xs))
+}
+
+fn main() {
+  println(list.try_each(["1", "2"], check))
+  println(list.try_each(["1", "x", "3", "y"], check))
+  println(list.try_each([], check))
+  println(all(["4", "z", "5"]))
+  println(all(["6"]))
+  let positive = { n -> match n > 0 {
+    true -> {
+      println("ok {n}")
+      Some(())
+    }
+    false -> None
+  } }
+  println(list.try_each_option([1, 2], positive))
+  println(list.try_each_option([1, -2, 3], positive))
+  println(list.try_each_option([], positive))
+}
