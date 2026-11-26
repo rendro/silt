@@ -17,7 +17,7 @@ trait json.Decode for Stuck {
         let _ = channel.receive(never)
         Ok(Stuck { n: n })
       }
-      _ -> Err(json.Other("no number here"))
+      _ -> Err(json.Other("no number here", 0))
     }
   }
 }

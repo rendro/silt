@@ -59,12 +59,62 @@ impl<'a> At<'a> {
         At::Index(self, index)
     }
 
+    /// The keys and indexes from the document to here.
+    pub(crate) fn path(&self) -> Vec<Seg> {
+        let mut path = Vec::new();
+        let mut here = self;
+        loop {
+            match here {
+                At::Top => break,
+                At::Key(up, key) => {
+                    path.push(Seg::Key(key.to_string()));
+                    here = up;
+                }
+                At::Index(up, index) => {
+                    path.push(Seg::Index(*index));
+                    here = up;
+                }
+            }
+        }
+        path.reverse();
+        path
+    }
+
     /// What a message about the value here ends with: ` at <path>`, or
     /// nothing for the document itself.
     pub(crate) fn suffix(&self) -> std::string::String {
         match self {
             At::Top => std::string::String::new(),
             _ => format!(" at {self}"),
+        }
+    }
+}
+
+/// A step of a path into a document: the value of a key, or an
+/// element of an array.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Seg {
+    Key(std::string::String),
+    Index(usize),
+}
+
+/// Where in a document a decoder's error is: the path of the value it
+/// is about (of a missing field, the table it is missing from), and the
+/// byte offset of that value in the text, once the reader of a text has
+/// found it there ([`Error::locate`]; 0 until then, and for a
+/// `json.Value`, which has no text).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Where {
+    pub(crate) path: Vec<Seg>,
+    pub(crate) offset: usize,
+}
+
+impl Where {
+    /// The value `at` a path, not found in a text yet.
+    pub(crate) fn of(at: &At) -> Where {
+        Where {
+            path: at.path(),
+            offset: 0,
         }
     }
 }
@@ -738,7 +788,7 @@ pub(crate) fn refusal(rt: &Reader, family: Family, target: &Target) -> Option<st
 /// a field no decoder fills is in the type ([`refusal`]).
 pub(crate) fn refused(rt: &Reader, rules: &Rules, target: &Target) -> Option<Value> {
     let message = refusal(rt, rules.family, target)?;
-    Some(result(rules, Err(Error::Other(message))))
+    Some(result(rules, Err(Error::Other(message, Where::default()))))
 }
 
 /// Whether a decoder of `family` decodes a value of `field_type`, in the
@@ -773,6 +823,10 @@ pub(crate) struct Rules {
     /// The variants `TypeMismatch`, `MissingField` and `Other` of the
     /// format's error (`JsonError`, `TomlError`).
     pub(crate) errors: [BuiltinVariant; 3],
+    /// Whether the format's errors end with the byte offset of their
+    /// value in the text (json's and toml's do; csv's say a line and a
+    /// column in their text).
+    pub(crate) offsets: bool,
     /// The format's error of the `JsonError` that a written
     /// `json.Decode` impl gave for a part `at` a path ([`at_part`]).
     pub(crate) from_impl: fn(&Value, &str) -> Value,
@@ -800,55 +854,107 @@ pub(crate) const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
 #[derive(Debug)]
 pub(crate) enum Error {
     /// `TypeMismatch(expected, actual)`: `actual` ends with the path.
-    TypeMismatch(&'static str, std::string::String),
-    /// `MissingField(path)`: the missing field's own path.
-    MissingField(std::string::String),
+    TypeMismatch(&'static str, std::string::String, Where),
+    /// `MissingField(path)`: the missing field's own path; where is the
+    /// table it is missing from.
+    MissingField(std::string::String, Where),
     /// `Other(message)`.
-    Other(std::string::String),
+    Other(std::string::String, Where),
     /// A value was present for a type no decoder exists for (the type as
     /// written): [`record`] turns it into an `Other` that names the field
     /// whose type it is.
     Unsupported(std::string::String),
     /// The error a written `json.Decode` impl gave for a part, as the
-    /// format's error variant.
-    Given(Value),
+    /// format's error variant; where is the part.
+    Given(Value, Where),
 }
 
 impl From<VmError> for Error {
     fn from(e: VmError) -> Self {
-        Error::Other(e.message)
+        Error::Other(e.message, Where::default())
     }
 }
 
 impl Error {
     /// The type mismatch of a value `at` a path that is `actual`.
     pub(crate) fn mismatch(expected: &'static str, actual: &str, at: &At) -> Error {
-        Error::TypeMismatch(expected, format!("{actual}{}", at.suffix()))
+        Error::TypeMismatch(expected, format!("{actual}{}", at.suffix()), Where::of(at))
     }
 
     /// The `Other` of a value `at` a path: `message` ends with the path.
     fn other(message: impl std::fmt::Display, at: &At) -> Error {
-        Error::Other(format!("{message}{}", at.suffix()))
+        Error::Other(format!("{message}{}", at.suffix()), Where::of(at))
+    }
+
+    /// Where the error is in the document, for one that says.
+    fn place_mut(&mut self) -> Option<&mut Where> {
+        match self {
+            Error::TypeMismatch(_, _, at)
+            | Error::MissingField(_, at)
+            | Error::Other(_, at)
+            | Error::Given(_, at) => Some(at),
+            Error::Unsupported(_) => None,
+        }
+    }
+
+    /// The error with the byte offset of its value in the text a reader
+    /// read, which `find` gives for the path of the value.
+    pub(crate) fn locate(&mut self, find: impl FnOnce(&[Seg]) -> usize) {
+        if let Some(at) = self.place_mut() {
+            at.offset = find(&at.path);
+        }
+    }
+
+    /// The error with its offset `by` bytes later: of a text read after
+    /// as many bytes (a byte order mark).
+    pub(crate) fn shift(&mut self, by: usize) {
+        if let Some(at) = self.place_mut() {
+            at.offset += by;
+        }
     }
 
     /// The variant of the error of the format of `rules`.
     pub(crate) fn variant(self, rules: &Rules) -> Value {
         let [mismatch, missing, other] = rules.errors;
         let string = |s: std::string::String| Value::string(s);
-        match self {
-            Error::TypeMismatch(expected, actual) => {
-                Value::variant(mismatch, [Value::string(expected), string(actual)])
+        // (The offset, last, where the format's errors have one.)
+        let fields = |mut fields: Vec<Value>, at: &Where| {
+            if rules.offsets {
+                fields.push(Value::Int(at.offset as i64));
             }
-            Error::MissingField(path) => Value::variant(missing, [string(path)]),
-            Error::Other(message) => Value::variant(other, [string(message)]),
-            Error::Given(error) => error,
+            fields
+        };
+        match self {
+            Error::TypeMismatch(expected, actual, at) => Value::variant(
+                mismatch,
+                fields(vec![Value::string(expected), string(actual)], &at),
+            ),
+            Error::MissingField(path, at) => {
+                Value::variant(missing, fields(vec![string(path)], &at))
+            }
+            Error::Other(message, at) => Value::variant(other, fields(vec![string(message)], &at)),
+            // An impl's error is placed at its part: what offset the impl
+            // gave, it read no text.
+            Error::Given(error, at) => match &error {
+                Value::Variant(given) if rules.offsets => {
+                    let mut fields = given.fields().to_vec();
+                    if let Some(offset @ Value::Int(_)) = fields.last_mut() {
+                        *offset = Value::Int(at.offset as i64);
+                    }
+                    Value::variant(given.tag(), fields)
+                }
+                _ => error,
+            },
             // (Only a record's field holds such a type, and `record`
             // names it: this is the fallback.)
             Error::Unsupported(declared) => Value::variant(
                 other,
-                [string(format!(
-                    "a value of type {declared} cannot be decoded"
-                ))],
+                fields(
+                    vec![string(format!(
+                        "a value of type {declared} cannot be decoded"
+                    ))],
+                    &Where::default(),
+                ),
             ),
         }
     }
@@ -1052,11 +1158,11 @@ mod tests {
         };
         match decoded {
             Ok(value) => format!("{value}"),
-            Err(Error::TypeMismatch(_, actual)) => format!("TypeMismatch at {}", path(&actual)),
-            Err(Error::MissingField(at)) => format!("MissingField {at}"),
-            Err(Error::Other(message)) => format!("Other {message}"),
+            Err(Error::TypeMismatch(_, actual, _)) => format!("TypeMismatch at {}", path(&actual)),
+            Err(Error::MissingField(at, _)) => format!("MissingField {at}"),
+            Err(Error::Other(message, _)) => format!("Other {message}"),
             Err(Error::Unsupported(declared)) => format!("Unsupported {declared}"),
-            Err(Error::Given(error)) => format!("Given {error}"),
+            Err(Error::Given(error, _)) => format!("Given {error}"),
         }
     }
 

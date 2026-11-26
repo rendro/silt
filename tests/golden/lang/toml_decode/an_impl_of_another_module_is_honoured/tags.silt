@@ -9,7 +9,7 @@ trait json.Decode for Tags {
     match value {
       json.String(text) -> Ok(Tags { s: set.from_list([text]) })
       json.Array(items) -> Ok(Tags { s: set.from_list(list.map(items) { item -> "{item}" }) })
-      _ -> Err(json.Other("no tags"))
+      _ -> Err(json.Other("no tags", 0))
     }
   }
 }

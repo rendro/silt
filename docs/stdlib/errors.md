@@ -58,18 +58,18 @@ modules.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
-| `MissingField(String)` | the field's path | required field absent |
-| `Other(String)` | message | unclassified parse failure |
+| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong JSON type for target |
+| `MissingField(String, Int)` | the field's path, byte offset of its object | required field absent |
+| `Other(String, Int)` | message, byte offset | unclassified parse failure |
 
 ### `TomlError` (requires `import toml`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(String, Int)` | message, byte offset | syntactically invalid TOML |
-| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong TOML type for target |
-| `MissingField(String)` | the field's path | required field absent |
-| `Other(String)` | message | unclassified parse failure |
+| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong TOML type for target |
+| `MissingField(String, Int)` | the field's path, byte offset of its table | required field absent |
+| `Other(String, Int)` | message, byte offset | unclassified parse failure |
 
 ### `IntError` (requires `import int`)
 

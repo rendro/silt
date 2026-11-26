@@ -62,9 +62,9 @@ use crate::typeinfo::FieldType;
 //
 // `TomlError` variants:
 //   Syntax(message, byte_offset)
-//   TypeMismatch(expected, actual)
-//   MissingField(name)
-//   Other(message)
+//   TypeMismatch(expected, actual, byte_offset)
+//   MissingField(name, byte_offset)
+//   Other(message, byte_offset)
 
 fn toml_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, [inner])
@@ -122,7 +122,10 @@ pub(crate) fn toml_de_result_err(err: &::toml::de::Error, text: &str) -> Value {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type,
 /// serialization errors, document-shape violations, etc.).
 pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
-    toml_err_wrap(Value::variant(bv::TOML_OTHER, [Value::string(msg)]))
+    toml_err_wrap(Value::variant(
+        bv::TOML_OTHER,
+        [Value::string(msg), Value::Int(0)],
+    ))
 }
 
 /// How `TomlError` shows the variant `tag` with `fields`:
@@ -132,13 +135,21 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("Syntax", [Value::String(m, _), Value::Int(offset)]) => {
             format!("toml syntax error at byte {offset}: {m}")
         }
-        ("TypeMismatch", [Value::String(exp, _), Value::String(act, _)]) => {
-            format!("toml type mismatch: expected {exp}, got {act}")
+        (
+            "TypeMismatch",
+            [
+                Value::String(exp, _),
+                Value::String(act, _),
+                Value::Int(offset),
+            ],
+        ) => {
+            format!("toml type mismatch at byte {offset}: expected {exp}, got {act}")
         }
-        ("MissingField", [Value::String(n, _)]) => {
-            format!("toml missing field: {n}")
+        ("MissingField", [Value::String(n, _), Value::Int(offset)]) => {
+            format!("toml missing field at byte {offset}: {n}")
         }
-        ("Other", [Value::String(m, _)]) => m.to_string(),
+        // (Its offset is a field of its own: the message is the text.)
+        ("Other", [Value::String(m, _), Value::Int(_)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -281,6 +292,7 @@ pub(crate) const RULES: Rules = Rules {
         bv::TOML_MISSING_FIELD,
         bv::TOML_OTHER,
     ],
+    offsets: true,
     from_impl,
 };
 
@@ -303,7 +315,7 @@ fn from_impl(error: &Value, at: &str) -> Value {
         _ if json.is(bv::JSON_SYNTAX) => {
             let message =
                 super::json::error_text(json.name(), &fields).unwrap_or_else(|| error.to_string());
-            return Value::variant(bv::TOML_OTHER, [Value::string(message)]);
+            return Value::variant(bv::TOML_OTHER, [Value::string(message), Value::Int(0)]);
         }
         _ => return error,
     };
@@ -500,9 +512,76 @@ pub(crate) fn read_text(
 ) -> Result<seed::Outcome, Value> {
     let read = |text: &str| seed::toml_text(r, top, text, marked(), parts);
     // (The marked strings, counted where any was written.)
-    marking(s, read, |_, text| {
+    let marked_in = |_: &seed::Outcome, text: &str| {
         ::toml::from_str::<::toml::Value>(text).map_or(usize::MAX, |doc| marked_strings(&doc))
-    })
+    };
+    // An error's value found in the text read, at its place in `s`.
+    let located = |mut outcome: seed::Outcome, text: &str, in_s: &dyn Fn(usize) -> usize| {
+        if let Err(e) = &mut outcome {
+            e.locate(|path| in_s(offset_at(text, path)));
+        }
+        outcome
+    };
+    marking(s, read, marked_in, located)
+}
+
+/// The byte offset in the TOML text `text`, a document, of the value at
+/// `path`: of a table, its header (`[a]`, `[[a]]`), the `{` of an inline
+/// one, or the key of one written by dotted keys (`a.b = 1`); as far as
+/// the path leads in the text, 0 for the document.
+fn offset_at(text: &str, path: &[decode::Seg]) -> usize {
+    use toml_edit::{Item, Table, Value as V};
+    /// A part of the document.
+    #[derive(Clone, Copy)]
+    enum Node<'d> {
+        Item(&'d Item),
+        Table(&'d Table),
+        Value(&'d V),
+    }
+    let Ok(doc) = toml_edit::ImDocument::parse(text) else {
+        return 0;
+    };
+    let mut node = Node::Table(doc.as_table());
+    let mut at = 0;
+    for seg in path {
+        let node_table = match node {
+            Node::Table(table) | Node::Item(Item::Table(table)) => Some(table),
+            _ => None,
+        };
+        let value = match node {
+            Node::Value(value) | Node::Item(Item::Value(value)) => Some(value),
+            _ => None,
+        };
+        let next = match (seg, node_table, value, node) {
+            (decode::Seg::Key(key), Some(table), _, _) => table
+                .get_key_value(key)
+                .map(|(key, item)| (Node::Item(item), key.span())),
+            (decode::Seg::Key(key), _, Some(V::InlineTable(table)), _) => table
+                .get_key_value(key)
+                .map(|(key, item)| (Node::Item(item), key.span())),
+            (decode::Seg::Index(index), _, Some(V::Array(array)), _) => {
+                array.get(*index).map(|value| (Node::Value(value), None))
+            }
+            (decode::Seg::Index(index), _, _, Node::Item(Item::ArrayOfTables(tables))) => {
+                tables.get(*index).map(|table| (Node::Table(table), None))
+            }
+            _ => None,
+        };
+        let Some((next, key)) = next else {
+            break;
+        };
+        let own = match next {
+            Node::Item(Item::Table(table)) | Node::Table(table) => table.span(),
+            Node::Item(Item::Value(value)) | Node::Value(value) => value.span(),
+            Node::Item(Item::ArrayOfTables(tables)) => tables.span(),
+            Node::Item(Item::None) => None,
+        };
+        if let Some(span) = own.or(key) {
+            at = span.start;
+        }
+        node = next;
+    }
+    at
 }
 
 /// A TOML text read again, decoded as `toml.parse` (`list`: `None`),
@@ -539,6 +618,7 @@ fn marking<T>(
     s: &str,
     mut parse: impl FnMut(&str) -> Result<T, ::toml::de::Error>,
     marked_in: impl Fn(&T, &str) -> usize,
+    finish: impl FnOnce(T, &str, &dyn Fn(usize) -> usize) -> T,
 ) -> Result<T, Value> {
     const MOST: usize = 64;
     let mut text = std::borrow::Cow::Borrowed(s);
@@ -554,7 +634,16 @@ fn marking<T>(
                     Some(e) if marked_in(&doc, &text) != grown.len() => {
                         Err(toml_de_result_err(&e, &text))
                     }
-                    _ => Ok(doc),
+                    _ => {
+                        let in_s = |at: usize| {
+                            let growth: usize = (grown.iter())
+                                .filter(|(end, _)| *end <= at)
+                                .map(|(_, by)| by)
+                                .sum();
+                            at.saturating_sub(growth)
+                        };
+                        Ok(finish(doc, &text, &in_s))
+                    }
                 };
             }
             Err(e) => {
@@ -770,6 +859,32 @@ mod tests {
     }
     use crate::builtins::data::MAX_ENCODE_DEPTH;
 
+    /// The offset of a value is where it starts; of a table, its header,
+    /// the `{` of an inline one, the key of a dotted one; of the document,
+    /// 0; of a path that leads out of the text, as far as it leads.
+    #[test]
+    fn a_value_is_found_where_it_starts() {
+        use decode::Seg::{Index, Key};
+        let key = |k: &str| Key(k.to_string());
+        let text =
+            "a = 1\n[t]\nx = \"s\"\n[[r]]\nn = 1\n[[r]]\nn = [1, 2]\nd.e = 3\ni = { j = 4 }\n";
+        let at = |path: &[decode::Seg]| offset_at(text, path);
+        assert_eq!(at(&[]), 0);
+        assert_eq!(at(&[key("a")]), 4);
+        assert_eq!(at(&[key("t")]), 6);
+        assert_eq!(at(&[key("t"), key("x")]), 14);
+        assert_eq!(at(&[key("r"), Index(1)]), 30);
+        assert_eq!(at(&[key("r"), Index(1), key("n"), Index(1)]), 44);
+        assert_eq!(at(&[key("r"), Index(1), key("n"), Index(9)]), 40);
+        // (The keys after `[[r]]` are the last element's.)
+        let last = |k: &str| [key("r"), Index(1), key(k)];
+        assert_eq!(at(&last("d")), text.find("d.e").unwrap_or(0));
+        assert_eq!(at(&last("i")), text.find('{').unwrap_or(0));
+        let j = [key("r"), Index(1), key("i"), key("j")];
+        assert_eq!(at(&j), text.find('4').unwrap_or(0));
+        assert_eq!(at(&[key("none")]), 0);
+    }
+
     /// The deepest value the encoder writes (a map in a list in a map,
     /// and so on) is written on a stack of 16 MiB, the least a thread
     /// that runs silt code has (`scheduler::WORKER_STACK_BYTES` where
@@ -813,7 +928,7 @@ mod tests {
             refused,
             format!(
                 "Err(Other(\"toml.pretty: the value is nested more than \
-                 {MAX_ENCODE_DEPTH} levels deep\"))"
+                 {MAX_ENCODE_DEPTH} levels deep\", 0))"
             )
         );
     }

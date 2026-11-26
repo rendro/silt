@@ -24,7 +24,7 @@ trait json.Decode for Tags {
         }
         Ok(Tags { s: set.from_list(names) })
       }
-      _ -> Err(json.TypeMismatch("array", "something else"))
+      _ -> Err(json.TypeMismatch("array", "something else", 0))
     }
   }
 }

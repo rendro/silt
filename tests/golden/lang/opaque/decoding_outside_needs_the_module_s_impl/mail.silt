@@ -16,9 +16,9 @@ trait json.Decode for Email {
     match value {
       json.String(s) -> match string.contains(s, "@") {
         true -> Ok(Email(string.to_lower(s)))
-        false -> Err(json.Other("not an address"))
+        false -> Err(json.Other("not an address", 0))
       }
-      _ -> Err(json.Other("not a string"))
+      _ -> Err(json.Other("not a string", 0))
     }
   }
 }

@@ -17,7 +17,7 @@ trait json.Decode for Code {
         env.set("F8P_SEEN", text)
         Ok(Code { digits: text })
       }
-      _ -> Err(json.Other("no code here"))
+      _ -> Err(json.Other("no code here", 0))
     }
   }
 }

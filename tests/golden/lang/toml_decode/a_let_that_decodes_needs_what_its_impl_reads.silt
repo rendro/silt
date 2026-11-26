@@ -13,7 +13,7 @@ trait json.Decode for T {
     match value {
       json.Object(_) -> Ok(T { n: later })
       json.Int(n) -> Ok(T { n: n + later })
-      _ -> Err(json.Other("no"))
+      _ -> Err(json.Other("no", 0))
     }
   }
 }

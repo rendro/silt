@@ -17,10 +17,10 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.String(text) -> Ok(Code { digits: text })
-      json.Int(_) -> Err(json.TypeMismatch("String", "an integer"))
-      json.Bool(_) -> Err(json.MissingField("digits"))
+      json.Int(_) -> Err(json.TypeMismatch("String", "an integer", 0))
+      json.Bool(_) -> Err(json.MissingField("digits", 0))
       json.Array(_) -> json.parse("[1,", Code)
-      _ -> Err(json.Other("no code here"))
+      _ -> Err(json.Other("no code here", 0))
     }
   }
 }
@@ -34,9 +34,9 @@ fn variant(r: Result(a, toml.TomlError)) -> String {
   match r {
     Ok(_) -> "Ok"
     Err(toml.Syntax(_, _)) -> "Syntax"
-    Err(toml.TypeMismatch(_, _)) -> "TypeMismatch"
-    Err(toml.MissingField(_)) -> "MissingField"
-    Err(toml.Other(_)) -> "Other"
+    Err(toml.TypeMismatch(_, _, _)) -> "TypeMismatch"
+    Err(toml.MissingField(_, _)) -> "MissingField"
+    Err(toml.Other(_, _)) -> "Other"
   }
 }
 

@@ -39,9 +39,10 @@ use serde::de::value::{MapDeserializer, SeqDeserializer};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 
 use super::{
-    At, Error, Hole, I64_MAX_PLUS_ONE, Numbers, Reader, Rules, decodable_enum, decodable_record,
-    descriptor, field_record_type, invalid_date_message, invalid_time_message, parse_date,
-    parse_datetime, parse_time, shown, unsupported_field_type_message, variant_field_message,
+    At, Error, Hole, I64_MAX_PLUS_ONE, Numbers, Reader, Rules, Where, decodable_enum,
+    decodable_record, descriptor, field_record_type, invalid_date_message, invalid_time_message,
+    parse_date, parse_datetime, parse_time, shown, unsupported_field_type_message,
+    variant_field_message,
 };
 use crate::builtins::registry::decoding::Leaf;
 use crate::builtins::time::{make_date, make_datetime, make_time};
@@ -826,10 +827,10 @@ impl<'s> Seed<'s> {
         };
         Met::Given(match given.get(number).cloned().flatten() {
             Some(Ok(value)) => Ok(value),
-            Some(Err(error)) => Err(Error::Given((self.cx.rules.from_impl)(
-                &error,
-                &self.at.to_string(),
-            ))),
+            Some(Err(error)) => Err(Error::Given(
+                (self.cx.rules.from_impl)(&error, &self.at.to_string()),
+                Where::of(self.at),
+            )),
             None => Ok(Value::Unit),
         })
     }
@@ -1329,7 +1330,10 @@ impl<'s> Seed<'s> {
                 // (TOML has no null: a key it leaves out is a `None`.)
                 None => match &*field.instantiated(args) {
                     FieldType::Option(_) => Ok(Value::variant(bv::NONE, [])),
-                    _ => Err(Error::MissingField(self.at.key(name).to_string())),
+                    _ => Err(Error::MissingField(
+                        self.at.key(name).to_string(),
+                        Where::of(self.at),
+                    )),
                 },
             };
             match decoded {
@@ -1337,7 +1341,7 @@ impl<'s> Seed<'s> {
                 Ok(_) => {}
                 Err(Error::Unsupported(declared)) => {
                     let message = unsupported_field_type_message(&ty.name, name, &declared);
-                    error = Some(Error::Other(message));
+                    error = Some(Error::Other(message, Where::of(&self.at.key(name))));
                     break;
                 }
                 Err(e) => {
@@ -1418,7 +1422,10 @@ impl<'s> Seed<'s> {
             Some(Fields::Passed) => unreachable!("a name that is no variant's is the error"),
             // (The name is a variant's with fields: `named` refuses
             // one without.)
-            None => Err(Error::MissingField(at.key("fields").to_string())),
+            None => Err(Error::MissingField(
+                at.key("fields").to_string(),
+                Where::of(at),
+            )),
         })
     }
 
@@ -1454,7 +1461,7 @@ fn named(cx: &Cx, ty: &Arc<TypeInfo>, name: Option<&Content>, at: &At) -> Result
             Some(Scalar::String(name)) => name,
             _ => return Err(Error::mismatch("String", name.kind(cx), &at_name)),
         },
-        None => return Err(Error::MissingField(at_name.to_string())),
+        None => return Err(Error::MissingField(at_name.to_string(), Where::of(at))),
     };
     let tag = Tag::named(ty, name).ok_or_else(|| no_variant(ty, name, &at_name))?;
     // (A variant without fields is its name, never a table.)
@@ -1494,11 +1501,10 @@ impl FieldsSeed<'_> {
         match error {
             // (A field no decoder fills was refused before the document
             // was read; this is the fallback.)
-            Some(Error::Unsupported(declared)) => Err(Error::Other(variant_field_message(
-                &ty.name,
-                &variant.name,
-                &declared,
-            ))),
+            Some(Error::Unsupported(declared)) => Err(Error::Other(
+                variant_field_message(&ty.name, &variant.name, &declared),
+                Where::of(&at_fields),
+            )),
             Some(e) => Err(e),
             None if !self.seed.build() => Ok(Value::Unit),
             None => Ok(Value::variant(self.tag.clone(), values)),
@@ -1757,7 +1763,7 @@ impl<'de> Visitor<'de> for ListUnderItsKey<'_> {
             // (A document of more keys or none decodes none of them.)
             _ => {
                 self.cx.parts.reorder(0, []);
-                Err(Error::Other((self.keys)(keys)))
+                Err(Error::Other((self.keys)(keys), Where::default()))
             }
         })
     }

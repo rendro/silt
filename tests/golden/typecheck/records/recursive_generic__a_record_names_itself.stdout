@@ -4,5 +4,5 @@ true
 false
 {"val":1,"kids":[{"val":2,"kids":[]},{"val":3,"kids":[{"val":4,"kids":[]}]}]}
 true
-Err(json type mismatch: expected Int, got string at kids[0].kids[0].val)
+Err(json type mismatch at byte 48: expected Int, got string at kids[0].kids[0].val)
 Tree {val: "x", kids: []}

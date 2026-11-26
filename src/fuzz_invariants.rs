@@ -383,7 +383,7 @@ fn fake_impl(json: &crate::value::Value) -> Result<crate::value::Value, crate::v
     match text.len() % 4 {
         0 => Err(Value::variant(
             bv::JSON_OTHER,
-            [Value::string(format!("no {text}"))],
+            [Value::string(format!("no {text}")), Value::Int(0)],
         )),
         _ => Ok(Value::string(text)),
     }
@@ -518,7 +518,7 @@ pub fn check_json_decoding(text: &[u8]) -> Result<(), String> {
                 let only_finding = with_impls == 1;
                 let from_text = |r: &Reader, parts: &seed::Parts| {
                     seed::json_text(r, expected, text, parts)
-                        .map_err(|e| json::json_result_err(&e, text))
+                        .map_err(|e| json::json_result_err(&e, text, 0))
                 };
                 let first = read_decoding(only_finding, rt, written, &json::RULES, from_text);
                 let again = read_decoding(only_finding, rt, written, &json::RULES, from_text);

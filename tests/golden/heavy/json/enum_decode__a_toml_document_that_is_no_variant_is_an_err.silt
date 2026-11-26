@@ -37,12 +37,12 @@ fn main() {
 """, Status))
   match toml.parse("""status = "Gone"
 """, Config) {
-    Err(toml.Other(why)) -> println("Other: {why}")
+    Err(toml.Other(why, _)) -> println("Other: {why}")
     other -> println("unexpected: {other}")
   }
   match toml.parse("""status = true
 """, Config) {
-    Err(toml.TypeMismatch(expected, actual)) -> println("TypeMismatch: {expected}, {actual}")
+    Err(toml.TypeMismatch(expected, actual, _)) -> println("TypeMismatch: {expected}, {actual}")
     other -> println("unexpected: {other}")
   }
 }

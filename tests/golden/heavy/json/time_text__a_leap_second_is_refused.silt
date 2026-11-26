@@ -33,11 +33,11 @@ fn main() {
     other -> println("unexpected: {other}")
   }
   match json.parse("""{"t": "23:59:60"}""", T) {
-    Err(json.Other(why)) -> println("Other: {why}")
+    Err(json.Other(why, _)) -> println("Other: {why}")
     other -> println("unexpected: {other}")
   }
   match toml.parse("t = 23:59:60", T) {
-    Err(toml.Other(why)) -> println("Other: {why}")
+    Err(toml.Other(why, _)) -> println("Other: {why}")
     other -> println("unexpected: {other}")
   }
 }

@@ -1569,7 +1569,7 @@ mod tests {
             },
             Value::Variant(result) => match result.fields() {
                 [Value::Variant(other)] => match other.fields() {
-                    [Value::String(message, _)] => Err(message.to_string()),
+                    [Value::String(message, _), Value::Int(_)] => Err(message.to_string()),
                     fields => panic!("{fields:?}"),
                 },
                 fields => panic!("{fields:?}"),
