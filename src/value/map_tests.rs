@@ -1101,6 +1101,60 @@ import host
     assert!(lists < 20, "{lists} changes of lists copied a shared tree");
 }
 
+/// A record in a record whose outer record is read in the same update
+/// by another of its fields (`o.{ inner: o.inner.{ m: map.set(...) },
+/// n: o.n + 1 }`) changes the collection in place: the outer record's
+/// slot reads only `n` after the call, so the field the update replaces
+/// is let go of while the slot is let go of, and the slot has the
+/// record again. 9,000 changes find each collection held nowhere else.
+#[test]
+fn a_record_whose_other_field_is_read_in_the_update_changes_in_place() {
+    let (given, shared, lists) = run_counting_shared(
+        r#"
+import list
+import map
+type Inner {
+  m: Map(Int, Int),
+  l: List(Int),
+}
+type Outer {
+  inner: Inner,
+  n: Int,
+  label: String,
+}
+type Top {
+  outer: Outer,
+  n: Int,
+}
+fn counted(i: Int, o: Outer) -> Outer {
+  match i == 0 {
+    true -> o
+    false -> counted(i - 1, o.{ inner: o.inner.{ m: map.set(o.inner.m, i, i) }, n: o.n + 1 })
+  }
+}
+fn deep(i: Int, t: Top) -> Top {
+  match i == 0 {
+    true -> t
+    false -> deep(i - 1, t.{ outer: t.outer.{ inner: t.outer.inner.{ l: list.append(t.outer.inner.l, i) }, label: "d" }, n: t.n + 1 })
+  }
+}
+fn main() {
+  let start = Outer { inner: Inner { m: #{}, l: [] }, n: 0, label: "s" }
+  let a = counted(3000, start)
+  let b = deep(3000, Top { outer: start, n: 0 })
+  let xs = list.map(1..3000) { i -> i }
+  let c = list.fold(xs, start) { o, x -> o.{ inner: o.inner.{ m: map.set(o.inner.m, x, x) }, label: "{o.n}", n: o.n + 1 } }
+  host.give([map.length(a.inner.m), a.n, list.length(b.outer.inner.l), b.n, map.length(c.inner.m), c.n, map.length(start.inner.m)])
+}
+import host
+"#,
+    );
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    assert_eq!(given, ints(&[3_000, 3_000, 3_000, 3_000, 3_000, 3_000, 0]));
+    assert!(shared < 20, "{shared} changes of maps copied a shared tree");
+    assert!(lists < 20, "{lists} changes of lists copied a shared tree");
+}
+
 // ── Deep values ────────────────────────────────────────────────────
 
 /// A value nested 10,000 levels deep through maps and sets kept in

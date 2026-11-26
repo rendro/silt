@@ -204,11 +204,14 @@ impl Record {
     /// (Of a record an update is about to replace those fields of, so
     /// that the value a field held may be the one holder of a
     /// collection, changed in place: `crate::vm`'s `give`.) A record
-    /// held elsewhere too stays as it is. Whether a field was let go of.
+    /// held elsewhere too stays as it is. A field whose bit is set in
+    /// `kept` (by its place among the type's fields) stays. Whether a
+    /// field was let go of.
     pub(crate) fn let_go_of_fields<'a>(
         &mut self,
         names: impl Iterator<Item = &'a str>,
         gone: impl Fn(&Value) -> bool,
+        kept: u64,
     ) -> bool {
         let Some(obj) = Arc::get_mut(&mut self.0) else {
             return false;
@@ -216,6 +219,7 @@ impl Record {
         let mut any = false;
         for name in names {
             if let Some(index) = obj.ty.field_index(name)
+                && (index >= 64 || kept & (1 << index) == 0)
                 && gone(&obj.fields[index])
             {
                 obj.fields[index] = Value::Unit;

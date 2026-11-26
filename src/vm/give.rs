@@ -127,6 +127,23 @@ fn let_go(
             let Some((Instr::RecordUpdate { fields }, _)) = decode(chunk.code(), update) else {
                 continue;
             };
+            // A value of the frame that is this record and is read after
+            // the call only by some of its fields (`o.{ inner: ..., n:
+            // o.n + 1 }`) is let go of while the fields the update
+            // replaces are let go of, but for those it reads, and is then
+            // the record again: the same record, whose fields it reads
+            // are as they were. (Dropped, it is a count; the record lives
+            // on in the base.)
+            let (mut kept, mut aside) = (0, 0u64);
+            for (part, read) in ahead.partly_read() {
+                if let (Value::Record(copy), Value::Record(record)) = (&frame[part], &frame[at])
+                    && copy.shares(record)
+                {
+                    kept |= read;
+                    aside |= 1 << part;
+                    frame[part] = Value::Unit;
+                }
+            }
             let (below, rest) = frame.split_at_mut(at);
             let (record, above) = rest
                 .split_first_mut()
@@ -146,7 +163,12 @@ fn let_go(
                 })
             };
             let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
-            changed |= record.let_go_of_fields(names, |value| given(value) || bases(value));
+            changed |= record.let_go_of_fields(names, |value| given(value) || bases(value), kept);
+            while aside != 0 {
+                let part = aside.trailing_zeros() as usize;
+                aside &= aside - 1;
+                frame[part] = frame[at].clone();
+            }
         }
         if !changed {
             break;

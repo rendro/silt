@@ -8,7 +8,9 @@
 -- change a collection in place when nothing else holds it; this file's
 -- output is what it was when each was a copy. Rows 12 to 15: the update
 -- made by a function of the program or a method, a method called after
--- it, the builtin as a value, a record in a record.
+-- it, the builtin as a value, a record in a record. Rows 16: a record in
+-- a record whose outer record is read in the same update, by another
+-- field, by the inner one, whole, in arms, through an alias.
 import channel
 import list
 import map
@@ -3699,6 +3701,897 @@ fn moreL(kind: String, make: Fn() -> List(Int)) {
   )
 }
 
+-- ── map.set: a field of the outer record read in the same update ──
+
+fn shownM(o: NestM) -> String {
+  "{o.label}:{fpM(o.inner.c)}:{fpM(o.spare.c)}"
+}
+
+fn plabelM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> plabelM(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }, label: "{o.label}." },
+    )
+  }
+}
+
+fn pinnerM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> pinnerM(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }, spare: o.inner },
+    )
+  }
+}
+
+fn pwholeM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> pwholeM(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }, label: shownM(o) },
+    )
+  }
+}
+
+fn ptwoM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> ptwoM(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) },
+        label: "{o.label}{fpM(o.spare.c)}",
+      },
+    )
+  }
+}
+
+fn parmM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> match i % 2 == 0 {
+      true -> parmM(
+        i + 1,
+        n,
+        o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }, label: "{o.label}e" },
+      )
+      false -> parmM(
+        i + 1,
+        n,
+        o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }, spare: o.inner },
+      )
+    }
+  }
+}
+
+fn paliasM(i: Int, n: Int, o: NestM) -> NestM {
+  match i == n {
+    true -> o
+    false -> {
+      let next = o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }
+      let p = o
+      paliasM(i + 1, n, o.{ inner: next, label: "{p.label}a", spare: p.inner })
+    }
+  }
+}
+
+fn poldM(i: Int, n: Int, o: NestM, old: NestM) -> String {
+  match i == n {
+    true -> "{shownM(o)} old {shownM(old)}"
+    false -> poldM(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.set(o.inner.c, i % 3, i % 3 * 3 + 1) }, label: "{o.label}o" },
+      o,
+    )
+  }
+}
+
+fn pdeepM(i: Int, n: Int, d: DeepM) -> DeepM {
+  match i == n {
+    true -> d
+    false -> pdeepM(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{
+          inner: d.top.inner.{ c: map.set(d.top.inner.c, i % 3, i % 3 * 3 + 1) },
+          label: "{d.top.label}d",
+        },
+        n: d.n + 1,
+      },
+    )
+  }
+}
+
+fn partM(kind: String, make: Fn() -> Map(Int, Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let box = BoxM { label: "b", c: c, d: c }
+  let nest = NestM { label: "o", inner: box, spare: box }
+  let before = shownM(nest)
+  rowM(
+    "{kind} 16 another field read in the update",
+    before,
+    shownM(nest),
+    shownM(plabelM(0, 7, nest)),
+  )
+  rowM(
+    "{kind} 16 the inner record read in the update",
+    before,
+    shownM(nest),
+    shownM(pinnerM(0, 7, nest)),
+  )
+  rowM(
+    "{kind} 16 the whole record read in the update",
+    before,
+    shownM(nest),
+    shownM(pwholeM(0, 3, nest)),
+  )
+  rowM("{kind} 16 two other fields read", before, shownM(nest), shownM(ptwoM(0, 5, nest)))
+  rowM("{kind} 16 arms that read other fields", before, shownM(nest), shownM(parmM(0, 7, nest)))
+  rowM("{kind} 16 an alias read after", before, shownM(nest), shownM(paliasM(0, 5, nest)))
+  rowM(
+    "{kind} 16 another field read, the old one too",
+    before,
+    shownM(nest),
+    poldM(0, 5, nest, nest),
+  )
+  let deep = DeepM { top: nest, n: 0 }
+  let made = pdeepM(0, 7, deep)
+  rowM("{kind} 16 three deep, fields read", before, shownM(deep.top), "{shownM(made.top)} {made.n}")
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.set(o.inner.c, x, x * 3 + 1) }, label: "{o.label}f" }
+  }
+  rowM("{kind} 16 a fold, another field read", before, shownM(nest), shownM(made))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.set(o.inner.c, x, x * 3 + 1) }, spare: o.inner }
+  }
+  rowM("{kind} 16 a fold, the inner record read", before, shownM(nest), shownM(made))
+  let own = plabelM(
+    0,
+    3,
+    NestM { label: "own", inner: BoxM { label: "i", c: make(), d: make() }, spare: box },
+  )
+  rowM("{kind} 16 held nowhere else, another field read", before, shownM(nest), shownM(own))
+}
+
+-- ── map.update: a field of the outer record read in the same update ──
+
+fn shownU(o: NestU) -> String {
+  "{o.label}:{fpU(o.inner.c)}:{fpU(o.spare.c)}"
+}
+
+fn plabelU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false -> plabelU(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } },
+        label: "{o.label}.",
+      },
+    )
+  }
+}
+
+fn pinnerU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false -> pinnerU(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } }, spare: o.inner },
+    )
+  }
+}
+
+fn pwholeU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false -> pwholeU(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } }, label: shownU(o) },
+    )
+  }
+}
+
+fn ptwoU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false -> ptwoU(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } },
+        label: "{o.label}{fpU(o.spare.c)}",
+      },
+    )
+  }
+}
+
+fn parmU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false -> match i % 2 == 0 {
+      true -> parmU(
+        i + 1,
+        n,
+        o.{
+          inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } },
+          label: "{o.label}e",
+        },
+      )
+      false -> parmU(
+        i + 1,
+        n,
+        o.{ inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } }, spare: o.inner },
+      )
+    }
+  }
+}
+
+fn paliasU(i: Int, n: Int, o: NestU) -> NestU {
+  match i == n {
+    true -> o
+    false -> {
+      let next = o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } }
+      let p = o
+      paliasU(i + 1, n, o.{ inner: next, label: "{p.label}a", spare: p.inner })
+    }
+  }
+}
+
+fn poldU(i: Int, n: Int, o: NestU, old: NestU) -> String {
+  match i == n {
+    true -> "{shownU(o)} old {shownU(old)}"
+    false -> poldU(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{ c: map.update(o.inner.c, i % 3, 0) { v -> v + 1 } },
+        label: "{o.label}o",
+      },
+      o,
+    )
+  }
+}
+
+fn pdeepU(i: Int, n: Int, d: DeepU) -> DeepU {
+  match i == n {
+    true -> d
+    false -> pdeepU(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{
+          inner: d.top.inner.{ c: map.update(d.top.inner.c, i % 3, 0) { v -> v + 1 } },
+          label: "{d.top.label}d",
+        },
+        n: d.n + 1,
+      },
+    )
+  }
+}
+
+fn partU(kind: String, make: Fn() -> Map(Int, Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let box = BoxU { label: "b", c: c, d: c }
+  let nest = NestU { label: "o", inner: box, spare: box }
+  let before = shownU(nest)
+  rowU(
+    "{kind} 16 another field read in the update",
+    before,
+    shownU(nest),
+    shownU(plabelU(0, 7, nest)),
+  )
+  rowU(
+    "{kind} 16 the inner record read in the update",
+    before,
+    shownU(nest),
+    shownU(pinnerU(0, 7, nest)),
+  )
+  rowU(
+    "{kind} 16 the whole record read in the update",
+    before,
+    shownU(nest),
+    shownU(pwholeU(0, 3, nest)),
+  )
+  rowU("{kind} 16 two other fields read", before, shownU(nest), shownU(ptwoU(0, 5, nest)))
+  rowU("{kind} 16 arms that read other fields", before, shownU(nest), shownU(parmU(0, 7, nest)))
+  rowU("{kind} 16 an alias read after", before, shownU(nest), shownU(paliasU(0, 5, nest)))
+  rowU(
+    "{kind} 16 another field read, the old one too",
+    before,
+    shownU(nest),
+    poldU(0, 5, nest, nest),
+  )
+  let deep = DeepU { top: nest, n: 0 }
+  let made = pdeepU(0, 7, deep)
+  rowU("{kind} 16 three deep, fields read", before, shownU(deep.top), "{shownU(made.top)} {made.n}")
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.update(o.inner.c, x, 0) { v -> v + 1 } }, label: "{o.label}f" }
+  }
+  rowU("{kind} 16 a fold, another field read", before, shownU(nest), shownU(made))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: map.update(o.inner.c, x, 0) { v -> v + 1 } }, spare: o.inner }
+  }
+  rowU("{kind} 16 a fold, the inner record read", before, shownU(nest), shownU(made))
+  let own = plabelU(
+    0,
+    3,
+    NestU { label: "own", inner: BoxU { label: "i", c: make(), d: make() }, spare: box },
+  )
+  rowU("{kind} 16 held nowhere else, another field read", before, shownU(nest), shownU(own))
+}
+
+-- ── set.insert: a field of the outer record read in the same update ──
+
+fn shownS(o: NestS) -> String {
+  "{o.label}:{fpS(o.inner.c)}:{fpS(o.spare.c)}"
+}
+
+fn plabelS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> plabelS(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }, label: "{o.label}." },
+    )
+  }
+}
+
+fn pinnerS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> pinnerS(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }, spare: o.inner },
+    )
+  }
+}
+
+fn pwholeS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> pwholeS(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }, label: shownS(o) },
+    )
+  }
+}
+
+fn ptwoS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> ptwoS(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) },
+        label: "{o.label}{fpS(o.spare.c)}",
+      },
+    )
+  }
+}
+
+fn parmS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> match i % 2 == 0 {
+      true -> parmS(
+        i + 1,
+        n,
+        o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }, label: "{o.label}e" },
+      )
+      false -> parmS(
+        i + 1,
+        n,
+        o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }, spare: o.inner },
+      )
+    }
+  }
+}
+
+fn paliasS(i: Int, n: Int, o: NestS) -> NestS {
+  match i == n {
+    true -> o
+    false -> {
+      let next = o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }
+      let p = o
+      paliasS(i + 1, n, o.{ inner: next, label: "{p.label}a", spare: p.inner })
+    }
+  }
+}
+
+fn poldS(i: Int, n: Int, o: NestS, old: NestS) -> String {
+  match i == n {
+    true -> "{shownS(o)} old {shownS(old)}"
+    false -> poldS(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: set.insert(o.inner.c, i % 3 + 500) }, label: "{o.label}o" },
+      o,
+    )
+  }
+}
+
+fn pdeepS(i: Int, n: Int, d: DeepS) -> DeepS {
+  match i == n {
+    true -> d
+    false -> pdeepS(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{
+          inner: d.top.inner.{ c: set.insert(d.top.inner.c, i % 3 + 500) },
+          label: "{d.top.label}d",
+        },
+        n: d.n + 1,
+      },
+    )
+  }
+}
+
+fn partS(kind: String, make: Fn() -> Set(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let box = BoxS { label: "b", c: c, d: c }
+  let nest = NestS { label: "o", inner: box, spare: box }
+  let before = shownS(nest)
+  rowS(
+    "{kind} 16 another field read in the update",
+    before,
+    shownS(nest),
+    shownS(plabelS(0, 7, nest)),
+  )
+  rowS(
+    "{kind} 16 the inner record read in the update",
+    before,
+    shownS(nest),
+    shownS(pinnerS(0, 7, nest)),
+  )
+  rowS(
+    "{kind} 16 the whole record read in the update",
+    before,
+    shownS(nest),
+    shownS(pwholeS(0, 3, nest)),
+  )
+  rowS("{kind} 16 two other fields read", before, shownS(nest), shownS(ptwoS(0, 5, nest)))
+  rowS("{kind} 16 arms that read other fields", before, shownS(nest), shownS(parmS(0, 7, nest)))
+  rowS("{kind} 16 an alias read after", before, shownS(nest), shownS(paliasS(0, 5, nest)))
+  rowS(
+    "{kind} 16 another field read, the old one too",
+    before,
+    shownS(nest),
+    poldS(0, 5, nest, nest),
+  )
+  let deep = DeepS { top: nest, n: 0 }
+  let made = pdeepS(0, 7, deep)
+  rowS("{kind} 16 three deep, fields read", before, shownS(deep.top), "{shownS(made.top)} {made.n}")
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: set.insert(o.inner.c, x + 500) }, label: "{o.label}f" }
+  }
+  rowS("{kind} 16 a fold, another field read", before, shownS(nest), shownS(made))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: set.insert(o.inner.c, x + 500) }, spare: o.inner }
+  }
+  rowS("{kind} 16 a fold, the inner record read", before, shownS(nest), shownS(made))
+  let own = plabelS(
+    0,
+    3,
+    NestS { label: "own", inner: BoxS { label: "i", c: make(), d: make() }, spare: box },
+  )
+  rowS("{kind} 16 held nowhere else, another field read", before, shownS(nest), shownS(own))
+}
+
+-- ── list.append: a field of the outer record read in the same update ──
+
+fn shownA(o: NestA) -> String {
+  "{o.label}:{fpA(o.inner.c)}:{fpA(o.spare.c)}"
+}
+
+fn plabelA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false -> plabelA(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, label: "{o.label}." },
+    )
+  }
+}
+
+fn pinnerA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false ->
+      pinnerA(i + 1, n, o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, spare: o.inner })
+  }
+}
+
+fn pwholeA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false ->
+      pwholeA(i + 1, n, o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, label: shownA(o) })
+  }
+}
+
+fn ptwoA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false -> ptwoA(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, label: "{o.label}{fpA(o.spare.c)}" },
+    )
+  }
+}
+
+fn parmA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false -> match i % 2 == 0 {
+      true -> parmA(
+        i + 1,
+        n,
+        o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, label: "{o.label}e" },
+      )
+      false ->
+        parmA(i + 1, n, o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, spare: o.inner })
+    }
+  }
+}
+
+fn paliasA(i: Int, n: Int, o: NestA) -> NestA {
+  match i == n {
+    true -> o
+    false -> {
+      let next = o.inner.{ c: list.append(o.inner.c, i % 3) }
+      let p = o
+      paliasA(i + 1, n, o.{ inner: next, label: "{p.label}a", spare: p.inner })
+    }
+  }
+}
+
+fn poldA(i: Int, n: Int, o: NestA, old: NestA) -> String {
+  match i == n {
+    true -> "{shownA(o)} old {shownA(old)}"
+    false -> poldA(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: list.append(o.inner.c, i % 3) }, label: "{o.label}o" },
+      o,
+    )
+  }
+}
+
+fn pdeepA(i: Int, n: Int, d: DeepA) -> DeepA {
+  match i == n {
+    true -> d
+    false -> pdeepA(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{
+          inner: d.top.inner.{ c: list.append(d.top.inner.c, i % 3) },
+          label: "{d.top.label}d",
+        },
+        n: d.n + 1,
+      },
+    )
+  }
+}
+
+fn partA(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let box = BoxA { label: "b", c: c, d: c }
+  let nest = NestA { label: "o", inner: box, spare: box }
+  let before = shownA(nest)
+  rowA(
+    "{kind} 16 another field read in the update",
+    before,
+    shownA(nest),
+    shownA(plabelA(0, 7, nest)),
+  )
+  rowA(
+    "{kind} 16 the inner record read in the update",
+    before,
+    shownA(nest),
+    shownA(pinnerA(0, 7, nest)),
+  )
+  rowA(
+    "{kind} 16 the whole record read in the update",
+    before,
+    shownA(nest),
+    shownA(pwholeA(0, 3, nest)),
+  )
+  rowA("{kind} 16 two other fields read", before, shownA(nest), shownA(ptwoA(0, 5, nest)))
+  rowA("{kind} 16 arms that read other fields", before, shownA(nest), shownA(parmA(0, 7, nest)))
+  rowA("{kind} 16 an alias read after", before, shownA(nest), shownA(paliasA(0, 5, nest)))
+  rowA(
+    "{kind} 16 another field read, the old one too",
+    before,
+    shownA(nest),
+    poldA(0, 5, nest, nest),
+  )
+  let deep = DeepA { top: nest, n: 0 }
+  let made = pdeepA(0, 7, deep)
+  rowA("{kind} 16 three deep, fields read", before, shownA(deep.top), "{shownA(made.top)} {made.n}")
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: list.append(o.inner.c, x) }, label: "{o.label}f" }
+  }
+  rowA("{kind} 16 a fold, another field read", before, shownA(nest), shownA(made))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: list.append(o.inner.c, x) }, spare: o.inner }
+  }
+  rowA("{kind} 16 a fold, the inner record read", before, shownA(nest), shownA(made))
+  let own = plabelA(
+    0,
+    3,
+    NestA { label: "own", inner: BoxA { label: "i", c: make(), d: make() }, spare: box },
+  )
+  rowA("{kind} 16 held nowhere else, another field read", before, shownA(nest), shownA(own))
+}
+
+-- ── list.set: a field of the outer record read in the same update ──
+
+fn shownL(o: NestL) -> String {
+  "{o.label}:{fpL(o.inner.c)}:{fpL(o.spare.c)}"
+}
+
+fn plabelL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> plabelL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+        label: "{o.label}.",
+      },
+    )
+  }
+}
+
+fn pinnerL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> pinnerL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+        spare: o.inner,
+      },
+    )
+  }
+}
+
+fn pwholeL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> pwholeL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+        label: shownL(o),
+      },
+    )
+  }
+}
+
+fn ptwoL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> ptwoL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+        label: "{o.label}{fpL(o.spare.c)}",
+      },
+    )
+  }
+}
+
+fn parmL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> match i % 2 == 0 {
+      true -> parmL(
+        i + 1,
+        n,
+        o.{
+          inner: o.inner.{
+            c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+              Some(next) -> next
+              None -> []
+            },
+          },
+          label: "{o.label}e",
+        },
+      )
+      false -> parmL(
+        i + 1,
+        n,
+        o.{
+          inner: o.inner.{
+            c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+              Some(next) -> next
+              None -> []
+            },
+          },
+          spare: o.inner,
+        },
+      )
+    }
+  }
+}
+
+fn paliasL(i: Int, n: Int, o: NestL) -> NestL {
+  match i == n {
+    true -> o
+    false -> {
+      let next = o.inner.{
+        c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      }
+      let p = o
+      paliasL(i + 1, n, o.{ inner: next, label: "{p.label}a", spare: p.inner })
+    }
+  }
+}
+
+fn poldL(i: Int, n: Int, o: NestL, old: NestL) -> String {
+  match i == n {
+    true -> "{shownL(o)} old {shownL(old)}"
+    false -> poldL(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{
+          c: match list.set(o.inner.c, i % 3, i % 3 * 5 + 7) {
+            Some(next) -> next
+            None -> []
+          },
+        },
+        label: "{o.label}o",
+      },
+      o,
+    )
+  }
+}
+
+fn pdeepL(i: Int, n: Int, d: DeepL) -> DeepL {
+  match i == n {
+    true -> d
+    false -> pdeepL(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{
+          inner: d.top.inner.{
+            c: match list.set(d.top.inner.c, i % 3, i % 3 * 5 + 7) {
+              Some(next) -> next
+              None -> []
+            },
+          },
+          label: "{d.top.label}d",
+        },
+        n: d.n + 1,
+      },
+    )
+  }
+}
+
+fn partL(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let box = BoxL { label: "b", c: c, d: c }
+  let nest = NestL { label: "o", inner: box, spare: box }
+  let before = shownL(nest)
+  rowL(
+    "{kind} 16 another field read in the update",
+    before,
+    shownL(nest),
+    shownL(plabelL(0, 7, nest)),
+  )
+  rowL(
+    "{kind} 16 the inner record read in the update",
+    before,
+    shownL(nest),
+    shownL(pinnerL(0, 7, nest)),
+  )
+  rowL(
+    "{kind} 16 the whole record read in the update",
+    before,
+    shownL(nest),
+    shownL(pwholeL(0, 3, nest)),
+  )
+  rowL("{kind} 16 two other fields read", before, shownL(nest), shownL(ptwoL(0, 5, nest)))
+  rowL("{kind} 16 arms that read other fields", before, shownL(nest), shownL(parmL(0, 7, nest)))
+  rowL("{kind} 16 an alias read after", before, shownL(nest), shownL(paliasL(0, 5, nest)))
+  rowL(
+    "{kind} 16 another field read, the old one too",
+    before,
+    shownL(nest),
+    poldL(0, 5, nest, nest),
+  )
+  let deep = DeepL { top: nest, n: 0 }
+  let made = pdeepL(0, 7, deep)
+  rowL("{kind} 16 three deep, fields read", before, shownL(deep.top), "{shownL(made.top)} {made.n}")
+  let made = list.fold(xs, nest) { o, x ->
+    o.{
+      inner: o.inner.{
+        c: match list.set(o.inner.c, x, x * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      },
+      label: "{o.label}f",
+    }
+  }
+  rowL("{kind} 16 a fold, another field read", before, shownL(nest), shownL(made))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{
+      inner: o.inner.{
+        c: match list.set(o.inner.c, x, x * 5 + 7) {
+          Some(next) -> next
+          None -> []
+        },
+      },
+      spare: o.inner,
+    }
+  }
+  rowL("{kind} 16 a fold, the inner record read", before, shownL(nest), shownL(made))
+  let own = plabelL(
+    0,
+    3,
+    NestL { label: "own", inner: BoxL { label: "i", c: make(), d: make() }, spare: box },
+  )
+  rowL("{kind} 16 held nowhere else, another field read", before, shownL(nest), shownL(own))
+}
+
 fn main() {
   eachM("tree", treeM)
   eachM("small", flatM)
@@ -3720,4 +4613,14 @@ fn main() {
   moreA("small", flatA)
   moreL("tree", treeL)
   moreL("small", flatL)
+  partM("tree", treeM)
+  partM("small", flatM)
+  partU("tree", treeU)
+  partU("small", flatU)
+  partS("tree", treeS)
+  partS("small", flatS)
+  partA("tree", treeA)
+  partA("small", flatA)
+  partL("tree", treeL)
+  partL("small", flatL)
 }

@@ -64,6 +64,22 @@ const HIGH: usize = 96;
 /// arguments that it is.
 const NEW: u8 = u8::MAX;
 
+/// Added to the number of a frame's value: a copy of it that `GetLocal`
+/// pushed after the call. Of a copy whose field is read at once
+/// (`o.n`), only that field of the value is read; any other use of the
+/// copy reads all of it.
+const COPY: u8 = PLACES as u8;
+
+/// The frame's value a place holds, the value itself or a copy of it.
+fn of(was: u8) -> Option<u8> {
+    (was != NEW).then_some(was % COPY)
+}
+
+/// The most of the frame's values of which the reading ahead keeps the
+/// fields that are read, the value itself being read no other way:
+/// past them, a field read reads all of the value.
+const PARTS: usize = 4;
+
 /// The stack as the reading ahead follows it: of each place, which of
 /// the frame's values from before the call is there, or [`NEW`].
 #[derive(Clone, Copy)]
@@ -117,9 +133,22 @@ pub(crate) struct Ahead {
     /// instruction: the same on every path that takes it.
     bases: [(u8, usize); BASES],
     taken: usize,
+    /// The places of values no path reads but by fields (`o.n`),
+    /// neither all of them nor as a record to update, with a bit for
+    /// each field that is read.
+    parts: [(u8, u64); PARTS],
+    partly: usize,
 }
 
 impl Ahead {
+    /// The places of the frame's values that no path reads but by some
+    /// of their fields, with a bit for each field that is read.
+    pub(crate) fn partly_read(&self) -> impl Iterator<Item = (usize, u64)> + '_ {
+        self.parts[..self.partly]
+            .iter()
+            .map(|&(at, fields)| (usize::from(at), fields))
+    }
+
     /// How many values the frame has below the call's arguments.
     pub(crate) fn olds(&self) -> usize {
         self.olds
@@ -154,14 +183,36 @@ struct Follow {
     /// path.
     bases: [(u8, usize); BASES],
     taken: usize,
+    /// The values of which a path reads a field of a copy, with a bit
+    /// for each field.
+    parts: [(u8, u64); PARTS],
+    partly: usize,
     /// The instructions it may read yet.
     left: usize,
 }
 
 impl Follow {
     fn reads(&mut self, was: u8) {
-        if was != NEW {
-            self.read |= 1 << was;
+        if let Some(at) = of(was) {
+            self.read |= 1 << at;
+        }
+    }
+
+    /// A path reads the field `index` of the frame's value `at`.
+    fn reads_field(&mut self, at: u8, index: usize) {
+        if index >= 64 {
+            return self.reads(at);
+        }
+        match self.parts[..self.partly]
+            .iter_mut()
+            .find(|(part, _)| *part == at)
+        {
+            Some((_, fields)) => *fields |= 1 << index,
+            None if self.partly < PARTS => {
+                self.parts[self.partly] = (at, 1 << index);
+                self.partly += 1;
+            }
+            None => self.reads(at),
         }
     }
 
@@ -173,8 +224,17 @@ impl Follow {
             self.left = self.left.checked_sub(1)?;
             let (instr, next) = decode(code, ip)?;
             match instr {
+                // A copy is read where it is used.
                 Instr::GetLocal { slot } => {
-                    self.reads(stack.get(slot)?);
+                    let was = stack.get(slot)?;
+                    stack.push(of(was).map_or(NEW, |at| at + COPY))?;
+                }
+                Instr::GetField { index } if stack.get(stack.len.checked_sub(1)?)? != NEW => {
+                    let was = stack.pop()?;
+                    match was >= COPY {
+                        true => self.reads_field(was - COPY, index),
+                        false => self.reads(was),
+                    }
                     stack.push(NEW)?;
                 }
                 Instr::MakeClosure { captures, .. } => {
@@ -201,10 +261,14 @@ impl Follow {
                     for _ in 0..fields.len() {
                         self.reads(stack.pop()?);
                     }
-                    let base = stack.pop()?;
-                    if base != NEW {
-                        *self.bases.get_mut(self.taken)? = (base, ip);
-                        self.taken += 1;
+                    // (A copy pushed after the call reads its value.)
+                    match stack.pop()? {
+                        NEW => {}
+                        base if base >= COPY => self.reads(base),
+                        base => {
+                            *self.bases.get_mut(self.taken)? = (base, ip);
+                            self.taken += 1;
+                        }
                     }
                     stack.push(NEW)?;
                 }
@@ -377,6 +441,8 @@ pub(crate) fn read(code: &[u8], ip: usize, olds: usize) -> Option<Ahead> {
         read: 0,
         bases: [(NEW, 0); BASES],
         taken: 0,
+        parts: [(NEW, 0); PARTS],
+        partly: 0,
         left: AHEAD,
     };
     follow.follow(code, ip, stack)?;
@@ -387,8 +453,16 @@ pub(crate) fn read(code: &[u8], ip: usize, olds: usize) -> Option<Ahead> {
         unread: 0,
         bases: [(NEW, 0); BASES],
         taken: 0,
+        parts: [(NEW, 0); PARTS],
+        partly: 0,
     };
-    let read = |at: u8| follow.read & (1 << at) != 0;
+    // (A value of which a field is read is read for a base, too.)
+    let read = |at: u8| {
+        follow.read & (1 << at) != 0
+            || follow.parts[..follow.partly]
+                .iter()
+                .any(|(part, _)| *part == at)
+    };
     for &(at, update) in &follow.bases[..follow.taken] {
         let same = |&(base, _): &(u8, usize)| base == at;
         let elsewhere = follow.bases[..follow.taken]
@@ -399,6 +473,15 @@ pub(crate) fn read(code: &[u8], ip: usize, olds: usize) -> Option<Ahead> {
         }
         ahead.bases[ahead.taken] = (at, update);
         ahead.taken += 1;
+    }
+    for &(at, fields) in &follow.parts[..follow.partly] {
+        let based = follow.bases[..follow.taken]
+            .iter()
+            .any(|&(base, _)| base == at);
+        if follow.read & (1 << at) == 0 && !based {
+            ahead.parts[ahead.partly] = (at, fields);
+            ahead.partly += 1;
+        }
     }
     for at in 0..olds {
         let based = ahead.bases[..ahead.taken]
