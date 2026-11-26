@@ -1,0 +1,19 @@
+error[type]: 'Go' is a variant of 'Light', not a record type
+ --> variant_as_a_record__a_variant_in_a_match_header_says_it_takes_no_fields.silt:8:9
+   |
+ 8 |   match Go { x } {
+   |         ^^ 'Go' is a variant of 'Light', not a record type
+  = help: `Go` has no fields: write `Go`
+
+error[type]: undefined variable 'x'
+ --> variant_as_a_record__a_variant_in_a_match_header_says_it_takes_no_fields.silt:8:14
+   |
+ 8 |   match Go { x } {
+   |              ^ undefined variable 'x'
+
+error[type]: 'Go' is a variant of 'Light', not a record type
+ --> variant_as_a_record__a_variant_in_a_match_header_says_it_takes_no_fields.silt:11:9
+    |
+ 11 |   match Go { Stay } {
+    |         ^^ 'Go' is a variant of 'Light', not a record type
+  = help: `Go` has no fields: write `Go`

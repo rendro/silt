@@ -274,6 +274,11 @@ impl TypeChecker {
         else {
             unreachable!("infer_match of another form");
         };
+        // (For the help on a hidden prelude variant: see
+        // `TypeChecker::match_arm_bodies`.)
+        if arms.len() > 1 {
+            (self.match_arm_bodies).push(arms.iter().map(|arm| arm.body.span).collect());
+        }
         match scrutinee {
             Some(scrutinee) => {
                 let scrutinee_span = scrutinee.span;

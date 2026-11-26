@@ -1,0 +1,17 @@
+-- exit: 1
+-- A variant of another module, imported by name or written through
+-- its module, as a record literal: the error says whose variant it is.
+import lights
+import lights.{ Go, Full }
+
+fn main() {
+  let light = Go { x: 1 }
+  let slot = Full { x: 1 }
+  let other = lights.Stop { x: 1 }
+  match Go { x } {
+    _ -> println("a")
+  }
+  println(light)
+  println(slot)
+  println(other)
+}

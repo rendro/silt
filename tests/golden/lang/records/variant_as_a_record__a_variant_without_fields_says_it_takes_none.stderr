@@ -1,0 +1,13 @@
+error[type]: 'Go' is a variant of 'Light', not a record type
+ --> variant_as_a_record__a_variant_without_fields_says_it_takes_none.silt:8:11
+   |
+ 8 |   let r = Go { x: 1 }
+   |           ^^ 'Go' is a variant of 'Light', not a record type
+  = help: `Go` has no fields: write `Go`
+
+error[type]: 'Stop' is a variant of 'Light', not a record type
+ --> variant_as_a_record__a_variant_without_fields_says_it_takes_none.silt:10:5
+    |
+ 10 |     Stop { x } -> println(x)
+    |     ^^^^ 'Stop' is a variant of 'Light', not a record type
+  = help: `Stop` has no fields: write `Stop`

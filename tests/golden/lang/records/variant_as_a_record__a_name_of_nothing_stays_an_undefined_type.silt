@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: undefined type 'Nope'
+-- stderr-contains: undefined record type 'Nada' in pattern
+-- stderr-not-contains: is a variant
+-- A record literal or pattern whose name names nothing (no type, no
+-- variant) keeps the error that the type is undefined.
+type Light { Go, Stop }
+
+fn main() {
+  let r = Nope { x: 1 }
+  match Go {
+    Nada { x } -> println(x)
+    _ -> println("go")
+  }
+  println(r)
+}

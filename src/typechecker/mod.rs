@@ -137,6 +137,11 @@ pub(crate) struct TypeChecker {
     /// mismatch there says how to reach the prelude's
     /// (`help_for_hidden_prelude_variants`).
     pub(super) prelude_variant_uses: Vec<(Span, Symbol, Option<Symbol>)>,
+    /// The places of the arms' bodies of each `match` of two or more
+    /// arms: a mismatch at a hidden prelude variant's name in one arm
+    /// makes the other arms' mismatches, which get its help too
+    /// (`help_for_hidden_prelude_variants`).
+    pub(super) match_arm_bodies: Vec<Vec<Span>>,
     /// The bounds in scope: for each annotation variable of a declaration
     /// whose body was or is being checked (by the variable it is in the
     /// declaration's scheme), the traits its `where` clauses declare and
@@ -849,6 +854,7 @@ impl TypeChecker {
             errors: Vec::new(),
             arm_mismatches: None,
             prelude_variant_uses: Vec::new(),
+            match_arm_bodies: Vec::new(),
             bounds: HashMap::new(),
             written_bounds: HashMap::new(),
             current_return_type: None,

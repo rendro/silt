@@ -1,0 +1,14 @@
+-- exit: 1
+-- `match Go { x } {` and `match Go { Stay } {` read `Go { ... }` as a
+-- record literal: with `Go` a variant, the error says whose variant it
+-- is and that it has no fields.
+type Light { Go, Stay }
+
+fn main() {
+  match Go { x } {
+    _ -> println("a")
+  }
+  match Go { Stay } {
+    _ -> println("b")
+  }
+}

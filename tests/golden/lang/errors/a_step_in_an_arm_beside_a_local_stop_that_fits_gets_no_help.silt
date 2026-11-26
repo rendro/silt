@@ -1,0 +1,26 @@
+-- exit: 1
+-- stderr-contains: type mismatch: expected Light, got Step(Int)
+-- stderr-not-contains: hides the prelude
+-- A local `Stop` given where a `Light` is wanted is no mismatch: a
+-- `Step` written in full beside it, or beside `Go`, is the program's
+-- own mistake, and no help line talks about the prelude's `Stop`.
+type Light { Go, Stop }
+
+fn pick(n: Int) -> Light {
+  match n {
+    0 -> Stop
+    _ -> Step.Continue(n)
+  }
+}
+
+fn other(n: Int) -> Light {
+  match n {
+    0 -> Go
+    _ -> Step.Stop(n)
+  }
+}
+
+fn main() {
+  println(pick(1))
+  println(other(1))
+}

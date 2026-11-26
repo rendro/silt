@@ -4470,9 +4470,13 @@ impl TypeChecker {
     /// - inside such a mismatch, where the prelude's type is given to
     ///   what the name made the program's (the arm `Some(n)` beside it):
     ///   "expected Slot, got Option(Int)", whose help on chaining through
-    ///   an `Option` does not apply.
+    ///   an `Option` does not apply; and so in the other arms of a
+    ///   `match` one of whose arms is the name with a mismatch at it
+    ///   (`3 -> Stop` beside `_ -> Continue(acc + x)` as a fold's
+    ///   step): "expected Light, got Step(Int)".
     pub(super) fn help_for_hidden_prelude_variants(&mut self) {
         let uses = std::mem::take(&mut self.prelude_variant_uses);
+        let matches = std::mem::take(&mut self.match_arm_bodies);
         if uses.is_empty() {
             return;
         }
@@ -4487,15 +4491,32 @@ impl TypeChecker {
         // (`util.Slot` as shown is the type `Slot`.)
         let is_type =
             |shown: &str, name: Symbol| shown.rsplit('.').next() == Some(resolve(name).as_str());
-        let contains = |outer: Span, inner: Span| {
-            outer != inner
-                && outer.file == inner.file
-                && outer.start <= inner.start
-                && inner.end <= outer.end
+        let within = |outer: Span, inner: Span| {
+            outer.file == inner.file && outer.start <= inner.start && inner.end <= outer.end
         };
-        // The mismatches around a name: their place, the two types, and
-        // the name's place and help.
-        let mut around: Vec<(Span, String, String, Span, String, String)> = Vec::new();
+        let contains = |outer: Span, inner: Span| outer != inner && within(outer, inner);
+        // The other arms' bodies of the innermost `match` an arm of
+        // which holds the place `at`.
+        let other_arms = |at: Span| -> Vec<Span> {
+            let arm = |body: &Span| within(*body, at);
+            let Some(bodies) = matches
+                .iter()
+                .filter(|bodies| bodies.iter().any(arm))
+                .min_by_key(|bodies| {
+                    bodies
+                        .iter()
+                        .find(|body| arm(body))
+                        .map(|body| body.end - body.start)
+                })
+            else {
+                return Vec::new();
+            };
+            bodies.iter().filter(|body| !arm(body)).copied().collect()
+        };
+        // The mismatches a name makes: the places where one the other
+        // way round may stand (inside it, or in the arms beside the
+        // name), the two types, and the name's place and help.
+        let mut around: Vec<(Vec<Span>, String, String, Span, String, String)> = Vec::new();
         for d in &mut self.errors {
             if d.code != Code::TypeMismatch {
                 continue;
@@ -4522,6 +4543,13 @@ impl TypeChecker {
                     if !d.help.contains(&help) {
                         d.help.push(help);
                     }
+                    if owner.is_some_and(|owner| is_type(&got, owner)) {
+                        let beside = other_arms(*span);
+                        if !beside.is_empty() {
+                            let help = hidden_variant_help(&text, &got, prelude);
+                            around.push((beside, expected.clone(), got.clone(), *span, text, help));
+                        }
+                    }
                     break;
                 }
                 if contains(d.span, *span) && owner.is_some_and(|owner| is_type(&got, owner)) {
@@ -4531,7 +4559,14 @@ impl TypeChecker {
                             .push((*span, format!("this `{text}` is the variant of `{got}`")));
                         d.help.push(help.clone());
                     }
-                    around.push((d.span, expected.clone(), got.clone(), *span, text, help));
+                    around.push((
+                        vec![d.span],
+                        expected.clone(),
+                        got.clone(),
+                        *span,
+                        text,
+                        help,
+                    ));
                     break;
                 }
             }
@@ -4547,8 +4582,10 @@ impl TypeChecker {
                 continue;
             };
             let Some((_, _, own, span, text, help)) =
-                around.iter().find(|(outer, prelude, own, ..)| {
-                    contains(*outer, d.span) && expected == *own && got == *prelude
+                around.iter().find(|(places, prelude, own, ..)| {
+                    expected == *own
+                        && got == *prelude
+                        && places.iter().any(|place| within(*place, d.span))
                 })
             else {
                 continue;
