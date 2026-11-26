@@ -4,7 +4,7 @@
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::typed::builtins;
+use super::typed::{Bytes, builtins};
 use crate::builtins::time::make_datetime;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
@@ -390,6 +390,14 @@ builtins! {
         let (path, contents) = (path.to_string(), contents.to_string());
         vm.io("io.write_file", io_unknown_err, Leave::RunsOut, move |_| {
             result(std::fs::write(&path, &contents), &path, unit)
+        })
+    }
+
+    // The bytes as they are, by the rules of `write_file`.
+    fn write_bytes(vm, path: &str, contents: Bytes) -> Result<Step, VmError> {
+        let (path, contents) = (path.to_string(), contents.clone());
+        vm.io("io.write_bytes", io_unknown_err, Leave::RunsOut, move |_| {
+            result(std::fs::write(&path, contents.as_slice()), &path, unit)
         })
     }
 

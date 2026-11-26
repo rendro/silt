@@ -89,6 +89,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn read_line() -> Result(Option(String), IoError)", "Read one line from stdin, or None at its end", io::read_line),
                 f("fn read_stdin() -> Result(String, IoError)", "Read all of stdin as a string", io::read_stdin),
                 f("fn read_stdin_bytes() -> Result(Bytes, IoError)", "Read all of stdin as bytes", io::read_stdin_bytes),
+                f("fn write_bytes(path: String, contents: Bytes) -> Result((), IoError)", "Write bytes to file", io::write_bytes),
                 f("fn write_file(path: String, contents: String) -> Result((), IoError)", "Write string to file", io::write_file),
             ],
         },

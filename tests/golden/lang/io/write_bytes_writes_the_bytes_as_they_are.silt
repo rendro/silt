@@ -1,0 +1,22 @@
+-- io.write_bytes writes bytes that are no UTF-8 as they are, creating or
+-- overwriting the file; io.read_bytes reads them back. Its errors are those
+-- of io.write_file.
+import bytes
+import io
+import result
+
+fn main() {
+  when let Ok(data) = bytes.from_list([104, 105, 0, 255]) else {
+    return println("not bytes")
+  }
+  println(io.write_bytes("data.bin", data))
+  match io.read_bytes("data.bin") {
+    Ok(back) -> println("{bytes.to_hex(back)} {back == data}")
+    Err(e) -> println("Error: {e}")
+  }
+  println(io.write_bytes("data.bin", bytes.from_string("x")))
+  println(io.read_bytes("data.bin") |> result.map { b -> bytes.to_hex(b) })
+  println(io.read_file("data.bin"))
+  println(io.write_bytes("data.bin", bytes.empty()))
+  println(io.read_file("data.bin"))
+}

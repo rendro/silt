@@ -22,6 +22,7 @@ inspection.
 | `read_line` | `() -> Result(Option(String), IoError)` | Read one line from stdin, or None at its end |
 | `read_stdin` | `() -> Result(String, IoError)` | Read all of stdin as a string |
 | `read_stdin_bytes` | `() -> Result(Bytes, IoError)` | Read all of stdin as bytes |
+| `write_bytes` | `(String, Bytes) -> Result((), IoError)` | Write bytes to file |
 | `write_file` | `(String, String) -> Result((), IoError)` | Write string to file |
 
 ## Errors
@@ -271,6 +272,33 @@ import io
 fn main() {
   match io.read_stdin_bytes() {
     Ok(b) -> println("{bytes.length(b)} bytes")
+    Err(e) -> println("Error: {e}")
+  }
+}
+```
+
+
+## `io.write_bytes`
+
+```
+io.write_bytes(path: String, contents: Bytes) -> Result((), IoError)
+```
+
+Writes bytes to a file as they are, creating or overwriting it: the other
+half of `io.read_bytes`. Its rules and errors are those of `io.write_file`.
+Bytes that are no UTF-8 (an image, a file with a stray byte for a test) are
+written too.
+
+```silt
+import bytes
+import io
+
+fn main() {
+  when let Ok(data) = bytes.from_list([104, 105, 255]) else {
+    return println("not bytes")
+  }
+  match io.write_bytes("data.bin", data) {
+    Ok(_) -> println("written")
     Err(e) -> println("Error: {e}")
   }
 }

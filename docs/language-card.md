@@ -367,6 +367,7 @@ io.read_file(path: String) -> Result(String, IoError)
 io.read_line() -> Result(Option(String), IoError)
 io.read_stdin() -> Result(String, IoError)
 io.read_stdin_bytes() -> Result(Bytes, IoError)
+io.write_bytes(path: String, contents: Bytes) -> Result((), IoError)
 io.write_file(path: String, contents: String) -> Result((), IoError)
 ```
 
