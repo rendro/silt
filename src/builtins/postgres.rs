@@ -3230,6 +3230,9 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
                 format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}");
             match mend(exp, act) {
                 Mend::Cast => format!("{text}; cast it in SQL, for example {col}::text"),
+                Mend::Timestamptz => {
+                    format!("{text}; cast it in SQL, for example {col}::timestamptz")
+                }
                 Mend::Json => format!(
                     "{text}; a field of type `{exp}` is filled only from a json or jsonb column"
                 ),
@@ -3256,6 +3259,9 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 enum Mend {
     /// Cast the column in SQL.
     Cast,
+    /// Cast the column to a `timestamptz`, the one type that fills an
+    /// `Instant`.
+    Timestamptz,
     /// Nothing but a json document fills the field.
     Json,
     /// Nothing but a json document, or an array of them, fills the
@@ -3296,11 +3302,20 @@ fn mend(expected: &str, actual: &str) -> Mend {
                     | "time.Date"
                     | "time.Time"
                     | "time.DateTime"
+                    | "Instant"
                     | "json.Value"
             ),
         }
     }
+    let mut element = expected;
+    while let Some(inner) = ["List(", "Option("]
+        .iter()
+        .find_map(|head| element.strip_prefix(head)?.strip_suffix(')'))
+    {
+        element = inner;
+    }
     match (from_a_column(expected), expected.starts_with("List(")) {
+        (true, _) if element == "Instant" => Mend::Timestamptz,
         (true, _) => Mend::Cast,
         (false, false) => Mend::Json,
         (false, true) => Mend::JsonArray,
@@ -3921,6 +3936,9 @@ mod tests {
             assert_eq!(mend("List(Option(Int))", actual), Mend::Cast, "{actual}");
             assert_eq!(mend("List(List(Option(time.Date)))", actual), Mend::Cast);
             assert_eq!(mend("List(Option(Meta))", actual), Mend::JsonArray);
+            // (An `Instant` is filled from a `timestamptz` alone.)
+            assert_eq!(mend("Instant", actual), Mend::Timestamptz, "{actual}");
+            assert_eq!(mend("List(Option(Instant))", actual), Mend::Timestamptz);
             assert_eq!(
                 mend("List(List(Meta))", actual),
                 Mend::JsonArray,

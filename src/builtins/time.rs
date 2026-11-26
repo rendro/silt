@@ -375,7 +375,7 @@ pub(crate) fn make_datetime(dt: NaiveDateTime) -> Value {
 }
 
 /// Build a Silt `Instant` record Value.
-fn make_instant(epoch_ns: i64) -> Value {
+pub(crate) fn make_instant(epoch_ns: i64) -> Value {
     Value::builtin_record(ty::INSTANT, [("epoch_ns", Value::Int(epoch_ns))])
 }
 

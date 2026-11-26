@@ -1,0 +1,71 @@
+-- A `timestamptz` column fills an `Instant` field, the same point in
+-- time, to the microsecond postgres keeps; an `Instant` parameter goes
+-- to the server as a `timestamptz`, whatever the session's TimeZone
+-- (here New York's), in a list as a `timestamptz[]`. A `DateTime`
+-- field is filled as before, and a json document still fills an
+-- `Instant`. A `timestamp` column fills no `Instant`: it has no zone.
+-- Into a json column the program sends `json.stringify(at)`.
+import env
+import json
+import postgres
+import time
+
+type I { started: time.Instant }
+
+type Both { at: time.Instant, dt: time.DateTime, maybe: Option(time.Instant) }
+
+type S { s: String }
+
+type Same { same: Bool, back: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      let done = postgres.transact(db) { tx ->
+        let _ = postgres.execute(tx, "SET LOCAL TimeZone = 'America/New_York'", ())?
+        let rows = postgres.query(tx, "SELECT TIMESTAMPTZ '2026-11-01 06:00:00.123456+00' AS started", (), I)?
+        println("read: {rows}")
+        let both = postgres.query(
+          tx,
+          "SELECT t AS at, t AS dt, NULL::timestamptz AS maybe FROM (SELECT TIMESTAMPTZ '2026-11-01 06:00:00.5+00' AS t) AS x",
+          (),
+          Both,
+        )?
+        println("both: {both}")
+        let at = time.Instant { epoch_ns: 1793512800123000000 }
+        let sent = postgres.query(
+          tx,
+          "SELECT $1 = TIMESTAMPTZ '2026-11-01 06:00:00.123+00' AS same, ($1 AT TIME ZONE 'UTC')::text AS back",
+          (at,),
+          Same,
+        )?
+        println("sent: {sent}")
+        let some = postgres.query(tx, "SELECT ($1::timestamptz AT TIME ZONE 'UTC')::text AS s", (Some(at),), S)?
+        println("an Option: {some}")
+        let listed = postgres.query(
+          tx,
+          "SELECT ($1::timestamptz[])[2] = TIMESTAMPTZ '1970-01-01 00:00:00+00' AS same, $1::timestamptz[]::text AS back",
+          ([at, time.Instant { epoch_ns: 0 }],),
+          Same,
+        )?
+        println("a list: {listed}")
+        let back = postgres.query(tx, "SELECT $1::timestamptz AS started", (at,), I)?
+        println("round trip: {back} {back == [I { started: at }]}")
+        let doc = postgres.query(tx, "SELECT $1::jsonb AS started", (json.stringify(at),), I)?
+        println("from jsonb: {doc}")
+        println("a timestamp: {postgres.query(tx, "SELECT TIMESTAMP '2026-11-01 06:00:00' AS started", (), I)}")
+        Ok(())
+      }
+      println("done: {done}")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e}")
+  }
+}
