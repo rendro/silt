@@ -1032,6 +1032,8 @@ impl Vm {
                     push_copy!(self.stack, self.stack[base - 1]);
                 }
                 Instr::CallDict { method, argc, at } => {
+                    let args_at = self.stack.len() - argc;
+                    give::before_call(&mut self.stack, chunk, ip, base, args_at - 1, args_at);
                     save!();
                     go_on!(ok!(self.call_dict(method, argc, at, false)));
                 }
@@ -1080,14 +1082,36 @@ impl Vm {
                     ok!(self.bind(n));
                     load!();
                 }
-                Instr::Call { argc } => call!(argc),
+                Instr::Call { argc } => {
+                    let func_slot = self.stack.len() - 1 - argc;
+                    give::before_call(&mut self.stack, chunk, ip, base, func_slot, func_slot + 1);
+                    call!(argc)
+                }
                 Instr::CallChecked { argc, at, template } => {
+                    let func_slot = self.stack.len() - 1 - argc;
+                    give::before_call(&mut self.stack, chunk, ip, base, func_slot, func_slot + 1);
                     let at = self.stack.len() - argc + usize::from(at);
                     save!();
                     ok!(self.check_receiver(template, at));
                     call!(argc)
                 }
-                Instr::TailCall { argc } => tail_call!(argc),
+                Instr::TailCall { argc } => {
+                    // (A closure takes the frame over, and the frame's
+                    // values go before it runs; a builtin as a value runs
+                    // above them.)
+                    let func_slot = self.stack.len() - 1 - argc;
+                    if !matches!(self.stack[func_slot], Value::VmClosure(_)) {
+                        give::before_call(
+                            &mut self.stack,
+                            chunk,
+                            ip,
+                            base,
+                            func_slot,
+                            func_slot + 1,
+                        );
+                    }
+                    tail_call!(argc)
+                }
                 Instr::TailCallChecked { argc, at, template } => {
                     let at = self.stack.len() - argc + usize::from(at);
                     save!();
@@ -1502,6 +1526,8 @@ impl Vm {
                     of,
                     at,
                 } => {
+                    let args_at = self.stack.len() - argc;
+                    give::before_call(&mut self.stack, chunk, ip, base, args_at, args_at);
                     save!();
                     go_on!(ok!(self.call_method(method, argc, of, at, false)));
                 }
