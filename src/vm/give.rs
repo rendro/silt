@@ -44,7 +44,8 @@ pub(super) fn let_go_of_copies(
     let_go(stack, chunk, ip, base, args_at, args_at..args_at + 1);
 }
 
-/// Before a call of a function, a method or a builtin as a value, that
+/// Before a call of a function, a method or a builtin as a value (in
+/// tail position too: a builtin runs above the frame's values), that
 /// takes the frame's values from `below` (its own slot, or its first
 /// argument) and is given those from `args_at`, and after which the
 /// code goes on at `ip`: when an argument is a collection or a record,

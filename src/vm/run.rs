@@ -1095,7 +1095,23 @@ impl Vm {
                     ok!(self.check_receiver(template, at));
                     call!(argc)
                 }
-                Instr::TailCall { argc } => tail_call!(argc),
+                Instr::TailCall { argc } => {
+                    // (A closure takes the frame over, and the frame's
+                    // values go before it runs; a builtin as a value runs
+                    // above them.)
+                    let func_slot = self.stack.len() - 1 - argc;
+                    if !matches!(self.stack[func_slot], Value::VmClosure(_)) {
+                        give::before_call(
+                            &mut self.stack,
+                            chunk,
+                            ip,
+                            base,
+                            func_slot,
+                            func_slot + 1,
+                        );
+                    }
+                    tail_call!(argc)
+                }
                 Instr::TailCallChecked { argc, at, template } => {
                     let at = self.stack.len() - argc + usize::from(at);
                     save!();

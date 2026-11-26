@@ -422,6 +422,7 @@ pub(crate) fn sites(code: &[u8]) -> Box<[(usize, OnceLock<Option<Ahead>>)]> {
         let site = match instr {
             Instr::CallBuiltin { builtin, .. } => puts(builtin),
             Instr::Call { .. }
+            | Instr::TailCall { .. }
             | Instr::CallChecked { .. }
             | Instr::CallMethod { .. }
             | Instr::CallDict { .. } => true,

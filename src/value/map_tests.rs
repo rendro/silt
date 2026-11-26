@@ -997,6 +997,56 @@ import host
     assert!(lists < 20, "{lists} changes of lists copied a shared tree");
 }
 
+/// A builtin that changes a collection, called as a value, changes it
+/// in place when it is the one holder: in a fold's step, where the call
+/// is the step's last act (`{ acc, x -> f(acc, x) }`), in a function
+/// that calls itself, taken from a list, and given to a fold as its
+/// step: 15,000 changes find each collection held nowhere else. (The
+/// step's slot held the old one while the builtin ran: each change
+/// copied the path of the tree.)
+#[test]
+fn a_builtin_called_as_a_value_changes_it_in_place() {
+    let (given, shared, lists) = run_counting_shared(
+        r#"
+import list
+import map
+import set
+fn looped(i: Int, acc: Map(Int, Int)) -> Map(Int, Int) {
+  let f = map.set
+  match i == 0 {
+    true -> acc
+    false -> looped(i - 1, f(acc, i, i))
+  }
+}
+fn main() {
+  let xs = list.map(1..3000) { i -> i }
+  let f = set.insert
+  let a = list.fold(xs, #[]) { acc, x -> f(acc, x) }
+  let g = list.append
+  let b = list.fold(xs, []) { acc, x -> g(acc, x) }
+  let c = looped(3000, #{})
+  let fs = [map.set]
+  let d = list.fold(xs, #{}) { acc, x ->
+    match list.first(fs) {
+      Some(h) -> h(acc, x, x)
+      None -> acc
+    }
+  }
+  let e = list.fold(xs, #[], set.insert)
+  host.give([set.length(a), list.length(b), map.length(c), map.length(d), set.length(e)])
+}
+import host
+"#,
+    );
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    assert_eq!(given, ints(&[3_000, 3_000, 3_000, 3_000, 3_000]));
+    assert!(
+        shared < 20,
+        "{shared} changes of maps and sets copied a shared tree"
+    );
+    assert!(lists < 20, "{lists} changes of lists copied a shared tree");
+}
+
 // ── Deep values ────────────────────────────────────────────────────
 
 /// A value nested 10,000 levels deep through maps and sets kept in
