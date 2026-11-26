@@ -16,11 +16,12 @@ error[type]: trait 'Conv' expects 1 type argument, got 0 in impl for 'json.Value
  14 | trait Conv for json.Value { fn conv(self) -> Int { 1 } }
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Conv' expects 1 type argument, got 0 in impl for 'json.Value'
 
-error[type]: type mismatch: expected a, got Int
+error[type]: type mismatch: expected Fn(json.Value) -> a, got Fn(json.Value) -> Int
  --> impl_and_pattern_messages_write_another_modules_names.silt:14:29
     |
  14 | trait Conv for json.Value { fn conv(self) -> Int { 1 } }
-    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected a, got Int
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(json.Value) -> a, got Fn(json.Value) -> Int
+  = note: the part that differs: expected a, got Int
   = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
 
 error[type]: trait impl 'Encode' for 'P' is missing method 'encode'

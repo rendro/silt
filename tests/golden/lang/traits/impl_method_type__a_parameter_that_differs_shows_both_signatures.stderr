@@ -1,0 +1,6 @@
+error[type]: type mismatch: expected Fn(Square, Int, String) -> Option(Int), got Fn(Square, Float, String) -> Option(Int)
+ --> impl_method_type__a_parameter_that_differs_shows_both_signatures.silt:11:3
+    |
+ 11 |   fn scale(self, by: Float, name: String) -> Option(Int) {
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(Square, Int, String) -> Option(Int), got Fn(Square, Float, String) -> Option(Int)
+  = note: the part that differs: expected Int, got Float

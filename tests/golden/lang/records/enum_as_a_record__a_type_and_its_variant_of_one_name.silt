@@ -1,0 +1,16 @@
+-- exit: 1
+-- An enum type with a variant of its own name, written as a record
+-- literal or pattern: the error says the name is the enum type's, and the
+-- help shows the variant of that name as a call.
+type Go { Go(Int), Other }
+type Tag { Tag }
+
+fn main() {
+  let g = Go { x: 1 }
+  let t = Tag { name: "a" }
+  match g {
+    Go { x } -> println(x)
+    _ -> println("other")
+  }
+  println(t)
+}

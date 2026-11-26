@@ -1,0 +1,6 @@
+error[type]: type mismatch: expected Fn(Box) -> List(Int), got Fn(Box) -> List(String)
+ --> impl_method_type__a_return_type_that_differs_shows_both_signatures.silt:13:3
+    |
+ 13 |   fn parts(self) -> List(String) {
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(Box) -> List(Int), got Fn(Box) -> List(String)
+  = note: the part that differs: expected Int, got String

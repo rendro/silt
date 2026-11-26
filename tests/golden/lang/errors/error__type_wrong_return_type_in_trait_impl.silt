@@ -1,6 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type mismatch: expected Int, got String
+-- stderr-contains: type mismatch: expected Fn(Int) -> Int, got Fn(Int) -> String
+-- stderr-contains: the part that differs: expected Int, got String
 trait Numeric {
   fn double(self) -> Int
 }

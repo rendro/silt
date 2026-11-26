@@ -1,0 +1,19 @@
+-- exit: 1
+-- An impl's method that differs from the trait's in a parameter and in
+-- its result: one error with both whole signatures and a note for each
+-- part.
+trait Pair {
+  fn pick(self, i: Int) -> Result(Int, String)
+}
+
+type Two { a: Int, b: Int }
+
+trait Pair for Two {
+  fn pick(self, i: String) -> Result(Int, Bool) {
+    Ok(self.a)
+  }
+}
+
+fn main() {
+  println(Pair.pick(Two { a: 1, b: 2 }, 0))
+}

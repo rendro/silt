@@ -1,0 +1,19 @@
+-- exit: 1
+-- stderr-contains: undefined type 'Nope'
+-- stderr-contains: undefined record type 'Nada' in pattern
+-- stderr-contains: module 'lights' has no record type 'Lamp'
+-- stderr-not-contains: is an enum type
+-- A record literal or pattern whose name names nothing keeps the error
+-- that the type is undefined, beside an enum the module offers.
+import lights
+
+fn main() {
+  let r = Nope { x: 1 }
+  let s = lights.Lamp { x: 1 }
+  match lights.Go {
+    Nada { x } -> println(x)
+    _ -> println("go")
+  }
+  println(r)
+  println(s)
+}

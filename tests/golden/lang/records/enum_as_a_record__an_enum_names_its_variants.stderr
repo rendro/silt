@@ -1,0 +1,41 @@
+error[type]: 'Light' is an enum type, not a record type
+ --> enum_as_a_record__an_enum_names_its_variants.silt:12:11
+    |
+ 12 |   let a = Light { x: 1 }
+    |           ^^^^^ 'Light' is an enum type, not a record type
+  = help: a value of `Light` is one of its variants: write `Go` or `Stop`
+
+error[type]: 'Slot' is an enum type, not a record type
+ --> enum_as_a_record__an_enum_names_its_variants.silt:13:11
+    |
+ 13 |   let b = Slot { x: 1 }
+    |           ^^^^ 'Slot' is an enum type, not a record type
+  = help: a value of `Slot` is one of its variants: write `Full(a)`, `Pair(a, b)` or `Empty`
+
+error[type]: 'One' is an enum type, not a record type
+ --> enum_as_a_record__an_enum_names_its_variants.silt:14:11
+    |
+ 14 |   let c = One { x: 1 }
+    |           ^^^ 'One' is an enum type, not a record type
+  = help: a value of `One` is its variant: write `Only(a)`
+
+error[type]: 'Big' is an enum type, not a record type
+ --> enum_as_a_record__an_enum_names_its_variants.silt:15:11
+    |
+ 15 |   let d = Big { x: 1 }
+    |           ^^^ 'Big' is an enum type, not a record type
+  = help: a value of `Big` is one of its variants: write `A`, `B`, `C`, `D`, `E`, `F` or 2 more
+
+error[type]: 'Option' is an enum type, not a record type
+ --> enum_as_a_record__an_enum_names_its_variants.silt:16:11
+    |
+ 16 |   let e = Option { v: 1 }
+    |           ^^^^^^ 'Option' is an enum type, not a record type
+  = help: a value of `Option` is one of its variants: write `Some(a)` or `None`
+
+error[type]: 'Light' is an enum type, not a record type
+ --> enum_as_a_record__an_enum_names_its_variants.silt:18:5
+    |
+ 18 |     Light { x } -> println(x)
+    |     ^^^^^ 'Light' is an enum type, not a record type
+  = help: a value of `Light` is one of its variants: write `Go` or `Stop`

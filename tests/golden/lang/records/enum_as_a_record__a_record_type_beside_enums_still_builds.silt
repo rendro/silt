@@ -1,0 +1,20 @@
+-- A record type beside enums, one of whose variants holds it: the
+-- record's literal and pattern still build and match.
+type Light { Go, Stop }
+type Pt { x: Int, y: Int }
+type Shape { Dot(Pt), Blank }
+
+fn main() {
+  let p = Pt { x: 1, y: 2 }
+  match p {
+    Pt { x, y } -> println("{x} {y}")
+  }
+  match Dot(Pt { x: 3, y: 4 }) {
+    Dot(Pt { x, .. }) -> println(x)
+    Blank -> println("blank")
+  }
+  match Go {
+    Go -> println("go")
+    Stop -> println("stop")
+  }
+}

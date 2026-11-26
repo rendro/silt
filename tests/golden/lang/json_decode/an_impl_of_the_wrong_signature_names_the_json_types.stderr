@@ -1,17 +1,20 @@
-error[type]: type mismatch: expected json.Value, got String
+error[type]: type mismatch: expected Fn(A) -> json.Value, got Fn(A) -> String
  --> an_impl_of_the_wrong_signature_names_the_json_types.silt:12:3
     |
  12 |   fn encode(self) -> String { "x" }
-    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected json.Value, got String
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(A) -> json.Value, got Fn(A) -> String
+  = note: the part that differs: expected json.Value, got String
 
-error[type]: type mismatch: expected json.Value, got String
+error[type]: type mismatch: expected Fn(json.Value) -> Result(B, json.JsonError), got Fn(String) -> Result(B, json.JsonError)
  --> an_impl_of_the_wrong_signature_names_the_json_types.silt:18:3
     |
  18 |   fn decode(value: String) -> Result(Self, json.JsonError) { Ok(B { n: 1 }) }
-    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected json.Value, got String
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(json.Value) -> Result(B, json.JsonError), got Fn(String) -> Result(B, json.JsonError)
+  = note: the part that differs: expected json.Value, got String
 
-error[type]: type mismatch: expected json.JsonError, got String
+error[type]: type mismatch: expected Fn(json.Value) -> Result(C, json.JsonError), got Fn(json.Value) -> Result(C, String)
  --> an_impl_of_the_wrong_signature_names_the_json_types.silt:24:3
     |
  24 |   fn decode(value: json.Value) -> Result(Self, String) { Ok(C { n: 1 }) }
-    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected json.JsonError, got String
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(json.Value) -> Result(C, json.JsonError), got Fn(json.Value) -> Result(C, String)
+  = note: the part that differs: expected json.JsonError, got String

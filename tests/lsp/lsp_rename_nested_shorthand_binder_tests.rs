@@ -72,9 +72,13 @@ fn apply_edits(text: &str, edits: &[Value]) -> String {
 }
 
 /// The renamed program checks: the field keeps its name and the binder
-/// gets the new one (`x: w`), so the result is the same program.
-fn assert_checks(applied: &str) {
-    let dir = std::env::temp_dir().join(format!("silt_r101_shorthand_{}", std::process::id()));
+/// gets the new one (`x: w`), so the result is the same program. The
+/// directory is the test's own (`test`): the tests of this binary run as
+/// threads of one process, and one test's removal of a shared directory
+/// took the file another was about to check.
+fn assert_checks(test: &str, applied: &str) {
+    let dir =
+        std::env::temp_dir().join(format!("silt_r101_shorthand_{test}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join(format!("case_{}.silt", applied.len()));
     std::fs::write(&file, applied).unwrap();
@@ -167,7 +171,7 @@ fn rename_shorthand_binder_after_nested_subpattern_in_match_arm() {
         !applied.contains("w { a: Inner"),
         "the constructor head must NOT be clobbered; got:\n{applied}"
     );
-    assert_checks(&applied);
+    assert_checks("match_arm", &applied);
     client.shutdown();
 }
 
@@ -222,7 +226,7 @@ fn rename_shorthand_binder_after_nested_subpattern_in_let_destructure() {
         !applied.contains("w { a: Inner"),
         "the constructor head must NOT be clobbered; got:\n{applied}"
     );
-    assert_checks(&applied);
+    assert_checks("let_destructure", &applied);
     client.shutdown();
 }
 
