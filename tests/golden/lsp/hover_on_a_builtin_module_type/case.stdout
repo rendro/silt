@@ -2,6 +2,7 @@
 ```silt
 type io.IoError {
   NotFound(String),
+  FolderNotFound(String),
   PermissionDenied(String),
   AlreadyExists(String),
   InvalidInput(String),
@@ -17,6 +18,7 @@ type io.IoError {
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `NotFound(String)` | path | file or directory missing |
+| `FolderNotFound(String)` | folder | the folder a write goes into is missing |
 | `PermissionDenied(String)` | path | permissions check failed |
 | `AlreadyExists(String)` | path | target already exists |
 | `InvalidInput(String)` | description | malformed argument |

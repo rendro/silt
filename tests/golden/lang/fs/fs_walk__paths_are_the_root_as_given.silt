@@ -1,0 +1,29 @@
+-- fs.walk names every path by the root as given, joined with the path
+-- inside the tree: a relative root gives relative paths, the root first.
+-- (Windows joins with a backslash: the output turns it into a slash.)
+import fs
+import io
+import list
+import string
+
+fn shown(root: String) -> String {
+  match fs.walk(root) {
+    Ok(paths) -> {
+      let paths = list.map(paths) { p -> string.replace(p, "\\", "/") }
+      let first = list.first(paths)
+      "{first} {list.sort(paths)}"
+    }
+    Err(e) -> "Error: {e}"
+  }
+}
+
+fn main() {
+  let _ = fs.mkdir("content/sub")
+  let _ = io.write_file("content/a.md", "a")
+  let _ = io.write_file("content/sub/b.md", "b")
+  println(shown("content"))
+  println(shown("content/"))
+  println(shown("content/sub"))
+  println(shown("./content/../content/sub"))
+  println(shown("content/a.md"))
+}

@@ -1,0 +1,26 @@
+-- fs.remove_all removes a directory with everything in it, or a file; a
+-- path that is not there is NotFound; a path that ends in . or .., or a
+-- root, is refused and nothing is removed.
+import fs
+import io
+
+fn main() {
+  let _ = fs.mkdir("out/sub/deeper")
+  let _ = io.write_file("out/a.txt", "a")
+  let _ = io.write_file("out/sub/deeper/b.txt", "b")
+  let _ = io.write_file("one.txt", "1")
+  println(fs.remove("out"))
+  println(fs.remove_all("out/."))
+  println(fs.remove_all("out/sub/.."))
+  println(fs.remove_all("."))
+  println(fs.remove_all("/"))
+  println(fs.exists("out/sub/deeper/b.txt"))
+  println(fs.remove_all("out"))
+  println(fs.exists("out"))
+  println(fs.remove_all("one.txt"))
+  println(fs.exists("one.txt"))
+  match fs.remove_all("out") {
+    Err(io.NotFound(path)) -> println("not there: {path}")
+    other -> println(other)
+  }
+}

@@ -1,0 +1,6 @@
+Empty
+Empty
+Some(Terminate)
+Empty
+Some(Interrupt)
+[Interrupt, Terminate]

@@ -1,0 +1,11 @@
+Err(directory not empty: out)
+Err(invalid input: fs.remove_all does not remove ., .., a root or a drive: out/.)
+Err(invalid input: fs.remove_all does not remove ., .., a root or a drive: out/sub/..)
+Err(invalid input: fs.remove_all does not remove ., .., a root or a drive: .)
+Err(invalid input: fs.remove_all does not remove ., .., a root or a drive: /)
+true
+Ok(())
+false
+Ok(())
+false
+not there: out

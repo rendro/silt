@@ -282,7 +282,7 @@ fn main() {
   when let Ok(raw) = bytes.from_hex("6f6e650a62616420ff0a74776f0a") else {
     panic("no hex")
   }
-  let _ = stream.write_to_file(stream.from_list([raw]), "mixed.log")
+  let _ = io.write_bytes("mixed.log", raw)
   let read = each_line("mixed.log") { line ->
     match line {
       Ok(text) -> println(text)
@@ -1043,7 +1043,8 @@ fn main() {
 stream.write_to_file(ch: Channel(Bytes), path: String) -> Result((), IoError)
 ```
 
-Writes the bytes of `ch` to the file at `path`, which it creates or empties, until `ch` closes. A failure to write is an `Err`.
+Writes the bytes of `ch` to the file at `path`, which it creates or empties, until `ch` closes. A failure to write is an `Err`: into a folder that does not
+exist, `Err(FolderNotFound(folder))`, as for `io.write_file`.
 
 ```silt
 import bytes

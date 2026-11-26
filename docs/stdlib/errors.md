@@ -44,6 +44,7 @@ modules.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `NotFound(String)` | path | file or directory missing |
+| `FolderNotFound(String)` | folder | the folder a write goes into is missing |
 | `PermissionDenied(String)` | path | permissions check failed |
 | `AlreadyExists(String)` | path | target already exists |
 | `InvalidInput(String)` | description | malformed argument |
@@ -206,6 +207,7 @@ import io
 fn handle(e: io.IoError) -> String {
   match e {
     io.NotFound(path) -> "missing: {path}"
+    io.FolderNotFound(folder) -> "no folder: {folder}"
     io.PermissionDenied(path) -> "denied: {path}"
     io.AlreadyExists(_) | io.InvalidInput(_) -> "recoverable"
     io.Interrupted | io.UnexpectedEof | io.WriteZero -> "transient"

@@ -357,7 +357,7 @@ println(value: a) -> () where a: Display
 ### io
 
 ```
-type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
+type IoError { NotFound(String), FolderNotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
 io.args() -> List(String)
 io.eprint(value: a) -> () where a: Display
 io.eprintln(value: a) -> () where a: Display
@@ -367,6 +367,7 @@ io.read_file(path: String) -> Result(String, IoError)
 io.read_line() -> Result(Option(String), IoError)
 io.read_stdin() -> Result(String, IoError)
 io.read_stdin_bytes() -> Result(Bytes, IoError)
+io.write_bytes(path: String, contents: Bytes) -> Result((), IoError)
 io.write_file(path: String, contents: String) -> Result((), IoError)
 ```
 
@@ -751,6 +752,7 @@ fs.list_dir(path: String) -> Result(List(String), IoError)
 fs.mkdir(path: String) -> Result((), IoError)
 fs.read_link(path: String) -> Result(String, IoError)
 fs.remove(path: String) -> Result((), IoError)
+fs.remove_all(path: String) -> Result((), IoError)
 fs.rename(from: String, to: String) -> Result((), IoError)
 fs.stat(path: String) -> Result(FileStat, IoError)
 fs.walk(root: String) -> Result(List(String), IoError)
@@ -935,7 +937,9 @@ uuid.v7() -> String
 ### process
 
 ```
+type Signal { Interrupt, Terminate }
 process.exit(code: Int) -> Never
+process.stop_signals() -> Channel(Signal)
 ```
 
 ### csv

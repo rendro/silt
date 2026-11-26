@@ -615,6 +615,7 @@ pub(crate) mod ty {
     pub(crate) const CSV_ERROR: TypeId = TypeId(DefId(34));
     pub(crate) const URL_ERROR: TypeId = TypeId(DefId(35));
     pub(crate) const RUNTIME_ERROR: TypeId = TypeId(DefId(36));
+    pub(crate) const SIGNAL: TypeId = TypeId(DefId(37));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -660,13 +661,14 @@ pub mod bv {
     pub(crate) const HEAD: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 5);
     pub(crate) const OPTIONS: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 6);
     pub(crate) const IO_NOT_FOUND: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 0);
-    pub(crate) const IO_PERMISSION_DENIED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 1);
-    pub(crate) const IO_ALREADY_EXISTS: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 2);
-    pub(crate) const IO_INVALID_INPUT: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 3);
-    pub(crate) const IO_INTERRUPTED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 4);
-    pub(crate) const IO_UNEXPECTED_EOF: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 5);
-    pub(crate) const IO_WRITE_ZERO: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 6);
-    pub(crate) const IO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
+    pub(crate) const IO_FOLDER_NOT_FOUND: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 1);
+    pub(crate) const IO_PERMISSION_DENIED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 2);
+    pub(crate) const IO_ALREADY_EXISTS: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 3);
+    pub(crate) const IO_INVALID_INPUT: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 4);
+    pub(crate) const IO_INTERRUPTED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 5);
+    pub(crate) const IO_UNEXPECTED_EOF: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 6);
+    pub(crate) const IO_WRITE_ZERO: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
+    pub(crate) const IO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 8);
     pub(crate) const JSON_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 0);
     pub(crate) const JSON_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 1);
     pub(crate) const JSON_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 2);
@@ -738,6 +740,8 @@ pub mod bv {
     pub(crate) const JSON_STRING: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 4);
     pub(crate) const JSON_ARRAY: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 5);
     pub(crate) const JSON_OBJECT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 6);
+    pub(crate) const SIGNAL_INTERRUPT: BuiltinVariant = BuiltinVariant::new(ty::SIGNAL, 0);
+    pub(crate) const SIGNAL_TERMINATE: BuiltinVariant = BuiltinVariant::new(ty::SIGNAL, 1);
 }
 
 /// The builtin types whose ids are the constants of [`ty`], in that
@@ -780,6 +784,7 @@ pub(crate) const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "CsvError",
     "UrlError",
     "RuntimeError",
+    "Signal",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -990,6 +995,7 @@ mod tests {
             (bv::HEAD, "HEAD"),
             (bv::OPTIONS, "OPTIONS"),
             (bv::IO_NOT_FOUND, "NotFound"),
+            (bv::IO_FOLDER_NOT_FOUND, "FolderNotFound"),
             (bv::IO_PERMISSION_DENIED, "PermissionDenied"),
             (bv::IO_ALREADY_EXISTS, "AlreadyExists"),
             (bv::IO_INVALID_INPUT, "InvalidInput"),
@@ -1058,6 +1064,8 @@ mod tests {
             (bv::PG_POOL, "PgPool"),
             (bv::PG_TX, "PgTx"),
             (bv::PG_CURSOR, "PgCursor"),
+            (bv::SIGNAL_INTERRUPT, "Interrupt"),
+            (bv::SIGNAL_TERMINATE, "Terminate"),
         ];
         for (variant, name) in constants {
             let tag = variant.tag();

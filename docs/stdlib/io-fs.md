@@ -22,6 +22,7 @@ inspection.
 | `read_line` | `() -> Result(Option(String), IoError)` | Read one line from stdin, or None at its end |
 | `read_stdin` | `() -> Result(String, IoError)` | Read all of stdin as a string |
 | `read_stdin_bytes` | `() -> Result(Bytes, IoError)` | Read all of stdin as bytes |
+| `write_bytes` | `(String, Bytes) -> Result((), IoError)` | Write bytes to file |
 | `write_file` | `(String, String) -> Result((), IoError)` | Write string to file |
 
 ## Errors
@@ -31,6 +32,7 @@ Every fallible `io` / `fs` function returns `Result(T, IoError)`.
 | Variant                      | Meaning                                    |
 |------------------------------|--------------------------------------------|
 | `NotFound(path)`           | file or directory does not exist           |
+| `FolderNotFound(folder)`   | the folder a write goes into does not exist |
 | `PermissionDenied(path)`   | OS denied access                           |
 | `AlreadyExists(path)`      | destination already exists                 |
 | `InvalidInput(msg)`        | malformed argument                         |
@@ -44,16 +46,19 @@ sites destructure specific variants when they need to branch (e.g. "create
 a default when the file does not exist") and show the error otherwise. See
 [stdlib errors](errors.md) for how every error enum is shown.
 
-`NotFound(path)` from a function that writes (`io.write_file`,
-`stream.write_to_file`, the target of `fs.copy` and `fs.rename`) names the
-file it was to write, and means the folder it writes into is missing: the
-folder is not made. Shown, it reads `file not found: <path>` as for a read.
+A function that writes (`io.write_file`, `io.write_bytes`,
+`stream.write_to_file`, the target of `fs.copy` and `fs.rename`) into a
+folder that does not exist gives `FolderNotFound(folder)`, which names that
+folder, the one the path's last part goes into: the folder is not made
+(`fs.mkdir` makes it). Shown, it reads `folder not found: <folder>`. Reads keep
+`NotFound(path)`, which names the file.
 
 ```silt
 import io
 
 fn main() {
-  println(io.write_file("no-such-dir/out.txt", "x")) -- Err(file not found: no-such-dir/out.txt)
+  println(io.write_file("no-such-dir/out.txt", "x")) -- Err(folder not found: no-such-dir)
+  println(io.read_file("no-such-dir/out.txt")) -- Err(file not found: no-such-dir/out.txt)
 }
 ```
 
@@ -277,6 +282,33 @@ fn main() {
 ```
 
 
+## `io.write_bytes`
+
+```
+io.write_bytes(path: String, contents: Bytes) -> Result((), IoError)
+```
+
+Writes bytes to a file as they are, creating or overwriting it: the other
+half of `io.read_bytes`. Its rules and errors are those of `io.write_file`.
+Bytes that are no UTF-8 (an image, a file with a stray byte for a test) are
+written too.
+
+```silt
+import bytes
+import io
+
+fn main() {
+  when let Ok(data) = bytes.from_list([104, 105, 255]) else {
+    return println("not bytes")
+  }
+  match io.write_bytes("data.bin", data) {
+    Ok(_) -> println("written")
+    Err(e) -> println("Error: {e}")
+  }
+}
+```
+
+
 ## `io.write_file`
 
 ```
@@ -459,6 +491,7 @@ Filesystem operations: queries, directory management, and file manipulation.
 | `mkdir` | `(String) -> Result((), IoError)` | Create a directory (and parents) |
 | `read_link` | `(String) -> Result(String, IoError)` | Read a symlink's target (without following) |
 | `remove` | `(String) -> Result((), IoError)` | Remove a file or empty directory |
+| `remove_all` | `(String) -> Result((), IoError)` | Remove a file, or a directory and everything in it |
 | `rename` | `(String, String) -> Result((), IoError)` | Rename / move a file or directory |
 | `stat` | `(String) -> Result(FileStat, IoError)` | Fetch filesystem metadata for a path |
 | `walk` | `(String) -> Result(List(String), IoError)` | Recursively list all paths under a directory |
@@ -609,7 +642,10 @@ fs.remove(path: String) -> Result((), IoError)
 Removes a file or an empty directory. Returns `Ok(())` on success or
 `Err(IoError)` on failure. A symlink is removed itself, never what it
 points to: a link to a directory is removed as a link to a file is,
-and the directory stays.
+and the directory stays. A link to a directory given with a separator at its end
+is removed as the link: `fs.remove("link/")` removes it as `fs.remove("link")`
+does. A file given so (`f/`) is no directory: `Err(not a directory: f/)`. To remove a
+directory with what is in it, use `fs.remove_all`.
 
 ```silt
 import fs
@@ -617,6 +653,42 @@ import fs
 fn main() {
   match fs.remove("temp.txt") {
     Ok(_) -> println("removed")
+    Err(e) -> println("Error: {e}")
+  }
+}
+```
+
+
+## `fs.remove_all`
+
+```
+fs.remove_all(path: String) -> Result((), IoError)
+```
+
+Removes a file, or a directory and everything in it, at any depth: this can
+delete a lot, and nothing asks first. A symlink is removed itself, never what
+it points to, also inside the tree (as `fs.walk` lists a link as itself): a
+link to a directory elsewhere goes, and that directory stays. So does a link
+to a directory given as `path`, with a separator at its end or without
+(`link/`, `link`): the link goes, and what it points to stays. A file or a
+link to a file given with a separator at its end is no directory, and
+nothing is removed. A path that does
+not exist is `Err(NotFound(path))`; a program that wants "gone either way"
+matches it. An error from inside the tree (a directory that may not be
+changed) names `path`, and what was removed before it stays removed.
+
+A `path` whose last part is `.` or `..` (`.`, `out/.`, `../`), that is a
+root (`/`, `C:\`), or on Windows a drive alone (`C:`, the current directory of
+that drive) is refused, as `rm -r` refuses it, and nothing is removed:
+`Err(InvalidInput("fs.remove_all does not remove ., .., a root or a drive: .."))`.
+
+```silt
+import fs
+import io
+
+fn main() {
+  match fs.remove_all("out") {
+    Ok(_) | Err(io.NotFound(_)) -> println("out is gone")
     Err(e) -> println("Error: {e}")
   }
 }
@@ -766,10 +838,18 @@ fs.walk(root: String) -> Result(List(String), IoError)
 
 Recursively walks the directory tree rooted at `root` and returns a
 flat list of every path discovered — the root, files **and**
-directories, in arbitrary order. Every path is absolute, so the result
-is safe to pass back into other `fs.*` calls without worrying about
-cwd drift: the root with its own symlinks resolved, joined with the
-entry's path inside the tree.
+directories. Each path is `root` as given, joined with the entry's path
+inside the tree, as `find` lists them: `fs.walk("content")` gives
+`"content"`, `"content/a.md"`, `"content/sub"`, `"content/sub/b.md"`. So a
+path inside the tree is the path with `root` taken off its start
+(`string.strip_prefix(p, "content/")`), and every path names its file
+from where `root` does: a relative `root` gives relative paths, an
+absolute one absolute paths. Nothing is resolved: `..` and symlinks in
+`root` stay as written. On Windows the parts are joined with `\`.
+
+The root comes first, and a directory comes before what is in it; the
+order of the entries of one directory is the file system's, which is no
+order in particular: sort the list where the order matters.
 
 **Symlinks are not followed.** A symlink inside the tree is listed as
 itself (`<root>/link`), never as the path it points to, and the walk
@@ -777,8 +857,8 @@ does not go into a symlinked directory. This avoids infinite loops on
 cyclic trees (including trees with a `link -> .` inside them), and a
 program that walks and then removes what it found removes the link,
 not its target. A `root` that is itself a symlink to a directory is
-walked. If you need to follow symlinks, walk, then post-filter with
-`fs.stat` / `fs.read_link`.
+walked, and its paths are named by the link. If you need to follow
+symlinks, walk, then post-filter with `fs.stat` / `fs.read_link`.
 
 **Entry cap.** To avoid accidental OOM on huge trees, `fs.walk`
 refuses to materialize more than `1_000_000` entries. Hitting the cap

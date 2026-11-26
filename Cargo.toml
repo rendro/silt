@@ -124,12 +124,14 @@ libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
 # cancel pending I/O on the handle the parked reader is using. We pull
 # in the smallest feature set that exposes `CancelIoEx`, the `HANDLE`
 # typedef, and the `SOCKET` typedef. Prefer `windows-sys` over
-# `winapi`: it is smaller and Microsoft-maintained.
+# `winapi`: it is smaller and Microsoft-maintained. `Win32_System_Console`:
+# the Ctrl-C and Ctrl-Break handler of `process.stop_signals`.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Networking_WinSock",
     "Win32_Storage_FileSystem",
+    "Win32_System_Console",
     "Win32_System_IO",
 ] }
 

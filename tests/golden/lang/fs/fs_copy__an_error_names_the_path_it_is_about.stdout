@@ -1,7 +1,7 @@
-Err(file not found: missing/b.txt)
+Err(folder not found: missing)
 Err(file not found: gone.txt)
-Err(file not found: missing/b.txt)
+Err(folder not found: missing)
 Err(file not found: gone.txt)
-file not found: missing/b.txt
+folder not found: missing
 false
 Ok("data")

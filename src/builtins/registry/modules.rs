@@ -76,7 +76,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "io",
             page: "io-fs.md",
             types: "\
-                pub type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }\n\
+                pub type IoError { NotFound(String), FolderNotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }\n\
             ",
             error: "IoError" => io::error_text,
             rows: [
@@ -89,6 +89,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn read_line() -> Result(Option(String), IoError)", "Read one line from stdin, or None at its end", io::read_line),
                 f("fn read_stdin() -> Result(String, IoError)", "Read all of stdin as a string", io::read_stdin),
                 f("fn read_stdin_bytes() -> Result(Bytes, IoError)", "Read all of stdin as bytes", io::read_stdin_bytes),
+                f("fn write_bytes(path: String, contents: Bytes) -> Result((), IoError)", "Write bytes to file", io::write_bytes),
                 f("fn write_file(path: String, contents: String) -> Result((), IoError)", "Write string to file", io::write_file),
             ],
         },
@@ -522,6 +523,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn mkdir(path: String) -> Result((), IoError)", "Create a directory (and parents)", io::fs::mkdir),
                 f("fn read_link(path: String) -> Result(String, IoError)", "Read a symlink's target (without following)", io::fs::read_link),
                 f("fn remove(path: String) -> Result((), IoError)", "Remove a file or empty directory", io::fs::remove),
+                f("fn remove_all(path: String) -> Result((), IoError)", "Remove a file, or a directory and everything in it", io::fs::remove_all),
                 f("fn rename(from: String, to: String) -> Result((), IoError)", "Rename / move a file or directory", io::fs::rename),
                 f("fn stat(path: String) -> Result(FileStat, IoError)", "Fetch filesystem metadata for a path", io::fs::stat),
                 f("fn walk(root: String) -> Result(List(String), IoError)", "Recursively list all paths under a directory", io::fs::walk),
@@ -731,8 +733,12 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "process",
             page: "process.md",
+            types: "\
+                pub type Signal { Interrupt, Terminate }\n\
+            ",
             rows: [
                 f("fn exit(code: Int) -> Never", "End the program with an exit code", process::exit),
+                f("fn stop_signals() -> Channel(Signal)", "A channel that the first SIGINT or SIGTERM is sent into, instead of ending the process", process::stop_signals),
             ],
         },
         module! {

@@ -1,0 +1,5 @@
+Some("content") ["content", "content/a.md", "content/sub", "content/sub/b.md"]
+Some("content/") ["content/", "content/a.md", "content/sub", "content/sub/b.md"]
+Some("content/sub") ["content/sub", "content/sub/b.md"]
+Some("./content/../content/sub") ["./content/../content/sub", "./content/../content/sub/b.md"]
+Some("content/a.md") ["content/a.md"]

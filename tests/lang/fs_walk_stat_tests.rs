@@ -90,6 +90,9 @@ fn err_msg(v: Value) -> String {
                 };
                 match error.name() {
                     "NotFound" => format!("file not found: {}", first_str(error.fields())),
+                    "FolderNotFound" => {
+                        format!("folder not found: {}", first_str(error.fields()))
+                    }
                     "PermissionDenied" => {
                         format!("permission denied: {}", first_str(error.fields()))
                     }
@@ -317,33 +320,30 @@ fn tree_with_links(dir: &TempDir) -> PathBuf {
 fn test_fs_walk_lists_a_link_as_itself() {
     let dir = TempDir::new("walk_links");
     let tree = tree_with_links(&dir);
-    let root = std::fs::canonicalize(&tree).unwrap();
-    let root = root.to_string_lossy();
-    let walked = sorted_paths(&format!("fs.walk(\"{}\")", tree.to_string_lossy()));
+    let root = tree.to_string_lossy();
+    let walked = sorted_paths(&format!("fs.walk(\"{root}\")"));
     assert_eq!(
         walked,
         format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self"),
     );
 }
 
-/// fs.walk shows every path as the root, its own links resolved, joined
-/// with the path below it: a root given through a link and relative
-/// parts (`tree/../tree`) give the same absolute paths.
+/// fs.walk shows every path as the root as given, joined with the path
+/// inside the tree: a root given through a link is gone into and named
+/// by the link, and one with relative parts (`tree/../tree`) keeps them.
+/// Nothing is resolved.
 #[cfg(unix)]
 #[test]
-fn test_fs_walk_resolves_only_the_root() {
+fn test_fs_walk_names_every_path_by_the_root_as_given() {
     let dir = TempDir::new("walk_root");
-    let tree = tree_with_links(&dir);
+    tree_with_links(&dir);
     std::os::unix::fs::symlink("tree", dir.path().join("alias")).unwrap();
-    let root = std::fs::canonicalize(&tree).unwrap();
-    let root = root.to_string_lossy();
-    let expected = format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self");
     let base = dir.as_silt_str();
-    for given in [format!("{base}/alias"), format!("{base}/tree/../tree")] {
+    for root in [format!("{base}/alias"), format!("{base}/tree/../tree")] {
         assert_eq!(
-            sorted_paths(&format!("fs.walk(\"{given}\")")),
-            expected,
-            "{given}"
+            sorted_paths(&format!("fs.walk(\"{root}\")")),
+            format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self"),
+            "{root}"
         );
     }
 }
@@ -600,12 +600,13 @@ fn test_a_file_name_that_is_no_utf8_fails_the_listing_and_names_its_directory() 
     );
 }
 
-/// A root whose links lead to a directory whose path is no UTF-8 fails
-/// fs.walk, which shows each path absolute: with U+FFFD in it, every path
-/// it gave named no file. (Not on macOS, nor on Windows, as above.)
+/// A root whose links lead to a directory whose path is no UTF-8 is
+/// walked: every path is named by the root as given, which is a String,
+/// so nothing that is no UTF-8 is shown. (Not on macOS, nor on Windows,
+/// as above.)
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
-fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_fails() {
+fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_names_the_root() {
     use std::os::unix::ffi::OsStrExt;
     let dir = TempDir::new("root_names");
     let bad = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xffdir"));
@@ -616,22 +617,14 @@ fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_fails() {
     let link = dir.path().join("link");
     std::os::unix::fs::symlink(&bad, &link).unwrap();
     let link = link.to_str().unwrap().to_string();
-    let got = err_msg(run(&format!(
-        "import fs\nimport host\nfn main() {{\n  host.give(fs.walk(\"{link}\"))\n}}\n"
-    )));
-    let shown = std::fs::canonicalize(&bad).unwrap();
     assert_eq!(
-        got,
-        format!(
-            "invalid input: the path of {link} is not UTF-8: {}",
-            shown.to_string_lossy()
-        )
+        sorted_paths(&format!("fs.walk(\"{link}\")")),
+        format!("{link}\n{link}/sub")
     );
 }
 
-/// A link whose target is no UTF-8 fails fs.read_link, as a walk of a root
-/// that leads to such a path does: with U+FFFD in it, the target it gave
-/// named no file. (Not on macOS, nor on Windows, as above.)
+/// A link whose target is no UTF-8 fails fs.read_link: with U+FFFD in it,
+/// the target it gave named no file. (Not on macOS, nor on Windows, as above.)
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn test_a_link_whose_target_is_no_utf8_fails_read_link() {
@@ -741,6 +734,111 @@ fn test_fs_remove_removes_a_link_to_a_directory_not_the_directory() {
         let refused = err_msg(run(&input));
         assert!(refused.contains(&*full), "{refused}");
         assert!(target.join("keep.txt").exists());
+    }
+}
+
+/// fs.remove_all removes a tree and the links in it, never what a link
+/// leads to: a link to a directory outside the tree goes, and that
+/// directory and what is in it stay. A link given as the path goes
+/// itself.
+#[test]
+fn test_fs_remove_all_removes_links_not_what_they_lead_to() {
+    let dir = TempDir::new("remove_all_links");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(tree.join("sub")).unwrap();
+    std::fs::write(tree.join("sub/own.txt"), "own").unwrap();
+    if dir_link(&outside, &tree.join("sub/link")).is_none() {
+        eprintln!("skipped: the system does not let this test make a link");
+        return;
+    }
+    let alias = dir.path().join("alias");
+    dir_link(&outside, &alias).unwrap();
+    for gone in [&alias, &tree] {
+        let at = gone.to_string_lossy().replace('\\', "/");
+        let input = format!(
+            "import fs\nimport host\nfn main() {{\n  host.give(fs.remove_all(\"{at}\"))\n}}\n"
+        );
+        assert_eq!(ok_inner(run(&input)), Value::Unit, "{at}");
+        assert!(std::fs::symlink_metadata(gone).is_err(), "{at} is gone");
+    }
+    assert_eq!(
+        std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+        "keep"
+    );
+}
+
+/// A link to a directory given with separators at its end (`link/`,
+/// `link//`, on Windows `link\`) is removed itself by fs.remove_all and
+/// fs.remove, as without them: the system would follow it (`link/` is
+/// the directory it leads to), and remove_all emptied that directory. A
+/// file or a link to a file given so is no directory, as before.
+#[test]
+fn test_a_link_to_a_directory_given_with_a_separator_at_its_end_is_removed_itself() {
+    let dir = TempDir::new("remove_link_slash");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    let mut endings = vec!["/", "//"];
+    if cfg!(windows) {
+        endings.push("\\\\");
+    }
+    for function in ["remove_all", "remove"] {
+        for ending in &endings {
+            let link = dir.path().join("link");
+            if dir_link(&outside, &link).is_none() {
+                eprintln!("skipped: the system does not let this test make a link");
+                return;
+            }
+            let at = format!("{}{ending}", link.to_string_lossy().replace('\\', "/"));
+            let input = format!(
+                "import fs\nimport host\nfn main() {{\n  host.give(fs.{function}(\"{at}\"))\n}}\n"
+            );
+            assert_eq!(ok_inner(run(&input)), Value::Unit, "fs.{function}({at})");
+            assert!(
+                std::fs::symlink_metadata(&link).is_err(),
+                "fs.{function}({at}): the link is gone"
+            );
+            assert_eq!(
+                std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+                "keep",
+                "fs.{function}({at}) keeps what the link leads to"
+            );
+        }
+    }
+    // A file, or a link to a file, given with a separator at its end is
+    // no directory: the system's own check stays, and nothing is
+    // removed (as `rm -r f/` refuses). (Unix: what Windows says of a
+    // file with a separator after it is its own.)
+    #[cfg(unix)]
+    {
+        let file = dir.path().join("f");
+        std::fs::write(&file, "f").unwrap();
+        let file_link = dir.path().join("flink");
+        std::os::unix::fs::symlink(outside.join("keep.txt"), &file_link).unwrap();
+        for function in ["remove_all", "remove"] {
+            for kept in [&file, &file_link] {
+                let at = format!("{}/", kept.to_string_lossy());
+                let input = format!(
+                    "import fs\nimport host\nfn main() {{\n  host.give(fs.{function}(\"{at}\"))\n}}\n"
+                );
+                assert_eq!(
+                    err_msg(run(&input)),
+                    format!("not a directory: {at}"),
+                    "fs.{function}({at})"
+                );
+                assert!(
+                    std::fs::symlink_metadata(kept).is_ok(),
+                    "fs.{function}({at}) removes nothing"
+                );
+            }
+        }
+        assert_eq!(
+            std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+            "keep"
+        );
     }
 }
 

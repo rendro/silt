@@ -4,7 +4,7 @@
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::typed::builtins;
+use super::typed::{Bytes, builtins};
 use crate::builtins::time::make_datetime;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
@@ -173,6 +173,26 @@ pub(crate) fn path_err(err: &std::io::Error, path: &str) -> Value {
     }
 }
 
+/// The error of a failed write of `path` (`io.write_file`,
+/// `stream.write_to_file`, the target of `fs.copy` and `fs.rename`): as
+/// `path_err`, except that a file not found because the folder it goes
+/// into is missing is that folder's own error, `FolderNotFound(folder)`:
+/// the message points at what is missing, not at a file the program
+/// never meant to read.
+pub(crate) fn write_err(err: &std::io::Error, path: &str) -> Value {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        let into = std::path::Path::new(path)
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        if std::fs::metadata(into).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            let folder = Value::string(into.to_string_lossy().into_owned());
+            return io_err(Value::variant(bv::IO_FOLDER_NOT_FOUND, [folder]));
+        }
+    }
+    path_err(err, path)
+}
+
 /// Whether `err` is a loop of symbolic links, by the system's code for
 /// it (ELOOP on Unix, ERROR_CANT_RESOLVE_FILENAME on Windows): the kind
 /// std gives it is not stable yet, and its words may change. Where no
@@ -311,6 +331,7 @@ pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
         ("NotFound", [Value::String(p, _)]) => format!("file not found: {p}"),
+        ("FolderNotFound", [Value::String(f, _)]) => format!("folder not found: {f}"),
         ("PermissionDenied", [Value::String(p, _)]) => {
             format!("permission denied: {p}")
         }
@@ -389,7 +410,21 @@ builtins! {
     fn write_file(vm, path: &str, contents: &str) -> Result<Step, VmError> {
         let (path, contents) = (path.to_string(), contents.to_string());
         vm.io("io.write_file", io_unknown_err, Leave::RunsOut, move |_| {
-            result(std::fs::write(&path, &contents), &path, unit)
+            match std::fs::write(&path, &contents) {
+                Ok(()) => fs_ok(Value::Unit),
+                Err(e) => write_err(&e, &path),
+            }
+        })
+    }
+
+    // The bytes as they are, by the rules of `write_file`.
+    fn write_bytes(vm, path: &str, contents: Bytes) -> Result<Step, VmError> {
+        let (path, contents) = (path.to_string(), contents.clone());
+        vm.io("io.write_bytes", io_unknown_err, Leave::RunsOut, move |_| {
+            match std::fs::write(&path, contents.as_slice()) {
+                Ok(()) => fs_ok(Value::Unit),
+                Err(e) => write_err(&e, &path),
+            }
         })
     }
 
@@ -457,6 +492,132 @@ pub(crate) mod fs {
 
     use super::*;
 
+    /// Remove the path itself, never what a link leads to: a link to a
+    /// directory is unlinked as a link to a file is (on Windows such a
+    /// link is removed as a directory is, which is how the system
+    /// removes it). A directory must be empty.
+    fn remove_one(at: &Path) -> std::io::Result<()> {
+        let directory = std::fs::symlink_metadata(at).is_ok_and(|md| {
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::FileTypeExt;
+                md.is_dir() || md.file_type().is_symlink_dir()
+            }
+            #[cfg(not(windows))]
+            {
+                md.is_dir()
+            }
+        });
+        match directory {
+            true => std::fs::remove_dir(at),
+            false => std::fs::remove_file(at),
+        }
+    }
+
+    /// A separator of the parts of a path: `/`, and `\` on Windows too.
+    fn separator(c: char) -> bool {
+        c == '/' || (cfg!(windows) && c == '\\')
+    }
+
+    /// `path` without the separators at its end, where a name is left
+    /// before them (`link/` is `link`; `/` and `C:\` stay as they are).
+    fn without_trailing_separators(path: &str) -> &str {
+        let trimmed = path.trim_end_matches(separator);
+        match Path::new(trimmed).components().next_back() {
+            Some(std::path::Component::Normal(_)) => trimmed,
+            _ => path,
+        }
+    }
+
+    /// The path `fs.remove` and `fs.remove_all` remove for `path`. A
+    /// separator at the end makes the system follow a link (`link/` is
+    /// the directory it leads to, which `remove_dir_all` would empty):
+    /// a link to a directory given so is removed as the link, without
+    /// the separators. Any other path is as given, so the system's own
+    /// check stays: `f/` of a file, or of a link to a file, is "not a
+    /// directory", and nothing is removed.
+    fn removed_as(path: &str) -> &str {
+        let trimmed = without_trailing_separators(path);
+        let a_link = trimmed != path
+            && std::fs::symlink_metadata(trimmed).is_ok_and(|md| md.file_type().is_symlink());
+        match a_link && std::fs::metadata(path).is_ok_and(|md| md.is_dir()) {
+            true => trimmed,
+            false => path,
+        }
+    }
+
+    /// Whether `fs.remove_all` refuses `path`: its last part is `.` or
+    /// `..` (`out/.`, `..`), it is a root (`/`, `C:\`), or on Windows
+    /// it is a drive alone (`C:`, the current directory of that drive,
+    /// as `.` is of the current one).
+    fn refused_by_remove_all(path: &str) -> bool {
+        let trimmed = path.trim_end_matches(separator);
+        let last = trimmed.rsplit(separator).next().unwrap_or(trimmed);
+        let at = Path::new(path);
+        let mut parts = at.components().peekable();
+        // (A drive alone, or a drive and `.`: `C:`, `C:.`.)
+        let a_drive_alone = parts.peek().is_some()
+            && parts.all(|part| {
+                matches!(
+                    part,
+                    std::path::Component::Prefix(_) | std::path::Component::CurDir
+                )
+            });
+        matches!(last, "." | "..") || (at.has_root() && at.parent().is_none()) || a_drive_alone
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{refused_by_remove_all, without_trailing_separators};
+
+        /// What `fs.remove_all` refuses, on every system: `.`, `..` and a
+        /// root; on Windows a drive alone too, which elsewhere is a name.
+        #[test]
+        fn remove_all_refuses_dot_dot_dot_a_root_and_a_drive_alone() {
+            for refused in [
+                ".",
+                "..",
+                "./",
+                "../",
+                "out/.",
+                "out/sub/..",
+                "a/./",
+                "/",
+                "//",
+                "/..",
+            ] {
+                assert!(refused_by_remove_all(refused), "{refused} is refused");
+            }
+            for removed in ["out", "out/", "a//", "link/", "", "C:x", "a/C:"] {
+                assert!(!refused_by_remove_all(removed), "{removed} is not refused");
+            }
+            for drive in ["C:", "c:", "C:\\", "C:/", "C:."] {
+                assert_eq!(refused_by_remove_all(drive), cfg!(windows), "{drive}");
+            }
+        }
+
+        /// A path that ends in separators is looked at without them, where
+        /// a name is left; a root and a drive stay as they are.
+        #[test]
+        fn trailing_separators_go_where_a_name_is_left() {
+            for (given, looked_at) in [
+                ("link/", "link"),
+                ("link//", "link"),
+                ("a/b/", "a/b"),
+                ("link", "link"),
+                ("/", "/"),
+                ("//", "//"),
+                ("", ""),
+            ] {
+                assert_eq!(without_trailing_separators(given), looked_at, "{given}");
+            }
+            #[cfg(windows)]
+            for (given, looked_at) in [("link\\", "link"), ("a\\b\\/", "a\\b"), ("C:\\", "C:\\")] {
+                assert_eq!(without_trailing_separators(given), looked_at, "{given}");
+            }
+        }
+    }
+
     builtins! {
         fn exists(path: &str) -> bool {
             Path::new(path).exists()
@@ -494,26 +655,33 @@ pub(crate) mod fs {
             result(made, path, unit)
         }
 
-        // The path itself is removed, never what a link leads to: a link
-        // to a directory is unlinked as a link to a file is (on Windows
-        // such a link is removed as a directory is, which is how the
-        // system removes it).
         fn remove(path: &str) -> Value {
-            let at = Path::new(path);
-            let directory = std::fs::symlink_metadata(at).is_ok_and(|md| {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::FileTypeExt;
-                    md.is_dir() || md.file_type().is_symlink_dir()
-                }
-                #[cfg(not(windows))]
-                {
-                    md.is_dir()
-                }
-            });
-            let removed = match directory {
-                true => std::fs::remove_dir(at),
-                false => std::fs::remove_file(at),
+            let at = Path::new(removed_as(path));
+            result(remove_one(at), path, unit)
+        }
+
+        // A directory goes with everything in it; a file or a link goes
+        // as `fs.remove` removes it, and no link is followed, also inside
+        // the tree (`remove_dir_all` follows none). An error names the
+        // path given, wherever in the tree it happened. A path that ends
+        // in `.` or `..`, or is a root or a drive alone, is refused, as
+        // `rm -r` refuses it: nothing is removed. A link to a directory
+        // given with a separator at its end (`link/`) is removed itself:
+        // the system would follow it, and empty what it leads to.
+        fn remove_all(path: &str) -> Value {
+            if refused_by_remove_all(path) {
+                return io_err(Value::variant(
+                    bv::IO_INVALID_INPUT,
+                    [Value::string(format!(
+                        "fs.remove_all does not remove ., .., a root or a drive: {path}"
+                    ))],
+                ));
+            }
+            let at = Path::new(removed_as(path));
+            let removed = match std::fs::symlink_metadata(at) {
+                Ok(md) if md.is_dir() => std::fs::remove_dir_all(at),
+                Ok(_) => remove_one(at),
+                Err(e) => Err(e),
             };
             result(removed, path, unit)
         }
@@ -532,7 +700,10 @@ pub(crate) mod fs {
                         | std::io::ErrorKind::DirectoryNotEmpty => to,
                         kind => rename_failed_at(kind, from, to),
                     };
-                    path_err(&e, about)
+                    match about == to {
+                        true => write_err(&e, to),
+                        false => path_err(&e, about),
+                    }
                 }
             }
         }
@@ -559,7 +730,7 @@ pub(crate) mod fs {
             }
             match std::fs::copy(from, to) {
                 Ok(_) => fs_ok(Value::Unit),
-                Err(e) => path_err(&e, to),
+                Err(e) => write_err(&e, to),
             }
         }
 
@@ -631,26 +802,14 @@ pub(crate) mod fs {
             // for build tooling (a symlink loop in node_modules should not
             // hang a build).
             let walker = walkdir::WalkDir::new(root).follow_links(false);
-            // Each path is shown absolute, so callers can pass it
-            // straight into other fs.* calls without worrying about cwd
-            // drift: the root with its own links resolved (walkdir goes
-            // into a root that is a link), joined with the entry's path
-            // below it. A link inside the tree is so shown as itself,
-            // never as the path it leads to.
+            // Each path is the root as given joined with the entry's path
+            // inside the tree, as walkdir makes it: `content`,
+            // `content/a.md`, the root first, a directory before what is
+            // in it. A relative root gives relative paths, an absolute one
+            // absolute paths. A link inside the tree is so shown as
+            // itself, never as the path it leads to; a root that is a link
+            // is gone into (walkdir follows the root) and named as given.
             let base = std::path::Path::new(root);
-            let shown_root = crate::source::canonical_path(base);
-            // (A root whose links lead to a path that is no UTF-8 is shown
-            // by no String: with U+FFFD in it, each path named no file.)
-            if shown_root.to_str().is_none() {
-                let why = std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "the path of {root} is not UTF-8: {}",
-                        shown_root.to_string_lossy()
-                    ),
-                );
-                return path_err(&why, root);
-            }
             let mut out: Vec<Value> = Vec::new();
             for entry in walker {
                 let entry = match entry {
@@ -680,12 +839,7 @@ pub(crate) mod fs {
                     let why = name_not_utf8(dir, entry.file_name());
                     return path_err(&why, &dir.to_string_lossy());
                 }
-                let shown = match entry.path().strip_prefix(base) {
-                    Ok(below) if below.as_os_str().is_empty() => shown_root.clone(),
-                    Ok(below) => shown_root.join(below),
-                    Err(_) => entry.path().to_path_buf(),
-                };
-                out.push(Value::string(shown.to_string_lossy().into_owned()));
+                out.push(Value::string(entry.path().to_string_lossy().into_owned()));
             }
             fs_ok(Value::list(out))
         }

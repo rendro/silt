@@ -1,8 +1,12 @@
-//! The running process (`process.*`): its exit.
+//! The running process (`process.*`): its exit, and the signals that
+//! ask it to stop.
 
 use super::typed::builtins;
+use crate::runtime::sync::Channel;
 use crate::value::Value;
 use crate::vm::{Exit, VmError};
+
+mod stop;
 
 builtins! {
     // What the exit does is the host's to say (`Vm::set_exit`).
@@ -21,5 +25,15 @@ builtins! {
                 Err(VmError::exited(code))
             }
         }
+    }
+
+    // The first stop signal from now on is a message on the channel,
+    // which is then closed, instead of ending the process; the one after
+    // it ends the process as it would have (`stop`).
+    fn stop_signals(vm) -> Result<Value, VmError> {
+        let ch = Channel::new(vm.next_channel_id(), 1);
+        stop::send_the_next_into(&ch, vm.scheduler())
+            .map_err(|why| VmError::new(format!("process.stop_signals: {why}")))?;
+        Ok(Value::Channel(ch))
     }
 }
