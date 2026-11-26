@@ -4438,62 +4438,131 @@ impl TypeChecker {
     }
 
     /// Keep the place of `expr` when it writes a prelude variant's name
-    /// bare, as a value or a call (`Stop`, `Stop(n)`): see
+    /// bare, as a value or a call (`Stop`, `Stop(n)`), with the type
+    /// whose variant the name is: see
     /// [`TypeChecker::prelude_variant_uses`].
     fn note_prelude_variant_use(&mut self, expr: &Expr) {
-        let name = match &expr.kind {
-            ExprKind::Ident(name) => *name,
+        let (name, res) = match &expr.kind {
+            ExprKind::Ident(name) => (*name, expr.res),
             ExprKind::Call(callee, _) => match &callee.kind {
-                ExprKind::Ident(name) => *name,
+                ExprKind::Ident(name) => (*name, callee.res),
                 _ => return,
             },
             _ => return,
         };
         if crate::builtins::registry::is_prelude_variant(&resolve(name)) {
-            self.prelude_variant_uses.push((expr.span, name));
+            let owner = self.res_variant_enum(res).map(|ty| ty.name);
+            self.prelude_variant_uses.push((expr.span, name, owner));
         }
     }
 
-    /// A mismatch at a bare prelude variant's name that a variant of the
-    /// program hides (`Stop(n)` given as a fold's step beside a
-    /// `type Msg { Add(Int), Stop(Int) }`, or a pattern `Stop(v)` of a
-    /// `Step`): "expected Step(Int), got Msg" gets the help line that
-    /// names the prelude's, as a call of a hidden nullary one does.
+    /// A mismatch that a bare prelude variant's name, hidden by a variant
+    /// of the program, makes gets the help line that names the
+    /// prelude's, as a call of a hidden nullary one does:
+    /// - at the name itself (`Stop(n)` given as a fold's step beside a
+    ///   `type Msg { Add(Int), Stop(Int) }`, or a pattern `Stop(v)` of
+    ///   a `Step`): "expected Step(Int), got Msg";
+    /// - around it, where the name gives the program's type to what the
+    ///   prelude's type is wanted for (`None` of a `type Slot { Full(Int),
+    ///   None }` as an arm of a `match` that is to give an
+    ///   `Option(Int)`): "expected Option(Int), got Slot", with the name
+    ///   marked;
+    /// - inside such a mismatch, where the prelude's type is given to
+    ///   what the name made the program's (the arm `Some(n)` beside it):
+    ///   "expected Slot, got Option(Int)", whose help on chaining through
+    ///   an `Option` does not apply.
     pub(super) fn help_for_hidden_prelude_variants(&mut self) {
         let uses = std::mem::take(&mut self.prelude_variant_uses);
         if uses.is_empty() {
+            return;
+        }
+        let head = |ty: &str| ty.split('(').next().unwrap_or_default().to_string();
+        let heads = |d: &Diagnostic| -> Option<(String, String)> {
+            let first = d.message.lines().next().unwrap_or_default();
+            let (expected, got) = first
+                .strip_prefix("type mismatch: expected ")?
+                .split_once(", got ")?;
+            Some((head(expected), head(got)))
+        };
+        // (`util.Slot` as shown is the type `Slot`.)
+        let is_type =
+            |shown: &str, name: Symbol| shown.rsplit('.').next() == Some(resolve(name).as_str());
+        let contains = |outer: Span, inner: Span| {
+            outer != inner
+                && outer.file == inner.file
+                && outer.start <= inner.start
+                && inner.end <= outer.end
+        };
+        // The mismatches around a name: their place, the two types, and
+        // the name's place and help.
+        let mut around: Vec<(Span, String, String, Span, String, String)> = Vec::new();
+        for d in &mut self.errors {
+            if d.code != Code::TypeMismatch {
+                continue;
+            }
+            let Some((expected, got)) = heads(d) else {
+                continue;
+            };
+            if got.is_empty() {
+                continue;
+            }
+            for (span, name, owner) in &uses {
+                let text = resolve(*name);
+                let Some(prelude) = crate::builtins::registry::prelude_enum_of(&text) else {
+                    continue;
+                };
+                if expected != prelude || got == prelude {
+                    continue;
+                }
+                if *span == d.span {
+                    let help = format!(
+                        "`{text}` here is the variant of `{got}`, which hides the prelude's \
+                         `{text}`: write `{prelude}.{text}`"
+                    );
+                    if !d.help.contains(&help) {
+                        d.help.push(help);
+                    }
+                    break;
+                }
+                if contains(d.span, *span) && owner.is_some_and(|owner| is_type(&got, owner)) {
+                    let help = hidden_variant_help(&text, &got, prelude);
+                    if !d.help.contains(&help) {
+                        d.labels
+                            .push((*span, format!("this `{text}` is the variant of `{got}`")));
+                        d.help.push(help.clone());
+                    }
+                    around.push((d.span, expected.clone(), got.clone(), *span, text, help));
+                    break;
+                }
+            }
+        }
+        if around.is_empty() {
             return;
         }
         for d in &mut self.errors {
             if d.code != Code::TypeMismatch {
                 continue;
             }
-            let Some((_, name)) = uses.iter().find(|(span, _)| *span == d.span) else {
+            let Some((expected, got)) = heads(d) else {
                 continue;
             };
-            let name = resolve(*name);
-            let Some(prelude) = crate::builtins::registry::prelude_enum_of(&name) else {
-                continue;
-            };
-            let first = d.message.lines().next().unwrap_or_default();
-            let Some((expected, got)) = first
-                .strip_prefix("type mismatch: expected ")
-                .and_then(|rest| rest.split_once(", got "))
+            let Some((_, _, own, span, text, help)) =
+                around.iter().find(|(outer, prelude, own, ..)| {
+                    contains(*outer, d.span) && expected == *own && got == *prelude
+                })
             else {
                 continue;
             };
-            let head = |ty: &str| ty.split('(').next().unwrap_or_default().to_string();
-            let (expected, got) = (head(expected), head(got));
-            if expected != prelude || got == prelude || got.is_empty() {
+            if d.help.contains(help) {
                 continue;
             }
-            let help = format!(
-                "`{name}` here is the variant of `{got}`, which hides the prelude's \
-                 `{name}`: write `{prelude}.{name}`"
-            );
-            if !d.help.contains(&help) {
-                d.help.push(help);
-            }
+            // (`?` or a `flat_map` would not make the prelude's type the
+            // program's.)
+            d.help
+                .retain(|line| !line.starts_with("to chain through a"));
+            d.labels
+                .push((*span, format!("this `{text}` is the variant of `{own}`")));
+            d.help.push(help.clone());
         }
     }
 
@@ -5268,4 +5337,13 @@ fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
             found
         }
     }
+}
+
+/// The help line of a mismatch that the variant `name` of the program's
+/// type `own` makes where the prelude's type `prelude` is wanted (see
+/// `TypeChecker::help_for_hidden_prelude_variants`).
+fn hidden_variant_help(name: &str, own: &str, prelude: &str) -> String {
+    format!(
+        "the variant `{name}` of `{own}` hides the prelude's `{name}`: write `{prelude}.{name}`"
+    )
 }

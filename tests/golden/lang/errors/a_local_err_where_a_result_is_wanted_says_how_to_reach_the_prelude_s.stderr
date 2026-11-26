@@ -1,0 +1,21 @@
+error[type]: type mismatch: expected Result(Int, String), got Fault
+ --> a_local_err_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:9:3
+   |
+ 9 |   match n {
+   |   ^^^^^^^^^ type mismatch: expected Result(Int, String), got Fault
+ ::: a_local_err_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+    |
+ 10 |     0 -> Err("zero")
+    |          ----------- this `Err` is the variant of `Fault`
+  = help: the variant `Err` of `Fault` hides the prelude's `Err`: write `Result.Err`
+
+error[type]: type mismatch: expected Fault, got Result(Int, _)
+ --> a_local_err_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:11:10
+    |
+ 11 |     _ -> Ok(n)
+    |          ^^^^^ type mismatch: expected Fault, got Result(Int, _)
+ ::: a_local_err_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+    |
+ 10 |     0 -> Err("zero")
+    |          ----------- this `Err` is the variant of `Fault`
+  = help: the variant `Err` of `Fault` hides the prelude's `Err`: write `Result.Err`

@@ -131,11 +131,12 @@ pub(crate) struct TypeChecker {
     /// `unify_pattern` does not report again.
     pub(super) arm_mismatches: Option<std::collections::HashSet<String>>,
     /// The places that write a prelude variant's name bare, as a value,
-    /// a call or a pattern (`Stop`, `Stop(n)`), with the name: where a
+    /// a call or a pattern (`Stop`, `Stop(n)`), with the name and, for
+    /// a value or a call, the type whose variant the name is: where a
     /// variant of the program by that name hides the prelude's, a
     /// mismatch there says how to reach the prelude's
     /// (`help_for_hidden_prelude_variants`).
-    pub(super) prelude_variant_uses: Vec<(Span, Symbol)>,
+    pub(super) prelude_variant_uses: Vec<(Span, Symbol, Option<Symbol>)>,
     /// The bounds in scope: for each annotation variable of a declaration
     /// whose body was or is being checked (by the variable it is in the
     /// declaration's scheme), the traits its `where` clauses declare and

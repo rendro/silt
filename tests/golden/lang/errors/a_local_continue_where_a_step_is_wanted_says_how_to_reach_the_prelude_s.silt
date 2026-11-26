@@ -1,0 +1,17 @@
+-- exit: 1
+-- A variant `Continue` of the program's `Plan` hides the prelude's `Continue`:
+-- as an arm of a `match` that is to give a `Step(Int)`, it makes the
+-- `match` a `Plan`. The mismatch, and the one at the other arm, mark the
+-- `Continue` and name `Step.Continue`, which reaches the prelude's.
+type Plan { Continue(Int), Halt }
+
+fn pick(n: Int) -> Step(Int) {
+  match n {
+    0 -> Continue(n)
+    _ -> Stop(n)
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

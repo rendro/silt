@@ -1,0 +1,41 @@
+-- The program's own `None`, `Some`, `Ok`, `Err`, `Continue` and `Stop`
+-- hide the prelude's in their module; `Option.None`, `Result.Ok`,
+-- `Step.Stop` and the rest reach the prelude's there.
+import list
+
+type Slot { Full(Int), None }
+type Guess { Some(Int), Nothing }
+type Reply { Ok(Int), Err(String) }
+type Plan { Continue(Int), Stop }
+
+fn first(n: Int) -> Option(Int) {
+  match n {
+    0 -> Option.None
+    _ -> Option.Some(n)
+  }
+}
+
+fn half(n: Int) -> Result(Int, String) {
+  match n % 2 {
+    0 -> Result.Ok(n / 2)
+    _ -> Result.Err("odd")
+  }
+}
+
+fn main() {
+  println(first(0))
+  println(first(3))
+  println(half(4))
+  println(half(3))
+  let total = list.fold_until([1, 2, 3, 4], 0) { acc, x ->
+    match x {
+      3 -> Step.Stop(acc)
+      _ -> Step.Continue(acc + x)
+    }
+  }
+  println(total)
+  println([Full(1), None])
+  println([Some(2), Nothing])
+  println([Ok(3), Err("e")])
+  println([Continue(4), Stop])
+}
