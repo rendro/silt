@@ -61,6 +61,8 @@ channel-backed lazy pipelines over the same combinator names.
 | `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
 | `take_while` | `(List(a), Fn(a) -> Bool) -> List(a)` | Elements until `f` first rejects one |
 | `traverse` | `(List(a), Fn(a) -> m(b)) -> m(List(b)) where m: Applicative` | Call f on every element, then one Applicative value of the list of the results: the first failure, if there is one |
+| `try_each` | `(List(a), Fn(a) -> Result((), e)) -> Result((), e)` | Call f on each element in order up to the first Err, which is the result; else Ok(()) |
+| `try_each_option` | `(List(a), Fn(a) -> Option(())) -> Option(())` | Call f on each element in order up to the first None, which is the result; else Some(()) |
 | `unfold` | `(a, Fn(a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
 | `unique` | `(List(a)) -> List(a) where a: Equal` | Remove duplicates, preserving first occurrence |
 | `unique_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Hash` | Keep the first element of each key |
@@ -978,8 +980,8 @@ list.traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative
 Calls `f` on every element, left to right, then gives one value of the
 Applicative `m` that holds the list of the results: the first failure
 (`None`, `Err`) if there is one. `f` is called on every element, also after
-one has failed; for steps that must stop at the first failure, write a
-recursive function with `?`. Of lists, it gives every combination.
+one has failed; for steps that must stop at the first failure, use
+`list.try_each`. Of lists, it gives every combination.
 
 ```silt
 import int
@@ -989,6 +991,59 @@ fn main() {
   println(["1", "2"] |> list.traverse(int.parse)) -- Ok([1, 2])
   println(["1", "x"] |> list.traverse(int.parse)) -- Err(invalid digit at byte 0)
   println(list.traverse([1, 2]) { x -> [x, -x] }) -- [[1, 2], [1, -2], [-1, 2], [-1, -2]]
+}
+```
+
+
+## `list.try_each`
+
+```
+list.try_each(xs: List(a), f: Fn(a) -> Result((), e)) -> Result((), e)
+```
+
+Calls `f` on each element, left to right, up to the first that gives an
+`Err`: that `Err` is the result, and `f` is not called on the elements
+after it. When every call gives `Ok(())`, the result is `Ok(())`. It is
+`list.each` for steps that can fail, such as writing files: with `?`,
+the first failure ends the function too. Above, `check` prints `read 1`
+and `read 2` for the first list, and only `read 1` for the second.
+
+```silt
+import int
+import list
+
+fn check(s: String) -> Result((), int.IntError) {
+  let _ = int.parse(s)?
+  println("read {s}")
+  Ok(())
+}
+
+fn main() {
+  println(list.try_each(["1", "2"], check)) -- Ok(())
+  println(list.try_each(["1", "x", "3"], check)) -- Err(invalid digit at byte 0)
+}
+```
+
+
+## `list.try_each_option`
+
+```
+list.try_each_option(xs: List(a), f: Fn(a) -> Option(())) -> Option(())
+```
+
+`list.try_each` for a function that gives an `Option`: calls `f` on each
+element, left to right, up to the first that gives `None`, which is the
+result. When every call gives `Some(())`, the result is `Some(())`.
+
+```silt
+import list
+import map
+import option
+
+fn main() {
+  let stock = #{ "pen": 2, "ink": 0 }
+  let take = { item -> map.get(stock, item) |> option.map { _ -> println("took {item}") } }
+  println(list.try_each_option(["pen", "cap", "ink"], take)) -- None
 }
 ```
 

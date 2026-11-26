@@ -1,0 +1,41 @@
+-- toml.parse refuses a key that no field of the record names, in a
+-- table at any depth: UnknownField with the key's path and the byte where
+-- the key is written, the first in the text, before the errors of the
+-- table's fields. The table of a variant with fields takes `variant`
+-- and `fields` alone. A map and a json.Value take every key, and
+-- json.parse still skips such a key.
+import json
+import toml
+
+type Meta { title: String, draft: Option(Bool) }
+
+type Inner { n: Int }
+
+type Cfg { name: String, inner: Inner, rows: List(Inner) }
+
+type Shape { Circle(Float), Dot }
+
+type HasShape { s: Shape }
+
+fn show(text: String) {
+  match toml.parse(text, Cfg) {
+    Ok(cfg) -> println("Ok {cfg}")
+    Err(toml.UnknownField(key, at)) -> println("UnknownField({key}, {at})")
+    Err(e) -> println("Err {e}")
+  }
+}
+
+fn main() {
+  println(toml.parse("title = \"T\"\ndrafts = true\n", Meta))
+  println(toml.parse("titel = \"T\"\n", Meta))
+  show("name = \"x\"\nrows = []\n[inner]\nn = 1\nm = 2\n")
+  show("name = \"x\"\nrows = []\nextra.a = 1\n[inner]\nn = \"q\"\n")
+  show("name = \"x\"\ninner = \{ n = 1, k = 2 }\nrows = []\n")
+  show("name = \"x\"\ninner = \{ n = 1 }\n[[rows]]\nn = 1\n[[rows]]\nn = 2\nq = 3\n")
+  show("name = \"x\"\ninner = \{ n = 1 }\nrows = []\n")
+  println(toml.parse("s = \{ variant = \"Circle\", fields = [1.0], color = \"red\" }\n", HasShape))
+  println(toml.parse("s = \{ variant = \"Circle\", fields = [1.0] }\n", HasShape))
+  println(toml.parse_map("a = 1\nb = 2\n", Int))
+  println(toml.parse("title = \"T\"\nx = 1\n", json.Value))
+  println(json.parse("""{"title": "T", "drafts": true}""", Meta))
+}

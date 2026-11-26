@@ -1,6 +1,7 @@
 file not found: missing.txt
-json missing field: name
-toml missing field: key
+json missing field at byte 0: name
+toml missing field at byte 0: key
+toml unknown field at byte 12: drafts
 no digits
 compiled regex exceeds size budget
 time out of range: month 13

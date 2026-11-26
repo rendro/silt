@@ -39,9 +39,10 @@ use serde::de::value::{MapDeserializer, SeqDeserializer};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 
 use super::{
-    At, Error, Hole, I64_MAX_PLUS_ONE, Numbers, Reader, Rules, decodable_enum, decodable_record,
-    descriptor, field_record_type, invalid_date_message, invalid_time_message, parse_date,
-    parse_datetime, parse_time, shown, unsupported_field_type_message, variant_field_message,
+    At, Error, Hole, I64_MAX_PLUS_ONE, Numbers, Reader, Rules, Where, decodable_enum,
+    decodable_record, descriptor, field_record_type, invalid_date_message, invalid_time_message,
+    parse_date, parse_datetime, parse_time, shown, unsupported_field_type_message,
+    variant_field_message,
 };
 use crate::builtins::registry::decoding::Leaf;
 use crate::builtins::time::{make_date, make_datetime, make_time};
@@ -826,10 +827,10 @@ impl<'s> Seed<'s> {
         };
         Met::Given(match given.get(number).cloned().flatten() {
             Some(Ok(value)) => Ok(value),
-            Some(Err(error)) => Err(Error::Given((self.cx.rules.from_impl)(
-                &error,
-                &self.at.to_string(),
-            ))),
+            Some(Err(error)) => Err(Error::Given(
+                (self.cx.rules.from_impl)(&error, &self.at.to_string()),
+                Where::of(self.at),
+            )),
             None => Ok(Value::Unit),
         })
     }
@@ -1299,6 +1300,7 @@ impl<'s> Seed<'s> {
         let start = parts.mark();
         let mut read: Vec<Option<(Outcome, Range<usize>)>> =
             (0..fields.len()).map(|_| None).collect();
+        let mut unknown = None;
         while let Some(key) = entries.key()? {
             match fields.iter().position(|(name, _)| *name == *key) {
                 Some(k) => {
@@ -1309,8 +1311,19 @@ impl<'s> Seed<'s> {
                     let decoded = entries.value(self.of(&field, &at))?;
                     read[k] = Some((decoded, from..parts.mark()));
                 }
-                None => entries.value(self.skip())?,
+                None => {
+                    if unknown.is_none() {
+                        unknown = self.unknown(&key);
+                    }
+                    entries.value(self.skip())?
+                }
             }
+        }
+        // A key no field names, where the format refuses one, is the
+        // record's error, before its fields' (the first in the text).
+        if let Some(unknown) = unknown {
+            parts.reorder(start, []);
+            return Ok(Err(unknown));
         }
         // (The parts found in the fields, in the order the type declares
         // them, where there are any.)
@@ -1329,7 +1342,10 @@ impl<'s> Seed<'s> {
                 // (TOML has no null: a key it leaves out is a `None`.)
                 None => match &*field.instantiated(args) {
                     FieldType::Option(_) => Ok(Value::variant(bv::NONE, [])),
-                    _ => Err(Error::MissingField(self.at.key(name).to_string())),
+                    _ => Err(Error::MissingField(
+                        self.at.key(name).to_string(),
+                        Where::of(self.at),
+                    )),
                 },
             };
             match decoded {
@@ -1337,7 +1353,7 @@ impl<'s> Seed<'s> {
                 Ok(_) => {}
                 Err(Error::Unsupported(declared)) => {
                     let message = unsupported_field_type_message(&ty.name, name, &declared);
-                    error = Some(Error::Other(message));
+                    error = Some(Error::Other(message, Where::of(&self.at.key(name))));
                     break;
                 }
                 Err(e) => {
@@ -1374,8 +1390,10 @@ impl<'s> Seed<'s> {
         let cx = self.cx;
         let at = self.at;
         let keep = cx.parts.keep_fields.get();
+        let start = cx.parts.mark();
         let mut name = None;
         let mut fields = None;
+        let mut unknown = None;
         while let Some(key) = entries.key()? {
             match &*key {
                 "variant" if !keep && name.is_some() => return Err(cx.for_a_restart()),
@@ -1392,8 +1410,19 @@ impl<'s> Seed<'s> {
                         _ => Fields::Kept(entries.value(Capture::kept(*cx))?),
                     })
                 }
-                _ => entries.value(self.skip())?,
+                _ => {
+                    if unknown.is_none() {
+                        unknown = self.unknown(&key);
+                    }
+                    entries.value(self.skip())?
+                }
             }
+        }
+        // (A key that is neither, where the format refuses one, is the
+        // variant's error before any other.)
+        if let Some(unknown) = unknown {
+            cx.parts.reorder(start, []);
+            return Ok(Err(unknown));
         }
         let tag = match named(cx, ty, name.as_ref(), at) {
             Ok(tag) => tag,
@@ -1418,8 +1447,19 @@ impl<'s> Seed<'s> {
             Some(Fields::Passed) => unreachable!("a name that is no variant's is the error"),
             // (The name is a variant's with fields: `named` refuses
             // one without.)
-            None => Err(Error::MissingField(at.key("fields").to_string())),
+            None => Err(Error::MissingField(
+                at.key("fields").to_string(),
+                Where::of(at),
+            )),
         })
+    }
+
+    /// The error of the key `key` of the table here that no field names,
+    /// where the format refuses such a key.
+    fn unknown(&self, key: &str) -> Option<Error> {
+        self.cx.rules.unknown?;
+        let at = self.at.key(key);
+        Some(Error::UnknownField(at.to_string(), Where::key(&at)))
     }
 
     /// The decoding of the `fields` of the variant `tag` at the type
@@ -1454,7 +1494,7 @@ fn named(cx: &Cx, ty: &Arc<TypeInfo>, name: Option<&Content>, at: &At) -> Result
             Some(Scalar::String(name)) => name,
             _ => return Err(Error::mismatch("String", name.kind(cx), &at_name)),
         },
-        None => return Err(Error::MissingField(at_name.to_string())),
+        None => return Err(Error::MissingField(at_name.to_string(), Where::of(at))),
     };
     let tag = Tag::named(ty, name).ok_or_else(|| no_variant(ty, name, &at_name))?;
     // (A variant without fields is its name, never a table.)
@@ -1494,11 +1534,10 @@ impl FieldsSeed<'_> {
         match error {
             // (A field no decoder fills was refused before the document
             // was read; this is the fallback.)
-            Some(Error::Unsupported(declared)) => Err(Error::Other(variant_field_message(
-                &ty.name,
-                &variant.name,
-                &declared,
-            ))),
+            Some(Error::Unsupported(declared)) => Err(Error::Other(
+                variant_field_message(&ty.name, &variant.name, &declared),
+                Where::of(&at_fields),
+            )),
             Some(e) => Err(e),
             None if !self.seed.build() => Ok(Value::Unit),
             None => Ok(Value::variant(self.tag.clone(), values)),
@@ -1757,7 +1796,7 @@ impl<'de> Visitor<'de> for ListUnderItsKey<'_> {
             // (A document of more keys or none decodes none of them.)
             _ => {
                 self.cx.parts.reorder(0, []);
-                Err(Error::Other((self.keys)(keys)))
+                Err(Error::Other((self.keys)(keys), Where::default()))
             }
         })
     }

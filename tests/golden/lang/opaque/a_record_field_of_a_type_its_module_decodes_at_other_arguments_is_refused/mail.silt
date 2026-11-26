@@ -16,7 +16,7 @@ trait json.Decode for Box(Email) {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.String(text) -> Ok(Box { v: Email { addr: text } })
-      _ -> Err(json.Other("an address is a string"))
+      _ -> Err(json.Other("an address is a string", 0))
     }
   }
 }

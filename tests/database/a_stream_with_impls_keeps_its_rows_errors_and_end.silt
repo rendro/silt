@@ -25,8 +25,8 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.String(text) -> Ok(Code { digits: text })
-      json.Int(n) -> Err(json.Other("no code: {n}"))
-      _ -> Err(json.Other("no code here"))
+      json.Int(n) -> Err(json.Other("no code: {n}", 0))
+      _ -> Err(json.Other("no code here", 0))
     }
   }
 }
@@ -50,7 +50,7 @@ trait json.Decode for Slow {
         }
         Ok(Slow { n: doubled })
       }
-      _ -> Err(json.Other("no number here"))
+      _ -> Err(json.Other("no number here", 0))
     }
   }
 }

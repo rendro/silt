@@ -100,7 +100,7 @@ fn an_impl_of_65600_type_variables_is_refused() {
     let source = format!(
         "import json\ntype Box(a) {{ v: a }}\n\
          trait json.Decode for Box({header}) {{\n\
-         \x20 fn decode(value: json.Value) -> Result(Self, json.JsonError) {{ Err(json.Other(\"inst\")) }}\n\
+         \x20 fn decode(value: json.Value) -> Result(Self, json.JsonError) {{ Err(json.Other(\"inst\", 0)) }}\n\
          }}\n\
          fn main() {{ println(json.parse(\"null\", Box({given}))) }}\n"
     );

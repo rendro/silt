@@ -677,6 +677,7 @@ pub mod bv {
     pub(crate) const TOML_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 1);
     pub(crate) const TOML_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 2);
     pub(crate) const TOML_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 3);
+    pub(crate) const TOML_UNKNOWN_FIELD: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 4);
     pub(crate) const INT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 0);
     pub(crate) const INT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 1);
     pub(crate) const INT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 2);
@@ -1011,6 +1012,7 @@ mod tests {
             (bv::TOML_TYPE_MISMATCH, "TypeMismatch"),
             (bv::TOML_MISSING_FIELD, "MissingField"),
             (bv::TOML_OTHER, "Other"),
+            (bv::TOML_UNKNOWN_FIELD, "UnknownField"),
             (bv::INT_EMPTY, "Empty"),
             (bv::INT_INVALID_DIGIT, "InvalidDigit"),
             (bv::INT_OVERFLOW, "Overflow"),

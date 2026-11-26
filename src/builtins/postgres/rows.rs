@@ -37,11 +37,11 @@ use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType
 use crate::builtins::data::Data;
 use crate::builtins::decode::{Hole, Holes, Reader};
 use crate::builtins::registry::decoding::Family;
-use crate::builtins::time::{make_date, make_datetime, make_time};
+use crate::builtins::time::{make_date, make_datetime, make_instant, make_time};
 use crate::builtins::typed::Type;
 use crate::builtins::{decode, json};
 use crate::bytecode::Globals;
-use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
+use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
@@ -378,6 +378,8 @@ impl Col {
             // decode, in the record types the field names too, and of a
             // type with a written impl.
             (Col::Json | Col::Jsonb, _) => decode::decodes(r, Family::Json, field),
+            // Both are a point in time, with no zone.
+            (Col::Timestamptz, F::Record(id)) if *id == ty::INSTANT => true,
             (Col::Bool, F::Bool)
             | (Col::Int2 | Col::Int4 | Col::Int8, F::Int)
             | (Col::Float4 | Col::Float8 | Col::Numeric, F::Float)
@@ -1049,6 +1051,9 @@ fn cell(
         (Col::Timestamp | Col::Timestamptz, F::DateTime) => {
             make_datetime(timestamp(raw).map_err(|why| Mismatch::new(rt, field, why))?)
         }
+        (Col::Timestamptz, F::Record(id)) if *id == ty::INSTANT => {
+            make_instant(instant(raw).map_err(|why| Mismatch::new(rt, field, why))?)
+        }
         (Col::Array(element), F::List(_)) => {
             let (dimensions, values) = array(raw).map_err(malformed)?;
             // An array of more dimensions, or of fewer, than the list
@@ -1390,6 +1395,23 @@ fn timestamp(raw: &[u8]) -> Result<NaiveDateTime, String> {
     }
 }
 
+/// The nanoseconds since 1970-01-01T00:00:00Z of a `timestamptz` cell,
+/// an `Instant`'s, or what it is instead: one past 1677 to 2262, which
+/// an `Instant` holds, is out of its range.
+fn instant(raw: &[u8]) -> Result<i64, String> {
+    /// The seconds from 1970-01-01 to 2000-01-01, Postgres's epoch.
+    const FROM_UNIX: i64 = 946_684_800;
+    let micros = wire::timestamp_from_sql(raw).map_err(|e| e.to_string())?;
+    match micros {
+        i64::MAX => Err("Infinity".into()),
+        i64::MIN => Err("-Infinity".into()),
+        micros => micros
+            .checked_add(FROM_UNIX * 1_000_000)
+            .and_then(|micros| micros.checked_mul(1000))
+            .ok_or_else(|| "a timestamptz out of Instant's range".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1519,8 +1541,8 @@ mod tests {
         assert_eq!(text(day(10000, 1, 1)), "10000-01-01");
         assert_eq!(text(day(-43, 3, 15)), "0044-03-15 BC");
         assert_eq!(text(day(0, 12, 31)), "0001-12-31 BC");
-        assert_eq!(text(at(2026, 10, 19)), "2026-10-19T12:00:00.250000000+00");
-        assert_eq!(text(at(-43, 3, 15)), "0044-03-15T12:00:00.250000000+00 BC");
+        assert_eq!(text(at(2026, 10, 19)), "2026-10-19T12:00:00.250+00");
+        assert_eq!(text(at(-43, 3, 15)), "0044-03-15T12:00:00.250+00 BC");
         let time = make_time(NaiveTime::from_hms_opt(1, 2, 3).expect("a time"));
         assert_eq!(text(time), "01:02:03");
     }
@@ -1547,7 +1569,7 @@ mod tests {
             },
             Value::Variant(result) => match result.fields() {
                 [Value::Variant(other)] => match other.fields() {
-                    [Value::String(message, _)] => Err(message.to_string()),
+                    [Value::String(message, _), Value::Int(_)] => Err(message.to_string()),
                     fields => panic!("{fields:?}"),
                 },
                 fields => panic!("{fields:?}"),

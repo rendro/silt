@@ -395,6 +395,7 @@ value:
 | `Int`, `Float`, `Bool`, `String` | its text (a `Float` keeps its point: `2.0`, which no integer column takes) |
 | `Bytes` | `bytea`'s hex text, `\x00ff` |
 | `Date`, `Time`, `DateTime` | silt's text of it: `2026-10-13`, `01:02:03`; a `DateTime` in UTC, `2026-10-13T01:02:03+00`; a year before 1 as a year BC, `0044-03-15 BC` |
+| `time.Instant` | a `timestamptz`: its date and time in UTC, as a `DateTime` is sent (`2026-11-01T06:00:00.123+00`); into a `json` or `jsonb` column, send `json.stringify(at)` |
 | a `List` | an array (`{"1","2"}`) where the statement's parameter is an array (`id = ANY($1)`), and JSON anywhere else |
 | a variant without fields | its name, as a `String` is sent (so `Active` goes into a `text` column, or a postgres enum with the label `Active`); like a `String`, it is no JSON for a `json` or `jsonb` column: there, send it in a record or as a `json.Value` |
 | a record, a `Map`, a tuple, a variant with fields, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
@@ -442,7 +443,8 @@ type may have these types:
 - `Bytes`, as the field, in an `Option` or in a `List` (a `bytea` column)
 - `time.Date`, `time.Time`, `time.DateTime`
 - `url.Url`, from a text column that `url.parse` reads (an error names what is wrong, not the text)
-- `time.Instant` and `time.Duration`, from a `json` or `jsonb` column as `json.parse` reads them
+- `time.Instant`, from a `timestamptz` column, or from a `json` or `jsonb` column as `json.parse` reads it
+- `time.Duration`, from a `json` or `jsonb` column as `json.parse` reads it
 - `json.Value`, any column as the table's last column says
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
@@ -514,7 +516,7 @@ the call's `Err`.
 | `bytea` | `Bytes` | `json.String`, the hex text `\x00ff` |
 | `date` | `time.Date` | `json.String`, as silt shows a `Date` |
 | `time` | `time.Time` | `json.String`, as silt shows a `Time` |
-| `timestamp`, `timestamptz` | `time.DateTime` (a `timestamptz` in UTC) | `json.String`, as silt shows a `DateTime` |
+| `timestamp`, `timestamptz` | `time.DateTime` (a `timestamptz` in UTC); a `timestamptz` also `time.Instant`, the same point in time | `json.String`, as silt shows a `DateTime` |
 | `json`, `jsonb` | any field type but `Bytes` and an enum, decoded by `json.parse`'s rules | the document |
 | an array | `List(T)` of a `T` its elements fill, `List(Option(T))` where an element may be `NULL`, `List(List(T))` for two dimensions | `json.Array` |
 | `void` (what `pg_sleep(1)` gives) | none | `json.Null` |
@@ -525,9 +527,9 @@ document's text), an `Option` field with `None` where the document is
 `null`, and no field that holds `Bytes` (in a record it names too); a
 document that does not fit its field is `TypeMismatch(column, field
 type, "jsonb: <why>")`, with the column's type and why as
-`json.decode` says it, ending with the path of the value in the document:
-`TypeMismatch("doc", "Meta", "jsonb: json type mismatch: expected Int, got
-string at level")`. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
+`json.parse` says it, the byte in the document and the path of the value
+there: `TypeMismatch("doc", "Meta", "jsonb: json type mismatch at byte 10:
+expected Int, got string at level")`. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
 fills no field, and is an error in a `json.Value` row as well: cast it
 in SQL, `col::text`.
 
@@ -561,7 +563,7 @@ One data layer, one override: a record or enum type with a written
   `json.Object` of the row's columns, as a `json.Value` row is (every
   column, by its name): an enum type is a row type so. The `Err` the impl
   returns is the row's `Err(Other(message))`, the `JsonError`'s message:
-  `Other("json missing field: n")`.
+  `Other("json missing field at byte 0: n")`.
 
 The impls are the program's code, which the task that called
 `postgres.query` or `postgres.cursor_next` runs, after the rows are read

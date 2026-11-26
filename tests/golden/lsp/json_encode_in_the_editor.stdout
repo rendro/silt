@@ -95,7 +95,7 @@ written as follows:
 | `None`, `()` | `null` |
 | any other variant (of `Result` too) | `{"fields":[...],"variant":"Name"}`; a variant without fields is the string `"Name"` |
 | `json.Value` | the JSON it holds: `json.Int(1)` is `1`, `json.Null` is `null` |
-| `Date`, `Time`, `DateTime` | the text silt shows of them: `"2026-10-19"`, `"12:30:00"` (with a fractional second only when the value has one: `"12:30:00.250000000"`) and `"2026-10-19T12:30:00"` |
+| `Date`, `Time`, `DateTime` | the text silt shows of them: `"2026-10-19"`, `"12:30:00"` (with a fractional second only when the value has one: `"12:30:00.250"`) and `"2026-10-19T12:30:00"` |
 | `Duration`, `Instant` | as the records they are: `{"ns":2000000000}`, `{"epoch_ns":...}` |
 
 The keys of a map, and so of a `json.Object`, are written in sorted order;

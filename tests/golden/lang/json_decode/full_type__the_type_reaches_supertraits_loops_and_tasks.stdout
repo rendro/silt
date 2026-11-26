@@ -4,6 +4,6 @@ Ok(Box {v: 2})
 Ok(Box {v: "2"})
 Ok(Box {v: 6})
 ok
-err json type mismatch: expected String, got number at v
+err json type mismatch at byte 6: expected String, got number at v
 Ok(Box {v: 2.5})
 Ok(Box {v: 8})

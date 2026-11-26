@@ -20,7 +20,7 @@ fn main() {
   }
   match json.decode(nest(1001), json.Value) {
     Ok(_) -> println("1001: Ok")
-    Err(json.Other(msg)) -> println("1001: Other({msg})")
+    Err(json.Other(msg, _)) -> println("1001: Other({msg})")
     Err(e) -> println("1001: {e}")
   }
 }

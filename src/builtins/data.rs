@@ -92,6 +92,26 @@ const _: () = assert!(std::mem::size_of::<Data>() == 32);
 pub(crate) const UNFILLED: &str =
     "internal error: a part a json.Encode impl writes was not written";
 
+/// The date and time in UTC of the instant `epoch_ns` nanoseconds after
+/// 1970-01-01T00:00:00Z, as data. (Every `Int` of nanoseconds is a
+/// date and time chrono has.)
+fn utc_datetime(epoch_ns: i64) -> Data {
+    use chrono::{Datelike, Timelike};
+    let at = chrono::DateTime::from_timestamp_nanos(epoch_ns).naive_utc();
+    let date = Date {
+        year: at.year().into(),
+        month: at.month().into(),
+        day: at.day().into(),
+    };
+    let time = Time {
+        hour: at.hour().into(),
+        minute: at.minute().into(),
+        second: at.second().into(),
+        ns: at.nanosecond().into(),
+    };
+    Data::DateTime(Box::new((date, time)))
+}
+
 /// What is said of a value of the kind `kind` that a format has no
 /// form for.
 pub(crate) fn unsupported(kind: &str) -> String {
@@ -335,6 +355,18 @@ impl<'c> Writer<'c> {
             }
             Value::Record(record) if record.type_id() == ty::TIME => {
                 Data::Time(Box::new(Time::of(record)))
+            }
+            // An `Instant` at a postgres parameter's place, or in an
+            // array, is sent as a `timestamptz`: its date and time in UTC.
+            Value::Record(record)
+                if record.type_id() == ty::INSTANT
+                    && self.format == Format::Postgres
+                    && place == Place::Value =>
+            {
+                match record.get("epoch_ns") {
+                    Some(Value::Int(ns)) => utc_datetime(*ns),
+                    _ => return Err(refused(self.caller, v)),
+                }
             }
             Value::Record(record) if record.type_id() == ty::DATE_TIME => {
                 match (record.get("date"), record.get("time")) {

@@ -126,7 +126,7 @@
     },
     "constructors": {
       "name": "constant.language.constructor.silt",
-      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Empty|Closed|Recv|Send|Received|Sent|Null|Bool|Int|Float|String|Array|Object|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Interrupt|Terminate|NotFound|FolderNotFound|PermissionDenied|AlreadyExists|InvalidInput|Interrupted|UnexpectedEof|WriteZero|Other|InvalidDigit|Overflow|Underflow|NotFinite|InvalidPattern|TooBig|Syntax|TypeMismatch|MissingField|ParseFormat|OutOfRange|InvalidFormat|Connect|Tls|Timeout|InvalidUrl|InvalidResponse|ClosedEarly|AuthFailed|Query|NoSuchColumn|TxnAborted|InvalidUtf8|InvalidHex|InvalidBase64|ByteOutOfRange|InvalidLength|Invalid|InvalidPart|Bind)\\b"
+      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Empty|Closed|Recv|Send|Received|Sent|Null|Bool|Int|Float|String|Array|Object|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Interrupt|Terminate|NotFound|FolderNotFound|PermissionDenied|AlreadyExists|InvalidInput|Interrupted|UnexpectedEof|WriteZero|Other|InvalidDigit|Overflow|Underflow|NotFinite|InvalidPattern|TooBig|Syntax|TypeMismatch|MissingField|UnknownField|ParseFormat|OutOfRange|InvalidFormat|Connect|Tls|Timeout|InvalidUrl|InvalidResponse|ClosedEarly|AuthFailed|Query|NoSuchColumn|TxnAborted|InvalidUtf8|InvalidHex|InvalidBase64|ByteOutOfRange|InvalidLength|Invalid|InvalidPart|Bind)\\b"
     },
     "builtins": {
       "name": "support.function.builtin.silt",

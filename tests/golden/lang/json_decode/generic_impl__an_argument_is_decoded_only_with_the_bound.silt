@@ -16,7 +16,7 @@ trait json.Decode for Box(a) {
         Ok(v) -> Ok(Box { v: v })
         Err(e) -> Err(e)
       }
-      _ -> Err(json.Other("not a box"))
+      _ -> Err(json.Other("not a box", 0))
     }
   }
 }
@@ -30,7 +30,7 @@ trait json.Decode for Pair(a) where a: json.Decode {
         Ok(v) -> Ok(Pair { l: v })
         Err(e) -> Err(e)
       }
-      _ -> Err(json.Other("not a pair"))
+      _ -> Err(json.Other("not a pair", 0))
     }
   }
 }

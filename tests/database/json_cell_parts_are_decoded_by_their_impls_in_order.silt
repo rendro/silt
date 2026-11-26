@@ -13,9 +13,9 @@ trait json.Decode for P {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     println("  impl P {value}")
     match value {
-      json.String("bad") -> Err(json.Other("P refuses bad"))
+      json.String("bad") -> Err(json.Other("P refuses bad", 0))
       json.String(s) -> Ok(P { s: s })
-      _ -> Err(json.TypeMismatch("string", "other"))
+      _ -> Err(json.TypeMismatch("string", "other", 0))
     }
   }
 }

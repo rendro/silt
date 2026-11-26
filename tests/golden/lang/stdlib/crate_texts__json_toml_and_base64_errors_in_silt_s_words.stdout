@@ -1,6 +1,6 @@
 Err(json syntax error at byte 6: a \u escape of half a surrogate pair)
-Err(json type mismatch: expected Int, got a json.Float)
-Err(json type mismatch: expected Int, got a number with a fraction)
+Err(json type mismatch at byte 0: expected Int, got a json.Float)
+Err(json type mismatch at byte 0: expected Int, got a number with a fraction)
 Err(toml syntax error at byte 3: a character that is not allowed here)
 Err(toml syntax error at byte 4: number too large)
 Err(toml syntax error at byte 4: invalid floating-point number: expected leading digit)

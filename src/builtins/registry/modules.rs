@@ -234,6 +234,8 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn take(xs: List(a), n: Int) -> List(a)", "Keep first n elements", list::take),
                 f("fn take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)", "Elements until `f` first rejects one", list::take_while),
                 f("fn traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative", "Call f on every element, then one Applicative value of the list of the results: the first failure, if there is one", list::traverse),
+                f("fn try_each(xs: List(a), f: Fn(a) -> Result((), e)) -> Result((), e)", "Call f on each element in order up to the first Err, which is the result; else Ok(())", list::try_each),
+                f("fn try_each_option(xs: List(a), f: Fn(a) -> Option(())) -> Option(())", "Call f on each element in order up to the first None, which is the result; else Some(())", list::try_each_option),
                 f("fn unfold(seed: a, f: Fn(a) -> Option((b, a))) -> List(b)", "Build a list from a seed", list::unfold),
                 f("fn unique(xs: List(a)) -> List(a) where a: Equal", "Remove duplicates, preserving first occurrence", list::unique),
                 f("fn unique_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Hash", "Keep the first element of each key", list::unique_by),
@@ -369,7 +371,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "json",
             page: "json.md",
             types: "\
-                pub type JsonError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
+                pub type JsonError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }\n\
                 pub type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }\n\
             ",
             traits: "\
@@ -389,7 +391,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "toml",
             page: "toml.md",
             types: "\
-                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
+                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }\n\
             ",
             error: "TomlError" => toml::error_text,
             rows: [

@@ -15,7 +15,8 @@ pub(crate) struct Date {
 
 /// A `Time`'s fields. Shown as the text of a `Time`, the one place it
 /// is decided (a `Time` value displays it too): `12:30:00`, with a
-/// fraction of a second only when it has one, `12:30:00.250000000`.
+/// fraction of a second only when it has one, in groups of three
+/// digits: `12:30:00.250`, `12:30:00.250001`, `12:30:00.250000001`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Time {
     pub(crate) hour: i64,
@@ -72,9 +73,13 @@ impl std::fmt::Display for Time {
             ns,
         } = self;
         write!(f, "{hour:02}:{minute:02}:{second:02}")?;
-        match *ns > 0 {
-            true => write!(f, ".{ns:09}"),
-            false => Ok(()),
+        // The fraction in groups of three digits: milli-, micro- or
+        // nanoseconds, as few as it needs (`.250`, `.000001`).
+        match *ns {
+            ..=0 => Ok(()),
+            ns if ns < 1_000_000_000 && ns % 1_000_000 == 0 => write!(f, ".{:03}", ns / 1_000_000),
+            ns if ns < 1_000_000_000 && ns % 1_000 == 0 => write!(f, ".{:06}", ns / 1_000),
+            ns => write!(f, ".{ns:09}"),
         }
     }
 }

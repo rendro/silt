@@ -160,6 +160,34 @@ regex patterns with `{N}` quantifiers that would conflict with interpolation:
 let pattern = """[\w]+@[\w]+\.\w{2,}"""
 ```
 
+### Building JSON and HTML
+
+A triple-quoted string fills in no `{name}`, and a `"..."` string
+needs `\"` for each quote and `\{` for each opening brace, so JSON
+and HTML are not written as text with values in it. Build JSON from a
+record and `json.stringify`, which writes the quotes, the braces and
+the escapes; build HTML with single-quoted attributes, which a
+`"..."` string takes as they are, or piece a triple-quoted string
+(the braces of CSS) together with the values:
+
+```silt
+import json
+
+type Event {
+  kind: String,
+  count: Int,
+}
+
+fn main() {
+  let kind = "fail"
+  println(json.stringify(Event { kind, count: 2 })) -- {"kind":"fail","count":2}
+  let href = "/a b"
+  println("<a href='{href}'>{kind}</a>") -- <a href='/a b'>fail</a>
+  let style = """p { color: red; }"""
+  println("<style>{style}</style>") -- <style>p { color: red; }</style>
+}
+```
+
 **Design rationale.** Interpolation `"{a}{b}"` is the way to build
 strings (`+` is arithmetic only) — it reads naturally and keeps
 multi-fragment messages punctuation-light. For pipeline contexts, use

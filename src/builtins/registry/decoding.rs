@@ -656,7 +656,7 @@ mod tests {
                         Family::Csv => Ok(crate::value::Value::Unit),
                     };
                     match decoded {
-                        Err(Error::Other(message)) if message.starts_with("cannot decode") => {
+                        Err(Error::Other(message, _)) if message.starts_with("cannot decode") => {
                             Some(message)
                         }
                         _ => None,

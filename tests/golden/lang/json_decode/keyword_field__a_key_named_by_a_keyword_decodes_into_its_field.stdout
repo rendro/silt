@@ -1,7 +1,7 @@
 today
 click 1
 {"when":"today","events":[{"type":"click","match":1,"id":2}]}
-json error: json missing field: type
+json error: json missing field at byte 0: type
 key
 type = "key"
 match = 3

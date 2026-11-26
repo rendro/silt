@@ -502,6 +502,8 @@ list.tail(xs: List(a)) -> List(a)
 list.take(xs: List(a), n: Int) -> List(a)
 list.take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 list.traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative
+list.try_each(xs: List(a), f: Fn(a) -> Result((), e)) -> Result((), e)
+list.try_each_option(xs: List(a), f: Fn(a) -> Option(())) -> Option(())
 list.unfold(seed: a, f: Fn(a) -> Option((b, a))) -> List(b)
 list.unique(xs: List(a)) -> List(a) where a: Equal
 list.unique_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Hash
@@ -621,7 +623,7 @@ regex.split(text: String, re: Regex) -> List(String)
 ### json
 
 ```
-type JsonError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
+type JsonError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }
 type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }
 trait Encode { fn encode(self) -> Value }
 trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
@@ -635,7 +637,7 @@ json.stringify(value: a) -> String where a: Encode
 ### toml
 
 ```
-type TomlError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
+type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }
 toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
 toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode

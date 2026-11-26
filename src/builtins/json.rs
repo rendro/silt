@@ -21,9 +21,9 @@ use crate::vm::{Source, Step, Vm, VmError};
 //
 // `JsonError` variants:
 //   Syntax(message, byte_offset)
-//   TypeMismatch(expected, actual)
-//   MissingField(name)
-//   Other(message)
+//   TypeMismatch(expected, actual, byte_offset)
+//   MissingField(name, byte_offset)
+//   Other(message, byte_offset)
 
 fn json_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, [inner])
@@ -56,7 +56,10 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
                 [Value::string(message), Value::Int(offset)],
             )
         }
-        _ => Value::variant(bv::JSON_OTHER, [Value::string(err.to_string())]),
+        _ => Value::variant(
+            bv::JSON_OTHER,
+            [Value::string(err.to_string()), Value::Int(0)],
+        ),
     }
 }
 
@@ -76,9 +79,9 @@ fn after_mark(error: Value, mark: usize) -> Value {
 }
 
 /// Build a full `Err(JsonError)` from a `serde_json::Error` of reading
-/// `text`.
-pub(crate) fn json_result_err(err: &serde_json::Error, text: &[u8]) -> Value {
-    json_err_wrap(json_error_to_variant(err, text))
+/// `text`, read after a byte order mark of `mark` bytes.
+pub(crate) fn json_result_err(err: &serde_json::Error, text: &[u8], mark: usize) -> Value {
+    json_err_wrap(after_mark(json_error_to_variant(err, text), mark))
 }
 
 /// Where in `text` the syntax error `err` is, as a 0-based byte offset
@@ -110,7 +113,10 @@ fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type
 /// descriptor, internal unexpected results, etc.).
 pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
-    json_err_wrap(Value::variant(bv::JSON_OTHER, [Value::string(msg)]))
+    json_err_wrap(Value::variant(
+        bv::JSON_OTHER,
+        [Value::string(msg), Value::Int(0)],
+    ))
 }
 
 /// How `JsonError` shows the variant `tag` with `fields`:
@@ -120,13 +126,21 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("Syntax", [Value::String(m, _), Value::Int(offset)]) => {
             format!("json syntax error at byte {offset}: {m}")
         }
-        ("TypeMismatch", [Value::String(exp, _), Value::String(act, _)]) => {
-            format!("json type mismatch: expected {exp}, got {act}")
+        (
+            "TypeMismatch",
+            [
+                Value::String(exp, _),
+                Value::String(act, _),
+                Value::Int(offset),
+            ],
+        ) => {
+            format!("json type mismatch at byte {offset}: expected {exp}, got {act}")
         }
-        ("MissingField", [Value::String(n, _)]) => {
-            format!("json missing field: {n}")
+        ("MissingField", [Value::String(n, _), Value::Int(offset)]) => {
+            format!("json missing field at byte {offset}: {n}")
         }
-        ("Other", [Value::String(m, _)]) => m.to_string(),
+        // (Its offset is a field of its own: the message is the text.)
+        ("Other", [Value::String(m, _), Value::Int(_)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -363,6 +377,8 @@ pub(crate) const RULES: Rules = Rules {
         bv::JSON_MISSING_FIELD,
         bv::JSON_OTHER,
     ],
+    offsets: true,
+    unknown: None,
     from_impl: decode::at_part,
 };
 
@@ -378,7 +394,7 @@ pub(crate) fn decode_field(
     text: &[u8],
     expected: &FieldType,
 ) -> Result<Result<Value, std::string::String>, serde_json::Error> {
-    let decoded = decode::seed::json_cell(r, expected, text)?;
+    let decoded = located(decode::seed::json_cell(r, expected, text)?, text, 0);
     Ok(decoded.map_err(|e| message(&e.variant(&RULES))))
 }
 
@@ -420,8 +436,123 @@ impl Source for Read {
     }
 }
 
-/// A JSON text read again.
-struct Text(Box<[u8]>);
+/// `outcome` of decoding the JSON text `text`, read after `mark` bytes
+/// (a byte order mark), its error with the byte offset of its value.
+fn located(mut outcome: decode::seed::Outcome, text: &[u8], mark: usize) -> decode::seed::Outcome {
+    if let Err(e) = &mut outcome {
+        // (JSON refuses no key: every error is about a value.)
+        e.locate(|path, _| offset_at(text, path));
+        e.shift(mark);
+    }
+    outcome
+}
+
+/// The byte offset in the JSON text `text`, a document, of the value
+/// at `path` (of a key written twice, the last, which the decoder
+/// reads): as far as the path leads in the text.
+pub(crate) fn offset_at(text: &[u8], path: &[decode::Seg]) -> usize {
+    let space = |mut at: usize| {
+        while text.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        at
+    };
+    // Past the string that starts at `at`.
+    let string_end = |mut at: usize| {
+        at += 1;
+        while let Some(b) = text.get(at) {
+            match b {
+                b'\\' => at += 2,
+                b'"' => return at + 1,
+                _ => at += 1,
+            }
+        }
+        text.len()
+    };
+    // Past the value that starts at `at`.
+    let value_end = |mut at: usize| {
+        let mut depth = 0usize;
+        while let Some(b) = text.get(at) {
+            match b {
+                b'"' => {
+                    at = string_end(at);
+                    if depth == 0 {
+                        return at;
+                    }
+                    continue;
+                }
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' if depth > 0 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return at + 1;
+                    }
+                }
+                b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r' if depth == 0 => return at,
+                _ => {}
+            }
+            at += 1;
+        }
+        text.len()
+    };
+    let mut at = space(0);
+    for seg in path {
+        let found = match (text.get(at), seg) {
+            (Some(b'{'), decode::Seg::Key(key)) => {
+                let mut found = None;
+                let mut next = space(at + 1);
+                while text.get(next) == Some(&b'"') {
+                    let end = string_end(next);
+                    let name: Option<std::string::String> =
+                        serde_json::from_slice(&text[next..end]).ok();
+                    next = space(end);
+                    if text.get(next) != Some(&b':') {
+                        break;
+                    }
+                    next = space(next + 1);
+                    if name.as_deref() == Some(key.as_str()) {
+                        found = Some(next);
+                    }
+                    next = space(value_end(next));
+                    match text.get(next) {
+                        Some(b',') => next = space(next + 1),
+                        _ => break,
+                    }
+                }
+                found
+            }
+            (Some(b'['), decode::Seg::Index(index)) => {
+                let mut next = space(at + 1);
+                let mut found = None;
+                for k in 0.. {
+                    if matches!(text.get(next), None | Some(b']')) {
+                        break;
+                    }
+                    if k == *index {
+                        found = Some(next);
+                        break;
+                    }
+                    next = space(value_end(next));
+                    match text.get(next) {
+                        Some(b',') => next = space(next + 1),
+                        _ => break,
+                    }
+                }
+                found
+            }
+            _ => None,
+        };
+        match found {
+            Some(found) => at = found,
+            None => break,
+        }
+    }
+    at
+}
+
+/// A JSON text read again, read after a byte order mark of so many
+/// bytes.
+struct Text(Box<[u8]>, usize);
 
 impl Source for Text {
     fn read(
@@ -431,7 +562,8 @@ impl Source for Text {
         parts: &decode::seed::Parts,
     ) -> Result<decode::seed::Outcome, Value> {
         decode::seed::json_text(r, expected, &self.0, parts)
-            .map_err(|e| json_result_err(&e, &self.0))
+            .map(|outcome| located(outcome, &self.0, self.1))
+            .map_err(|e| json_result_err(&e, &self.0, self.1))
     }
 }
 
@@ -469,9 +601,10 @@ builtins! {
         let expected = decode::target(&PARSE, ty)?.element();
         let read = |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
             decode::seed::json_text(r, expected, text, parts)
-                .map_err(|e| json_err_wrap(after_mark(json_error_to_variant(&e, text), mark)))
+                .map(|outcome| located(outcome, text, mark))
+                .map_err(|e| json_result_err(&e, text, mark))
         };
-        let source = || -> Box<dyn Source> { Box::new(Text(text.into())) };
+        let source = || -> Box<dyn Source> { Box::new(Text(text.into(), mark)) };
         vm.decode_read("json.decode", &RULES, expected, read, source)
     }
 
@@ -494,6 +627,28 @@ builtins! {
 mod tests {
     use super::*;
     use crate::builtins::data::MAX_ENCODE_DEPTH;
+
+    /// The offset of a value is where it starts, of a key written twice
+    /// the last one's; of a path that leads out of the text, as far as
+    /// it leads.
+    #[test]
+    fn a_value_is_found_where_it_starts() {
+        use decode::Seg::{Index, Key};
+        let key = |k: &str| Key(k.to_string());
+        let text = br#" {"a": 1, "s": "x\"}", "o": {"b": [true, {"c": null}]}, "a": [2]} "#;
+        let at = |path: &[decode::Seg]| offset_at(text, path);
+        let find = |s: &str| {
+            (text.windows(s.len()))
+                .position(|w| w == s.as_bytes())
+                .unwrap_or(0)
+        };
+        assert_eq!(at(&[]), 1);
+        assert_eq!(at(&[key("a")]), find("[2]"));
+        assert_eq!(at(&[key("s")]), find("\"x"));
+        assert_eq!(at(&[key("o"), key("b"), Index(1), key("c")]), find("null"));
+        assert_eq!(at(&[key("o"), key("b"), Index(5)]), find("[true"));
+        assert_eq!(at(&[key("none")]), 1);
+    }
     use crate::builtins::decode::shown;
     use crate::typeinfo::{FieldType, TypeInfo};
 

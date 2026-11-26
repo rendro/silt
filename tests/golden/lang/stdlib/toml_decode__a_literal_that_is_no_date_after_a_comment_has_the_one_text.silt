@@ -4,7 +4,7 @@
 import time
 import toml
 
-type L { d: List(time.Date) }
+type L { d: List(time.Date), x: Option(String) }
 
 fn main() {
   println(toml.parse("d = [1979-02-30]", L))

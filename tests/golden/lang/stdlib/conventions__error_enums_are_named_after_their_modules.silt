@@ -37,8 +37,8 @@ fn main() {
   println(io.inspect(bytes.from_hex("zz")))
   let last: List(String) = [
     show(io.Other("io")),
-    show(json.Other("json")),
-    show(toml.Other("toml")),
+    show(json.Other("json", 0)),
+    show(toml.Other("toml", 0)),
     show(http.Other("http")),
   ]
   println(last)

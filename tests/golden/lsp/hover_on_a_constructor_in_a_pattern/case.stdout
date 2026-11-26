@@ -12,9 +12,9 @@ A variant of `json.JsonError`, reached as `json.Syntax`.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
-| `MissingField(String)` | the field's path | required field absent |
-| `Other(String)` | message | unclassified parse failure |
+| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong JSON type for target |
+| `MissingField(String, Int)` | the field's path, byte offset of its object | required field absent |
+| `Other(String, Int)` | message, byte offset | unclassified parse failure |
 > hover 74:21
 ```silt
 String
@@ -25,7 +25,7 @@ Int
 ```
 > hover 75:14
 ```silt
-Fn(String) -> json.JsonError
+Fn(String, Int) -> json.JsonError
 ```
 
 ---
@@ -35,9 +35,9 @@ A variant of `json.JsonError`, reached as `json.MissingField`.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
-| `MissingField(String)` | the field's path | required field absent |
-| `Other(String)` | message | unclassified parse failure |
+| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong JSON type for target |
+| `MissingField(String, Int)` | the field's path, byte offset of its object | required field absent |
+| `Other(String, Int)` | message, byte offset | unclassified parse failure |
 > hover 75:27
 ```silt
 String

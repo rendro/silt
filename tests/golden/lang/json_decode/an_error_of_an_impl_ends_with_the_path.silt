@@ -13,11 +13,11 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.Int(n) -> Ok(Code { n: n })
-      json.String("other") -> Err(json.Other("not a code"))
-      json.String("missing") -> Err(json.MissingField("digits"))
-      json.String("spaced") -> Err(json.MissingField("a b"))
+      json.String("other") -> Err(json.Other("not a code", 0))
+      json.String("missing") -> Err(json.MissingField("digits", 0))
+      json.String("spaced") -> Err(json.MissingField("a b", 0))
       json.String("syntax") -> Err(json.Syntax("bad digits", 3))
-      _ -> Err(json.TypeMismatch("Int", "something else"))
+      _ -> Err(json.TypeMismatch("Int", "something else", 0))
     }
   }
 }
