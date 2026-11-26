@@ -219,8 +219,9 @@ pub fn resolve_packages(
 /// <name>...`: the git dependencies of the project's own `silt.toml`
 /// whose keys are `names` are resolved again, as [`LockPolicy::Refresh`]
 /// resolves every one (their branch or tag looked up, the commit fetched
-/// afresh and pinned); every other package keeps the pin the lock has
-/// for it.
+/// afresh and pinned), and so is every other package's dependency on the
+/// same repository and ref, which takes the same commit; every other
+/// package keeps the pin the lock has for it.
 pub(crate) fn refresh_packages(
     project_root: &Path,
     names: HashSet<Symbol>,
@@ -261,6 +262,7 @@ fn resolve(
         diagnostics: Vec::new(),
         queue: VecDeque::new(),
         refresh,
+        refreshed: Vec::new(),
     };
     let root = resolver.add(
         SourceKey::Path(root_dir.clone()),
@@ -360,6 +362,11 @@ struct Resolver<'a> {
     /// The keys of the project's own dependencies that are resolved
     /// again although the lock pins them (`silt update <name>`).
     refresh: HashSet<Symbol>,
+    /// The repositories and refs of those dependencies, each with the
+    /// commit it was resolved to again: another package's dependency on
+    /// the same repository and ref takes that commit too, so that the
+    /// graph holds the source once, as after `silt update`.
+    refreshed: Vec<(String, GitRef, String)>,
 }
 
 impl Resolver<'_> {
@@ -495,9 +502,15 @@ impl Resolver<'_> {
                 // dependency of the project named.
                 let afresh = self.policy == LockPolicy::Refresh
                     || (from == PackageId(0) && self.refresh.contains(&key));
-                let pinned = match afresh {
-                    true => None,
-                    false => self.pinned_commit(&lock_url, ref_spec),
+                // (The project's dependencies come first: a dependency's
+                // dependency on a source named is met after it.)
+                let refreshed = (self.refreshed.iter())
+                    .find(|(u, r, _)| *u == lock_url && same_ref(ref_spec, r))
+                    .map(|(_, _, commit)| commit.clone());
+                let pinned = match (afresh, refreshed) {
+                    (true, _) => None,
+                    (false, Some(commit)) => Some(commit),
+                    (false, None) => self.pinned_commit(&lock_url, ref_spec),
                 };
                 let commit = match pinned {
                     Some(commit) => commit,
@@ -535,6 +548,10 @@ impl Resolver<'_> {
                         }
                     },
                 };
+                if afresh && self.policy != LockPolicy::Refresh {
+                    self.refreshed
+                        .push((lock_url.clone(), ref_spec.clone(), commit.clone()));
+                }
                 // A source met before is that package (not fetched
                 // again: under `silt update` that would remove the
                 // checkout the package was read from).

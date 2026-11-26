@@ -1335,6 +1335,55 @@ fn silt_update_with_names_moves_only_those() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// `silt update c` moves `c` also where a dependency of the project
+/// depends on it, at the same repository and branch: the graph holds `c`
+/// once, at the commit the update resolved, as after `silt update`.
+/// FAILS before the review fix: the project's dependency moved and the
+/// path dependency's kept the old pin, "`c` is required at two commits".
+#[test]
+fn silt_update_with_a_name_moves_it_for_every_package_that_needs_it() {
+    let ws = fresh_workspace("update_name_shared");
+    if !git_installed() {
+        return;
+    }
+    let first = sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let app = ws.join("app");
+    let c = "c = { git = \"../lib\", branch = \"main\" }";
+    // (A path dependency's git URL is relative to its own silt.toml.)
+    write_package(
+        &app.join("lib"),
+        "shared",
+        &["c = { git = \"../../lib\", branch = \"main\" }"],
+        "lib.silt",
+        "pub fn w() { 1 }\n",
+    );
+    write_package(
+        &app,
+        "app",
+        &["shared = { path = \"lib\" }", c],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    fs::write(ws.join("lib/src/lib.silt"), "pub fn v() { 2 }\n").unwrap();
+    let second = commit_all(&ws, &ws.join("lib"), "two");
+    let out = silt(&ws, &app, &["update", "c"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out),
+        format!(
+            "remote: {} -> {} (branch `main` moved)\n",
+            &first[..7],
+            &second[..7]
+        )
+    );
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert!(lock.contains(&second) && !lock.contains(&first), "{lock}");
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── The lockfile's checksum of a git dependency ──────────────────────
 
 /// An app beside the repository `lib` (the package `remote`) that pins
