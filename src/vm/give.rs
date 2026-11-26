@@ -105,23 +105,51 @@ fn let_go(
             frame[at] = Value::Unit;
         }
     }
-    for (at, update) in ahead.bases() {
-        if !matches!(frame[at], Value::Record(_)) {
-            continue;
-        }
-        for other in ahead.unread() {
-            if let (Value::Record(copy), Value::Record(record)) = (&frame[other], &frame[at])
-                && copy.shares(record)
-            {
-                frame[other] = Value::Unit;
+    // A record in a record (`o.{ inner: o.inner.{ m: map.set(o.inner.m,
+    // k, v) } }`): the outer record's field holds the inner one, which
+    // is the base of the update before, so the outer record is let go of
+    // first; each round lets go of what the one before made the one
+    // holder.
+    for _ in 0..=ahead.bases().count() {
+        let mut changed = false;
+        for (at, update) in ahead.bases() {
+            if !matches!(frame[at], Value::Record(_)) {
+                continue;
             }
-        }
-        let Some((Instr::RecordUpdate { fields }, _)) = decode(chunk.code(), update) else {
-            continue;
-        };
-        if let Value::Record(record) = &mut frame[at] {
+            for other in ahead.unread() {
+                if let (Value::Record(copy), Value::Record(record)) = (&frame[other], &frame[at])
+                    && copy.shares(record)
+                {
+                    frame[other] = Value::Unit;
+                    changed = true;
+                }
+            }
+            let Some((Instr::RecordUpdate { fields }, _)) = decode(chunk.code(), update) else {
+                continue;
+            };
+            let (below, rest) = frame.split_at_mut(at);
+            let (record, above) = rest
+                .split_first_mut()
+                .expect("the base is a value of the frame");
+            let Value::Record(record) = record else {
+                continue;
+            };
+            // A field that holds a given value, or the record another
+            // update takes as its base (which holds it on).
+            let bases = |value: &Value| {
+                ahead.bases().any(|(other, _)| {
+                    other != at
+                        && match other < at {
+                            true => shares(value, &below[other]),
+                            false => shares(value, &above[other - at - 1]),
+                        }
+                })
+            };
             let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
-            record.let_go_of_fields(names, given);
+            changed |= record.let_go_of_fields(names, |value| given(value) || bases(value));
+        }
+        if !changed {
+            break;
         }
     }
 }

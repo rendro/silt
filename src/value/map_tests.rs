@@ -1047,6 +1047,60 @@ import host
     assert!(lists < 20, "{lists} changes of lists copied a shared tree");
 }
 
+/// A record in a record that holds a collection, carried by a function
+/// that calls itself or by a fold and updated as
+/// `o.{ inner: o.inner.{ m: map.set(o.inner.m, k, v) } }`, changes the
+/// collection in place, three records deep too: 9,000 changes find each
+/// collection held nowhere else. (The outer record's field held the
+/// inner record while its update was made: each change copied the
+/// path of the tree.)
+#[test]
+fn a_record_in_a_record_changes_its_collection_in_place() {
+    let (given, shared, lists) = run_counting_shared(
+        r#"
+import list
+import map
+import set
+type Inner {
+  m: Map(Int, Int),
+  l: List(Int),
+}
+type Outer {
+  inner: Inner,
+  n: Int,
+}
+type Top {
+  outer: Outer,
+}
+fn nested(i: Int, o: Outer) -> Outer {
+  match i == 0 {
+    true -> o
+    false -> nested(i - 1, o.{ n: o.n + 1, inner: o.inner.{ m: map.set(o.inner.m, i, i) } })
+  }
+}
+fn deep(i: Int, t: Top) -> Top {
+  match i == 0 {
+    true -> t
+    false -> deep(i - 1, t.{ outer: t.outer.{ inner: t.outer.inner.{ l: list.append(t.outer.inner.l, i) } } })
+  }
+}
+fn main() {
+  let start = Outer { inner: Inner { m: #{}, l: [] }, n: 0 }
+  let a = nested(3000, start)
+  let b = deep(3000, Top { outer: start })
+  let xs = list.map(1..3000) { i -> i }
+  let c = list.fold(xs, start) { o, x -> o.{ inner: o.inner.{ m: map.update(o.inner.m, x, 0) { v -> v + 1 } } } }
+  host.give([map.length(a.inner.m), a.n, list.length(b.outer.inner.l), map.length(c.inner.m), map.length(start.inner.m)])
+}
+import host
+"#,
+    );
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    assert_eq!(given, ints(&[3_000, 3_000, 3_000, 3_000, 0]));
+    assert!(shared < 20, "{shared} changes of maps copied a shared tree");
+    assert!(lists < 20, "{lists} changes of lists copied a shared tree");
+}
+
 // ── Deep values ────────────────────────────────────────────────────
 
 /// A value nested 10,000 levels deep through maps and sets kept in
