@@ -1,0 +1,28 @@
+-- cmd: fmt
+-- In a `match` header, a literal with one field written alone,
+-- `Q { x }`, is a literal as it is anywhere else: it stays as written,
+-- and parentheses around it go, as they do around a literal with `:`,
+-- or an update.
+type Q { x: Int }
+
+fn main() {
+  let x = 0
+  let a = match Q { x } {
+    Q { x } -> x
+  }
+  let a2 = match (Q { x }) {
+    Q { x } -> x
+  }
+  let b = match (Q { x }.x) {
+    0 -> "zero"
+    _ -> "other"
+  }
+  let r = Q { x: 2 }
+  let c = match (Q { x: x }) {
+    Q { x } -> x
+  }
+  let d = match (r.{ x }) {
+    Q { x } -> x
+  }
+  println("{a} {a2} {b} {r.x} {c} {d}")
+}

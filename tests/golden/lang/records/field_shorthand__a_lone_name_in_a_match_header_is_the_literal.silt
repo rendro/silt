@@ -1,0 +1,11 @@
+-- In a `match` header, braces behind a type name that hold one name
+-- alone are the literal `Q { x }`, as `Q { x, y }` is; the match body
+-- is the `{` behind them.
+type Q { x: Int }
+
+fn main() {
+  let x = 1
+  match Q { x } {
+    Q { x } -> println("plain {x}")
+  }
+}

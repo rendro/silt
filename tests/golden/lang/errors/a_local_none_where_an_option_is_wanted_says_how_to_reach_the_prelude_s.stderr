@@ -1,0 +1,21 @@
+error[type]: type mismatch: expected Option(Int), got Slot
+ --> a_local_none_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:9:3
+   |
+ 9 |   match n {
+   |   ^^^^^^^^^ type mismatch: expected Option(Int), got Slot
+ ::: a_local_none_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+    |
+ 10 |     0 -> None
+    |          ---- this `None` is the variant of `Slot`
+  = help: the variant `None` of `Slot` hides the prelude's `None`: write `Option.None`
+
+error[type]: type mismatch: expected Slot, got Option(Int)
+ --> a_local_none_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:11:10
+    |
+ 11 |     _ -> Some(n)
+    |          ^^^^^^^ type mismatch: expected Slot, got Option(Int)
+ ::: a_local_none_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+    |
+ 10 |     0 -> None
+    |          ---- this `None` is the variant of `Slot`
+  = help: the variant `None` of `Slot` hides the prelude's `None`: write `Option.None`

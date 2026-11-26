@@ -1,0 +1,9 @@
+None
+Some(3)
+Ok(2)
+Err("odd")
+3
+[Full(1), None]
+[Some(2), Nothing]
+[Ok(3), Err("e")]
+[Continue(4), Stop]

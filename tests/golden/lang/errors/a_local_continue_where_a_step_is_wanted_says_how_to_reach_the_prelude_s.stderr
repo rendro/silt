@@ -1,0 +1,21 @@
+error[type]: type mismatch: expected Step(Int), got Plan
+ --> a_local_continue_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:9:3
+   |
+ 9 |   match n {
+   |   ^^^^^^^^^ type mismatch: expected Step(Int), got Plan
+ ::: a_local_continue_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+    |
+ 10 |     0 -> Continue(n)
+    |          ----------- this `Continue` is the variant of `Plan`
+  = help: the variant `Continue` of `Plan` hides the prelude's `Continue`: write `Step.Continue`
+
+error[type]: type mismatch: expected Plan, got Step(Int)
+ --> a_local_continue_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:11:10
+    |
+ 11 |     _ -> Stop(n)
+    |          ^^^^^^^ type mismatch: expected Plan, got Step(Int)
+ ::: a_local_continue_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+    |
+ 10 |     0 -> Continue(n)
+    |          ----------- this `Continue` is the variant of `Plan`
+  = help: the variant `Continue` of `Plan` hides the prelude's `Continue`: write `Step.Continue`

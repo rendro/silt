@@ -72,7 +72,6 @@ ends the program with status 1. `silt run main.silt
 | set, ordered | `#[1, 2, 3]` |
 | record | `User { name: "A", age: 3 }`, `User { name, age }` (= `name: name`); a keyword may name a field: `e.type`, `Event { type: t }` |
 | record update | `user.{ age: 4 }`, `user.{ age }` |
-| in a `match` header | a lone field written alone in parentheses: `match (P { x }) { ... }` |
 | variant | `Some(1)`, `None`, `Ok(x)`, `Err(e)`, `Circle(2)` |
 | closure | `{ x -> x * 2 }`, `{ a, b -> a + b }`, `{ (k, v) -> v }`, `{ -> 42 }` |
 

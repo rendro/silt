@@ -1,0 +1,14 @@
+-- cmd: lsp
+-- lsp: hover 11:15
+-- lsp: references 11:15
+-- lsp: rename 11:15 n
+-- The local behind a lone shorthand field of a literal in a `match`
+-- header is the local: hover shows it, and a rename writes the field out.
+type Box { x: Int }
+
+fn main() {
+  let x = 1
+  match Box { x } {
+    Box { x } -> println("{x}")
+  }
+}

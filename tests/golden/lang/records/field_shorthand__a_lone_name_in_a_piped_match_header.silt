@@ -1,0 +1,19 @@
+-- A lone shorthand literal at the start of a pipeline in a `match`
+-- header is the literal, and the pipeline goes on behind it.
+type Q { x: Int }
+
+fn get(q: Q) -> Int {
+  q.x
+}
+
+fn main() {
+  let x = 2
+  match Q { x } |> get {
+    2 -> println("piped 2")
+    _ -> println("piped other")
+  }
+  match Q { x } |> get == 2 {
+    true -> println("piped eq")
+    false -> println("piped ne")
+  }
+}

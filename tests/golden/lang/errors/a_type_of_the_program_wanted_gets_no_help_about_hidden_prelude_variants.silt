@@ -1,0 +1,29 @@
+-- exit: 1
+-- stderr-contains: type mismatch: expected Slot, got Option(Int)
+-- stderr-contains: type mismatch: expected Option(Int), got Slot
+-- stderr-not-contains: hides the prelude
+-- A `Slot` is wanted, or a `Slot` is given by a variant the prelude
+-- has no name for: the mismatch is the program's own, and no help line
+-- talks about the prelude's `None`, though `Slot` hides it.
+type Slot { Full(Int), None }
+
+fn empty() -> Slot {
+  None
+}
+
+fn wrong() -> Slot {
+  Some(1)
+}
+
+fn mixed(n: Int) -> Option(Int) {
+  match n {
+    0 -> Full(0)
+    _ -> Some(n)
+  }
+}
+
+fn main() {
+  println(empty())
+  println(wrong())
+  println(mixed(1))
+}

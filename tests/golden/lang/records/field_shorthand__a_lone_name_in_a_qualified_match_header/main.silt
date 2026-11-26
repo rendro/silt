@@ -1,0 +1,14 @@
+-- A qualified type name in a `match` header takes the lone shorthand
+-- literal as the bare name does: `shapes.Box { x }` is the literal.
+import shapes
+
+fn main() {
+  let x = 4
+  match shapes.Box { x } {
+    shapes.Box { x } -> println("qualified {x}")
+  }
+  match shapes.Box { x } == shapes.Box { x: 4 } {
+    true -> println("eq")
+    false -> println("ne")
+  }
+}
