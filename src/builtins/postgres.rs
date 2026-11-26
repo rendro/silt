@@ -3336,15 +3336,14 @@ fn mend(expected: &str, actual: &str) -> Mend {
     // says which columns fill one.
     if element == "Instant" {
         let cell = ["Infinity", "-Infinity"].contains(&actual);
+        let list = expected.starts_with("List(");
+        // (A cast keeps the column's shape: a `timestamp` mends a field
+        // that is no list, a `timestamp[]` one that is.)
         match actual {
-            "timestamp" => return Mend::Timestamptz { array: false },
-            "timestamp[]" => return Mend::Timestamptz { array: true },
+            "timestamp" if !list => return Mend::Timestamptz { array: false },
+            "timestamp[]" if list => return Mend::Timestamptz { array: true },
             _ if cell || actual.contains("timestamp") => return Mend::None,
-            _ => {
-                return Mend::Instant {
-                    array: expected.starts_with("List("),
-                };
-            }
+            _ => return Mend::Instant { array: list },
         }
     }
     match (from_a_column(expected), expected.starts_with("List(")) {
@@ -3998,15 +3997,24 @@ mod tests {
         assert_eq!(mend("Instant", "timestamp"), pair(false));
         assert_eq!(mend("Option(Instant)", "timestamp"), pair(false));
         assert_eq!(mend("List(Instant)", "timestamp[]"), pair(true));
-        for not in [
-            "Infinity",
-            "-Infinity",
-            "a timestamptz out of Instant's range",
-            "timestamptz[] with 2 dimensions",
-            "timestamp[] with 2 dimensions",
+        assert_eq!(mend("List(List(Instant))", "timestamp[]"), pair(true));
+        // A cast of another shape than the field's mends nothing; a
+        // timestamptz cell that is no Instant (in an array too, whose
+        // element's type the mismatch names), or an array of more
+        // dimensions than the list has levels, says what is wrong. (These
+        // are the texts the plan and the cells give.)
+        for (expected, not) in [
+            ("Instant", "timestamp[]"),
+            ("Option(Instant)", "timestamp[]"),
+            ("List(Instant)", "timestamp"),
+            ("Instant", "timestamptz[]"),
+            ("List(Instant)", "timestamptz"),
+            ("Instant", "Infinity"),
+            ("Instant", "-Infinity"),
+            ("Instant", "a timestamptz out of Instant's range"),
+            ("List(Instant)", "timestamptz[] with 2 dimensions"),
         ] {
-            assert_eq!(mend("Instant", not), Mend::None, "{not}");
-            assert_eq!(mend("List(Instant)", not), Mend::None, "{not}");
+            assert_eq!(mend(expected, not), Mend::None, "{expected} {not}");
         }
     }
 

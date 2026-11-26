@@ -67,11 +67,17 @@ fn main() {
         println("from jsonb: {doc}")
         println("a timestamp: {postgres.query(tx, "SELECT TIMESTAMP '2026-11-01 06:00:00' AS started", (), I)}")
         println("timestamp[]: {postgres.query(tx, "SELECT ARRAY[TIMESTAMP '2026-11-01 06:00:00'] AS xs", (), L)}")
+        -- A column of another shape than the field's: no cast mends it.
+        println("timestamp[] for an Instant: {postgres.query(tx, "SELECT ARRAY[TIMESTAMP '2026-11-01 06:00:00'] AS started", (), I)}")
+        println("timestamp for a list: {postgres.query(tx, "SELECT TIMESTAMP '2026-11-01 06:00:00' AS xs", (), L)}")
+        println("timestamptz[] for an Instant: {postgres.query(tx, "SELECT ARRAY[TIMESTAMPTZ '2026-11-01 06:00:00+00'] AS started", (), I)}")
         -- A timestamptz that is no Instant says what is wrong, and no cast.
         println("out of range: {postgres.query(tx, "SELECT TIMESTAMPTZ '2300-01-01 00:00:00+00' AS started", (), I)}")
         println("infinity: {postgres.query(tx, "SELECT 'infinity'::timestamptz AS started", (), I)}")
         println("-infinity: {postgres.query(tx, "SELECT '-infinity'::timestamptz AS started", (), I)}")
         println("two dimensions: {postgres.query(tx, "SELECT ARRAY[ARRAY[TIMESTAMPTZ '2026-11-01 06:00:00+00']] AS xs", (), L)}")
+        println("an infinity in a list: {postgres.query(tx, "SELECT ARRAY['infinity'::timestamptz] AS xs", (), L)}")
+        println("out of range in a list: {postgres.query(tx, "SELECT ARRAY[TIMESTAMPTZ '2300-01-01 00:00:00+00'] AS xs", (), L)}")
         -- Any other column: only a document fills an Instant as well.
         println("an int4: {postgres.query(tx, "SELECT 1 AS started", (), I)}")
         println("an int4[]: {postgres.query(tx, "SELECT ARRAY[1] AS xs", (), L)}")
