@@ -412,30 +412,6 @@ impl TcpListenerHandle {
         self.accepting.lock().kept.pop_front()
     }
 
-    /// Ask the system to queue more connections that wait to be
-    /// accepted than the 128 a listener is bound with: a burst of
-    /// clients beyond the queue is not refused but left to try again,
-    /// a second or more later each time. The system caps the number
-    /// at its own limit. (Elsewhere than on Unix the queue stays as it
-    /// was bound.)
-    pub fn widen_backlog(&self) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            /// What Linux allows by default (`net.core.somaxconn`).
-            const BACKLOG: libc::c_int = 4096;
-            let Some(socket) = self.socket() else {
-                return;
-            };
-            // SAFETY: `listen` on a descriptor that this handle owns
-            // and that is listening already changes the length of its
-            // queue and nothing else; a failure leaves it as it was.
-            unsafe {
-                let _ = libc::listen(socket.as_raw_fd(), BACKLOG);
-            }
-        }
-    }
-
     /// Keep a client's connection for the next accept: one that an
     /// accept had taken for a task which never received it.
     pub fn keep(&self, stream: std::net::TcpStream) {
@@ -2140,7 +2116,6 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
         let listener = TcpListenerHandle::new(0, listener);
-        listener.widen_backlog();
         // A connection is in the listener's queue when `connect` has
         // returned.
         let clients: Vec<TcpStream> = (0..40)

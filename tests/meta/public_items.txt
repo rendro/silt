@@ -809,7 +809,6 @@ src/runtime/handle.rs: pub fn try_get
 src/runtime/handle.rs: pub fn wake
 src/runtime/handle.rs: pub fn watch_writes
 src/runtime/handle.rs: pub fn whole
-src/runtime/handle.rs: pub fn widen_backlog
 src/runtime/handle.rs: pub fn with_deadline
 src/runtime/handle.rs: pub fn with_owner
 src/runtime/handle.rs: pub fn write_all

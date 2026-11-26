@@ -562,6 +562,53 @@ pub(crate) fn accept_op(
     })
 }
 
+/// How many connections that wait to be accepted a listener's queue
+/// holds: what Linux allows by default (`net.core.somaxconn`), where
+/// the 128 of `TcpListener::bind` are soon passed by a burst of
+/// clients. The system caps the number at its own limit; a client
+/// beyond the queue is refused on Windows, and on Linux and macOS is
+/// left to try again, a second or more later each time. On Windows the
+/// number is given as `SOMAXCONN_HINT(4096)`, which the system takes
+/// as it is (within 200 and 65535); a plain number is capped at a
+/// limit of its own there.
+const BACKLOG: i32 = if cfg!(windows) { -4096 } else { 4096 };
+
+/// Bind a listener to `addr` (as `TcpListener::bind` does: each
+/// address it names in turn, the address reused on Unix), with a queue
+/// of [`BACKLOG`] connections. (A listening socket's queue is the one
+/// it was first given on Windows, whatever it is asked later: the
+/// socket is made here, not by `TcpListener::bind`.)
+pub(crate) fn bind(addr: &str) -> std::io::Result<TcpListener> {
+    use std::net::ToSocketAddrs;
+    let mut last = None;
+    for addr in addr.to_socket_addrs()? {
+        match bind_to(addr) {
+            Ok(listener) => return Ok(listener),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "could not resolve to any addresses",
+        )
+    }))
+}
+
+/// [`bind`] to the one address `addr`.
+fn bind_to(addr: std::net::SocketAddr) -> std::io::Result<TcpListener> {
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(addr),
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    #[cfg(unix)]
+    socket.set_reuse_address(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(BACKLOG)?;
+    Ok(socket.into())
+}
+
 /// Connect to `addr` (as `TcpStream::connect` does: each address it
 /// names in turn) so that `shutter` can end the connect: each socket is
 /// made and given to the shutter before it connects, and a shut of it
@@ -674,12 +721,8 @@ builtins! {
 
     fn listen(vm, addr: &str) -> Value {
         let id = vm.next_tcp_id();
-        match TcpListener::bind(addr) {
-            Ok(listener) => {
-                let listener = TcpListenerHandle::new(id, listener);
-                listener.widen_backlog();
-                ok(Value::TcpListener(Arc::new(listener)))
-            }
+        match bind(addr) {
+            Ok(listener) => ok(Value::TcpListener(Arc::new(TcpListenerHandle::new(id, listener)))),
             Err(e) => tcp_io_err(Doing::Binding, &e),
         }
     }
@@ -872,6 +915,36 @@ mod tests {
             assert_eq!(variant(doing, ErrorKind::TimedOut), "Timeout");
             assert_eq!(variant(doing, ErrorKind::WouldBlock), "Timeout");
         }
+    }
+
+    /// A listener holds a burst of connections that nobody has
+    /// accepted yet, beyond the 128 of `TcpListener::bind`: each
+    /// connect is made at once, not refused (Windows) or left to try
+    /// again (Linux). (On macOS the system caps the queue at 128 by
+    /// default: the test is not its own.)
+    #[test]
+    #[cfg(any(target_os = "linux", windows))]
+    fn a_listener_holds_a_burst_beyond_128_connections() {
+        use std::time::Duration;
+        #[cfg(target_os = "linux")]
+        {
+            // The system's cap, where a machine has lowered it.
+            let cap = std::fs::read_to_string("/proc/sys/net/core/somaxconn")
+                .ok()
+                .and_then(|text| text.trim().parse::<usize>().ok());
+            if cap.is_some_and(|cap| cap < 300) {
+                return;
+            }
+        }
+        let listener = bind("127.0.0.1:0").expect("a listener");
+        let addr = listener.local_addr().expect("its address");
+        let held: Vec<TcpStream> = (0..300)
+            .map(|n| {
+                TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+                    .unwrap_or_else(|e| panic!("connect {n} of 300: {e}"))
+            })
+            .collect();
+        assert_eq!(held.len(), 300);
     }
 
     /// A connect that waits for its peer ends when its shutter is shut
