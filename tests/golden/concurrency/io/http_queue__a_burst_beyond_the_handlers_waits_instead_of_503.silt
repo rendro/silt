@@ -2,10 +2,14 @@
 -- requires-feature: http
 -- A burst of 300 clients at a server whose handlers take 20 ms: those beyond
 -- its 128 handlers wait in its queue for one, and every request is answered
--- 200 (before the queue, about half were answered 503 at once).
+-- 200 (before the queue, about half were answered 503 at once). The
+-- burst waits in the system's queue of the listener until it is
+-- accepted (beyond 128 there, Windows refused connects). A client that
+-- is not answered 200 has what it was given said, each once.
 import bytes
 import http
 import list
+import set
 import task
 import tcp
 import time
@@ -23,14 +27,16 @@ fn main() {
   let port = tcp.local_port(listener)
   let server = { -> http.serve(listener, slow) }
   task.background([server]) { ->
-    let statuses = task.map(1..300, 300) { _ ->
+    let answers = task.map(1..300, 300) { _ ->
       match http.get(url_of("http://127.0.0.1:{port}/")) {
-        Ok(r) -> r.status
-        Err(_) -> 0
+        Ok(r) -> "{r.status}"
+        Err(e) -> "{e}"
       }
     }
-    let ok = list.filter(statuses) { s -> s == 200 } |> list.length
-    println("{ok} of {list.length(statuses)} answered 200")
+    let ok = list.filter(answers) { a -> a == "200" } |> list.length
+    println("{ok} of {list.length(answers)} answered 200")
+    let others = list.filter(answers) { a -> a != "200" } |> set.from_list
+    list.each(set.to_list(others)) { a -> println(a) }
     tcp.close_listener(listener)
   }
 }
