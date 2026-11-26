@@ -25,8 +25,8 @@ syntax keyword siltConstructor Received Sent
 syntax keyword siltConstructor Null Bool Int Float String Array Object
 syntax keyword siltConstructor Monday Tuesday Wednesday Thursday Friday Saturday Sunday
 syntax keyword siltConstructor GET POST PUT PATCH DELETE HEAD OPTIONS
-syntax keyword siltConstructor NotFound PermissionDenied AlreadyExists InvalidInput Interrupted
-syntax keyword siltConstructor UnexpectedEof WriteZero Other
+syntax keyword siltConstructor NotFound FolderNotFound PermissionDenied AlreadyExists InvalidInput
+syntax keyword siltConstructor Interrupted UnexpectedEof WriteZero Other
 syntax keyword siltConstructor InvalidDigit Overflow Underflow
 syntax keyword siltConstructor NotFinite
 syntax keyword siltConstructor InvalidPattern TooBig

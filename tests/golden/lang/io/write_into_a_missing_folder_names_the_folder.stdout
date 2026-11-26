@@ -1,0 +1,9 @@
+Err(folder not found: out)
+Err(folder not found: out/deeper)
+Err(folder not found: out)
+Err(file not found: out/hourly.csv)
+Err(folder not found: out)
+Err(folder not found: out)
+make out first
+Ok(())
+false

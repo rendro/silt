@@ -1,0 +1,26 @@
+-- A write into a folder that does not exist gives that folder's own error,
+-- FolderNotFound(folder), from every writer; a read keeps NotFound(path),
+-- and a write into a folder that is there is not touched.
+import bytes
+import fs
+import io
+import stream
+
+fn main() {
+  println(io.write_file("out/hourly.csv", "x"))
+  println(io.write_bytes("out/deeper/hourly.csv", bytes.from_string("x")))
+  println(stream.write_to_file(stream.from_list([bytes.from_string("x")]), "out/hourly.csv"))
+  println(io.read_file("out/hourly.csv"))
+  let _ = io.write_file("a.txt", "a")
+  println(fs.copy("a.txt", "out/b.txt"))
+  println(fs.rename("a.txt", "out/b.txt"))
+  match io.write_file("out/hourly.csv", "x") {
+    Err(io.FolderNotFound(folder)) -> {
+      println("make {folder} first")
+      let _ = fs.mkdir(folder)
+      println(io.write_file("out/hourly.csv", "x"))
+    }
+    other -> println(other)
+  }
+  println(fs.exists("out/deeper"))
+}

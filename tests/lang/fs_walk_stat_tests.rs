@@ -90,6 +90,9 @@ fn err_msg(v: Value) -> String {
                 };
                 match error.name() {
                     "NotFound" => format!("file not found: {}", first_str(error.fields())),
+                    "FolderNotFound" => {
+                        format!("folder not found: {}", first_str(error.fields()))
+                    }
                     "PermissionDenied" => {
                         format!("permission denied: {}", first_str(error.fields()))
                     }

@@ -173,6 +173,26 @@ pub(crate) fn path_err(err: &std::io::Error, path: &str) -> Value {
     }
 }
 
+/// The error of a failed write of `path` (`io.write_file`,
+/// `stream.write_to_file`, the target of `fs.copy` and `fs.rename`): as
+/// `path_err`, except that a file not found because the folder it goes
+/// into is missing is that folder's own error, `FolderNotFound(folder)`:
+/// the message points at what is missing, not at a file the program
+/// never meant to read.
+pub(crate) fn write_err(err: &std::io::Error, path: &str) -> Value {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        let into = std::path::Path::new(path)
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        if std::fs::metadata(into).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            let folder = Value::string(into.to_string_lossy().into_owned());
+            return io_err(Value::variant(bv::IO_FOLDER_NOT_FOUND, [folder]));
+        }
+    }
+    path_err(err, path)
+}
+
 /// Whether `err` is a loop of symbolic links, by the system's code for
 /// it (ELOOP on Unix, ERROR_CANT_RESOLVE_FILENAME on Windows): the kind
 /// std gives it is not stable yet, and its words may change. Where no
@@ -311,6 +331,7 @@ pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
         ("NotFound", [Value::String(p, _)]) => format!("file not found: {p}"),
+        ("FolderNotFound", [Value::String(f, _)]) => format!("folder not found: {f}"),
         ("PermissionDenied", [Value::String(p, _)]) => {
             format!("permission denied: {p}")
         }
@@ -389,7 +410,10 @@ builtins! {
     fn write_file(vm, path: &str, contents: &str) -> Result<Step, VmError> {
         let (path, contents) = (path.to_string(), contents.to_string());
         vm.io("io.write_file", io_unknown_err, Leave::RunsOut, move |_| {
-            result(std::fs::write(&path, &contents), &path, unit)
+            match std::fs::write(&path, &contents) {
+                Ok(()) => fs_ok(Value::Unit),
+                Err(e) => write_err(&e, &path),
+            }
         })
     }
 
@@ -397,7 +421,10 @@ builtins! {
     fn write_bytes(vm, path: &str, contents: Bytes) -> Result<Step, VmError> {
         let (path, contents) = (path.to_string(), contents.clone());
         vm.io("io.write_bytes", io_unknown_err, Leave::RunsOut, move |_| {
-            result(std::fs::write(&path, contents.as_slice()), &path, unit)
+            match std::fs::write(&path, contents.as_slice()) {
+                Ok(()) => fs_ok(Value::Unit),
+                Err(e) => write_err(&e, &path),
+            }
         })
     }
 
@@ -576,7 +603,10 @@ pub(crate) mod fs {
                         | std::io::ErrorKind::DirectoryNotEmpty => to,
                         kind => rename_failed_at(kind, from, to),
                     };
-                    path_err(&e, about)
+                    match about == to {
+                        true => write_err(&e, to),
+                        false => path_err(&e, about),
+                    }
                 }
             }
         }
@@ -603,7 +633,7 @@ pub(crate) mod fs {
             }
             match std::fs::copy(from, to) {
                 Ok(_) => fs_ok(Value::Unit),
-                Err(e) => path_err(&e, to),
+                Err(e) => write_err(&e, to),
             }
         }
 

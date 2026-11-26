@@ -2,8 +2,8 @@ import fs
 import io
 
 -- fs.copy and fs.rename name the path an error is about: the source
--- when it is not there, else the destination (in a directory that is
--- not there).
+-- when it is not there, else the destination; a destination in a
+-- directory that is not there is that directory's FolderNotFound.
 fn main() {
   let _ = io.write_file("a.txt", "data")
   println(fs.copy("a.txt", "missing/b.txt"))

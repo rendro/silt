@@ -76,7 +76,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "io",
             page: "io-fs.md",
             types: "\
-                pub type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }\n\
+                pub type IoError { NotFound(String), FolderNotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }\n\
             ",
             error: "IoError" => io::error_text,
             rows: [

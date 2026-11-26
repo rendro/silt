@@ -32,6 +32,7 @@ Every fallible `io` / `fs` function returns `Result(T, IoError)`.
 | Variant                      | Meaning                                    |
 |------------------------------|--------------------------------------------|
 | `NotFound(path)`           | file or directory does not exist           |
+| `FolderNotFound(folder)`   | the folder a write goes into does not exist |
 | `PermissionDenied(path)`   | OS denied access                           |
 | `AlreadyExists(path)`      | destination already exists                 |
 | `InvalidInput(msg)`        | malformed argument                         |
@@ -45,16 +46,19 @@ sites destructure specific variants when they need to branch (e.g. "create
 a default when the file does not exist") and show the error otherwise. See
 [stdlib errors](errors.md) for how every error enum is shown.
 
-`NotFound(path)` from a function that writes (`io.write_file`,
-`stream.write_to_file`, the target of `fs.copy` and `fs.rename`) names the
-file it was to write, and means the folder it writes into is missing: the
-folder is not made. Shown, it reads `file not found: <path>` as for a read.
+A function that writes (`io.write_file`, `io.write_bytes`,
+`stream.write_to_file`, the target of `fs.copy` and `fs.rename`) into a
+folder that does not exist gives `FolderNotFound(folder)`, which names that
+folder, the one the path's last part goes into: the folder is not made
+(`fs.mkdir` makes it). Shown, it reads `folder not found: <folder>`. Reads keep
+`NotFound(path)`, which names the file.
 
 ```silt
 import io
 
 fn main() {
-  println(io.write_file("no-such-dir/out.txt", "x")) -- Err(file not found: no-such-dir/out.txt)
+  println(io.write_file("no-such-dir/out.txt", "x")) -- Err(folder not found: no-such-dir)
+  println(io.read_file("no-such-dir/out.txt")) -- Err(file not found: no-such-dir/out.txt)
 }
 ```
 

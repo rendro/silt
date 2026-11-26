@@ -1043,7 +1043,8 @@ fn main() {
 stream.write_to_file(ch: Channel(Bytes), path: String) -> Result((), IoError)
 ```
 
-Writes the bytes of `ch` to the file at `path`, which it creates or empties, until `ch` closes. A failure to write is an `Err`.
+Writes the bytes of `ch` to the file at `path`, which it creates or empties, until `ch` closes. A failure to write is an `Err`: into a folder that does not
+exist, `Err(FolderNotFound(folder))`, as for `io.write_file`.
 
 ```silt
 import bytes

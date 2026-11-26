@@ -660,13 +660,14 @@ pub mod bv {
     pub(crate) const HEAD: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 5);
     pub(crate) const OPTIONS: BuiltinVariant = BuiltinVariant::new(ty::METHOD, 6);
     pub(crate) const IO_NOT_FOUND: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 0);
-    pub(crate) const IO_PERMISSION_DENIED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 1);
-    pub(crate) const IO_ALREADY_EXISTS: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 2);
-    pub(crate) const IO_INVALID_INPUT: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 3);
-    pub(crate) const IO_INTERRUPTED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 4);
-    pub(crate) const IO_UNEXPECTED_EOF: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 5);
-    pub(crate) const IO_WRITE_ZERO: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 6);
-    pub(crate) const IO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
+    pub(crate) const IO_FOLDER_NOT_FOUND: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 1);
+    pub(crate) const IO_PERMISSION_DENIED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 2);
+    pub(crate) const IO_ALREADY_EXISTS: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 3);
+    pub(crate) const IO_INVALID_INPUT: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 4);
+    pub(crate) const IO_INTERRUPTED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 5);
+    pub(crate) const IO_UNEXPECTED_EOF: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 6);
+    pub(crate) const IO_WRITE_ZERO: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
+    pub(crate) const IO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 8);
     pub(crate) const JSON_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 0);
     pub(crate) const JSON_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 1);
     pub(crate) const JSON_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 2);
@@ -990,6 +991,7 @@ mod tests {
             (bv::HEAD, "HEAD"),
             (bv::OPTIONS, "OPTIONS"),
             (bv::IO_NOT_FOUND, "NotFound"),
+            (bv::IO_FOLDER_NOT_FOUND, "FolderNotFound"),
             (bv::IO_PERMISSION_DENIED, "PermissionDenied"),
             (bv::IO_ALREADY_EXISTS, "AlreadyExists"),
             (bv::IO_INVALID_INPUT, "InvalidInput"),

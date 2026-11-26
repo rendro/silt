@@ -38,7 +38,7 @@ use parking_lot::Mutex;
 
 use super::collections::{Kind, fits};
 use super::common::{READ_AT_ONCE, ok};
-use super::io::{io_result_err, path_err};
+use super::io::{io_result_err, path_err, write_err};
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
 use super::typed::{Arg, Chan, List, builtins, unsound};
@@ -2210,7 +2210,7 @@ builtins! {
         writing("stream.write_to_file", ch, ON_A_FILE, move |bytes| {
             use std::io::Write;
             if file.is_none() {
-                file = Some(std::fs::File::create(&path).map_err(|e| path_err(&e, &path))?);
+                file = Some(std::fs::File::create(&path).map_err(|e| write_err(&e, &path))?);
             }
             let Some(file) = file.as_mut() else {
                 return Ok(());

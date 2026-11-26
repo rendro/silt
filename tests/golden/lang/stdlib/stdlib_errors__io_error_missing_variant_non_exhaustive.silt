@@ -6,6 +6,7 @@ import io
 fn describe(e: io.IoError) -> String {
   match e {
     io.NotFound(p) -> "not found"
+    io.FolderNotFound(p) -> "no folder"
     io.PermissionDenied(p) -> "denied"
     io.AlreadyExists(p) -> "exists"
     io.InvalidInput(p) -> "invalid"

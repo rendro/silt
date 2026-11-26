@@ -357,7 +357,7 @@ println(value: a) -> () where a: Display
 ### io
 
 ```
-type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
+type IoError { NotFound(String), FolderNotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
 io.args() -> List(String)
 io.eprint(value: a) -> () where a: Display
 io.eprintln(value: a) -> () where a: Display
