@@ -91,11 +91,11 @@ fn test_silt_test_banner_consistency_top_level_and_subcommand() {
     );
 }
 
-/// Round-36 GAP: canonical form of the `silt test` banner uses `[path]`
-/// (not `[file]`) because `silt test` accepts a directory too — the
-/// positional argument is semantically a path.
+/// Round-36 GAP: canonical form of the `silt test` banner uses
+/// `[<path>...]` (not `[file]`) because `silt test` accepts
+/// directories too, and several paths, as `silt check` does.
 ///
-/// Mutation reasoning: a regression that renames `[path]` back to
+/// Mutation reasoning: a regression that renames `[<path>...]` back to
 /// `[file]` fails this assertion against both outputs.
 #[test]
 fn test_silt_test_banner_uses_path_token_not_file() {
@@ -107,8 +107,8 @@ fn test_silt_test_banner_uses_path_token_not_file() {
     let top_stdout = String::from_utf8_lossy(&top_help.stdout);
     let top_row = extract_top_level_test_row(&top_stdout).expect("no silt test row");
     assert!(
-        top_row.contains("[path]"),
-        "top-level help row missing canonical `[path]` token: {top_row:?}"
+        top_row.contains("[<path>...]"),
+        "top-level help row missing canonical `[<path>...]` token: {top_row:?}"
     );
     assert!(
         !top_row.contains("[file]"),
@@ -123,8 +123,8 @@ fn test_silt_test_banner_uses_path_token_not_file() {
     let sub_stdout = String::from_utf8_lossy(&sub_help.stdout);
     let sub_banner = extract_subcommand_usage(&sub_stdout).expect("no Usage: line");
     assert!(
-        sub_banner.contains("[path]"),
-        "subcommand banner missing canonical `[path]` token: {sub_banner:?}"
+        sub_banner.contains("[<path>...]"),
+        "subcommand banner missing canonical `[<path>...]` token: {sub_banner:?}"
     );
     assert!(
         !sub_banner.contains("[file]"),

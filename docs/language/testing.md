@@ -16,14 +16,18 @@ that is how `silt test` finds it.
 
 Without a path argument, `silt test` searches the current directory
 recursively, but not a directory that holds a `silt.toml` of its own:
-that is another package, whose tests are its own. You can also pass a
-specific file or directory:
+that is another package, whose tests are its own. You can also pass
+specific files and directories, any number of them:
 
 ```
 silt test                      -- search current directory recursively
 silt test tests/               -- search tests/ directory recursively
 silt test math_test.silt       -- run a single file
+silt test a_test.silt tests/   -- run a file and search a directory
 ```
+
+With several paths the tests of each run, with one summary at the end;
+a file named twice (or found in a directory also named) runs once.
 
 A test file is a module of its own, which imports the module it tests.
 So it cannot write an impl for a type of that module (an impl goes in
@@ -125,8 +129,8 @@ Running `silt test` in a directory containing this file produces:
 4 tests: 3 passed, 0 failed, 1 skipped
 ```
 
-(When a single file is passed directly — `silt test math_test.silt` — the
-`./` prefix is omitted and you see `PASS math_test.silt::test_addition`
+(When a path is passed — `silt test math_test.silt` — the files are named
+as found from it, and the `./` prefix is omitted and you see `PASS math_test.silt::test_addition`
 instead.)
 
 ## Filtering Tests

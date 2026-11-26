@@ -1,7 +1,7 @@
 //! `silt fmt -` and `silt check -` read the program from stdin (`fmt`
-//! writes the result to stdout); `silt check` takes several files and
-//! checks each. FAIL on the base commit: `-` was an unknown flag, and a
-//! second file was an unexpected extra argument.
+//! writes the result to stdout); `silt check` and `silt test` take
+//! several paths and read each. FAIL on the base commit: `-` was an
+//! unknown flag, and a second file was an unexpected extra argument.
 
 use std::fs;
 use std::io::Write;
@@ -252,4 +252,40 @@ fn check_watch_refuses_stdin() {
         text(&out.stderr),
         "error: silt check: --watch cannot watch stdin ('-'): name the files\n"
     );
+}
+
+/// `silt test` takes several paths, files and directories, runs the
+/// tests of each with one summary, runs a file given twice once, and
+/// refuses a path that is neither before any test runs. FAIL on the
+/// base commit: a second path was an unexpected extra argument.
+#[test]
+fn test_takes_several_paths() {
+    let dir = fresh_dir("test_paths");
+    fs::create_dir_all(dir.join("a")).unwrap();
+    fs::write(dir.join("a/x_test.silt"), "fn test_one() {\n  ()\n}\n").unwrap();
+    fs::write(dir.join("b_test.silt"), "fn test_two() {\n  ()\n}\n").unwrap();
+    fs::write(dir.join("prog.txt"), "hi\n").unwrap();
+
+    let out = silt(&dir, &["test", "a", "b_test.silt"], "");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    // (The results are written to stderr.)
+    let results = text(&out.stderr);
+    assert!(results.contains("PASS a/x_test.silt::test_one"), "{out:?}");
+    assert!(results.contains("PASS b_test.silt::test_two"), "{out:?}");
+    assert!(results.contains("2 tests: 2 passed"), "{out:?}");
+
+    // One file, two spellings: run once.
+    let out = silt(&dir, &["test", "b_test.silt", "./b_test.silt"], "");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(text(&out.stderr).contains("1 test: 1 passed"), "{out:?}");
+
+    // A path that is no .silt file and no directory: nothing runs.
+    let out = silt(&dir, &["test", "a", "prog.txt"], "");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        text(&out.stderr).contains("silt test: prog.txt is not a .silt file or a directory"),
+        "{out:?}"
+    );
+    assert!(!text(&out.stderr).contains("PASS"), "{out:?}");
+    let _ = fs::remove_dir_all(&dir);
 }

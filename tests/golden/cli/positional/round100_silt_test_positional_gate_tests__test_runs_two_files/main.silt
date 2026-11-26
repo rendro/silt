@@ -1,0 +1,7 @@
+-- cmd: test a_test.silt
+-- stderr-contains: PASS a_test.silt::test_a
+-- stderr-contains: PASS main.silt::test_b
+-- stderr-contains: 2 tests: 2 passed
+-- `silt test` takes several paths, as `silt check` does, and runs the
+-- tests of each with one summary.
+fn test_b() { () }

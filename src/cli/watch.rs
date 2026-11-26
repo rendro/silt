@@ -245,12 +245,15 @@ fn handle_watch(args: &[String]) {
     }
 
     let all = positionals(&filtered);
-    let positional = all.first().cloned();
-    // `silt test` without a file finds its test files in a directory.
-    let discovery = match (sub, positional.as_deref()) {
-        ("test", None) => Some(env::current_dir().unwrap_or_else(|_| ".".into())),
-        ("test", Some(path)) if Path::new(path).is_dir() => Some(PathBuf::from(path)),
-        _ => None,
+    // `silt test` finds its test files in each directory given, or in
+    // the working directory when no path is given.
+    let discovery: Vec<PathBuf> = match (sub, all.is_empty()) {
+        ("test", true) => vec![env::current_dir().unwrap_or_else(|_| ".".into())],
+        ("test", false) => (all.iter())
+            .filter(|path| Path::new(path).is_dir())
+            .map(PathBuf::from)
+            .collect(),
+        _ => Vec::new(),
     };
     // `disasm` reads the lockfile; the others bring it up to date.
     let lock = if sub == "disasm" {
@@ -303,8 +306,8 @@ fn positionals(args: &[String]) -> Vec<String> {
 /// for a package's directory, the package's `src/main.silt` (for
 /// `check`, its `src/lib.silt` when it has no main); for `check`, the
 /// `.silt` files under another directory; for `test`, the test files of
-/// the directory given or of the working directory, or the file given,
-/// and the entry of the package that is checked first; with no path, the
+/// each directory given or of the working directory, and each file
+/// given, with the entry of each package that is checked first; with no path, the
 /// working directory's package. A path the command refuses has no file.
 #[cfg(feature = "watch")]
 fn entries(sub: &str, positionals: &[String]) -> Vec<PathBuf> {
@@ -316,33 +319,41 @@ fn entries(sub: &str, positionals: &[String]) -> Vec<PathBuf> {
         _ => Vec::new(),
     };
     if sub == "test" {
-        let positional = positionals.first().map(String::as_str);
-        let (dir, mut files) = match positional.map(path_arg) {
-            Some(PathArg::File(file)) => {
-                let dir = Path::new(&file)
-                    .parent()
-                    .filter(|d| !d.as_os_str().is_empty());
-                (
-                    dir.unwrap_or(Path::new(".")).to_path_buf(),
-                    vec![file.into()],
-                )
-            }
-            Some(PathArg::Package(dir) | PathArg::Dir(dir)) => {
-                let files = crate::cli::paths::package_test_files(Path::new(&dir));
-                (
-                    PathBuf::from(dir),
-                    files.into_iter().map(PathBuf::from).collect(),
-                )
-            }
-            Some(PathArg::NotSilt(_)) => return Vec::new(),
-            None => {
-                let files = crate::cli::paths::package_test_files(&cwd);
-                (cwd.clone(), files.into_iter().map(PathBuf::from).collect())
-            }
+        // Each path given, or the working directory.
+        let given: Vec<Option<&str>> = match positionals.is_empty() {
+            true => vec![None],
+            false => positionals.iter().map(|p| Some(p.as_str())).collect(),
         };
-        // `silt test` checks the package first: its files are the
-        // program's too.
-        files.extend(package_of(&dir).into_iter().filter(|p| p.is_file()));
+        let mut files = Vec::new();
+        for positional in given {
+            let (dir, found) = match positional.map(path_arg) {
+                Some(PathArg::File(file)) => {
+                    let dir = Path::new(&file)
+                        .parent()
+                        .filter(|d| !d.as_os_str().is_empty());
+                    (
+                        dir.unwrap_or(Path::new(".")).to_path_buf(),
+                        vec![file.into()],
+                    )
+                }
+                Some(PathArg::Package(dir) | PathArg::Dir(dir)) => {
+                    let found = crate::cli::paths::package_test_files(Path::new(&dir));
+                    (
+                        PathBuf::from(dir),
+                        found.into_iter().map(PathBuf::from).collect(),
+                    )
+                }
+                Some(PathArg::NotSilt(_)) => return Vec::new(),
+                None => {
+                    let found = crate::cli::paths::package_test_files(&cwd);
+                    (cwd.clone(), found.into_iter().map(PathBuf::from).collect())
+                }
+            };
+            files.extend(found);
+            // `silt test` checks the package first: its files are the
+            // program's too.
+            files.extend(package_of(&dir).into_iter().filter(|p| p.is_file()));
+        }
         return files;
     }
     if positionals.is_empty() {

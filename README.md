@@ -202,7 +202,7 @@ silt check                 Type-check the package (inside a package)
 silt check -               Type-check the program read from stdin
 silt check --format json <file.silt>   Type-check with JSON output (for CI/editors)
 silt check --deny-warnings <file.silt>   Also fail on warnings (for CI)
-silt test [path]           Run test functions
+silt test [<path>...]      Run test functions (of each file or directory given)
 silt fmt [files...]        Format source code
 silt fmt -                 Format the program read from stdin, to stdout
 silt fmt --check           Check formatting without modifying files
