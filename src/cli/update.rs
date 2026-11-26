@@ -42,8 +42,9 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("line for each dependency whose pin changed.");
         println!();
         println!("With names, only those dependencies of `silt.toml` are resolved");
-        println!("again (a branch or tag looked up, the commit fetched afresh); every");
-        println!("other dependency keeps the commit `silt.lock` pins it to.");
+        println!("again (a branch or tag looked up, the commit fetched afresh), and");
+        println!("so is another package's dependency on the same repository and ref;");
+        println!("every other dependency keeps the commit `silt.lock` pins it to.");
         println!();
         println!("Arguments:");
         println!("  <name>...          The names the dependencies are imported as.");
