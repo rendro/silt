@@ -15,7 +15,9 @@
 //! long list made in one go makes the tree of its elements, once, and
 //! keeps it with them for the next.
 //! The list a range expression `a..b` makes holds its two ends and no
-//! element at all. A clone is a count.
+//! element at all. A clone is a count. No list is changed where a
+//! program can see it; one an update is given away with, that nothing
+//! else holds, is changed in place ([`List::put_back`]).
 //!
 //! How a list is stored is this file's own. The rest of silt has its
 //! length, its elements by index and in order, and its parts
@@ -573,10 +575,95 @@ impl List {
             items.push(value);
             return Ok(List::from(items));
         }
+        if self.in_tree() {
+            shared_change();
+        }
         let mut tree = self.to_tree();
         copied(1);
         tree.push_back(value);
         Ok(List::of_tree(tree))
+    }
+
+    /// Whether this is the one holder of the list's elements, and they
+    /// are all the elements of a tree: given away, the list is changed
+    /// in place by [`List::put_back`] and [`List::put_at`], where a
+    /// change of a list that is held elsewhere too copies a part of the
+    /// tree (the edge of it, or the path to the element).
+    pub(crate) fn held_alone_in_tree(&self) -> bool {
+        let Stored::Other(other) = &self.0 else {
+            return false;
+        };
+        Arc::strong_count(other) == 1
+            && match &**other {
+                Other::Long {
+                    long,
+                    start: 0,
+                    len,
+                } => {
+                    long.held_alone()
+                        && matches!(&**long, LongItems::Tree(tree) if tree.len() == *len)
+                }
+                Other::Long { .. } | Other::Ints { .. } => false,
+            }
+    }
+
+    /// The tree of the list and its length, to change where they are:
+    /// when this is the one holder of the list, and of the tree, and the
+    /// list is all of the tree.
+    fn own_tree(&mut self) -> Option<(&mut Vector<Value>, &mut usize)> {
+        let Stored::Other(other) = &mut self.0 else {
+            return None;
+        };
+        let Other::Long {
+            long,
+            start: 0,
+            len,
+        } = Arc::get_mut(other)?
+        else {
+            return None;
+        };
+        match long.get_mut()? {
+            LongItems::Tree(tree) if tree.len() == *len => Some((tree, len)),
+            LongItems::Tree(_) | LongItems::Side { .. } => None,
+        }
+    }
+
+    /// [`List::push_back`] of a list given away: when it is the one
+    /// holder of its elements, the tree they are in is changed where
+    /// it is, for no other list and no value of a program has it to see
+    /// the change. Else the list is left as it is and the change is a
+    /// new list, as with `push_back`. (`list.append` of the list a fold
+    /// hands from step to step, or a function hands to itself.)
+    pub(crate) fn put_back(mut self, value: Value) -> Result<List, TooLong> {
+        if !self.flat_for(self.len() + 1)
+            && let Some((tree, len)) = self.own_tree()
+        {
+            copied(1);
+            tree.push_back(value);
+            *len += 1;
+            return Ok(self);
+        }
+        self.push_back(value)
+    }
+
+    /// [`List::set`] of a list given away, changed in place as by
+    /// [`List::put_back`].
+    pub(crate) fn put_at(mut self, index: usize, value: Value) -> Result<Option<List>, TooLong> {
+        if index < self.len()
+            && !self.flat_for(self.len())
+            && let Some((tree, _)) = self.own_tree()
+        {
+            copied(1);
+            tree.set(index, value);
+            return Ok(Some(self));
+        }
+        self.set(index, value)
+    }
+
+    /// Whether the list is a part of a long list's elements kept in a
+    /// tree.
+    fn in_tree(&self) -> bool {
+        matches!(self.form(), Form::Long { long, .. } if matches!(**long, LongItems::Tree(_)))
     }
 
     /// The list with `value` in place of the element at `index`;
@@ -590,6 +677,9 @@ impl List {
             let mut items = self.to_vec()?;
             items[index] = value;
             return Ok(Some(List::from(items)));
+        }
+        if self.in_tree() {
+            shared_change();
         }
         let mut tree = self.to_tree();
         copied(1);
@@ -892,6 +982,31 @@ fn part_of(tree: &Vector<Value>, start: usize, len: usize) -> Vector<Value> {
     };
     part.truncate(len);
     part
+}
+
+/// Count a change of a list in a tree that copies a part of the tree
+/// (`push_back`, `set`): the list made from it keeps its own.
+#[inline]
+fn shared_change() {
+    #[cfg(test)]
+    shares::SHARED.set(shares::SHARED.get() + 1);
+}
+
+/// How many changes of lists in trees copied a part of the tree, as a
+/// change of a list held elsewhere too does: what the tests of folds
+/// and functions that hand a list on count.
+#[cfg(test)]
+pub(crate) mod shares {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static SHARED: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The changes that copied a list's tree on this thread so far.
+    pub(crate) fn count() -> u64 {
+        SHARED.get()
+    }
 }
 
 /// Count `n` elements copied, or moved, into storage made for a list.

@@ -698,6 +698,111 @@ import host
     assert_eq!(given.last(), Some(Value::tuple(vec![sums, ints(&steps)])));
 }
 
+/// How many changes of a list in a tree that copied the tree `f` makes.
+fn shared_list_puts(f: impl FnOnce()) -> u64 {
+    let before = super::list::shares::count();
+    f();
+    super::list::shares::count() - before
+}
+
+/// Run `source`, a program that gives one value to the host: that
+/// value, and how many changes of maps and sets, and of lists, copied
+/// a tree another holder shared.
+fn run_counting_shared(source: &str) -> (Value, u64, u64) {
+    let (program, given) =
+        crate::session::testing::compile_given(source).unwrap_or_else(|e| panic!("{e:?}"));
+    let mut lists = 0;
+    let shared = shared_puts(|| {
+        lists = shared_list_puts(|| {
+            crate::vm::Vm::new(crate::HostIo::process())
+                .run_program(&program)
+                .expect("it runs");
+        });
+    });
+    (given.last().expect("a value given"), shared, lists)
+}
+
+/// A fold that grows a set with `set.insert`, or a list with
+/// `list.append`, hands the one it grows from step to step, and each
+/// step changes it in place: 20,000 inserts into a set of 2,000 and
+/// 20,000 appends find it held nowhere else. (Each copied the path of
+/// the set's tree to the member, or the edge of the list's tree.)
+#[test]
+fn a_fold_that_grows_a_set_or_a_list_changes_it_in_place() {
+    let (given, shared, lists) = run_counting_shared(
+        r#"
+import list
+import set
+fn main() {
+  let xs = list.map(1..20000) { i -> (i * 7919) % 2000 }
+  let s = list.fold(xs, #[]) { acc, x -> set.insert(acc, x) }
+  let l = list.fold(xs, []) { acc, x -> list.append(acc, x) }
+  host.give((set.length(s), list.length(l), list.get(l, 19999), list.sum(l) == list.sum(xs)))
+}
+import host
+"#,
+    );
+    assert_eq!(
+        given,
+        Value::tuple(vec![
+            int(2_000),
+            int(20_000),
+            Value::variant(crate::typeinfo::bv::SOME, [int((20_000 * 7919) % 2000)]),
+            Value::Bool(true),
+        ])
+    );
+    assert!(
+        shared < 20,
+        "{shared} of the 2,000 inserts of a new member copied a shared set"
+    );
+    assert!(lists < 20, "{lists} of 20,000 appends copied a shared list");
+}
+
+/// A set or a list that is held elsewhere when a fold changes it stays
+/// as it was: the one the fold starts from and `main` still holds,
+/// the one a step's function captures, each of a `list.scan`, one in
+/// a record, one a step keeps in its state.
+#[test]
+fn a_set_or_a_list_held_elsewhere_stays_as_it_was_when_a_fold_changes_it() {
+    let (given, _, _) = run_counting_shared(
+        r#"
+import list
+import set
+type Kept {
+  s: Set(Int),
+  l: List(Int),
+}
+fn main() {
+  let xs = list.map(1..300) { i -> i % 100 }
+  let s0 = list.fold(xs, #[]) { acc, x -> set.insert(acc, x) }
+  let l0 = list.fold(xs, []) { acc, x -> list.append(acc, x) }
+  let s1 = list.fold(xs, s0) { acc, x -> set.insert(acc, x + 1000) }
+  let l1 = list.fold(xs, l0) { acc, x -> list.append(acc, x) }
+  let s2 = list.fold(xs, s0) { acc, x -> set.insert(acc, x + set.length(s0) * 100) }
+  let l2 = list.fold(xs, l0) { acc, x -> list.append(acc, list.length(l0)) }
+  let steps = list.scan(list.take(xs, 5), l0) { acc, x -> list.append(acc, x) }
+  let kept = Kept { s: s0, l: l0 }
+  let s3 = list.fold(xs, kept.s) { acc, x -> set.insert(acc, x + 5000) }
+  let l3 = list.fold(xs, kept.l) { acc, x -> list.append(acc, x) }
+  let (l4, olds) = list.fold(list.take(xs, 3), (l0, [])) { (acc, old), x -> (list.append(acc, x), [acc, ..old]) }
+  let lengths = [set.length(s0), list.length(l0), set.length(s1), list.length(l1), set.length(s2),
+    list.length(l2), set.length(kept.s), list.length(kept.l), set.length(s3), list.length(l3), list.length(l4)]
+  host.give((lengths, list.map(steps) { l -> list.length(l) }, list.map(olds) { l -> list.length(l) }))
+}
+import host
+"#,
+    );
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    assert_eq!(
+        given,
+        Value::tuple(vec![
+            ints(&[100, 300, 200, 600, 200, 600, 100, 300, 200, 600, 303]),
+            ints(&[300, 301, 302, 303, 304, 305]),
+            ints(&[302, 301, 300]),
+        ])
+    );
+}
+
 // ── Deep values ────────────────────────────────────────────────────
 
 /// A value nested 10,000 levels deep through maps and sets kept in

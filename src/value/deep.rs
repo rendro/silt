@@ -275,6 +275,20 @@ impl Deref for Long {
     }
 }
 
+impl Long {
+    /// The elements, to change where they are, when this is their one
+    /// holder: no other list, and no value of a program, can see the
+    /// change.
+    pub(super) fn get_mut(&mut self) -> Option<&mut LongItems> {
+        Arc::get_mut(&mut self.long)
+    }
+
+    /// Whether this is the one holder of the elements.
+    pub(super) fn held_alone(&self) -> bool {
+        Arc::strong_count(&self.long) == 1
+    }
+}
+
 impl From<LongItems> for Long {
     fn from(long: LongItems) -> Long {
         Long {

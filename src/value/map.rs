@@ -1,9 +1,12 @@
 //! The map value and the set value.
 //!
 //! A map is its entries, each a key and its value, in the order of the
-//! keys; a set is its members, in their order. Neither is ever changed:
-//! an update is a new map, or set, and the one it was made from stays
-//! as it was. A clone is a count.
+//! keys; a set is its members, in their order. Neither is ever changed
+//! where a program can see it: an update is a new map, or set, and the
+//! one it was made from stays as it was. A clone is a count. (A map or
+//! a set an update is given away with, that nothing else holds, is
+//! changed in place: [`Map::put`], [`Set::put`]. No holder is left to
+//! see the old one.)
 //!
 //! A small map keeps its entries side by side in key order, and finds
 //! a key by halving; a large one keeps them in a tree (the B-tree of
@@ -720,6 +723,41 @@ impl Set {
         self.inserted(value).knowing(fns)
     }
 
+    /// Whether this is the one holder of the set's members, and they
+    /// are in a tree: given away, the set is changed in place by
+    /// [`Set::put`], where a change of a set that is held elsewhere too
+    /// copies the path of the tree to the member.
+    pub(crate) fn held_alone_in_tree(&self) -> bool {
+        Arc::strong_count(&self.0) == 1 && matches!(self.members(), Members::Tree(_))
+    }
+
+    /// [`Set::insert`] of a set given away: when it is the one holder
+    /// of its members, they are changed where they are, as
+    /// [`Map::put`] changes a map's entries. Else the set is left as it
+    /// is and the change is a new set, as with `insert`.
+    pub(crate) fn put(mut self, value: Value) -> Set {
+        let fns = match self.fns() {
+            Fns::Yes => Fns::Yes,
+            Fns::No if is_no_fn(&value) => Fns::No,
+            _ => Fns::Unknown,
+        };
+        let Some(of) = Arc::get_mut(&mut self.0) else {
+            return self.insert(value);
+        };
+        match &mut *of.members {
+            // (A member it has stays, as `insert` keeps it.)
+            Members::Tree(tree) => {
+                if !tree.contains(&value) {
+                    copied(1);
+                    tree.insert(value);
+                    *of.fns.get_mut() = fns as u8;
+                }
+                self
+            }
+            Members::Flat(_) | Members::Side { .. } => self.insert(value),
+        }
+    }
+
     fn inserted(&self, value: Value) -> Set {
         match self.members() {
             Members::Flat(members) => match find_member(members, &value) {
@@ -737,6 +775,9 @@ impl Set {
             Members::Side { .. } | Members::Tree(_) => match self.contains(&value) {
                 true => self.clone(),
                 false => {
+                    if let Members::Tree(_) = self.members() {
+                        shared_change();
+                    }
                     let mut tree = self.tree().cloned().unwrap_or_default();
                     copied(1);
                     tree.insert(value);
@@ -1036,7 +1077,8 @@ pub(super) mod walks {
     }
 }
 
-/// Count a [`Map::put`] of a map in a tree that another holder shares.
+/// Count a [`Map::put`] of a map in a tree that another holder
+/// shares, or an insert into a set's tree that copies it.
 #[inline]
 fn shared_change() {
     #[cfg(test)]
@@ -1044,8 +1086,9 @@ fn shared_change() {
 }
 
 /// How many [`Map::put`]s found their map in a tree held elsewhere
-/// too, and copied the path of the tree to the key: what the test of a
-/// fold that counts with `map.update` or `map.set` counts.
+/// too, and how many inserts into a set copied its tree: each copied
+/// the path of the tree to the key. What the tests of folds and
+/// functions that hand a map or a set on count.
 #[cfg(test)]
 pub(super) mod shares {
     use std::cell::Cell;
