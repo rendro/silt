@@ -12,4 +12,6 @@ fn f1(x: tcp.TcpStream) -> Int { 0 }
 
 fn main() {
   println(1)
+  let _ = f0
+  let _ = f1
 }

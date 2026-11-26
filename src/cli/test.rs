@@ -1,4 +1,4 @@
-//! `silt test [--filter <pat>] [path]` — discover, compile, and run
+//! `silt test [--filter <pat>] [<path>...]` — discover, compile, and run
 //! `test_*` functions.
 
 use std::collections::{BTreeMap, HashSet};
@@ -17,19 +17,19 @@ use crate::cli::paths::{
 };
 use crate::cli::run::render_runtime_error;
 
-/// Dispatch `silt test [--filter <pat>] [path]`.
+/// Dispatch `silt test [--filter <pat>] [<path>...]`.
 pub(crate) fn dispatch(args: &[String]) {
-    let (file, filter) = arguments(args);
+    let (paths, filter) = arguments(args);
     crate::cli::refuse_bad_settings("test");
-    run_tests(file.as_deref(), filter);
+    run_tests(&paths, filter);
 }
 
-/// The path and the `--filter` of `silt test <args>` (`args[0]` is the
+/// The paths and the `--filter` of `silt test <args>` (`args[0]` is the
 /// binary, `args[1]` the command). A usage error (an unknown flag, a
-/// second path) ends the process with 1, before anything is read: also
-/// before `silt test --watch` watches.
-pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
-    let mut file: Option<String> = None;
+/// `--`) ends the process with 1, before anything is read: also before
+/// `silt test --watch` watches.
+pub(crate) fn arguments(args: &[String]) -> (Vec<String>, Option<String>) {
+    let mut paths: Vec<String> = Vec::new();
     let mut filter: Option<String> = None;
     let mut i = 2;
     while i < args.len() {
@@ -72,8 +72,9 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
             println!();
             println!("Auto-discovery: when no path is given, recursively runs tests");
             println!("from files matching *_test.silt; a directory given is searched");
-            println!("the same way. A file given is run whatever its name. In a package");
-            println!("(also when the path given is in one), it first checks the package");
+            println!("the same way. A file given is run whatever its name. Several");
+            println!("paths run the tests of each, with one summary. In a package");
+            println!("(also when a path given is in one), it first checks the package");
             println!("as 'silt check' does, and runs no test when the package has an");
             println!("error.");
             process::exit(0);
@@ -91,27 +92,12 @@ pub(crate) fn arguments(args: &[String]) -> (Option<String>, Option<String>) {
             );
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
-        } else if file.is_none() {
-            file = Some(args[i].clone());
-            i += 1;
         } else {
-            // Reject extra positionals — `silt test` takes at most one
-            // path (a single file or a directory to scan). Pre-fix the
-            // assign was unconditional and last-wins, so
-            // `silt test a_test.silt b_test.silt` silently ran only
-            // `b_test.silt` and reported green while `a_test.silt` never
-            // ran — a CI hazard (a skipped test reads as passing).
-            // Mirror the rejection pattern in `silt check`/`silt run`.
-            eprintln!(
-                "error: silt test: unexpected extra argument '{}'",
-                crate::git::escape_for_display(&args[i])
-            );
-            eprintln!("silt test takes at most one path (a file or a directory to scan).");
-            eprintln!("Run 'silt test --help' for usage.");
-            process::exit(1);
+            paths.push(args[i].clone());
+            i += 1;
         }
     }
-    (file, filter)
+    (paths, filter)
 }
 
 /// Print what the session found in `path` (`diagnostics`) and was not
@@ -199,43 +185,75 @@ fn check_package_first(dir: &Path) {
     process::exit(1);
 }
 
-fn run_tests(file: Option<&str>, filter: Option<String>) {
-    // The path given is what the five commands that take one make of
-    // it (`paths::path_arg`). The package it is in (or the working
-    // directory is in) is checked first.
-    let paths: Vec<String> = match file.map(path_arg) {
-        // silt test dir/ — find all test files in directory recursively
-        Some(PathArg::Package(dir) | PathArg::Dir(dir)) => {
-            check_package_first(Path::new(&dir));
-            package_test_files(Path::new(&dir))
-        }
-        // silt test file.silt — single file
-        Some(PathArg::File(f)) => {
-            let dir = Path::new(&f).parent().filter(|d| !d.as_os_str().is_empty());
-            let dir = dir.unwrap_or(Path::new("."));
-            // A file reached through a link (to the file, or to a
-            // directory on its way) is run in the package of the file it
-            // leads to (`open_entry`), so that package is checked. Where
-            // the path as given finds the same package, it is looked for
-            // from there, so that its files are shown as given.
-            let real = crate::source::canonical_path(Path::new(&f));
-            let package_of = |dir: &Path| {
-                crate::manifest::Manifest::find(dir)
-                    .map(|root| crate::source::canonical_path(&root))
-            };
-            match real.parent() {
-                Some(real) if package_of(dir) != package_of(real) => check_package_first(real),
-                _ => check_package_first(dir),
+fn run_tests(given: &[String], filter: Option<String>) {
+    // Each path given is what the commands that take one make of it
+    // (`paths::path_arg`); one that is none of them, or names nothing
+    // (a misspelled file or directory), is refused before anything runs.
+    let args: Vec<PathArg> = given.iter().map(|arg| path_arg(arg)).collect();
+    for arg in &args {
+        match arg {
+            PathArg::NotSilt(f) => refuse_path("test", f, FILE_OR_DIRECTORY),
+            PathArg::File(f) => {
+                if let Err(e) = std::fs::metadata(f) {
+                    eprintln!(
+                        "error reading {}: {}",
+                        crate::source::shown_path(f),
+                        crate::diagnostic::io_error_text(&e)
+                    );
+                    process::exit(1);
+                }
             }
-            vec![f]
+            PathArg::Package(_) | PathArg::Dir(_) => {}
         }
-        Some(PathArg::NotSilt(f)) => refuse_path("test", &f, FILE_OR_DIRECTORY),
-        // silt test — find all test files in current directory recursively
-        None => {
-            check_package_first(Path::new("."));
-            package_test_files(Path::new("."))
+    }
+    // The package each path is in (or the working directory is in) is
+    // checked first, once however many paths are in it.
+    let package_of = |dir: &Path| {
+        crate::manifest::Manifest::find(dir).map(|root| crate::source::canonical_path(&root))
+    };
+    let mut checked = HashSet::new();
+    let mut check_first = |dir: &Path| {
+        if checked.insert(package_of(dir)) {
+            check_package_first(dir);
         }
     };
+    let mut paths: Vec<String> = Vec::new();
+    for arg in args {
+        match arg {
+            // silt test dir/ — find all test files in directory recursively
+            PathArg::Package(dir) | PathArg::Dir(dir) => {
+                check_first(Path::new(&dir));
+                paths.extend(package_test_files(Path::new(&dir)));
+            }
+            // silt test file.silt — single file
+            PathArg::File(f) => {
+                let dir = Path::new(&f).parent().filter(|d| !d.as_os_str().is_empty());
+                let dir = dir.unwrap_or(Path::new("."));
+                // A file reached through a link (to the file, or to a
+                // directory on its way) is run in the package of the file
+                // it leads to (`open_entry`), so that package is checked.
+                // Where the path as given finds the same package, it is
+                // looked for from there, so that its files are shown as
+                // given.
+                let real = crate::source::canonical_path(Path::new(&f));
+                match real.parent() {
+                    Some(real) if package_of(dir) != package_of(real) => check_first(real),
+                    _ => check_first(dir),
+                }
+                paths.push(f);
+            }
+            PathArg::NotSilt(_) => unreachable!("refused above"),
+        }
+    }
+    // silt test — find all test files in current directory recursively
+    if given.is_empty() {
+        check_first(Path::new("."));
+        paths = package_test_files(Path::new("."));
+    }
+    // A file given twice (two spellings of its path, a link and what it
+    // leads to, a file and a directory it is in) is run once.
+    let mut seen = HashSet::new();
+    paths.retain(|path| seen.insert(crate::source::canonical_path(Path::new(path))));
 
     if paths.is_empty() {
         // A filter that selects nothing fails the run, also where there
@@ -266,11 +284,11 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // A file found in the working directory is named `./a_test.silt`
         // on its result lines; its diagnostics name it as every other
         // file of the program is named there, `a_test.silt`.
-        let shown = match file {
-            None => (path.strip_prefix("./"))
+        let shown = match given.is_empty() {
+            true => (path.strip_prefix("./"))
                 .or_else(|| path.strip_prefix(".\\"))
                 .unwrap_or(path),
-            Some(_) => path.as_str(),
+            false => path.as_str(),
         };
         let (mut session, file) = match open_entry(shown, LockPolicy::Update) {
             Ok(opened) => opened,

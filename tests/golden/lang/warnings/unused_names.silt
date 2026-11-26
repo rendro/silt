@@ -9,7 +9,7 @@ type Point {
   y: Int,
 }
 
-fn f(xs: List(Int), limit: Int) -> Int {
+pub fn f(xs: List(Int), limit: Int) -> Int {
   let total = 0
   let _skipped = 1
   let Point { x, y } = Point { x: 1, y: 2 }

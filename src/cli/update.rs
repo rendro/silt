@@ -1,21 +1,24 @@
-//! `silt update` — regenerate `silt.lock` for the current package's
-//! dependencies.
+//! `silt update [<name>...]` — regenerate `silt.lock` for the current
+//! package's dependencies, or re-resolve only the named ones.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::git::{GitRef, escape_for_display};
+use crate::intern;
 use crate::lockfile::{LockedPackage, LockedSource, Lockfile};
-use crate::package_graph::{LockPolicy, resolve_packages};
+use crate::package_graph::{LockPolicy, refresh_packages, resolve_packages};
 use crate::source::SourceMap;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
 
-/// Dispatch `silt update`: regenerate the lock for the current
-/// package's whole dependency tree. It takes no arguments.
+/// Dispatch `silt update [<name>...]`: regenerate the lock for the
+/// current package's whole dependency tree, or with names re-resolve only
+/// those dependencies.
 pub(crate) fn dispatch(args: &[String]) {
     let mut wants_help = false;
+    let mut names: Vec<String> = Vec::new();
     for arg in &args[2..] {
         match arg.as_str() {
             "--help" | "-h" => wants_help = true,
@@ -27,43 +30,48 @@ pub(crate) fn dispatch(args: &[String]) {
                 eprintln!("Run 'silt update --help' for usage.");
                 process::exit(1);
             }
-            other => {
-                eprintln!(
-                    "error: silt update: unexpected extra argument '{}'",
-                    escape_for_display(other)
-                );
-                process::exit(1);
-            }
+            name => names.push(name.to_string()),
         }
     }
     if wants_help {
-        println!("Usage: silt update");
+        println!("Usage: silt update [<name>...]");
         println!();
         println!("Regenerate `silt.lock` from the current package's `silt.toml`.");
         println!("Resolves the full dependency tree, computes the checksums of git");
         println!("dependencies, and writes the result next to `silt.toml`. Prints a");
         println!("line for each dependency whose pin changed.");
         println!();
+        println!("With names, only those dependencies of `silt.toml` are resolved");
+        println!("again (a branch or tag looked up, the commit fetched afresh), and");
+        println!("so is another package's dependency on the same repository and ref;");
+        println!("every other dependency keeps the commit `silt.lock` pins it to.");
+        println!();
+        println!("Arguments:");
+        println!("  <name>...          The names the dependencies are imported as.");
+        println!();
         println!("To update the silt binary itself, use `silt self-update` instead.");
         process::exit(0);
     }
-    run_dependency_update();
+    run_dependency_update(&names);
 }
 
-/// Implementation of `silt update`.
+/// Implementation of `silt update [<name>...]`.
 ///
 /// Walks up from cwd to find a `silt.toml`, resolves the full dep tree
 /// fresh from disk, computes git checksums, and writes `silt.lock` next to
-/// the manifest, the entire lock. Then says what changed in it: a line for
+/// the manifest, the entire lock. With `names`, only those dependencies
+/// of the manifest are resolved afresh, and the others keep their pins; a
+/// name that is no key of its `[dependencies]` is an error, before
+/// anything is resolved. Then says what changed in the lock: a line for
 /// each dependency whose pin moved, was added or was removed, or that the
 /// lock is up to date.
 ///
 /// Outside any package (no `silt.toml` reachable) we print a fixed
 /// error message and exit 1 — this is the canonical "must be run
 /// inside a silt package" diagnostic that tests pin to.
-fn run_dependency_update() {
+fn run_dependency_update(names: &[String]) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let (root, _) = match find_project_root(&cwd) {
+    let (root, manifest) = match find_project_root(&cwd) {
         Ok(Some(pair)) => pair,
         Ok(None) => {
             eprintln!(
@@ -81,9 +89,28 @@ fn run_dependency_update() {
             .ok()
             .flatten()
     };
+    let mut refresh = HashSet::new();
+    for name in names {
+        match (manifest.dependencies.keys()).find(|key| intern::resolve(**key) == *name) {
+            Some(key) => {
+                refresh.insert(*key);
+            }
+            None => {
+                eprintln!(
+                    "error: silt update: no dependency '{}' in silt.toml",
+                    escape_for_display(name)
+                );
+                process::exit(1);
+            }
+        }
+    }
     let before = read();
     let mut sources = SourceMap::new();
-    if let Err(diagnostics) = resolve_packages(&root, LockPolicy::Refresh, &mut sources) {
+    let resolved = match names.is_empty() {
+        true => resolve_packages(&root, LockPolicy::Refresh, &mut sources),
+        false => refresh_packages(&root, refresh, &mut sources),
+    };
+    if let Err(diagnostics) = resolved {
         die_on_manifest_error(PackageFailure {
             sources,
             diagnostics,

@@ -304,6 +304,8 @@ codes! {
     UnusedImport = "W0202", Resolve;
     /// A `let` or pattern name that nothing uses.
     UnusedName = "W0203", Resolve;
+    /// A private top-level function that nothing in its module reaches.
+    UnusedFunction = "W0204", Resolve;
     /// A `deep fn` whose calls the recursion check would accept without
     /// it.
     NeedlessDeep = "W0301", Type;

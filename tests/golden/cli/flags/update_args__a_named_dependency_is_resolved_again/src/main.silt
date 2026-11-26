@@ -1,0 +1,4 @@
+-- cmd: update dep
+-- `silt update <name>` re-resolves the dependencies it names and writes
+-- silt.lock (a path dependency is read as it is), saying what changed.
+fn main() {}

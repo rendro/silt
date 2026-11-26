@@ -20,24 +20,24 @@ fn tg(x: a) -> Int where a: T {
   T.go(x)
 }
 
-fn a_trait() -> Int {
+pub fn a_trait() -> Int {
   let v: Int = todo()
   tg(v) + T.go(v)
 }
 
-fn a_question_mark() -> Result(Int, String) {
+pub fn a_question_mark() -> Result(Int, String) {
   let t: Result(Int, String) = todo()
   let n = t?
   Ok(n + 1)
 }
 
-fn a_pattern() -> Result(Int, String) {
+pub fn a_pattern() -> Result(Int, String) {
   let (t, k): (Result(Int, String), Int) = todo()
   let n = t?
   Ok(tg(k) + n)
 }
 
-fn matched() -> Int {
+pub fn matched() -> Int {
   let o: Option(Int) = todo()
   when let Some(k) = o else {
     return 0

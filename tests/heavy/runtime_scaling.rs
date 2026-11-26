@@ -500,7 +500,9 @@ fn a_method_call_costs_the_same_however_many_types_implement_the_trait() {
 #[cfg(target_os = "linux")]
 fn waiting_tasks_program(functions: usize, tasks: usize) -> String {
     let functions: String = (0..functions)
-        .map(|i| format!("fn g{i}(x: Int) -> Int {{\n  x + {i}\n}}\n\n"))
+        // (`pub`: a private function nothing calls is warned of, and
+        // 2,000 warnings fill the stderr pipe that this test reads last.)
+        .map(|i| format!("pub fn g{i}(x: Int) -> Int {{\n  x + {i}\n}}\n\n"))
         .collect();
     format!(
         "import channel

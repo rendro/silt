@@ -50,7 +50,7 @@ import http
 import url
 
 -- Text into a body: what a handler answers.
-fn hello(_req: http.Request) -> http.Response {
+pub fn hello(_req: http.Request) -> http.Response {
   http.Response { status: 200, body: bytes.from_string("Hello"), headers: #{} }
 }
 

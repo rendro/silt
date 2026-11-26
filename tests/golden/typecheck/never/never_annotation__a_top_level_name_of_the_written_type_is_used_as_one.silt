@@ -25,7 +25,7 @@ let v: Int = todo()
 
 let (t, k): (Result(Int, String), Int) = todo()
 
-fn uses() -> Result(Int, String) {
+pub fn uses() -> Result(Int, String) {
   let n = t?
   Ok(tg(v) + tg(k) + n)
 }

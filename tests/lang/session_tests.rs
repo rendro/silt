@@ -120,7 +120,7 @@ fn main_is_found_by_type_however_it_is_bound() {
 /// `check_str` gives the static diagnostics without asking for `main`.
 #[test]
 fn check_str_reports_type_errors_and_needs_no_main() {
-    assert!(check_str("fn helper(x: Int) -> Int { x + 1 }").is_empty());
+    assert!(check_str("pub fn helper(x: Int) -> Int { x + 1 }").is_empty());
     let diagnostics = check_str("fn helper(x: Int) -> String { x }");
     assert!(
         diagnostics

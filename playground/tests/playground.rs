@@ -137,7 +137,7 @@ fn a_display_impl_of_mains_err_that_fails_is_noted() {
 
 #[test]
 fn a_program_without_main_is_an_error_of_run_and_not_of_check() {
-    let source = "fn helper() {\n  1\n}\n";
+    let source = "fn helper() -> Int {\n  1\n}\n\nlet one = helper()\n";
     let ran = run_it(source);
     assert!(!ran.ok);
     assert!(ran.diagnostics.contains("main"), "{}", ran.diagnostics);

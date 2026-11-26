@@ -389,7 +389,11 @@ impl Lsp {
             "{}",
             self.gave_up(&format!("{context}: the server must still be running"))
         );
-        let diagnostics = self.change(uri, 1000, "fn answer() -> Int { 42 }\n");
+        let diagnostics = self.change(
+            uri,
+            1000,
+            "fn answer() -> Int { 42 }\nfn main() { println(answer()) }\n",
+        );
         assert!(
             diagnostics.is_empty(),
             "{context}: a valid document has no diagnostics, got {diagnostics:?}"

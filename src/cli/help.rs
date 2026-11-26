@@ -73,8 +73,8 @@ pub(crate) fn usage_text() -> String {
         "Update the silt binary to the latest release",
     ));
     out.push_str(&line(
-        "silt update",
-        "Regenerate silt.lock for the current package's dependencies",
+        "silt update [<name>...]",
+        "Regenerate silt.lock for the current package's dependencies (only those named)",
     ));
     out.push_str(&line(
         "silt add <name> --path <path>",
@@ -167,14 +167,14 @@ pub(crate) fn run_usage_banner() -> &'static str {
 /// Two code paths print this — the top-level `silt --help` row and the
 /// subcommand's own `silt test --help` line. Previously the two literals
 /// had drifted apart (positional token was `[path]` vs `[file]`), so
-/// this helper pins one canonical form. We keep `[path]` because
-/// `silt test` accepts a directory too — the positional argument is
-/// semantically a path, not a single file.
+/// this helper pins one canonical form: `[<path>...]`, as `silt check`
+/// and `silt fmt` write it, since `silt test` takes files and
+/// directories, any number of them.
 ///
 /// `tests/cli/cli_test_banner_and_unknown_flag_tests.rs` locks the two banners so
 /// they can't drift apart again.
 pub(crate) fn test_usage_banner() -> &'static str {
-    "silt test [--filter <pattern>] [--watch] [path]"
+    "silt test [--filter <pattern>] [--watch] [<path>...]"
 }
 
 /// Single source of truth for the `silt disasm` usage banner line.

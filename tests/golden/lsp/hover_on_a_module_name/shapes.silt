@@ -8,3 +8,7 @@ pub type Square { side: Int }
 pub fn unit() -> Square {
   Square { side: 1 }
 }
+
+trait Area for Square {
+  fn area(self) -> Int { self.side * self.side }
+}

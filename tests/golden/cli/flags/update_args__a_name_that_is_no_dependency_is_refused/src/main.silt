@@ -1,0 +1,5 @@
+-- cmd: update nope
+-- exit: 1
+-- `silt update <name>` takes the names of the package's dependencies: a
+-- name that is none of them is refused before anything is resolved.
+fn main() {}

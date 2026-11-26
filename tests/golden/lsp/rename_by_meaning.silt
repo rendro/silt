@@ -99,4 +99,10 @@ fn head(c: t) -> Int where t: Container {
 fn main() {
   let b = Box { w: 3 }
   println(twice(b) + unbox(b) + either(Left(1)) + scopes(1) + blocks(1) + loops(1) + Sized.size(b))
+  println(head(b))
+}
+
+trait Container for Box {
+  fn first(self) -> Int { self.w }
+  fn second(self) -> Int { self.w }
 }

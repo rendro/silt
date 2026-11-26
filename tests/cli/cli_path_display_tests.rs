@@ -83,7 +83,7 @@ fn every_command_writes_a_file_name_with_a_control_character_escaped() {
         ),
         (
             &["test", "no\u{1b}csuch_test.silt"],
-            "no\\u{1b}csuch_test.silt: failed to read",
+            "error reading no\\u{1b}csuch_test.silt: ",
         ),
     ];
     for (args, expected) in runs {

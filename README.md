@@ -202,7 +202,7 @@ silt check                 Type-check the package (inside a package)
 silt check -               Type-check the program read from stdin
 silt check --format json <file.silt>   Type-check with JSON output (for CI/editors)
 silt check --deny-warnings <file.silt>   Also fail on warnings (for CI)
-silt test [path]           Run test functions
+silt test [<path>...]      Run test functions (of each file or directory given)
 silt fmt [files...]        Format source code
 silt fmt -                 Format the program read from stdin, to stdout
 silt fmt --check           Check formatting without modifying files
@@ -211,7 +211,7 @@ silt init [--lib]          Create a new silt package (a library with --lib) in t
 silt lsp                   Start the language server
 silt disasm [<file.silt>]  Show bytecode disassembly
 silt self-update           Update the silt binary to the latest release
-silt update                Regenerate silt.lock for the current package's dependencies
+silt update [<name>...]    Regenerate silt.lock for the current package's dependencies (only those named)
 silt add <name> --path <path>                             Add a path-based dependency to silt.toml
 silt add <name> --git <url> (--rev|--branch|--tag) <ref>  Add a git-based dependency to silt.toml
 silt remove <name>         Remove a dependency from silt.toml and silt.lock

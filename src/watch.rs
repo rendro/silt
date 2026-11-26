@@ -71,12 +71,12 @@ fn clear_screen_seq_for(no_color: Option<&std::ffi::OsStr>, terminal: bool) -> &
 
 /// The files of a program and what each held: a hash of its text, or
 /// `None` for a file that cannot be read (a missing module). For a
-/// command whose entries are discovered in a directory (`silt test`), the
-/// directory and the entries found there.
+/// command whose entries are discovered in directories (`silt test`), the
+/// directories and the entries found there.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct WatchSet {
     files: BTreeMap<PathBuf, Option<u64>>,
-    discovery: Option<(PathBuf, BTreeSet<PathBuf>)>,
+    discovery: Option<(Vec<PathBuf>, BTreeSet<PathBuf>)>,
 }
 
 impl WatchSet {
@@ -94,11 +94,15 @@ impl WatchSet {
         }
     }
 
-    /// The set, with `entries` discovered in the directory `dir`: a
-    /// `.silt` file created or removed under it is looked at, and when
+    /// The set, with `entries` discovered in the directories `dirs`: a
+    /// `.silt` file created or removed under one is looked at, and when
     /// the entries found there are no longer `entries`, that is a change.
-    pub(crate) fn discovered_in(mut self, dir: PathBuf, entries: BTreeSet<PathBuf>) -> WatchSet {
-        self.discovery = Some((dir, entries));
+    pub(crate) fn discovered_in(
+        mut self,
+        dirs: Vec<PathBuf>,
+        entries: BTreeSet<PathBuf>,
+    ) -> WatchSet {
+        self.discovery = Some((dirs, entries));
         self
     }
 
@@ -153,11 +157,12 @@ impl WatchSet {
     }
 
     /// Whether an event for `path` is to be looked at: a file of the set,
-    /// or a `.silt` file under the discovery directory.
+    /// or a `.silt` file under a discovery directory.
     pub(crate) fn concerns(&self, path: &Path) -> bool {
         self.files.contains_key(path)
-            || self.discovery.as_ref().is_some_and(|(dir, _)| {
-                path.starts_with(dir) && path.extension().is_some_and(|ext| ext == "silt")
+            || self.discovery.as_ref().is_some_and(|(dirs, _)| {
+                dirs.iter().any(|dir| path.starts_with(dir))
+                    && path.extension().is_some_and(|ext| ext == "silt")
             })
     }
 
@@ -176,18 +181,21 @@ impl WatchSet {
     /// The directories to watch, and whether each is watched with its
     /// subdirectories: the directories the files are in (so a file that
     /// an editor replaces, or that does not exist yet, is seen), and the
-    /// discovery directory with its subdirectories.
+    /// discovery directories with their subdirectories.
     fn watches(&self) -> BTreeSet<(PathBuf, bool)> {
-        let discovery = self.discovery.as_ref().map(|(dir, _)| dir);
+        let discovery: &[PathBuf] = self.discovery.as_ref().map_or(&[], |(dirs, _)| dirs);
         let mut watches: BTreeSet<(PathBuf, bool)> = self
             .files
             .keys()
             .filter_map(|p| p.parent())
-            .filter(|dir| !discovery.is_some_and(|d| dir.starts_with(d)))
+            .filter(|dir| !discovery.iter().any(|d| dir.starts_with(d)))
             .map(|dir| (dir.to_path_buf(), false))
             .collect();
-        if let Some(dir) = discovery {
-            watches.insert((dir.clone(), true));
+        // (A directory under another is watched with it.)
+        for dir in discovery {
+            if !discovery.iter().any(|d| d != dir && dir.starts_with(d)) {
+                watches.insert((dir.clone(), true));
+            }
         }
         watches
     }
@@ -329,10 +337,10 @@ impl Runner for ChildRunner {
 pub(crate) struct Target {
     /// The entry files of the programs, found again before each run.
     pub entries: Box<dyn Fn() -> Vec<PathBuf>>,
-    /// The directory the entries are discovered in, for `silt test`
-    /// given a directory or none: a test file created or removed there
-    /// is a change.
-    pub discovery: Option<PathBuf>,
+    /// The directories the entries are discovered in, for `silt test`
+    /// given directories or no path: a test file created or removed
+    /// there is a change.
+    pub discovery: Vec<PathBuf>,
     /// The lockfile policy of the command.
     pub lock: LockPolicy,
 }
@@ -347,9 +355,12 @@ impl Target {
     fn watch_set(&self) -> WatchSet {
         let entries = self.entry_set();
         let set = WatchSet::for_entries(&entries.iter().cloned().collect::<Vec<_>>(), self.lock);
-        match &self.discovery {
-            Some(dir) => set.discovered_in(absolute(dir), entries),
-            None => set,
+        match self.discovery.is_empty() {
+            false => set.discovered_in(
+                self.discovery.iter().map(|d| absolute(d)).collect(),
+                entries,
+            ),
+            true => set,
         }
     }
 }
@@ -795,7 +806,7 @@ mod tests {
     /// The set of a `silt test` over `dir`: its test files, discovered.
     fn test_set(dir: &Path) -> WatchSet {
         let entries = test_files(dir);
-        WatchSet::of(entries.clone()).discovered_in(dir.to_path_buf(), entries)
+        WatchSet::of(entries.clone()).discovered_in(vec![dir.to_path_buf()], entries)
     }
 
     #[test]

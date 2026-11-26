@@ -1,2 +1,2 @@
 fn hidden() -> Int { 1 }
-pub fn shown() -> Int { 2 }
+pub fn shown() -> Int { hidden() + 1 }

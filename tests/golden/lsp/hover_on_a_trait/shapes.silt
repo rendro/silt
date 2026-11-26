@@ -2,3 +2,9 @@
 pub trait Area {
   fn area(self) -> Float
 }
+
+pub type Sq { s: Float }
+
+trait Area for Sq {
+  fn area(self) -> Float { self.s * self.s }
+}

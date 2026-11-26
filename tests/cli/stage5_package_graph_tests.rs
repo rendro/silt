@@ -1260,6 +1260,130 @@ fn silt_update_says_what_moved() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// `silt update <name>...` resolves only the named dependencies again:
+/// the others keep the commits the lock pins, and a name that is no
+/// dependency is an error that leaves the lock alone. FAILS on the base:
+/// a name was an unexpected extra argument.
+#[test]
+fn silt_update_with_names_moves_only_those() {
+    let ws = fresh_workspace("update_names");
+    if !git_installed() {
+        return;
+    }
+    let remote_first = sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let other_repo = ws.join("other");
+    write_package(&other_repo, "other", &[], "lib.silt", "pub fn w() { 1 }\n");
+    let other_first = commit_all(&ws, &other_repo, "one");
+    let app = ws.join("app");
+    let deps = [
+        "remote = { git = \"../lib\", branch = \"main\" }",
+        "other = { git = \"../other\", branch = \"main\" }",
+    ];
+    write_package(&app, "app", &deps, "main.silt", "fn main() {}\n");
+    let update = |args: &[&str]| {
+        let out = silt(&ws, &app, args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        stderr(&out)
+    };
+    assert_eq!(
+        update(&["update"]),
+        format!(
+            "other: added, branch `main` at {}\nremote: added, branch `main` at {}\n",
+            &other_first[..7],
+            &remote_first[..7]
+        )
+    );
+
+    // Both branches move; only the one named moves in the lock.
+    fs::write(ws.join("lib/src/lib.silt"), "pub fn v() { 2 }\n").unwrap();
+    let remote_second = commit_all(&ws, &ws.join("lib"), "two");
+    fs::write(other_repo.join("src/lib.silt"), "pub fn w() { 2 }\n").unwrap();
+    let other_second = commit_all(&ws, &other_repo, "two");
+    assert_eq!(
+        update(&["update", "remote"]),
+        format!(
+            "remote: {} -> {} (branch `main` moved)\n",
+            &remote_first[..7],
+            &remote_second[..7]
+        )
+    );
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert!(lock.contains(&other_first), "{lock}");
+    assert!(!lock.contains(&other_second), "{lock}");
+
+    // An unknown name: nothing is resolved, the lock stays.
+    let out = silt(&ws, &app, &["update", "other", "nope"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out),
+        "error: silt update: no dependency 'nope' in silt.toml\n"
+    );
+    assert_eq!(fs::read_to_string(app.join("silt.lock")).unwrap(), lock);
+
+    assert_eq!(
+        update(&["update", "other"]),
+        format!(
+            "other: {} -> {} (branch `main` moved)\n",
+            &other_first[..7],
+            &other_second[..7]
+        )
+    );
+    assert_eq!(
+        update(&["update", "remote", "other"]),
+        "silt.lock is up to date.\n"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// `silt update c` moves `c` also where a dependency of the project
+/// depends on it, at the same repository and branch: the graph holds `c`
+/// once, at the commit the update resolved, as after `silt update`.
+/// FAILS before the review fix: the project's dependency moved and the
+/// path dependency's kept the old pin, "`c` is required at two commits".
+#[test]
+fn silt_update_with_a_name_moves_it_for_every_package_that_needs_it() {
+    let ws = fresh_workspace("update_name_shared");
+    if !git_installed() {
+        return;
+    }
+    let first = sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let app = ws.join("app");
+    let c = "c = { git = \"../lib\", branch = \"main\" }";
+    // (A path dependency's git URL is relative to its own silt.toml.)
+    write_package(
+        &app.join("lib"),
+        "shared",
+        &["c = { git = \"../../lib\", branch = \"main\" }"],
+        "lib.silt",
+        "pub fn w() { 1 }\n",
+    );
+    write_package(
+        &app,
+        "app",
+        &["shared = { path = \"lib\" }", c],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    fs::write(ws.join("lib/src/lib.silt"), "pub fn v() { 2 }\n").unwrap();
+    let second = commit_all(&ws, &ws.join("lib"), "two");
+    let out = silt(&ws, &app, &["update", "c"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out),
+        format!(
+            "remote: {} -> {} (branch `main` moved)\n",
+            &first[..7],
+            &second[..7]
+        )
+    );
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert!(lock.contains(&second) && !lock.contains(&first), "{lock}");
+    let _ = fs::remove_dir_all(&ws);
+}
+
 // ── The lockfile's checksum of a git dependency ──────────────────────
 
 /// An app beside the repository `lib` (the package `remote`) that pins
@@ -1289,6 +1413,53 @@ fn app_with_a_cached_git_dependency(ws: &Path) -> (PathBuf, PathBuf, String) {
     let checkout = url_dirs[0].join(&head);
     assert!(checkout.is_dir(), "{}", checkout.display());
     (app.clone(), checkout, locked_checksum(&app))
+}
+
+/// Write `text` into the file `path` of a cached checkout, which silt
+/// made read-only when it fetched it: as an editor that is told so may
+/// still do.
+#[allow(clippy::permissions_set_readonly_false)]
+fn overwrite_read_only(path: &Path, text: impl AsRef<[u8]>) {
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    assert!(permissions.readonly(), "{} is writable", path.display());
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// A fetched checkout's files are read-only, its directories are not:
+/// an edit is refused when it is made, and the checkout can be deleted
+/// (`silt update` replaces it). FAILS on the base: the files were
+/// writable.
+#[test]
+fn a_fetched_checkout_is_read_only() {
+    let ws = fresh_workspace("checkout_read_only");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
+    for file in [
+        checkout.join("silt.toml"),
+        checkout.join("src").join("lib.silt"),
+    ] {
+        let permissions = fs::metadata(&file).unwrap().permissions();
+        assert!(permissions.readonly(), "{} is writable", file.display());
+    }
+    for dir in [checkout.clone(), checkout.join("src")] {
+        let permissions = fs::metadata(&dir).unwrap().permissions();
+        assert!(!permissions.readonly(), "{} is read-only", dir.display());
+    }
+    assert!(fs::write(checkout.join("src").join("lib.silt"), "x").is_err());
+
+    // `silt update` removes the checkout and fetches it again, read-only.
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(locked_checksum(&app), expected);
+    let lib = checkout.join("src").join("lib.silt");
+    assert!(fs::metadata(&lib).unwrap().permissions().readonly());
+    // And it can be deleted, as the checksum error's help says.
+    fs::remove_dir_all(&checkout).unwrap();
+    let _ = fs::remove_dir_all(&ws);
 }
 
 /// The checksum of the one git dependency in the app's silt.lock.
@@ -1361,11 +1532,10 @@ fn a_changed_checkout_in_the_cache_is_refused() {
         return;
     }
     let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
-    fs::write(
-        checkout.join("src").join("lib.silt"),
+    overwrite_read_only(
+        &checkout.join("src").join("lib.silt"),
         "pub fn v() { \"changed\" }\n",
-    )
-    .unwrap();
+    );
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
 
     let out = silt(&ws, &app, &["run"]);
@@ -1414,11 +1584,10 @@ fn silt_update_fetches_every_git_dependency_afresh() {
         return;
     }
     let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
-    fs::write(
-        checkout.join("src").join("lib.silt"),
+    overwrite_read_only(
+        &checkout.join("src").join("lib.silt"),
         "pub fn v() { \"changed\" }\n",
-    )
-    .unwrap();
+    );
 
     let out = silt(&ws, &app, &["update"]);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -1478,14 +1647,13 @@ fn a_changed_manifest_in_a_cached_checkout_is_refused() {
     let other = ws.join("other");
     write_package(&other, "other", &[], "lib.silt", "pub fn o() { 1 }\n");
     let manifest = fs::read_to_string(checkout.join("silt.toml")).unwrap();
-    fs::write(
-        checkout.join("silt.toml"),
+    overwrite_read_only(
+        &checkout.join("silt.toml"),
         format!(
             "{manifest}\n[dependencies]\nother = {{ path = {} }}\n",
             toml_path(&other)
         ),
-    )
-    .unwrap();
+    );
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
 
     let out = silt(&ws, &app, &["run"]);

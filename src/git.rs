@@ -1475,7 +1475,7 @@ pub fn fetch_to_cache(url: &str, commit: &str) -> Result<PathBuf, GitError> {
 /// content, whatever was done to the cache.
 pub(crate) fn fetch_afresh(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     let dest = cache_for(url, commit)?;
-    match fs::remove_dir_all(&dest) {
+    match remove_checkout(&dest) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
@@ -1545,8 +1545,58 @@ pub(crate) fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitEr
         .and_then(|_| finish_checkout(url, &rev, &tmp, tmp_str));
     // Whatever happened, the temporary directory is this process's own:
     // gone after a rename, removed otherwise.
-    let _ = fs::remove_dir_all(&tmp);
+    let _ = remove_checkout(&tmp);
     result
+}
+
+/// Make every file of the checkout at `dir` read-only, once its checksum
+/// is taken: an edit of a fetched dependency's file (one the editor's
+/// go-to-definition opened, say), which its checksum would refuse
+/// later, is refused or warned of when it is made. The directories stay
+/// writable, so the checkout can be deleted. A symbolic link is left
+/// alone.
+fn make_read_only(dir: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            make_read_only(&entry.path())?;
+        } else if kind.is_file() {
+            let mut permissions = entry.metadata()?.permissions();
+            permissions.set_readonly(true);
+            fs::set_permissions(entry.path(), permissions)?;
+        }
+    }
+    Ok(())
+}
+
+/// Remove the checkout at `dir`, whose files are read-only
+/// ([`make_read_only`]). Elsewhere deleting a file needs only its
+/// directory to be writable; on Windows a read-only file is not deleted,
+/// so each one is made writable first.
+pub(crate) fn remove_checkout(dir: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    let _ = make_writable(dir);
+    fs::remove_dir_all(dir)
+}
+
+/// Clear the read-only mark of every file under `dir` (Windows: on
+/// Windows `set_readonly(false)` clears the attribute and nothing more).
+#[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)]
+fn make_writable(dir: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            make_writable(&entry.path())?;
+        } else if kind.is_file() {
+            let mut permissions = entry.metadata()?.permissions();
+            permissions.set_readonly(false);
+            fs::set_permissions(entry.path(), permissions)?;
+        }
+    }
+    Ok(())
 }
 
 /// The rest of [`fetch_rev`] once `tmp` holds a clone: resolve `rev`,
@@ -1582,6 +1632,12 @@ fn finish_checkout(
             });
         }
     }
+    // Read-only before it is moved into place: the checkout only ever
+    // appears so.
+    make_read_only(tmp).map_err(|e| GitError::Io {
+        context: format!("make checkout {} read-only", tmp.display()),
+        error: e,
+    })?;
 
     // The rename is atomic. It fails if another process renamed its
     // checkout of the same commit into place first: then that one is

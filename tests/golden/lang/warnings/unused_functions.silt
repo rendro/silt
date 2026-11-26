@@ -1,0 +1,65 @@
+-- cmd: check --deny-warnings
+-- exit: 1
+-- A private function that nothing in its module reaches is never used:
+-- one that nothing calls, one that only calls itself, two that only call
+-- each other, one that only an unused one calls. Not `main`, a test, a
+-- `pub` function or an impl's or a trait's method, nor what they or a
+-- top-level `let` reach, a function passed as a value included.
+import list
+
+trait Shape {
+  fn area(self) -> Int
+  fn twice(self) -> Int { double(Shape.area(self)) }
+}
+
+type Sq { s: Int }
+
+trait Shape for Sq {
+  fn area(self) -> Int { square(self.s) }
+}
+
+fn square(x: Int) -> Int { x * x }
+
+fn double(x: Int) -> Int { x * 2 }
+
+fn inc(x: Int) -> Int { x + 1 }
+
+fn from_let() -> Int { 3 }
+
+fn of_api() -> Int { 4 }
+
+fn of_test() -> Int { 5 }
+
+let start = from_let()
+
+pub fn api() -> Int { of_api() }
+
+fn test_it() {
+  println(of_test())
+}
+
+fn skip_test_later() {
+  ()
+}
+
+fn unused(x: Int) -> Int { x * 2 }
+
+fn countdown(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> countdown(n - 1)
+  }
+}
+
+fn ping(n: Int) -> Int { pong(n) }
+
+fn pong(n: Int) -> Int { ping(n) }
+
+fn caller() -> Int { called() }
+
+fn called() -> Int { 1 }
+
+fn main() {
+  println(list.map([start], inc))
+  println(Shape.twice(Sq { s: 2 }))
+}

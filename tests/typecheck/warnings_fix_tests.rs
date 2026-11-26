@@ -67,7 +67,7 @@ fn removing_an_unused_item_keeps_the_others() {
 fn an_import_used_only_in_a_type_or_an_impl_header_is_used() {
     let text = "import http\nimport json\n\ntype Tag {\n  name: String,\n}\n\n\
                 trait json.Encode for Tag {\n  fn encode(self) -> json.Value {\n    \
-                json.Value.Null\n  }\n}\n\nfn status(_r: http.Request) -> Int {\n  200\n}\n";
+                json.Value.Null\n  }\n}\n\npub fn status(_r: http.Request) -> Int {\n  200\n}\n";
     assert!(check_str(text).is_empty(), "{:?}", check_str(text));
 }
 

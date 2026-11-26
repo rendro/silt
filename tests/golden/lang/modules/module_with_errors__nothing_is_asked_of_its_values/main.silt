@@ -33,7 +33,7 @@ fn main() {
     _ -> ()
   }
 }
-fn g() -> Result(Int, String) {
+pub fn g() -> Result(Int, String) {
   let o = broken.opt()?
   Ok(o.show().length)
 }
