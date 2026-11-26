@@ -1366,6 +1366,53 @@ fn app_with_a_cached_git_dependency(ws: &Path) -> (PathBuf, PathBuf, String) {
     (app.clone(), checkout, locked_checksum(&app))
 }
 
+/// Write `text` into the file `path` of a cached checkout, which silt
+/// made read-only when it fetched it: as an editor that is told so may
+/// still do.
+#[allow(clippy::permissions_set_readonly_false)]
+fn overwrite_read_only(path: &Path, text: impl AsRef<[u8]>) {
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    assert!(permissions.readonly(), "{} is writable", path.display());
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// A fetched checkout's files are read-only, its directories are not:
+/// an edit is refused when it is made, and the checkout can be deleted
+/// (`silt update` replaces it). FAILS on the base: the files were
+/// writable.
+#[test]
+fn a_fetched_checkout_is_read_only() {
+    let ws = fresh_workspace("checkout_read_only");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
+    for file in [
+        checkout.join("silt.toml"),
+        checkout.join("src").join("lib.silt"),
+    ] {
+        let permissions = fs::metadata(&file).unwrap().permissions();
+        assert!(permissions.readonly(), "{} is writable", file.display());
+    }
+    for dir in [checkout.clone(), checkout.join("src")] {
+        let permissions = fs::metadata(&dir).unwrap().permissions();
+        assert!(!permissions.readonly(), "{} is read-only", dir.display());
+    }
+    assert!(fs::write(checkout.join("src").join("lib.silt"), "x").is_err());
+
+    // `silt update` removes the checkout and fetches it again, read-only.
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(locked_checksum(&app), expected);
+    let lib = checkout.join("src").join("lib.silt");
+    assert!(fs::metadata(&lib).unwrap().permissions().readonly());
+    // And it can be deleted, as the checksum error's help says.
+    fs::remove_dir_all(&checkout).unwrap();
+    let _ = fs::remove_dir_all(&ws);
+}
+
 /// The checksum of the one git dependency in the app's silt.lock.
 fn locked_checksum(app: &Path) -> String {
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
@@ -1436,11 +1483,10 @@ fn a_changed_checkout_in_the_cache_is_refused() {
         return;
     }
     let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
-    fs::write(
-        checkout.join("src").join("lib.silt"),
+    overwrite_read_only(
+        &checkout.join("src").join("lib.silt"),
         "pub fn v() { \"changed\" }\n",
-    )
-    .unwrap();
+    );
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
 
     let out = silt(&ws, &app, &["run"]);
@@ -1489,11 +1535,10 @@ fn silt_update_fetches_every_git_dependency_afresh() {
         return;
     }
     let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
-    fs::write(
-        checkout.join("src").join("lib.silt"),
+    overwrite_read_only(
+        &checkout.join("src").join("lib.silt"),
         "pub fn v() { \"changed\" }\n",
-    )
-    .unwrap();
+    );
 
     let out = silt(&ws, &app, &["update"]);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -1553,14 +1598,13 @@ fn a_changed_manifest_in_a_cached_checkout_is_refused() {
     let other = ws.join("other");
     write_package(&other, "other", &[], "lib.silt", "pub fn o() { 1 }\n");
     let manifest = fs::read_to_string(checkout.join("silt.toml")).unwrap();
-    fs::write(
-        checkout.join("silt.toml"),
+    overwrite_read_only(
+        &checkout.join("silt.toml"),
         format!(
             "{manifest}\n[dependencies]\nother = {{ path = {} }}\n",
             toml_path(&other)
         ),
-    )
-    .unwrap();
+    );
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
 
     let out = silt(&ws, &app, &["run"]);
