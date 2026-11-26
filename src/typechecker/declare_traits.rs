@@ -3120,7 +3120,8 @@ impl TypeChecker {
                                 (own, &writes),
                             ),
                             true => {
-                                let mismatch = self.of_whole_types(mismatch, &written, expected);
+                                let mismatch =
+                                    self.of_whole_signatures(mismatch, &written, expected);
                                 self.report_mismatch(mismatch, method.span)
                             }
                         }

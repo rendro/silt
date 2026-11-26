@@ -1,0 +1,18 @@
+-- exit: 1
+-- An impl's method whose one parameter differs from the trait's: both
+-- whole signatures, with the parameter's types in the note.
+trait Shape {
+  fn scale(self, by: Int, name: String) -> Option(Int)
+}
+
+type Square { side: Int }
+
+trait Shape for Square {
+  fn scale(self, by: Float, name: String) -> Option(Int) {
+    Some(self.side)
+  }
+}
+
+fn main() {
+  println(Shape.scale(Square { side: 2 }, 3, "a"))
+}

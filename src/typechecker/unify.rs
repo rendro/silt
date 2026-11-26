@@ -425,19 +425,46 @@ impl TypeChecker {
     /// that is no plain mismatch of two types, stays as it is.
     pub(super) fn of_whole_types(
         &self,
-        Mismatch(faults): Mismatch,
+        mismatch: Mismatch,
         got: &Type,
         expected: &Type,
     ) -> Mismatch {
+        self.whole_types(mismatch, got, expected, false)
+    }
+
+    /// `of_whole_types` of two function types too: the signature an impl
+    /// writes for a trait's method (`got`) and the one the trait
+    /// declares (`expected`) are each said whole, with a note for each
+    /// part that differs.
+    pub(super) fn of_whole_signatures(
+        &self,
+        mismatch: Mismatch,
+        got: &Type,
+        expected: &Type,
+    ) -> Mismatch {
+        self.whole_types(mismatch, got, expected, true)
+    }
+
+    fn whole_types(
+        &self,
+        Mismatch(faults): Mismatch,
+        got: &Type,
+        expected: &Type,
+        functions: bool,
+    ) -> Mismatch {
         let (got, expected) = (self.apply(got), self.apply(expected));
         // (Of two functions, the part is what is said: the result a
-        // callback is to have, a parameter's type.)
+        // callback is to have, a parameter's type. Not of two
+        // signatures, which are written whole.)
         let plain = |ty: &Type| match ty {
             Type::Generic(name, _) => !name.is_builtin(crate::defs::TYPE_OF),
-            Type::Fun(..) => false,
+            Type::Fun(..) => functions,
             _ => true,
         };
         let mut whole: Option<Fault> = None;
+        // (A part that differs twice alike, `a` against `Int` in a
+        // parameter and in the result, is said once.)
+        let mut parts: Vec<String> = Vec::new();
         let mut out = Vec::new();
         for fault in faults {
             let part = match &fault.apart {
@@ -472,6 +499,10 @@ impl TypeChecker {
                     continue;
                 }
             };
+            if parts.contains(&part) {
+                continue;
+            }
+            parts.push(part.clone());
             match &mut whole {
                 Some(first) => {
                     let notes = first.note.get_or_insert_with(String::new);

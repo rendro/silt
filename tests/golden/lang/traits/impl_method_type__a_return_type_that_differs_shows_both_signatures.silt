@@ -1,0 +1,20 @@
+-- exit: 1
+-- An impl's method whose written type differs from the trait's in one
+-- part (the element of the list it returns): the error shows the whole
+-- signature the trait declares and the one the impl writes, and the
+-- note names the part that differs.
+trait Parts {
+  fn parts(self) -> List(Int)
+}
+
+type Box { v: Int }
+
+trait Parts for Box {
+  fn parts(self) -> List(String) {
+    ["{self.v}"]
+  }
+}
+
+fn main() {
+  println(Parts.parts(Box { v: 1 }))
+}

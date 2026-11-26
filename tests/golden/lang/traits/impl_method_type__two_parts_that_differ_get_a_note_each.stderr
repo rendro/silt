@@ -1,0 +1,7 @@
+error[type]: type mismatch: expected Fn(Two, Int) -> Result(Int, String), got Fn(Two, String) -> Result(Int, Bool)
+ --> impl_method_type__two_parts_that_differ_get_a_note_each.silt:12:3
+    |
+ 12 |   fn pick(self, i: String) -> Result(Int, Bool) {
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(Two, Int) -> Result(Int, String), got Fn(Two, String) -> Result(Int, Bool)
+  = note: the part that differs: expected Int, got String
+          the part that differs: expected String, got Bool

@@ -1,5 +1,6 @@
-error[type]: type mismatch: expected String, got Int
+error[type]: type mismatch: expected Fn(D) -> String, got Fn(D) -> Int
  --> display_impl__a_wrong_signature_is_the_one_error.silt:13:3
     |
  13 |   fn display(self) -> Int {
-    |   ^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Fn(D) -> String, got Fn(D) -> Int
+  = note: the part that differs: expected String, got Int
