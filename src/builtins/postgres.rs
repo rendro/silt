@@ -3230,8 +3230,16 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
                 format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}");
             match mend(exp, act) {
                 Mend::Cast => format!("{text}; cast it in SQL, for example {col}::text"),
-                Mend::Timestamptz => {
-                    format!("{text}; cast it in SQL, for example {col}::timestamptz")
+                Mend::Timestamptz { array } => {
+                    let brackets = if array { "[]" } else { "" };
+                    format!("{text}; cast it in SQL, for example {col}::timestamptz{brackets}")
+                }
+                Mend::Instant { array } => {
+                    let arrays = if array { " or an array of them" } else { "" };
+                    format!(
+                        "{text}; a field of type `{exp}` is filled only from a timestamptz, json or \
+                         jsonb column{arrays}"
+                    )
                 }
                 Mend::Json => format!(
                     "{text}; a field of type `{exp}` is filled only from a json or jsonb column"
@@ -3259,9 +3267,17 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 enum Mend {
     /// Cast the column in SQL.
     Cast,
-    /// Cast the column to a `timestamptz`, the one type that fills an
+    /// Cast the `timestamp` column (an array of them: `array`) to a
+    /// `timestamptz`, the one column type but a document's that fills an
     /// `Instant`.
-    Timestamptz,
+    Timestamptz {
+        array: bool,
+    },
+    /// Nothing but a `timestamptz` or a json document (in a list: or an
+    /// array of them) fills the field, an `Instant`.
+    Instant {
+        array: bool,
+    },
     /// Nothing but a json document fills the field.
     Json,
     /// Nothing but a json document, or an array of them, fills the
@@ -3302,7 +3318,6 @@ fn mend(expected: &str, actual: &str) -> Mend {
                     | "time.Date"
                     | "time.Time"
                     | "time.DateTime"
-                    | "Instant"
                     | "json.Value"
             ),
         }
@@ -3314,8 +3329,25 @@ fn mend(expected: &str, actual: &str) -> Mend {
     {
         element = inner;
     }
+    // An `Instant` is filled from a `timestamptz` and a document: a
+    // `timestamp` is cast to the one; a `timestamptz` that is no
+    // `Instant` (infinity, out of its range, of more dimensions than the
+    // list) says what is wrong, which no cast mends; any other column
+    // says which columns fill one.
+    if element == "Instant" {
+        let cell = ["Infinity", "-Infinity"].contains(&actual);
+        match actual {
+            "timestamp" => return Mend::Timestamptz { array: false },
+            "timestamp[]" => return Mend::Timestamptz { array: true },
+            _ if cell || actual.contains("timestamp") => return Mend::None,
+            _ => {
+                return Mend::Instant {
+                    array: expected.starts_with("List("),
+                };
+            }
+        }
+    }
     match (from_a_column(expected), expected.starts_with("List(")) {
-        (true, _) if element == "Instant" => Mend::Timestamptz,
         (true, _) => Mend::Cast,
         (false, false) => Mend::Json,
         (false, true) => Mend::JsonArray,
@@ -3936,9 +3968,13 @@ mod tests {
             assert_eq!(mend("List(Option(Int))", actual), Mend::Cast, "{actual}");
             assert_eq!(mend("List(List(Option(time.Date)))", actual), Mend::Cast);
             assert_eq!(mend("List(Option(Meta))", actual), Mend::JsonArray);
-            // (An `Instant` is filled from a `timestamptz` alone.)
-            assert_eq!(mend("Instant", actual), Mend::Timestamptz, "{actual}");
-            assert_eq!(mend("List(Option(Instant))", actual), Mend::Timestamptz);
+            // (An `Instant` is filled from a `timestamptz` or a document.)
+            let instant = |array| Mend::Instant { array };
+            // (An infinity is no Instant whatever the column: below.)
+            if actual != "-Infinity" {
+                assert_eq!(mend("Instant", actual), instant(false), "{actual}");
+                assert_eq!(mend("List(Option(Instant))", actual), instant(true));
+            }
             assert_eq!(
                 mend("List(List(Meta))", actual),
                 Mend::JsonArray,
@@ -3955,6 +3991,22 @@ mod tests {
             for expected in ["Int", "Meta", "List(Meta)"] {
                 assert_eq!(mend(expected, not), Mend::None, "{expected} {not}");
             }
+        }
+        // A timestamp is cast to a timestamptz; a timestamptz that is no
+        // Instant has no cast that mends it.
+        let pair = |a| Mend::Timestamptz { array: a };
+        assert_eq!(mend("Instant", "timestamp"), pair(false));
+        assert_eq!(mend("Option(Instant)", "timestamp"), pair(false));
+        assert_eq!(mend("List(Instant)", "timestamp[]"), pair(true));
+        for not in [
+            "Infinity",
+            "-Infinity",
+            "a timestamptz out of Instant's range",
+            "timestamptz[] with 2 dimensions",
+            "timestamp[] with 2 dimensions",
+        ] {
+            assert_eq!(mend("Instant", not), Mend::None, "{not}");
+            assert_eq!(mend("List(Instant)", not), Mend::None, "{not}");
         }
     }
 

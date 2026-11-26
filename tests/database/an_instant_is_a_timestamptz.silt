@@ -3,7 +3,10 @@
 -- to the server as a `timestamptz`, whatever the session's TimeZone
 -- (here New York's), in a list as a `timestamptz[]`. A `DateTime`
 -- field is filled as before, and a json document still fills an
--- `Instant`. A `timestamp` column fills no `Instant`: it has no zone.
+-- `Instant`. A `timestamp` column fills no `Instant`: it has no zone, and
+-- the error says to cast it. A timestamptz that is no Instant (infinity,
+-- out of its range, an array of two dimensions) says what is wrong; any
+-- other column says that a json or jsonb column fills the field too.
 -- Into a json column the program sends `json.stringify(at)`.
 import env
 import json
@@ -11,6 +14,8 @@ import postgres
 import time
 
 type I { started: time.Instant }
+
+type L { xs: List(time.Instant) }
 
 type Both { at: time.Instant, dt: time.DateTime, maybe: Option(time.Instant) }
 
@@ -61,6 +66,15 @@ fn main() {
         let doc = postgres.query(tx, "SELECT $1::jsonb AS started", (json.stringify(at),), I)?
         println("from jsonb: {doc}")
         println("a timestamp: {postgres.query(tx, "SELECT TIMESTAMP '2026-11-01 06:00:00' AS started", (), I)}")
+        println("timestamp[]: {postgres.query(tx, "SELECT ARRAY[TIMESTAMP '2026-11-01 06:00:00'] AS xs", (), L)}")
+        -- A timestamptz that is no Instant says what is wrong, and no cast.
+        println("out of range: {postgres.query(tx, "SELECT TIMESTAMPTZ '2300-01-01 00:00:00+00' AS started", (), I)}")
+        println("infinity: {postgres.query(tx, "SELECT 'infinity'::timestamptz AS started", (), I)}")
+        println("-infinity: {postgres.query(tx, "SELECT '-infinity'::timestamptz AS started", (), I)}")
+        println("two dimensions: {postgres.query(tx, "SELECT ARRAY[ARRAY[TIMESTAMPTZ '2026-11-01 06:00:00+00']] AS xs", (), L)}")
+        -- Any other column: only a document fills an Instant as well.
+        println("an int4: {postgres.query(tx, "SELECT 1 AS started", (), I)}")
+        println("an int4[]: {postgres.query(tx, "SELECT ARRAY[1] AS xs", (), L)}")
         Ok(())
       }
       println("done: {done}")

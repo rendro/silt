@@ -6,4 +6,11 @@ a list: [Same {same: true, back: "\{\"2026-11-01 01:00:00.123-05\",\"1969-12-31 
 round trip: [I {started: Instant {epoch_ns: 1793512800123000000}}] true
 from jsonb: [I {started: Instant {epoch_ns: 1793512800123000000}}]
 a timestamp: Err(postgres type mismatch on column `started`: expected Instant, got timestamp; cast it in SQL, for example started::timestamptz)
+timestamp[]: Err(postgres type mismatch on column `xs`: expected List(Instant), got timestamp[]; cast it in SQL, for example xs::timestamptz[])
+out of range: Err(postgres type mismatch on column `started`: expected Instant, got a timestamptz out of Instant's range)
+infinity: Err(postgres type mismatch on column `started`: expected Instant, got Infinity)
+-infinity: Err(postgres type mismatch on column `started`: expected Instant, got -Infinity)
+two dimensions: Err(postgres type mismatch on column `xs`: expected List(Instant), got timestamptz[] with 2 dimensions)
+an int4: Err(postgres type mismatch on column `started`: expected Instant, got int4; a field of type `Instant` is filled only from a timestamptz, json or jsonb column)
+an int4[]: Err(postgres type mismatch on column `xs`: expected List(Instant), got int4[]; a field of type `List(Instant)` is filled only from a timestamptz, json or jsonb column or an array of them)
 done: Ok(())
