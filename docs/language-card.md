@@ -637,7 +637,7 @@ json.stringify(value: a) -> String where a: Encode
 ### toml
 
 ```
-type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }
+type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }
 toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
 toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode

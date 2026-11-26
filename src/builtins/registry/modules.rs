@@ -391,7 +391,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "toml",
             page: "toml.md",
             types: "\
-                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }\n\
+                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }\n\
             ",
             error: "TomlError" => toml::error_text,
             rows: [

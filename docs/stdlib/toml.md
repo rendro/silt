@@ -21,7 +21,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 ## Errors
 
 Every fallible `toml.*` call returns `Result(T, TomlError)`. The `TomlError`
-enum has four variants you can pattern-match on, or fall back to
+enum has five variants you can pattern-match on, or fall back to
 show it with `"{e}"` when you just want a rendered string:
 
 | Variant | Fields | Meaning |
@@ -30,6 +30,7 @@ show it with `"{e}"` when you just want a rendered string:
 | `TypeMismatch(expected, actual, offset)` | `String`, `String`, `Int` | A value's TOML type did not match the type it decodes into; `actual` ends with the value's path, `offset` is the byte where the value starts |
 | `MissingField(name, offset)` | `String`, `Int` | A required (non-`Option`) field was absent; `name` is its path, `offset` the byte where its table's header starts (`[server]`, `[[posts]]`, the `{` of an inline table), 0 for the top level |
 | `Other(msg, offset)` | `String`, `Int` | Anything else (a date that is none, serialization failures, document-shape violations); `offset` is the byte where the value starts, 0 for one of no place in a text |
+| `UnknownField(name, offset)` | `String`, `Int` | A key of a record's table that no field names; `name` is its path, `offset` the byte where the key is written |
 
 An error about a value of the document ends with the path of that value:
 the fields of a record and the keys of a map by name (`inner.a`), a key
@@ -50,7 +51,8 @@ for a `MissingField`, where the header of the table it is missing from
 starts, the `{` of an inline table, or 0 for the top level; for a table
 written by dotted keys (`server.port = 1`), the key. A `TypeMismatch` and a
 `MissingField` show it (`toml type mismatch at byte 19: expected List, got
-integer at tags`); an `Other` shows its message alone. `toml.stringify` and
+integer at tags`), as an `UnknownField` does; an `Other` shows its message
+alone. `toml.stringify` and
 `toml.pretty` read no text: their offsets are 0. A `json.Decode` impl's
 error is placed at the part the impl was given, whatever offset the impl
 wrote (write 0). The line of an offset is one more than the newlines
@@ -203,7 +205,7 @@ errors: `Other("bad tags", _)` at `posts[1].tags` is `Other("bad tags at
 posts[1].tags", _)`, `MissingField("name", _)` there is
 `MissingField("posts[1].tags.name", _)`; a message is the impl's text with
 the path appended as it is (`TypeMismatch("Int", "string at k at
-posts[1].tags")` for one the impl got from `json.decode`). A `Syntax` error (an impl that
+posts[1].tags", _)` for one the impl got from `json.decode`). A `Syntax` error (an impl that
 parses a JSON text of its own) is an `Other` of json's message of it,
 `Other("json syntax error at byte 3: ... at posts[1].tags", _)`, since its
 offset is in that text and not in the TOML document. The first error
@@ -274,10 +276,15 @@ a variant with fields (see [Enums](#enums)), a `json.Value`, or a type with a
 `json.Decode` impl. The type is passed as a
 `type` parameter (see [Generics](../language/generics.md) — not a string).
 Fields are matched by name; `Option` fields default to `None` if missing
-from the document. A key that no field names is skipped, in a table at any
-depth, as `json.parse` skips it, so a misspelled key is no error: the field
-it was meant for is missing, an `Err(MissingField(...))`, or `None` for an
-`Option` field.
+from the document. A key that no field names is an error, in a table at any
+depth: `Err(UnknownField(path, offset))`, the key's path and the byte where
+the key is written, so a misspelled key in a file a person wrote is never
+lost. (`json.parse` and `csv.parse` skip such a key: their documents come
+from other programs, which add fields over time.) The first such key in
+the text is the table's error, before the errors of its fields. The table
+of a variant with fields takes the keys `variant` and `fields` alone. To
+allow other keys, read the table into a `Map` (`toml.parse_map`) or a
+`json.Value`, which take every key.
 
 ```silt
 import toml
@@ -288,9 +295,10 @@ type Meta {
 }
 
 fn main() {
-  -- "drafts" for "draft": skipped, and draft is None
-  println(toml.parse("title = \"T\"\ndrafts = true\n", Meta)) -- Ok(Meta {title: "T", draft: None})
-  println(toml.parse("titel = \"T\"\n", Meta)) -- Err(toml missing field at byte 0: title)
+  -- "drafts" for "draft": an error at the key
+  println(toml.parse("title = \"T\"\ndrafts = true\n", Meta)) -- Err(toml unknown field at byte 12: drafts)
+  println(toml.parse("titel = \"T\"\n", Meta)) -- Err(toml unknown field at byte 0: titel)
+  println(toml.parse("draft = true\n", Meta)) -- Err(toml missing field at byte 0: title)
 }
 ```
 

@@ -65,6 +65,7 @@ use crate::typeinfo::FieldType;
 //   TypeMismatch(expected, actual, byte_offset)
 //   MissingField(name, byte_offset)
 //   Other(message, byte_offset)
+//   UnknownField(path, byte_offset)
 
 fn toml_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, [inner])
@@ -150,6 +151,9 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         }
         // (Its offset is a field of its own: the message is the text.)
         ("Other", [Value::String(m, _), Value::Int(_)]) => m.to_string(),
+        ("UnknownField", [Value::String(n, _), Value::Int(offset)]) => {
+            format!("toml unknown field at byte {offset}: {n}")
+        }
         _ => return None,
     })
 }
@@ -293,6 +297,7 @@ pub(crate) const RULES: Rules = Rules {
         bv::TOML_OTHER,
     ],
     offsets: true,
+    unknown: Some(bv::TOML_UNKNOWN_FIELD),
     from_impl,
 };
 
@@ -518,7 +523,7 @@ pub(crate) fn read_text(
     // An error's value found in the text read, at its place in `s`.
     let located = |mut outcome: seed::Outcome, text: &str, in_s: &dyn Fn(usize) -> usize| {
         if let Err(e) = &mut outcome {
-            e.locate(|path| in_s(offset_at(text, path)));
+            e.locate(|path, key| in_s(offset_at(text, path, key)));
         }
         outcome
     };
@@ -528,8 +533,9 @@ pub(crate) fn read_text(
 /// The byte offset in the TOML text `text`, a document, of the value at
 /// `path`: of a table, its header (`[a]`, `[[a]]`), the `{` of an inline
 /// one, or the key of one written by dotted keys (`a.b = 1`); as far as
-/// the path leads in the text, 0 for the document.
-fn offset_at(text: &str, path: &[decode::Seg]) -> usize {
+/// the path leads in the text, 0 for the document. Where `key`, the key
+/// at the end of the path is meant, and found where it is written.
+fn offset_at(text: &str, path: &[decode::Seg], key: bool) -> usize {
     use toml_edit::{Item, Table, Value as V};
     /// A part of the document.
     #[derive(Clone, Copy)]
@@ -543,7 +549,7 @@ fn offset_at(text: &str, path: &[decode::Seg]) -> usize {
     };
     let mut node = Node::Table(doc.as_table());
     let mut at = 0;
-    for seg in path {
+    for (k, seg) in path.iter().enumerate() {
         let node_table = match node {
             Node::Table(table) | Node::Item(Item::Table(table)) => Some(table),
             _ => None,
@@ -567,16 +573,22 @@ fn offset_at(text: &str, path: &[decode::Seg]) -> usize {
             }
             _ => None,
         };
-        let Some((next, key)) = next else {
+        let Some((next, key_span)) = next else {
             break;
         };
+        if key
+            && k + 1 == path.len()
+            && let Some(span) = key_span
+        {
+            return span.start;
+        }
         let own = match next {
             Node::Item(Item::Table(table)) | Node::Table(table) => table.span(),
             Node::Item(Item::Value(value)) | Node::Value(value) => value.span(),
             Node::Item(Item::ArrayOfTables(tables)) => tables.span(),
             Node::Item(Item::None) => None,
         };
-        if let Some(span) = own.or(key) {
+        if let Some(span) = own.or(key_span) {
             at = span.start;
         }
         node = next;
@@ -868,7 +880,7 @@ mod tests {
         let key = |k: &str| Key(k.to_string());
         let text =
             "a = 1\n[t]\nx = \"s\"\n[[r]]\nn = 1\n[[r]]\nn = [1, 2]\nd.e = 3\ni = { j = 4 }\n";
-        let at = |path: &[decode::Seg]| offset_at(text, path);
+        let at = |path: &[decode::Seg]| offset_at(text, path, false);
         assert_eq!(at(&[]), 0);
         assert_eq!(at(&[key("a")]), 4);
         assert_eq!(at(&[key("t")]), 6);
@@ -883,6 +895,12 @@ mod tests {
         let j = [key("r"), Index(1), key("i"), key("j")];
         assert_eq!(at(&j), text.find('4').unwrap_or(0));
         assert_eq!(at(&[key("none")]), 0);
+        // A key, meant as itself, is where it is written.
+        assert_eq!(offset_at(text, &[key("t"), key("x")], true), 10);
+        assert_eq!(
+            offset_at(text, &last("d"), true),
+            text.find("d.e").unwrap_or(0)
+        );
     }
 
     /// The deepest value the encoder writes (a map in a list in a map,

@@ -650,7 +650,9 @@ parameter (see [Generics](../language/generics.md) — not a string), written in
 full: `json.parse(text, User)`, `json.parse(text, List(Point))` for an array,
 `json.parse(text, Map(String, Int))` for an object read as a map. Fields are
 matched by name; `Option` fields default to `None` if missing from the JSON.
-A key that no field names is skipped, in a record at any depth, so a
+A key that no field names is skipped, in a record at any depth (a JSON
+document mostly comes from a program, which may add fields over time;
+`toml.parse` refuses such a key), so a
 misspelled key is no error: the field it was meant for is missing, an
 `Err(MissingField(...))`, or `None` for an `Option` field.
 A field may be named by a keyword, so the key `"type"` is read into the field

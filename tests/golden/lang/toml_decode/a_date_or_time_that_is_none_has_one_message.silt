@@ -23,7 +23,7 @@ fn main() {
   println(toml.parse("ds = [1979-02-28, 1979-02-29]", Ds))
   -- A literal is a datetime, for a String too.
   println(toml.parse("s = 1979-02-29", S))
-  -- A key no field reads is not looked at.
+  -- A key no field names is an error at the key, whatever its value.
   println(toml.parse("n = 1\nx = 1979-02-29", Other))
   -- A syntax error after one is at its place in the document.
   println(toml.parse("d = 1979-02-29\nx = [", D))

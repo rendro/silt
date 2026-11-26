@@ -32,6 +32,7 @@ syntax keyword siltConstructor InvalidDigit Overflow Underflow
 syntax keyword siltConstructor NotFinite
 syntax keyword siltConstructor InvalidPattern TooBig
 syntax keyword siltConstructor Syntax TypeMismatch MissingField
+syntax keyword siltConstructor UnknownField
 syntax keyword siltConstructor ParseFormat OutOfRange InvalidFormat
 syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse ClosedEarly
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted

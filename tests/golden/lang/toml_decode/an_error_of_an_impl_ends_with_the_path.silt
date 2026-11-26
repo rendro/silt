@@ -37,6 +37,7 @@ fn variant(r: Result(a, toml.TomlError)) -> String {
     Err(toml.TypeMismatch(_, _, _)) -> "TypeMismatch"
     Err(toml.MissingField(_, _)) -> "MissingField"
     Err(toml.Other(_, _)) -> "Other"
+    Err(toml.UnknownField(_, _)) -> "UnknownField"
   }
 }
 

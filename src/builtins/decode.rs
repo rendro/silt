@@ -107,6 +107,9 @@ pub(crate) enum Seg {
 pub(crate) struct Where {
     pub(crate) path: Vec<Seg>,
     pub(crate) offset: usize,
+    /// Whether the error is about the key at the end of the path, not
+    /// its value: a key no field names is found where the key is.
+    pub(crate) key: bool,
 }
 
 impl Where {
@@ -115,6 +118,15 @@ impl Where {
         Where {
             path: at.path(),
             offset: 0,
+            key: false,
+        }
+    }
+
+    /// The key at the end of the path `at`, not found in a text yet.
+    pub(crate) fn key(at: &At) -> Where {
+        Where {
+            key: true,
+            ..Where::of(at)
         }
     }
 }
@@ -827,6 +839,11 @@ pub(crate) struct Rules {
     /// value in the text (json's and toml's do; csv's say a line and a
     /// column in their text).
     pub(crate) offsets: bool,
+    /// The variant of the format's error for a key of a record's table
+    /// that no field names, where the format refuses one (TOML, which
+    /// people write by hand); `None` where such a key is skipped (JSON
+    /// and CSV, which programs write and add to).
+    pub(crate) unknown: Option<BuiltinVariant>,
     /// The format's error of the `JsonError` that a written
     /// `json.Decode` impl gave for a part `at` a path ([`at_part`]).
     pub(crate) from_impl: fn(&Value, &str) -> Value,
@@ -860,6 +877,9 @@ pub(crate) enum Error {
     MissingField(std::string::String, Where),
     /// `Other(message)`.
     Other(std::string::String, Where),
+    /// `UnknownField(path)`: a key of a record's table that no field of
+    /// the record names, where the format refuses one ([`Rules::unknown`]).
+    UnknownField(std::string::String, Where),
     /// A value was present for a type no decoder exists for (the type as
     /// written): [`record`] turns it into an `Other` that names the field
     /// whose type it is.
@@ -892,16 +912,18 @@ impl Error {
             Error::TypeMismatch(_, _, at)
             | Error::MissingField(_, at)
             | Error::Other(_, at)
+            | Error::UnknownField(_, at)
             | Error::Given(_, at) => Some(at),
             Error::Unsupported(_) => None,
         }
     }
 
     /// The error with the byte offset of its value in the text a reader
-    /// read, which `find` gives for the path of the value.
-    pub(crate) fn locate(&mut self, find: impl FnOnce(&[Seg]) -> usize) {
+    /// read, which `find` gives for the path of the value (and whether
+    /// it is the key at its end that is meant).
+    pub(crate) fn locate(&mut self, find: impl FnOnce(&[Seg], bool) -> usize) {
         if let Some(at) = self.place_mut() {
-            at.offset = find(&at.path);
+            at.offset = find(&at.path, at.key);
         }
     }
 
@@ -933,6 +955,14 @@ impl Error {
                 Value::variant(missing, fields(vec![string(path)], &at))
             }
             Error::Other(message, at) => Value::variant(other, fields(vec![string(message)], &at)),
+            Error::UnknownField(path, at) => match rules.unknown {
+                Some(unknown) => Value::variant(unknown, fields(vec![string(path)], &at)),
+                // (Only a format that refuses such a key has the error.)
+                None => Value::variant(
+                    other,
+                    fields(vec![string(format!("unknown field {path}"))], &at),
+                ),
+            },
             // An impl's error is placed at its part: what offset the impl
             // gave, it read no text.
             Error::Given(error, at) => match &error {
@@ -1161,6 +1191,7 @@ mod tests {
             Err(Error::TypeMismatch(_, actual, _)) => format!("TypeMismatch at {}", path(&actual)),
             Err(Error::MissingField(at, _)) => format!("MissingField {at}"),
             Err(Error::Other(message, _)) => format!("Other {message}"),
+            Err(Error::UnknownField(at, _)) => format!("UnknownField {at}"),
             Err(Error::Unsupported(declared)) => format!("Unsupported {declared}"),
             Err(Error::Given(error, _)) => format!("Given {error}"),
         }

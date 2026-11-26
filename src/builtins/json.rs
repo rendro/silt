@@ -378,6 +378,7 @@ pub(crate) const RULES: Rules = Rules {
         bv::JSON_OTHER,
     ],
     offsets: true,
+    unknown: None,
     from_impl: decode::at_part,
 };
 
@@ -439,7 +440,8 @@ impl Source for Read {
 /// (a byte order mark), its error with the byte offset of its value.
 fn located(mut outcome: decode::seed::Outcome, text: &[u8], mark: usize) -> decode::seed::Outcome {
     if let Err(e) = &mut outcome {
-        e.locate(|path| offset_at(text, path));
+        // (JSON refuses no key: every error is about a value.)
+        e.locate(|path, _| offset_at(text, path));
         e.shift(mark);
     }
     outcome

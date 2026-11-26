@@ -172,6 +172,7 @@ pub(crate) const RULES: Rules = Rules {
     family: Family::Csv,
     errors: [bv::CSV_TYPE_MISMATCH, bv::CSV_MISSING_FIELD, bv::CSV_OTHER],
     offsets: false,
+    unknown: None,
     // (A CSV cell is given to no impl: the checker refuses a type with
     // one, and the decoder honours none for csv.)
     from_impl: |error, _| error.clone(),
