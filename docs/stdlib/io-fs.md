@@ -827,10 +827,18 @@ fs.walk(root: String) -> Result(List(String), IoError)
 
 Recursively walks the directory tree rooted at `root` and returns a
 flat list of every path discovered — the root, files **and**
-directories, in arbitrary order. Every path is absolute, so the result
-is safe to pass back into other `fs.*` calls without worrying about
-cwd drift: the root with its own symlinks resolved, joined with the
-entry's path inside the tree.
+directories. Each path is `root` as given, joined with the entry's path
+inside the tree, as `find` lists them: `fs.walk("content")` gives
+`"content"`, `"content/a.md"`, `"content/sub"`, `"content/sub/b.md"`. So a
+path inside the tree is the path with `root` taken off its start
+(`string.strip_prefix(p, "content/")`), and every path names its file
+from where `root` does: a relative `root` gives relative paths, an
+absolute one absolute paths. Nothing is resolved: `..` and symlinks in
+`root` stay as written. On Windows the parts are joined with `\`.
+
+The root comes first, and a directory comes before what is in it; the
+order of the entries of one directory is the file system's, which is no
+order in particular: sort the list where the order matters.
 
 **Symlinks are not followed.** A symlink inside the tree is listed as
 itself (`<root>/link`), never as the path it points to, and the walk
@@ -838,8 +846,8 @@ does not go into a symlinked directory. This avoids infinite loops on
 cyclic trees (including trees with a `link -> .` inside them), and a
 program that walks and then removes what it found removes the link,
 not its target. A `root` that is itself a symlink to a directory is
-walked. If you need to follow symlinks, walk, then post-filter with
-`fs.stat` / `fs.read_link`.
+walked, and its paths are named by the link. If you need to follow
+symlinks, walk, then post-filter with `fs.stat` / `fs.read_link`.
 
 **Entry cap.** To avoid accidental OOM on huge trees, `fs.walk`
 refuses to materialize more than `1_000_000` entries. Hitting the cap

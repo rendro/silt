@@ -317,33 +317,30 @@ fn tree_with_links(dir: &TempDir) -> PathBuf {
 fn test_fs_walk_lists_a_link_as_itself() {
     let dir = TempDir::new("walk_links");
     let tree = tree_with_links(&dir);
-    let root = std::fs::canonicalize(&tree).unwrap();
-    let root = root.to_string_lossy();
-    let walked = sorted_paths(&format!("fs.walk(\"{}\")", tree.to_string_lossy()));
+    let root = tree.to_string_lossy();
+    let walked = sorted_paths(&format!("fs.walk(\"{root}\")"));
     assert_eq!(
         walked,
         format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self"),
     );
 }
 
-/// fs.walk shows every path as the root, its own links resolved, joined
-/// with the path below it: a root given through a link and relative
-/// parts (`tree/../tree`) give the same absolute paths.
+/// fs.walk shows every path as the root as given, joined with the path
+/// inside the tree: a root given through a link is gone into and named
+/// by the link, and one with relative parts (`tree/../tree`) keeps them.
+/// Nothing is resolved.
 #[cfg(unix)]
 #[test]
-fn test_fs_walk_resolves_only_the_root() {
+fn test_fs_walk_names_every_path_by_the_root_as_given() {
     let dir = TempDir::new("walk_root");
-    let tree = tree_with_links(&dir);
+    tree_with_links(&dir);
     std::os::unix::fs::symlink("tree", dir.path().join("alias")).unwrap();
-    let root = std::fs::canonicalize(&tree).unwrap();
-    let root = root.to_string_lossy();
-    let expected = format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self");
     let base = dir.as_silt_str();
-    for given in [format!("{base}/alias"), format!("{base}/tree/../tree")] {
+    for root in [format!("{base}/alias"), format!("{base}/tree/../tree")] {
         assert_eq!(
-            sorted_paths(&format!("fs.walk(\"{given}\")")),
-            expected,
-            "{given}"
+            sorted_paths(&format!("fs.walk(\"{root}\")")),
+            format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self"),
+            "{root}"
         );
     }
 }
@@ -600,12 +597,13 @@ fn test_a_file_name_that_is_no_utf8_fails_the_listing_and_names_its_directory() 
     );
 }
 
-/// A root whose links lead to a directory whose path is no UTF-8 fails
-/// fs.walk, which shows each path absolute: with U+FFFD in it, every path
-/// it gave named no file. (Not on macOS, nor on Windows, as above.)
+/// A root whose links lead to a directory whose path is no UTF-8 is
+/// walked: every path is named by the root as given, which is a String,
+/// so nothing that is no UTF-8 is shown. (Not on macOS, nor on Windows,
+/// as above.)
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
-fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_fails() {
+fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_names_the_root() {
     use std::os::unix::ffi::OsStrExt;
     let dir = TempDir::new("root_names");
     let bad = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xffdir"));
@@ -616,22 +614,14 @@ fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_fails() {
     let link = dir.path().join("link");
     std::os::unix::fs::symlink(&bad, &link).unwrap();
     let link = link.to_str().unwrap().to_string();
-    let got = err_msg(run(&format!(
-        "import fs\nimport host\nfn main() {{\n  host.give(fs.walk(\"{link}\"))\n}}\n"
-    )));
-    let shown = std::fs::canonicalize(&bad).unwrap();
     assert_eq!(
-        got,
-        format!(
-            "invalid input: the path of {link} is not UTF-8: {}",
-            shown.to_string_lossy()
-        )
+        sorted_paths(&format!("fs.walk(\"{link}\")")),
+        format!("{link}\n{link}/sub")
     );
 }
 
-/// A link whose target is no UTF-8 fails fs.read_link, as a walk of a root
-/// that leads to such a path does: with U+FFFD in it, the target it gave
-/// named no file. (Not on macOS, nor on Windows, as above.)
+/// A link whose target is no UTF-8 fails fs.read_link: with U+FFFD in it,
+/// the target it gave named no file. (Not on macOS, nor on Windows, as above.)
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn test_a_link_whose_target_is_no_utf8_fails_read_link() {

@@ -675,26 +675,14 @@ pub(crate) mod fs {
             // for build tooling (a symlink loop in node_modules should not
             // hang a build).
             let walker = walkdir::WalkDir::new(root).follow_links(false);
-            // Each path is shown absolute, so callers can pass it
-            // straight into other fs.* calls without worrying about cwd
-            // drift: the root with its own links resolved (walkdir goes
-            // into a root that is a link), joined with the entry's path
-            // below it. A link inside the tree is so shown as itself,
-            // never as the path it leads to.
+            // Each path is the root as given joined with the entry's path
+            // inside the tree, as walkdir makes it: `content`,
+            // `content/a.md`, the root first, a directory before what is
+            // in it. A relative root gives relative paths, an absolute one
+            // absolute paths. A link inside the tree is so shown as
+            // itself, never as the path it leads to; a root that is a link
+            // is gone into (walkdir follows the root) and named as given.
             let base = std::path::Path::new(root);
-            let shown_root = crate::source::canonical_path(base);
-            // (A root whose links lead to a path that is no UTF-8 is shown
-            // by no String: with U+FFFD in it, each path named no file.)
-            if shown_root.to_str().is_none() {
-                let why = std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "the path of {root} is not UTF-8: {}",
-                        shown_root.to_string_lossy()
-                    ),
-                );
-                return path_err(&why, root);
-            }
             let mut out: Vec<Value> = Vec::new();
             for entry in walker {
                 let entry = match entry {
@@ -724,12 +712,7 @@ pub(crate) mod fs {
                     let why = name_not_utf8(dir, entry.file_name());
                     return path_err(&why, &dir.to_string_lossy());
                 }
-                let shown = match entry.path().strip_prefix(base) {
-                    Ok(below) if below.as_os_str().is_empty() => shown_root.clone(),
-                    Ok(below) => shown_root.join(below),
-                    Err(_) => entry.path().to_path_buf(),
-                };
-                out.push(Value::string(shown.to_string_lossy().into_owned()));
+                out.push(Value::string(entry.path().to_string_lossy().into_owned()));
             }
             fs_ok(Value::list(out))
         }
