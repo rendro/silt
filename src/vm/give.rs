@@ -54,6 +54,11 @@ pub(super) fn let_go_of_copies(
 /// nothing of this frame: what it holds of the frame's values, a
 /// closure's capture of one, it holds itself, and so keeps it from
 /// being changed in place.
+///
+/// A closure that only reads the arguments it is given (see
+/// [`crate::bytecode::Chunk::passes_on`]) changes none in place: the
+/// frame keeps its copies, at no cost. So does a call after which the
+/// frame reads all it holds.
 #[inline(always)]
 pub(super) fn before_call(
     stack: &mut [Value],
@@ -63,7 +68,40 @@ pub(super) fn before_call(
     below: usize,
     args_at: usize,
 ) {
-    if stack[args_at..].iter().any(held) {
+    // (No collection or record given, or a closure that hands on none
+    // of what it is given: most calls ask no more.)
+    if !stack[args_at..].iter().any(held) {
+        return;
+    }
+    let passes = match stack.get(below) {
+        Some(Value::VmClosure(callee)) if args_at == below + 1 && callee.bound.is_empty() => {
+            match callee.function.chunk().passes_on(callee.function.arity()) {
+                0 => return,
+                passes => passes,
+            }
+        }
+        _ => u64::MAX,
+    };
+    given_held(stack, chunk, ip, base, below, args_at, passes);
+}
+
+/// [`before_call`] of a call whose callee may hand on the arguments
+/// `passes` (a bit each; past 64, they share bits).
+#[inline(never)]
+fn given_held(
+    stack: &mut [Value],
+    chunk: &Chunk,
+    ip: usize,
+    base: usize,
+    below: usize,
+    args_at: usize,
+    passes: u64,
+) {
+    let mut given = 0u64;
+    for (at, arg) in stack[args_at..].iter().enumerate() {
+        given |= u64::from(held(arg)) << (at % 64);
+    }
+    if given & passes != 0 {
         let_go(stack, chunk, ip, base, below, args_at..stack.len());
     }
 }
@@ -93,7 +131,10 @@ fn let_go(
     below: usize,
     given: std::ops::Range<usize>,
 ) {
-    let Some(ahead) = chunk.ahead_at(ip, below - base) else {
+    let Some(ahead) = chunk
+        .ahead_at(ip, below - base)
+        .filter(|ahead| !ahead.idle())
+    else {
         return;
     };
     let (slots, rest) = stack.split_at_mut(below);
@@ -109,8 +150,8 @@ fn let_go(
     // k, v) } }`): the outer record's field holds the inner one, which
     // is the base of the update before, so the outer record is let go of
     // first; each round lets go of what the one before made the one
-    // holder.
-    for _ in 0..=ahead.bases().count() {
+    // holder: as many rounds as there are records, at most.
+    for _ in 0..ahead.bases().count() {
         let mut changed = false;
         for (at, update) in ahead.bases() {
             if !matches!(frame[at], Value::Record(_)) {

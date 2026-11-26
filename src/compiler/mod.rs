@@ -4437,4 +4437,39 @@ fn f(expected, actual) {
         let param = closure_in_f("fn f() -> Int {\n  let g = { g -> g + 1 }\n  g(3)\n}\n");
         assert!(!has_op(param.chunk(), Op::GetClosure));
     }
+
+    /// A function that only reads what it is given hands none of it on
+    /// (`Chunk::passes_on`): a call of it lets go of nothing. One that
+    /// gives a parameter to a call, a builtin that changes it or calls a
+    /// function, a record update, a closure or a value it makes, or to
+    /// its next round where that happens, hands that one on.
+    #[test]
+    fn a_function_that_only_reads_its_arguments_hands_none_on() {
+        let fns = compile(
+            "import list\nimport map\nimport set\n\
+             type Sq { w: Int, h: Int }\n\
+             fn sum(xs: List(Int)) -> Int {\n  match xs {\n    [] -> 0\n    [x, ..rest] -> x + sum(rest)\n  }\n}\n\
+             fn look(m: Map(Int, Int), i: Int) -> Int {\n  match map.get(m, i) {\n    Some(v) -> v\n    None -> 0\n  }\n}\n\
+             fn area(s: Sq) -> Int {\n  s.w * s.h\n}\n\
+             fn add(s: Set(Int), x: Int) -> Set(Int) {\n  set.insert(s, x)\n}\n\
+             fn on(m: Map(Int, Int), i: Int) -> Int {\n  look(m, i)\n}\n\
+             fn folded(xs: List(Int), acc: Set(Int)) -> Set(Int) {\n  list.fold(xs, acc) { s, x -> set.insert(s, x) }\n}\n\
+             fn kept(m: Map(Int, Int)) -> Fn() -> Int {\n  { -> map.length(m) }\n}\n\
+             fn moved(s: Sq, k: Int) -> Sq {\n  s.{ w: k }\n}\n\
+             fn round(i: Int, a: Set(Int), b: Set(Int)) -> Set(Int) {\n  match i == 0 {\n    true -> set.insert(a, 1)\n    false -> round(i - 1, b, a)\n  }\n}\n",
+        );
+        let passes = |name: &str| {
+            let f = find_fn(&fns, name);
+            f.chunk().passes_on(f.arity())
+        };
+        assert_eq!(passes("sum"), 0);
+        assert_eq!(passes("look"), 0);
+        assert_eq!(passes("area"), 0);
+        assert_ne!(passes("add") & 0b01, 0);
+        assert_ne!(passes("on") & 0b01, 0);
+        assert_ne!(passes("folded") & 0b10, 0);
+        assert_ne!(passes("kept"), 0);
+        assert_ne!(passes("moved") & 0b01, 0);
+        assert_eq!(passes("round") & 0b110, 0b110);
+    }
 }

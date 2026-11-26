@@ -51,6 +51,24 @@ pub(crate) fn puts(id: BuiltinId) -> bool {
     ids.get(usize::from(id.0)).copied().unwrap_or(false)
 }
 
+/// Whether the builtin `id` may call a function it is given: one that
+/// takes a function, as `list.fold` does, may hand its other arguments
+/// to it, and that one change them in place. (One that takes none and
+/// changes nothing in place only reads its arguments.)
+#[inline]
+pub(crate) fn calls_back(id: BuiltinId) -> bool {
+    static IDS: OnceLock<Box<[bool]>> = OnceLock::new();
+    let ids = IDS.get_or_init(|| {
+        // (The ids are the places of a table, from 0 on.)
+        (0..=u16::MAX)
+            .map(|id| registry().builtin(BuiltinId(id)))
+            .take_while(Option::is_some)
+            .map(|row| row.is_none_or(|row| row.signature.contains("Fn(")))
+            .collect()
+    });
+    ids.get(usize::from(id.0)).copied().unwrap_or(true)
+}
+
 /// The most values of the frame below a call's arguments that the
 /// reading ahead follows: a frame of more lets go of none.
 const PLACES: usize = 64;
@@ -149,9 +167,11 @@ impl Ahead {
             .map(|&(at, fields)| (usize::from(at), fields))
     }
 
-    /// How many values the frame has below the call's arguments.
-    pub(crate) fn olds(&self) -> usize {
-        self.olds
+    /// Whether the call lets go of nothing: no value is unread, partly
+    /// read or the base of an update.
+    #[inline]
+    pub(crate) fn idle(&self) -> bool {
+        self.unread == 0 && self.taken == 0 && self.partly == 0
     }
 
     /// The places of the frame's values (from its first) that no path
@@ -494,27 +514,270 @@ pub(crate) fn read(code: &[u8], ip: usize, olds: usize) -> Option<Ahead> {
     Some(ahead)
 }
 
-/// The places in `code` just after each call of a builtin that changes
-/// a collection in place, and of each call of a function or a method,
-/// each with what the code after it reads, once a call there has been
-/// made ([`super::Chunk::ahead_at`]).
-pub(crate) fn sites(code: &[u8]) -> Box<[(usize, OnceLock<Option<Ahead>>)]> {
-    let mut sites = Vec::new();
-    let mut at = 0;
-    while let Some((instr, next)) = decode(code, at) {
-        let site = match instr {
-            Instr::CallBuiltin { builtin, .. } => puts(builtin),
-            Instr::Call { .. }
-            | Instr::TailCall { .. }
-            | Instr::CallChecked { .. }
-            | Instr::CallMethod { .. }
-            | Instr::CallDict { .. } => true,
-            _ => false,
-        };
-        if site {
-            sites.push((next, OnceLock::new()));
+/// The calls of a chunk whose code after them is read ahead: of each
+/// place in the code, the number of its site plus one (0 for a place
+/// just after no such call), and the sites, each with what the code
+/// after the call reads, once a call there has been made
+/// ([`super::Chunk::ahead_at`]).
+#[derive(Debug, Clone)]
+pub(crate) struct Sites {
+    of: Box<[u32]>,
+    sites: Box<[OnceLock<Option<Ahead>>]>,
+}
+
+impl Sites {
+    /// The places in `code` just after each call of a builtin that
+    /// changes a collection in place, and of each call of a function or
+    /// a method.
+    pub(crate) fn of(code: &[u8]) -> Sites {
+        let mut of = vec![0u32; code.len() + 1];
+        let mut sites = Vec::new();
+        let mut at = 0;
+        while let Some((instr, next)) = decode(code, at) {
+            let site = match instr {
+                Instr::CallBuiltin { builtin, .. } => puts(builtin),
+                Instr::Call { .. }
+                | Instr::TailCall { .. }
+                | Instr::CallChecked { .. }
+                | Instr::CallMethod { .. }
+                | Instr::CallDict { .. } => true,
+                _ => false,
+            };
+            if site && let Ok(number) = u32::try_from(sites.len() + 1) {
+                of[next] = number;
+                sites.push(OnceLock::new());
+            }
+            at = next;
         }
-        at = next;
+        Sites {
+            of: of.into_boxed_slice(),
+            sites: sites.into_boxed_slice(),
+        }
     }
-    sites.into_boxed_slice()
+
+    /// What the code from `ip` reads of a frame of `olds` values below
+    /// the call's arguments, read at the first call.
+    #[inline]
+    pub(crate) fn at(&self, code: &[u8], ip: usize, olds: usize) -> Option<&Ahead> {
+        let number = *self.of.get(ip)?;
+        let site = self
+            .sites
+            .get(usize::try_from(number).ok()?.checked_sub(1)?)?;
+        let ahead = site.get_or_init(|| read(code, ip, olds)).as_ref()?;
+        (ahead.olds == olds).then_some(ahead)
+    }
+}
+
+/// The most instructions [`passes_on`] reads of a function, on all paths.
+const PASSES: usize = 4096;
+
+/// Of each parameter of a function of `arity` parameters whose code is
+/// `code`, a bit: whether the function may hand the value it is given
+/// on to a call, a builtin, a record update, a closure or a value it
+/// makes, where it could be changed in place; a parameter of which it
+/// only reads (matches it, reads its fields, compares it, returns it)
+/// has none. All bits when the code is more than [`PASSES`]
+/// instructions on its paths, or of an instruction the reading does not
+/// know. (A bit too many is safe: the caller lets go of its copies for
+/// nothing. A bit too few is too: the call's update copies.)
+pub(crate) fn passes_on(code: &[u8], arity: usize) -> u64 {
+    if arity > PLACES {
+        return u64::MAX;
+    }
+    let mut stack = Stack {
+        len: 0,
+        places: [NEW; HIGH],
+    };
+    for at in 0..arity {
+        if stack.push(at as u8).is_none() {
+            return u64::MAX;
+        }
+    }
+    let mut pass = Pass {
+        on: 0,
+        into: [0; PLACES],
+        left: PASSES,
+    };
+    if pass.follow(code, 0, stack, arity).is_none() {
+        return u64::MAX;
+    }
+    // A parameter handed to the next round as another one is handed on
+    // where that one is.
+    let mut on = pass.on;
+    loop {
+        let more = (0..arity)
+            .filter(|&p| pass.into[p] & on != 0)
+            .fold(on, |on, p| on | 1 << p);
+        if more == on {
+            return on;
+        }
+        on = more;
+    }
+}
+
+/// The paths of a function's code, followed for [`passes_on`].
+struct Pass {
+    /// The parameters handed on.
+    on: u64,
+    /// Of each parameter, the parameters a self tail call makes it.
+    into: [u64; PLACES],
+    left: usize,
+}
+
+impl Pass {
+    fn passes(&mut self, was: u8) {
+        if let Some(at) = of(was) {
+            self.on |= 1 << at;
+        }
+    }
+
+    fn follow(&mut self, code: &[u8], mut ip: usize, mut stack: Stack, arity: usize) -> Option<()> {
+        loop {
+            self.left = self.left.checked_sub(1)?;
+            let (instr, next) = decode(code, ip)?;
+            let effect = instr.effect();
+            let mut target = None;
+            instr.operands(|operand| {
+                if let Operand::Target(to) = operand {
+                    target = Some(to);
+                }
+            });
+            match instr {
+                Instr::GetLocal { slot } => {
+                    let was = stack.get(slot)?;
+                    stack.push(of(was).unwrap_or(NEW))?;
+                }
+                Instr::SetLocal { slot } => {
+                    let top = stack.get(stack.len.checked_sub(1)?)?;
+                    *stack.places.get_mut(slot)? = top;
+                }
+                Instr::Pop => {
+                    stack.pop()?;
+                }
+                Instr::Slide { slot } => {
+                    let top = stack.pop()?;
+                    if slot > stack.len {
+                        return None;
+                    }
+                    stack.len = slot;
+                    stack.push(top)?;
+                }
+                Instr::Return | Instr::Panic => return Some(()),
+                Instr::Recur { argc, first, .. } => {
+                    let argc = usize::from(argc);
+                    for i in (0..argc).rev() {
+                        let was = stack.pop()?;
+                        match (of(was), first + i < arity) {
+                            (Some(p), true) => self.into[usize::from(p)] |= 1 << (first + i),
+                            (Some(_), false) => self.passes(was),
+                            (None, _) => {}
+                        }
+                    }
+                    return Some(());
+                }
+                // A pattern's test and part, a copy: the value stays.
+                Instr::TestTag { .. }
+                | Instr::TestEqual { .. }
+                | Instr::TestTupleLen { .. }
+                | Instr::TestListMin { .. }
+                | Instr::TestListExact { .. }
+                | Instr::TestIntRange { .. }
+                | Instr::TestFloatRange { .. }
+                | Instr::TestRecordTag { .. }
+                | Instr::TestMapHasKey { .. }
+                | Instr::DestructTuple { .. }
+                | Instr::DestructVariant { .. }
+                | Instr::DestructList { .. }
+                | Instr::DestructListRest { .. }
+                | Instr::DestructRecordField { .. }
+                | Instr::DestructMapValue { .. }
+                | Instr::Dup => {
+                    let was = stack.pop()?;
+                    stack.push(was)?;
+                    stack.push(match instr {
+                        Instr::Dup => was,
+                        _ => NEW,
+                    })?;
+                }
+                // What only reads the values it takes.
+                Instr::Constant { .. }
+                | Instr::Unit
+                | Instr::True
+                | Instr::False
+                | Instr::Add
+                | Instr::Sub
+                | Instr::Mul
+                | Instr::Div
+                | Instr::Mod
+                | Instr::AddConst { .. }
+                | Instr::SubConst { .. }
+                | Instr::Eq
+                | Instr::Neq
+                | Instr::Lt
+                | Instr::Gt
+                | Instr::Leq
+                | Instr::Geq
+                | Instr::Negate
+                | Instr::Not
+                | Instr::GetGlobal { .. }
+                | Instr::GetUpvalue { .. }
+                | Instr::GetClosure
+                | Instr::FrameDict
+                | Instr::GetField { .. }
+                | Instr::Jump { .. }
+                | Instr::JumpIfFalse { .. }
+                | Instr::JumpIfTrue { .. }
+                | Instr::JumpIfNotLt { .. }
+                | Instr::JumpIfNotGt { .. }
+                | Instr::JumpIfNotLeq { .. }
+                | Instr::JumpIfNotGeq { .. }
+                | Instr::JumpIfNotEq { .. }
+                | Instr::JumpIfNotNeq { .. } => {
+                    for _ in 0..effect.pops {
+                        stack.pop()?;
+                    }
+                    for _ in 0..effect.pushes {
+                        stack.push(NEW)?;
+                    }
+                }
+                Instr::MakeClosure { captures, .. } => {
+                    for capture in captures.iter(code) {
+                        if capture.is_local {
+                            self.passes(stack.get(capture.index)?);
+                        }
+                    }
+                    stack.push(NEW)?;
+                }
+                // A builtin that changes nothing in place and calls no
+                // function only reads what it is given.
+                Instr::CallBuiltin { builtin, argc } if !puts(builtin) && !calls_back(builtin) => {
+                    for _ in 0..argc {
+                        stack.pop()?;
+                    }
+                    stack.push(NEW)?;
+                }
+                // Anything else hands on what it takes.
+                _ if effect.cut.is_none()
+                    && matches!(effect.flow, Flow::Next | Flow::Branch | Flow::Jump) =>
+                {
+                    for _ in 0..effect.pops {
+                        self.passes(stack.pop()?);
+                    }
+                    for _ in 0..effect.pushes {
+                        stack.push(NEW)?;
+                    }
+                }
+                _ => return None,
+            }
+            match effect.flow {
+                Flow::Next => ip = next,
+                Flow::Branch => {
+                    self.follow(code, target?, stack, arity)?;
+                    ip = next;
+                }
+                Flow::Jump => ip = target?,
+                Flow::End => return Some(()),
+            }
+        }
+    }
 }

@@ -652,7 +652,10 @@ pub struct Chunk {
     /// The places just after the calls of builtins that change a
     /// collection in place, and what the code after each reads of the
     /// frame ([`Chunk::ahead_at`]): found at the first such call.
-    ahead: OnceLock<Box<[(usize, OnceLock<Option<ahead::Ahead>>)]>>,
+    ahead: OnceLock<ahead::Sites>,
+    /// Of the function's parameters, which it may hand on to where they
+    /// could be changed in place ([`Chunk::passes_on`]).
+    passes: OnceLock<u64>,
 }
 
 impl Chunk {
@@ -663,6 +666,7 @@ impl Chunk {
             spans: Vec::new(),
             constant_dedup: HashMap::new(),
             ahead: OnceLock::new(),
+            passes: OnceLock::new(),
         }
     }
 
@@ -671,13 +675,21 @@ impl Chunk {
     /// frame's `olds` values below the call's arguments: read at the
     /// first call there, and kept. `None` where the reading gives no
     /// answer, and where no such call is.
+    #[inline]
     pub(crate) fn ahead_at(&self, ip: usize, olds: usize) -> Option<&ahead::Ahead> {
-        let sites = self.ahead.get_or_init(|| ahead::sites(&self.code));
-        let at = sites.binary_search_by_key(&ip, |(at, _)| *at).ok()?;
-        let ahead = sites[at]
-            .1
-            .get_or_init(|| ahead::read(&self.code, ip, olds));
-        ahead.as_ref().filter(|ahead| ahead.olds() == olds)
+        self.ahead
+            .get_or_init(|| ahead::Sites::of(&self.code))
+            .at(&self.code, ip, olds)
+    }
+
+    /// Of the parameters of the function of `arity` parameters whose code
+    /// this is, a bit for each it may hand on to where it could be changed
+    /// in place ([`ahead::passes_on`]): read once.
+    #[inline]
+    pub(crate) fn passes_on(&self, arity: usize) -> u64 {
+        *self
+            .passes
+            .get_or_init(|| ahead::passes_on(&self.code, arity))
     }
 
     /// The encoded instructions.
@@ -907,6 +919,7 @@ impl Function {
                 spans: Vec::new(),
                 constant_dedup: HashMap::new(),
                 ahead: OnceLock::new(),
+                passes: OnceLock::new(),
             },
             hidden: 0,
             dict_slot: false,
@@ -932,6 +945,7 @@ impl Function {
                 spans: Vec::new(),
                 constant_dedup: HashMap::new(),
                 ahead: OnceLock::new(),
+                passes: OnceLock::new(),
             },
             hidden: 0,
             dict_slot: false,
