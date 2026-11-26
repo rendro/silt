@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+-- stderr-not-contains: never used
+-- While its module has an error, no function is said to be never used:
+-- the module is being written.
+fn unused(x: Int) -> Int { x * 2 }
+
+fn main() {
+  let n: Int = "one"
+  println(n)
+}

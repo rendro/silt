@@ -454,6 +454,7 @@ pub(crate) fn resolve_module(
     if kind == ModuleKind::File && source.complete {
         let used = resolver.used.take();
         resolver.unused_imports(program, &used, source.text);
+        resolver.unused_functions(program);
     }
     let own_aliases = std::mem::take(&mut resolver.own_aliases);
     let mut diagnostics = resolver.diagnostics;
@@ -1760,6 +1761,100 @@ impl Resolver<'_> {
                     }
                 }
             }
+        }
+    }
+
+    /// Warn of each private top-level function of `program` that nothing
+    /// reaches. What is reached: what `main`, a test (`test_*`,
+    /// `skip_test_*`), a `pub` function, an impl's or a trait's method or
+    /// a top-level `let` names, and what a function reached names. So a
+    /// function that only calls itself (or only functions that call it
+    /// back) is unused, and so is one that only unused functions call.
+    fn unused_functions(&mut self, program: &Program) {
+        // The private functions, by their definition: each one's
+        // declaration. A name bound twice at the top level is the error
+        // of that, and no function of the name is warned of.
+        let mut bound: HashMap<Symbol, usize> = HashMap::new();
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) => *bound.entry(f.name).or_default() += 1,
+                Decl::Let { pattern, .. } => {
+                    pattern.for_each_binder(&mut |name, _, _| *bound.entry(name).or_default() += 1)
+                }
+                _ => {}
+            }
+        }
+        let mut private: HashMap<DefId, &FnDecl> = HashMap::new();
+        for decl in &program.decls {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            let name = resolve(f.name);
+            if f.is_pub
+                || bound.get(&f.name).is_some_and(|n| *n > 1)
+                || f.is_recovery_stub
+                || name == crate::program::ENTRY_POINT
+                || crate::program::test_kind(&name).is_some()
+            {
+                continue;
+            }
+            if let Some(Binding::Def(id)) = self.scope.values.get(&f.name)
+                && self.defs.get(*id).span == f.name_span
+            {
+                private.insert(*id, f);
+            }
+        }
+        if private.is_empty() {
+            return;
+        }
+        // The private functions an expression names.
+        let named = |body: &Expr, out: &mut Vec<DefId>| {
+            body.for_each_expr(&mut |e| {
+                if let Some(Res::Def(id)) = e.res
+                    && private.contains_key(&id)
+                {
+                    out.push(id);
+                }
+            });
+        };
+        let mut queue = Vec::new();
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) => {
+                    let own = matches!(
+                        self.scope.values.get(&f.name),
+                        Some(Binding::Def(id)) if private.get(id).is_some_and(|p| std::ptr::eq(*p, f))
+                    );
+                    if !own {
+                        named(&f.body, &mut queue);
+                    }
+                }
+                Decl::Trait(t) => t.methods.iter().for_each(|m| named(&m.body, &mut queue)),
+                Decl::TraitImpl(ti) => ti.methods.iter().for_each(|m| named(&m.body, &mut queue)),
+                Decl::Let { value, .. } => named(value, &mut queue),
+                Decl::Type(_) | Decl::Import(..) => {}
+            }
+        }
+        let mut reached = HashSet::new();
+        while let Some(id) = queue.pop() {
+            if reached.insert(id) {
+                named(&private[&id].body, &mut queue);
+            }
+        }
+        let mut unused: Vec<&FnDecl> = (private.iter())
+            .filter(|(id, _)| !reached.contains(*id))
+            .map(|(_, f)| *f)
+            .collect();
+        unused.sort_by_key(|f| f.name_span.start);
+        for f in unused {
+            self.diagnostics.push(
+                Diagnostic::warning(
+                    Code::UnusedFunction,
+                    f.name_span,
+                    format!("function '{}' is never used", resolve(f.name)),
+                )
+                .with_help("remove it, or make it pub"),
+            );
         }
     }
 

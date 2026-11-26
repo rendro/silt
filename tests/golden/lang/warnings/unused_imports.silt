@@ -19,7 +19,7 @@ trait json.Encode for Tag {
   }
 }
 
-fn status(_r: http.Request) -> Int {
+pub fn status(_r: http.Request) -> Int {
   200
 }
 

@@ -4,13 +4,13 @@
 -- would supply take any type arguments and any field.
 import m.{ Box, Pt }
 
-fn f(b: Box(Int)) -> Int {
+pub fn f(b: Box(Int)) -> Int {
   match b {
     _ -> 1
   }
 }
 
-fn g(p: Pt) -> Int {
+pub fn g(p: Pt) -> Int {
   p.x
 }
 

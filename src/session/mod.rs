@@ -862,8 +862,18 @@ impl Session {
                 check.diagnostics.sort_by_key(|d| d.span.start);
             }
         }
+        // A function is said to be never used only in a module that
+        // checked: while it has an error, it is being written.
+        if !checked {
+            warnings.retain(|d| d.code != Code::UnusedFunction);
+        }
         if module.incomplete || module.problems.iter().any(syntax_error) {
-            warnings.retain(|d| !matches!(d.code, Code::UnusedName | Code::UnusedImport));
+            warnings.retain(|d| {
+                !matches!(
+                    d.code,
+                    Code::UnusedName | Code::UnusedImport | Code::UnusedFunction
+                )
+            });
         }
         let diagnostics = match self.graph.module(id).cut_short {
             true => bugs,

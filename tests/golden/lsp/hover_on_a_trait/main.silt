@@ -87,4 +87,6 @@ fn main() {
   println(Sized.size(b))
   println(Sized.size(mk()))
   println("{Box { w: 1 }}")
+  println(read(1))
+  show(b, shapes.Sq { s: 1.0 }, b, 1)
 }

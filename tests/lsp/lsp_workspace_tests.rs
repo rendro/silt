@@ -141,7 +141,7 @@ fn an_importer_is_checked_again_when_the_imported_document_opens_or_closes() {
 
     let first = client.did_open_and_wait(
         &importer,
-        "import wspace_late_a\nfn other() { wspace_late_a.pinger(2) }\n",
+        "import wspace_late_a\npub fn other() { wspace_late_a.pinger(2) }\n",
     );
     assert!(
         messages(&first)
@@ -191,7 +191,7 @@ fn documents_that_are_no_files_import_each_other_and_read_no_disk() {
     client.did_open_and_wait("untitled:nofile_a.silt", "pub fn pinger(x) { x }\n");
     let importer = client.did_open_and_wait(
         "untitled:nofile_b.silt",
-        "import nofile_a\nfn other() { nofile_a.pinger(2) }\n",
+        "import nofile_a\npub fn other() { nofile_a.pinger(2) }\n",
     );
     assert_eq!(errors(&importer), Vec::<String>::new());
     // `Cargo.toml` is in the server's working directory; a module is a
@@ -282,7 +282,7 @@ fn dot_segments_of_a_file_uri_are_resolved() {
     );
     let importer = client.did_open_and_wait(
         &format!("{dir}/./dots_b.silt"),
-        "import dots_a\nfn other() { dots_a.pinger(2) }\n",
+        "import dots_a\npub fn other() { dots_a.pinger(2) }\n",
     );
     let diagnostics = importer
         .pointer("/params/diagnostics")

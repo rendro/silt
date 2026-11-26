@@ -14,4 +14,7 @@ fn f2(x: postgres.PgPool) -> Int { 0 }
 
 fn main() {
   println(1)
+  let _ = f0
+  let _ = f1
+  let _ = f2
 }

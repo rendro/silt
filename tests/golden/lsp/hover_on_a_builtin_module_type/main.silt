@@ -85,4 +85,33 @@ fn f28(x: regex.Regex) -> Int { 0 }
 
 fn main() {
   println(1)
+  let _ = f0
+  let _ = f1
+  let _ = f2
+  let _ = f3
+  let _ = f4
+  let _ = f5
+  let _ = f6
+  let _ = f7
+  let _ = f8
+  let _ = f9
+  let _ = f10
+  let _ = f11
+  let _ = f12
+  let _ = f13
+  let _ = f14
+  let _ = f15
+  let _ = f16
+  let _ = f17
+  let _ = f18
+  let _ = f19
+  let _ = f20
+  let _ = f21
+  let _ = f22
+  let _ = f23
+  let _ = f24
+  let _ = f25
+  let _ = f26
+  let _ = f27
+  let _ = f28
 }

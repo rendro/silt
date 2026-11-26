@@ -7,3 +7,7 @@ fn count(list: List(Int)) -> Int {
   let total = 0
   1
 }
+
+fn main() {
+  println(count([1]))
+}

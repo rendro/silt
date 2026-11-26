@@ -1,0 +1,42 @@
+warning[type]: function 'unused' is never used
+ --> unused_functions.silt:45:4
+    |
+ 45 | fn unused(x: Int) -> Int { x * 2 }
+    |    ^^^^^^ function 'unused' is never used
+  = help: remove it, or make it pub
+
+warning[type]: function 'countdown' is never used
+ --> unused_functions.silt:47:4
+    |
+ 47 | fn countdown(n: Int) -> Int {
+    |    ^^^^^^^^^ function 'countdown' is never used
+  = help: remove it, or make it pub
+
+warning[type]: function 'ping' is never used
+ --> unused_functions.silt:54:4
+    |
+ 54 | fn ping(n: Int) -> Int { pong(n) }
+    |    ^^^^ function 'ping' is never used
+  = help: remove it, or make it pub
+
+warning[type]: function 'pong' is never used
+ --> unused_functions.silt:56:4
+    |
+ 56 | fn pong(n: Int) -> Int { ping(n) }
+    |    ^^^^ function 'pong' is never used
+  = help: remove it, or make it pub
+
+warning[type]: function 'caller' is never used
+ --> unused_functions.silt:58:4
+    |
+ 58 | fn caller() -> Int { called() }
+    |    ^^^^^^ function 'caller' is never used
+  = help: remove it, or make it pub
+
+warning[type]: function 'called' is never used
+ --> unused_functions.silt:60:4
+    |
+ 60 | fn called() -> Int { 1 }
+    |    ^^^^^^ function 'called' is never used
+  = help: remove it, or make it pub
+error: silt check: 6 warnings, denied by --deny-warnings

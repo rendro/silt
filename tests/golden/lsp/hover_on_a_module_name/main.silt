@@ -64,4 +64,5 @@ fn main() {
   println(env.get("HOME"))
   println(read("1"))
   println(v)
+  println(send(s))
 }

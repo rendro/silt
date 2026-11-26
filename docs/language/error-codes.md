@@ -159,5 +159,6 @@ line names the fix, which is the one way to silence it.
 | `W0201` | A local that hides an imported module, an alias or an imported name. |
 | `W0202` | An import that nothing in the file uses. |
 | `W0203` | A `let` name or a pattern name that nothing reads. |
+| `W0204` | A private function that nothing in its module calls: not `main`, a test, a `pub` function, an impl's or a trait's method, a top-level `let`, nor a function they call (one that only calls itself counts as unused). |
 | `W0301` | A `deep fn` the recursion check would accept without `deep`. |
 | `W0302` | A `let`-bound `_name` in scope at a tail call that ends its block: the call lets it go before it runs. |

@@ -7,4 +7,8 @@
 fn double_all(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x * 2 } }
 fn wrap(x: Int, type m) -> m(Int) where m: Applicative { m.pure(x) }
 fn same(xs: m(Int)) -> m(Int) where m: Monad { xs }
-fn main() { println(double_all([1])) }
+fn main() {
+  println(double_all([1]))
+  println(wrap(1, Option))
+  println(same([1]))
+}

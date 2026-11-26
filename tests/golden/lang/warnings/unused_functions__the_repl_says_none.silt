@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: fn helper() -> Int { 1 }\nfn other() -> Int { 2 }\nother()\n:quit\n
+-- stdout-contains: 2
+-- stderr-not-contains: never used
+-- A REPL entry's function is for the entries after it: none is said to
+-- be never used.
