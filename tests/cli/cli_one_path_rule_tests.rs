@@ -157,9 +157,11 @@ fn the_test_command_given_a_path_in_a_package_checks_the_package_first() {
             "{path}: {err}"
         );
     }
-    // Outside a package there is no package to check.
+    // Outside a package there is no package to check; no test file is
+    // found there, which fails the run.
     let out = silt(&dir, &["test", "plain"]);
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(stderr(&out), "no test files found\n", "{out:?}");
     let _ = fs::remove_dir_all(&dir);
 }
 
