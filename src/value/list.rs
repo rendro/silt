@@ -718,6 +718,14 @@ impl List {
         self.set(index, value)
     }
 
+    /// Whether the list may be the one holder of a tree its elements
+    /// are in, which [`List::put_concat`] changes in place: a long list
+    /// that holds its elements (a short one, or a range, never is).
+    #[inline]
+    pub(crate) fn may_be_put_into(&self) -> bool {
+        matches!(&self.0, Stored::Other(other) if matches!(**other, Other::Long { .. }))
+    }
+
     /// Whether the list is a part of a long list's elements kept in a
     /// tree.
     fn in_tree(&self) -> bool {

@@ -46,6 +46,7 @@ pub(super) fn let_go_of_copies(
 }
 
 /// Before a `ListConcat` of the two lists from `args_at` (`[x, ..acc]`),
+/// one of them long,
 /// after which the code goes on at `ip`: let go of each value of the
 /// frame that is no more read and is a copy of one of them (see
 /// [`let_go`]), so that one the operands alone hold is changed in
@@ -58,9 +59,6 @@ pub(super) fn let_go_of_operands(
     base: usize,
     args_at: usize,
 ) {
-    if !matches!(&stack[args_at..], [Value::List(_), Value::List(_)]) {
-        return;
-    }
     let_go(stack, chunk, ip, base, args_at, args_at..args_at + 2);
 }
 

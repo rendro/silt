@@ -958,7 +958,9 @@ import option
     let sum: i64 = (1..=3_000).map(|i| i * 3).sum();
     assert_eq!(
         given,
-        ints(&[3_000, sum, 9_000, 3_000, 9_000, 3_000, 1, 1, 3_000, 3_000, 6_000, 9_000])
+        ints(&[
+            3_000, sum, 9_000, 3_000, 9_000, 3_000, 1, 1, 3_000, 3_000, 6_000, 9_000
+        ])
     );
     assert!(lists < 20, "{lists} of 21,000 changes copied a shared list");
 }
