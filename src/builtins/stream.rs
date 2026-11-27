@@ -373,7 +373,7 @@ impl Pipe {
                     self.cut_short(vm);
                     return Ok(match self.handle {
                         Some(_) => Step::Done(Value::Unit),
-                        None => Step::Park(Vm::no_wait()),
+                        None => Step::park(Vm::no_wait()),
                     });
                 }
                 // A sink that reads its input to the end says so before
@@ -397,7 +397,7 @@ impl Pipe {
                     };
                     let wait = Wait::new(vec![Arm::Demand(out)]);
                     self.state = State::Asking(take);
-                    return Ok(Step::Park(wait));
+                    return Ok(Step::park(wait));
                 }
                 Next::Take(index) => {
                     let input = &self.inputs[index];
@@ -407,7 +407,7 @@ impl Pipe {
                         TryReceive::Empty => {
                             let wait = Wait::new(vec![Arm::Recv(input.clone())]);
                             self.state = State::Taking(vec![index]);
-                            return Ok(Step::Park(wait));
+                            return Ok(Step::park(wait));
                         }
                     }
                 }
@@ -422,7 +422,7 @@ impl Pipe {
                     let wait = Wait::new(arms.iter().map(recv).collect()).first(self.turn);
                     self.turn = self.turn.wrapping_add(1);
                     self.state = State::Taking(arms);
-                    return Ok(Step::Park(wait));
+                    return Ok(Step::park(wait));
                 }
                 Next::Emit(value) => {
                     if self.out.is_none() {
@@ -445,7 +445,7 @@ impl Pipe {
                         TrySend::Full(value) => {
                             let wait = Wait::new(vec![Arm::Demand(out)]);
                             self.state = State::Asking(Next::Emit(value));
-                            return Ok(Step::Park(wait));
+                            return Ok(Step::park(wait));
                         }
                     }
                 }
@@ -475,7 +475,7 @@ impl Pipe {
                     let op = vm.io_op(failure, leave, move |_| operation());
                     let wait = op.wait(vm, Limit::Io);
                     self.state = State::Io(op);
-                    return Ok(Step::Park(wait));
+                    return Ok(Step::park(wait));
                 }
                 Next::Done(value) => {
                     // A source that ended by itself leaves its

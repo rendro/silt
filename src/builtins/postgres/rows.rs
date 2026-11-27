@@ -1550,13 +1550,10 @@ mod tests {
     /// What `f`, the builtin `json.stringify` or `toml.stringify`,
     /// writes of `#{"v": value}`: the text, or the message of its
     /// refusal (json raises, toml returns `Err(Other(message))`).
-    fn written_by(
-        f: fn(&mut crate::vm::Vm, &[Value]) -> crate::builtins::typed::Called,
-        value: &Value,
-    ) -> Result<String, String> {
+    fn written_by(f: crate::builtins::typed::TypedCall, value: &Value) -> Result<String, String> {
         let mut vm = crate::vm::Vm::new(crate::vm::HostIo::process());
         let doc = Value::map([(Value::string("v"), value.clone())]);
-        let written = match f(&mut vm, &[doc]) {
+        let written = match vm.call_body(f, &[doc]) {
             Some(Ok(crate::vm::Step::Done(written))) => written,
             Some(Err(e)) => return Err(e.message),
             _ => panic!("no result"),

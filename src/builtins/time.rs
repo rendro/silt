@@ -1396,7 +1396,10 @@ mod tests {
     /// The value a builtin of the module gives for `args`.
     fn call(builtin: crate::builtins::typed::TypedCall, args: &[Value]) -> Value {
         let mut vm = Vm::new(crate::vm::HostIo::process());
-        match builtin(&mut vm, args).expect("the arguments are the builtin's") {
+        match vm
+            .call_body(builtin, args)
+            .expect("the arguments are the builtin's")
+        {
             Ok(Step::Done(value)) => value,
             _ => panic!("the builtin gives a value"),
         }

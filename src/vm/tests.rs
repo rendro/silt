@@ -3006,7 +3006,7 @@ fn test_builtin_panic_converted_to_vm_error() {
     // own, as a call of a builtin does. If the wrapper is removed,
     // this test unwinds and fails; with the wrapper, it returns a
     // VmError naming the module and the panic payload.
-    fn boom(_vm: &mut Vm, _args: &[Value]) -> crate::builtins::typed::Called {
+    fn boom(_vm: &mut Vm, _at: usize) -> crate::builtins::typed::Called {
         panic!("synthetic builtin panic for test")
     }
     let println = registry().named("println").expect("println");
@@ -3028,7 +3028,7 @@ fn test_builtin_panic_converted_to_vm_error() {
     };
     let mut vm = Vm::new(crate::HostIo::process());
     let err = vm
-        .enter_row(&row, &[])
+        .enter_row(&row, 0)
         .err()
         .expect("expected VmError from panicking builtin");
     let msg = format!("{err}");
@@ -3074,10 +3074,13 @@ fn test_println_rejects_wrong_arity() {
         ),
     ] {
         let id = registry().named(name).expect(name).id;
+        let at = vm.stack.len();
+        vm.stack.extend(args);
         let err = vm
-            .enter_builtin(id, &args)
+            .enter_builtin(id, at)
             .err()
             .unwrap_or_else(|| panic!("{said}"));
+        assert_eq!(vm.stack.len(), at);
         assert_eq!(err.message, said);
         assert!(err.type_confusion);
     }
@@ -4040,9 +4043,12 @@ the step budget is used up at 2:3; id 2:3; twice 6:11; main 11:11; <script> 9:1"
 
 // ── The arguments of a builtin ──────────────────────────────────────
 //
-// A builtin's arguments leave the stack before its body runs, into the
-// VM's one list for them (`Vm::with_args`): no call has a list of its
-// own, and no body sees a slot of the stack.
+// A builtin whose body does not name the VM reads its arguments where
+// the call left them, on the stack, and the stack is cut back to them
+// when it has returned (`Vm::enter_row`). A body that names the VM, and
+// a host function, has them taken off the stack first, into the VM's
+// one list for them (`Vm::with_args`, `Vm::take_args`): no call has a
+// list of its own, and no such body sees a slot of the stack.
 mod builtin_args {
     use super::*;
 
@@ -4117,11 +4123,12 @@ mod builtin_args {
         }
     }
 
-    /// The arguments are dropped when the body has returned, whatever
-    /// it returned: before its value is anybody's, before the frame it
-    /// goes on as is resumed for the first time, before its error is
-    /// looked at. (As when every call had a list of its own, which went
-    /// when the call was made.)
+    /// The arguments are where the call left them while the body runs,
+    /// and dropped when it has returned, whatever it returned: before
+    /// its value is anybody's, before the frame it goes on as is
+    /// resumed for the first time, before its error is looked at. (As
+    /// when every call had a list of its own, which went when the call
+    /// was made.)
     #[test]
     fn the_arguments_are_dropped_when_the_body_has_returned() {
         use crate::vm::calls::Entered;
@@ -4135,21 +4142,28 @@ mod builtin_args {
                 Ok(Step::Done(Value::Unit))
             }
         }
-        fn value(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+        // (Each body finds its argument in its slot: the bytes are held
+        // twice, by the test and by the argument.)
+        fn there(vm: &Vm, at: usize) {
+            assert!(matches!(&vm.stack[at..], [Value::Bytes(b)] if Arc::strong_count(b) == 2));
+        }
+        fn value(vm: &mut Vm, at: usize) -> crate::builtins::typed::Called {
+            there(vm, at);
             Some(Ok(Step::Done(Value::Unit)))
         }
-        fn frame(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+        fn frame(vm: &mut Vm, at: usize) -> crate::builtins::typed::Called {
+            there(vm, at);
             Some(Ok(Step::Run(Box::new(Frame))))
         }
-        fn fails(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
-            Some(Err(VmError::new("the probe failed".into())))
+        fn fails(vm: &mut Vm, at: usize) -> crate::builtins::typed::Called {
+            there(vm, at);
+            Some(Err(Box::new(VmError::new("the probe failed".into()))))
         }
-        fn misfit(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+        fn misfit(vm: &mut Vm, at: usize) -> crate::builtins::typed::Called {
+            there(vm, at);
             None
         }
 
-        // What the test and the argument hold: the bytes are held twice
-        // while the argument is there.
         let held = Arc::new(vec![7u8]);
         for (body, frames) in [
             (value as crate::builtins::typed::TypedCall, 0),
@@ -4159,16 +4173,15 @@ mod builtin_args {
         ] {
             let row = row(body);
             let mut vm = Vm::new(crate::HostIo::process());
-            vm.stack = vec![Value::Bytes(held.clone())];
-            let entered = vm.with_args(0, |vm, args| {
-                assert_eq!(Arc::strong_count(&held), 2);
-                vm.enter_row(&row, args)
-            });
+            vm.stack = vec![Value::Int(0), Value::Bytes(held.clone())];
+            let entered = vm.enter_row(&row, 1);
             assert_eq!(Arc::strong_count(&held), 1);
             // (The frame is there, and has not been resumed.)
             assert_eq!(vm.frames.len(), frames);
             assert_eq!(matches!(entered, Ok(Entered::Native)), frames == 1);
-            assert!(vm.stack.is_empty());
+            assert_eq!(vm.stack, ints(&[0]));
+            // No list was filled for them.
+            assert_eq!(vm.builtin_args.capacity(), 0);
         }
     }
 
@@ -4178,13 +4191,16 @@ mod builtin_args {
     fn a_vm_that_waits_gives_the_list_up() {
         use crate::vm::run::Slice;
 
+        // (`string.from` names the VM: it may call a `Display` impl.)
         let program = crate::session::testing::compile_str(
             "\
 import channel
 import int
+import string
 fn main() {
   let nobody = channel.new(0)
   let n = int.abs(-1) + int.abs(-2)
+  let _ = string.from(n)
   let _ = channel.receive(nobody)
 }
 ",
@@ -4252,6 +4268,34 @@ import host
         assert!(vm.builtin_args.capacity() >= 2);
     }
 
+    /// Builtins whose bodies do not name the VM, called every way, read
+    /// their arguments on the stack: the VM's list is never filled.
+    #[test]
+    fn a_body_without_the_vm_reads_its_arguments_where_they_are() {
+        let (vm, result) = ran("\
+import int
+import list
+import string
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+  f(x)
+}
+fn main() {
+  let direct = int.abs(-3) + string.length(\"four\")
+  let as_value = apply(int.abs, -5)
+  let callback = list.map([-1, -2], int.abs)
+  let nested = list.fold([1, 2, 3], 0) { acc, x -> acc + int.max(x, string.length(\"ab\")) }
+  let grown = list.fold([1, 2, 3, 4], []) { acc, x -> list.append(acc, x) }
+  let total = direct + as_value + list.length(callback) + nested + list.length(grown)
+  match total {
+    25 -> ()
+    _ -> panic(\"wrong total\")
+  }
+}
+");
+        result.unwrap();
+        assert_eq!(vm.builtin_args.capacity(), 0);
+    }
+
     #[test]
     fn a_builtin_that_fails_leaves_the_list_empty() {
         let (vm, result) = ran("\
@@ -4264,20 +4308,27 @@ fn main() {
         assert_eq!(result.unwrap_err().message, "division by zero");
         assert!(vm.builtin_args.is_empty());
 
-        // A body that panics: the panic is an error of the call, and
-        // the list is the VM's again.
-        fn boom(_vm: &mut Vm, _args: &[Value]) -> crate::builtins::typed::Called {
+        // A body that panics: the panic is an error of the call, and the
+        // stack is cut back to the arguments, whether the body read
+        // them where they are or had them taken off the stack.
+        fn boom(_vm: &mut Vm, _at: usize) -> crate::builtins::typed::Called {
             panic!("a panic in a builtin")
         }
-        let row = row(boom);
-        let mut vm = Vm::new(crate::HostIo::process());
-        vm.stack = ints(&[0, 1, 2]);
-        let err = (vm.with_args(1, |vm, args| vm.enter_row(&row, args)).err())
-            .expect("the panic is an error");
-        assert!(err.message.contains("a panic in a builtin"), "{err}");
-        assert_eq!(vm.stack, ints(&[0]));
-        assert!(vm.builtin_args.is_empty());
-        assert!(vm.builtin_args.capacity() >= 2);
+        crate::builtins::typed::builtins! {
+            fn boom_with_the_vm(vm, _a: i64, _b: i64) -> () {
+                let _ = vm;
+                panic!("a panic in a builtin")
+            }
+        }
+        for body in [boom as crate::builtins::typed::TypedCall, boom_with_the_vm] {
+            let row = row(body);
+            let mut vm = Vm::new(crate::HostIo::process());
+            vm.stack = ints(&[0, 1, 2]);
+            let err = vm.enter_row(&row, 1).err().expect("the panic is an error");
+            assert!(err.message.contains("a panic in a builtin"), "{err}");
+            assert_eq!(vm.stack, ints(&[0]));
+            assert!(vm.builtin_args.is_empty());
+        }
     }
 }
 
@@ -4930,7 +4981,7 @@ mod abandon {
 
         fn resume(&mut self, _vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
             match &self.park_on {
-                Some(ch) => Ok(Step::Park(Wait::new(vec![Arm::Recv(ch.clone())]))),
+                Some(ch) => Ok(Step::park(Wait::new(vec![Arm::Recv(ch.clone())]))),
                 None => Err(VmError::new("the probe failed".into())),
             }
         }
@@ -7655,7 +7706,7 @@ mod applicative {
     /// What the builtin body `body` gives for `args`, its frame run to
     /// its end as the loop runs the frame of a call; an error's message.
     fn run(vm: &mut Vm, body: TypedCall, args: &[Value]) -> Result<Value, String> {
-        let step = body(vm, args).expect("arguments that fit");
+        let step = vm.call_body(body, args).expect("arguments that fit");
         let native = match step.map_err(|error| error.message)? {
             Step::Done(value) => return Ok(value),
             Step::Run(native) => native,

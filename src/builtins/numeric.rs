@@ -568,7 +568,11 @@ mod tests {
     fn to_int(f: f64) -> Result<Value, VmError> {
         let mut vm = Vm::new(crate::vm::HostIo::process());
         let f = Value::Float(Float::new(f).expect("a finite number"));
-        match float::to_int(&mut vm, &[f]).expect("a Float is the argument")? {
+        let called = vm.call_body(float::to_int, &[f]);
+        match called
+            .expect("a Float is the argument")
+            .map_err(|error| *error)?
+        {
             Step::Done(value) => Ok(value),
             _ => panic!("float.to_int gives a value"),
         }

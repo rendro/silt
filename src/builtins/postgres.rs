@@ -1584,7 +1584,7 @@ fn with_params(
         values,
         move |vm, written| {
             let params = rows::params(caller, written?)?;
-            then(vm, params).ret()
+            then(vm, params).ret().map_err(|error| *error)
         },
     )
 }
@@ -1671,7 +1671,7 @@ impl From<Value> for Failed {
 type Started = Result<Result<Step, VmError>, Failed>;
 
 impl<T: Ret> Ret for Result<T, Failed> {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         match self {
             Ok(done) => done.ret(),
             Err(Failed(error)) => Ok(Step::Done(err(error))),
@@ -2648,7 +2648,7 @@ impl Native for Finisher {
                             cell.stream_waits(Some(self.ch.clone()));
                         }
                         self.state = Finishing::Sending;
-                        return Ok(Step::Park(Wait::new(vec![Arm::Send(self.ch.clone(), row)])));
+                        return Ok(Step::park(Wait::new(vec![Arm::Send(self.ch.clone(), row)])));
                     }
                 }
             }
@@ -3774,7 +3774,7 @@ impl Native for Transact {
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if let Some(wait) = self.wait.take() {
-            return Ok(Step::Park(wait));
+            return Ok(Step::park(wait));
         }
         match std::mem::replace(&mut self.stage, Stage::Ended) {
             Stage::Begin(op) => {
@@ -3813,7 +3813,7 @@ impl Native for Transact {
                 // learns nothing.)
                 let wait = op.wait(vm, Limit::None);
                 self.stage = Stage::End(op);
-                Ok(Step::Park(wait))
+                Ok(Step::park(wait))
             }
             Stage::End(op) => Ok(Step::Done(op.value(&vm.woken()?))),
             Stage::Ended => Ok(Step::Done(input)),

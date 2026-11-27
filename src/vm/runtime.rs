@@ -217,10 +217,19 @@ pub(crate) enum Step {
     Run(Box<dyn Native>),
     /// The task waits for this. When the wait has ended the frame is
     /// resumed, with unit, and finds how it ended in [`Vm::woken`].
-    Park(Wait),
+    /// (Boxed: a step is handed up from every call of a builtin, and
+    /// most do not wait. [`Step::park`] makes it.)
+    Park(Box<Wait>),
     /// The task's slice ends here, to give way to the other tasks; the
     /// frame is resumed, with unit, when the task runs again.
     Yield,
+}
+
+impl Step {
+    /// The step of a task that waits for `wait` ([`Step::Park`]).
+    pub(crate) fn park(wait: Wait) -> Step {
+        Step::Park(Box::new(wait))
+    }
 }
 
 /// A frame that waits once: [`Vm::park`].
@@ -241,7 +250,7 @@ where
 
     fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
         if let Some(wait) = self.wait.take() {
-            return Ok(Step::Park(wait));
+            return Ok(Step::park(wait));
         }
         let fired = vm.woken()?;
         let step = (self.then)(vm, fired)?;
