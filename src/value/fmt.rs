@@ -298,8 +298,12 @@ fn begin<'a>(
             (Parts::Values(items.iter()), close)
         }
         Value::Map(entries) => {
-            f.write_str("#{")?;
-            (Parts::Entries(entries.iter(), None), "}")
+            // As `silt fmt` writes a map in source: `#{ "a": 1 }`, `#{}`.
+            if entries.is_empty() {
+                return f.write_str("#{}").map(|()| None);
+            }
+            f.write_str("#{ ")?;
+            (Parts::Entries(entries.iter(), None), " }")
         }
         Value::Set(members) => {
             f.write_str("#[")?;

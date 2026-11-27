@@ -1,1 +1,1 @@
-Some(#{"host": "example", "user": "alice"})
+Some(#{ "host": "example", "user": "alice" })

@@ -1332,7 +1332,7 @@ mod tests {
             (
                 with("{}"),
                 "Cfg { name: \"x\", inner: Inner { n: 2, tag: None }, xs: [1, 2], \
-                 m: #{\"a\": 1.0, \"b c\": 2.5}, t: (1, \"s\"), d: 2026-10-19, \
+                 m: #{ \"a\": 1.0, \"b c\": 2.5 }, t: (1, \"s\"), d: 2026-10-19, \
                  tm: 12:30:00.250, at: 2026-10-19T10:30:00, o: None, \
                  rows: [Inner { n: 1, tag: Some(\"a\") }, Inner { n: 2, tag: None }] }",
             ),
@@ -1423,7 +1423,10 @@ mod tests {
         }
         // A map of records.
         let maps = [
-            (r#"{"a": {"n": 1}}"#, "#{\"a\": Inner { n: 1, tag: None }}"),
+            (
+                r#"{"a": {"n": 1}}"#,
+                "#{ \"a\": Inner { n: 1, tag: None } }",
+            ),
             (r#"{"a": {"n": 1}, "b": {}}"#, "MissingField b.n"),
         ];
         let map = F::Map(Box::new(F::Record(inner.id)));

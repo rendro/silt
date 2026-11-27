@@ -3,7 +3,7 @@
 Some("x")
 P { name: "q\"uote\n\{x}\\", n: 1 }
 Tag("t")
-#{"k": "v"}
+#{ "k": "v" }
 #["s"]
 Ok("\u{1}")
 b, c

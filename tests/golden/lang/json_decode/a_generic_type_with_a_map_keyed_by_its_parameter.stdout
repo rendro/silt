@@ -1,4 +1,4 @@
-Ok(M { m: #{"x": 1} })
+Ok(M { m: #{ "x": 1 } })
 Err(json type mismatch at line 1, column 13: expected Int, got string at m.x)
-Ok(M { m: #{"x": 2} })
-Ok(M { m: #{"y": 3} })
+Ok(M { m: #{ "x": 2 } })
+Ok(M { m: #{ "y": 3 } })

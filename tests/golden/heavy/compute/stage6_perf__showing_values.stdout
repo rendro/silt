@@ -1,4 +1,4 @@
-17006856
+17066856
 Scene { name: "scene 40", shapes: [Circle(Point { x: 40, y: 41 }, 5), Poly([Point { x: 40, y: 41 }, Point { x: 0, y: 40 }, Point { x: 40, y: 41 }]), Nothing] }
 Scene { name: "scene 39", shapes: [Circle(Point { x: 39, y: 40 }, 4), Poly([Point { x: 39, y: 40 }, Point { x: 0, y: 39 }, Point { x: 39, y: 40 }]), Nothing] }
 Scene { name: "scene 38", shapes: [Circle(Point { x: 38, y: 39 }, 3), Poly([Point { x: 38, y: 39 }, Point { x: 0, y: 38 }, Point { x: 38, y: 39 }]), Nothing] }

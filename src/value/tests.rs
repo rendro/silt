@@ -1075,13 +1075,13 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
                 (text("k"), text("v")),
                 (text("l"), Value::list(vec![Value::Int(1)])),
             ]),
-            "#{\"k\": \"v\", \"l\": [1]}",
-            "#{\"k\": \"v\", \"l\": [1]}",
+            "#{ \"k\": \"v\", \"l\": [1] }",
+            "#{ \"k\": \"v\", \"l\": [1] }",
         ),
         (
             Value::map([(Value::tuple(vec![Value::Int(1), text("a")]), Value::Int(2))]),
-            "#{(1, \"a\"): 2}",
-            "#{(1, \"a\"): 2}",
+            "#{ (1, \"a\"): 2 }",
+            "#{ (1, \"a\"): 2 }",
         ),
         (Value::map([]), "#{}", "#{}"),
         (

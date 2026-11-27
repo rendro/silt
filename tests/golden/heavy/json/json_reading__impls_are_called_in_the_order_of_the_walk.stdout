@@ -7,7 +7,7 @@
   impl P String("o")
   impl P String("t0")
   impl Q Int(5)
-R {"n": 1, "t": ["t0", 5], "o": "o", "l": ["l0", "l1"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"} -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{"a": P { s: "ma" }, "b": P { s: "mb" }}, l: [P { s: "l0" }, P { s: "l1" }], o: Some(P { s: "o" }), t: (P { s: "t0" }, Qb(5)), n: 1 }
+R {"n": 1, "t": ["t0", 5], "o": "o", "l": ["l0", "l1"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"} -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{ "a": P { s: "ma" }, "b": P { s: "mb" } }, l: [P { s: "l0" }, P { s: "l1" }], o: Some(P { s: "o" }), t: (P { s: "t0" }, Qb(5)), n: 1 }
   impl P String("z")
   impl P String("a")
   impl P String("ma")
@@ -28,7 +28,7 @@ R {"n": 1, "t": ["t0", 1, 2], "l": [], "m": {"b": "mb", "a": "bad"}, "a": "bad",
   impl P String("t0")
   impl Q Null
 R {"n": 1, "t": ["t0", null], "l": [], "m": {}, "a": "a", "z": "z", "a": "a2", "z": 3} -> Err json missing field at line 1, column 22: t[1].q
-  impl P Object(#{"a": String("x")})
+  impl P Object(#{ "a": String("x") })
 R {"n": 1, "t": ["t0", 1], "l": [], "m": {"k": "bad", "k": "good"}, "a": {"a": 7}, "z": {"a": "x"}} -> Err json type mismatch at line 1, column 87: expected Int, got string at a at z
 R {"n": 1, "t": ["t0", 1], "l": ["l0"], "m": {}, "a": "a", "z": "z"} trailing -> Err json syntax error at line 1, column 68: trailing characters
   impl P String("z")
@@ -90,7 +90,7 @@ Map(Option(P)) -> Err P refuses bad at b
   impl P String("x")
   impl P String("t0")
   impl Q Int(5)
-decode R -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{"a": P { s: "ma" }, "b": P { s: "mb" }}, l: [P { s: "x" }], o: None, t: (P { s: "t0" }, Qb(5)), n: 1 }
+decode R -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{ "a": P { s: "ma" }, "b": P { s: "mb" } }, l: [P { s: "x" }], o: None, t: (P { s: "t0" }, Qb(5)), n: 1 }
   impl P String("z")
   impl P String("bad")
 decode R bad -> Err P refuses bad at a
@@ -113,7 +113,7 @@ a = "a"
 [m]
 b = "mb"
 a = "ma"
- -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{"a": P { s: "ma" }, "b": P { s: "mb" }}, l: [P { s: "l0" }, P { s: "l1" }], o: None, t: (P { s: "t0" }, Qb(5)), n: 1 }
+ -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{ "a": P { s: "ma" }, "b": P { s: "mb" } }, l: [P { s: "l0" }, P { s: "l1" }], o: None, t: (P { s: "t0" }, Qb(5)), n: 1 }
   impl P String("z")
   impl P String("bad")
 toml R n = 1
@@ -134,8 +134,8 @@ z = "z"
 a = 1979-05-27
 [m]
  -> Err expected an array of 2 elements for a tuple, got 1 at t
-  impl P Object(#{"a": Int(3)})
-  impl P Object(#{"a": Float(1.5)})
+  impl P Object(#{ "a": Int(3) })
+  impl P Object(#{ "a": Float(1.5) })
 toml R n = 1
 t = ["t0", 1]
 l = []

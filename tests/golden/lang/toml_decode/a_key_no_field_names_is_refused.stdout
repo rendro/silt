@@ -7,6 +7,6 @@ UnknownField(rows[1].q, 59)
 Ok Cfg { name: "x", inner: Inner { n: 1 }, rows: [] }
 Err(toml unknown field at line 1, column 43: s.color, expected variant or fields)
 Ok(HasShape { s: Circle(1.0) })
-Ok(#{"a": 1, "b": 2})
-Ok(Object(#{"title": String("T"), "x": Int(1)}))
+Ok(#{ "a": 1, "b": 2 })
+Ok(Object(#{ "title": String("T"), "x": Int(1) }))
 Ok(Meta { title: "T", draft: None })
