@@ -1,0 +1,37 @@
+-- exit: 1
+-- stderr-contains: this call of `f` takes a frame for every round
+-- stderr-contains: this call of `g` takes a frame for every round
+-- stderr-not-contains: this call of `h`
+-- A name an or-pattern binds is a part of the value only when every
+-- alternative binds a part to it: in `Node(y) | y` and in
+-- `Node(y) | (Leaf as y)` it may be the value itself, which would call
+-- f(Leaf) for ever. `Node(y) | Wrap(y)` takes a part in both.
+type T {
+  Leaf,
+  Node(T),
+  Wrap(T),
+}
+
+fn f(t: T) -> Int {
+  match t {
+    Node(y) | y -> 1 + f(y)
+  }
+}
+
+fn g(t: T) -> Int {
+  match t {
+    Node(y) | (Leaf as y) -> 1 + g(y)
+    Wrap(_) -> 0
+  }
+}
+
+fn h(t: T) -> Int {
+  match t {
+    Node(y) | Wrap(y) -> 1 + h(y)
+    Leaf -> 0
+  }
+}
+
+fn main() {
+  println(f(Leaf) + g(Leaf) + h(Leaf))
+}
