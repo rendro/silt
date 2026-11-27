@@ -5827,18 +5827,20 @@ fn is_constructor(name: Symbol) -> bool {
 /// `name` as a record field's name is written, in snake case: `Date` ->
 /// `date`, `URL` -> `url`, `DateTime` -> `date_time`, `HTTPCode` ->
 /// `http_code`. A capital starts a word, but in a run of capitals only
-/// the last one before a lower-case letter does (`HTTP` + `Code`).
+/// the last one before a lower-case letter does (`HTTP` + `Code`), and
+/// not before a lone `s`, which ends the run's word (`PDFs` -> `pdfs`).
 fn snake_case(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let mut out = String::new();
     for (k, c) in chars.iter().enumerate() {
         let before = k.checked_sub(1).map(|k| chars[k]);
         let after = chars.get(k + 1);
+        let lone_s = after == Some(&'s') && !chars.get(k + 2).is_some_and(|c| c.is_lowercase());
         let starts_word = c.is_uppercase()
             && before.is_some_and(|b| {
                 b.is_lowercase()
                     || b.is_ascii_digit()
-                    || (b.is_uppercase() && after.is_some_and(|a| a.is_lowercase()))
+                    || (b.is_uppercase() && after.is_some_and(|a| a.is_lowercase()) && !lone_s)
             });
         if starts_word && !out.ends_with('_') {
             out.push('_');
@@ -5957,6 +5959,12 @@ mod tests {
             ("Base64Url", "base64_url"),
             ("My_Field", "my_field"),
             ("X", "x"),
+            ("PDFs", "pdfs"),
+            ("URLs", "urls"),
+            ("IDs", "ids"),
+            ("UserIDs", "user_ids"),
+            ("PDFsByDate", "pdfs_by_date"),
+            ("HTTPServer", "http_server"),
         ] {
             assert_eq!(snake_case(name), field, "{name}");
         }
