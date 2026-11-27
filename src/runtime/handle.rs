@@ -1992,8 +1992,9 @@ impl TaskHandle {
     }
 
     /// Every reader of the output of the task's stage has let it go
-    /// (the output is dropped): nothing can read a failure of the task
-    /// any more, and it is dismissed, the one it has had and one that
+    /// (the output is dropped), or of the output of a stage it feeds
+    /// (`Channel::let_go_of_feeders`): nothing can read a failure of the
+    /// task any more, and it is dismissed, the one it has had and one that
     /// comes later, unless the code of its owner has ended
     /// ([`TaskHandle::keep_failure`]). The same as the cancel of the
     /// task that the output's stop does, but at once: the stop is

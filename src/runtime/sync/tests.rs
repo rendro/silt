@@ -1590,6 +1590,54 @@ fn a_select_asks_each_channel_it_finds_empty() {
     assert_eq!(received(resumed(&d, 3)), (0, 1));
 }
 
+/// Letting go of the last channel of a chain of fed channels (it is
+/// dropped) lets go of every channel that feeds it, up the chain and
+/// across a feeder with two inputs, at once and each once, though the
+/// feeders still hold their inputs (`Channel::let_go_of_feeders`): a
+/// stage holds its inputs until it has stopped, and the failure of a
+/// stage up the chain is dismissed as the end of the chain is let go of,
+/// not when the deferred stops have run.
+#[test]
+fn letting_go_of_the_end_of_a_chain_lets_go_of_every_feeder_once() {
+    use std::sync::Weak;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let chain: Vec<Arc<Channel>> = (0..4).map(|id| Channel::fed(id, 2, 0)).collect();
+    // 0 is fed by 1, 1 by 2 and 3.
+    let feeds: [&[usize]; 4] = [&[1], &[2, 3], &[], &[]];
+    let let_go: Vec<Arc<AtomicUsize>> = (0..4).map(|_| Arc::default()).collect();
+    for (id, channel) in chain.iter().enumerate() {
+        let (count, once) = (let_go[id].clone(), AtomicBool::new(false));
+        let inputs: Vec<Weak<Channel>> = feeds[id]
+            .iter()
+            .map(|&i| Arc::downgrade(&chain[i]))
+            .collect();
+        channel.stop_feeder_with(
+            move || match once.swap(true, Ordering::SeqCst) {
+                true => Vec::new(),
+                false => {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    inputs.iter().filter_map(Weak::upgrade).collect()
+                }
+            },
+            || {},
+        );
+    }
+    let counts = || {
+        let_go
+            .iter()
+            .map(|n| n.load(Ordering::SeqCst))
+            .collect::<Vec<_>>()
+    };
+    let mut chain = chain.into_iter();
+    drop(chain.next());
+    assert_eq!(counts(), [1, 1, 1, 1]);
+    // The others, dropped later (their stages have stopped), let go of
+    // nothing more.
+    drop(chain);
+    assert_eq!(counts(), [1, 1, 1, 1]);
+}
+
 // ── Threads ─────────────────────────────────────────────────────────
 
 /// Four threads cross two rendezvous channels with selects whose arms
