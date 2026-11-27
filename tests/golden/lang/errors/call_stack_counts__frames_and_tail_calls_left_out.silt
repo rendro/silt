@@ -1,0 +1,19 @@
+-- exit: 1
+-- A long call stack is cut to its first ten and its last five lines. The
+-- line for the ones left out counts the tail calls among them apart from
+-- the frames: `hop` hands over to `down` and takes no frame, `down`
+-- takes one each round.
+deep fn down(n: Int) -> Int {
+  match n {
+    0 -> 1 / n
+    _ -> hop(n - 1) + 1
+  }
+}
+
+fn hop(n: Int) -> Int {
+  down(n)
+}
+
+fn main() {
+  println(down(20))
+}

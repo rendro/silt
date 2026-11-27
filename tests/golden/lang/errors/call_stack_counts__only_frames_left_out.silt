@@ -1,0 +1,14 @@
+-- exit: 1
+-- A recursion without tail calls: every line of its call stack is a
+-- frame, and the 32 lines (`down` 31 times, `main`) less the 15 shown
+-- are 17 frames left out.
+deep fn down(n: Int) -> Int {
+  match n {
+    0 -> 1 / n
+    _ -> down(n - 1) + 1
+  }
+}
+
+fn main() {
+  println(down(30))
+}

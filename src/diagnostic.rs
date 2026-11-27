@@ -341,6 +341,10 @@ pub struct Diagnostic {
     /// The labels of a runtime error are its call stack, innermost frame
     /// first, each labelled with the function's name.
     pub(crate) labels: Vec<(Span, String)>,
+    /// Of a runtime error: whether each label of its call stack is a
+    /// tail call of another function, which took no frame. A label past
+    /// its end took one.
+    pub(crate) tail_calls: Box<[bool]>,
     pub(crate) notes: Vec<String>,
     pub(crate) help: Vec<String>,
     /// The notes and help lines that name a place: the line has `{at}`
@@ -426,6 +430,7 @@ impl Diagnostic {
             span,
             message,
             labels: Vec::new(),
+            tail_calls: Box::default(),
             notes: Vec::new(),
             help: Vec::new(),
             places: Box::default(),
@@ -903,10 +908,15 @@ pub(crate) fn render_human_in(view: &dyn SourceView, d: &Diagnostic, c: &Colors)
         write_body(&mut out, c, "= help:", &visible_text(help));
     }
     if runtime {
-        let frames: Vec<(String, Span)> = d
+        let frames: Vec<crate::vm::error::Call> = d
             .labels
             .iter()
-            .map(|(span, name)| (name.clone(), *span))
+            .enumerate()
+            .map(|(at, (span, name))| crate::vm::error::Call {
+                name: name.clone(),
+                span: *span,
+                tail: d.tail_calls.get(at).copied().unwrap_or(false),
+            })
             .collect();
         let lines = crate::vm::error::render_call_stack(&frames, |_, span| view.frame(*span));
         if !lines.is_empty() {

@@ -3149,7 +3149,7 @@ mod error_places {
                     .run(script.clone())
                     .expect_err("the code stops with an error");
                 assert_eq!(err.span, Some(place), "the place of: {err}");
-                let frames: Vec<Span> = err.call_stack.iter().map(|(_, span)| *span).collect();
+                let frames: Vec<Span> = err.call_stack.iter().map(|call| call.span).collect();
                 assert_eq!(frames, stack, "the call stack of: {err}");
                 errors.push(err);
             }
@@ -3256,10 +3256,10 @@ mod error_places {
         let shown = |err: &VmError| {
             let mut text = format!("{} at {}", err.message, err.span.map_or("-".into(), at));
             let mut frames = err.call_stack.iter().peekable();
-            while let Some((name, span)) = frames.next() {
+            while let Some(crate::vm::error::Call { name, span, .. }) = frames.next() {
                 let mut times = 1;
                 while frames
-                    .next_if(|next| next.0 == *name && next.1 == *span)
+                    .next_if(|next| next.name == *name && next.span == *span)
                     .is_some()
                 {
                     times += 1;

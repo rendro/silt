@@ -72,6 +72,11 @@ test files, without running them. `silt test` checks the package first, as
 `silt check` does, with no path and also when the path it is given is
 in the package: when a module has an error, it shows the
 errors and runs no test, even where no test file imports that module.
+A directory below that holds a `silt.toml` of its own is another package,
+whose test files `silt test` leaves to it. Where it finds no test file
+outside them, it names those that have some, and, where their names can
+be pasted in a command line, the command that tests them (`silt test
+ledger money`).
 `silt init` writes a first test, `src/main_test.silt` (`src/lib_test.silt`
 in a library), that imports the entry module and calls a `pub` function
 of it.
