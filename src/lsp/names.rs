@@ -717,6 +717,15 @@ impl<'a> Names<'a> {
                     self.pattern(p);
                 }
             }
+            // `p as name` binds the name, as a name pattern does.
+            PatternKind::As {
+                pattern: inner,
+                name,
+                name_span,
+            } => {
+                self.pattern(inner);
+                self.local(*name_span, *name, true, false);
+            }
             // `^name` compares with the local `name`: a use of it,
             // behind the `^`.
             PatternKind::Pin(name) => {

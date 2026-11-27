@@ -5156,10 +5156,65 @@ impl<'src> Parser<'src> {
                 self.advance();
                 alts.push(self.parse_primary_pattern()?);
             }
+            if self.at(&Token::As) {
+                // (Whether `A | B as x` names the whole or only `B` is
+                // not for the reader to guess.)
+                return Err(Diagnostic::error(
+                    Code::ExpectedToken,
+                    self.found_span(),
+                    "an or-pattern named with `as` stands in parentheses",
+                )
+                .with_help("write `(A | B) as x` to name the whole value"));
+            }
             Ok(self.mk_pattern(PatternKind::Or(alts), or_span))
         } else {
-            Ok(first)
+            self.parse_as_names(first)
         }
+    }
+
+    /// `pattern` with the `as name` behind it, if there are any:
+    /// `[_, ..] as xs`, `(A | B) as x`.
+    fn parse_as_names(&mut self, mut pattern: Pattern) -> Result<Pattern> {
+        while self.at(&Token::As) {
+            self.advance();
+            let name_span = self.found_span();
+            let name = match self.peek().clone() {
+                Token::Ident(name) if !is_constructor(name) && name != intern::intern("_") => {
+                    self.advance();
+                    name
+                }
+                _ => {
+                    return Err(Diagnostic::error(
+                        Code::ExpectedIdentifier,
+                        name_span,
+                        format!(
+                            "expected a lowercase name after `as` in a pattern, found {}",
+                            self.found()
+                        ),
+                    ));
+                }
+            };
+            let start = pattern.span;
+            pattern = self.mk_pattern(
+                PatternKind::As {
+                    pattern: Box::new(pattern),
+                    name,
+                    name_span,
+                },
+                start,
+            );
+            if self.at(&Token::Bar) {
+                return Err(Diagnostic::error(
+                    Code::ExpectedToken,
+                    self.found_span(),
+                    "an alternative named with `as` stands in parentheses",
+                )
+                .with_help(
+                    "write `(A as x) | (B as x)`, or `(A | B) as x` to name the whole value",
+                ));
+            }
+        }
+        Ok(pattern)
     }
 
     /// Parse the tail of an integer range pattern after the `..` token
@@ -5618,8 +5673,9 @@ impl<'src> Parser<'src> {
 /// a `match`. `tokens` are the contents at the braces' own depth: of a
 /// nested group only its opener. A parameter is a pattern with an
 /// optional `: Type` annotation, so the scan accepts identifiers, `,`,
-/// `|`, `:`, `.`, `type` and the openers of nested groups, and
-/// answers true at the first `->`. Anything else at that depth (a
+/// `|`, `:`, `.`, `type`, the openers of nested groups and `as` with a
+/// lowercase name behind it (`{ (a, b) as pair -> ... }`), and answers
+/// true at the first `->`. Anything else at that depth (a
 /// literal, `when`, the closing `}`) means braces of another kind:
 /// neither a block nor a record literal can put a `->` at its own depth
 /// after only those tokens. `{ a: Int -> a }` is a closure; `{ a: Int }`,
@@ -5628,9 +5684,16 @@ impl<'src> Parser<'src> {
 /// is the right answer too. The formatter asks the same of the body of a
 /// `match` it prints.
 pub(crate) fn closure_head<'t>(tokens: impl IntoIterator<Item = &'t Token>) -> bool {
-    for token in tokens {
+    let mut tokens = tokens.into_iter();
+    while let Some(token) = tokens.next() {
         match token {
             Token::Arrow => return true,
+            // (An ascription in a block, `{ f as Fn(Int) -> Int }`, has a
+            // type behind its `as`, which is not a lowercase name.)
+            Token::As => match tokens.next() {
+                Some(Token::Ident(name)) if !is_constructor(*name) => {}
+                _ => return false,
+            },
             Token::Ident(_)
             | Token::Comma
             | Token::Bar
@@ -6568,6 +6631,52 @@ fn main() {
         assert_eq!(prog.decls.len(), 1);
         let arm = first_match_arm_of_main(&prog);
         assert!(matches!(&arm.pattern.kind, PatternKind::Or(pats) if pats.len() == 3));
+    }
+
+    #[test]
+    fn test_as_pattern_names_what_stands_in_front_of_it() {
+        let prog = parse(
+            r#"
+            fn classify(n) {
+                match n {
+                    (1 | 2) as small -> small
+                    _ -> 0
+                }
+            }
+        "#,
+        );
+        let arm = first_match_arm_of_main(&prog);
+        let PatternKind::As { pattern, name, .. } = &arm.pattern.kind else {
+            panic!("expected an as-pattern, got {:?}", arm.pattern.kind);
+        };
+        assert_eq!(*name, intern::intern("small"));
+        assert!(matches!(&pattern.kind, PatternKind::Or(pats) if pats.len() == 2));
+        // `p as a as b` names the same value twice, the inner name first.
+        let prog = parse("fn f(n) {\n  match n {\n    x as a as b -> b\n  }\n}\n");
+        let arm = first_match_arm_of_main(&prog);
+        let PatternKind::As { pattern, name, .. } = &arm.pattern.kind else {
+            panic!("expected an as-pattern");
+        };
+        assert_eq!(*name, intern::intern("b"));
+        assert!(
+            matches!(&pattern.kind, PatternKind::As { name, .. } if *name == intern::intern("a"))
+        );
+    }
+
+    #[test]
+    fn test_closure_head_takes_as_with_a_name_only() {
+        let toks = |text: &str| -> Vec<Token> {
+            let lexed = Lexer::new(crate::source::FileId::default(), text)
+                .tokenize()
+                .checked()
+                .unwrap();
+            lexed.tokens.into_iter().map(|t| t.kind).collect()
+        };
+        // `{ (a, b) as p -> ... }`: the parenthesis is the group's opener.
+        assert!(closure_head(&toks("( as p ->")));
+        // `{ g as Fn(Int) -> Int }`: an ascription in a block.
+        assert!(!closure_head(&toks("g as Fn ( -> Int")));
+        assert!(!closure_head(&toks("g as")));
     }
 
     #[test]

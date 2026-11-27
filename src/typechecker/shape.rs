@@ -513,9 +513,9 @@ impl<'a, 'd> Walk<'a, 'd> {
             PatternKind::Or(alternatives) => {
                 if let Some(first) = alternatives.first() {
                     let below = below
-                        || alternatives
-                            .iter()
-                            .all(|a| !matches!(a.kind, PatternKind::Ident(_)));
+                        || alternatives.iter().all(|a| {
+                            !matches!(a.kind, PatternKind::Ident(_) | PatternKind::As { .. })
+                        });
                     self.bind(first, rel, below);
                 }
             }
@@ -523,6 +523,12 @@ impl<'a, 'd> Walk<'a, 'd> {
                 for (_, value) in entries {
                     self.bind(value, rel, true);
                 }
+            }
+            // The name is the value itself, as a name pattern in its
+            // place would be.
+            PatternKind::As { pattern, name, .. } => {
+                self.bind(pattern, rel, below);
+                self.scopes.push((*name, origin(below)));
             }
             PatternKind::Wildcard
             | PatternKind::Int(_)

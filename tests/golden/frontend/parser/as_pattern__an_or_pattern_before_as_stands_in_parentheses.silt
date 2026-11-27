@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: error[parse]: an or-pattern named with `as` stands in parentheses
+-- stderr-contains: write `(A | B) as x` to name the whole value
+-- stderr-contains: .silt:9:11
+-- Whether `0 | 1 as m` names the whole value or only the 1 is not left
+-- for the reader to guess.
+fn f(n: Int) -> Int {
+  match n {
+    0 | 1 as m -> m
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(f(1))
+}

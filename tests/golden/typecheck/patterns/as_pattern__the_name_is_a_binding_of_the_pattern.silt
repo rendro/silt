@@ -1,0 +1,33 @@
+-- exit: 1
+-- stderr-contains: error[type]: duplicate binding 'x' in pattern
+-- stderr-contains: .silt:13:15
+-- stderr-contains: or-pattern alternatives must bind the same variables; first alternative binds {x}, alternative 2 binds {}
+-- stderr-contains: error[type]: type mismatch: expected Int, got String
+-- stderr-contains: warning[type]: 'unused' is never used
+-- stderr-contains: name it `_unused`
+-- The name behind `as` is one of the names the pattern binds: bound
+-- twice, missing from an alternative, or never used, it is told as any
+-- name of a pattern is.
+fn dup(n: (Int, Int)) -> Int {
+  match n {
+    (x, _) as x -> x
+  }
+}
+
+fn alternatives(o: Option(Int)) -> Int {
+  match o {
+    (Some(_) as x) | None -> 1
+  }
+}
+
+fn mismatch(n: Int) -> Int {
+  match n {
+    "a" as s -> 1
+    _ -> 0
+  }
+}
+
+fn main() {
+  let (a, b) as unused = (1, 2)
+  println("{a} {b} {dup((1, 2))} {alternatives(None)} {mismatch(1)}")
+}

@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: error[parse]: expected a lowercase name after `as` in a pattern, found M
+-- stderr-contains: .silt:7:10
+-- (`_` and a constructor's name are no names a value is bound to.)
+fn f(n: Int) -> Int {
+  match n {
+    0 as M -> 1
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(f(1))
+}

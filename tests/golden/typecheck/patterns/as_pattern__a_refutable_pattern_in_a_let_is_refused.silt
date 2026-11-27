@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: error[type]: refutable pattern in `let`: constructor 'Some' is only one of 2 variants of enum 'Option'
+-- The name behind `as` matches every value, the pattern in front of it
+-- does not.
+fn main() {
+  let Some(x) as o = Some(1)
+  println("{x} {o}")
+}

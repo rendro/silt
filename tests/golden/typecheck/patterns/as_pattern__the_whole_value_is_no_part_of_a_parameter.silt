@@ -1,0 +1,27 @@
+-- exit: 1
+-- stderr-contains: error[type]: this call of `walk` takes a frame for every round
+-- stderr-contains: `whole` is not a part of `t`
+-- The name behind `as` is the value itself, not a part of it: a call
+-- on it does not descend. A call on what the pattern takes apart does.
+type T {
+  Leaf,
+  Node(T),
+}
+
+fn depth(t: T) -> Int {
+  match t {
+    Node(inner) as _whole -> 1 + depth(inner)
+    Leaf -> 0
+  }
+}
+
+fn walk(t: T) -> Int {
+  match t {
+    Node(_) as whole -> 1 + walk(whole)
+    Leaf -> 0
+  }
+}
+
+fn main() {
+  println(depth(Node(Leaf)) + walk(Leaf))
+}

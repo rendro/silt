@@ -214,6 +214,69 @@ Ok(x) | Err(y) -> ...
 -- compile error: or-pattern alternatives must bind the same variables
 ```
 
+## Naming the Whole Value (`as`)
+
+`pattern as name` matches what `pattern` matches and also binds the whole
+value to `name`. It tests a shape and keeps the value in one place:
+
+```silt
+type Tok {
+  TEof,
+  TNum(Int),
+}
+
+type Token {
+  tok: Tok,
+  pos: Int,
+}
+
+fn first(tokens: List(Token)) -> String {
+  match tokens {
+    [Token { tok: TEof, .. } as t, ..] -> "end of input at {t.pos}"
+    [Token { tok: TNum(n), .. }, ..] -> "number {n}"
+    [] -> "nothing"
+  }
+}
+
+fn main() {
+  println(first([Token { tok: TEof, pos: 4 }])) -- end of input at 4
+  println(first([Token { tok: TNum(7), pos: 1 }])) -- number 7
+}
+```
+
+It stands anywhere a pattern can: in a `match` arm, inside another
+pattern, in a `let`, a `when let` and a parameter.
+
+```silt
+fn main() {
+  let (a, b) as pair = (1, 2)
+  println("{a} {b} {pair}") -- 1 2 (1, 2)
+  let swap = { (x, y) as p -> "{p} becomes ({y}, {x})" }
+  println(swap((3, 4))) -- (3, 4) becomes (4, 3)
+}
+```
+
+An or-pattern stands in parentheses in front of the `as`, which then
+names the value whichever alternative matched: `(0 | 1) as bit`. Written
+without them, `0 | 1 as bit` is an error, as is `0 as bit | 1`: an
+alternative that has a name of its own stands in parentheses too, and
+every alternative binds the same names, `(Circle(r) as s) | (Ring(r) as s)`.
+
+```silt
+fn describe(n: Int) -> String {
+  match n {
+    (0 | 1) as bit -> "the bit {bit}"
+    2..9 as digit -> "the digit {digit}"
+    other -> "{other}"
+  }
+}
+
+fn main() {
+  println(describe(1)) -- the bit 1
+  println(describe(7)) -- the digit 7
+}
+```
+
 ## Guards
 
 ```silt
