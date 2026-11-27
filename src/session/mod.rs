@@ -821,6 +821,33 @@ impl Session {
                 Some((*key, self.graph.module_at(&src.join("lib.silt"))?))
             })
             .collect();
+        // (Each key of the `[dependencies]` of a package the package
+        // depends on, nearer ones first, whose library the session has: a
+        // dependency's dependency is named by the key it has there.)
+        let farther_dependencies = {
+            let mut order = vec![module.package];
+            let mut found = Vec::new();
+            let mut at = 0;
+            while let Some(from) = order.get(at).copied() {
+                at += 1;
+                let Some(from) = packages.packages.get(from.0 as usize) else {
+                    continue;
+                };
+                for (key, dep, _) in &from.deps {
+                    if order.contains(dep) {
+                        continue;
+                    }
+                    order.push(*dep);
+                    let lib = (packages.packages.get(dep.0 as usize))
+                        .and_then(|dep| dep.src.as_ref())
+                        .and_then(|src| self.graph.module_at(&src.join("lib.silt")));
+                    if let Some(lib) = lib.filter(|_| from.id != module.package) {
+                        found.push((*key, lib));
+                    }
+                }
+            }
+            found
+        };
         let package_name = (packages.packages.get(module.package.0 as usize))
             .map_or_else(|| intern(""), |package| package.name);
         let mut check = typechecker::check_module(
@@ -829,6 +856,7 @@ impl Session {
                 module: id,
                 package: module.package,
                 dependencies,
+                farther_dependencies,
                 package_name,
                 module_name: module.name,
                 kind,

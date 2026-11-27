@@ -18,13 +18,16 @@ impl TypeChecker {
 
     /// The module of the opaque type `ty` when it is none of `viewers`,
     /// as this file writes it (`money` for the library of the dependency
-    /// `money`, which calls itself `lib`; `m` after `import money as m`).
+    /// `money`, which calls itself `lib`; `m` after `import money as m`);
+    /// a library no import here can reach by the key the dependency that
+    /// has it gives it (`beta`, which `alpha`'s signatures write).
     fn opaque_outside_of(&self, ty: TypeRef, viewers: &[crate::defs::ModuleId]) -> Option<Symbol> {
         let def = self.def(ty.id.0)?;
         if def.vis != crate::defs::Vis::Opaque || viewers.contains(&def.module) {
             return None;
         }
         (self.module_name_here(def.module))
+            .or_else(|| self.farther_keys.get(&def.module).copied())
             .or_else(|| self.tables.module_names.get(&def.module).copied())
     }
 

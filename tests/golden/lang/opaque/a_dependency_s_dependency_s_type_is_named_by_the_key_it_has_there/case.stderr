@@ -1,0 +1,13 @@
+error[type]: cannot read field 'raw' of a 'bt.Tok' outside module 'bt': the type is opaque
+ --> src/main.silt:13:11
+    |
+ 13 |   println(t.raw)
+    |           ^^^^^ cannot read field 'raw' of a 'bt.Tok' outside module 'bt': the type is opaque
+  = help: use the functions of module 'bt'
+
+error[type]: type 'bt.Tok' cannot be encoded outside module 'bt': it is opaque, and 'bt' writes no 'json.Encode' impl for it
+ --> src/main.silt:14:26
+    |
+ 14 |   println(json.stringify(t))
+    |                          ^ type 'bt.Tok' cannot be encoded outside module 'bt': it is opaque, and 'bt' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'bt', or write `trait json.Encode for Tok` there
