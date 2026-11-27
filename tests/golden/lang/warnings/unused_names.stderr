@@ -18,3 +18,5 @@ warning[type]: 'b' is never used
  18 |     [(a, b), ..] -> a
     |          ^ 'b' is never used
   = help: remove it, or name it `_b`
+
+checked 1 module: no errors

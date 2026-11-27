@@ -18,3 +18,5 @@ warning[type]: `once` does not need `deep`: it does not call itself
  18 | deep fn once(n: Int) -> Int {
     | ^^^^ `once` does not need `deep`: it does not call itself
   = help: remove `deep`
+
+checked 1 module: no errors

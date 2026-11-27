@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 deep fn fact(n) {
   match n {
     0 -> 1

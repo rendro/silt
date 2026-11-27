@@ -88,7 +88,8 @@ fn check_dash_checks_stdin() {
         "import helper\n\nfn main() {\n  println(helper.two())\n}\n",
     );
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+    assert_eq!(text(&out.stderr), "checked 2 modules: no errors\n", "{out:?}");
 
     let program = "fn main() {\n  let x: Int = \"s\"\n  println(x)\n}\n";
     let out = silt(&dir, &["check", "-"], program);

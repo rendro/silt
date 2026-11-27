@@ -11,3 +11,5 @@ warning[type]: local 'list' hides the imported module 'list'
  7 | fn count(list: List(Int)) -> Int {
    |          ^^^^ local 'list' hides the imported module 'list'
   = help: rename the local, or import the module under another name: `import list as li`
+
+checked 1 module: no errors
