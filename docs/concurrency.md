@@ -1440,7 +1440,7 @@ What becomes of the operation is one rule for each kind of operation:
 | Operation | What becomes of it when nobody waits for it |
 |---|---|
 | `tcp.connect`, `tcp.connect_tls`, `tcp.read`, `tcp.read_exact`, `tcp.write`, the TLS handshakes of `tcp.tls_server` and `tcp.tls_server_mtls`, and `stream.write_to_tcp` | The connection is **shut down**, as by `tcp.close`, which makes the operation return and frees its thread. A connect that waits for its peer (`tcp.connect`, `tcp.connect_tls`) is shut down too; on Linux that ends it at once, elsewhere it may run on to the system's connect time, and until the connect has returned it counts among the operations that cannot be interrupted (the bound of 64 below). The name lookup of a connect to a host name cannot be interrupted: it ends by the system's own time. |
-| `http.get`, `http.request` | The request is **ended**: its connect, a read or a write it waits in, a TLS handshake, a redirect, which frees its thread. A connect that waits for its peer is shut down, as one of `tcp.connect` is: on Linux that ends it at once; elsewhere it may run on to its connect time (at most 10 s), counted until then among the operations that cannot be interrupted. The name lookup of a host name cannot be interrupted. |
+| `http.get`, `http.request`, `http.request_once` | The request is **ended**: its connect, a read or a write it waits in, a TLS handshake, a redirect, which frees its thread. A connect that waits for its peer is shut down, as one of `tcp.connect` is: on Linux that ends it at once; elsewhere it may run on to its connect time (at most 10 s), counted until then among the operations that cannot be interrupted. The name lookup of a host name cannot be interrupted. |
 | `stream.tcp_lines`, `stream.tcp_chunks` | The source **lets go** of the connection, which closes only if nothing else holds it. A read in flight ends without taking anything, on a plain or a TLS connection (see [stream](stdlib/stream.md)). |
 | `tcp.accept`, and the accept of `http.serve` | The accept is woken and gives up; the listener stays usable. A client's connection that reached it is kept by the listener for the next accept. |
 | `postgres.query`, `postgres.execute`, `postgres.notify` and the cursor functions, the `BEGIN` of `postgres.transact`, the `LISTEN` of `postgres.listen` | One that has no connection yet is **never sent**, and the connection goes back to the pool. One that has it: on a pool it is left to finish; in a transaction the server is asked to cancel it, and the transaction is aborted (see [postgres](stdlib/postgres.md)). |
@@ -1490,6 +1490,7 @@ Linux.
 | `io.read_stdin()`, `io.read_stdin_bytes()` | Always (stdin) |
 | `http.get(u)` | Always (network) |
 | `http.request(...)` | Always (network) |
+| `http.request_once(...)` | Always (network) |
 | `print`, `println`, `io.eprint`, `io.eprintln` | The output's writer holds 64 KiB that its reader has not taken yet -- resumes when there is room |
 
 None of these block the OS thread. The task is parked and the thread continues
