@@ -245,6 +245,10 @@ struct Branch {
     /// The branch it is written in.
     parent: usize,
     fork: Fork,
+    /// Where it ends, when it leaves the function there (an else block,
+    /// an arm that ends in `return`): what is written from there on does
+    /// not run with it.
+    leaves: Option<u32>,
 }
 
 /// How a branch runs with the branch it is written in.
@@ -254,9 +258,8 @@ enum Fork {
     Body,
     /// An arm of the match numbered `.0`: only one of its arms runs.
     Arm(usize),
-    /// The else block of a `when`, which leaves the function: what is
-    /// written from `.0` on does not run with it.
-    Else(u32),
+    /// The else block of a `when`, which leaves the function.
+    Else,
 }
 
 impl<'a, 'd> Walk<'a, 'd> {
@@ -361,21 +364,27 @@ impl<'a, 'd> Walk<'a, 'd> {
             branches: vec![Branch {
                 parent: 0,
                 fork: Fork::Body,
+                leaves: None,
             }],
             matches: 0,
         }
     }
 
     /// Enter a new branch; gives the one to go back to.
-    fn new_branch(&mut self, fork: Fork) -> usize {
+    fn new_branch(&mut self, fork: Fork, leaves: Option<u32>) -> usize {
         let parent = self.branch;
-        self.branches.push(Branch { parent, fork });
+        self.branches.push(Branch {
+            parent,
+            fork,
+            leaves,
+        });
         std::mem::replace(&mut self.branch, self.branches.len() - 1)
     }
 
     /// Whether the sites `a` and `b` of one node can both run: not in
-    /// two arms of one match, and not one in an else block that leaves
-    /// the function and the other written after it.
+    /// two arms of one match, and not one in a branch that leaves the
+    /// function (an else block, an arm that ends in `return`) and the
+    /// other written after it.
     fn run_together(&self, a: &Site, b: &Site) -> bool {
         // (Each branch up to the body it is in.)
         let up = |mut x: usize| {
@@ -401,7 +410,11 @@ impl<'a, 'd> Walk<'a, 'd> {
             return false;
         }
         let left_before = |path: &[usize], other: &Site| {
-            (path.iter()).any(|&x| matches!(fork(x), Fork::Else(end) if other.span.start >= end))
+            (path.iter()).any(|&x| {
+                self.branches[x]
+                    .leaves
+                    .is_some_and(|end| other.span.start >= end)
+            })
         };
         !left_before(&pa[..ia], b) && !left_before(&pb[..ib], a)
     }
@@ -441,7 +454,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         let outer_node = self.node.replace(n);
         let outer_closure = self.closure.take();
         let outer_held = std::mem::take(&mut self.held);
-        let outer_branch = self.new_branch(Fork::Body);
+        let outer_branch = self.new_branch(Fork::Body, None);
         let depth = self.scopes.len();
         let (params, body) = (self.nodes[n].params, self.nodes[n].body);
         for (i, param) in params.iter().enumerate() {
@@ -710,7 +723,8 @@ impl<'a, 'd> Walk<'a, 'd> {
                 let this = self.matches;
                 for arm in arms {
                     let depth = self.scopes.len();
-                    let outer_branch = self.new_branch(Fork::Arm(this));
+                    let leaves = ends_in_return(&arm.body).then_some(arm.body.span.end);
+                    let outer_branch = self.new_branch(Fork::Arm(this), leaves);
                     self.bind_matched(&arm.pattern, expr.as_deref());
                     if let Some(guard) = &arm.guard {
                         self.expr(guard, false);
@@ -792,7 +806,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                     self.expr(expr, false);
                     // (The else block is a branch of its own: it leaves the
                     // function.)
-                    let outer_branch = self.new_branch(Fork::Else(else_body.span.end));
+                    let outer_branch = self.new_branch(Fork::Else, Some(else_body.span.end));
                     self.expr(else_body, false);
                     self.branch = outer_branch;
                     self.bind_matched(pattern, Some(expr));
@@ -802,7 +816,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                     else_body,
                 } => {
                     self.expr(condition, false);
-                    let outer_branch = self.new_branch(Fork::Else(else_body.span.end));
+                    let outer_branch = self.new_branch(Fork::Else, Some(else_body.span.end));
                     self.expr(else_body, false);
                     self.branch = outer_branch;
                 }
@@ -825,7 +839,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         let coll = element.and_then(|(coll, _)| coll);
         let outer_closure = self.closure.replace((coll, element.is_some()));
         let outer_held = std::mem::take(&mut self.held);
-        let outer_branch = self.new_branch(Fork::Body);
+        let outer_branch = self.new_branch(Fork::Body, None);
         let depth = self.scopes.len();
         for (i, param) in params.iter().enumerate() {
             match (coll, element) {
@@ -1786,6 +1800,21 @@ fn endings(
             out.push((e.span, Ending::Call, in_arm));
         }
         _ => {}
+    }
+}
+
+/// Whether `e` leaves the function when it ends: it ends in `return`
+/// (in a block, in every arm of a match).
+fn ends_in_return(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Return(_) => true,
+        ExprKind::Block(stmts) => {
+            matches!(stmts.last(), Some(Stmt::Expr(last)) if ends_in_return(last))
+        }
+        ExprKind::Match { arms, .. } => {
+            !arms.is_empty() && arms.iter().all(|a| ends_in_return(&a.body))
+        }
+        _ => false,
     }
 }
 

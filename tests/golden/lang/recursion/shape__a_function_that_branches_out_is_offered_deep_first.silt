@@ -5,8 +5,8 @@
 -- one covers it. Calls that both run branch out wherever they are:
 -- one in a match's scrutinee or a `let` and one in its arm. A count down
 -- by one call (sum_to in shape__a_call_that_keeps_a_frame_must_pass_a_part)
--- keeps the fold first, and so does `guarded`: of its two calls only one
--- runs, as the else block returns.
+-- keeps the fold first, and so do `guarded` and `ret_arm`: of their two
+-- calls only one runs, as the else block or the arm returns.
 fn fib(n: Int) -> Int {
   match n < 2 {
     true -> n
@@ -41,6 +41,16 @@ fn guarded(n: Int) -> Int {
   2 + guarded(n - 1)
 }
 
+fn ret_arm(n: Int) -> Int {
+  match n > 5 {
+    true -> {
+      return 1 + ret_arm(n - 1)
+    }
+    false -> ()
+  }
+  2 + ret_arm(n - 1)
+}
+
 fn main() {
-  println(fib(10) + scrutinee(10) + bound(10) + guarded(0))
+  println(fib(10) + scrutinee(10) + bound(10) + guarded(0) + ret_arm(0))
 }
