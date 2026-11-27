@@ -35,6 +35,7 @@ syntax keyword siltConstructor Syntax TypeMismatch MissingField
 syntax keyword siltConstructor UnknownField
 syntax keyword siltConstructor ParseFormat OutOfRange InvalidFormat
 syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse ClosedEarly
+syntax keyword siltConstructor TooManyRedirects
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
 syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange
 syntax keyword siltConstructor InvalidLength

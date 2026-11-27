@@ -6,7 +6,7 @@ order: 15
 
 # http
 
-HTTP client and server. Included by default (the server needs [tcp](tcp.md), which the `http` feature brings with it). Exclude with `--no-default-features` for WASM or minimal builds: a program that names `http.get`, `http.request` or `http.serve` then does not check (the error names the cargo feature `http`), while the module's types remain. A URL is a [`url.Url`](url.md), in a request the client sends and in one the server gets.
+HTTP client and server. Included by default (the server needs [tcp](tcp.md), which the `http` feature brings with it). Exclude with `--no-default-features` for WASM or minimal builds: a program that names `http.get`, `http.request`, `http.request_once` or `http.serve` then does not check (the error names the cargo feature `http`), while the module's types remain. A URL is a [`url.Url`](url.md), in a request the client sends and in one the server gets.
 
 ## Types
 
@@ -81,11 +81,13 @@ resource.
 |------|-----------|-------------|
 | `get` | `(Url) -> Result(Response, HttpError)` | HTTP GET request |
 | `request` | `(Method, Url, Bytes, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
+| `request_once` | `(Method, Url, Bytes, Map(String, String)) -> Result(Response, HttpError)` | One HTTP request, whose redirect is the response, not followed |
 | `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
 
 ## Errors
 
-`http.get` and `http.request` return `Result(Response, HttpError)`. Note
+`http.get`, `http.request` and `http.request_once` return
+`Result(Response, HttpError)`. Note
 that a 4xx or 5xx HTTP response is an `Ok(Response)`: an `Err` is a
 response that did not arrive whole. That is a failure before its head
 is there (DNS, connection, TLS, a timeout, a head that is no HTTP), and
@@ -103,11 +105,22 @@ rendered string.
 | `InvalidUrl(url)` | `String` | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes (the transport's limit), or has a user with a `:` in it once decoded; no connection is made. Also the location of a redirect that is no URL or has such a scheme, which is not followed. The URL is shown with its user and password hidden |
 | `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
-| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, too many redirects |
+| `TooManyRedirects` | — | `http.get` or `http.request` was redirected more than ten times |
+| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none |
 
 Which variant a failure is, is decided by the kind of failure the
 transport reports, never by the wording of its message: the message is
 only what `Connect`, `Tls`, `InvalidResponse` and `Other` carry.
+
+The client keeps its connections: a connection that the server keeps
+open after a response carries the next request to that server, from any
+task of the program, so a program that asks one server many times
+connects to it once (`req.peer`, which the server sees, stays the same).
+An idle connection is kept for 15 s, at most 3 to one server and 10 in
+all. A server may close an idle connection at any time. A request that
+went out on a kept connection which then ended before a byte of the
+answer came is sent once more, on a new connection; any other failure
+is the program's.
 
 To bound a request by a time of your own, put a `task.deadline` around
 it. A request that nobody waits for any more (its deadline passed, its
@@ -244,7 +257,8 @@ The URL goes out as the `Url` holds it, in its normal form: escaped
 its fragment, which is no server's. A URL longer than 65,534 bytes is an
 `InvalidUrl`: the transport takes no longer one.
 
-A redirect is followed, up to ten of them: after a 307 or 308 with the
+A redirect is followed, up to ten of them (one more is
+`Err(TooManyRedirects)`): after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
 the `Content-Type` among `headers` (a `HEAD` stays a `HEAD`); after a 301
 or 302 a `POST` as such a `GET`, and any other method with the same
@@ -258,7 +272,7 @@ its path, `//host/x` on its scheme, `../x` next to its path. An
 empty location, or one that is a fragment alone (`#top`), is the URL that
 answered itself, as RFC 3986 reads it: after a 303 that is a `GET` of the
 same URL, and a server that answers it so every time ends in
-`Err(Other("too many redirects"))`. A response without a location is
+`Err(TooManyRedirects)`. A response without a location is
 handed back as it is, its status 3xx. A byte of a location that a URL
 cannot hold (a space, the bytes of `é`) is escaped first (`%20`,
 `%C3%A9`), as browsers send it. A location that does not resolve to a URL
@@ -296,6 +310,60 @@ let resp = http.request(
 )?
 ```
 
+
+## `http.request_once`
+
+```
+http.request_once(method: Method, u: Url, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)
+```
+
+Sends one request, as `http.request` sends it (its method, body,
+headers, and the user and password of the URL as `authorization`), and
+returns its response without following a redirect: a 301, 302, 303, 307
+or 308 is an `Ok(Response)` as it came, with its `location` header as
+the server wrote it and its body. A program that follows redirects
+itself sees each one: it can report the chain, stop where it likes, and
+knows the address that answered last, against which the links of a page
+are resolved. `url.resolve` resolves a location as `http.request` does.
+
+```silt
+import bytes
+import http
+import map
+import result
+import url
+
+-- Where `page` ends after at most `hops` redirects, and the response
+-- there; each redirect is printed.
+fn fetch(page: url.Url, hops: Int) -> Result((url.Url, http.Response), String) {
+  let resp = http.request_once(http.GET, page, bytes.empty(), #{})
+    |> result.map_err { e -> "{e}" }?
+  let redirected = resp.status >= 300 && resp.status < 400
+  match (redirected, map.get(resp.headers, "location")) {
+    (true, Some(location)) -> {
+      when hops > 0 else {
+        return Err("too many redirects at {page}")
+      }
+      let next = url.resolve(page, location) |> result.map_err { e -> "{e}" }?
+      println("{resp.status} {page} -> {next}")
+      fetch(next, hops - 1)
+    }
+    _ -> Ok((page, resp))
+  }
+}
+
+fn main() -> Result((), String) {
+  let start = url.parse("http://127.0.0.1:8080/r/1") |> result.map_err { e -> "{e}" }?
+  let (last, resp) = fetch(start, 10)?
+  -- A link of the page is resolved against where it ended.
+  let link = url.resolve(last, "p1.html") |> result.map_err { e -> "{e}" }?
+  println("{resp.status} at {last}; its link p1.html is {link}")
+  Ok(())
+}
+```
+
+Like `http.get`, this transparently yields to the scheduler when called
+from a task.
 
 ## `http.serve`
 

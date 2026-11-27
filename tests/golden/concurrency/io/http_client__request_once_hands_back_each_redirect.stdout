@@ -1,0 +1,14 @@
+request_once, one redirect at a time:
+  301 /r/1: location /r/2 is /r/2 [moved]
+  302 /r/2: location 3 is /r/3 []
+  307 /r/3: location ../pages/p0.html is /pages/p0.html []
+  200 /pages/p0.html [<a href=p1.html>]
+  its link p1.html is /pages/p1.html
+http.get of the same URL:
+  200 [<a href=p1.html>]
+a redirect loop:
+  308 /loop: location /loop is /loop []
+  308 /loop: location /loop is /loop []
+  still redirected at /loop
+  http.get: TooManyRedirects
+  http.request: http too many redirects: more than 10

@@ -911,6 +911,7 @@ fn all_doc_fn_main_blocks_run_if_safe() {
     const DENY_SUBSTRINGS: &[&str] = &[
         // Networked — would hit the real internet in CI.
         "http.get",
+        "http.request",
         "http.post",
         "http.put",
         "http.delete",
