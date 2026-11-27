@@ -1,8 +1,18 @@
 error[type]: this call of `fib` takes a frame for every round
- --> shape__a_function_that_branches_out_is_offered_deep_first.silt:10:14
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:12:14
     |
- 10 |     false -> fib(n - 1) + fib(n - 2)
+ 12 |     false -> fib(n - 1) + fib(n - 2)
     |              ^^^^^^^^^^ this call of `fib` takes a frame for every round
   = note: not the last thing `fib` does, and `n - 1` is not a part of `n`
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn fib`
   = help: or carry the running value in a parameter, so that the call comes last
+
+error[type]: this call of `guarded` takes a frame for every round
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:17:32
+    |
+ 17 |   when n > 5 else { return 1 + guarded(n - 1) }
+    |                                ^^^^^^^^^^^^^^ this call of `guarded` takes a frame for every round
+  = note: not the last thing `guarded` does, and `n - 1` is not a part of `n`
+  = help: count with the library: `list.fold(1..n, start) { acc, i -> ... }`
+  = help: or carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn guarded`

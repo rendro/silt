@@ -1,0 +1,13 @@
+error[type]: this call of `g` takes a frame for every round
+ --> shape__a_function_another_deep_makes_pass_is_not_named.silt:9:20
+   |
+ 9 |     [_, ..] -> 1 + g(xs)
+   |                    ^^^^^ this call of `g` takes a frame for every round
+ ::: shape__a_function_another_deep_makes_pass_is_not_named.silt:16:10
+    |
+ 16 |     _ -> f([0, ..ys])
+    |          ------------ `g` calls `f` here
+  = note: not the last thing `f` does, and it passes `xs` itself, not a part of it
+  = note: `f` and `g` call each other, so they are checked together
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn f`

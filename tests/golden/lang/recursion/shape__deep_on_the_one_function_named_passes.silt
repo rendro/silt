@@ -1,0 +1,19 @@
+-- The group of shape__a_function_another_deep_makes_pass_is_not_named
+-- with `deep` on `f` alone: it passes, with no warning.
+deep fn f(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..] -> 1 + g(xs)
+  }
+}
+
+fn g(ys: List(Int)) -> Int {
+  match ys {
+    [_, _, _, ..] -> 0
+    _ -> f([0, ..ys])
+  }
+}
+
+fn main() {
+  println(f([1]))
+}

@@ -674,7 +674,10 @@ impl<'a, 'd> Walk<'a, 'd> {
                     else_body,
                 } => {
                     self.expr(expr, false);
+                    // (The else block is a branch of its own: it ends the block.)
+                    let outer_branch = self.new_branch();
                     self.expr(else_body, false);
+                    self.branch = outer_branch;
                     self.bind_matched(pattern, Some(expr));
                 }
                 Stmt::WhenBool {
@@ -682,7 +685,9 @@ impl<'a, 'd> Walk<'a, 'd> {
                     else_body,
                 } => {
                     self.expr(condition, false);
+                    let outer_branch = self.new_branch();
                     self.expr(else_body, false);
+                    self.branch = outer_branch;
                 }
                 Stmt::Expr(e) => self.expr(e, tail && i == last),
             }
@@ -1009,7 +1014,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             return;
         }
         if let Solved::Refused(best, fails) = &solved {
-            self.refuse(members, best, fails);
+            self.refuse(members, &checked, best, fails);
         }
         // A `deep` the check would not need.
         if members.iter().any(|&m| self.nodes[m].deep.is_some()) {
@@ -1105,11 +1110,18 @@ impl<'a, 'd> Walk<'a, 'd> {
         Solved::Refused(d, fails)
     }
 
-    /// E0345 for a refused group, under the choice of parameters that
-    /// breaks the rule in fewest members: one error for each member with
-    /// a call that breaks it, at the first such call. The first of the
-    /// errors names the group.
-    fn refuse(&mut self, members: &[usize], best: &[Option<usize>], fails: &[usize]) {
+    /// E0345 for a refused group (`checked`: the calls of members not
+    /// `deep`), under the choice of parameters that breaks the rule in
+    /// fewest members: one error for each member with a call that breaks
+    /// it, at the first such call, unless `deep` on the other members
+    /// named is enough. The first of the errors names the group.
+    fn refuse(
+        &mut self,
+        members: &[usize],
+        checked: &[usize],
+        best: &[Option<usize>],
+        fails: &[usize],
+    ) {
         // A member passed as a value says most, then a call inside a
         // closure, then a call; each the first in the text.
         let key = |s: usize| {
@@ -1128,6 +1140,24 @@ impl<'a, 'd> Walk<'a, 'd> {
             })
             .collect();
         firsts.sort_by_key(|&s| key(s));
+        // A member named need not be when `deep` on the others named lets
+        // the group pass (its calls then are all tail calls, say).
+        let mut k = 0;
+        while k < firsts.len() {
+            let others: Vec<usize> = (firsts.iter().enumerate())
+                .filter(|&(j, _)| j != k)
+                .map(|(_, &s)| self.sites[s].from)
+                .collect();
+            let left: Vec<usize> = (checked.iter().copied())
+                .filter(|&s| !others.contains(&self.sites[s].from))
+                .collect();
+            match self.solve(members, &left) {
+                Solved::Tail | Solved::Data(_) => {
+                    firsts.remove(k);
+                }
+                Solved::Refused(..) => k += 1,
+            }
+        }
         let errors: Vec<Diagnostic> = (firsts.iter().enumerate())
             .map(|(i, &s)| self.refused(members, best, s, i == 0))
             .collect();
@@ -1221,25 +1251,35 @@ impl<'a, 'd> Walk<'a, 'd> {
             } => {
                 let measure = d_to.and_then(|i| measures.get(i).copied().flatten());
                 // The parameter the argument is made from, or the caller's
-                // only one.
+                // only one (said when it descends on none).
                 let made_from = (d_to.and_then(|i| site.made_from.get(i).copied().flatten()))
                     .or_else(|| (from.params.len() == 1).then_some(0));
                 let not_last = format!("not the last thing `{from_name}` does");
+                // (The parameter itself only when it is the one descended on;
+                // anything else is said against that one.)
                 let label = match (&arg, measure, d_from) {
-                    (Some(arg), Some(m), _) if !m.strict => match self
-                        .param_name(site.from, m.param)
-                    {
-                        p if p == *arg => {
-                            format!("{not_last}, and it passes `{arg}` itself, not a part of it")
+                    (Some(arg), Some(m), _) if !m.strict && d_from.is_none_or(|d| d == m.param) => {
+                        match self.param_name(site.from, m.param) {
+                            p if p == *arg => {
+                                format!(
+                                    "{not_last}, and it passes `{arg}` itself, not a part of it"
+                                )
+                            }
+                            p => {
+                                format!("{not_last}, and `{arg}` is `{p}` itself, not a part of it")
+                            }
                         }
-                        p => format!("{not_last}, and `{arg}` is `{p}` itself, not a part of it"),
-                    },
-                    (Some(arg), Some(m), Some(d)) => format!(
+                    }
+                    (Some(arg), Some(m), Some(d)) if m.strict => format!(
                         "{not_last}, and `{arg}` is a part of `{}`, not of `{}`",
                         self.param_name(site.from, m.param),
                         self.param_name(site.from, d),
                     ),
-                    (Some(arg), _, _) => match made_from {
+                    (Some(arg), _, Some(d)) => format!(
+                        "{not_last}, and `{arg}` is not a part of `{}`",
+                        self.param_name(site.from, d)
+                    ),
+                    (Some(arg), _, None) => match made_from {
                         Some(p) => format!(
                             "{not_last}, and `{arg}` is not a part of `{}`",
                             self.param_name(site.from, p)

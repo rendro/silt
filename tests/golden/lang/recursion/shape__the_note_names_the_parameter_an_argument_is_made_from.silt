@@ -2,7 +2,10 @@
 -- exit: 1
 -- The note of a call that keeps a frame says what the argument is of
 -- the caller's parameters: the parameter itself, a part of another
--- parameter, something made from a parameter, or none of them.
+-- parameter, something made from a parameter, or none of them; each
+-- against the parameter the function is checked on.
+import list
+
 fn walk(xs: List(Int), n: Int) -> Int {
   match n {
     0 -> 0
@@ -34,6 +37,13 @@ fn fresh(xs: List(Int), n: Int) -> Int {
   }
 }
 
+fn two(xs: List(Int), ys: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..] -> 1 + two(list.concat(ys, xs), ys)
+  }
+}
+
 fn parse_binary(ts: List(Int), min: Int) -> Int {
   match ts {
     [] -> min
@@ -49,5 +59,5 @@ fn parse_unary(ts: List(Int)) -> Int {
 }
 
 fn main() {
-  println(walk([], 3) + zip_len([], []) + grow([], 0) + fresh([], 0) + parse_binary([1, 2], 0))
+  println(walk([], 3) + zip_len([], []) + grow([], 0) + fresh([], 0) + two([], []) + parse_binary([1, 2], 0))
 }

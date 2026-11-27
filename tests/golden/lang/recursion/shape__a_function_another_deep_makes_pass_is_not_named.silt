@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- Both functions break the rule under every choice, but `deep` on `f`
+-- leaves only `g`'s tail call, which runs in constant stack: only `f` is
+-- named (shape__deep_on_the_one_function_named_passes shows it passes).
+fn f(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..] -> 1 + g(xs)
+  }
+}
+
+fn g(ys: List(Int)) -> Int {
+  match ys {
+    [_, _, _, ..] -> 0
+    _ -> f([0, ..ys])
+  }
+}
+
+fn main() {
+  println(f([1]))
+}
