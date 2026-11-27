@@ -42,6 +42,9 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
             format!("http invalid response: {m}")
         }
         ("ClosedEarly", []) => "http connection closed before response completed".to_string(),
+        ("TooManyRedirects", []) => {
+            format!("http too many redirects: more than {REDIRECTS_MAX}")
+        }
         ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
@@ -308,9 +311,10 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 /// - TLS: `Tls(why)`. A failed handshake reaches silt as a failure of
 ///   the socket with invalid data, around an error of the TLS library;
 ///   on an `https` URL that is `Tls`.
+/// - Too many redirects: `TooManyRedirects` (the client follows them
+///   itself, [`do_http_request_on`]).
 /// - Anything else is `Other(why)`: a header name or value of the
-///   program's that is none, too many redirects, any failure of the
-///   socket not named above.
+///   program's that is none, any failure of the socket not named above.
 #[cfg(feature = "http")]
 fn http_error(error: &ureq::Error, url: &str) -> Value {
     use std::io::ErrorKind;
@@ -392,6 +396,7 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
             Value::variant(bv::HTTP_INVALID_RESPONSE, why())
         }
         Error::Tls(_) | Error::Rustls(_) | Error::Pem(_) | Error::TlsRequired => tls(),
+        Error::TooManyRedirects => Value::variant(bv::HTTP_TOO_MANY_REDIRECTS, []),
         // (A status is no failure: silt asks the library for it as a
         // response, and the library's error for one is never made.)
         _ => Value::variant(bv::HTTP_OTHER, why()),
@@ -421,45 +426,160 @@ fn finish_http_response(
     }
 }
 
-/// The client of `http.get` and `http.request`. Security: conservative
-/// default timeouts so a slow/unreachable peer cannot hang the
-/// underlying OS socket indefinitely (HIGH-3). These apply even if the
-/// silt task's SILT_IO_TIMEOUT unblocks the VM task, so we don't leak
-/// real file descriptors.
+/// The one client of the program: every `http.get`, `http.request` and
+/// `http.request_once` goes through it, so that a connection to a server
+/// that is kept after a response (keep-alive) serves the next request to
+/// that server. An idle connection is kept for 15 s, at most 3 to one
+/// server and 10 in all (ureq's pool). Security: conservative default
+/// timeouts so a slow/unreachable peer cannot hang the underlying OS
+/// socket indefinitely (HIGH-3). These apply even if the silt task's
+/// SILT_IO_TIMEOUT unblocks the VM task, so we don't leak real file
+/// descriptors.
 #[cfg(feature = "http")]
-fn client() -> Client {
-    client_with_times(Duration::from_secs(10), Duration::from_secs(60))
+fn client() -> &'static ureq::Agent {
+    static CLIENT: std::sync::LazyLock<ureq::Agent> = std::sync::LazyLock::new(|| {
+        client_with_times(Duration::from_secs(10), Duration::from_secs(60))
+    });
+    &CLIENT
 }
 
-/// The client of one call of `http.get` or `http.request`, and what its
-/// TCP connects are doing ([`Connects`]).
+/// One call of `http.get`, `http.request` or `http.request_once`: whether
+/// it was stopped ([`Call::stop`]), and the attempt it makes now. The
+/// call is the one of the thread it runs on ([`in_call`]): the
+/// connector and the connections of the client, which ureq calls on that
+/// thread, find it there.
 #[cfg(feature = "http")]
-struct Client {
-    agent: ureq::Agent,
-    connects: Arc<Connects>,
+#[derive(Default)]
+struct Call {
+    stopped: AtomicBool,
+    now: Mutex<Attempt>,
 }
 
-/// The TCP connects of a client, which the client makes itself
-/// ([`Connecting`]): their [`Shutter`], which the client's stop shuts, and
-/// whether the client was stopped. A connect that waits for its peer is
-/// shut down so (on Linux that ends it at once, see
-/// `tcp::connect_shuttered`); a connect that would begin after the stop
-/// does not begin.
+/// One request of a call on the wire: each redirect it follows is one,
+/// and so is a request sent again after a kept connection the server had
+/// closed ([`send_once`]).
+#[cfg(feature = "http")]
+#[derive(Default)]
+struct Attempt {
+    /// Its number, one of its own in the process (0: none begun).
+    id: u64,
+    /// The connection it is sent on, once it has one.
+    line: Option<Arc<Line>>,
+    /// That connection served a request before: it was kept.
+    reused: bool,
+    /// A byte of the response has come.
+    answered: bool,
+}
+
+/// The numbers of the attempts ([`Attempt::id`]).
+#[cfg(feature = "http")]
+static ATTEMPTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The socket of a connection of the client, as a stop shuts it
+/// ([`Shutter`]), and the attempt that uses the connection: a stop of
+/// a call shuts only a connection that its own attempt uses, never one
+/// that went back to the client and serves another call.
 ///
 /// [`Shutter`]: crate::runtime::handle::Shutter
 #[cfg(feature = "http")]
 #[derive(Default)]
-struct Connects {
+struct Line {
     shutter: crate::runtime::handle::Shutter,
-    stopped: AtomicBool,
+    user: Mutex<u64>,
 }
 
 #[cfg(feature = "http")]
-impl std::fmt::Debug for Connects {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Connects")
-            .field("stopped", &self.stopped)
-            .finish()
+thread_local! {
+    /// The call that runs on this thread ([`in_call`]).
+    static CALL: std::cell::RefCell<Option<Arc<Call>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `run` as the call `call` of this thread, and lets go of the
+/// call's connection after it: a stop that comes later ends nothing.
+#[cfg(feature = "http")]
+fn in_call<T>(call: &Arc<Call>, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Arc<Call>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let before = self.0.take();
+            if let Some(call) = CALL.with(|now| now.replace(before)) {
+                call.now.lock().line = None;
+            }
+        }
+    }
+    let _restore = Restore(CALL.with(|now| now.replace(Some(call.clone()))));
+    run()
+}
+
+/// Does `act` with the call of this thread, if there is one (a test may
+/// use a client of its own without one).
+#[cfg(feature = "http")]
+fn with_call<T>(act: impl FnOnce(&Call) -> T) -> Option<T> {
+    CALL.with(|now| now.borrow().as_deref().map(act))
+}
+
+#[cfg(feature = "http")]
+impl Call {
+    /// A new attempt begins: it has no connection yet.
+    fn begin(&self) {
+        let id = ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        *self.now.lock() = Attempt {
+            id,
+            ..Attempt::default()
+        };
+    }
+
+    /// The present attempt uses the connection `line`, which `served`
+    /// (the attempt it served last, 0 for none). `NotConnected` if the
+    /// call was stopped: the connection is shut then.
+    fn enlist(&self, line: &Arc<Line>, served: &mut u64) -> std::io::Result<()> {
+        let mut now = self.now.lock();
+        if now.id == *served {
+            return Ok(());
+        }
+        now.reused = *served != 0;
+        now.answered = false;
+        *served = now.id;
+        *line.user.lock() = now.id;
+        now.line = Some(line.clone());
+        if self.stopped.load(Ordering::SeqCst) {
+            line.shutter.shut();
+            return Err(std::io::ErrorKind::NotConnected.into());
+        }
+        Ok(())
+    }
+
+    /// Whether the present attempt went out on a kept connection that
+    /// ended before a byte of the response came: the server had closed
+    /// it while it was idle, and the request may be sent again.
+    fn met_a_closed_connection(&self) -> bool {
+        let now = self.now.lock();
+        now.reused && !now.answered && !self.stopped.load(Ordering::SeqCst)
+    }
+
+    /// What ends this call when nobody waits for it any more
+    /// (`Leave::Closes`): the connection its attempt uses is shut, which
+    /// ends a read, a write or a TLS handshake at once, and so is the
+    /// socket of its connect; no connect, request or redirect begins after
+    /// it. `false` while a connect is under way: whether a shutdown ends
+    /// it depends on the system (Linux: it does), and the operation counts
+    /// among those that cannot be interrupted until the connect has
+    /// returned (at once, on Linux).
+    fn stop(self: &Arc<Self>) -> impl FnOnce() -> bool + Send + 'static {
+        let call = self.clone();
+        move || {
+            call.stopped.store(true, Ordering::SeqCst);
+            let now = call.now.lock();
+            let Some(line) = &now.line else {
+                return true;
+            };
+            let user = line.user.lock();
+            let ended = !line.shutter.is_connecting();
+            if *user == now.id {
+                line.shutter.shut();
+            }
+            ended
+        }
     }
 }
 
@@ -468,10 +588,11 @@ impl std::fmt::Debug for Connects {
 /// while its connect waits is ended there, and hands ureq the connected
 /// socket ([`Connected`]). What it does besides is what ureq's (3.5)
 /// does: each resolved address in turn with its share of the connect's
-/// time ([`connect_each`]), `TCP_NODELAY` as configured.
+/// time ([`connect_each`]), `TCP_NODELAY` as configured. The new
+/// connection is the one of the attempt of the thread's call ([`Call`]).
 #[cfg(feature = "http")]
 #[derive(Debug)]
-struct Connecting(Arc<Connects>);
+struct Connecting;
 
 #[cfg(feature = "http")]
 impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Connector<In>
@@ -489,30 +610,28 @@ impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::
         if chained.is_some() {
             return Ok(chained.map(Either::A));
         }
+        let line = Arc::new(Line::default());
+        let mut served = 0;
+        // (A connect that would begin after the stop does not begin.)
+        with_call(|call| call.enlist(&line, &mut served)).transpose()?;
         let stream = connect_each(&details.addrs, details.timeout, |addr, time| {
-            // A connect that would begin after the stop does not begin.
-            if self.0.stopped.load(Ordering::SeqCst) {
-                return Err(std::io::ErrorKind::NotConnected.into());
-            }
-            super::tcp::connect_shuttered_to(addr, &self.0.shutter, time)
+            super::tcp::connect_shuttered_to(addr, &line.shutter, time)
         })?;
         if details.config.no_delay() {
             stream.set_nodelay(true)?;
         }
         let config = details.config;
-        let stream = Arc::new(stream);
         let transport = Connected {
-            stream: stream.clone(),
+            stream: Arc::new(stream),
             buffers: ureq::unversioned::transport::LazyBuffers::new(
                 config.input_buffer_size(),
                 config.output_buffer_size(),
             ),
             timeout_read: None,
             timeout_write: None,
+            line,
+            served,
         };
-        let handle: std::sync::Weak<dyn ureq::unversioned::transport::ShutdownHandle> =
-            Arc::downgrade(&stream) as _;
-        (details.register_shutdown)(handle)?;
         Ok(Some(Either::B(transport)))
     }
 }
@@ -637,15 +756,21 @@ impl std::fmt::Display for NoSuchHost {
 impl std::error::Error for NoSuchHost {}
 
 /// A connection the http client made itself ([`Connecting`]), as ureq's
-/// transport for TCP is: its buffers, the socket, shared with the
-/// client's shutdown, and the read and write timeouts it has (set only
-/// when they change).
+/// transport for TCP is: its buffers, the socket, and the read and write
+/// timeouts it has (set only when they change). Besides, what a stop
+/// shuts ([`Line`]) and the attempt it served last (0: none yet): each
+/// read and write, and the check of a kept connection that a call takes
+/// from the pool (`is_open`), enlists it in the attempt of the thread's call
+/// ([`Call::enlist`]), which so knows the connection it uses and
+/// whether that was kept.
 #[cfg(feature = "http")]
 struct Connected {
     stream: Arc<std::net::TcpStream>,
     buffers: ureq::unversioned::transport::LazyBuffers,
     timeout_read: Option<Duration>,
     timeout_write: Option<Duration>,
+    line: Arc<Line>,
+    served: u64,
 }
 
 #[cfg(feature = "http")]
@@ -701,6 +826,15 @@ fn io_of(e: std::io::Error, timeout: &ureq::unversioned::transport::NextTimeout)
 }
 
 #[cfg(feature = "http")]
+impl Connected {
+    /// Enlists the connection in the attempt of the thread's call.
+    fn enlist(&mut self) -> std::io::Result<()> {
+        let (line, served) = (&self.line, &mut self.served);
+        with_call(|call| call.enlist(line, served)).unwrap_or(Ok(()))
+    }
+}
+
+#[cfg(feature = "http")]
 impl ureq::unversioned::transport::Transport for Connected {
     fn buffers(&mut self) -> &mut dyn ureq::unversioned::transport::Buffers {
         &mut self.buffers
@@ -713,6 +847,7 @@ impl ureq::unversioned::transport::Transport for Connected {
     ) -> Result<(), ureq::Error> {
         use std::io::Write;
         use ureq::unversioned::transport::Buffers;
+        self.enlist()?;
         let timeout = timeout.for_write();
         let stream = &self.stream;
         set_timeout(&mut self.timeout_write, time_of(timeout)?, |t| {
@@ -730,6 +865,7 @@ impl ureq::unversioned::transport::Transport for Connected {
     ) -> Result<bool, ureq::Error> {
         use std::io::Read;
         use ureq::unversioned::transport::Buffers;
+        self.enlist()?;
         let timeout = timeout.for_read();
         let time = time_of(timeout)?;
         let stream = &self.stream;
@@ -763,6 +899,13 @@ impl ureq::unversioned::transport::Transport for Connected {
 
     fn is_open(&mut self) -> bool {
         use std::io::Read;
+        // ureq asks this of a kept connection when a call takes it from
+        // the pool, on that call's thread: the call uses it from now on,
+        // so that a stop of the call that used it before shuts nothing
+        // of it. (A stopped call gets no connection.)
+        if self.enlist().is_err() {
+            return false;
+        }
         // Nothing may wait to be read on a connection that is kept: a read
         // that would wait says it is open.
         if self.stream.set_nonblocking(true).is_err() {
@@ -777,27 +920,6 @@ impl ureq::unversioned::transport::Transport for Connected {
     }
 }
 
-#[cfg(feature = "http")]
-impl Client {
-    /// What ends a request of this client that nobody waits for any
-    /// more (`Leave::Closes`): the client is shut down, which ends a
-    /// read, a write or a TLS handshake at once, and so is the socket of
-    /// its connect. `false` while a connect is under way: whether a
-    /// shutdown ends it depends on the system (Linux: it does), and the
-    /// operation counts among those that cannot be interrupted until the
-    /// connect has returned (at once, on Linux).
-    fn stop(&self) -> impl FnOnce() -> bool + Send + 'static {
-        let (agent, connects) = (self.agent.clone(), self.connects.clone());
-        move || {
-            connects.stopped.store(true, Ordering::SeqCst);
-            let ended = !connects.shutter.is_connecting();
-            connects.shutter.shut();
-            agent.shutdown();
-            ended
-        }
-    }
-}
-
 /// A client whose times to connect and in all are the given ones. Every
 /// request says `user-agent: silt/<version>` and `accept-encoding:
 /// gzip`, unless the program sets that header itself: ureq sends the
@@ -805,7 +927,7 @@ impl Client {
 /// proxy, TCP, TLS) with its own TCP connector ([`Connecting`]), and its
 /// resolver ureq's, with a failed lookup marked ([`Resolving`]).
 #[cfg(feature = "http")]
-fn client_with_times(connect: Duration, global: Duration) -> Client {
+fn client_with_times(connect: Duration, global: Duration) -> ureq::Agent {
     client_resolving(
         connect,
         global,
@@ -820,7 +942,20 @@ fn client_resolving(
     connect: Duration,
     global: Duration,
     resolver: impl ureq::unversioned::resolver::Resolver,
-) -> Client {
+) -> ureq::Agent {
+    client_of(connect, global, resolver, ureq::tls::TlsConfig::default())
+}
+
+/// A client as [`client_resolving`] makes it, whose TLS is `tls`. On top
+/// of its connections, which may be TLS, it notes when the answer begins
+/// ([`Answering`]).
+#[cfg(feature = "http")]
+fn client_of(
+    connect: Duration,
+    global: Duration,
+    resolver: impl ureq::unversioned::resolver::Resolver,
+    tls: ureq::tls::TlsConfig,
+) -> ureq::Agent {
     use ureq::unversioned::transport::{ConnectProxyConnector, Connector, RustlsConnector};
     let config = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -828,16 +963,81 @@ fn client_resolving(
         .timeout_global(Some(global))
         .user_agent(format!("silt/{}", crate::VERSION))
         .accept_encoding("gzip")
+        .tls_config(tls)
         .build();
-    let connects = Arc::new(Connects::default());
     let connector =
         ().chain(ConnectProxyConnector::default())
-            .chain(Connecting(connects.clone()))
-            .chain(RustlsConnector::default());
-    let resolver = Resolving(resolver);
-    Client {
-        agent: ureq::Agent::with_parts(config, connector, resolver),
-        connects,
+            .chain(Connecting)
+            .chain(RustlsConnector::default())
+            .chain(Answering);
+    ureq::Agent::with_parts(config, connector, Resolving(resolver))
+}
+
+/// The top of the connector of the http client: it hands up the
+/// connection made below it (TCP, and TLS on it for `https`), noting in
+/// the attempt of the thread's call when a byte of the answer comes
+/// ([`Answered`]).
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct Answering;
+
+#[cfg(feature = "http")]
+impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Connector<In>
+    for Answering
+{
+    type Out = Answered<In>;
+
+    fn connect(
+        &self,
+        _details: &ureq::unversioned::transport::ConnectionDetails,
+        chained: Option<In>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        Ok(chained.map(Answered))
+    }
+}
+
+/// A connection of the client as ureq reads the answer from it: what it
+/// reads is the answer itself, above TLS. A byte of it that comes says
+/// so in the attempt of the thread's call ([`Attempt::answered`]); the
+/// records of TLS below it do not (a server that closes a kept
+/// connection sends one, `close_notify`, and no answer).
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct Answered<T>(T);
+
+#[cfg(feature = "http")]
+impl<T: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Transport
+    for Answered<T>
+{
+    fn buffers(&mut self) -> &mut dyn ureq::unversioned::transport::Buffers {
+        self.0.buffers()
+    }
+
+    fn transmit_output(
+        &mut self,
+        amount: usize,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<(), ureq::Error> {
+        self.0.transmit_output(amount, timeout)
+    }
+
+    fn await_input(
+        &mut self,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<bool, ureq::Error> {
+        let came = self.0.await_input(timeout)?;
+        if came {
+            with_call(|call| call.now.lock().answered = true);
+        }
+        Ok(came)
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.0.is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        self.0.is_tls()
     }
 }
 
@@ -856,7 +1056,6 @@ fn url_of(text: &str) -> Url {
 
 /// How many redirects `http.get` and `http.request` follow, as many as
 /// ureq would.
-#[cfg(feature = "http")]
 const REDIRECTS_MAX: usize = 10;
 
 /// Test-only: a request as `http.request` makes it, with a client of
@@ -868,11 +1067,15 @@ fn do_http_request(
     body: &[u8],
     headers: &[(String, String)],
 ) -> Value {
-    do_http_request_on(&client().agent, method_tag, &url_of(url), body, headers)
+    let agent = client_with_times(Duration::from_secs(10), Duration::from_secs(60));
+    let call = Arc::new(Call::default());
+    do_http_request_on(&agent, &call, method_tag, &url_of(url), body, headers, true)
 }
 
-/// Perform a synchronous HTTP request with the client `agent` and
-/// return a `Value`.
+/// Perform a synchronous HTTP request with the client `agent` as the
+/// call `call`, and return a `Value`. It follows the redirects it gets
+/// if `follow` (`http.get`, `http.request`); otherwise a redirect is
+/// the response (`http.request_once`).
 ///
 /// The request follows redirects itself, because ureq does not send a
 /// body again: a 303 goes on as a GET without a body (a HEAD stays a
@@ -886,17 +1089,35 @@ fn do_http_request(
 /// body's own length is (an empty body of a method that takes none by
 /// default has none).
 ///
-/// A shutdown of `agent` (`ureq::Agent::shutdown`, from another thread)
-/// ends the request: a read or a write it waits in, a TLS handshake,
-/// the next redirect. A connect under way runs on to its end (at most
-/// the connect time of [`client`]), and the request ends after it.
+/// A stop of `call` ([`Call::stop`], from another thread) ends the
+/// request: a read or a write it waits in, a TLS handshake, the next
+/// redirect. A connect under way runs on to its end (at most the connect
+/// time of [`client`]), and the request ends after it.
 #[cfg(feature = "http")]
 fn do_http_request_on(
     agent: &ureq::Agent,
+    call: &Arc<Call>,
     method_tag: &str,
     url: &Url,
     body: &[u8],
     headers: &[(String, String)],
+    follow: bool,
+) -> Value {
+    in_call(call, || {
+        request_hops(agent, call, method_tag, url, body, headers, follow)
+    })
+}
+
+/// [`do_http_request_on`] in its call.
+#[cfg(feature = "http")]
+fn request_hops(
+    agent: &ureq::Agent,
+    call: &Call,
+    method_tag: &str,
+    url: &Url,
+    body: &[u8],
+    headers: &[(String, String)],
+    follow: bool,
 ) -> Value {
     if !matches!(
         method_tag,
@@ -942,8 +1163,11 @@ fn do_http_request_on(
         if sent_url.as_str().len() > URL_MAX {
             return invalid_url(cut_short(&url.to_string()));
         }
-        let result = send_request(agent, method, sent_url.as_str(), body, &sent);
+        let result = send_once(agent, call, method, sent_url.as_str(), body, &sent);
         let shown = url.to_string();
+        if !follow {
+            return finish_http_response(result, &shown, method == "HEAD");
+        }
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &shown, method == "HEAD");
         };
@@ -978,9 +1202,73 @@ fn do_http_request_on(
                 .iter()
                 .any(|credential| key.eq_ignore_ascii_case(credential))
         });
+        if let Ok(mut response) = result {
+            drain(&mut response);
+        }
         url = next;
     }
-    finish_http_response(Err(ureq::Error::TooManyRedirects), &url.to_string(), false)
+    Value::variant(bv::ERR, [Value::variant(bv::HTTP_TOO_MANY_REDIRECTS, [])])
+}
+
+/// Reads the body of a redirect that is followed, when it says it is
+/// short (its `content-length` at most 64 KiB), so that its connection
+/// is kept for the next request; a body of another length closes it.
+#[cfg(feature = "http")]
+fn drain(response: &mut ureq::http::Response<ureq::Body>) {
+    let short = response
+        .headers()
+        .get("content-length")
+        .and_then(|length| length.to_str().ok())
+        .and_then(|length| length.trim().parse::<u64>().ok())
+        .is_some_and(|length| length <= 64 * 1024);
+    if short {
+        let _ = std::io::copy(&mut response.body_mut().as_reader(), &mut std::io::sink());
+    }
+}
+
+/// Sends one request of `call` ([`send_request`]) as a new attempt. A
+/// request of a method that may be sent twice (GET, HEAD, PUT, DELETE,
+/// OPTIONS: idempotent, RFC 9110) that went out on a kept connection
+/// which ended before a byte of the response came is sent once more, on
+/// a new connection: the server had closed the connection while it was
+/// idle, and the client saw it too late. A POST or a PATCH is not: the
+/// server may have acted on it before it closed.
+#[cfg(feature = "http")]
+fn send_once(
+    agent: &ureq::Agent,
+    call: &Call,
+    method: &str,
+    url: &str,
+    body: &[u8],
+    headers: &[(&str, &str)],
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    call.begin();
+    let result = send_request(agent, method, url, body, headers, false);
+    let idempotent = matches!(method, "GET" | "HEAD" | "PUT" | "DELETE" | "OPTIONS");
+    match &result {
+        Err(e) if idempotent && ended_unanswered(e) && call.met_a_closed_connection() => {
+            call.begin();
+            send_request(agent, method, url, body, headers, true)
+        }
+        _ => result,
+    }
+}
+
+/// Whether `error` is the end of the connection (it was closed, or
+/// reset).
+#[cfg(feature = "http")]
+fn ended_unanswered(error: &ureq::Error) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        error,
+        ureq::Error::Io(io) if matches!(
+            io.kind(),
+            ErrorKind::UnexpectedEof
+                | ErrorKind::ConnectionReset
+                | ErrorKind::ConnectionAborted
+                | ErrorKind::BrokenPipe
+        )
+    )
 }
 
 /// The longest URL the transport sends: its reader of URLs takes no
@@ -1031,7 +1319,8 @@ fn basic_of_url(url: &Url) -> Result<Option<String>, ()> {
 /// method sends the body, with its length; an empty body sends
 /// nothing, not even a length for the methods that take none by
 /// default (GET, DELETE, HEAD, OPTIONS: ureq makes them take one with
-/// `force_send_body`).
+/// `force_send_body`). A `new` request takes no kept connection: it
+/// makes one (and the kept connections to its server are let go of).
 #[cfg(feature = "http")]
 fn send_request(
     agent: &ureq::Agent,
@@ -1039,18 +1328,24 @@ fn send_request(
     url: &str,
     body: &[u8],
     headers: &[(&str, &str)],
+    new: bool,
 ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
     fn headed<B>(
         mut req: ureq::RequestBuilder<B>,
         headers: &[(&str, &str)],
+        new: bool,
     ) -> ureq::RequestBuilder<B> {
         for (key, val) in headers {
             req = req.header(*key, *val);
         }
-        req.config().max_redirects(0).build()
+        let config = req.config().max_redirects(0);
+        match new {
+            true => config.max_idle_age(Duration::ZERO).build(),
+            false => config.build(),
+        }
     }
     let with_body = |req: ureq::RequestBuilder<ureq::typestate::WithBody>| {
-        let req = headed(req, headers);
+        let req = headed(req, headers, new);
         if body.is_empty() {
             req.send_empty()
         } else {
@@ -1058,7 +1353,7 @@ fn send_request(
         }
     };
     let without_body = |req: ureq::RequestBuilder<ureq::typestate::WithoutBody>| {
-        let req = headed(req, headers);
+        let req = headed(req, headers, new);
         if body.is_empty() {
             req.call()
         } else {
@@ -2426,6 +2721,15 @@ impl Drop for Serve {
     }
 }
 
+/// The headers of a request as the program gave them.
+#[cfg(feature = "http")]
+fn header_pairs(headers: Map) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
+        .collect()
+}
+
 /// A `Method` argument: its name (`GET`).
 #[cfg(feature = "http")]
 struct Method<'a>(&'a str);
@@ -2448,22 +2752,31 @@ builtins! {
         let url = Url::clone(u);
         // A request that nobody waits for any more (cancelled, ended
         // by its deadline) is ended: its client is shut down.
-        let client = client();
-        vm.io("http", http_timeout_err, Leave::closes(client.stop()), move |_| {
-            do_http_request_on(&client.agent, "GET", &url, &[], &[])
+        let call = Arc::new(Call::default());
+        vm.io("http", http_timeout_err, Leave::closes(call.stop()), move |_| {
+            do_http_request_on(client(), &call, "GET", &url, &[], &[], true)
         })
     }
 
     #[cfg(feature = "http")]
     fn request(vm, method: Method, u: typed::Url, body: Bytes, headers: Map) -> Result<Step, VmError> {
         let (method, url, body) = (method.0.to_string(), Url::clone(u), body.clone());
-        let headers: Vec<(String, String)> = headers
-            .iter()
-            .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
-            .collect();
-        let client = client();
-        vm.io("http", http_timeout_err, Leave::closes(client.stop()), move |_| {
-            do_http_request_on(&client.agent, &method, &url, &body, &headers)
+        let headers = header_pairs(headers);
+        let call = Arc::new(Call::default());
+        vm.io("http", http_timeout_err, Leave::closes(call.stop()), move |_| {
+            do_http_request_on(client(), &call, &method, &url, &body, &headers, true)
+        })
+    }
+
+    // One request, whose answer is the response, a redirect too: the
+    // program follows a redirect itself if it likes.
+    #[cfg(feature = "http")]
+    fn request_once(vm, method: Method, u: typed::Url, body: Bytes, headers: Map) -> Result<Step, VmError> {
+        let (method, url, body) = (method.0.to_string(), Url::clone(u), body.clone());
+        let headers = header_pairs(headers);
+        let call = Arc::new(Call::default());
+        vm.io("http", http_timeout_err, Leave::closes(call.stop()), move |_| {
+            do_http_request_on(client(), &call, &method, &url, &body, &headers, false)
         })
     }
 
@@ -2876,7 +3189,7 @@ mod http_error_tests {
     /// A client whose times are `ms`, so that a test of a timeout does
     /// not wait for the times of `http.get`.
     fn agent(ms: u64) -> ureq::Agent {
-        client_with_times(Duration::from_millis(ms), Duration::from_millis(ms)).agent
+        client_with_times(Duration::from_millis(ms), Duration::from_millis(ms))
     }
 
     /// The URL of a server that takes one connection, reads what the
@@ -2903,6 +3216,7 @@ mod http_error_tests {
             (bv::HTTP_INVALID_URL, "InvalidUrl"),
             (bv::HTTP_INVALID_RESPONSE, "InvalidResponse"),
             (bv::HTTP_CLOSED_EARLY, "ClosedEarly"),
+            (bv::HTTP_TOO_MANY_REDIRECTS, "TooManyRedirects"),
             (bv::HTTP_OTHER, "Other"),
         ];
         let Value::Variant(result) = value else {
@@ -3697,7 +4011,7 @@ mod connect_each_tests {
             Resolves(vec![dead, live_addr]),
         );
         let started = std::time::Instant::now();
-        let got = client.agent.get("http://two.test/").call();
+        let got = client.get("http://two.test/").call();
         let took = started.elapsed();
         let mut response = got.expect("the second address answers");
         assert_eq!(response.status(), 200);
@@ -3708,5 +4022,451 @@ mod connect_each_tests {
         // The first address had its share, 1 s of the 1.5 s.
         assert!(took >= Duration::from_millis(900), "{took:?}");
         drop(held);
+    }
+}
+
+/// The client keeps a connection that the server keeps, and sends the
+/// next request to that server on it; a kept connection that the server
+/// closed is given up for a new one, and a request that went out on it
+/// unanswered is sent once more. Every server here is a thread on the
+/// loopback interface that does with each connection what its script
+/// says.
+#[cfg(all(test, feature = "http"))]
+mod keep_alive_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    /// What a server does with one request of a connection.
+    #[derive(Clone, Copy)]
+    enum Reply {
+        /// Answers `200` with this body, and keeps the connection.
+        Answer(&'static str),
+        /// Answers, and closes the connection without saying so.
+        AnswerAndClose(&'static str),
+        /// Reads the request and closes the connection without a word.
+        Close,
+        /// Reads the request and answers nothing for 30 s.
+        Hold,
+    }
+
+    /// A server whose `n`th connection does with its requests what the
+    /// `n`th script says (one past the scripts is closed at once), and
+    /// the request lines that each connection got.
+    struct Server {
+        url: String,
+        got: Arc<Mutex<Vec<Vec<String>>>>,
+    }
+
+    impl Server {
+        fn new(scripts: Vec<Vec<Reply>>) -> Server {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+            let url = format!("http://{}/", listener.local_addr().expect("its address"));
+            let got: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
+            let seen = got.clone();
+            std::thread::spawn(move || {
+                for (n, stream) in listener.incoming().enumerate() {
+                    let Ok(stream) = stream else { return };
+                    seen.lock().push(Vec::new());
+                    let script = scripts.get(n).cloned().unwrap_or_default();
+                    let seen = seen.clone();
+                    std::thread::spawn(move || serve(stream, &script, n, &seen));
+                }
+            });
+            Server { url, got }
+        }
+
+        /// How many connections the server took.
+        fn connections(&self) -> usize {
+            self.got.lock().len()
+        }
+
+        /// The request lines that each connection got.
+        fn requests(&self) -> Vec<Vec<String>> {
+            self.got.lock().clone()
+        }
+    }
+
+    fn serve(mut stream: TcpStream, script: &[Reply], n: usize, seen: &Mutex<Vec<Vec<String>>>) {
+        for reply in script {
+            let Some(line) = read_request(&mut stream) else {
+                return;
+            };
+            seen.lock()[n].push(line);
+            let answer = |body: &str| {
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            match *reply {
+                Reply::Answer(body) => {
+                    let _ = stream.write_all(answer(body).as_bytes());
+                }
+                Reply::AnswerAndClose(body) => {
+                    let _ = stream.write_all(answer(body).as_bytes());
+                    return;
+                }
+                Reply::Close => return,
+                Reply::Hold => {
+                    std::thread::sleep(Duration::from_secs(30));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// The request line of the next request of `stream`, read whole with
+    /// its body (of a `content-length`); `None` at the end of the
+    /// connection.
+    fn read_request(stream: &mut TcpStream) -> Option<String> {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            match stream.read(&mut byte) {
+                Ok(1) => head.push(byte[0]),
+                _ => return None,
+            }
+        }
+        let head = String::from_utf8_lossy(&head).into_owned();
+        let length = head
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let mut body = vec![0u8; length];
+        stream.read_exact(&mut body).ok()?;
+        head.lines().next().map(str::to_string)
+    }
+
+    /// A client of its own, as the program's is.
+    fn agent() -> ureq::Agent {
+        client_with_times(Duration::from_secs(5), Duration::from_secs(10))
+    }
+
+    /// What `method` of `url` with `body` comes to, as a call of its
+    /// own of `agent`.
+    fn ask(agent: &ureq::Agent, call: &Arc<Call>, method: &str, url: &str, body: &[u8]) -> String {
+        let got = do_http_request_on(agent, call, method, &url_of(url), body, &[], true);
+        answered(&got)
+    }
+
+    /// The body of the response in `got`, or the failure.
+    fn answered(got: &Value) -> String {
+        match got {
+            Value::Variant(result) if result.is(bv::OK) => match result.fields() {
+                [response] => match extract_http_response(response) {
+                    Ok((_, body, _)) => String::from_utf8_lossy(body).into_owned(),
+                    Err(e) => format!("no response: {e:?}"),
+                },
+                _ => format!("no response: {got}"),
+            },
+            _ => http_error_tests::failure(got),
+        }
+    }
+
+    fn get(agent: &ureq::Agent, url: &str) -> String {
+        ask(agent, &Arc::new(Call::default()), "GET", url, &[])
+    }
+
+    #[test]
+    fn requests_to_one_server_go_on_one_connection() {
+        let server = Server::new(vec![vec![Reply::Answer("ok"); 6]]);
+        let agent = agent();
+        let call = || Arc::new(Call::default());
+        for _ in 0..3 {
+            assert_eq!(get(&agent, &server.url), "ok");
+        }
+        assert_eq!(ask(&agent, &call(), "POST", &server.url, b"abc"), "ok");
+        assert_eq!(ask(&agent, &call(), "PUT", &server.url, b""), "ok");
+        let once = do_http_request_on(
+            &agent,
+            &call(),
+            "GET",
+            &url_of(&server.url),
+            &[],
+            &[],
+            false,
+        );
+        assert_eq!(answered(&once), "ok");
+        assert_eq!(server.connections(), 1, "{:?}", server.requests());
+    }
+
+    /// A server that closes a kept connection while it is idle (here
+    /// after one answer, without saying so): the next request sees it
+    /// closed and goes on a new one.
+    #[test]
+    fn a_kept_connection_the_server_closed_while_idle_is_given_up() {
+        let server = Server::new(vec![
+            vec![Reply::AnswerAndClose("one")],
+            vec![Reply::Answer("two")],
+        ]);
+        let agent = agent();
+        assert_eq!(get(&agent, &server.url), "one");
+        // The server's close has arrived.
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(get(&agent, &server.url), "two");
+        assert_eq!(server.connections(), 2);
+    }
+
+    /// A server that closes a kept connection just as the next request
+    /// goes out on it, before a byte of the answer: a request of a method
+    /// that may be sent twice is sent once more, on a new connection.
+    #[test]
+    fn a_request_that_meets_a_kept_connection_closed_is_sent_again_on_a_new_one() {
+        for method in ["GET", "PUT", "DELETE", "OPTIONS"] {
+            let server = Server::new(vec![
+                vec![Reply::Answer("one"), Reply::Close],
+                vec![Reply::Answer("two")],
+            ]);
+            let agent = agent();
+            let call = || Arc::new(Call::default());
+            assert_eq!(ask(&agent, &call(), method, &server.url, b"abc"), "one");
+            assert_eq!(ask(&agent, &call(), method, &server.url, b"abc"), "two");
+            let line = format!("{method} / HTTP/1.1");
+            assert_eq!(
+                server.requests(),
+                vec![vec![line.clone(), line.clone()], vec![line]],
+                "{method}"
+            );
+        }
+    }
+
+    /// A POST or a PATCH that meets a kept connection closed so is not
+    /// sent again: the server may have acted on it. It is `ClosedEarly`.
+    #[test]
+    fn a_post_or_patch_that_meets_a_kept_connection_closed_is_closed_early() {
+        for method in ["POST", "PATCH"] {
+            let server = Server::new(vec![
+                vec![Reply::Answer("one"), Reply::Close],
+                vec![Reply::Answer("two")],
+            ]);
+            let agent = agent();
+            let call = || Arc::new(Call::default());
+            assert_eq!(ask(&agent, &call(), method, &server.url, b"abc"), "one");
+            assert_eq!(
+                ask(&agent, &call(), method, &server.url, b"abc"),
+                "ClosedEarly"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+            let line = format!("{method} / HTTP/1.1");
+            assert_eq!(
+                server.requests(),
+                vec![vec![line.clone(), line]],
+                "{method}"
+            );
+        }
+    }
+
+    /// The same over TLS: a server that closes a kept connection as the
+    /// next request goes out sends `close_notify` before it closes, a
+    /// record of TLS and no byte of the answer, so the request is sent
+    /// once more as over plain http. The client takes the server's
+    /// self-signed certificate (verification off, in this test only).
+    #[test]
+    #[cfg(feature = "tcp-tls")]
+    fn a_kept_https_connection_closed_with_close_notify_is_sent_again() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("a certificate");
+        let chain = vec![CertificateDer::from(cert.cert.der().to_vec())];
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
+        let config = Arc::new(
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(chain, key)
+                .expect("a server config"),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let url = format!("https://{}/", listener.local_addr().expect("its address"));
+        let got: Arc<Mutex<Vec<usize>>> = Arc::default();
+        let seen = got.clone();
+        std::thread::spawn(move || {
+            for (n, stream) in listener.incoming().enumerate() {
+                let Ok(stream) = stream else { return };
+                let conn = rustls::ServerConnection::new(config.clone()).expect("a connection");
+                let mut tls = rustls::StreamOwned::new(conn, stream);
+                seen.lock().push(0);
+                // The first connection answers one request and closes
+                // with close_notify when the second has come; the next
+                // answers.
+                let replies: &[Option<&str>] = match n {
+                    0 => &[Some("one"), None],
+                    _ => &[Some("two")],
+                };
+                for reply in replies {
+                    if read_tls_request(&mut tls).is_none() {
+                        break;
+                    }
+                    seen.lock()[n] += 1;
+                    match reply {
+                        Some(body) => {
+                            let answer = format!(
+                                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = tls.write_all(answer.as_bytes());
+                            let _ = tls.flush();
+                        }
+                        None => {
+                            tls.conn.send_close_notify();
+                            let _ = tls.flush();
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let tls = ureq::tls::TlsConfig::builder()
+            .disable_verification(true)
+            .build();
+        let agent = client_of(
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            ureq::unversioned::resolver::DefaultResolver::default(),
+            tls,
+        );
+        assert_eq!(get(&agent, &url), "one");
+        assert_eq!(get(&agent, &url), "two");
+        assert_eq!(*got.lock(), vec![2, 1]);
+    }
+
+    /// The head of the next request of `tls`; `None` at its end.
+    #[cfg(feature = "tcp-tls")]
+    fn read_tls_request(tls: &mut impl Read) -> Option<()> {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            match tls.read(&mut byte) {
+                Ok(1) => head.push(byte[0]),
+                _ => return None,
+            }
+        }
+        Some(())
+    }
+
+    /// The request is sent again once: a new connection that ends
+    /// unanswered too is the failure.
+    #[test]
+    fn a_request_is_sent_again_once_only() {
+        let server = Server::new(vec![
+            vec![Reply::Answer("one"), Reply::Close],
+            vec![Reply::Close],
+            vec![Reply::Answer("three")],
+        ]);
+        let agent = agent();
+        assert_eq!(get(&agent, &server.url), "one");
+        assert_eq!(get(&agent, &server.url), "ClosedEarly");
+        assert_eq!(server.connections(), 2);
+    }
+
+    /// A new connection that ends before its answer is not sent again:
+    /// only a kept one may have been closed while it was idle.
+    #[test]
+    fn a_request_on_a_new_connection_is_not_sent_again() {
+        let server = Server::new(vec![vec![Reply::Close], vec![Reply::Answer("two")]]);
+        assert_eq!(get(&agent(), &server.url), "ClosedEarly");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(server.connections(), 1);
+    }
+
+    /// A stop of a call ends its request on a kept connection at once,
+    /// and the client goes on with a new connection.
+    #[test]
+    fn a_stop_ends_a_request_on_a_kept_connection() {
+        let server = Server::new(vec![
+            vec![Reply::Answer("one"), Reply::Hold],
+            vec![Reply::Answer("three")],
+        ]);
+        let agent = agent();
+        assert_eq!(get(&agent, &server.url), "one");
+        let call = Arc::new(Call::default());
+        let stop = call.stop();
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            stop()
+        });
+        let started = std::time::Instant::now();
+        let got = ask(&agent, &call, "GET", &server.url, &[]);
+        assert!(started.elapsed() < Duration::from_secs(4), "{got}");
+        assert!(
+            stopper.join().expect("the stop"),
+            "the stop ended the request"
+        );
+        assert_ne!(got, "one");
+        assert_eq!(get(&agent, &server.url), "three");
+    }
+
+    /// A call that takes a kept connection from the pool uses it from that
+    /// moment: a stop of the call that used it before, coming while that
+    /// call still names it, shuts nothing of it. Here the connection is
+    /// checked out by call B (ureq's check, `is_open`) before it writes,
+    /// and A's stop comes in between.
+    #[test]
+    fn a_connection_taken_from_the_pool_is_the_taker_s_at_once() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let near = TcpStream::connect(listener.local_addr().unwrap()).expect("a connection");
+        let (_far, _) = listener.accept().expect("accepted");
+        let mut conn = Connected {
+            stream: Arc::new(near),
+            buffers: ureq::unversioned::transport::LazyBuffers::new(1024, 1024),
+            timeout_read: None,
+            timeout_write: None,
+            line: Arc::new(Line::default()),
+            served: 0,
+        };
+        let (a, b) = (Arc::new(Call::default()), Arc::new(Call::default()));
+        in_call(&a, || {
+            a.begin();
+            conn.enlist().expect("A uses the connection");
+            // A's request is done; B takes the connection from the pool.
+            in_call(&b, || {
+                b.begin();
+                assert!(
+                    ureq::unversioned::transport::Transport::is_open(&mut conn),
+                    "open"
+                );
+            });
+            assert_eq!(*conn.line.user.lock(), b.now.lock().id, "B uses it");
+            // A's stop, while A still names the connection.
+            assert!(a.stop()());
+        });
+        assert!(!conn.line.shutter.is_shut(), "A's stop shut B's connection");
+    }
+
+    /// The same through the client: call A's request is done and its
+    /// connection back in the pool while A still names it; call B takes
+    /// it for a request that the server answers after a while; A's stop
+    /// in that while leaves B its answer.
+    #[test]
+    fn a_stop_of_one_call_leaves_the_next_call_its_connection() {
+        let server = Server::new(vec![vec![Reply::Answer("one"), Reply::Answer("two")]]);
+        let agent = Arc::new(agent());
+        let a = Arc::new(Call::default());
+        in_call(&a, || {
+            let got = request_hops(&agent, &a, "GET", &url_of(&server.url), &[], &[], true);
+            assert_eq!(answered(&got), "one");
+            let (agent, url) = (agent.clone(), server.url.clone());
+            let b = std::thread::spawn(move || get(&agent, &url));
+            std::thread::sleep(Duration::from_millis(100));
+            a.stop()();
+            assert_eq!(b.join().expect("B"), "two");
+        });
+        assert_eq!(server.connections(), 1);
+    }
+
+    /// A stop that comes after its call has ended (nobody took the value)
+    /// does not shut the connection, which went back to the client and
+    /// serves the next call.
+    #[test]
+    fn a_stop_after_its_call_leaves_the_connection_to_the_next() {
+        let server = Server::new(vec![vec![Reply::Answer("one"), Reply::Answer("two")]]);
+        let agent = agent();
+        let call = Arc::new(Call::default());
+        assert_eq!(ask(&agent, &call, "GET", &server.url, &[]), "one");
+        assert!(call.stop()());
+        assert_eq!(get(&agent, &server.url), "two");
+        assert_eq!(server.connections(), 1);
     }
 }

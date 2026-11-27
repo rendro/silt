@@ -703,7 +703,9 @@ pub mod bv {
     pub(crate) const HTTP_INVALID_URL: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 3);
     pub(crate) const HTTP_INVALID_RESPONSE: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 4);
     pub(crate) const HTTP_CLOSED_EARLY: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 5);
-    pub(crate) const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 6);
+    pub(crate) const HTTP_TOO_MANY_REDIRECTS: BuiltinVariant =
+        BuiltinVariant::new(ty::HTTP_ERROR, 6);
+    pub(crate) const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 7);
     pub(crate) const REGEX_INVALID_PATTERN: BuiltinVariant =
         BuiltinVariant::new(ty::REGEX_ERROR, 0);
     pub(crate) const REGEX_TOO_BIG: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 1);
@@ -1037,6 +1039,7 @@ mod tests {
             (bv::HTTP_INVALID_URL, "InvalidUrl"),
             (bv::HTTP_INVALID_RESPONSE, "InvalidResponse"),
             (bv::HTTP_CLOSED_EARLY, "ClosedEarly"),
+            (bv::HTTP_TOO_MANY_REDIRECTS, "TooManyRedirects"),
             (bv::HTTP_OTHER, "Other"),
             (bv::REGEX_INVALID_PATTERN, "InvalidPattern"),
             (bv::REGEX_TOO_BIG, "TooBig"),

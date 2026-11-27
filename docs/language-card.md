@@ -737,9 +737,10 @@ time.weekday(date: Date) -> Weekday
 type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }
 type Response { status: Int, body: Bytes, headers: Map(String, String) }
 type Request { method: Method, url: Url, headers: Map(String, String), body: Bytes, peer: String }
-type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, Other(String) }
+type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, TooManyRedirects, Other(String) }
 http.get(u: Url) -> Result(Response, HttpError)  -- cargo feature `http`
 http.request(method: Method, u: Url, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)  -- cargo feature `http`
+http.request_once(method: Method, u: Url, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)  -- cargo feature `http`
 http.serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()  -- cargo feature `http`
 ```
 

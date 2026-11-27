@@ -1,0 +1,57 @@
+-- timeout: 30
+-- requires-feature: http
+-- The client keeps a connection that the server keeps: every request
+-- of the program to one server goes on one connection, so the server
+-- sees one peer, whatever the function and the method. A server that
+-- closes its idle connections (here: it is stopped, and served again on
+-- the same listener) is reached on a new one.
+import bytes
+import http
+import list
+import result
+import set
+import task
+import tcp
+import url
+
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("not text")
+}
+
+-- Each answer is the address of the client's end of the connection.
+fn answer(req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string(req.peer), headers: #{} }
+}
+
+fn peer(got: Result(http.Response, http.HttpError)) -> String {
+  match got {
+    Ok(resp) -> text(resp.body)
+    Err(e) -> "{e}"
+  }
+}
+
+-- The peers that the server saw for ten requests of every kind.
+fn ask(home: url.Url) -> List(String) {
+  let gets = list.map(1..10) { _ -> peer(http.get(home)) }
+  let posts = list.map(1..5) { _ ->
+    peer(http.request(http.POST, home, bytes.from_string("abc"), #{}))
+  }
+  let once = peer(http.request_once(http.DELETE, home, bytes.empty(), #{}))
+  list.append(list.concat(gets, posts), once)
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  when let Ok(home) = url.parse("http://127.0.0.1:{tcp.local_port(listener)}/") else {
+    panic("no URL")
+  }
+  let first = task.background([{ -> http.serve(listener, answer) }]) { -> ask(home) }
+  let again = task.background([{ -> http.serve(listener, answer) }]) { -> ask(home) }
+  let seen = set.from_list(first)
+  println("first server: {list.length(first)} requests from {set.length(seen)} peer(s)")
+  let seen_again = set.from_list(again)
+  println("served again: {list.length(again)} requests from {set.length(seen_again)} peer(s)")
+  println("the same peer as before: {set.length(set.intersection(seen, seen_again)) > 0}")
+}

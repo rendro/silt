@@ -38,4 +38,4 @@ HEAD /303
   the handler: HEAD /echo [], without authorization
   the client:  200 []
 POST /loop
-  the client: too many redirects
+  the client: http too many redirects: more than 10

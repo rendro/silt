@@ -106,6 +106,7 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `InvalidUrl(String)` | url, its user and password hidden | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes, or has a user with a `:`; or a redirect leads to a location that is no URL or has such a scheme |
 | `InvalidResponse(String)` | message | what the server sent is no HTTP, or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete |
+| `TooManyRedirects` | — | `http.get` or `http.request` was redirected more than ten times |
 | `Other(String)` | message | unclassified transport error |
 
 ### `TcpError` (requires `import tcp`)

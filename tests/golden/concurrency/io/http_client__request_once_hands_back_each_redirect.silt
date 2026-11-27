@@ -1,0 +1,108 @@
+-- timeout: 30
+-- requires-feature: http
+-- `http.request_once` sends one request and hands back a redirect as it
+-- came, its location as the server wrote it and its body: a program that
+-- follows redirects itself sees each one and where the chain ends, and
+-- resolves the links of the last page against that address. `http.get`
+-- follows the same chain to the same page. A redirect loop is
+-- `TooManyRedirects` for `http.get` and `http.request`.
+import bytes
+import http
+import map
+import result
+import task
+import tcp
+import url
+
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("not text")
+}
+
+fn moved(status: Int, location: String, body: String) -> http.Response {
+  http.Response {
+    status: status,
+    body: bytes.from_string(body),
+    headers: #{ "location": location },
+  }
+}
+
+fn answer(req: http.Request) -> http.Response {
+  match url.segments(req.url) {
+    ["r", "1"] -> moved(301, "/r/2", "moved")
+    ["r", "2"] -> moved(302, "3", "")
+    ["r", "3"] -> moved(307, "../pages/p0.html", "")
+    ["loop"] -> moved(308, "/loop", "")
+    _ -> http.Response {
+      status: 200,
+      body: bytes.from_string("<a href=p1.html>"),
+      headers: #{},
+    }
+  }
+}
+
+-- Where `page` ends after at most `hops` redirects, and its response.
+fn follow(page: url.Url, hops: Int) -> Result((url.Url, http.Response), String) {
+  let resp = http.request_once(http.GET, page, bytes.empty(), #{})
+    |> result.map_err { e -> "{e}" }?
+  match map.get(resp.headers, "location") {
+    Some(location) -> {
+      when hops > 0 else {
+        return Err("still redirected at {url.path(page)}")
+      }
+      let next = url.resolve(page, location) |> result.map_err { e -> "{e}" }?
+      println(
+        "  {resp.status} {url.path(page)}: location {location} is {url.path(next)} [{text(resp.body)}]",
+      )
+      follow(next, hops - 1)
+    }
+    None -> Ok((page, resp))
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  when let Ok(u) = url.parse(text) else {
+    panic("no URL: {text}")
+  }
+  u
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let link = "http://127.0.0.1:{tcp.local_port(listener)}"
+  task.background([{ -> http.serve(listener, answer) }]) { ->
+    let start = url_of("{link}/r/1")
+    println("request_once, one redirect at a time:")
+    match follow(start, 5) {
+      Ok((last, resp)) -> {
+        println("  {resp.status} {url.path(last)} [{text(resp.body)}]")
+        match url.resolve(last, "p1.html") {
+          Ok(next) -> println("  its link p1.html is {url.path(next)}")
+          Err(e) -> println("  {e}")
+        }
+      }
+      Err(e) -> println("  {e}")
+    }
+    println("http.get of the same URL:")
+    match http.get(start) {
+      Ok(resp) -> println("  {resp.status} [{text(resp.body)}]")
+      Err(e) -> println("  {e}")
+    }
+    println("a redirect loop:")
+    let looping = url_of("{link}/loop")
+    match follow(looping, 2) {
+      Ok(_) -> println("  ended")
+      Err(e) -> println("  {e}")
+    }
+    match http.get(looping) {
+      Err(http.TooManyRedirects) -> println("  http.get: TooManyRedirects")
+      Err(e) -> println("  http.get: {e}")
+      Ok(resp) -> println("  http.get: {resp.status}")
+    }
+    match http.request(http.POST, looping, bytes.from_string("x"), #{}) {
+      Err(e) -> println("  http.request: {e}")
+      Ok(resp) -> println("  http.request: {resp.status}")
+    }
+  }
+}
