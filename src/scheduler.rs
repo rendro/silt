@@ -3322,6 +3322,8 @@ impl Drop for Taken {
             }
         };
         for inner in looks.iter().filter_map(Weak::upgrade) {
+            #[cfg(test)]
+            let _at = GivenAt::event("the stops pending ran");
             inner.check_all();
         }
     }
@@ -3753,10 +3755,16 @@ mod tests {
     /// (Its task sleeps 150 ms first, so that the program's thread has
     /// parked by then. Where a busy machine held the program's thread
     /// up for longer, its park was the last event and gave it: as
-    /// right, and no failure.)
+    /// right, and no failure.) Or by the look that the check of that
+    /// event left for when the stops pending then had run: the stops
+    /// are those of every program of the process (`DEFERRED`), and a
+    /// test beside this one may have had one pending at that moment
+    /// (about 1 run in 200 of the scheduler's tests, four at once).
     fn assert_given_by_the_last(at: Option<&'static str>, event: &str) {
         assert!(
-            at == Some(event) || at == Some("a thread parked"),
+            at == Some(event)
+                || at == Some("a thread parked")
+                || at == Some("the stops pending ran"),
             "the verdict was given at {at:?}, not at the last event ({event})"
         );
     }
