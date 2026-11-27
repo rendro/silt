@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- The opaque types of a dependency's library are named as the file at
+-- hand writes them: by the dependency's key (`mail.User`, module
+-- `mail`), or by the name an import gives the module (`m.User` in
+-- other.silt), never by the library's file (`lib`).
+-- stderr-not-contains: lib
+import json
+import mail
+
+fn main() {
+  let v = mail.user("b")
+  println(v.name)
+  let mail.User { name: _, .. } = v
+  match mail.email("a@x") {
+    mail.Email(s) -> println(s)
+  }
+  println(json.stringify(v))
+}

@@ -1,0 +1,16 @@
+pub opaque type Email {
+  Email(String),
+}
+
+pub opaque type User {
+  name: String,
+  age: Int,
+}
+
+pub fn email(text: String) -> Email {
+  Email(text)
+}
+
+pub fn user(name: String) -> User {
+  User { name: name, age: 1 }
+}
