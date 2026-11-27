@@ -4235,6 +4235,44 @@ fn main() {
         assert!(out.take().contains("division by zero"));
     }
 
+    /// A failure of a stage whose output every reader has let go of is
+    /// dismissed as the output is dropped, before the stop that the drop
+    /// defers has run: a report while the stop waits (as `run_program`
+    /// returns) shows none. That holds for a failure that comes after the
+    /// drop too (the stage was past its last look at its output).
+    #[test]
+    fn a_failure_is_dismissed_as_the_output_is_let_go_before_the_stop_runs() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = super::Scheduler::new(HostIo::buffer(&out));
+        // Failed, then let go of.
+        let stage = failed_stage(&scheduler, 7);
+        stage.let_go();
+        assert_eq!(scheduler.report_unread_failures(), 0, "{}", out.take());
+        // Let go of, then failed: `fail` says that nothing is unread,
+        // and the scheduler records nothing.
+        let later = Arc::new(super::TaskHandle::new(8));
+        later.let_go();
+        let error = VmError::new("division by zero".to_string());
+        assert!(!later.fail(error, &scheduler.inner.parking));
+        assert!(!later.has_unread_failure());
+        assert!(later.try_get().is_some_and(|result| result.is_err()));
+    }
+
+    /// An output that is let go of after the owner's code has ended (a
+    /// task held it to the end and was dropped with it) dismisses
+    /// nothing, as the stop that comes then does not
+    /// (`a_stop_after_the_end_dismisses_no_failure`).
+    #[test]
+    fn an_output_let_go_after_the_end_dismisses_no_failure() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = super::Scheduler::new(HostIo::buffer(&out));
+        let stage = failed_stage(&scheduler, 7);
+        scheduler.stop_tasks();
+        stage.let_go();
+        assert_eq!(scheduler.report_unread_failures(), 1);
+        assert!(out.take().contains("division by zero"));
+    }
+
     /// A stop that is still to run when the tasks have come to a stop
     /// (a thread outside a slice let the stream go: the timer's, as it
     /// ended a task by its deadline) runs before the end: the stream
@@ -4382,12 +4420,21 @@ fn main() {
         );
     }
 
-    /// A failed stage that the program lets go of is stopped, and the
-    /// stop dismisses its failure: a program that makes stages that
-    /// fail and lets go of them reports none, and its record of failed
-    /// tasks lets go of them as it goes (it held about 840 bytes per
-    /// failure when every one was kept). Counted, not timed: the record
-    /// holds no more than a few past the 64, however many fail.
+    /// A failed stage that the program lets go of is stopped, and its
+    /// failure is dismissed: a program that makes stages that fail and
+    /// lets go of them reports none, and its record of failed tasks lets
+    /// go of them as it goes (it held about 840 bytes per failure when
+    /// every one was kept). Counted, not timed: the record holds no more
+    /// than a few past the 64, however many fail.
+    ///
+    /// No report can come early: the output of each stage is dropped
+    /// before `main` returns, or by the stage's own task before its
+    /// failure is recorded (a stage holds it for a moment as it closes
+    /// it), and the drop dismisses the failure at once
+    /// (`TaskHandle::let_go`). It once did so only in the stop that the
+    /// drop defers, and the report as `run_program` returns showed a
+    /// failure whose stop had not run yet (about 1 run in 2,400, with
+    /// four such programs at once beside four busy cores).
     #[test]
     fn failures_that_nothing_can_read_any_more_are_not_kept() {
         let (printed, shown, counted, most) = failure_reports(
