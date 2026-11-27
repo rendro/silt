@@ -15,7 +15,7 @@ Ok(Tagged(Moved("q", None), [Active, Paused(4)]))
 Ok(Dot)
 Ok(Node(Leaf(1), Node(Leaf(2), Leaf(3))))
 Ok([Active, Paused(3), Moved("x", None), Moved("y", Some(2)), At(Point { x: 1, y: 2 }, [3])])
-Ok(#{"a": Active, "b": Paused(5)})
+Ok(#{ "a": Active, "b": Paused(5) })
 Ok(Paused(9))
 Ok(Moved("t", Some(7)))
 true

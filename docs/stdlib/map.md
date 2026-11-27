@@ -143,7 +143,7 @@ import map
 fn main() {
   let m = #{ "a": 1, "b": 2, "c": 3 }
   let big = map.filter(m) { k, v -> v > 1 }
-  println(big) -- #{"b": 2, "c": 3}
+  println(big) -- #{ "b": 2, "c": 3 }
 }
 ```
 
@@ -183,7 +183,7 @@ import map
 
 fn main() {
   let m = map.from_entries([("a", 1), ("b", 2)])
-  println(m) -- #{"a": 1, "b": 2}
+  println(m) -- #{ "a": 1, "b": 2 }
 }
 ```
 
@@ -276,7 +276,7 @@ import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let doubled = map.map(m) { k, v -> (k, v * 2) }
-  println(doubled) -- #{"a": 2, "b": 4}
+  println(doubled) -- #{ "a": 2, "b": 4 }
 }
 ```
 
@@ -296,7 +296,7 @@ fn main() {
   let a = #{ "x": 1, "y": 2 }
   let b = #{ "y": 99, "z": 3 }
   let merged = map.merge(a, b)
-  println(merged) -- #{"x": 1, "y": 99, "z": 3}
+  println(merged) -- #{ "x": 1, "y": 99, "z": 3 }
 }
 ```
 
@@ -335,7 +335,7 @@ import map
 fn main() {
   let m = #{ "a": 1 }
   let m2 = map.set(m, "b", 2)
-  println(m2) -- #{"a": 1, "b": 2}
+  println(m2) -- #{ "a": 1, "b": 2 }
 }
 ```
 
@@ -356,8 +356,8 @@ fn main() {
   let m = #{ "a": 1 }
   let m2 = map.update(m, "a", 0) { v -> v + 10 }
   let m3 = map.update(m2, "b", 0) { v -> v + 10 }
-  println(m2) -- #{"a": 11}
-  println(m3) -- #{"a": 11, "b": 10}
+  println(m2) -- #{ "a": 11 }
+  println(m3) -- #{ "a": 11, "b": 10 }
 }
 ```
 

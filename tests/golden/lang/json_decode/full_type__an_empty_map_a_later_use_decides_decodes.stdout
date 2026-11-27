@@ -1,4 +1,4 @@
-Ok(Box { v: #{"b": 2} })
-Ok(Box { v: #{"b": 2} })
-Ok(Box { v: #{"b": 2} })
+Ok(Box { v: #{ "b": 2 } })
+Ok(Box { v: #{ "b": 2 } })
+Ok(Box { v: #{ "b": 2 } })
 Err(json type mismatch at line 1, column 13: expected Int, got string at v.b)

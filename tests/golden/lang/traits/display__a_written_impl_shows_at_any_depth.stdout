@@ -1,7 +1,7 @@
 [21C, 3C]
 (21C, 1, "s")
-#{"k": 21C}
-#{21C: "v"}
+#{ "k": 21C }
+#{ 21C: "v" }
 2
 #[21C]
 Reading { place: "attic", temp: 21C, history: [3C, 21C] }
