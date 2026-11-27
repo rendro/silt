@@ -84,6 +84,11 @@ pub struct Channel {
     /// What its only reader does when it gives the channel up
     /// ([`Channel::abandon`]): tell whoever feeds it to stop.
     on_abandon: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// What is done at once where its readers let it go (it is
+    /// dropped), before the stop of its feeder, which is deferred: it
+    /// gives the channels that feed the feeder, which are let go of
+    /// with it ([`Channel::let_go_of_feeders`]).
+    on_let_go: OnceLock<Box<dyn Fn() -> Vec<Arc<Channel>> + Send + Sync>>,
     /// What its reader does when it drains the channel
     /// ([`Channel::drain`]): drain what feeds it.
     on_drain: OnceLock<Box<dyn Fn(&dyn Wake) + Send + Sync>>,
@@ -265,7 +270,9 @@ impl Drop for Channel {
         // weakly) that every reader has let go of: the feeder is told
         // to stop, as by `abandon`. Not here: a channel is dropped
         // wherever its last holder lets it go, maybe under a lock that
-        // the stop takes (`scheduler::run_deferred`).
+        // the stop takes (`scheduler::run_deferred`). What takes no
+        // lock is done here (`Channel::let_go_of_feeders`).
+        self.let_go_of_feeders();
         if let Some(stop) = self.on_abandon.take() {
             crate::scheduler::defer(stop);
         }
@@ -315,6 +322,7 @@ impl Channel {
             id,
             capacity,
             on_abandon: OnceLock::new(),
+            on_let_go: OnceLock::new(),
             on_drain: OnceLock::new(),
             timer: OnceLock::new(),
             from_outside: OnceLock::new(),
@@ -382,10 +390,39 @@ impl Channel {
     }
 
     /// The channel is the output of something that is to stop when
-    /// nobody reads the output any more: `stop` tells it to. Set once,
-    /// when the channel is made.
-    pub fn stop_feeder_with(&self, stop: impl Fn() + Send + Sync + 'static) {
+    /// nobody reads the output any more: `stop` tells it to. Where the
+    /// channel is dropped, `let_go` is done at once and `stop` is
+    /// deferred. `let_go` takes no lock, and gives the channels that
+    /// feed the feeder (none after its first call). Set once, when the
+    /// channel is made.
+    pub fn stop_feeder_with(
+        &self,
+        let_go: impl Fn() -> Vec<Arc<Channel>> + Send + Sync + 'static,
+        stop: impl Fn() + Send + Sync + 'static,
+    ) {
+        let _ = self.on_let_go.set(Box::new(let_go));
         let _ = self.on_abandon.set(Box::new(stop));
+    }
+
+    /// Every reader has let the channel go: what its feeder does at once
+    /// (`Channel::stop_feeder_with`), and so for each channel that feeds
+    /// it, up the chain, in one pass and without a lock. The stop that
+    /// follows stops them all (it abandons the feeder's inputs), so they
+    /// are let go of now, as the channel is. (A stage holds its inputs
+    /// until it has stopped: let go of only then, a failure up the chain
+    /// stayed unread for as long as the stop waited.)
+    fn let_go_of_feeders(&self) {
+        let Some(let_go) = self.on_let_go.get() else {
+            return;
+        };
+        let mut feeding = let_go();
+        while let Some(input) = feeding.pop() {
+            if let Some(let_go) = input.on_let_go.get() {
+                feeding.extend(let_go());
+            }
+            // (Where this was the last holder of `input`, its drop finds
+            // it let go of already.)
+        }
     }
 
     /// The reader of the channel reads no more. If the channel is the

@@ -1716,6 +1716,10 @@ pub struct TaskHandle {
     /// unhandled ([`TaskHandle::keep_failure`]): a cancel no longer
     /// dismisses it.
     kept: AtomicBool,
+    /// Set when every reader of the output of the task's stage let it
+    /// go while the code of its owner still ran ([`TaskHandle::let_go`]):
+    /// a failure of the task is dismissed, whenever it comes.
+    let_go: AtomicBool,
     /// Who the task belongs to (`Vm::set_task_owner`): the
     /// program, or one test of a test run.
     owner: u64,
@@ -1776,6 +1780,7 @@ impl TaskHandle {
             cancelled: Arc::new(AtomicBool::new(false)),
             unread_failure: AtomicBool::new(false),
             kept: AtomicBool::new(false),
+            let_go: AtomicBool::new(false),
             owner,
             deadline: None,
             expired: AtomicBool::new(false),
@@ -1967,15 +1972,40 @@ impl TaskHandle {
     }
 
     /// The task failed with `error`. `true` when that is the handle's
-    /// result now: the failure is then unread until a reader receives
-    /// it or a cancel dismisses it.
+    /// result now and nothing has dismissed it: the failure is then
+    /// unread until a reader receives it or a cancel dismisses it.
     pub fn fail(&self, error: VmError, wake: &dyn Wake) -> bool {
         if self.result.get().is_some() {
             return false;
         }
         // Before the readers are woken: one of them reads it.
-        self.unread_failure.store(true, AtomicOrdering::Release);
-        self.result.complete(Ended(Err(error)), wake).is_ok()
+        self.unread_failure.store(true, AtomicOrdering::SeqCst);
+        let failed = self.result.complete(Ended(Err(error)), wake).is_ok();
+        // A stage whose output its readers let go of has nobody to read
+        // its failure. (Read after the store above, as `let_go` stores
+        // before it clears: one of the two sees the other.)
+        if self.let_go.load(AtomicOrdering::SeqCst) {
+            self.unread_failure.store(false, AtomicOrdering::SeqCst);
+            return false;
+        }
+        failed
+    }
+
+    /// Every reader of the output of the task's stage has let it go
+    /// (the output is dropped), or of the output of a stage it feeds
+    /// (`Channel::let_go_of_feeders`): nothing can read a failure of the
+    /// task any more, and it is dismissed, the one it has had and one that
+    /// comes later, unless the code of its owner has ended
+    /// ([`TaskHandle::keep_failure`]). The same as the cancel of the
+    /// task that the output's stop does, but at once: the stop is
+    /// deferred (`scheduler::defer`), and a report that came before it
+    /// ran (`Vm::run_program`'s, as `main` returns) showed the failure
+    /// of a stage that the program had let go of.
+    pub(crate) fn let_go(&self) {
+        if !self.kept.load(AtomicOrdering::SeqCst) {
+            self.let_go.store(true, AtomicOrdering::SeqCst);
+            self.unread_failure.store(false, AtomicOrdering::SeqCst);
+        }
     }
 
     /// A cancel: the task's result is the cancellation unless it

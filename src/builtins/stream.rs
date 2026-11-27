@@ -669,7 +669,21 @@ fn stage_on(
     // calls the stop: done every time, the stop of every stage walked the
     // rest of the chain again.)
     let done = AtomicBool::new(false);
-    out.stop_feeder_with(move || {
+    // The stage's failure is dismissed as its readers let the output go,
+    // not only when the stop has run (`TaskHandle::let_go`); and so for
+    // the stages that feed it, which the stop stops too. Once, as the
+    // stop: a chain is let go of in one pass.
+    let let_go = {
+        let (handle, feeds, once) = (handle.clone(), feeds.clone(), AtomicBool::new(false));
+        move || match once.swap(true, Ordering::SeqCst) {
+            true => Vec::new(),
+            false => {
+                handle.let_go();
+                feeds.iter().filter_map(Weak::upgrade).collect()
+            }
+        }
+    };
+    out.stop_feeder_with(let_go, move || {
         if done.swap(true, Ordering::SeqCst) {
             return;
         }

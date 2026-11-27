@@ -2027,7 +2027,7 @@ impl Inner {
             queue.sleepers -= 1;
             drop(queue);
             if deadline.is_some() && self.parking.timer().fire_due(&self.parking) > 0 {
-                self.check_all();
+                self.check_after_the_timer();
             }
         }
     }
@@ -2163,11 +2163,26 @@ impl Inner {
     /// stops, and one after the end could not,
     /// [`TaskHandle::keep_failure`].)
     fn end(&self, task: Task, after_slice: bool) {
+        self.end_recording(task, after_slice, false);
+    }
+
+    /// [`Inner::end`], for a task that failed with a failure that
+    /// nothing has read when `unread` holds (`TaskHandle::fail`): it is
+    /// recorded for the report once the frames are gone, and before the
+    /// task stops counting, so the end of the program finds it. (A stage
+    /// holds its output, upgraded from its `Weak`, while its frame closes
+    /// it: recorded before that, the failure of a stage whose last reader
+    /// had let it go meanwhile was in the record until the stage let go
+    /// of the output too, and a report then showed it.)
+    fn end_recording(&self, task: Task, after_slice: bool, unread: bool) {
         // Its frames are abandoned before it stops counting.
         let Task {
             vm, handle, group, ..
         } = task;
         drop(vm);
+        if unread {
+            record_failed_task(self, &handle);
+        }
         // Then whoever waits for its end (a stop) is told,
         // while it still counts: a wait for it is never seen as stuck.
         handle.stop(&self.parking);
@@ -2278,7 +2293,7 @@ impl Inner {
             };
             if next.is_some_and(|next| next.is_zero()) {
                 if timer.fire_due(&self.parking) > 0 {
-                    self.check_all();
+                    self.check_after_the_timer();
                 }
                 // (What a task that its deadline ended let go of.)
                 run_deferred();
@@ -2302,7 +2317,7 @@ impl Inner {
                 drop(state);
                 timer.pass_to_next_deadline();
                 if timer.fire_due(&self.parking) > 0 {
-                    self.check_all();
+                    self.check_after_the_timer();
                 }
                 run_deferred();
                 continue;
@@ -2321,7 +2336,7 @@ impl Inner {
             }
             drop(state);
             if next.is_some() && timer.fire_due(&self.parking) > 0 {
-                self.check_all();
+                self.check_after_the_timer();
             }
             run_deferred();
         }
@@ -2400,7 +2415,7 @@ impl Inner {
         if *self.timer_lock.lock() == TimerThread::Unavailable
             && self.parking.timer().fire_due(&self.parking) > 0
         {
-            self.check_all();
+            self.check_after_the_timer();
         }
         self.queued.load(Ordering::SeqCst) == 0
     }
@@ -2475,20 +2490,23 @@ impl Inner {
             SliceResult::Failed(error) => {
                 // A failure that nothing reads (the output of a stream
                 // stage that nobody reads) is reported when the program
-                // ends, so it is recorded here. `fail` returns false if
-                // the task had been cancelled before: its handle keeps
-                // the cancellation as its result then.
+                // ends, so it is recorded as the task ends. `fail`
+                // returns false if the task had been cancelled before (its
+                // handle keeps the cancellation as its result then), or
+                // its output let go of.
                 let error = task.vm.enrich_error(error);
                 // A task of a `task.join` or a `task.background` fails
                 // its call, which raises the failure (or notes it, under
                 // the first): it is never one that nothing read.
-                if let Some((together, role)) = task.handle.together() {
-                    let _ = task.handle.complete(Err(error.clone()), &self.parking);
-                    together.failed(role, error, &self.parking);
-                } else if task.handle.fail(error, &self.parking) {
-                    record_failed_task(self, &task.handle);
-                }
-                self.end(task, true);
+                let unread = match task.handle.together() {
+                    Some((together, role)) => {
+                        let _ = task.handle.complete(Err(error.clone()), &self.parking);
+                        together.failed(role, error, &self.parking);
+                        false
+                    }
+                    None => task.handle.fail(error, &self.parking),
+                };
+                self.end_recording(task, true, unread);
             }
             SliceResult::Blocked(wait) => {
                 // What the task let go of before it waits is stopped
@@ -2645,6 +2663,15 @@ impl Inner {
         for group in groups {
             self.check(&group);
         }
+    }
+
+    /// [`Inner::check_all`] after the timer has fired: what it woke
+    /// may have run to a stop since, before this look (its own end
+    /// looks too; whichever comes first gives a verdict).
+    fn check_after_the_timer(&self) {
+        #[cfg(test)]
+        let _at = GivenAt::event("a timer fired");
+        self.check_all();
     }
 }
 
@@ -2965,7 +2992,7 @@ fn fire_timers(inner: &Inner) {
         // A deadline that ended nobody's wait (a channel that closed
         // unheard) may have been the last thing pending.
         if timer.fire_due(&inner.parking) > 0 {
-            inner.check_all();
+            inner.check_after_the_timer();
         }
         // What a task that its deadline ended let go of (`expire_task`).
         run_deferred();
@@ -3322,6 +3349,8 @@ impl Drop for Taken {
             }
         };
         for inner in looks.iter().filter_map(Weak::upgrade) {
+            #[cfg(test)]
+            let _at = GivenAt::event("the stops pending ran");
             inner.check_all();
         }
     }
@@ -3749,14 +3778,27 @@ mod tests {
         (result, at)
     }
 
-    /// The verdict was given at `event`, the last event of the program.
-    /// (Its task sleeps 150 ms first, so that the program's thread has
-    /// parked by then. Where a busy machine held the program's thread
-    /// up for longer, its park was the last event and gave it: as
-    /// right, and no failure.)
+    /// The verdict was given at `event`, the last event of the program,
+    /// or by another look that an event of the program makes, never by
+    /// one that nothing made. Each look that can give it is named
+    /// (`GivenAt`), so which one did is no matter of time:
+    /// - the park of the program's thread: its task sleeps 150 ms first,
+    ///   so that the thread has parked by then, but where a busy machine
+    ///   held the thread up for longer, its park was the last event;
+    /// - the look that the check of the event left for when the stops
+    ///   pending then had run: the stops are those of every program of
+    ///   the process (`DEFERRED`), and a test beside this one may have
+    ///   had one pending at that moment (1 run in 200 of the scheduler's
+    ///   tests, four at once);
+    /// - the look after the timer fired the task's sleep: the task may run
+    ///   to its park or its end on a worker before the timer's thread
+    ///   looks, and then that look comes first.
     fn assert_given_by_the_last(at: Option<&'static str>, event: &str) {
         assert!(
-            at == Some(event) || at == Some("a thread parked"),
+            at == Some(event)
+                || at == Some("a thread parked")
+                || at == Some("the stops pending ran")
+                || at == Some("a timer fired"),
             "the verdict was given at {at:?}, not at the last event ({event})"
         );
     }
@@ -3834,9 +3876,12 @@ fn main() {
         vm.set_task_owner(1);
         let first = vm.run_program(&leaves_tasks);
         vm.set_task_owner(2);
-        let before = Instant::now();
+        // Not timed: the verdict comes at all only if the first owner's
+        // task asleep for an hour does not hold it up (a hanging test of
+        // the lib suite is ended after five minutes as a failure,
+        // .config/nextest.toml). It once asserted that the run took
+        // under 30 s of the wall clock.
         let second = vm.run_program(&deadlocked);
-        let took = before.elapsed();
         assert_eq!(first.map_err(|e| e.message), Ok(()));
         let error = second.expect_err("the second program is deadlocked");
         assert_eq!(
@@ -3845,7 +3890,6 @@ fn main() {
         );
         // Its own task is listed, the first owner's two are not.
         assert_eq!(error.help.len(), 1, "{:?}", error.help);
-        assert!(took < Duration::from_secs(30), "the verdict took {took:?}");
     }
 
     /// Where the timer thread cannot be started, the threads that
@@ -4235,6 +4279,44 @@ fn main() {
         assert!(out.take().contains("division by zero"));
     }
 
+    /// A failure of a stage whose output every reader has let go of is
+    /// dismissed as the output is dropped, before the stop that the drop
+    /// defers has run: a report while the stop waits (as `run_program`
+    /// returns) shows none. That holds for a failure that comes after the
+    /// drop too (the stage was past its last look at its output).
+    #[test]
+    fn a_failure_is_dismissed_as_the_output_is_let_go_before_the_stop_runs() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = super::Scheduler::new(HostIo::buffer(&out));
+        // Failed, then let go of.
+        let stage = failed_stage(&scheduler, 7);
+        stage.let_go();
+        assert_eq!(scheduler.report_unread_failures(), 0, "{}", out.take());
+        // Let go of, then failed: `fail` says that nothing is unread,
+        // and the scheduler records nothing.
+        let later = Arc::new(super::TaskHandle::new(8));
+        later.let_go();
+        let error = VmError::new("division by zero".to_string());
+        assert!(!later.fail(error, &scheduler.inner.parking));
+        assert!(!later.has_unread_failure());
+        assert!(later.try_get().is_some_and(|result| result.is_err()));
+    }
+
+    /// An output that is let go of after the owner's code has ended (a
+    /// task held it to the end and was dropped with it) dismisses
+    /// nothing, as the stop that comes then does not
+    /// (`a_stop_after_the_end_dismisses_no_failure`).
+    #[test]
+    fn an_output_let_go_after_the_end_dismisses_no_failure() {
+        let out = crate::vm::Buffer::new();
+        let scheduler = super::Scheduler::new(HostIo::buffer(&out));
+        let stage = failed_stage(&scheduler, 7);
+        scheduler.stop_tasks();
+        stage.let_go();
+        assert_eq!(scheduler.report_unread_failures(), 1);
+        assert!(out.take().contains("division by zero"));
+    }
+
     /// A stop that is still to run when the tasks have come to a stop
     /// (a thread outside a slice let the stream go: the timer's, as it
     /// ended a task by its deadline) runs before the end: the stream
@@ -4382,12 +4464,22 @@ fn main() {
         );
     }
 
-    /// A failed stage that the program lets go of is stopped, and the
-    /// stop dismisses its failure: a program that makes stages that
-    /// fail and lets go of them reports none, and its record of failed
-    /// tasks lets go of them as it goes (it held about 840 bytes per
-    /// failure when every one was kept). Counted, not timed: the record
-    /// holds no more than a few past the 64, however many fail.
+    /// A failed stage that the program lets go of is stopped, and its
+    /// failure is dismissed: a program that makes stages that fail and
+    /// lets go of them reports none, and its record of failed tasks lets
+    /// go of them as it goes (it held about 840 bytes per failure when
+    /// every one was kept). Counted, not timed: the record holds no more
+    /// than a few past the 64, however many fail.
+    ///
+    /// No report can come early: the output of each stage is dropped
+    /// before `main` returns, or by the stage's own frame as the stage
+    /// ends (it holds the output for a moment as it closes it), and that
+    /// is before its failure is recorded (`Inner::end_recording`); the
+    /// drop dismisses the failure at once (`TaskHandle::let_go`). It
+    /// once did so only in the stop that the drop defers, and the report
+    /// as `run_program` returns showed a failure whose stop had not run
+    /// yet (about 1 run in 2,400, with four such programs at once beside
+    /// four busy cores).
     #[test]
     fn failures_that_nothing_can_read_any_more_are_not_kept() {
         let (printed, shown, counted, most) = failure_reports(

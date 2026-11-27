@@ -112,8 +112,10 @@ fn an_impl_of_65600_type_variables_is_refused() {
 }
 
 /// `silt check` of `source`, written to a file of its own: its exit
-/// status, its errors, the most memory it had resident (kB) and how long
-/// it took.
+/// status, its errors, the most memory it had resident (kB) and the
+/// processor time it used (user and system). That time is the work the
+/// check did: a busy machine, which stretches the wall clock (the heavy
+/// shard runs beside other tests), does not add to it.
 #[cfg(target_os = "linux")]
 fn check_measured(name: &str, source: &str) -> (i32, String, i64, std::time::Duration) {
     use std::io::Read;
@@ -123,8 +125,7 @@ fn check_measured(name: &str, source: &str) -> (i32, String, i64, std::time::Dur
     std::fs::create_dir_all(&dir).expect("a temporary directory");
     let file = dir.join(format!("{name}.silt"));
     std::fs::write(&file, source).expect("the module is written");
-    let started = std::time::Instant::now();
-    // (`wait4` below reaps it, for the memory it had.)
+    // (`wait4` below reaps it, for the memory and the time it had.)
     #[allow(clippy::zombie_processes)]
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("check")
@@ -143,7 +144,9 @@ fn check_measured(name: &str, source: &str) -> (i32, String, i64, std::time::Dur
     // SAFETY: the pid is of our child, not waited for yet; `status` and
     // `usage` are valid for writes.
     let waited = unsafe { libc::wait4(child.id() as libc::pid_t, &mut status, 0, &mut usage) };
-    let took = started.elapsed();
+    let time =
+        |t: libc::timeval| std::time::Duration::new(t.tv_sec as u64, t.tv_usec as u32 * 1000);
+    let took = time(usage.ru_utime) + time(usage.ru_stime);
     let _ = std::fs::remove_file(&file);
     assert_eq!(waited, child.id() as libc::pid_t, "{stderr}");
     assert!(libc::WIFEXITED(status), "{stderr}");
