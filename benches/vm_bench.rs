@@ -146,6 +146,31 @@ fn main() { fib(25) }
     "#,
     );
 
+    // A function that gives a variant, matched at once: the variant is
+    // made where its constructor is, not called (`run::constructed`).
+    bench(
+        "calls: returns Ok(VI(n)) 200K",
+        r#"
+type V {
+  VI(Int),
+  VN,
+}
+fn give(n: Int) -> Result(V, String) {
+  Ok(VI(n))
+}
+fn walk(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> match give(n) {
+      Ok(VI(k)) -> walk(n - 1, acc + k)
+      _ -> acc
+    }
+  }
+}
+fn main() { walk(200000, 0) }
+    "#,
+    );
+
     println!();
 
     // ── Collections ─────────────────────────────────────────────────
@@ -432,8 +457,9 @@ fn main() {
     println!();
 
     // ── Collections built by updates ────────────────────────────────
-    // Each row builds a collection of 2,000 elements one update at a
+    // Each 2K row builds a collection of 2,000 elements one update at a
     // time, the old version still held: what a fold or a self call does.
+    // The 200K rows hold it nowhere else.
     // The read rows walk 10,000 elements. benches/collections.silt
     // runs the same programs at any size, one process per run.
     println!("── Collections built by updates ───────────────────────────────");
@@ -443,6 +469,11 @@ fn main() {
         ("collections: list.append 2K", "append", 2_000),
         ("collections: list.set 2K", "listset", 2_000),
         ("collections: map.set 2K", "mapset", 2_000),
+        // (A list nothing else holds grows in place at either end: the
+        // three take about as long.)
+        ("collections: prepend 200K", "prepend", 200_000),
+        ("collections: list.prepend 200K", "lprepend", 200_000),
+        ("collections: list.append 200K", "append", 200_000),
         ("collections: set.insert 2K", "setins", 2_000),
         ("collections: walk by rest 10K", "walk", 10_000),
         ("collections: list.get 10K", "getall", 10_000),

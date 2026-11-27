@@ -1,0 +1,1663 @@
+-- A list that a program holds anywhere else stays as it was when an
+-- element is put at its front, by [x, ..acc] or by list.prepend: a let, a
+-- function's frame, a closure, a record, a tuple, a list, an Option, a
+-- channel, another task, a fold's state, a function that calls itself
+-- with it (with the old one, with it twice, with a history of them), a
+-- record that holds it in such a function, a function of the program or
+-- a method that makes the change, the builtin as a value (for [x, ..acc],
+-- a closure that makes it), a record in a record. Each row prints the
+-- held one before and after ("same") and the one made. Both may change a
+-- list in place when nothing else holds it; this file's output is what it
+-- was when each was a copy. The rows are those of list.append in
+-- an_update_leaves_every_other_holder_of_a_collection_as_it_was.silt.
+import channel
+import list
+import map
+import option
+import set
+import task
+
+-- ── [x, ..acc] ───────────────────────────────────────────────
+
+type BoxP {
+  label: String,
+  c: List(Int),
+  d: List(Int),
+}
+
+fn fpP(c: List(Int)) -> String {
+  "{list.length(c)}/{list.fold(c, 0) { a, x -> (a * 31 + x) % 1000003 }}/{list.get(c, 0)}"
+}
+
+fn treeP() -> List(Int) {
+  list.fold(0..199, []) { a, i -> [i, ..a] }
+}
+
+fn flatP() -> List(Int) {
+  [1, 2, 3]
+}
+
+fn tailP(c: List(Int)) -> List(Int) {
+  [1, ..c]
+}
+
+fn viaP(c: List(Int)) -> List(Int) {
+  tailP(c)
+}
+
+fn localsP(c: List(Int)) -> List(Int) {
+  let a = c
+  let b = a
+  match b {
+    e -> [2, ..e]
+  }
+}
+
+fn foldP(c: List(Int), xs: List(Int)) -> List(Int) {
+  list.fold(xs, c) { acc, x -> [x, ..acc] }
+}
+
+-- a function that calls itself with the collection as its last argument
+fn lastP(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> lastP(i + 1, n, [i % 3, ..acc])
+  }
+}
+
+-- with it as its first argument
+fn firstP(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> firstP([i % 3, ..acc], i + 1, n)
+  }
+}
+
+-- through a let
+fn namedP(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = [i % 3, ..acc]
+      namedP(i + 1, n, next)
+    }
+  }
+}
+
+-- the old one handed on too
+fn oldP(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpP(acc)} old {fpP(old)}"
+    false -> oldP(i + 1, n, [i % 3, ..acc], acc)
+  }
+}
+
+-- the same one handed on twice
+fn twiceP(i: Int, n: Int, acc: List(Int), same: List(Int)) -> String {
+  match i == n {
+    true -> "{fpP(acc)} same {fpP(same)}"
+    false -> twiceP(i + 1, n, acc, [i % 3, ..acc])
+  }
+}
+
+-- every old one kept in a list
+fn histP(i: Int, n: Int, acc: List(Int), olds: List(List(Int))) -> String {
+  match i == n {
+    true -> "{fpP(acc)} olds {list.map(olds) { o -> fpP(o) }}"
+    false -> histP(i + 1, n, [i % 3, ..acc], [acc, ..olds])
+  }
+}
+
+-- a closure of each round keeps the old one
+fn seenP(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpP(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> seenP(i + 1, n, [i % 3, ..acc], [{ -> fpP(acc) }, ..looks])
+  }
+}
+
+-- an arm that does not change it reads it
+fn armP(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> match i % 2 == 0 {
+      true -> armP(i + 1, n, [i % 3, ..acc])
+      false -> armP(i + 1, n, acc)
+    }
+  }
+}
+
+-- each old one sent on a channel
+fn sentP(i: Int, n: Int, acc: List(Int), ch: Channel(List(Int))) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      channel.send(ch, acc)
+      sentP(i + 1, n, [i % 3, ..acc], ch)
+    }
+  }
+}
+
+-- a record that holds it, handed on
+fn recP(i: Int, n: Int, b: BoxP) -> BoxP {
+  match i == n {
+    true -> b
+    false -> recP(i + 1, n, b.{ c: [i % 3, ..b.c] })
+  }
+}
+
+-- the record handed on, and the old record too
+fn recoldP(i: Int, n: Int, b: BoxP, old: BoxP) -> String {
+  match i == n {
+    true -> "{fpP(b.c)} old {fpP(old.c)} {old.label}"
+    false -> recoldP(i + 1, n, b.{ c: [i % 3, ..b.c], label: "r{i}" }, b)
+  }
+}
+
+-- a field updated from another one
+fn recotherP(i: Int, n: Int, b: BoxP) -> BoxP {
+  match i == n {
+    true -> b
+    false -> recotherP(i + 1, n, b.{ d: [i % 3, ..b.c] })
+  }
+}
+
+-- two updates of the record in a row
+fn rectwoP(i: Int, n: Int, b: BoxP) -> BoxP {
+  match i == n {
+    true -> b
+    false -> rectwoP(i + 1, n, b.{ c: [i % 3, ..b.c] }.{ d: [(i + 1) % 3, ..b.d] })
+  }
+}
+
+-- a record whose function reads it again in an arm
+fn recarmP(i: Int, n: Int, b: BoxP) -> BoxP {
+  match i == n {
+    true -> b
+    false -> match i % 2 == 0 {
+      true -> recarmP(i + 1, n, b.{ c: [i % 3, ..b.c] })
+      false -> recarmP(i + 1, n, b.{ label: "{b.label}." })
+    }
+  }
+}
+
+fn rowP(name: String, before: String, after: String, made: String) {
+  let verdict = match before == after {
+    true -> "same"
+    false -> "CHANGED UNDER ITS HOLDER"
+  }
+  println("[x, ..acc] {name}: {verdict} {before} -> {after}; made {made}")
+}
+
+fn eachP(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpP(c)
+  let n = [1, ..c]
+  rowP("{kind} 1 a let read after", before, fpP(c), fpP(n))
+  rowP("{kind} 2 returned at once", before, fpP(c), fpP(tailP(c)))
+  rowP("{kind} 2 through a tail call", before, fpP(c), fpP(viaP(c)))
+  rowP("{kind} 2 copies in the frame", before, fpP(c), fpP(localsP(c)))
+  let look = { -> fpP(c) }
+  rowP("{kind} 3 a closure", before, look(), fpP(foldP(c, xs)))
+  let box = BoxP { label: "b", c: c, d: c }
+  let pair = (c, 1)
+  let items = [c, c]
+  let maybe = Some(c)
+  rowP("{kind} 4 a record field", before, fpP(box.c), fpP(foldP(box.c, xs)))
+  let (first, _) = pair
+  let made = foldP(first, xs)
+  let (again, _) = pair
+  rowP("{kind} 4 a tuple", before, fpP(again), fpP(made))
+  let changed = list.map(items) { it -> tailP(it) }
+  rowP(
+    "{kind} 4 list elements",
+    "{[before, before]}",
+    "{list.map(items) { it -> fpP(it) }}",
+    "{list.map(changed) { it -> fpP(it) }}",
+  )
+  let changed = option.map(maybe) { it -> tailP(it) }
+  rowP(
+    "{kind} 4 an Option",
+    before,
+    fpP(option.unwrap_or(maybe, [])),
+    fpP(option.unwrap_or(changed, [])),
+  )
+  let updated = box.{ c: [1, ..box.c] }
+  rowP(
+    "{kind} 4 a record update",
+    "{before} {before}",
+    "{fpP(box.c)} {fpP(box.d)}",
+    "{fpP(updated.c)} {fpP(updated.d)}",
+  )
+  let ch = channel.new(4)
+  channel.send(ch, c)
+  let made = foldP(c, xs)
+  let got = match channel.receive(ch) {
+    Some(v) -> fpP(v)
+    None -> "closed"
+  }
+  rowP("{kind} 5 a channel message", before, got, fpP(made))
+  let go = channel.new(1)
+  let seen = channel.new(1)
+  let results = channel.new(2)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(go)
+        channel.send(seen, fpP(c))
+      },
+      { ->
+        channel.send(results, foldP(c, xs))
+        channel.send(results, lastP(0, 5, c))
+        channel.send(go, ())
+      },
+    ],
+  )
+  let got = match channel.receive(seen) {
+    Some(v) -> v
+    None -> "closed"
+  }
+  let made = list.map(0..1) { _ ->
+    match channel.receive(results) {
+      Some(v) -> fpP(v)
+      None -> "closed"
+    }
+  }
+  rowP("{kind} 5 another task", before, got, "{made}")
+  let made = task.map([c, c], 2) { it -> lastP(0, 6, foldP(it, xs)) }
+  rowP("{kind} 5 changed in other tasks", before, fpP(c), "{list.map(made) { it -> fpP(it) }}")
+  let made = list.fold_until(xs, c) { acc, x ->
+    match x == 0 {
+      true -> Stop([x, ..acc])
+      false -> Continue([x, ..acc])
+    }
+  }
+  rowP("{kind} 6 fold_until", before, fpP(c), fpP(made))
+  let made = set.fold(set.from_list(xs), c) { acc, x -> [x, ..acc] }
+  rowP("{kind} 6 set.fold", before, fpP(c), fpP(made))
+  let olds = channel.new(16)
+  let made = list.fold(xs, c) { acc, x ->
+    channel.send(olds, acc)
+    [x, ..acc]
+  }
+  channel.close(olds)
+  let kept = list.map(0..6) { _ ->
+    match channel.receive(olds) {
+      Some(v) -> fpP(v)
+      None -> "closed"
+    }
+  }
+  println("[x, ..acc] {kind} 7 a step that sends the old one away: {kept}; made {fpP(made)}")
+  let (made, history) = list.fold(xs, (c, [])) { (acc, hist), x ->
+    let next = [x, ..acc]
+    (next, [acc, ..hist])
+  }
+  println(
+    "[x, ..acc] {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpP(h) }}; made {fpP(made)}",
+  )
+  let snapshots = list.scan(xs, c) { acc, x -> [x, ..acc] }
+  println("[x, ..acc] {kind} 7 list.scan: {list.map(snapshots) { s -> fpP(s) }}")
+  let made = list.fold(xs, c) { acc, x ->
+    match x == 1 {
+      true -> acc
+      false -> [x, ..acc]
+    }
+  }
+  rowP("{kind} 7 a step that sometimes gives it back", before, fpP(c), fpP(made))
+  let made = list.fold(xs, c) { acc, x ->
+    list.fold(xs, acc) { inner, y -> [(x + y) % 3, ..inner] }
+  }
+  rowP("{kind} 7 a fold in a fold", before, fpP(c), fpP(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let size = fpP(acc)
+    let next = [x, ..acc]
+    match size == fpP(acc) {
+      true -> next
+      false -> []
+    }
+  }
+  rowP("{kind} 7 a step that reads it after the change", before, fpP(c), fpP(made))
+  rowP("{kind} 8 a loop, last argument", before, fpP(c), fpP(lastP(0, 7, c)))
+  rowP("{kind} 8 a loop, first argument", before, fpP(c), fpP(firstP(c, 0, 7)))
+  rowP("{kind} 8 a loop through a let", before, fpP(c), fpP(namedP(0, 7, c)))
+  rowP("{kind} 8 a loop with the old one", before, fpP(c), oldP(0, 7, c, c))
+  rowP("{kind} 8 a loop with it twice", before, fpP(c), twiceP(0, 7, c, c))
+  rowP("{kind} 8 a loop that keeps the old ones", before, fpP(c), histP(0, 4, c, []))
+  rowP("{kind} 8 a loop whose closures keep the old ones", before, fpP(c), seenP(0, 4, c, []))
+  rowP("{kind} 8 a loop whose other arm reads it", before, fpP(c), fpP(armP(0, 7, c)))
+  let ch = channel.new(16)
+  let made = sentP(0, 4, c, ch)
+  channel.close(ch)
+  let got = list.map(0..3) { _ ->
+    match channel.receive(ch) {
+      Some(v) -> fpP(v)
+      None -> "closed"
+    }
+  }
+  rowP("{kind} 8 a loop that sends the old ones", before, fpP(c), "{fpP(made)} sent {got}")
+  let start = BoxP { label: "s", c: c, d: c }
+  let made = recP(0, 7, start)
+  rowP(
+    "{kind} 9 a record in a loop",
+    "{before} {before}",
+    "{fpP(start.c)} {fpP(start.d)}",
+    "{fpP(made.c)} {fpP(made.d)}",
+  )
+  rowP(
+    "{kind} 9 a record in a loop, its old one too",
+    before,
+    fpP(start.c),
+    recoldP(0, 5, start, start),
+  )
+  let made = recotherP(0, 7, start)
+  rowP(
+    "{kind} 9 a record field from another",
+    "{before} {before}",
+    "{fpP(start.c)} {fpP(start.d)}",
+    "{fpP(made.c)} {fpP(made.d)}",
+  )
+  let made = rectwoP(0, 7, start)
+  rowP(
+    "{kind} 9 two record updates",
+    "{before} {before}",
+    "{fpP(start.c)} {fpP(start.d)}",
+    "{fpP(made.c)} {fpP(made.d)}",
+  )
+  let made = recarmP(0, 7, start)
+  rowP("{kind} 9 a record read in another arm", before, fpP(start.c), "{fpP(made.c)} {made.label}")
+  let made = recP(0, 3, BoxP { label: "own", c: make(), d: [] })
+  rowP("{kind} 9 a record held nowhere else", before, fpP(c), fpP(made.c))
+  let made = list.fold(xs, start) { b, x -> b.{ c: [x, ..b.c] } }
+  rowP(
+    "{kind} 9 a record in a fold",
+    "{before} {before}",
+    "{fpP(start.c)} {fpP(start.d)}",
+    fpP(made.c),
+  )
+  let kept = [start]
+  let made = list.fold(xs, start) { b, x -> b.{ d: [x, ..b.d] } }
+  rowP(
+    "{kind} 9 a record in a fold, held in a list",
+    before,
+    fpP(option.unwrap_or(list.first(kept), start).d),
+    fpP(made.d),
+  )
+  let failing = task.guard { ->
+    list.fold(xs, c) { acc, x ->
+      match x == 0 {
+        true -> panic("stop")
+        false -> [x, ..acc]
+      }
+    }
+  }
+  let ended = match failing {
+    Ok(_) -> "done"
+    Err(_) -> "failed"
+  }
+  rowP("{kind} 10 a task that fails part way", before, fpP(c), ended)
+  let other = make()
+  let by = #{ c: "first" }
+  let members = set.from_list([c])
+  let made = foldP(c, xs)
+  let made2 = lastP(0, 5, other)
+  println(
+    "[x, ..acc] {kind} 11 a key and a member: {map.get(by, c)} {set.contains(members, c)} {c == other} {made == foldP(make(), xs)} {made2 == lastP(0, 5, make())} {map.get(#{ made: 1 }, foldP(make(), xs))}",
+  )
+}
+
+-- ── [x, ..acc]: through calls, as a value, in nested records ──
+
+type NestP {
+  label: String,
+  inner: BoxP,
+  spare: BoxP,
+}
+
+type DeepP {
+  top: NestP,
+  n: Int,
+}
+
+trait StepP {
+  fn step(self, x: Int) -> BoxP
+}
+
+trait StepP for BoxP {
+  fn step(self, x: Int) -> BoxP {
+    self.{ c: [x, ..self.c] }
+  }
+}
+
+trait CountP {
+  fn count(self) -> Int
+}
+
+trait CountP for Int {
+  fn count(self) -> Int {
+    self + 1
+  }
+}
+
+-- a function of the program that makes the update
+fn wrapP(c: List(Int), x: Int) -> List(Int) {
+  [x, ..c]
+}
+
+fn wlastP(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> wlastP(i + 1, n, wrapP(acc, i % 3))
+  }
+}
+
+fn wletP(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = wrapP(acc, i % 3)
+      wletP(i + 1, n, next)
+    }
+  }
+}
+
+fn woldP(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpP(acc)} old {fpP(old)}"
+    false -> woldP(i + 1, n, wrapP(acc, i % 3), acc)
+  }
+}
+
+-- the old one read by a call after the update
+fn wreadP(i: Int, n: Int, acc: List(Int), seen: List(String)) -> String {
+  match i == n {
+    true -> "{fpP(acc)} seen {seen}"
+    false -> wreadP(i + 1, n, wrapP(acc, i % 3), [fpP(acc), ..seen])
+  }
+}
+
+-- a closure made before the call keeps the old one
+fn wlookP(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpP(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> {
+      let look = { -> fpP(acc) }
+      wlookP(i + 1, n, wrapP(acc, i % 3), [look, ..looks])
+    }
+  }
+}
+
+-- a method that makes the update of a record
+fn mstepP(i: Int, n: Int, b: BoxP) -> BoxP {
+  match i == n {
+    true -> b
+    false -> mstepP(i + 1, n, StepP.step(b, i % 3))
+  }
+}
+
+fn mstepoldP(i: Int, n: Int, b: BoxP, old: BoxP) -> String {
+  match i == n {
+    true -> "{fpP(b.c)} old {fpP(old.c)}"
+    false -> mstepoldP(i + 1, n, StepP.step(b, i % 3), b)
+  }
+}
+
+-- a method called after the update
+fn mafterP(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> mafterP([i % 3, ..acc], CountP.count(i), n)
+  }
+}
+
+fn mafteroldP(acc: List(Int), i: Int, n: Int, old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpP(acc)} old {fpP(old)}"
+    false -> mafteroldP([i % 3, ..acc], CountP.count(i), n, acc)
+  }
+}
+
+-- the builtin as a value
+fn vloopP(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  let f = { l, x -> [x, ..l] }
+  match i == n {
+    true -> acc
+    false -> vloopP(i + 1, n, f(acc, i % 3))
+  }
+}
+
+fn voldP(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  let f = { l, x -> [x, ..l] }
+  match i == n {
+    true -> "{fpP(acc)} old {fpP(old)}"
+    false -> voldP(i + 1, n, f(acc, i % 3), acc)
+  }
+}
+
+-- a record in a record
+fn nloopP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false -> nloopP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] } })
+  }
+}
+
+fn noldP(i: Int, n: Int, o: NestP, old: NestP) -> String {
+  match i == n {
+    true -> "{fpP(o.inner.c)} old {fpP(old.inner.c)} {old.label}"
+    false -> noldP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, label: "n{i}" }, o)
+  }
+}
+
+fn ndeepP(i: Int, n: Int, d: DeepP) -> DeepP {
+  match i == n {
+    true -> d
+    false ->
+      ndeepP(i + 1, n, d.{ top: d.top.{ inner: d.top.inner.{ c: [i % 3, ..d.top.inner.c] } } })
+  }
+}
+
+fn notherP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false -> notherP(i + 1, n, o.{ inner: o.inner.{ d: [i % 3, ..o.inner.c] } })
+  }
+}
+
+fn moreP(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpP(c)
+  rowP("{kind} 12 a function's update, last argument", before, fpP(c), fpP(wlastP(0, 7, c)))
+  rowP("{kind} 12 a function's update through a let", before, fpP(c), fpP(wletP(0, 7, c)))
+  rowP("{kind} 12 a function's update with the old one", before, fpP(c), woldP(0, 5, c, c))
+  rowP("{kind} 12 a function's update, the old one read after", before, fpP(c), wreadP(0, 4, c, []))
+  rowP(
+    "{kind} 12 a function's update, a closure keeps the old one",
+    before,
+    fpP(c),
+    wlookP(0, 4, c, []),
+  )
+  let made = list.fold(xs, c) { acc, x -> wrapP(acc, x) }
+  rowP("{kind} 12 a function's update in a fold", before, fpP(c), fpP(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let next = wrapP(acc, x)
+    match fpP(acc) == fpP(acc) {
+      true -> next
+      false -> acc
+    }
+  }
+  rowP("{kind} 12 a function's update in a fold, the old one read after", before, fpP(c), fpP(made))
+  let box = BoxP { label: "b", c: c, d: c }
+  let made = mstepP(0, 7, box)
+  rowP(
+    "{kind} 13 a method's update of a record",
+    "{before} {before}",
+    "{fpP(box.c)} {fpP(box.d)}",
+    "{fpP(made.c)} {fpP(made.d)}",
+  )
+  rowP(
+    "{kind} 13 a method's update, the old record too",
+    before,
+    fpP(box.c),
+    mstepoldP(0, 5, box, box),
+  )
+  rowP("{kind} 13 a method after the update", before, fpP(c), fpP(mafterP(c, 0, 7)))
+  rowP(
+    "{kind} 13 a method after the update, the old one too",
+    before,
+    fpP(c),
+    mafteroldP(c, 0, 5, c),
+  )
+  let made = list.fold(xs, box) { b, x -> StepP.step(b, x) }
+  rowP("{kind} 13 a method's update in a fold", before, fpP(box.c), fpP(made.c))
+  rowP("{kind} 14 the builtin as a value", before, fpP(c), fpP(vloopP(0, 7, c)))
+  rowP("{kind} 14 the builtin as a value, the old one too", before, fpP(c), voldP(0, 5, c, c))
+  let f = { l, x -> [x, ..l] }
+  let made = list.fold(xs, c) { acc, x -> f(acc, x) }
+  rowP("{kind} 14 the builtin as a value in a fold", before, fpP(c), fpP(made))
+  let fs = [f, f]
+  let made = list.fold(xs, c) { acc, x ->
+    match list.get(fs, x % 2) {
+      Some(g) -> g(acc, x)
+      None -> acc
+    }
+  }
+  rowP("{kind} 14 the builtin from a list", before, fpP(c), fpP(made))
+  let made = list.fold(xs, c) { l, x -> [x, ..l] }
+  rowP("{kind} 14 the builtin given to a fold", before, fpP(c), fpP(made))
+  let made = list.fold([c, c], []) { l, x -> [x, ..l] }
+  rowP("{kind} 14 [x, ..acc] given to a fold of it", before, fpP(c), "{list.length(made)}")
+  let nest = NestP { label: "o", inner: box, spare: box }
+  let made = nloopP(0, 7, nest)
+  rowP(
+    "{kind} 15 a record in a record",
+    "{before} {before} {before}",
+    "{fpP(nest.inner.c)} {fpP(nest.spare.c)} {fpP(box.c)}",
+    "{fpP(made.inner.c)} {fpP(made.inner.d)} {fpP(made.spare.c)}",
+  )
+  rowP(
+    "{kind} 15 a record in a record, the old one too",
+    before,
+    fpP(nest.inner.c),
+    noldP(0, 5, nest, nest),
+  )
+  let deep = DeepP { top: nest, n: 0 }
+  let made = ndeepP(0, 7, deep)
+  rowP(
+    "{kind} 15 three records deep",
+    "{before} {before}",
+    "{fpP(deep.top.inner.c)} {fpP(nest.inner.c)}",
+    "{fpP(made.top.inner.c)} {fpP(made.top.spare.c)}",
+  )
+  let made = notherP(0, 7, nest)
+  rowP(
+    "{kind} 15 a record in a record, a field from another",
+    before,
+    fpP(nest.inner.c),
+    "{fpP(made.inner.c)} {fpP(made.inner.d)}",
+  )
+  let own = nloopP(
+    0,
+    3,
+    NestP {
+      label: "own",
+      inner: BoxP { label: "i", c: make(), d: [] },
+      spare: BoxP { label: "s", c: [], d: [] },
+    },
+  )
+  rowP("{kind} 15 a record in a record held nowhere else", before, fpP(c), fpP(own.inner.c))
+  let made = list.fold(xs, nest) { o, x -> o.{ inner: o.inner.{ c: [x, ..o.inner.c] } } }
+  rowP(
+    "{kind} 15 a record in a record in a fold",
+    "{before} {before}",
+    "{fpP(nest.inner.c)} {fpP(box.c)}",
+    fpP(made.inner.c),
+  )
+  let kept = [nest.inner]
+  let made = list.fold(xs, nest) { o, x -> o.{ inner: o.inner.{ c: [x, ..o.inner.c] } } }
+  rowP(
+    "{kind} 15 a record in a record, its inner one in a list",
+    before,
+    fpP(option.unwrap_or(list.first(kept), box).c),
+    fpP(made.inner.c),
+  )
+}
+
+-- ── [x, ..acc]: a field of the outer record read in the same update ──
+
+fn shownP(o: NestP) -> String {
+  "{o.label}:{fpP(o.inner.c)}:{fpP(o.spare.c)}"
+}
+
+fn plabelP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false ->
+      plabelP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, label: "{o.label}." })
+  }
+}
+
+fn pinnerP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false -> pinnerP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, spare: o.inner })
+  }
+}
+
+fn pwholeP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false -> pwholeP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, label: shownP(o) })
+  }
+}
+
+fn ptwoP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false -> ptwoP(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, label: "{o.label}{fpP(o.spare.c)}" },
+    )
+  }
+}
+
+fn parmP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false -> match i % 2 == 0 {
+      true -> parmP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, label: "{o.label}e" })
+      false -> parmP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, spare: o.inner })
+    }
+  }
+}
+
+fn paliasP(i: Int, n: Int, o: NestP) -> NestP {
+  match i == n {
+    true -> o
+    false -> {
+      let next = o.inner.{ c: [i % 3, ..o.inner.c] }
+      let p = o
+      paliasP(i + 1, n, o.{ inner: next, label: "{p.label}a", spare: p.inner })
+    }
+  }
+}
+
+fn poldP(i: Int, n: Int, o: NestP, old: NestP) -> String {
+  match i == n {
+    true -> "{shownP(o)} old {shownP(old)}"
+    false ->
+      poldP(i + 1, n, o.{ inner: o.inner.{ c: [i % 3, ..o.inner.c] }, label: "{o.label}o" }, o)
+  }
+}
+
+fn pdeepP(i: Int, n: Int, d: DeepP) -> DeepP {
+  match i == n {
+    true -> d
+    false -> pdeepP(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{ inner: d.top.inner.{ c: [i % 3, ..d.top.inner.c] }, label: "{d.top.label}d" },
+        n: d.n + 1,
+      },
+    )
+  }
+}
+
+fn partP(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let box = BoxP { label: "b", c: c, d: c }
+  let nest = NestP { label: "o", inner: box, spare: box }
+  let before = shownP(nest)
+  rowP(
+    "{kind} 16 another field read in the update",
+    before,
+    shownP(nest),
+    shownP(plabelP(0, 7, nest)),
+  )
+  rowP(
+    "{kind} 16 the inner record read in the update",
+    before,
+    shownP(nest),
+    shownP(pinnerP(0, 7, nest)),
+  )
+  rowP(
+    "{kind} 16 the whole record read in the update",
+    before,
+    shownP(nest),
+    shownP(pwholeP(0, 3, nest)),
+  )
+  rowP("{kind} 16 two other fields read", before, shownP(nest), shownP(ptwoP(0, 5, nest)))
+  rowP("{kind} 16 arms that read other fields", before, shownP(nest), shownP(parmP(0, 7, nest)))
+  rowP("{kind} 16 an alias read after", before, shownP(nest), shownP(paliasP(0, 5, nest)))
+  rowP(
+    "{kind} 16 another field read, the old one too",
+    before,
+    shownP(nest),
+    poldP(0, 5, nest, nest),
+  )
+  let deep = DeepP { top: nest, n: 0 }
+  let made = pdeepP(0, 7, deep)
+  rowP("{kind} 16 three deep, fields read", before, shownP(deep.top), "{shownP(made.top)} {made.n}")
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: [x, ..o.inner.c] }, label: "{o.label}f" }
+  }
+  rowP("{kind} 16 a fold, another field read", before, shownP(nest), shownP(made))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: [x, ..o.inner.c] }, spare: o.inner }
+  }
+  rowP("{kind} 16 a fold, the inner record read", before, shownP(nest), shownP(made))
+  let own = plabelP(
+    0,
+    3,
+    NestP { label: "own", inner: BoxP { label: "i", c: make(), d: make() }, spare: box },
+  )
+  rowP("{kind} 16 held nowhere else, another field read", before, shownP(nest), shownP(own))
+}
+
+-- ── list.prepend ───────────────────────────────────────────────
+
+type BoxQ {
+  label: String,
+  c: List(Int),
+  d: List(Int),
+}
+
+fn fpQ(c: List(Int)) -> String {
+  "{list.length(c)}/{list.fold(c, 0) { a, x -> (a * 31 + x) % 1000003 }}/{list.get(c, 0)}"
+}
+
+fn treeQ() -> List(Int) {
+  list.fold(0..199, []) { a, i -> list.prepend(a, i) }
+}
+
+fn flatQ() -> List(Int) {
+  [1, 2, 3]
+}
+
+fn tailQ(c: List(Int)) -> List(Int) {
+  list.prepend(c, 1)
+}
+
+fn viaQ(c: List(Int)) -> List(Int) {
+  tailQ(c)
+}
+
+fn localsQ(c: List(Int)) -> List(Int) {
+  let a = c
+  let b = a
+  match b {
+    e -> list.prepend(e, 2)
+  }
+}
+
+fn foldQ(c: List(Int), xs: List(Int)) -> List(Int) {
+  list.fold(xs, c) { acc, x -> list.prepend(acc, x) }
+}
+
+-- a function that calls itself with the collection as its last argument
+fn lastQ(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> lastQ(i + 1, n, list.prepend(acc, i % 3))
+  }
+}
+
+-- with it as its first argument
+fn firstQ(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> firstQ(list.prepend(acc, i % 3), i + 1, n)
+  }
+}
+
+-- through a let
+fn namedQ(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = list.prepend(acc, i % 3)
+      namedQ(i + 1, n, next)
+    }
+  }
+}
+
+-- the old one handed on too
+fn oldQ(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} old {fpQ(old)}"
+    false -> oldQ(i + 1, n, list.prepend(acc, i % 3), acc)
+  }
+}
+
+-- the same one handed on twice
+fn twiceQ(i: Int, n: Int, acc: List(Int), same: List(Int)) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} same {fpQ(same)}"
+    false -> twiceQ(i + 1, n, acc, list.prepend(acc, i % 3))
+  }
+}
+
+-- every old one kept in a list
+fn histQ(i: Int, n: Int, acc: List(Int), olds: List(List(Int))) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} olds {list.map(olds) { o -> fpQ(o) }}"
+    false -> histQ(i + 1, n, list.prepend(acc, i % 3), [acc, ..olds])
+  }
+}
+
+-- a closure of each round keeps the old one
+fn seenQ(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> seenQ(i + 1, n, list.prepend(acc, i % 3), [{ -> fpQ(acc) }, ..looks])
+  }
+}
+
+-- an arm that does not change it reads it
+fn armQ(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> match i % 2 == 0 {
+      true -> armQ(i + 1, n, list.prepend(acc, i % 3))
+      false -> armQ(i + 1, n, acc)
+    }
+  }
+}
+
+-- each old one sent on a channel
+fn sentQ(i: Int, n: Int, acc: List(Int), ch: Channel(List(Int))) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      channel.send(ch, acc)
+      sentQ(i + 1, n, list.prepend(acc, i % 3), ch)
+    }
+  }
+}
+
+-- a record that holds it, handed on
+fn recQ(i: Int, n: Int, b: BoxQ) -> BoxQ {
+  match i == n {
+    true -> b
+    false -> recQ(i + 1, n, b.{ c: list.prepend(b.c, i % 3) })
+  }
+}
+
+-- the record handed on, and the old record too
+fn recoldQ(i: Int, n: Int, b: BoxQ, old: BoxQ) -> String {
+  match i == n {
+    true -> "{fpQ(b.c)} old {fpQ(old.c)} {old.label}"
+    false -> recoldQ(i + 1, n, b.{ c: list.prepend(b.c, i % 3), label: "r{i}" }, b)
+  }
+}
+
+-- a field updated from another one
+fn recotherQ(i: Int, n: Int, b: BoxQ) -> BoxQ {
+  match i == n {
+    true -> b
+    false -> recotherQ(i + 1, n, b.{ d: list.prepend(b.c, i % 3) })
+  }
+}
+
+-- two updates of the record in a row
+fn rectwoQ(i: Int, n: Int, b: BoxQ) -> BoxQ {
+  match i == n {
+    true -> b
+    false ->
+      rectwoQ(i + 1, n, b.{ c: list.prepend(b.c, i % 3) }.{ d: list.prepend(b.d, (i + 1) % 3) })
+  }
+}
+
+-- a record whose function reads it again in an arm
+fn recarmQ(i: Int, n: Int, b: BoxQ) -> BoxQ {
+  match i == n {
+    true -> b
+    false -> match i % 2 == 0 {
+      true -> recarmQ(i + 1, n, b.{ c: list.prepend(b.c, i % 3) })
+      false -> recarmQ(i + 1, n, b.{ label: "{b.label}." })
+    }
+  }
+}
+
+fn rowQ(name: String, before: String, after: String, made: String) {
+  let verdict = match before == after {
+    true -> "same"
+    false -> "CHANGED UNDER ITS HOLDER"
+  }
+  println("list.prepend {name}: {verdict} {before} -> {after}; made {made}")
+}
+
+fn eachQ(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpQ(c)
+  let n = list.prepend(c, 1)
+  rowQ("{kind} 1 a let read after", before, fpQ(c), fpQ(n))
+  rowQ("{kind} 2 returned at once", before, fpQ(c), fpQ(tailQ(c)))
+  rowQ("{kind} 2 through a tail call", before, fpQ(c), fpQ(viaQ(c)))
+  rowQ("{kind} 2 copies in the frame", before, fpQ(c), fpQ(localsQ(c)))
+  let look = { -> fpQ(c) }
+  rowQ("{kind} 3 a closure", before, look(), fpQ(foldQ(c, xs)))
+  let box = BoxQ { label: "b", c: c, d: c }
+  let pair = (c, 1)
+  let items = [c, c]
+  let maybe = Some(c)
+  rowQ("{kind} 4 a record field", before, fpQ(box.c), fpQ(foldQ(box.c, xs)))
+  let (first, _) = pair
+  let made = foldQ(first, xs)
+  let (again, _) = pair
+  rowQ("{kind} 4 a tuple", before, fpQ(again), fpQ(made))
+  let changed = list.map(items) { it -> tailQ(it) }
+  rowQ(
+    "{kind} 4 list elements",
+    "{[before, before]}",
+    "{list.map(items) { it -> fpQ(it) }}",
+    "{list.map(changed) { it -> fpQ(it) }}",
+  )
+  let changed = option.map(maybe) { it -> tailQ(it) }
+  rowQ(
+    "{kind} 4 an Option",
+    before,
+    fpQ(option.unwrap_or(maybe, [])),
+    fpQ(option.unwrap_or(changed, [])),
+  )
+  let updated = box.{ c: list.prepend(box.c, 1) }
+  rowQ(
+    "{kind} 4 a record update",
+    "{before} {before}",
+    "{fpQ(box.c)} {fpQ(box.d)}",
+    "{fpQ(updated.c)} {fpQ(updated.d)}",
+  )
+  let ch = channel.new(4)
+  channel.send(ch, c)
+  let made = foldQ(c, xs)
+  let got = match channel.receive(ch) {
+    Some(v) -> fpQ(v)
+    None -> "closed"
+  }
+  rowQ("{kind} 5 a channel message", before, got, fpQ(made))
+  let go = channel.new(1)
+  let seen = channel.new(1)
+  let results = channel.new(2)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(go)
+        channel.send(seen, fpQ(c))
+      },
+      { ->
+        channel.send(results, foldQ(c, xs))
+        channel.send(results, lastQ(0, 5, c))
+        channel.send(go, ())
+      },
+    ],
+  )
+  let got = match channel.receive(seen) {
+    Some(v) -> v
+    None -> "closed"
+  }
+  let made = list.map(0..1) { _ ->
+    match channel.receive(results) {
+      Some(v) -> fpQ(v)
+      None -> "closed"
+    }
+  }
+  rowQ("{kind} 5 another task", before, got, "{made}")
+  let made = task.map([c, c], 2) { it -> lastQ(0, 6, foldQ(it, xs)) }
+  rowQ("{kind} 5 changed in other tasks", before, fpQ(c), "{list.map(made) { it -> fpQ(it) }}")
+  let made = list.fold_until(xs, c) { acc, x ->
+    match x == 0 {
+      true -> Stop(list.prepend(acc, x))
+      false -> Continue(list.prepend(acc, x))
+    }
+  }
+  rowQ("{kind} 6 fold_until", before, fpQ(c), fpQ(made))
+  let made = set.fold(set.from_list(xs), c) { acc, x -> list.prepend(acc, x) }
+  rowQ("{kind} 6 set.fold", before, fpQ(c), fpQ(made))
+  let olds = channel.new(16)
+  let made = list.fold(xs, c) { acc, x ->
+    channel.send(olds, acc)
+    list.prepend(acc, x)
+  }
+  channel.close(olds)
+  let kept = list.map(0..6) { _ ->
+    match channel.receive(olds) {
+      Some(v) -> fpQ(v)
+      None -> "closed"
+    }
+  }
+  println("list.prepend {kind} 7 a step that sends the old one away: {kept}; made {fpQ(made)}")
+  let (made, history) = list.fold(xs, (c, [])) { (acc, hist), x ->
+    let next = list.prepend(acc, x)
+    (next, [acc, ..hist])
+  }
+  println(
+    "list.prepend {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpQ(h) }}; made {fpQ(made)}",
+  )
+  let snapshots = list.scan(xs, c) { acc, x -> list.prepend(acc, x) }
+  println("list.prepend {kind} 7 list.scan: {list.map(snapshots) { s -> fpQ(s) }}")
+  let made = list.fold(xs, c) { acc, x ->
+    match x == 1 {
+      true -> acc
+      false -> list.prepend(acc, x)
+    }
+  }
+  rowQ("{kind} 7 a step that sometimes gives it back", before, fpQ(c), fpQ(made))
+  let made = list.fold(xs, c) { acc, x ->
+    list.fold(xs, acc) { inner, y -> list.prepend(inner, (x + y) % 3) }
+  }
+  rowQ("{kind} 7 a fold in a fold", before, fpQ(c), fpQ(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let size = fpQ(acc)
+    let next = list.prepend(acc, x)
+    match size == fpQ(acc) {
+      true -> next
+      false -> []
+    }
+  }
+  rowQ("{kind} 7 a step that reads it after the change", before, fpQ(c), fpQ(made))
+  rowQ("{kind} 8 a loop, last argument", before, fpQ(c), fpQ(lastQ(0, 7, c)))
+  rowQ("{kind} 8 a loop, first argument", before, fpQ(c), fpQ(firstQ(c, 0, 7)))
+  rowQ("{kind} 8 a loop through a let", before, fpQ(c), fpQ(namedQ(0, 7, c)))
+  rowQ("{kind} 8 a loop with the old one", before, fpQ(c), oldQ(0, 7, c, c))
+  rowQ("{kind} 8 a loop with it twice", before, fpQ(c), twiceQ(0, 7, c, c))
+  rowQ("{kind} 8 a loop that keeps the old ones", before, fpQ(c), histQ(0, 4, c, []))
+  rowQ("{kind} 8 a loop whose closures keep the old ones", before, fpQ(c), seenQ(0, 4, c, []))
+  rowQ("{kind} 8 a loop whose other arm reads it", before, fpQ(c), fpQ(armQ(0, 7, c)))
+  let ch = channel.new(16)
+  let made = sentQ(0, 4, c, ch)
+  channel.close(ch)
+  let got = list.map(0..3) { _ ->
+    match channel.receive(ch) {
+      Some(v) -> fpQ(v)
+      None -> "closed"
+    }
+  }
+  rowQ("{kind} 8 a loop that sends the old ones", before, fpQ(c), "{fpQ(made)} sent {got}")
+  let start = BoxQ { label: "s", c: c, d: c }
+  let made = recQ(0, 7, start)
+  rowQ(
+    "{kind} 9 a record in a loop",
+    "{before} {before}",
+    "{fpQ(start.c)} {fpQ(start.d)}",
+    "{fpQ(made.c)} {fpQ(made.d)}",
+  )
+  rowQ(
+    "{kind} 9 a record in a loop, its old one too",
+    before,
+    fpQ(start.c),
+    recoldQ(0, 5, start, start),
+  )
+  let made = recotherQ(0, 7, start)
+  rowQ(
+    "{kind} 9 a record field from another",
+    "{before} {before}",
+    "{fpQ(start.c)} {fpQ(start.d)}",
+    "{fpQ(made.c)} {fpQ(made.d)}",
+  )
+  let made = rectwoQ(0, 7, start)
+  rowQ(
+    "{kind} 9 two record updates",
+    "{before} {before}",
+    "{fpQ(start.c)} {fpQ(start.d)}",
+    "{fpQ(made.c)} {fpQ(made.d)}",
+  )
+  let made = recarmQ(0, 7, start)
+  rowQ("{kind} 9 a record read in another arm", before, fpQ(start.c), "{fpQ(made.c)} {made.label}")
+  let made = recQ(0, 3, BoxQ { label: "own", c: make(), d: [] })
+  rowQ("{kind} 9 a record held nowhere else", before, fpQ(c), fpQ(made.c))
+  let made = list.fold(xs, start) { b, x -> b.{ c: list.prepend(b.c, x) } }
+  rowQ(
+    "{kind} 9 a record in a fold",
+    "{before} {before}",
+    "{fpQ(start.c)} {fpQ(start.d)}",
+    fpQ(made.c),
+  )
+  let kept = [start]
+  let made = list.fold(xs, start) { b, x -> b.{ d: list.prepend(b.d, x) } }
+  rowQ(
+    "{kind} 9 a record in a fold, held in a list",
+    before,
+    fpQ(option.unwrap_or(list.first(kept), start).d),
+    fpQ(made.d),
+  )
+  let failing = task.guard { ->
+    list.fold(xs, c) { acc, x ->
+      match x == 0 {
+        true -> panic("stop")
+        false -> list.prepend(acc, x)
+      }
+    }
+  }
+  let ended = match failing {
+    Ok(_) -> "done"
+    Err(_) -> "failed"
+  }
+  rowQ("{kind} 10 a task that fails part way", before, fpQ(c), ended)
+  let other = make()
+  let by = #{ c: "first" }
+  let members = set.from_list([c])
+  let made = foldQ(c, xs)
+  let made2 = lastQ(0, 5, other)
+  println(
+    "list.prepend {kind} 11 a key and a member: {map.get(by, c)} {set.contains(members, c)} {c == other} {made == foldQ(make(), xs)} {made2 == lastQ(0, 5, make())} {map.get(#{ made: 1 }, foldQ(make(), xs))}",
+  )
+}
+
+-- ── list.prepend: through calls, as a value, in nested records ──
+
+type NestQ {
+  label: String,
+  inner: BoxQ,
+  spare: BoxQ,
+}
+
+type DeepQ {
+  top: NestQ,
+  n: Int,
+}
+
+trait StepQ {
+  fn step(self, x: Int) -> BoxQ
+}
+
+trait StepQ for BoxQ {
+  fn step(self, x: Int) -> BoxQ {
+    self.{ c: list.prepend(self.c, x) }
+  }
+}
+
+trait CountQ {
+  fn count(self) -> Int
+}
+
+trait CountQ for Int {
+  fn count(self) -> Int {
+    self + 1
+  }
+}
+
+-- a function of the program that makes the update
+fn wrapQ(c: List(Int), x: Int) -> List(Int) {
+  list.prepend(c, x)
+}
+
+fn wlastQ(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> wlastQ(i + 1, n, wrapQ(acc, i % 3))
+  }
+}
+
+fn wletQ(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> {
+      let next = wrapQ(acc, i % 3)
+      wletQ(i + 1, n, next)
+    }
+  }
+}
+
+fn woldQ(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} old {fpQ(old)}"
+    false -> woldQ(i + 1, n, wrapQ(acc, i % 3), acc)
+  }
+}
+
+-- the old one read by a call after the update
+fn wreadQ(i: Int, n: Int, acc: List(Int), seen: List(String)) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} seen {seen}"
+    false -> wreadQ(i + 1, n, wrapQ(acc, i % 3), [fpQ(acc), ..seen])
+  }
+}
+
+-- a closure made before the call keeps the old one
+fn wlookQ(i: Int, n: Int, acc: List(Int), looks: List(Fn() -> String)) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} looks {list.map(looks) { f -> f() }}"
+    false -> {
+      let look = { -> fpQ(acc) }
+      wlookQ(i + 1, n, wrapQ(acc, i % 3), [look, ..looks])
+    }
+  }
+}
+
+-- a method that makes the update of a record
+fn mstepQ(i: Int, n: Int, b: BoxQ) -> BoxQ {
+  match i == n {
+    true -> b
+    false -> mstepQ(i + 1, n, StepQ.step(b, i % 3))
+  }
+}
+
+fn mstepoldQ(i: Int, n: Int, b: BoxQ, old: BoxQ) -> String {
+  match i == n {
+    true -> "{fpQ(b.c)} old {fpQ(old.c)}"
+    false -> mstepoldQ(i + 1, n, StepQ.step(b, i % 3), b)
+  }
+}
+
+-- a method called after the update
+fn mafterQ(acc: List(Int), i: Int, n: Int) -> List(Int) {
+  match i == n {
+    true -> acc
+    false -> mafterQ(list.prepend(acc, i % 3), CountQ.count(i), n)
+  }
+}
+
+fn mafteroldQ(acc: List(Int), i: Int, n: Int, old: List(Int)) -> String {
+  match i == n {
+    true -> "{fpQ(acc)} old {fpQ(old)}"
+    false -> mafteroldQ(list.prepend(acc, i % 3), CountQ.count(i), n, acc)
+  }
+}
+
+-- the builtin as a value
+fn vloopQ(i: Int, n: Int, acc: List(Int)) -> List(Int) {
+  let f = list.prepend
+  match i == n {
+    true -> acc
+    false -> vloopQ(i + 1, n, f(acc, i % 3))
+  }
+}
+
+fn voldQ(i: Int, n: Int, acc: List(Int), old: List(Int)) -> String {
+  let f = list.prepend
+  match i == n {
+    true -> "{fpQ(acc)} old {fpQ(old)}"
+    false -> voldQ(i + 1, n, f(acc, i % 3), acc)
+  }
+}
+
+-- a record in a record
+fn nloopQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false -> nloopQ(i + 1, n, o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) } })
+  }
+}
+
+fn noldQ(i: Int, n: Int, o: NestQ, old: NestQ) -> String {
+  match i == n {
+    true -> "{fpQ(o.inner.c)} old {fpQ(old.inner.c)} {old.label}"
+    false ->
+      noldQ(i + 1, n, o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) }, label: "n{i}" }, o)
+  }
+}
+
+fn ndeepQ(i: Int, n: Int, d: DeepQ) -> DeepQ {
+  match i == n {
+    true -> d
+    false -> ndeepQ(
+      i + 1,
+      n,
+      d.{ top: d.top.{ inner: d.top.inner.{ c: list.prepend(d.top.inner.c, i % 3) } } },
+    )
+  }
+}
+
+fn notherQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false -> notherQ(i + 1, n, o.{ inner: o.inner.{ d: list.prepend(o.inner.c, i % 3) } })
+  }
+}
+
+fn moreQ(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let before = fpQ(c)
+  rowQ("{kind} 12 a function's update, last argument", before, fpQ(c), fpQ(wlastQ(0, 7, c)))
+  rowQ("{kind} 12 a function's update through a let", before, fpQ(c), fpQ(wletQ(0, 7, c)))
+  rowQ("{kind} 12 a function's update with the old one", before, fpQ(c), woldQ(0, 5, c, c))
+  rowQ("{kind} 12 a function's update, the old one read after", before, fpQ(c), wreadQ(0, 4, c, []))
+  rowQ(
+    "{kind} 12 a function's update, a closure keeps the old one",
+    before,
+    fpQ(c),
+    wlookQ(0, 4, c, []),
+  )
+  let made = list.fold(xs, c) { acc, x -> wrapQ(acc, x) }
+  rowQ("{kind} 12 a function's update in a fold", before, fpQ(c), fpQ(made))
+  let made = list.fold(xs, c) { acc, x ->
+    let next = wrapQ(acc, x)
+    match fpQ(acc) == fpQ(acc) {
+      true -> next
+      false -> acc
+    }
+  }
+  rowQ("{kind} 12 a function's update in a fold, the old one read after", before, fpQ(c), fpQ(made))
+  let box = BoxQ { label: "b", c: c, d: c }
+  let made = mstepQ(0, 7, box)
+  rowQ(
+    "{kind} 13 a method's update of a record",
+    "{before} {before}",
+    "{fpQ(box.c)} {fpQ(box.d)}",
+    "{fpQ(made.c)} {fpQ(made.d)}",
+  )
+  rowQ(
+    "{kind} 13 a method's update, the old record too",
+    before,
+    fpQ(box.c),
+    mstepoldQ(0, 5, box, box),
+  )
+  rowQ("{kind} 13 a method after the update", before, fpQ(c), fpQ(mafterQ(c, 0, 7)))
+  rowQ(
+    "{kind} 13 a method after the update, the old one too",
+    before,
+    fpQ(c),
+    mafteroldQ(c, 0, 5, c),
+  )
+  let made = list.fold(xs, box) { b, x -> StepQ.step(b, x) }
+  rowQ("{kind} 13 a method's update in a fold", before, fpQ(box.c), fpQ(made.c))
+  rowQ("{kind} 14 the builtin as a value", before, fpQ(c), fpQ(vloopQ(0, 7, c)))
+  rowQ("{kind} 14 the builtin as a value, the old one too", before, fpQ(c), voldQ(0, 5, c, c))
+  let f = list.prepend
+  let made = list.fold(xs, c) { acc, x -> f(acc, x) }
+  rowQ("{kind} 14 the builtin as a value in a fold", before, fpQ(c), fpQ(made))
+  let fs = [f, f]
+  let made = list.fold(xs, c) { acc, x ->
+    match list.get(fs, x % 2) {
+      Some(g) -> g(acc, x)
+      None -> acc
+    }
+  }
+  rowQ("{kind} 14 the builtin from a list", before, fpQ(c), fpQ(made))
+  let made = list.fold(xs, c, list.prepend)
+  rowQ("{kind} 14 the builtin given to a fold", before, fpQ(c), fpQ(made))
+  let made = list.fold([c, c], [], list.prepend)
+  rowQ("{kind} 14 list.prepend given to a fold of it", before, fpQ(c), "{list.length(made)}")
+  let nest = NestQ { label: "o", inner: box, spare: box }
+  let made = nloopQ(0, 7, nest)
+  rowQ(
+    "{kind} 15 a record in a record",
+    "{before} {before} {before}",
+    "{fpQ(nest.inner.c)} {fpQ(nest.spare.c)} {fpQ(box.c)}",
+    "{fpQ(made.inner.c)} {fpQ(made.inner.d)} {fpQ(made.spare.c)}",
+  )
+  rowQ(
+    "{kind} 15 a record in a record, the old one too",
+    before,
+    fpQ(nest.inner.c),
+    noldQ(0, 5, nest, nest),
+  )
+  let deep = DeepQ { top: nest, n: 0 }
+  let made = ndeepQ(0, 7, deep)
+  rowQ(
+    "{kind} 15 three records deep",
+    "{before} {before}",
+    "{fpQ(deep.top.inner.c)} {fpQ(nest.inner.c)}",
+    "{fpQ(made.top.inner.c)} {fpQ(made.top.spare.c)}",
+  )
+  let made = notherQ(0, 7, nest)
+  rowQ(
+    "{kind} 15 a record in a record, a field from another",
+    before,
+    fpQ(nest.inner.c),
+    "{fpQ(made.inner.c)} {fpQ(made.inner.d)}",
+  )
+  let own = nloopQ(
+    0,
+    3,
+    NestQ {
+      label: "own",
+      inner: BoxQ { label: "i", c: make(), d: [] },
+      spare: BoxQ { label: "s", c: [], d: [] },
+    },
+  )
+  rowQ("{kind} 15 a record in a record held nowhere else", before, fpQ(c), fpQ(own.inner.c))
+  let made = list.fold(xs, nest) { o, x -> o.{ inner: o.inner.{ c: list.prepend(o.inner.c, x) } } }
+  rowQ(
+    "{kind} 15 a record in a record in a fold",
+    "{before} {before}",
+    "{fpQ(nest.inner.c)} {fpQ(box.c)}",
+    fpQ(made.inner.c),
+  )
+  let kept = [nest.inner]
+  let made = list.fold(xs, nest) { o, x -> o.{ inner: o.inner.{ c: list.prepend(o.inner.c, x) } } }
+  rowQ(
+    "{kind} 15 a record in a record, its inner one in a list",
+    before,
+    fpQ(option.unwrap_or(list.first(kept), box).c),
+    fpQ(made.inner.c),
+  )
+}
+
+-- ── list.prepend: a field of the outer record read in the same update ──
+
+fn shownQ(o: NestQ) -> String {
+  "{o.label}:{fpQ(o.inner.c)}:{fpQ(o.spare.c)}"
+}
+
+fn plabelQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false -> plabelQ(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) }, label: "{o.label}." },
+    )
+  }
+}
+
+fn pinnerQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false ->
+      pinnerQ(i + 1, n, o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) }, spare: o.inner })
+  }
+}
+
+fn pwholeQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false -> pwholeQ(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) }, label: shownQ(o) },
+    )
+  }
+}
+
+fn ptwoQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false -> ptwoQ(
+      i + 1,
+      n,
+      o.{
+        inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) },
+        label: "{o.label}{fpQ(o.spare.c)}",
+      },
+    )
+  }
+}
+
+fn parmQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false -> match i % 2 == 0 {
+      true -> parmQ(
+        i + 1,
+        n,
+        o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) }, label: "{o.label}e" },
+      )
+      false ->
+        parmQ(i + 1, n, o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) }, spare: o.inner })
+    }
+  }
+}
+
+fn paliasQ(i: Int, n: Int, o: NestQ) -> NestQ {
+  match i == n {
+    true -> o
+    false -> {
+      let next = o.inner.{ c: list.prepend(o.inner.c, i % 3) }
+      let p = o
+      paliasQ(i + 1, n, o.{ inner: next, label: "{p.label}a", spare: p.inner })
+    }
+  }
+}
+
+fn poldQ(i: Int, n: Int, o: NestQ, old: NestQ) -> String {
+  match i == n {
+    true -> "{shownQ(o)} old {shownQ(old)}"
+    false -> poldQ(
+      i + 1,
+      n,
+      o.{ inner: o.inner.{ c: list.prepend(o.inner.c, i % 3) }, label: "{o.label}o" },
+      o,
+    )
+  }
+}
+
+fn pdeepQ(i: Int, n: Int, d: DeepQ) -> DeepQ {
+  match i == n {
+    true -> d
+    false -> pdeepQ(
+      i + 1,
+      n,
+      d.{
+        top: d.top.{
+          inner: d.top.inner.{ c: list.prepend(d.top.inner.c, i % 3) },
+          label: "{d.top.label}d",
+        },
+        n: d.n + 1,
+      },
+    )
+  }
+}
+
+fn partQ(kind: String, make: Fn() -> List(Int)) {
+  let xs = [1, 2, 0, 2, 1, 0, 2]
+  let c = make()
+  let box = BoxQ { label: "b", c: c, d: c }
+  let nest = NestQ { label: "o", inner: box, spare: box }
+  let before = shownQ(nest)
+  rowQ(
+    "{kind} 16 another field read in the update",
+    before,
+    shownQ(nest),
+    shownQ(plabelQ(0, 7, nest)),
+  )
+  rowQ(
+    "{kind} 16 the inner record read in the update",
+    before,
+    shownQ(nest),
+    shownQ(pinnerQ(0, 7, nest)),
+  )
+  rowQ(
+    "{kind} 16 the whole record read in the update",
+    before,
+    shownQ(nest),
+    shownQ(pwholeQ(0, 3, nest)),
+  )
+  rowQ("{kind} 16 two other fields read", before, shownQ(nest), shownQ(ptwoQ(0, 5, nest)))
+  rowQ("{kind} 16 arms that read other fields", before, shownQ(nest), shownQ(parmQ(0, 7, nest)))
+  rowQ("{kind} 16 an alias read after", before, shownQ(nest), shownQ(paliasQ(0, 5, nest)))
+  rowQ(
+    "{kind} 16 another field read, the old one too",
+    before,
+    shownQ(nest),
+    poldQ(0, 5, nest, nest),
+  )
+  let deep = DeepQ { top: nest, n: 0 }
+  let made = pdeepQ(0, 7, deep)
+  rowQ("{kind} 16 three deep, fields read", before, shownQ(deep.top), "{shownQ(made.top)} {made.n}")
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: list.prepend(o.inner.c, x) }, label: "{o.label}f" }
+  }
+  rowQ("{kind} 16 a fold, another field read", before, shownQ(nest), shownQ(made))
+  let made = list.fold(xs, nest) { o, x ->
+    o.{ inner: o.inner.{ c: list.prepend(o.inner.c, x) }, spare: o.inner }
+  }
+  rowQ("{kind} 16 a fold, the inner record read", before, shownQ(nest), shownQ(made))
+  let own = plabelQ(
+    0,
+    3,
+    NestQ { label: "own", inner: BoxQ { label: "i", c: make(), d: make() }, spare: box },
+  )
+  rowQ("{kind} 16 held nowhere else, another field read", before, shownQ(nest), shownQ(own))
+}
+
+fn main() {
+  eachP("tree", treeP)
+  eachP("small", flatP)
+  moreP("tree", treeP)
+  moreP("small", flatP)
+  partP("tree", treeP)
+  partP("small", flatP)
+  eachQ("tree", treeQ)
+  eachQ("small", flatQ)
+  moreQ("tree", treeQ)
+  moreQ("small", flatQ)
+  partQ("tree", treeQ)
+  partQ("small", flatQ)
+}

@@ -144,6 +144,9 @@ http.get(u: Url) -> Result(Response, HttpError)
 Makes an HTTP GET request. Returns `Ok(Response)` for a response of any
 status (4xx and 5xx too) that arrived whole, and `Err(HttpError)`
 otherwise: see [Errors](#errors).
+A redirect is followed as [`http.request`](#httprequest) follows it, up
+to ten of them: the `Response` is the last one's, and nothing in it says
+where it came from.
 The names of the response's headers are in lower case
 (`map.get(resp.headers, "content-type")`); a header that came more than
 once is one entry, its values joined with `", "` in the order they came

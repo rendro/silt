@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: help: write `url: String`
+-- stderr-contains: help: write `httpCode: Int`
+-- The help lowers the whole leading run of capitals of an acronym, but
+-- the capital that starts the next word.
+type Link {
+  URL: String,
+}
+
+type Reply {
+  HTTPCode: Int,
+}
+
+fn main() {
+  println(Link { url: "x" })
+  println(Reply { httpCode: 1 })
+}
