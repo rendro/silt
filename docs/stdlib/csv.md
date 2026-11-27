@@ -184,7 +184,7 @@ type Row {
 
 fn main() {
   let text = "Date,Description,Amount (USD)\n2026-01-02,Coffee,-3.50\n2026-01-03,Rent,-950\n"
-  let columns = #{"date": "Date", "description": "Description", "amount": "Amount (USD)"}
+  let columns = #{ "date": "Date", "description": "Description", "amount": "Amount (USD)" }
   match csv.parse_with(text, columns, Row) {
     Ok(rows) -> list.each(rows) { r -> println("{r.date} {r.description} {r.amount}") }
     Err(e) -> println("{e}")
