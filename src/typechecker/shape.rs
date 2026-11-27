@@ -573,18 +573,29 @@ impl<'a, 'd> Walk<'a, 'd> {
     /// Bind the names of `pattern` matched against `value`: a tuple
     /// written out is matched an element at a time.
     fn bind_matched(&mut self, pattern: &Pattern, value: Option<&Expr>) {
+        // (`(a, b) as both`: the names behind `as` are the tuple, which
+        // is built here and is no part of a parameter.)
+        let mut tuple = pattern;
+        let mut whole = Vec::new();
+        while let PatternKind::As { pattern, name, .. } = &tuple.kind {
+            whole.push(*name);
+            tuple = pattern;
+        }
         if let (
             Some(Expr {
                 kind: ExprKind::Tuple(values),
                 ..
             }),
             PatternKind::Tuple(items),
-        ) = (value, &pattern.kind)
+        ) = (value, &tuple.kind)
             && values.len() == items.len()
         {
             let measures: Vec<_> = values.iter().map(|v| self.measure(v)).collect();
             for (item, m) in items.iter().zip(measures) {
                 self.bind(item, m, false);
+            }
+            for name in whole {
+                self.scopes.push((name, Origin::Other));
             }
             return;
         }

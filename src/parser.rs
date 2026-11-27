@@ -5381,6 +5381,8 @@ impl<'src> Parser<'src> {
             // Record pattern: User { name, age, .. }
             let open = self.advance().span;
             let mut has_rest = false;
+            // (A field written alone with `as` behind it, `P { x as y }`.)
+            let mut alone_then_as = false;
             let fields = self.comma_list(
                 "record pattern",
                 open,
@@ -5402,9 +5404,15 @@ impl<'src> Parser<'src> {
                         }
                         return Ok(None);
                     }
-                    p.parse_field_pattern().map(Some)
+                    let field = p.parse_field_pattern()?;
+                    alone_then_as = field.2.is_none() && p.at(&Token::As);
+                    Ok(Some(field))
                 },
-            )?;
+            )
+            .map_err(|err| match alone_then_as {
+                true => err.with_help("write `P { x: x as y }`"),
+                false => err,
+            })?;
             let fields = fields.into_iter().flatten().collect();
             // A record type is reached through at most its module.
             if qualifier.len() > 1 {
@@ -5603,20 +5611,28 @@ impl<'src> Parser<'src> {
             Token::LBracket => {
                 self.advance(); // consume [
                 let mut rest = None;
-                let patterns = self.comma_list(
-                    "list pattern",
-                    start,
-                    ListEnd::Close(&Token::RBracket),
-                    |p| {
-                        p.nothing_after_rest(rest.is_some(), "..", ']', "a list pattern")?;
-                        if p.at(&Token::DotDot) {
-                            let dots = p.advance().span;
-                            rest = Some(Box::new(p.parse_list_rest(dots)?));
-                            return Ok(None);
-                        }
-                        p.parse_pattern().map(Some)
-                    },
-                )?;
+                // (A rest with `as` behind it, `[a, ..rest as r]`.)
+                let mut rest_then_as = false;
+                let patterns = self
+                    .comma_list(
+                        "list pattern",
+                        start,
+                        ListEnd::Close(&Token::RBracket),
+                        |p| {
+                            p.nothing_after_rest(rest.is_some(), "..", ']', "a list pattern")?;
+                            if p.at(&Token::DotDot) {
+                                let dots = p.advance().span;
+                                rest = Some(Box::new(p.parse_list_rest(dots)?));
+                                rest_then_as = p.at(&Token::As);
+                                return Ok(None);
+                            }
+                            p.parse_pattern().map(Some)
+                        },
+                    )
+                    .map_err(|err| match rest_then_as {
+                        true => err.with_help("`..rest` already names the rest"),
+                        false => err,
+                    })?;
                 let patterns = patterns.into_iter().flatten().collect();
                 Ok(mk(PatternKind::List(patterns, rest)))
             }

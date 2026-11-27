@@ -1,8 +1,10 @@
 -- exit: 1
 -- stderr-contains: error[type]: this call of `walk` takes a frame for every round
 -- stderr-contains: `whole` is not a part of `t`
+-- stderr-not-contains: this call of `count`
 -- The name behind `as` is the value itself, not a part of it: a call
--- on it does not descend. A call on what the pattern takes apart does.
+-- on it does not descend. A call on what the pattern takes apart does,
+-- also when the pattern is a tuple's matched against a tuple written out.
 type T {
   Leaf,
   Node(T),
@@ -22,6 +24,13 @@ fn walk(t: T) -> Int {
   }
 }
 
+fn count(xs: List(Int), n: Int) -> Int {
+  match (xs, n) {
+    ([_, ..rest], m) as _both -> 1 + count(rest, m)
+    ([], _) -> 0
+  }
+}
+
 fn main() {
-  println(depth(Node(Leaf)) + walk(Leaf))
+  println(depth(Node(Leaf)) + walk(Leaf) + count([1], 0))
 }
