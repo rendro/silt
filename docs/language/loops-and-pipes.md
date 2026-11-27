@@ -374,6 +374,9 @@ error[type]: this call of `sum_to` takes a frame for every round
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn sum_to`
 ```
 
+In a group of functions that call each other, each function of the
+group that needs `deep` gets its own error, in the same run.
+
 **`deep fn`.** When the depth is bounded by something the compiler
 cannot see (quicksort calls itself on filtered lists, a parser on the
 rest of its input), write `deep` before `fn`: the check is off for that
