@@ -2163,11 +2163,26 @@ impl Inner {
     /// stops, and one after the end could not,
     /// [`TaskHandle::keep_failure`].)
     fn end(&self, task: Task, after_slice: bool) {
+        self.end_recording(task, after_slice, false);
+    }
+
+    /// [`Inner::end`], for a task that failed with a failure that
+    /// nothing has read when `unread` holds (`TaskHandle::fail`): it is
+    /// recorded for the report once the frames are gone, and before the
+    /// task stops counting, so the end of the program finds it. (A stage
+    /// holds its output, upgraded from its `Weak`, while its frame closes
+    /// it: recorded before that, the failure of a stage whose last reader
+    /// had let it go meanwhile was in the record until the stage let go
+    /// of the output too, and a report then showed it.)
+    fn end_recording(&self, task: Task, after_slice: bool, unread: bool) {
         // Its frames are abandoned before it stops counting.
         let Task {
             vm, handle, group, ..
         } = task;
         drop(vm);
+        if unread {
+            record_failed_task(self, &handle);
+        }
         // Then whoever waits for its end (a stop) is told,
         // while it still counts: a wait for it is never seen as stuck.
         handle.stop(&self.parking);
@@ -2475,20 +2490,23 @@ impl Inner {
             SliceResult::Failed(error) => {
                 // A failure that nothing reads (the output of a stream
                 // stage that nobody reads) is reported when the program
-                // ends, so it is recorded here. `fail` returns false if
-                // the task had been cancelled before: its handle keeps
-                // the cancellation as its result then.
+                // ends, so it is recorded as the task ends. `fail`
+                // returns false if the task had been cancelled before (its
+                // handle keeps the cancellation as its result then), or
+                // its output let go of.
                 let error = task.vm.enrich_error(error);
                 // A task of a `task.join` or a `task.background` fails
                 // its call, which raises the failure (or notes it, under
                 // the first): it is never one that nothing read.
-                if let Some((together, role)) = task.handle.together() {
-                    let _ = task.handle.complete(Err(error.clone()), &self.parking);
-                    together.failed(role, error, &self.parking);
-                } else if task.handle.fail(error, &self.parking) {
-                    record_failed_task(self, &task.handle);
-                }
-                self.end(task, true);
+                let unread = match task.handle.together() {
+                    Some((together, role)) => {
+                        let _ = task.handle.complete(Err(error.clone()), &self.parking);
+                        together.failed(role, error, &self.parking);
+                        false
+                    }
+                    None => task.handle.fail(error, &self.parking),
+                };
+                self.end_recording(task, true, unread);
             }
             SliceResult::Blocked(wait) => {
                 // What the task let go of before it waits is stopped
@@ -4452,13 +4470,14 @@ fn main() {
     /// than a few past the 64, however many fail.
     ///
     /// No report can come early: the output of each stage is dropped
-    /// before `main` returns, or by the stage's own task before its
-    /// failure is recorded (a stage holds it for a moment as it closes
-    /// it), and the drop dismisses the failure at once
-    /// (`TaskHandle::let_go`). It once did so only in the stop that the
-    /// drop defers, and the report as `run_program` returns showed a
-    /// failure whose stop had not run yet (about 1 run in 2,400, with
-    /// four such programs at once beside four busy cores).
+    /// before `main` returns, or by the stage's own frame as the stage
+    /// ends (it holds the output for a moment as it closes it), and that
+    /// is before its failure is recorded (`Inner::end_recording`); the
+    /// drop dismisses the failure at once (`TaskHandle::let_go`). It
+    /// once did so only in the stop that the drop defers, and the report
+    /// as `run_program` returns showed a failure whose stop had not run
+    /// yet (about 1 run in 2,400, with four such programs at once beside
+    /// four busy cores).
     #[test]
     fn failures_that_nothing_can_read_any_more_are_not_kept() {
         let (printed, shown, counted, most) = failure_reports(
