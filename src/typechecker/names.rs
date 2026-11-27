@@ -435,7 +435,7 @@ pub(crate) fn resolve_module(
         previous: HashMap::new(),
         named_closures: Vec::new(),
         bound_now: Vec::new(),
-        interpolated_name: false,
+        interpolation: None,
         text: source.text,
         own_aliases: HashMap::new(),
         diagnostics,
@@ -1487,10 +1487,11 @@ struct Resolver<'a> {
     /// The names of the local `let`s whose value, not a closure, is
     /// being resolved: a name there is not yet bound.
     bound_now: Vec<Symbol>,
-    /// Whether the name being resolved is the whole code of a string's
-    /// interpolation (`"\p{L}"`): one that resolves to nothing was
-    /// most likely meant as text.
-    interpolated_name: bool,
+    /// Inside the code of a string's interpolation whose help about
+    /// literal braces is not given yet: `Some(true)` when that code is a
+    /// bare name (`"\p{L}"`). A name there that resolves to nothing was
+    /// most likely meant as text (`"fn f(x) { x + 1 }"`).
+    interpolation: Option<bool>,
     /// The module's text: whether a string literal is a raw one.
     text: &'a str,
     /// The type each alias the module declares names by its head (see
@@ -3423,9 +3424,10 @@ impl Resolver<'_> {
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
-                        self.interpolated_name = matches!(e.kind, ExprKind::Ident(_));
+                        let outer =
+                            (self.interpolation).replace(matches!(e.kind, ExprKind::Ident(_)));
                         self.expr(e);
-                        self.interpolated_name = false;
+                        self.interpolation = outer;
                     }
                 }
             }
@@ -3774,12 +3776,20 @@ impl Resolver<'_> {
                 }
             }
         };
-        // A name that is all of an interpolation, with no other help: a
-        // `{` meant as text (`"\p{L}"`, `"x{n}"` in a regex).
+        // A name in an interpolation, with no other help: a `{` meant as
+        // text (`"\p{L}"`, `"x{n}"` in a regex, code in a string). Said
+        // once for each interpolation.
         let help = help.or_else(|| {
-            self.interpolated_name.then(|| {
+            let whole = self.interpolation.take()?;
+            Some(if whole {
                 format!(
                     "`{{{name_str}}}` in a string is an interpolation: {}",
+                    crate::lexer::LITERAL_BRACE_HELP
+                )
+            } else {
+                format!(
+                    "`{name_str}` is inside a `{{ }}` of a string, which is an \
+                     interpolation: {}",
                     crate::lexer::LITERAL_BRACE_HELP
                 )
             })

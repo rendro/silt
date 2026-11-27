@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A name in an interpolation that is more than a name, bound to nothing,
+-- was most likely meant as text too, as code in a string is: the first
+-- such name of each interpolation gets the help about literal braces.
+fn main() {
+  let s = "fn f(x) { x / (x - 2) } and { y }"
+  println(s)
+}
