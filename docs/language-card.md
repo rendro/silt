@@ -955,6 +955,7 @@ process.stop_signals() -> Channel(Signal)
 type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
 csv.join_line(fields: List(String)) -> String
 csv.parse(text: String, type a) -> Result(List(a), CsvError)
+csv.parse_with(text: String, columns: Map(String, String), type a) -> Result(List(a), CsvError)
 csv.split_line(line: String) -> Result(List(String), CsvError)
 csv.stringify(rows: List(a)) -> String
 ```

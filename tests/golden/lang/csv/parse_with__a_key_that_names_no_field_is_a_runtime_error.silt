@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: csv.parse_with: the map names the field `dtae`, and Row has no field of that name
+-- A key of the map that is no field of the type is the program's mistake,
+-- not the text's: a runtime error, before the text is read.
+import csv
+
+type Row { date: String, amount: Float }
+
+fn main() {
+  println(csv.parse_with("", #{"dtae": "Date"}, Row))
+}

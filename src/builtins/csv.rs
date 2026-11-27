@@ -283,9 +283,15 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
     })
 }
 
+/// The cells of a row the decoder reads, each by a name: the index of
+/// its column in the header, by the name it is read under (the
+/// column's own name for `csv.parse`, the name of the field that reads
+/// it for `csv.parse_with`).
+type Keys = [(String, usize)];
+
 /// The rows of a [`Table`] as the decoder reads a document: an array of
-/// rows, each a map of its cells by their column's name.
-struct Rows<'t>(&'t Table);
+/// rows, each a map of its cells by their [`Keys`].
+struct Rows<'t>(&'t Table, &'t Keys);
 
 impl<'de> de::Deserializer<'de> for Rows<'_> {
     type Error = de::value::Error;
@@ -293,6 +299,7 @@ impl<'de> de::Deserializer<'de> for Rows<'_> {
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         visitor.visit_seq(RowSeq {
             table: self.0,
+            keys: self.1,
             next: 0,
         })
     }
@@ -306,6 +313,7 @@ impl<'de> de::Deserializer<'de> for Rows<'_> {
 
 struct RowSeq<'t> {
     table: &'t Table,
+    keys: &'t Keys,
     next: usize,
 }
 
@@ -320,8 +328,7 @@ impl<'de> SeqAccess<'de> for RowSeq<'_> {
             return Ok(None);
         };
         self.next += 1;
-        let header = &self.table.header;
-        seed.deserialize(Row(header, row)).map(Some)
+        seed.deserialize(Row(self.keys, row)).map(Some)
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -329,13 +336,13 @@ impl<'de> SeqAccess<'de> for RowSeq<'_> {
     }
 }
 
-struct Row<'t>(&'t [String], &'t [String]);
+struct Row<'t>(&'t Keys, &'t [String]);
 
 impl<'de> de::Deserializer<'de> for Row<'_> {
     type Error = de::value::Error;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        let cells = (self.0.iter().map(String::as_str)).zip(self.1.iter().map(String::as_str));
+        let cells = (self.0.iter()).map(|(key, k)| (key.as_str(), self.1[*k].as_str()));
         visitor.visit_map(MapDeserializer::new(cells))
     }
 
@@ -348,8 +355,9 @@ impl<'de> de::Deserializer<'de> for Row<'_> {
 
 /// The text of the decoder's error, which ends with the path of
 /// the value (` at [2].age`), with the line and the column instead
-/// (` at line 4, column age`).
-fn at_line(message: &str, lines: &[usize]) -> String {
+/// (` at line 4, column age`): the column that `column` gives for the
+/// name the cell was read under.
+fn at_line(message: &str, lines: &[usize], column: &dyn Fn(&str) -> String) -> String {
     let Some((before, path)) = message.rsplit_once(" at [") else {
         return message.to_string();
     };
@@ -360,14 +368,14 @@ fn at_line(message: &str, lines: &[usize]) -> String {
         return message.to_string();
     };
     match rest.strip_prefix('.') {
-        Some(column) => format!("{before} at line {line}, column {column}"),
+        Some(key) => format!("{before} at line {line}, column {}", column(key)),
         None => format!("{before} at line {line}"),
     }
 }
 
 /// The result `result` of the decoder with each error's path a line and
 /// a column ([`at_line`]).
-fn with_lines(result: Value, lines: &[usize]) -> Value {
+fn with_lines(result: Value, lines: &[usize], column: &dyn Fn(&str) -> String) -> Value {
     let Value::Variant(outer) = &result else {
         return result;
     };
@@ -378,7 +386,7 @@ fn with_lines(result: Value, lines: &[usize]) -> Value {
         return result;
     }
     let text = |v: &Value| match v {
-        Value::String(s, _) => Value::string(at_line(s, lines)),
+        Value::String(s, _) => Value::string(at_line(s, lines, column)),
         other => other.clone(),
     };
     let fields: Vec<Value> = match error.fields() {
@@ -391,8 +399,8 @@ fn with_lines(result: Value, lines: &[usize]) -> Value {
     Value::variant(bv::ERR, [Value::variant(error.tag(), fields)])
 }
 
-/// A CSV text read again, for the decoder.
-struct Text(std::sync::Arc<Table>);
+/// A CSV text read again, for the decoder, its cells by their keys.
+struct Text(std::sync::Arc<Table>, std::sync::Arc<Vec<(String, usize)>>);
 
 impl Source for Text {
     fn read(
@@ -401,7 +409,7 @@ impl Source for Text {
         expected: &FieldType,
         parts: &decode::seed::Parts,
     ) -> Result<decode::seed::Outcome, Value> {
-        decode::seed::csv_rows(r, expected, Rows(&self.0), parts).map_err(other_err)
+        decode::seed::csv_rows(r, expected, Rows(&self.0, &self.1), parts).map_err(other_err)
     }
 }
 
@@ -414,6 +422,7 @@ fn other_err(message: String) -> Value {
 }
 
 static PARSE: Decoder = Decoder::new("csv.parse");
+static PARSE_WITH: Decoder = Decoder::new("csv.parse_with");
 
 /// The fields of the record type `element`, each with its type at the
 /// type's arguments.
@@ -431,15 +440,50 @@ fn record_fields(vm: &Vm, element: &FieldType) -> Vec<(String, FieldType)> {
         .collect()
 }
 
+/// The column each field of the record type `element` reads, with the
+/// field's type: the one `columns` (of `csv.parse_with`) gives for it,
+/// else the column of the field's own name. A key of `columns` that
+/// names no field is a runtime error of `caller`: the map is the
+/// program's, not the text's.
+fn field_columns(
+    vm: &Vm,
+    caller: &str,
+    element: &FieldType,
+    columns: Option<typed::Map>,
+) -> Result<Vec<(String, String, FieldType)>, VmError> {
+    let fields = record_fields(vm, element);
+    let mut named = Vec::new();
+    for (key, column) in columns.iter().flat_map(|map| map.iter()) {
+        let (Value::String(key, _), Value::String(column, _)) = (key, column) else {
+            return Err(unsound(caller, "columns"));
+        };
+        if !fields.iter().any(|(name, _)| **name == **key) {
+            let ty = decode::shown(&vm.runtime, element);
+            return Err(VmError::new(format!(
+                "{caller}: the map names the field `{key}`, and {ty} has no field of that name"
+            )));
+        }
+        named.push((key.to_string(), column.to_string()));
+    }
+    Ok(fields
+        .into_iter()
+        .map(|(name, field)| {
+            let column = (named.iter())
+                .find(|(key, _)| *key == name)
+                .map_or_else(|| name.clone(), |(_, column)| column.clone());
+            (name, column, field)
+        })
+        .collect())
+}
+
 /// `Err(Syntax(...))` of a column of the header of `table` that is the
-/// name of a field of the record type `element` but for spaces around
-/// it, where no column is the name itself: names are matched exactly.
-fn spaced_column(vm: &Vm, table: &Table, element: &FieldType) -> Option<Value> {
-    record_fields(vm, element)
-        .iter()
-        .filter(|(name, _)| !table.header.contains(name))
-        .find_map(|(name, _)| {
-            let k = (table.header.iter()).position(|cell| cell.trim() == name)?;
+/// column a field reads but for spaces around it, where no column is
+/// that name itself: names are matched exactly.
+fn spaced_column(table: &Table, fields: &[(String, String, FieldType)]) -> Option<Value> {
+    (fields.iter())
+        .filter(|(_, column, _)| !table.header.contains(column))
+        .find_map(|(_, column, _)| {
+            let k = (table.header.iter()).position(|cell| cell.trim() == column)?;
             let why = format!(
                 "the header's column '{}' has spaces around it: column names are matched exactly",
                 table.header[k]
@@ -448,16 +492,80 @@ fn spaced_column(vm: &Vm, table: &Table, element: &FieldType) -> Option<Value> {
         })
 }
 
-/// The column the header of `table` lacks for a field of the record type
-/// `element` that is no `Option`: a field with no column is missing from
-/// every row, also where there is none.
-fn missing_column(vm: &Vm, table: &Table, element: &FieldType) -> Option<String> {
-    record_fields(vm, element)
-        .into_iter()
-        .find(|(name, field)| {
-            !matches!(field, FieldType::Option(_)) && !table.header.contains(name)
+/// The column the header of `table` lacks that a field of the record
+/// type reads, of a field that is no `Option`: a field with no column is
+/// missing from every row, also where there is none.
+fn missing_column(table: &Table, fields: &[(String, String, FieldType)]) -> Option<String> {
+    (fields.iter())
+        .find(|(_, column, field)| {
+            !matches!(field, FieldType::Option(_)) && !table.header.contains(column)
         })
-        .map(|(name, _)| name)
+        .map(|(_, column, _)| column.clone())
+}
+
+/// Every row of `text` as a record of the type `ty`, read by `caller`:
+/// each field from the column `field_columns` gives it.
+fn parse_rows(
+    vm: &mut Vm,
+    decoder: &'static Decoder,
+    text: &str,
+    columns: Option<typed::Map>,
+    ty: Type,
+) -> Result<Step, VmError> {
+    let caller = decoder.name;
+    let element = decode::target(decoder, ty)?.element();
+    let fields = field_columns(vm, caller, &element, columns)?;
+    let table = match table(text) {
+        Ok(table) => std::sync::Arc::new(table),
+        Err(syntax) => return Ok(Step::Done(syntax)),
+    };
+    if table.header.is_empty() {
+        return Ok(Step::Done(ok(Value::list(Vec::new()))));
+    }
+    if let Some(spaced) = spaced_column(&table, &fields) {
+        return Ok(Step::Done(spaced));
+    }
+    if let Some(name) = missing_column(&table, &fields) {
+        return Ok(Step::Done(Value::variant(
+            bv::ERR,
+            [Value::variant(bv::CSV_MISSING_FIELD, [Value::string(name)])],
+        )));
+    }
+    // Each cell by its column's name (a column no field reads is passed
+    // over by the decoder); for `parse_with`, the cells the fields read,
+    // each by its field's name.
+    let keys: Vec<(String, usize)> = match columns {
+        None => (table.header.iter().cloned()).zip(0..).collect(),
+        Some(_) => (fields.iter())
+            .filter_map(|(name, column, _)| {
+                let k = table.header.iter().position(|cell| cell == column)?;
+                Some((name.clone(), k))
+            })
+            .collect(),
+    };
+    let keys = std::sync::Arc::new(keys);
+    let expected = FieldType::List(Box::new(element));
+    let read = {
+        let (table, keys) = (table.clone(), keys.clone());
+        move |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
+            decode::seed::csv_rows(r, expected, Rows(&table, &keys), parts).map_err(other_err)
+        }
+    };
+    let source = {
+        let (table, keys) = (table.clone(), keys.clone());
+        move || -> Box<dyn Source> { Box::new(Text(table, keys)) }
+    };
+    let step = vm.decode_read(caller, &RULES, expected, read, source)?;
+    // (An error names the column of the field it is about.)
+    let column = |key: &str| {
+        (fields.iter())
+            .find(|(name, _, _)| name == key)
+            .map_or_else(|| key.to_string(), |(_, column, _)| column.clone())
+    };
+    Ok(match step {
+        Step::Done(result) => Step::Done(with_lines(result, &table.lines, &column)),
+        other => other,
+    })
 }
 
 // ── Writing ─────────────────────────────────────────────────────────
@@ -518,39 +626,13 @@ builtins! {
     // from the columns of their names by the one decoder (as json's and
     // toml's are read).
     fn parse(vm, text: &str, ty: Type) -> Result<Step, VmError> {
-        let element = decode::target(&PARSE, ty)?.element();
-        let table = match table(text) {
-            Ok(table) => std::sync::Arc::new(table),
-            Err(syntax) => return Ok(Step::Done(syntax)),
-        };
-        if table.header.is_empty() {
-            return Ok(Step::Done(ok(Value::list(Vec::new()))));
-        }
-        if let Some(spaced) = spaced_column(vm, &table, &element) {
-            return Ok(Step::Done(spaced));
-        }
-        if let Some(name) = missing_column(vm, &table, &element) {
-            return Ok(Step::Done(Value::variant(
-                bv::ERR,
-                [Value::variant(bv::CSV_MISSING_FIELD, [Value::string(name)])],
-            )));
-        }
-        let expected = FieldType::List(Box::new(element));
-        let read = {
-            let table = table.clone();
-            move |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
-                decode::seed::csv_rows(r, expected, Rows(&table), parts).map_err(other_err)
-            }
-        };
-        let source = {
-            let table = table.clone();
-            move || -> Box<dyn Source> { Box::new(Text(table)) }
-        };
-        let step = vm.decode_read("csv.parse", &RULES, expected, read, source)?;
-        Ok(match step {
-            Step::Done(result) => Step::Done(with_lines(result, &table.lines)),
-            other => other,
-        })
+        parse_rows(vm, &PARSE, text, None, ty)
+    }
+
+    // As `parse`, each field the map names read from the column the map
+    // gives for it.
+    fn parse_with(vm, text: &str, columns: typed::Map, ty: Type) -> Result<Step, VmError> {
+        parse_rows(vm, &PARSE_WITH, text, Some(columns), ty)
     }
 
     // A header of the field names of the records' type, then a line
