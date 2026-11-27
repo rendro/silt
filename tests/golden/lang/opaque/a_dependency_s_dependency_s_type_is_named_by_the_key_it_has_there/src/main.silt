@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- An opaque type of a dependency's dependency, which no import here can
+-- reach, is named by the key the dependency gives it (`bt.Tok`, module
+-- `bt`), as alpha's signatures write it, never by the library's file
+-- (`lib`).
+-- stderr-not-contains: lib
+import json
+import alpha
+
+fn main() {
+  let t = alpha.make()
+  println(t.raw)
+  println(json.stringify(t))
+}

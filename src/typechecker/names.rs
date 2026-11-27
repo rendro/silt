@@ -3478,6 +3478,13 @@ impl Resolver<'_> {
                         });
                         self.expr(e);
                         let done = std::mem::replace(&mut self.interpolation, outer);
+                        // (A name that resolves in a string inside the
+                        // code resolves in the code: `"{nope + "{n}"}"`.)
+                        if let (Some(outer), Some(Interpolation { resolved: true, .. })) =
+                            (&mut self.interpolation, &done)
+                        {
+                            outer.resolved = true;
+                        }
                         self.literal_brace_help(done);
                     }
                 }

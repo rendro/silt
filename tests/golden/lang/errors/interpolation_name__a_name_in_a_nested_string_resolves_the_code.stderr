@@ -1,0 +1,19 @@
+error[type]: undefined variable 'nope'
+ --> interpolation_name__a_name_in_a_nested_string_resolves_the_code.silt:8:13
+   |
+ 8 |   println("{nope + "{n}"}")
+   |             ^^^^ undefined variable 'nope'
+
+error[type]: undefined variable 'zz'
+ --> interpolation_name__a_name_in_a_nested_string_resolves_the_code.silt:9:13
+   |
+ 9 |   println("{zz + "{qq}"}")
+   |             ^^ undefined variable 'zz'
+  = help: `zz` is inside a `{ }` of a string, which is an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`
+
+error[type]: undefined variable 'qq'
+ --> interpolation_name__a_name_in_a_nested_string_resolves_the_code.silt:9:20
+   |
+ 9 |   println("{zz + "{qq}"}")
+   |                    ^^ undefined variable 'qq'
+  = help: `{qq}` in a string is an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`

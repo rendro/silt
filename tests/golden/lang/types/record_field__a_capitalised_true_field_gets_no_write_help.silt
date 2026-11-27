@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- `True` and `False` in lower case are values, not names a field can
+-- have: their error writes no field. `Ok` still gets `ok`.
+-- stderr-contains: so 'True' reads as a variant
+-- stderr-contains: record field 'False' starts with a capital
+-- stderr-contains: help: write `ok: Int`
+-- stderr-not-contains: write `true
+-- stderr-not-contains: write `false
+type A {
+  True: Int,
+}
+
+type B {
+  x: Int,
+  False: Int,
+  Ok: Int,
+}
+
+fn main() {
+  println(1)
+}

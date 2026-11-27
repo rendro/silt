@@ -1,0 +1,27 @@
+error[type]: cannot read field 'raw' of a 'bb.Tok' outside module 'bb': the type is opaque
+ --> src/main.silt:12:11
+    |
+ 12 |   println(t.raw)
+    |           ^^^^^ cannot read field 'raw' of a 'bb.Tok' outside module 'bb': the type is opaque
+  = help: use the functions of module 'bb'
+
+error[type]: cannot update a 'bb.Tok' outside module 'bb': the type is opaque
+ --> src/main.silt:13:11
+    |
+ 13 |   let u = t.{ raw: "y" }
+    |           ^^^^^^^^^^^^^^ cannot update a 'bb.Tok' outside module 'bb': the type is opaque
+  = help: use the functions of module 'bb'
+
+warning[type]: 'u' is never used
+ --> src/main.silt:13:7
+    |
+ 13 |   let u = t.{ raw: "y" }
+    |       ^ 'u' is never used
+  = help: remove it, or name it `_u`
+
+error[type]: type 'bb.Tok' cannot be encoded outside module 'bb': it is opaque, and 'bb' writes no 'json.Encode' impl for it
+ --> src/main.silt:14:26
+    |
+ 14 |   println(json.stringify(t))
+    |                          ^ type 'bb.Tok' cannot be encoded outside module 'bb': it is opaque, and 'bb' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'bb', or write `trait json.Encode for Tok` there

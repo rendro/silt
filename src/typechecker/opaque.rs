@@ -18,14 +18,35 @@ impl TypeChecker {
 
     /// The module of the opaque type `ty` when it is none of `viewers`,
     /// as this file writes it (`money` for the library of the dependency
-    /// `money`, which calls itself `lib`; `m` after `import money as m`).
+    /// `money`, which calls itself `lib`; `m` after `import money as m`);
+    /// a library no import here can reach by the key the dependency that
+    /// has it gives it (`beta`, which `alpha`'s signatures write).
     fn opaque_outside_of(&self, ty: TypeRef, viewers: &[crate::defs::ModuleId]) -> Option<Symbol> {
         let def = self.def(ty.id.0)?;
         if def.vis != crate::defs::Vis::Opaque || viewers.contains(&def.module) {
             return None;
         }
         (self.module_name_here(def.module))
+            .or_else(|| self.farther_key(def.module))
             .or_else(|| self.tables.module_names.get(&def.module).copied())
+    }
+
+    /// The key a package the file's package depends on gives the library
+    /// `module`, which no import here reaches: one this file gives nothing
+    /// else, and of those first one reached through a dependency the file
+    /// imports (`delta.make()` hands on a `bb.Tok` where delta has `bb`),
+    /// then the nearest.
+    fn farther_key(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
+        let usable = || {
+            (self.farther_keys.iter())
+                .filter(move |far| far.library == module && !self.binds_here(far.key))
+        };
+        let imported = |m: &crate::defs::ModuleId| {
+            self.import_paths.contains_key(m) || self.module_spelled.contains_key(m)
+        };
+        (usable().find(|far| far.through.as_ref().is_some_and(imported)))
+            .or_else(|| usable().next())
+            .map(|far| far.key)
     }
 
     /// `ty`, as far as it is known, when it is an opaque type of another

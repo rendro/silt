@@ -229,6 +229,12 @@ impl TypeChecker {
         module_name_in(self, module)
     }
 
+    /// Whether the file binds `name` at its top level: to a module or
+    /// an item it imports, or to a definition of its own.
+    pub(super) fn binds_here(&self, name: Symbol) -> bool {
+        NamingContext::binds(self, name)
+    }
+
     /// The name `name` of the module `module` (a type, a trait, a
     /// function, a variant) as this file writes it, in every message,
     /// help and answer of the editor: bare where the file imports the

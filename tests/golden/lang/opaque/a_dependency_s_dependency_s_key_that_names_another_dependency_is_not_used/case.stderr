@@ -1,0 +1,27 @@
+error[type]: cannot read field 'raw' of a 'lib.Tok' outside module 'lib': the type is opaque
+ --> src/main.silt:13:11
+    |
+ 13 |   println(t.raw)
+    |           ^^^^^ cannot read field 'raw' of a 'lib.Tok' outside module 'lib': the type is opaque
+  = help: use the functions of module 'lib'
+
+error[type]: cannot update a 'lib.Tok' outside module 'lib': the type is opaque
+ --> src/main.silt:14:11
+    |
+ 14 |   let u = t.{ raw: "y" }
+    |           ^^^^^^^^^^^^^^ cannot update a 'lib.Tok' outside module 'lib': the type is opaque
+  = help: use the functions of module 'lib'
+
+warning[type]: 'u' is never used
+ --> src/main.silt:14:7
+    |
+ 14 |   let u = t.{ raw: "y" }
+    |       ^ 'u' is never used
+  = help: remove it, or name it `_u`
+
+error[type]: type 'lib.Tok' cannot be encoded outside module 'lib': it is opaque, and 'lib' writes no 'json.Encode' impl for it
+ --> src/main.silt:15:26
+    |
+ 15 |   println(json.stringify(t))
+    |                          ^ type 'lib.Tok' cannot be encoded outside module 'lib': it is opaque, and 'lib' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'lib', or write `trait json.Encode for Tok` there
