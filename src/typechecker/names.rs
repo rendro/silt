@@ -178,6 +178,18 @@ pub(crate) struct Source<'a> {
     pub importable: &'a dyn Fn(Symbol) -> bool,
 }
 
+/// The code of a string's interpolation being resolved
+/// (`Resolver::interpolation`).
+struct Interpolation {
+    /// Whether the code is a bare name (`"\p{L}"`).
+    whole: bool,
+    /// Whether a name in it resolves.
+    resolved: bool,
+    /// The diagnostic of its first undefined name with no help, and the
+    /// name.
+    first: Option<(usize, Symbol)>,
+}
+
 /// What an import of a module binds a name to, for the warning about a
 /// local that hides it.
 #[derive(Clone, Copy)]
@@ -1493,11 +1505,11 @@ struct Resolver<'a> {
     /// The names of the local `let`s whose value, not a closure, is
     /// being resolved: a name there is not yet bound.
     bound_now: Vec<Symbol>,
-    /// Inside the code of a string's interpolation whose help about
-    /// literal braces is not given yet: `Some(true)` when that code is a
-    /// bare name (`"\p{L}"`). A name there that resolves to nothing was
-    /// most likely meant as text (`"fn f(x) { x + 1 }"`).
-    interpolation: Option<bool>,
+    /// The code of a string's interpolation being resolved, if any. When
+    /// no name in it resolves, it was most likely meant as text
+    /// (`"\p{L}"`, `"fn f(x) { x + 1 }"`): its first undefined name is
+    /// told about literal braces.
+    interpolation: Option<Interpolation>,
     /// The module's text: whether a string literal is a raw one.
     text: &'a str,
     /// The type each alias the module declares names by its head (see
@@ -3450,10 +3462,14 @@ impl Resolver<'_> {
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
-                        let outer =
-                            (self.interpolation).replace(matches!(e.kind, ExprKind::Ident(_)));
+                        let outer = self.interpolation.replace(Interpolation {
+                            whole: matches!(e.kind, ExprKind::Ident(_)),
+                            resolved: false,
+                            first: None,
+                        });
                         self.expr(e);
-                        self.interpolation = outer;
+                        let done = std::mem::replace(&mut self.interpolation, outer);
+                        self.literal_brace_help(done);
                     }
                 }
             }
@@ -3494,10 +3510,17 @@ impl Resolver<'_> {
             }
             ExprKind::Ident(name) => {
                 let name = *name;
-                expr.res = Some(self.ident(name, span));
+                let res = self.ident(name, span);
+                self.note_resolved(res);
+                expr.res = Some(res);
             }
             ExprKind::FieldAccess(..) => {
                 expr.res = self.field_access(expr);
+                if let ExprKind::FieldAccess(obj, ..) = &expr.kind
+                    && let (ExprKind::Ident(_), Some(res)) = (&obj.kind, obj.res)
+                {
+                    self.note_resolved(res);
+                }
             }
             ExprKind::Pipe(a, b) => {
                 self.expr(a);
@@ -3802,29 +3825,57 @@ impl Resolver<'_> {
                 }
             }
         };
-        // A name in an interpolation, with no other help: a `{` meant as
-        // text (`"\p{L}"`, `"x{n}"` in a regex, code in a string). Said
-        // once for each interpolation.
-        let help = help.or_else(|| {
-            let whole = self.interpolation.take()?;
-            Some(if whole {
-                format!(
-                    "`{{{name_str}}}` in a string is an interpolation: {}",
-                    crate::lexer::LITERAL_BRACE_HELP
-                )
-            } else {
-                format!(
-                    "`{name_str}` is inside a `{{ }}` of a string, which is an \
-                     interpolation: {}",
-                    crate::lexer::LITERAL_BRACE_HELP
-                )
-            })
-        });
         let mut d = Diagnostic::error(Code::UnresolvedName, span, message);
-        if let Some(help) = help {
-            d = d.with_help(help);
+        match help {
+            Some(help) => d = d.with_help(help),
+            // (The first name of an interpolation with no other help: told
+            // about literal braces when nothing in it resolves.)
+            None => {
+                if let Some(interpolation) = &mut self.interpolation
+                    && interpolation.first.is_none()
+                {
+                    interpolation.first = Some((self.diagnostics.len(), name));
+                }
+            }
         }
         self.error(d);
+    }
+
+    /// Mark the interpolation being resolved, if any, as one that names
+    /// something when `res`, a name's meaning, is no error.
+    fn note_resolved(&mut self, res: Res) {
+        if let Some(interpolation) = &mut self.interpolation
+            && !matches!(res, Res::Error)
+        {
+            interpolation.resolved = true;
+        }
+    }
+
+    /// Of an interpolation just resolved (`done`) in which no name
+    /// resolves: the help about literal braces, at its first undefined
+    /// name (`"\p{L}"`, `"x{n}"` in a regex, code in a string).
+    fn literal_brace_help(&mut self, done: Option<Interpolation>) {
+        let Some(Interpolation {
+            whole,
+            resolved: false,
+            first: Some((at, name)),
+        }) = done
+        else {
+            return;
+        };
+        let help = match whole {
+            true => format!(
+                "`{{{name}}}` in a string is an interpolation: {}",
+                crate::lexer::LITERAL_BRACE_HELP
+            ),
+            false => format!(
+                "`{name}` is inside a `{{ }}` of a string, which is an interpolation: {}",
+                crate::lexer::LITERAL_BRACE_HELP
+            ),
+        };
+        if let Some(d) = self.diagnostics.get_mut(at) {
+            d.help.push(help);
+        }
     }
 
     /// Whether the module of the name `module` (bound here, imported, or
@@ -4090,7 +4141,10 @@ impl Resolver<'_> {
             }
             // `money.parse(s)` without `import money`: a module of the
             // package (`src/money.silt`) or a key of its `[dependencies]`.
-            None if (self.importable)(head_name) && self.alias_of(head_name).is_none() => {
+            None if (self.importable)(head_name)
+                && self.alias_of(head_name).is_none()
+                && !self.imports.contains_key(&head_name) =>
+            {
                 self.not_imported(head_name, span);
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
