@@ -2,6 +2,7 @@
 -- (from 1, the column in characters) and shows the line and the column;
 -- an unknown key's error names the keys its table takes. A program can
 -- say file:line:column without counting lines itself.
+import time
 import toml
 
 type Rule { match: String, account: String }
@@ -40,6 +41,8 @@ fn main() {
   report("p.toml", toml.parse("x = 1\ny = 2\nzz = 3\n", P))
   -- A variant's table takes variant and fields.
   report("e.toml", toml.parse_list("[[xs]]\nvariant = \"A\"\nfeilds = [1]\n", Shape))
+  -- A date that is no day before the error on its line is no column more.
+  report("d.toml", toml.parse("d = 1979-02-29 x = 1\n", D))
   -- toml.stringify reads no text: no place.
   report("out", toml.stringify(1))
 }
@@ -47,3 +50,4 @@ fn main() {
 type Shape { A(Int), B }
 type N { name: String, y: Int }
 type Q { p: N }
+type D { d: time.Date, x: Int }

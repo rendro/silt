@@ -78,15 +78,15 @@ fn toml_err_wrap(inner: Value) -> Value {
 /// don't have a span (extremely rare in practice) we fall back to 0.
 pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error, text: &str) -> Value {
     let start = err.span().map_or(0, |s| s.start);
-    syntax(err, text, start, start)
+    syntax(err, text, start, text, start)
 }
 
 /// The `Syntax` error of `err`, an error at the byte `at` of `text`
-/// that is the byte `offset` of the text the program gave, `s` (where
-/// `text` is `s` with literals marked, [`marking`], which keeps the
-/// lines; the column is counted in `text`).
-fn syntax(err: &::toml::de::Error, text: &str, at: usize, offset: usize) -> Value {
-    let (line, column) = decode::line_column(text.as_bytes(), at);
+/// that is the byte `offset` of the text the program gave, `s` (`text`
+/// is `s` with literals marked, [`marking`]): its line and column are
+/// counted in `s`.
+fn syntax(err: &::toml::de::Error, text: &str, at: usize, s: &str, offset: usize) -> Value {
+    let (line, column) = decode::line_column(s.as_bytes(), offset);
     let [offset, line, column] = decode::place(offset, line, column);
     Value::variant(
         bv::TOML_SYNTAX,
@@ -740,6 +740,7 @@ fn marking<T>(
                         &e,
                         &text,
                         at,
+                        s,
                         at.saturating_sub(growth),
                     )));
                 };

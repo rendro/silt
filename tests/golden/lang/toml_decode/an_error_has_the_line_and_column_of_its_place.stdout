@@ -14,5 +14,7 @@ p.toml:3:1: unknown key zz (byte 12), expected ["x", "y"]
   toml unknown field at line 3, column 1: zz, expected x or y
 e.toml:3:1: unknown key xs[0].feilds (byte 21), expected ["variant", "fields"]
   toml unknown field at line 3, column 1: xs[0].feilds, expected variant or fields
+d.toml:1:16: expected newline, `#` (byte 15)
+  toml syntax error at line 1, column 16: expected newline, `#`
 out:0:0: toml.stringify: top-level value must be a table/record, got integer (byte 0)
   toml.stringify: top-level value must be a table/record, got integer
