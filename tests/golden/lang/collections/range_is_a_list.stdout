@@ -4,8 +4,8 @@
 [1, 2, 3]
 [1, 2, 3]
 [1, 2, 3]
-Span {name: "s", over: [1, 2, 3]}
-Span {name: "s", over: [2]}
+Span { name: "s", over: [1, 2, 3] }
+Span { name: "s", over: [2] }
 Some([1, 2])
 #{"k": [1, 2]}
 []

@@ -113,7 +113,7 @@ Err(toml.parse_list(Shape): expected a document with exactly one top-level key, 
 == s = "Dot"
 ss = ["Dot", { variant = "Rect", fields = [1, 2] }, { fields = [2.5], variant = "Circle" }]
 Err(toml unknown field at byte 0: s)
-Ok(HS {s: Dot, ss: [Dot, Rect(1, 2), Circle(2.5)]})
+Ok(HS { s: Dot, ss: [Dot, Rect(1, 2), Circle(2.5)] })
 Err(toml unknown field at byte 0: s)
 Err(toml unknown field at byte 0: s)
 Err(toml type mismatch at byte 4: expected Int, got string at s)
@@ -257,7 +257,7 @@ Err(toml.parse_list(Shape): expected a document with exactly one top-level key, 
 f = 1.0
 Err(toml unknown field at byte 0: i)
 Err(toml unknown field at byte 0: i)
-Ok(N {i: 9223372036854775807, f: 1.0})
+Ok(N { i: 9223372036854775807, f: 1.0 })
 Err(toml unknown field at byte 0: i)
 Err(toml type mismatch at byte 28: expected Int, got float at f)
 Err(toml type mismatch at byte 28: expected List, got float at f)
@@ -268,7 +268,7 @@ Err(toml.parse_list(Shape): expected a document with exactly one top-level key, 
 f = -0.0
 Err(toml unknown field at byte 0: i)
 Err(toml unknown field at byte 0: i)
-Ok(N {i: -9223372036854775808, f: 0.0})
+Ok(N { i: -9223372036854775808, f: 0.0 })
 Err(toml unknown field at byte 0: i)
 Err(toml type mismatch at byte 29: expected Int, got float at f)
 Err(toml type mismatch at byte 29: expected List, got float at f)
@@ -345,7 +345,7 @@ Err(toml.parse_list(Shape): expected a document with exactly one top-level key, 
 f = 0.5
 Err(toml unknown field at byte 0: i)
 Err(toml unknown field at byte 0: i)
-Ok(N {i: 16, f: 0.5})
+Ok(N { i: 16, f: 0.5 })
 Err(toml unknown field at byte 0: i)
 Err(toml type mismatch at byte 13: expected Int, got float at f)
 Err(toml type mismatch at byte 13: expected List, got float at f)
@@ -356,7 +356,7 @@ Err(toml.parse_list(Shape): expected a document with exactly one top-level key, 
 f = 6.626e-34
 Err(toml unknown field at byte 0: i)
 Err(toml unknown field at byte 0: i)
-Ok(N {i: 1000, f: 0.0000000000000000000000000000000006626})
+Ok(N { i: 1000, f: 0.0000000000000000000000000000000006626 })
 Err(toml unknown field at byte 0: i)
 Err(toml type mismatch at byte 14: expected Int, got float at f)
 Err(toml type mismatch at byte 14: expected List, got float at f)
@@ -378,7 +378,7 @@ Err(toml syntax error at byte 4: number too large)
 Err(toml unknown field at byte 0: b)
 Err(toml unknown field at byte 0: b)
 Err(toml unknown field at byte 0: b)
-Ok(B {b: Box {v: Dot, more: [Dot, Circle(1.0)]}})
+Ok(B { b: Box { v: Dot, more: [Dot, Circle(1.0)] } })
 Err(toml type mismatch at byte 4: expected Int, got table at b)
 Err(toml type mismatch at byte 4: expected List, got table at b)
 Err(toml type mismatch at byte 4: expected array, got table at b)

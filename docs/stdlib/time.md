@@ -414,9 +414,9 @@ epoch, `-1` for the second before it) names an instant without an offset.
 import time
 
 fn main() {
-  println(time.parse_instant("2026-11-01T08:00:00+05:30", "%+")) -- Ok(Instant {epoch_ns: 1793500200000000000})
-  println(time.parse_instant("2026-11-01T08:00:00+0530", "%+")) -- Ok(Instant {epoch_ns: 1793500200000000000})
-  println(time.parse_instant("2026-11-01 02:30:00Z", "%+")) -- Ok(Instant {epoch_ns: 1793500200000000000})
+  println(time.parse_instant("2026-11-01T08:00:00+05:30", "%+")) -- Ok(Instant { epoch_ns: 1793500200000000000 })
+  println(time.parse_instant("2026-11-01T08:00:00+0530", "%+")) -- Ok(Instant { epoch_ns: 1793500200000000000 })
+  println(time.parse_instant("2026-11-01 02:30:00Z", "%+")) -- Ok(Instant { epoch_ns: 1793500200000000000 })
 }
 ```
 

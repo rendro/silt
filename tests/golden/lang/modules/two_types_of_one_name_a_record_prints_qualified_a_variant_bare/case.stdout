@@ -1,5 +1,5 @@
-a.Pt {x: 1}
-b.Pt {x: 2}
+a.Pt { x: 1 }
+b.Pt { x: 2 }
 V("s")
 W
 [W]

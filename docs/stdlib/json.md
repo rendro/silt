@@ -257,7 +257,7 @@ fn main() {
   let job = Job { name: "build", status: Paused(3) }
   let text = json.stringify(job)
   println(text) -- {"name":"build","status":{"fields":[3],"variant":"Paused"}}
-  println(json.parse(text, Job)) -- Ok(Job {name: "build", status: Paused(3)})
+  println(json.parse(text, Job)) -- Ok(Job { name: "build", status: Paused(3) })
   println(json.stringify([Active, Paused(1)])) -- ["Active",{"fields":[1],"variant":"Paused"}]
   println(json.parse("""{"name": "x", "status": "Gone"}""", Job))
   -- Err(`Status` has no variant `Gone` at status)
@@ -457,7 +457,7 @@ fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode 
 }
 
 fn main() {
-  println(load("""{"port": 80}""", Config)) -- Ok(Config {port: 80})
+  println(load("""{"port": 80}""", Config)) -- Ok(Config { port: 80 })
 }
 ```
 
@@ -543,7 +543,7 @@ type Post {
 
 fn main() {
   println(json.parse("""{"title": "a", "tags": "x"}""", Post))
-  -- Ok(Post {title: a, tags: Tags {names: #[x]}})
+  -- Ok(Post { title: a, tags: Tags { names: #[x] } })
   println(json.parse("""{"title": "a", "tags": 3}""", Post))
   -- Err(tags are a string or a list of strings at tags)
 }
@@ -678,7 +678,7 @@ type Out {
 fn main() {
   -- "nikc" and "m" name no field: skipped
   let text = """{"name": "Ann", "nikc": "A", "inner": {"n": 1, "m": 2}}"""
-  println(json.parse(text, Out)) -- Ok(Out {name: "Ann", inner: Inner {n: 1}, nick: None})
+  println(json.parse(text, Out)) -- Ok(Out { name: "Ann", inner: Inner { n: 1 }, nick: None })
   println(json.parse("""{"nmae": "Ann", "inner": {"n": 1}}""", Out)) -- Err(json missing field at byte 0: name)
 }
 ```

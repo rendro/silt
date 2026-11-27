@@ -135,7 +135,7 @@ fn main() {
 "#;
     assert_eq!(
         run(source, geo()),
-        Ok(Value::string("Point {x: 1, y: 2} Circle(3)"))
+        Ok(Value::string("Point { x: 1, y: 2 } Circle(3)"))
     );
 }
 
@@ -207,7 +207,7 @@ fn a_host_types_result_is_checked() {
     for (call, expected) in [
         (
             "g.size()",
-            "g.size: its signature returns Size, but it returned Record Point {x: 1, y: 2}",
+            "g.size: its signature returns Size, but it returned Record Point { x: 1, y: 2 }",
         ),
         (
             "g.point()",
@@ -664,7 +664,7 @@ fn main() {
         run(source, geo()),
         Ok(Value::tuple(vec![
             Value::string(r#"{"x":1,"y":2}"#),
-            Value::string("Ok(Point {x: 1, y: 2})"),
+            Value::string("Ok(Point { x: 1, y: 2 })"),
         ]))
     );
 }
@@ -817,7 +817,7 @@ fn a_host_type_prints_by_its_module() {
     assert_eq!(
         run(source, geo()),
         Ok(Value::string(
-            "geo.Point {x: 1, y: 2} main.Point {x: 3, y: 4}"
+            "geo.Point { x: 1, y: 2 } main.Point { x: 3, y: 4 }"
         ))
     );
 }

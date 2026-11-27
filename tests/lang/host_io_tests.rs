@@ -983,7 +983,7 @@ fn a_display_impl_of_mains_err_that_fails_is_given_to_the_host() {
     let e = Vm::new(HostIo::buffer(&out))
         .run_program(&program)
         .expect_err("main returned Err");
-    assert_eq!(e.returned.as_deref(), Some("E {a: 1}"));
+    assert_eq!(e.returned.as_deref(), Some("E { a: 1 }"));
     let failure = e.display_failure.as_deref().expect("the impl failed");
     assert_eq!(failure.type_name, "E");
     assert_eq!(failure.message, "panic: display panics");

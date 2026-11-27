@@ -310,10 +310,14 @@ fn begin<'a>(
             {
                 return Ok(None);
             }
+            // As `silt fmt` writes a record in source: `P { x: 1, y: 2 }`.
             f.write_str(&record.ty().name)?;
-            f.write_str(" {")?;
+            if record.fields().is_empty() {
+                return f.write_str(" {}").map(|()| None);
+            }
+            f.write_str(" { ")?;
             let names = record.ty().fields().iter();
-            (Parts::Fields(names, record.fields().iter()), "}")
+            (Parts::Fields(names, record.fields().iter()), " }")
         }
         Value::Variant(variant) => {
             // A builtin error is shown as its message.

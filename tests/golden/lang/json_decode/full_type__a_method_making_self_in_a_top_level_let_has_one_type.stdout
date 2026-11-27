@@ -1,2 +1,2 @@
-Ok(Box {v: 2})
-Ok(Box {v: 3})
+Ok(Box { v: 2 })
+Ok(Box { v: 3 })

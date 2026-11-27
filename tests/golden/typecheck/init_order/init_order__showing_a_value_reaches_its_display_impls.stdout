@@ -2,7 +2,7 @@ plain
 unit
 6C
 1C
-Wrap {inner: [2C]}
+Wrap { inner: [2C] }
 Node(Leaf(3C), Leaf(4C))
 ["Some(5C)"]
 1

@@ -969,7 +969,7 @@ takes it from the return type of the function it is in, when that is
 known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
 The structural `Display` formats in constructor syntax: `Circle(5.0)`
-for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
+for a variant, `Point { x: 1, y: 2 }` for a record, its fields in the
 order the type declares them. A string inside a structure
 is written as a program writes it, in quotes and escaped:
 `["a", "b, c"]`, `Some("x")`, `(1, "a\nb")`, `#{"k": "v"}`, so the
@@ -1012,7 +1012,7 @@ fn main() {
 the like) are for the person debugging: they write the structure of a
 value in silt syntax, every string quoted and escaped as inside a
 structure (`io.inspect("a\"b")` is `"a\"b"`), and do not call written
-`Display` impls (`io.inspect(t)` is `Temp {degrees: 21}`). They write a record's
+`Display` impls (`io.inspect(t)` is `Temp { degrees: 21 }`). They write a record's
 fields in the same order as `println`.
 
 `Equal`, `Hash` and `Compare` are **sealed**: they always come

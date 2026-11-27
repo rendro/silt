@@ -1,6 +1,6 @@
 Err(invalid time '23:59:60': a leap second (second 60) is not read at t)
 Err(invalid time '12:30:60.5': a leap second (second 60) is not read at t)
-Ok(T {t: 23:59:59.999999999})
+Ok(T { t: 23:59:59.999999999 })
 Err(invalid datetime '2016-12-31T23:59:60': a leap second (second 60) is not read at dt)
 Err(invalid datetime '2016-12-31 23:59:60Z': a leap second (second 60) is not read at dt)
 Err(invalid datetime '2017-01-01T00:59:60+01:00': a leap second (second 60) is not read at dt)

@@ -1,2 +1,2 @@
-error: E {a: 1}
+error: E { a: 1 }
 note: the Display impl of E failed: panic: display panics (main_err__a_display_impl_that_fails_is_noted.silt:11:5)

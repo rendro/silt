@@ -1,6 +1,6 @@
 Silt REPL (type :quit to exit, :help for commands)
-F {f: <fn:closure in make>, n: 1}
-G {g: <fn:closure in <repl:6>>, h: <fn:twice>}
+F { f: <fn:closure in make>, n: 1 }
+G { g: <fn:closure in <repl:6>>, h: <fn:twice> }
 <fn:pick>
 <fn:closure in <repl:9>>
 <fn:twice>

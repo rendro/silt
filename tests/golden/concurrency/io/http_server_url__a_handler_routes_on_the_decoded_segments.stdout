@@ -18,7 +18,7 @@ GET /users/%7eann HTTP/1.1
   the client: 200 user ~ann
 GET /show?q=1 HTTP/1.1
   the handler: GET http://example.test/show?q=1 ["show"] [("q", "1")]
-  the client: 200 Request {method: GET, url: <url:http://example.test/show?q=1>, headers: #{"connection": "close", "host": "Example.TEST:80"}, body: bytes(, length: 0), peer: "PEER"}
+  the client: 200 Request { method: GET, url: <url:http://example.test/show?q=1>, headers: #{"connection": "close", "host": "Example.TEST:80"}, body: bytes(, length: 0), peer: "PEER" }
 GET http://elsewhere.test/users/9 HTTP/1.1
   the handler: GET http://elsewhere.test/users/9 ["users", "9"] []
   the client: 200 user 9

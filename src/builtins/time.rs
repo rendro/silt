@@ -1676,7 +1676,7 @@ mod tests {
         assert_eq!(date.to_string(), "2024-03-09");
         assert_eq!(time.to_string(), "07:30:05.000000042");
         assert_eq!(both.to_string(), "2024-03-09T07:30:05.000000042");
-        assert_eq!(make_instant(7).to_string(), "Instant {epoch_ns: 7}");
+        assert_eq!(make_instant(7).to_string(), "Instant { epoch_ns: 7 }");
         assert_eq!(make_duration(1_500_000_000).to_string(), "1.500s");
 
         let read = Date::take(&date).expect("a Date");
