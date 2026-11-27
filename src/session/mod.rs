@@ -774,6 +774,24 @@ impl Session {
             ModuleKind::Cell => self.cells.hidden_imports(),
             _ => HashMap::new(),
         };
+        let packages = match &self.packages {
+            Some(Ok(packages)) => packages,
+            _ => &self.fallback_packages,
+        };
+        // (`m.x` without `import m` is told to import `m` when the
+        // import would load a module: a key of the package's
+        // `[dependencies]` or a file of its `src`.)
+        let own_name = module.name;
+        let package = module.package;
+        let importable = |name: Symbol| {
+            let file_of = |src: &Path| src.join(format!("{}.silt", resolve(name)));
+            name != own_name
+                && crate::module::is_module_name(&resolve(name))
+                && (packages.dependency(package, name).is_some()
+                    || (packages.packages.get(package.0 as usize))
+                        .and_then(|own| own.src.as_deref())
+                        .is_some_and(|src| file_of(src).is_file()))
+        };
         let resolution = names::resolve_module(
             &mut ast,
             id,
@@ -784,6 +802,7 @@ impl Session {
                 text: text.map_or("", |file| &file.text),
                 complete: !module.incomplete,
                 hidden_imports: &hidden_imports,
+                importable: &importable,
             },
         );
         let cell = kind == ModuleKind::Cell;
@@ -794,10 +813,6 @@ impl Session {
         };
         // (Each key of the package's `[dependencies]` whose library the
         // session has: a help offers its import by the key.)
-        let packages = match &self.packages {
-            Some(Ok(packages)) => packages,
-            _ => &self.fallback_packages,
-        };
         let dependencies = (packages.packages.get(module.package.0 as usize))
             .map_or(&[][..], |package| package.deps.as_slice())
             .iter()
@@ -824,6 +839,7 @@ impl Session {
                 defs: self.defs.clone(),
                 tables: &mut self.tables,
                 for_editor: self.for_editor,
+                text: text.map(|file| file.text.clone()),
             },
         );
         say_hidden_modules(

@@ -291,6 +291,19 @@ pub(crate) fn concat(name: &str, xs: List, ys: List) -> Result<Value, VmError> {
     Ok(Value::List(xs.concat(ys)?))
 }
 
+/// [`concat`] of two lists given away (`[x, ..acc]`): one that is the
+/// one holder of its elements is changed in place ([`crate::value::List::put_concat`]).
+pub(crate) fn put_concat(
+    name: &str,
+    xs: crate::value::List,
+    ys: crate::value::List,
+) -> Result<Value, VmError> {
+    xs.writable()?;
+    ys.writable()?;
+    fits(name, Kind::List, xs.len().saturating_add(ys.len()))?;
+    Ok(Value::List(xs.put_concat(ys)?))
+}
+
 fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
     Ok(Value::list(std::mem::take(out)))
 }
@@ -973,10 +986,18 @@ pub(crate) mod list {
             Ok(Step::Done(Value::List(xs.push_back(elem)?)))
         }
 
-        fn prepend(xs: List, elem: &Value) -> Result<Value, VmError> {
+        fn prepend(xs: List, elem: &Value) -> Result<Step, VmError> {
             xs.writable()?;
             fits("list.prepend", Kind::List, xs.len().saturating_add(1))?;
-            Ok(Value::List(xs.push_front(elem.clone())?))
+            let elem = elem.clone();
+            // (In place as `list.append`.)
+            if xs.held_alone_in_tree() {
+                let xs = xs.clone();
+                return Ok(after_args("list.prepend", move || {
+                    Ok(Value::List(xs.put_front(elem)?))
+                }));
+            }
+            Ok(Step::Done(Value::List(xs.push_front(elem)?)))
         }
 
         fn concat(xs: List, ys: List) -> Result<Value, VmError> {

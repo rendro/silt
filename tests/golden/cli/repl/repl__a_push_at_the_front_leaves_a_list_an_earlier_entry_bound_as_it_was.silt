@@ -1,0 +1,8 @@
+-- cmd: repl
+-- stdin: import list\nlet l = list.fold(0..199, []) { a, i -> [i, ..a] }\nlet l2 = list.fold([1, 2], l) { a, x -> [x, ..a] }\nlet l3 = list.fold([1, 2], l) { a, x -> list.prepend(a, x) }\nfn grow(i: Int, acc: List(Int)) -> List(Int) {\n  match i == 0 {\n    true -> acc\n    false -> grow(i - 1, [i, ..acc])\n  }\n}\nlet l4 = grow(5, l)\nlet l5 = list.fold([7, 8], l) { a, x -> [..a, x] }\n(list.length(l), list.first(l), list.last(l), list.sum(l))\n(list.length(l2), list.first(l2), list.first(l3), list.length(l4), list.first(l4), list.last(l5))\n:quit\n
+-- stdout-contains: (200, Some(199), Some(0), 19900)
+-- stdout-contains: (202, Some(2), Some(2), 205, Some(1), Some(8))
+-- A list an earlier entry binds stays as it was when a later entry
+-- puts an element at its front or its back, by a fold or by a function
+-- that calls itself: [x, ..acc], list.prepend and [..acc, x] change a
+-- list in place only when nothing else holds it.

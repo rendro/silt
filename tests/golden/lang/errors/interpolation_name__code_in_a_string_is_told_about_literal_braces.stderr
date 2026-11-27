@@ -1,0 +1,25 @@
+error[type]: undefined variable 'x'
+ --> interpolation_name__code_in_a_string_is_told_about_literal_braces.silt:8:22
+   |
+ 8 |   let s = "fn f(x) { x / (x - 2) } and { y }"
+   |                      ^ undefined variable 'x'
+  = help: `x` is inside a `{ }` of a string, which is an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`
+
+error[type]: undefined variable 'x'
+ --> interpolation_name__code_in_a_string_is_told_about_literal_braces.silt:8:27
+   |
+ 8 |   let s = "fn f(x) { x / (x - 2) } and { y }"
+   |                           ^ undefined variable 'x'
+
+error[type]: undefined variable 'y'
+ --> interpolation_name__code_in_a_string_is_told_about_literal_braces.silt:8:42
+   |
+ 8 |   let s = "fn f(x) { x / (x - 2) } and { y }"
+   |                                          ^ undefined variable 'y'
+  = help: `{y}` in a string is an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`
+
+error[type]: undefined variable 'nope'
+ --> interpolation_name__code_in_a_string_is_told_about_literal_braces.silt:11:17
+    |
+ 11 |   println("{n + nope}")
+    |                 ^^^^ undefined variable 'nope'

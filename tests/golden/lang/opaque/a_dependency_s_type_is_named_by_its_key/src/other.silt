@@ -1,0 +1,5 @@
+import mail as m
+
+pub fn age(u: m.User) -> Int {
+  u.age
+}
