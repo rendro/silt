@@ -66,6 +66,20 @@ let min = -9223372036854775808 -- the smallest Int
 println(int.abs(min)) -- runtime error: integer overflow: abs(-9223372036854775808)
 ```
 
+A program that must go on when a number it was given does not fit
+asks first: `int.checked_add`, `int.checked_sub`, `int.checked_mul` and
+`int.checked_div` give `None` where the operator would end the program
+([int](../stdlib/int-float.md#intchecked_add-intchecked_sub-intchecked_mul-intchecked_div)).
+
+```silt
+import int
+
+fn main() {
+  println(int.checked_mul(999999999999999999, 100)) -- None
+  println(int.checked_add(40, 2)) -- Some(42)
+}
+```
+
 The smallest `Int` is written `-9223372036854775808`: the minus sign and
 the digits are one literal there. Without the minus sign,
 `9223372036854775808` is one more than the largest `Int` and is rejected

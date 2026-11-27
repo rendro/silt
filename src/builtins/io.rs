@@ -478,6 +478,13 @@ builtins! {
         })
     }
 
+    // Whether a person types the program's input: stdin is a terminal,
+    // not a file or a pipe (nor the playground, which has no terminal).
+    fn stdin_is_terminal() -> bool {
+        use std::io::IsTerminal;
+        std::io::stdin().is_terminal()
+    }
+
     // Only the program args explicitly forwarded by the CLI past a `--`
     // separator (`silt run script.silt -- foo bar` → `["foo", "bar"]`).
     fn args() -> Vec<Value> {

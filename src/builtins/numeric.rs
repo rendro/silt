@@ -242,6 +242,29 @@ pub(crate) mod int {
             }
         }
 
+        // `a + b`, `a - b`, `a * b` and `a / b` as the operators
+        // compute them, `None` where the operator would end the program:
+        // a result outside the Ints, and a division by zero.
+        fn checked_add(a: i64, b: i64) -> Option<Value> {
+            a.checked_add(b).map(Value::Int)
+        }
+
+        fn checked_sub(a: i64, b: i64) -> Option<Value> {
+            a.checked_sub(b).map(Value::Int)
+        }
+
+        fn checked_mul(a: i64, b: i64) -> Option<Value> {
+            a.checked_mul(b).map(Value::Int)
+        }
+
+        // Rounded down, as `/` rounds.
+        fn checked_div(a: i64, b: i64) -> Option<Value> {
+            match b {
+                0 => None,
+                b => crate::vm::arithmetic::floored_div(a, b).map(Value::Int),
+            }
+        }
+
         fn bit_and(a: i64, b: i64) -> i64 {
             a & b
         }

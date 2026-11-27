@@ -32,9 +32,9 @@ pub(super) fn int_arithmetic(op: Op, a: i64, b: i64) -> Result<i64, VmError> {
 }
 
 /// `a / b` rounded down, for a `b` that is not 0: `None` where it is
-/// no Int (the smallest Int over -1).
+/// no Int (the smallest Int over -1). (`int.checked_div` divides so too.)
 #[inline(always)]
-fn floored_div(a: i64, b: i64) -> Option<i64> {
+pub(crate) fn floored_div(a: i64, b: i64) -> Option<i64> {
     let q = a.checked_div(b)?;
     // Truncation rounded a negative quotient up: one less. (It was not
     // the smallest Int then.)

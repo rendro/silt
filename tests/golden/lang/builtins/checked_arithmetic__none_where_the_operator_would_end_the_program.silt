@@ -1,0 +1,49 @@
+-- int.checked_add, checked_sub, checked_mul and checked_div give the
+-- operator's result where it is an Int, and None where the operator would
+-- end the program: a result past the Ints, a division by zero.
+import int
+import list
+
+fn show(o: Option(Int)) -> String {
+  match o {
+    Some(n) -> "{n}"
+    None -> "None"
+  }
+}
+
+fn main() {
+  println(show(int.checked_add(int.max_value, 1)))
+  println(show(int.checked_add(int.max_value, 0)))
+  println(show(int.checked_add(int.min_value, -1)))
+  println(show(int.checked_sub(int.min_value, 1)))
+  println(show(int.checked_sub(0, int.min_value)))
+  println(show(int.checked_sub(-1, int.max_value)))
+  println(show(int.checked_mul(999999999999999999, 100)))
+  println(show(int.checked_mul(int.min_value, -1)))
+  println(show(int.checked_mul(int.min_value, 1)))
+  println(show(int.checked_div(7, 0)))
+  println(show(int.checked_div(0, 0)))
+  println(show(int.checked_div(int.min_value, -1)))
+  println(show(int.checked_div(int.min_value, 1)))
+  -- Rounded down, as / rounds.
+  println(show(int.checked_div(-7, 2)))
+  println(show(int.checked_div(7, -2)))
+  println(show(int.checked_div(-7, -2)))
+  -- Where it fits, each is its operator.
+  let pairs = [(7, 3), (-7, 3), (7, -3), (-7, -3), (0, 5), (123456789, -987)]
+  list.each(pairs) { (a, b) ->
+    let same = int.checked_add(a, b) == Some(a + b)
+      && int.checked_sub(a, b) == Some(a - b)
+      && int.checked_mul(a, b) == Some(a * b)
+      && int.checked_div(a, b) == Some(a / b)
+    println("{a} {b} {same}")
+  }
+  -- A sum of what a user typed, with its own error for one too large.
+  let total = list.fold([int.max_value - 2, 1, 1, 1], Some(0)) { acc, n ->
+    match acc {
+      Some(sum) -> int.checked_add(sum, n)
+      None -> None
+    }
+  }
+  println(show(total))
+}

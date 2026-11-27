@@ -2,7 +2,7 @@
 //!
 //! Executes compiled `Function` objects produced by the compiler.
 
-mod arithmetic;
+pub(crate) mod arithmetic;
 mod calls;
 pub(crate) mod decode;
 mod dicts;
