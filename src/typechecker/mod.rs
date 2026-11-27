@@ -767,10 +767,9 @@ pub(crate) struct TypeChecker {
     /// The library module of each dependency of the module's package the
     /// session has, by its key (`ModuleContext::dependencies`).
     pub(super) dependency_keys: HashMap<crate::defs::ModuleId, Symbol>,
-    /// The library module of each dependency of a package the module's
-    /// package depends on, by the key that package gives it, the
-    /// nearest first (`ModuleContext::farther_dependencies`).
-    pub(super) farther_keys: HashMap<crate::defs::ModuleId, Symbol>,
+    /// The keys the packages the module's package depends on give their
+    /// dependencies, the nearest first (`ModuleContext::farther_dependencies`).
+    pub(super) farther_keys: Vec<FartherKey>,
     /// The module's text (`ModuleContext::text`), for a help that
     /// writes code as the file wrote it.
     pub(super) source_text: Option<std::sync::Arc<str>>,
@@ -1040,7 +1039,7 @@ impl TypeChecker {
             own_traits: HashMap::new(),
             import_paths: HashMap::new(),
             dependency_keys: HashMap::new(),
-            farther_keys: HashMap::new(),
+            farther_keys: Vec::new(),
             source_text: None,
             rejected_types: std::collections::HashSet::new(),
             refused_traits: std::collections::HashSet::new(),
@@ -2436,7 +2435,7 @@ pub(crate) struct ModuleContext<'a> {
     /// library module it names: what a message calls a module no import
     /// of the file can reach (`beta`, where the package depends on
     /// `alpha`, which depends on `beta`).
-    pub(crate) farther_dependencies: Vec<(Symbol, crate::defs::ModuleId)>,
+    pub(crate) farther_dependencies: Vec<FartherKey>,
     /// The name of the package, from its `silt.toml`.
     pub(crate) package_name: Symbol,
     /// Its name, for diagnostics.
@@ -2465,6 +2464,21 @@ pub(crate) struct ModuleContext<'a> {
     /// The module's text, if it has one: a help may write code as the
     /// file wrote it.
     pub(crate) text: Option<std::sync::Arc<str>>,
+}
+
+/// A key of the `[dependencies]` of a package that the package of the
+/// module being checked depends on, directly or not
+/// (`ModuleContext::farther_dependencies`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FartherKey {
+    /// The key, which no import of the module would load anything else
+    /// by.
+    pub(crate) key: Symbol,
+    /// The library module it names.
+    pub(crate) library: crate::defs::ModuleId,
+    /// The library of the dependency of the module's package through
+    /// which the key's package is reached first, if the session has it.
+    pub(crate) through: Option<crate::defs::ModuleId>,
 }
 
 /// The modules a module imports, and theirs, and so on: the modules that
@@ -2561,10 +2575,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.module = module;
     checker.module_name = module_name;
     checker.dependency_keys = dependencies.into_iter().map(|(key, m)| (m, key)).collect();
-    checker.farther_keys = HashMap::new();
-    for (key, m) in farther_dependencies {
-        checker.farther_keys.entry(m).or_insert(key);
-    }
+    checker.farther_keys = farther_dependencies;
     checker.source_text = text;
     checker.refused_traits = scope.refused_traits.clone();
     checker.refused_imports = scope.refused_imports.clone();

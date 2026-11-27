@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- alpha gives beta the key `bt`, but this file's `bt` is a module of its
+-- own package: an opaque type of beta is not called `bt.Tok` here.
+-- stderr-not-contains: bt.Tok
+import json
+import alpha
+import bt
+
+fn main() {
+  let t = alpha.make()
+  println(bt.hello())
+  println(t.raw)
+  let u = t.{ raw: "y" }
+  println(json.stringify(t))
+}

@@ -1,0 +1,7 @@
+pub opaque type Tok {
+  raw: String,
+}
+
+pub fn tok(s: String) -> Tok {
+  Tok { raw: s }
+}

@@ -27,8 +27,26 @@ impl TypeChecker {
             return None;
         }
         (self.module_name_here(def.module))
-            .or_else(|| self.farther_keys.get(&def.module).copied())
+            .or_else(|| self.farther_key(def.module))
             .or_else(|| self.tables.module_names.get(&def.module).copied())
+    }
+
+    /// The key a package the file's package depends on gives the library
+    /// `module`, which no import here reaches: one this file gives nothing
+    /// else, and of those first one reached through a dependency the file
+    /// imports (`delta.make()` hands on a `bb.Tok` where delta has `bb`),
+    /// then the nearest.
+    fn farther_key(&self, module: crate::defs::ModuleId) -> Option<Symbol> {
+        let usable = || {
+            (self.farther_keys.iter())
+                .filter(move |far| far.library == module && !self.binds_here(far.key))
+        };
+        let imported = |m: &crate::defs::ModuleId| {
+            self.import_paths.contains_key(m) || self.module_spelled.contains_key(m)
+        };
+        (usable().find(|far| far.through.as_ref().is_some_and(imported)))
+            .or_else(|| usable().next())
+            .map(|far| far.key)
     }
 
     /// `ty`, as far as it is known, when it is an opaque type of another

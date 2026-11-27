@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- alpha and delta both depend on beta, by the keys `bt` and `bb`; the
+-- file imports only delta, whose signatures write `bb.Tok`: the opaque
+-- errors name it so.
+-- stderr-not-contains: bt.Tok
+import json
+import delta
+
+fn main() {
+  let t = delta.make()
+  println(t.raw)
+  let u = t.{ raw: "y" }
+  println(json.stringify(t))
+}
