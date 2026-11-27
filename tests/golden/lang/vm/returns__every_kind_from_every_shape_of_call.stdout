@@ -5,7 +5,7 @@ true
 ()
 text
 [1, 2, 3]
-Point {x: 1, y: 2}
+Point { x: 1, y: 2 }
 Circle(1.5)
 42
 a function that returns its argument
@@ -15,7 +15,7 @@ true
 ()
 text
 [1, 2, 3]
-Point {x: 1, y: 2}
+Point { x: 1, y: 2 }
 Circle(1.5)
 Square
 42
@@ -26,7 +26,7 @@ true
 ()
 text
 [1, 2, 3]
-Point {x: 1, y: 2}
+Point { x: 1, y: 2 }
 Circle(1.5)
 42
 a closure
@@ -36,7 +36,7 @@ true
 ()
 text
 [1, 2, 3]
-Point {x: 1, y: 2}
+Point { x: 1, y: 2 }
 Circle(1.5)
 42
 a method and a default method
@@ -46,7 +46,7 @@ true
 ()
 text
 [1, 2, 3]
-Point {x: 1, y: 2}
+Point { x: 1, y: 2 }
 Circle(1.5)
 42
 7
@@ -55,7 +55,7 @@ true
 ()
 text
 [1, 2, 3]
-Point {x: 1, y: 2}
+Point { x: 1, y: 2 }
 Circle(1.5)
 42
 a function a builtin calls back
@@ -65,7 +65,7 @@ a function a builtin calls back
 [(), ()]
 ["text", "text"]
 [[1, 3], [2, 3]]
-[Point {x: 1, y: 2}, Point {x: 2, y: 2}]
+[Point { x: 1, y: 2 }, Point { x: 2, y: 2 }]
 [Circle(1.5), Circle(1.5)]
 [41, 42]
 6

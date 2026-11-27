@@ -1,4 +1,4 @@
-Ok(Pair {x: "s", y: 3})
+Ok(Pair { x: "s", y: 3 })
 Err(json type mismatch at byte 0: expected Int, got string)
-Ok(Box {v: [3]})
-Ok(M {m: #{"k": true}})
+Ok(Box { v: [3] })
+Ok(M { m: #{"k": true} })

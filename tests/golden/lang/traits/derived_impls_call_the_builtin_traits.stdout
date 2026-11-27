@@ -1,8 +1,8 @@
-Pt {x: 1}
+Pt { x: 1 }
 true
 -1
 -1
-[Pt {x: 1}, Pt {x: 2}]
+[Pt { x: 1 }, Pt { x: 2 }]
 true
 false
 Some("a")

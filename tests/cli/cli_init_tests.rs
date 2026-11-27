@@ -452,12 +452,14 @@ fn test_silt_test_checks_the_package_first() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
 
-    // Outside a package there is no package to check.
+    // Outside a package there is no package to check: no test file is
+    // found, which fails the run.
     let plain = temp_dir_named("no_pkg");
     let out = silt_cmd().arg("test").current_dir(&plain).output().unwrap();
-    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
         "no test files found\n"
     );
+    assert!(out.stdout.is_empty(), "{out:?}");
 }

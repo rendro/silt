@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 type Color { Red, Green, Blue }
 fn main() {
   let t = (true, Red)

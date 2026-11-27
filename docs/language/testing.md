@@ -74,9 +74,9 @@ in the package: when a module has an error, it shows the
 errors and runs no test, even where no test file imports that module.
 A directory below that holds a `silt.toml` of its own is another package,
 whose test files `silt test` leaves to it. Where it finds no test file
-outside them, it names those that have some, and, where their names can
-be pasted in a command line, the command that tests them (`silt test
-ledger money`).
+outside them, it says `no test files found` and fails; it names those
+packages that have some, and, where their names can be pasted in a
+command line, the command that tests them (`silt test ledger money`).
 `silt init` writes a first test, `src/main_test.silt` (`src/lib_test.silt`
 in a library), that imports the entry module and calls a `pub` function
 of it.
@@ -138,6 +138,13 @@ Running `silt test` in a directory containing this file produces:
 as found from it, and the `./` prefix is omitted and you see `PASS math_test.silt::test_addition`
 instead.)
 
+A test that takes over a second shows how long it took on its line, so
+that a slow test stands out:
+
+```
+  PASS ./math_test.silt::test_sum_to_a_million (15.1 s)
+```
+
 ## Filtering Tests
 
 Use `--filter <pattern>` to run only tests whose names contain the pattern:
@@ -190,6 +197,9 @@ deadlocked fails with the deadlock report.
 ## Exit Code
 
 `silt test` exits with code 0 if all tests pass and code 1 if any test fails.
+A run that finds no test fails too, with code 1: where there is no test file
+(`no test files found`), and where the test files hold no `test_*` function,
+as where `--filter` matches no test.
 
 A test does not end the run. A call of `process.exit` in a test, or in a task
 of a call it made, fails that test, whatever the code, and the run goes on with the

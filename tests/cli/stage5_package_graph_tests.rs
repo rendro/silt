@@ -1695,7 +1695,7 @@ fn a_dependency_taken_out_rewrites_the_lock_for_the_dependencies() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stderr(&out),
-        "Updating silt.lock for the dependencies in silt.toml\n"
+        "Updating silt.lock for the dependencies in silt.toml\nchecked 1 module: no errors\n"
     );
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
     assert!(!lock.contains("calc"), "{lock}");

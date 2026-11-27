@@ -1,0 +1,9 @@
+import a
+
+fn g() -> Int {
+  a.f()
+}
+
+pub fn h() -> Int {
+  2
+}

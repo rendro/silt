@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 import list as l
 fn main() {
     let _ = l.length([1, 2, 3])

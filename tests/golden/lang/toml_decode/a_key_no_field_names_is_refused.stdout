@@ -4,9 +4,9 @@ UnknownField(inner.m, 35)
 UnknownField(extra, 21)
 UnknownField(inner.k, 28)
 UnknownField(rows[1].q, 59)
-Ok Cfg {name: "x", inner: Inner {n: 1}, rows: []}
+Ok Cfg { name: "x", inner: Inner { n: 1 }, rows: [] }
 Err(toml unknown field at byte 42: s.color)
-Ok(HasShape {s: Circle(1.0)})
+Ok(HasShape { s: Circle(1.0) })
 Ok(#{"a": 1, "b": 2})
 Ok(Object(#{"title": String("T"), "x": Int(1)}))
-Ok(Meta {title: "T", draft: None})
+Ok(Meta { title: "T", draft: None })

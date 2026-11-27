@@ -1,0 +1,6 @@
+import a
+import test
+
+fn test_f() {
+  test.assert_eq(a.f(), 1)
+}

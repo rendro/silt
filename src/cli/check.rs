@@ -426,6 +426,9 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
     // program imports and another checks as its own shows its errors
     // once.
     let mut shown: HashSet<ProblemKey> = HashSet::new();
+    // The files of silt code checked, by their canonical paths: a module
+    // that two programs import is one.
+    let mut modules: HashSet<std::path::PathBuf> = HashSet::new();
     for program in programs {
         let path = match program.entry.as_str() {
             "-" => STDIN_NAME,
@@ -449,6 +452,13 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
             }
         };
         failed |= checked.failed();
+        for file in checked.session.sources().files() {
+            if let crate::source::SourceName::Path(p) | crate::source::SourceName::Overlay(p) =
+                &file.path
+            {
+                modules.insert(crate::source::canonical_path(p));
+            }
+        }
         let files = ProgramFiles::new(path, checked.session.sources());
         // (One program's diagnostics are each once already: what two
         // programs both found is told apart by its problem. A single
@@ -482,6 +492,7 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
     // order of finding.)
     found.sort_by(|a, b| a.0.cmp(&b.0));
     let mut json = json_unreadable;
+    let any_shown = !found.is_empty();
     for (i, (_, shown)) in found.into_iter().enumerate() {
         match shown {
             Shown::Json(entry) => json.push(entry),
@@ -511,6 +522,18 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         let noun = if warnings == 1 { "warning" } else { "warnings" };
         eprintln!("error: silt check: {warnings} {noun}, denied by --deny-warnings");
         process::exit(1);
+    }
+    // Found nothing wrong: one line says so, and what was checked, so
+    // that a check of nothing is not taken for a check that passed.
+    // (JSON output is the array alone.)
+    if format == OutputFormat::Human {
+        // (Apart from the warnings above, as they are from each other.)
+        if any_shown {
+            eprintln!();
+        }
+        let n = modules.len();
+        let noun = if n == 1 { "module" } else { "modules" };
+        eprintln!("checked {n} {noun}: no errors");
     }
 }
 

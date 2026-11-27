@@ -10,6 +10,6 @@
 2024-01-01 23:59:59.123 -> 2024-01-01T23:59:59.123
 2024-01-01 23:59:59.12 -> time parse error: invalid datetime '2024-01-01 23:59:59.12' for '%Y-%m-%d %H:%M:%S.%3f': expected the fraction of a second at byte 20
 2024-01-01 23:59:59.123 -> 2024-01-01T23:59:59.123
-Ok(Instant {epoch_ns: 1704153599250000000})
+Ok(Instant { epoch_ns: 1704153599250000000 })
 Ok("2024-01-01 23:59:59.500000000")
 true

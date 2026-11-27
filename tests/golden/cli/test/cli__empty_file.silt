@@ -1,4 +1,5 @@
 -- A program with no code: only these directive comments.
 -- cmd: test
+-- exit: 1
 -- stderr-contains: 0 tests:
 -- stderr-not-contains: panicked at

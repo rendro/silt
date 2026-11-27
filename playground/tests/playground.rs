@@ -123,7 +123,7 @@ fn a_display_impl_of_mains_err_that_fails_is_noted() {
     // run` writes them.
     assert_eq!(
         ran.error,
-        "error: E {a: 1}\nnote: the Display impl of E failed: panic: display panics \
+        "error: E { a: 1 }\nnote: the Display impl of E failed: panic: display panics \
          (main.silt:3:32)"
     );
     // An impl that works is shown as it was.

@@ -11,7 +11,7 @@ true
 at,start,points
 2024-03-09T07:30:00,07:30:00,2.5
 true
-Ok([Person {name: "x", age: 1, score: 1.0, member: true, email: None, born: None}])
+Ok([Person { name: "x", age: 1, score: 1.0, member: true, email: None, born: None }])
 1,"Smith, John","say ""hi""",,"two
 lines"
 true

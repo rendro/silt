@@ -117,3 +117,38 @@ fn test_silt_help_fmt_row_alignment() {
         "run vs init desc columns differ: run={run_col} init={init_col}"
     );
 }
+
+// ── the time of a slow test ─────────────────────────────────────────
+
+/// A test that takes over a second shows its time on its result line,
+/// `PASS slow_test.silt::test_slow (1.2 s)`; a quick test's line is
+/// as it was. FAILS on the base: no line shows a time.
+#[test]
+fn test_a_slow_test_shows_its_time() {
+    let dir = std::env::temp_dir().join(format!("silt_slow_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("slow_test.silt"),
+        "import time\n\nfn test_quick() {\n  ()\n}\n\nfn test_slow() {\n  \
+         time.sleep(time.ms(1200))\n}\n",
+    )
+    .unwrap();
+    let out = silt_cmd()
+        .args(["test", "slow_test.silt"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines[0], "  PASS slow_test.silt::test_quick", "{stderr}");
+    let slow = lines[1]
+        .strip_prefix("  PASS slow_test.silt::test_slow (")
+        .and_then(|rest| rest.strip_suffix(" s)"))
+        .unwrap_or_else(|| panic!("no time on the slow test's line: {stderr}"));
+    let seconds: f64 = slow.parse().unwrap_or_else(|_| panic!("{stderr}"));
+    assert!(seconds >= 1.1, "{stderr}");
+    assert_eq!(slow.split('.').nth(1).map(str::len), Some(1), "{stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

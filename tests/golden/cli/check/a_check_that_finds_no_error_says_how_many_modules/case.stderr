@@ -1,0 +1,8 @@
+warning[type]: function 'g' is never used
+ --> src/b.silt:3:4
+   |
+ 3 | fn g() -> Int {
+   |    ^ function 'g' is never used
+  = help: remove it, or make it pub
+
+checked 4 modules: no errors

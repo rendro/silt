@@ -1,10 +1,10 @@
-read: [I {started: Instant {epoch_ns: 1793512800123456000}}]
-both: [Both {at: Instant {epoch_ns: 1793512800500000000}, dt: 2026-11-01T06:00:00.500, maybe: None}]
-sent: [Same {same: true, back: "2026-11-01 06:00:00.123"}]
-an Option: [S {s: "2026-11-01 06:00:00.123"}]
-a list: [Same {same: true, back: "\{\"2026-11-01 01:00:00.123-05\",\"1969-12-31 19:00:00-05\"}"}]
-round trip: [I {started: Instant {epoch_ns: 1793512800123000000}}] true
-from jsonb: [I {started: Instant {epoch_ns: 1793512800123000000}}]
+read: [I { started: Instant { epoch_ns: 1793512800123456000 } }]
+both: [Both { at: Instant { epoch_ns: 1793512800500000000 }, dt: 2026-11-01T06:00:00.500, maybe: None }]
+sent: [Same { same: true, back: "2026-11-01 06:00:00.123" }]
+an Option: [S { s: "2026-11-01 06:00:00.123" }]
+a list: [Same { same: true, back: "\{\"2026-11-01 01:00:00.123-05\",\"1969-12-31 19:00:00-05\"}" }]
+round trip: [I { started: Instant { epoch_ns: 1793512800123000000 } }] true
+from jsonb: [I { started: Instant { epoch_ns: 1793512800123000000 } }]
 a timestamp: Err(postgres type mismatch on column `started`: expected Instant, got timestamp; cast it in SQL, for example started::timestamptz)
 timestamp[]: Err(postgres type mismatch on column `xs`: expected List(Instant), got timestamp[]; cast it in SQL, for example xs::timestamptz[])
 timestamp[] for an Instant: Err(postgres type mismatch on column `started`: expected Instant, got timestamp[])

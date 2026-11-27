@@ -3,7 +3,7 @@
 -- cmd: check
 -- exit: 0
 -- stderr-not-contains: unknown module
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 import a
 
 fn main() {

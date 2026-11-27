@@ -1198,7 +1198,7 @@ mod tests {
         }
         assert_eq!(
             value(&mut repl, "json.parse(\"1\", Box(Int))"),
-            "Ok(Box {v: 1})"
+            "Ok(Box { v: 1 })"
         );
         let evaluation = repl.eval(
             "trait json.Decode for Box(String) {\n  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: \"s\" }) }\n}",
@@ -1206,15 +1206,15 @@ mod tests {
         assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
         assert_eq!(
             value(&mut repl, "json.parse(\"1\", Box(String))"),
-            "Ok(Box {v: \"s\"})"
+            "Ok(Box { v: \"s\" })"
         );
         assert_eq!(
             value(&mut repl, "json.parse(\"1\", Box(Int))"),
-            "Ok(Box {v: 1})"
+            "Ok(Box { v: 1 })"
         );
         assert_eq!(
             value(&mut repl, "Box(String).decode(json.Null)"),
-            "Ok(Box {v: \"s\"})"
+            "Ok(Box { v: \"s\" })"
         );
         let evaluation = repl.eval("json.parse(\"1\", Box(Bool))");
         assert!(!evaluation.committed);
@@ -1264,13 +1264,13 @@ mod tests {
         assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
         assert_eq!(
             value(&mut repl, "top(\"\\{\\\"v\\\": 3}\")"),
-            "Ok(Box {v: 3})"
+            "Ok(Box { v: 3 })"
         );
         let evaluation = repl.eval("let wrapped = { s -> Box(Int).mk(s) }");
         assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
         assert_eq!(
             value(&mut repl, "wrapped(\"\\{\\\"v\\\": 4}\")"),
-            "Ok(Box {v: 4})"
+            "Ok(Box { v: 4 })"
         );
     }
 
@@ -1380,8 +1380,11 @@ mod tests {
         );
         let used = format!("{closure}\nlet r = k(1, \"\\{{\\\"v\\\": 2}}\")");
         assert!(repl.eval(&used).committed, "`{used}` must run");
-        assert_eq!(value(&mut repl, "r"), "Ok(Box {v: 2})");
-        assert_eq!(value(&mut repl, r#"k(3, "\{\"v\": 4}")"#), "Ok(Box {v: 4})");
+        assert_eq!(value(&mut repl, "r"), "Ok(Box { v: 2 })");
+        assert_eq!(
+            value(&mut repl, r#"k(3, "\{\"v\": 4}")"#),
+            "Ok(Box { v: 4 })"
+        );
         let other = repl.eval(r#"k("a", "\{\"v\": \"b\"}")"#);
         assert!(!other.committed, "a call at another type must fail");
     }
@@ -1657,14 +1660,14 @@ mod tests {
                 &mut repl,
                 "boxed(\"\\{\\\"v\\\": \\{\\\"addr\\\": \\\"x\\\"}}\", mail.Email)"
             ),
-            "Ok(Box {v: Email {addr: \"x\"}})"
+            "Ok(Box { v: Email { addr: \"x\" } })"
         );
         assert_eq!(
             value(
                 &mut repl,
                 "outer(\"\\{\\\"v\\\": \\{\\\"addr\\\": \\\"y\\\"}}\", mail.Email)"
             ),
-            "Ok(Box {v: Email {addr: \"y\"}})"
+            "Ok(Box { v: Email { addr: \"y\" } })"
         );
         assert_eq!(
             value(&mut repl, "sh(mail.mk(\"q\"))"),
@@ -1725,11 +1728,11 @@ mod tests {
         let text = "\"\\{\\\"addr\\\": \\\"x\\\"}\"";
         assert_eq!(
             value(&mut repl, &format!("k1({text}, mail.Email)")),
-            "Ok(Email {addr: \"x\"})"
+            "Ok(Email { addr: \"x\" })"
         );
         assert_eq!(
             value(&mut repl, &format!("k({text}, mail.Email)")),
-            "Ok(Email {addr: \"x\"})"
+            "Ok(Email { addr: \"x\" })"
         );
         for refused in ["kb", "kp"] {
             let entry = format!("{refused}({text}, mail.Email)");

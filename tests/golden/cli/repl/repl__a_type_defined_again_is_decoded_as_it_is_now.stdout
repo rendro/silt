@@ -1,2 +1,2 @@
 Silt REPL (type :quit to exit, :help for commands)
-Ok(R {n: 1})
+Ok(R { n: 1 })

@@ -4,3 +4,5 @@ warning[type]: unused import 'helper' from module 'other'
  4 | import other.{ main, helper }
    |                      ^^^^^^ unused import 'helper' from module 'other'
   = help: remove `helper` from the import
+
+checked 2 modules: no errors

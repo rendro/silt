@@ -1,2 +1,2 @@
-error: Joined {a: 1}
+error: Joined { a: 1 }
 note: the Display impl of Joined failed: panic: in a task (main_err__a_failed_join_in_a_display_impl_is_noted.silt:12:21)

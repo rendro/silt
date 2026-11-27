@@ -312,8 +312,10 @@ fn run_tests(given: &[String], filter: Option<String>) {
             say(&format!("no test matches --filter '{filter}'\n"));
             crate::scheduler::exit_with_status(1);
         }
-        println!("{}", no_test_files(&walked));
-        return;
+        // So does finding no test file: a run that ran no test tested
+        // nothing.
+        say(&format!("{}\n", no_test_files(&walked)));
+        crate::scheduler::exit_with_status(1);
     }
 
     // Files that `--filter` did not rule out. Without a filter, all of them.
@@ -468,6 +470,7 @@ fn run_tests(given: &[String], filter: Option<String>) {
             // The tasks of the file's top-level code are still there,
             // and may work for the test.
             vm.set_task_owner_within(owner, setup_owner);
+            let started = std::time::Instant::now();
             let outcome = vm.call_test(test);
             // The test has ended when its tasks can do no more: one
             // that fails after the test function has returned fails
@@ -483,23 +486,24 @@ fn run_tests(given: &[String], filter: Option<String>) {
             // result line: the line and what stands under it are one
             // report.
             let task_failures = owners.take_task_failures(&vm, owner, &mut counts);
+            let time = took(started.elapsed());
             let mut said = String::new();
             let test_failed = match outcome {
                 // The test ran to its end.
                 Ok(()) if task_failures.is_empty() => {
-                    said += &format!("  PASS {written}::{name}\n");
+                    said += &format!("  PASS {written}::{name}{time}\n");
                     false
                 }
                 // The test ran to its end, but a task it spawned failed
                 // and was neither joined nor cancelled.
                 Ok(()) => {
-                    said += &format!("  FAIL {written}::{name}\n");
+                    said += &format!("  FAIL {written}::{name}{time}\n");
                     true
                 }
                 // Raised, or returned as `Err` (typically at a `?`; the
                 // assertions after it never ran), at the test's name.
                 Err(e) => {
-                    said += &format!("  FAIL {written}::{name}\n");
+                    said += &format!("  FAIL {written}::{name}{time}\n");
                     // The location is in the file the error's span
                     // names, mirroring `silt run`; the test file itself
                     // is named as typed.
@@ -557,8 +561,9 @@ fn run_tests(given: &[String], filter: Option<String>) {
             "hint: test functions must be named 'fn test_*'; test files end with '_test.silt'\n";
     }
     say(&said);
-    // (The tests may have left threads: see `vm_run_file`.)
-    if failed > 0 || file_errors.any() {
+    // (The tests may have left threads: see `vm_run_file`.) Test files
+    // that hold no test fail the run, as finding no test file does.
+    if failed > 0 || file_errors.any() || total == 0 {
         crate::scheduler::exit_with_status(1);
     }
 }
@@ -766,6 +771,16 @@ fn owner_index(tag: u64) -> Option<usize> {
     usize::try_from(tag.checked_sub(1)?).ok()
 }
 
+/// How long a test took, as its result line shows it: nothing for a
+/// test of a second or less, ` (15.1 s)` for a slower one, so that the
+/// slow test stands out and the quick ones read as they are.
+fn took(elapsed: std::time::Duration) -> String {
+    match elapsed > std::time::Duration::from_secs(1) {
+        true => format!(" ({:.1} s)", elapsed.as_secs_f64()),
+        false => String::new(),
+    }
+}
+
 /// A rendered diagnostic as it stands under a test's result line: each
 /// line indented, with its line end.
 fn indented(text: &str) -> String {
@@ -785,4 +800,21 @@ fn indented(text: &str) -> String {
 /// code, or not at all (`crate::scheduler::report`).
 fn say(text: &str) {
     crate::scheduler::report(|| eprint!("{text}"));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::took;
+
+    /// A test of a second or less shows no time; a slower one shows it
+    /// in seconds, to a tenth.
+    #[test]
+    fn only_a_test_over_a_second_shows_its_time() {
+        assert_eq!(took(Duration::from_millis(20)), "");
+        assert_eq!(took(Duration::from_secs(1)), "");
+        assert_eq!(took(Duration::from_millis(1500)), " (1.5 s)");
+        assert_eq!(took(Duration::from_millis(15_080)), " (15.1 s)");
+    }
 }
