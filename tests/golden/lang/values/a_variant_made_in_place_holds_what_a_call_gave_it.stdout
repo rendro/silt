@@ -1,0 +1,9 @@
+VI(1) VI(2) VP(1, VP(2, VP(3, VN)))
+ok VP(4, VI(5))
+boxed [1, 2] s
+held 100 true grown true ys 101
+folded true xs 100
+map Some(Some(1)) Some(-1) Some(1)
+task ["VI(5)", "VL([0, 1, 2])", "VP(6, VS(t))"]
+task.map ["VP(1, VI(1))", "VP(1, VP(2, VI(2)))", "VP(1, VP(2, VP(3, VI(3))))"]
+map Some [Some(1), Some(2)] ["VI(3)"]

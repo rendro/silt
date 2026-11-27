@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- In a group of functions that call each other, each function with a
+-- call that breaks the rule has its own error in the same run, so that
+-- writing `deep` on each function named passes (as the case
+-- shape__deep_on_each_function_named_passes shows). The first error
+-- names the group.
+fn a(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + b(n - 1)
+  }
+}
+
+fn b(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> c(n)
+  }
+}
+
+fn c(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 2 * a(n - 1)
+  }
+}
+
+fn main() {
+  println(a(4))
+}

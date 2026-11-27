@@ -1,0 +1,304 @@
+[x, ..acc] tree 1 a let read after: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+[x, ..acc] tree 2 returned at once: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+[x, ..acc] tree 2 through a tail call: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+[x, ..acc] tree 2 copies in the frame: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/953292/Some(2)
+[x, ..acc] tree 3 a closure: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 4 a record field: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 4 a tuple: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 4 list elements: same ["200/731394/Some(199)", "200/731394/Some(199)"] -> ["200/731394/Some(199)", "200/731394/Some(199)"]; made ["201/842343/Some(1)", "201/842343/Some(1)"]
+[x, ..acc] tree 4 an Option: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+[x, ..acc] tree 4 a record update: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 201/842343/Some(1) 200/731394/Some(199)
+[x, ..acc] tree 5 a channel message: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 5 another task: same 200/731394/Some(199) -> 200/731394/Some(199); made ["207/691120/Some(2)", "205/838180/Some(1)"]
+[x, ..acc] tree 5 changed in other tasks: same 200/731394/Some(199) -> 200/731394/Some(199); made ["213/268815/Some(2)", "213/268815/Some(2)"]
+[x, ..acc] tree 6 fold_until: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/721160/Some(0)
+[x, ..acc] tree 6 set.fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
+[x, ..acc] tree 7 a step that sends the old one away: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)"]; made 207/691120/Some(2)
+[x, ..acc] tree 7 a step that keeps the old ones: ["206/688685/Some(0)", "205/688685/Some(1)", "204/264645/Some(2)", "203/721160/Some(0)", "202/721160/Some(2)", "201/842343/Some(1)", "200/731394/Some(199)"]; made 207/691120/Some(2)
+[x, ..acc] tree 7 list.scan: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)", "207/691120/Some(2)"]
+[x, ..acc] tree 7 a step that sometimes gives it back: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/44705/Some(2)
+[x, ..acc] tree 7 a fold in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 249/744177/Some(1)
+[x, ..acc] tree 7 a step that reads it after the change: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 8 a loop, last argument: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+[x, ..acc] tree 8 a loop, first argument: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+[x, ..acc] tree 8 a loop through a let: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+[x, ..acc] tree 8 a loop with the old one: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0) old 206/128579/Some(2)
+[x, ..acc] tree 8 a loop with it twice: same 200/731394/Some(199) -> 200/731394/Some(199); made 200/731394/Some(199) same 201/731394/Some(0)
+[x, ..acc] tree 8 a loop that keeps the old ones: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) olds ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+[x, ..acc] tree 8 a loop whose closures keep the old ones: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) looks ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+[x, ..acc] tree 8 a loop whose other arm reads it: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/231879/Some(0)
+[x, ..acc] tree 8 a loop that sends the old ones: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) sent ["200/731394/Some(199)", "201/731394/Some(0)", "202/170801/Some(1)", "203/414140/Some(2)"]
+[x, ..acc] tree 9 a record in a loop: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199)
+[x, ..acc] tree 9 a record in a loop, its old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0) r3
+[x, ..acc] tree 9 a record field from another: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 200/731394/Some(199) 201/731394/Some(0)
+[x, ..acc] tree 9 two record updates: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 207/342197/Some(1)
+[x, ..acc] tree 9 a record read in another arm: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/231879/Some(0) s...
+[x, ..acc] tree 9 a record held nowhere else: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
+[x, ..acc] tree 9 a record in a fold: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 9 a record in a fold, held in a list: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 10 a task that fails part way: same 200/731394/Some(199) -> 200/731394/Some(199); made failed
+[x, ..acc] tree 11 a key and a member: Some("first") true true true true Some(1)
+[x, ..acc] small 1 a let read after: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+[x, ..acc] small 2 returned at once: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+[x, ..acc] small 2 through a tail call: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+[x, ..acc] small 2 copies in the frame: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/60608/Some(2)
+[x, ..acc] small 3 a closure: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 4 a record field: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 4 a tuple: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 4 list elements: same ["3/1026/Some(1)", "3/1026/Some(1)"] -> ["3/1026/Some(1)", "3/1026/Some(1)"]; made ["4/30817/Some(1)", "4/30817/Some(1)"]
+[x, ..acc] small 4 an Option: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+[x, ..acc] small 4 a record update: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 4/30817/Some(1) 3/1026/Some(1)
+[x, ..acc] small 5 a channel message: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 5 another task: same 3/1026/Some(1) -> 3/1026/Some(1); made ["10/95549/Some(2)", "8/714250/Some(1)"]
+[x, ..acc] small 5 changed in other tasks: same 3/1026/Some(1) -> 3/1026/Some(1); made ["16/246476/Some(2)", "16/246476/Some(2)"]
+[x, ..acc] small 6 fold_until: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/877856/Some(0)
+[x, ..acc] small 6 set.fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
+[x, ..acc] small 7 a step that sends the old one away: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)"]; made 10/95549/Some(2)
+[x, ..acc] small 7 a step that keeps the old ones: ["9/411465/Some(0)", "8/411465/Some(1)", "7/879893/Some(2)", "6/877856/Some(0)", "5/877856/Some(2)", "4/30817/Some(1)", "3/1026/Some(1)"]; made 10/95549/Some(2)
+[x, ..acc] small 7 list.scan: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)", "10/95549/Some(2)"]
+[x, ..acc] small 7 a step that sometimes gives it back: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/381886/Some(2)
+[x, ..acc] small 7 a fold in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 52/51399/Some(1)
+[x, ..acc] small 7 a step that reads it after the change: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 8 a loop, last argument: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+[x, ..acc] small 8 a loop, first argument: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+[x, ..acc] small 8 a loop through a let: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+[x, ..acc] small 8 a loop with the old one: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0) old 9/671801/Some(2)
+[x, ..acc] small 8 a loop with it twice: same 3/1026/Some(1) -> 3/1026/Some(1); made 3/1026/Some(1) same 4/1026/Some(0)
+[x, ..acc] small 8 a loop that keeps the old ones: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) olds ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+[x, ..acc] small 8 a loop whose closures keep the old ones: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) looks ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+[x, ..acc] small 8 a loop whose other arm reads it: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/477129/Some(0)
+[x, ..acc] small 8 a loop that sends the old ones: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) sent ["3/1026/Some(1)", "4/1026/Some(0)", "5/924547/Some(1)", "6/182675/Some(2)"]
+[x, ..acc] small 9 a record in a loop: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1)
+[x, ..acc] small 9 a record in a loop, its old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0) r3
+[x, ..acc] small 9 a record field from another: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 3/1026/Some(1) 4/1026/Some(0)
+[x, ..acc] small 9 two record updates: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 10/284062/Some(1)
+[x, ..acc] small 9 a record read in another arm: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/477129/Some(0) s...
+[x, ..acc] small 9 a record held nowhere else: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
+[x, ..acc] small 9 a record in a fold: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 9 a record in a fold, held in a list: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 10 a task that fails part way: same 3/1026/Some(1) -> 3/1026/Some(1); made failed
+[x, ..acc] small 11 a key and a member: Some("first") true true true true Some(1)
+[x, ..acc] tree 12 a function's update, last argument: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+[x, ..acc] tree 12 a function's update through a let: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+[x, ..acc] tree 12 a function's update with the old one: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+[x, ..acc] tree 12 a function's update, the old one read after: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) seen ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+[x, ..acc] tree 12 a function's update, a closure keeps the old one: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) looks ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+[x, ..acc] tree 12 a function's update in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 12 a function's update in a fold, the old one read after: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 13 a method's update of a record: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199)
+[x, ..acc] tree 13 a method's update, the old record too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+[x, ..acc] tree 13 a method after the update: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+[x, ..acc] tree 13 a method after the update, the old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+[x, ..acc] tree 13 a method's update in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 14 the builtin as a value: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+[x, ..acc] tree 14 the builtin as a value, the old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+[x, ..acc] tree 14 the builtin as a value in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 14 the builtin from a list: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 14 the builtin given to a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 14 [x, ..acc] given to a fold of it: same 200/731394/Some(199) -> 200/731394/Some(199); made 2
+[x, ..acc] tree 15 a record in a record: same 200/731394/Some(199) 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199) 200/731394/Some(199)
+[x, ..acc] tree 15 a record in a record, the old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0) n3
+[x, ..acc] tree 15 three records deep: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199)
+[x, ..acc] tree 15 a record in a record, a field from another: same 200/731394/Some(199) -> 200/731394/Some(199); made 200/731394/Some(199) 201/731394/Some(0)
+[x, ..acc] tree 15 a record in a record held nowhere else: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
+[x, ..acc] tree 15 a record in a record in a fold: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] tree 15 a record in a record, its inner one in a list: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+[x, ..acc] small 12 a function's update, last argument: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+[x, ..acc] small 12 a function's update through a let: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+[x, ..acc] small 12 a function's update with the old one: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+[x, ..acc] small 12 a function's update, the old one read after: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) seen ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+[x, ..acc] small 12 a function's update, a closure keeps the old one: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) looks ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+[x, ..acc] small 12 a function's update in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 12 a function's update in a fold, the old one read after: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 13 a method's update of a record: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1)
+[x, ..acc] small 13 a method's update, the old record too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+[x, ..acc] small 13 a method after the update: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+[x, ..acc] small 13 a method after the update, the old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+[x, ..acc] small 13 a method's update in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 14 the builtin as a value: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+[x, ..acc] small 14 the builtin as a value, the old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+[x, ..acc] small 14 the builtin as a value in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 14 the builtin from a list: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 14 the builtin given to a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 14 [x, ..acc] given to a fold of it: same 3/1026/Some(1) -> 3/1026/Some(1); made 2
+[x, ..acc] small 15 a record in a record: same 3/1026/Some(1) 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1) 3/1026/Some(1)
+[x, ..acc] small 15 a record in a record, the old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0) n3
+[x, ..acc] small 15 three records deep: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1)
+[x, ..acc] small 15 a record in a record, a field from another: same 3/1026/Some(1) -> 3/1026/Some(1); made 3/1026/Some(1) 4/1026/Some(0)
+[x, ..acc] small 15 a record in a record held nowhere else: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
+[x, ..acc] small 15 a record in a record in a fold: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] small 15 a record in a record, its inner one in a list: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+[x, ..acc] tree 16 another field read in the update: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o.......:207/128579/Some(0):200/731394/Some(199)
+[x, ..acc] tree 16 the inner record read in the update: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o:207/128579/Some(0):206/128579/Some(2)
+[x, ..acc] tree 16 the whole record read in the update: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o:200/731394/Some(199):200/731394/Some(199):201/731394/Some(0):200/731394/Some(199):202/170801/Some(1):200/731394/Some(199):203/414140/Some(2):200/731394/Some(199)
+[x, ..acc] tree 16 two other fields read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o200/731394/Some(199)200/731394/Some(199)200/731394/Some(199)200/731394/Some(199)200/731394/Some(199):205/838180/Some(1):200/731394/Some(199)
+[x, ..acc] tree 16 arms that read other fields: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oeeee:207/128579/Some(0):205/838180/Some(1)
+[x, ..acc] tree 16 an alias read after: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oaaaaa:205/838180/Some(1):204/414140/Some(0)
+[x, ..acc] tree 16 another field read, the old one too: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oooooo:205/838180/Some(1):200/731394/Some(199) old ooooo:204/414140/Some(0):200/731394/Some(199)
+[x, ..acc] tree 16 three deep, fields read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oddddddd:207/128579/Some(0):200/731394/Some(199) 7
+[x, ..acc] tree 16 a fold, another field read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made offfffff:207/691120/Some(2):200/731394/Some(199)
+[x, ..acc] tree 16 a fold, the inner record read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o:207/691120/Some(2):206/688685/Some(0)
+[x, ..acc] tree 16 held nowhere else, another field read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made own...:203/414140/Some(2):200/731394/Some(199)
+[x, ..acc] small 16 another field read in the update: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o.......:10/671801/Some(0):3/1026/Some(1)
+[x, ..acc] small 16 the inner record read in the update: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o:10/671801/Some(0):9/671801/Some(2)
+[x, ..acc] small 16 the whole record read in the update: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o:3/1026/Some(1):3/1026/Some(1):4/1026/Some(0):3/1026/Some(1):5/924547/Some(1):3/1026/Some(1):6/182675/Some(2):3/1026/Some(1)
+[x, ..acc] small 16 two other fields read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o3/1026/Some(1)3/1026/Some(1)3/1026/Some(1)3/1026/Some(1)3/1026/Some(1):8/714250/Some(1):3/1026/Some(1)
+[x, ..acc] small 16 arms that read other fields: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oeeee:10/671801/Some(0):8/714250/Some(1)
+[x, ..acc] small 16 an alias read after: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oaaaaa:8/714250/Some(1):7/182675/Some(0)
+[x, ..acc] small 16 another field read, the old one too: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oooooo:8/714250/Some(1):3/1026/Some(1) old ooooo:7/182675/Some(0):3/1026/Some(1)
+[x, ..acc] small 16 three deep, fields read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oddddddd:10/671801/Some(0):3/1026/Some(1) 7
+[x, ..acc] small 16 a fold, another field read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made offfffff:10/95549/Some(2):3/1026/Some(1)
+[x, ..acc] small 16 a fold, the inner record read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o:10/95549/Some(2):9/411465/Some(0)
+[x, ..acc] small 16 held nowhere else, another field read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made own...:6/182675/Some(2):3/1026/Some(1)
+list.prepend tree 1 a let read after: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+list.prepend tree 2 returned at once: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+list.prepend tree 2 through a tail call: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+list.prepend tree 2 copies in the frame: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/953292/Some(2)
+list.prepend tree 3 a closure: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 4 a record field: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 4 a tuple: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 4 list elements: same ["200/731394/Some(199)", "200/731394/Some(199)"] -> ["200/731394/Some(199)", "200/731394/Some(199)"]; made ["201/842343/Some(1)", "201/842343/Some(1)"]
+list.prepend tree 4 an Option: same 200/731394/Some(199) -> 200/731394/Some(199); made 201/842343/Some(1)
+list.prepend tree 4 a record update: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 201/842343/Some(1) 200/731394/Some(199)
+list.prepend tree 5 a channel message: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 5 another task: same 200/731394/Some(199) -> 200/731394/Some(199); made ["207/691120/Some(2)", "205/838180/Some(1)"]
+list.prepend tree 5 changed in other tasks: same 200/731394/Some(199) -> 200/731394/Some(199); made ["213/268815/Some(2)", "213/268815/Some(2)"]
+list.prepend tree 6 fold_until: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/721160/Some(0)
+list.prepend tree 6 set.fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
+list.prepend tree 7 a step that sends the old one away: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)"]; made 207/691120/Some(2)
+list.prepend tree 7 a step that keeps the old ones: ["206/688685/Some(0)", "205/688685/Some(1)", "204/264645/Some(2)", "203/721160/Some(0)", "202/721160/Some(2)", "201/842343/Some(1)", "200/731394/Some(199)"]; made 207/691120/Some(2)
+list.prepend tree 7 list.scan: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)", "207/691120/Some(2)"]
+list.prepend tree 7 a step that sometimes gives it back: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/44705/Some(2)
+list.prepend tree 7 a fold in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 249/744177/Some(1)
+list.prepend tree 7 a step that reads it after the change: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 8 a loop, last argument: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+list.prepend tree 8 a loop, first argument: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+list.prepend tree 8 a loop through a let: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+list.prepend tree 8 a loop with the old one: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0) old 206/128579/Some(2)
+list.prepend tree 8 a loop with it twice: same 200/731394/Some(199) -> 200/731394/Some(199); made 200/731394/Some(199) same 201/731394/Some(0)
+list.prepend tree 8 a loop that keeps the old ones: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) olds ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+list.prepend tree 8 a loop whose closures keep the old ones: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) looks ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+list.prepend tree 8 a loop whose other arm reads it: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/231879/Some(0)
+list.prepend tree 8 a loop that sends the old ones: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) sent ["200/731394/Some(199)", "201/731394/Some(0)", "202/170801/Some(1)", "203/414140/Some(2)"]
+list.prepend tree 9 a record in a loop: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199)
+list.prepend tree 9 a record in a loop, its old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0) r3
+list.prepend tree 9 a record field from another: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 200/731394/Some(199) 201/731394/Some(0)
+list.prepend tree 9 two record updates: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 207/342197/Some(1)
+list.prepend tree 9 a record read in another arm: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/231879/Some(0) s...
+list.prepend tree 9 a record held nowhere else: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
+list.prepend tree 9 a record in a fold: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 9 a record in a fold, held in a list: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 10 a task that fails part way: same 200/731394/Some(199) -> 200/731394/Some(199); made failed
+list.prepend tree 11 a key and a member: Some("first") true true true true Some(1)
+list.prepend small 1 a let read after: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+list.prepend small 2 returned at once: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+list.prepend small 2 through a tail call: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+list.prepend small 2 copies in the frame: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/60608/Some(2)
+list.prepend small 3 a closure: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 4 a record field: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 4 a tuple: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 4 list elements: same ["3/1026/Some(1)", "3/1026/Some(1)"] -> ["3/1026/Some(1)", "3/1026/Some(1)"]; made ["4/30817/Some(1)", "4/30817/Some(1)"]
+list.prepend small 4 an Option: same 3/1026/Some(1) -> 3/1026/Some(1); made 4/30817/Some(1)
+list.prepend small 4 a record update: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 4/30817/Some(1) 3/1026/Some(1)
+list.prepend small 5 a channel message: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 5 another task: same 3/1026/Some(1) -> 3/1026/Some(1); made ["10/95549/Some(2)", "8/714250/Some(1)"]
+list.prepend small 5 changed in other tasks: same 3/1026/Some(1) -> 3/1026/Some(1); made ["16/246476/Some(2)", "16/246476/Some(2)"]
+list.prepend small 6 fold_until: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/877856/Some(0)
+list.prepend small 6 set.fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
+list.prepend small 7 a step that sends the old one away: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)"]; made 10/95549/Some(2)
+list.prepend small 7 a step that keeps the old ones: ["9/411465/Some(0)", "8/411465/Some(1)", "7/879893/Some(2)", "6/877856/Some(0)", "5/877856/Some(2)", "4/30817/Some(1)", "3/1026/Some(1)"]; made 10/95549/Some(2)
+list.prepend small 7 list.scan: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)", "10/95549/Some(2)"]
+list.prepend small 7 a step that sometimes gives it back: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/381886/Some(2)
+list.prepend small 7 a fold in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 52/51399/Some(1)
+list.prepend small 7 a step that reads it after the change: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 8 a loop, last argument: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+list.prepend small 8 a loop, first argument: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+list.prepend small 8 a loop through a let: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+list.prepend small 8 a loop with the old one: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0) old 9/671801/Some(2)
+list.prepend small 8 a loop with it twice: same 3/1026/Some(1) -> 3/1026/Some(1); made 3/1026/Some(1) same 4/1026/Some(0)
+list.prepend small 8 a loop that keeps the old ones: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) olds ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+list.prepend small 8 a loop whose closures keep the old ones: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) looks ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+list.prepend small 8 a loop whose other arm reads it: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/477129/Some(0)
+list.prepend small 8 a loop that sends the old ones: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) sent ["3/1026/Some(1)", "4/1026/Some(0)", "5/924547/Some(1)", "6/182675/Some(2)"]
+list.prepend small 9 a record in a loop: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1)
+list.prepend small 9 a record in a loop, its old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0) r3
+list.prepend small 9 a record field from another: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 3/1026/Some(1) 4/1026/Some(0)
+list.prepend small 9 two record updates: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 10/284062/Some(1)
+list.prepend small 9 a record read in another arm: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/477129/Some(0) s...
+list.prepend small 9 a record held nowhere else: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
+list.prepend small 9 a record in a fold: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 9 a record in a fold, held in a list: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 10 a task that fails part way: same 3/1026/Some(1) -> 3/1026/Some(1); made failed
+list.prepend small 11 a key and a member: Some("first") true true true true Some(1)
+list.prepend tree 12 a function's update, last argument: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+list.prepend tree 12 a function's update through a let: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+list.prepend tree 12 a function's update with the old one: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+list.prepend tree 12 a function's update, the old one read after: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) seen ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+list.prepend tree 12 a function's update, a closure keeps the old one: same 200/731394/Some(199) -> 200/731394/Some(199); made 204/414140/Some(0) looks ["203/414140/Some(2)", "202/170801/Some(1)", "201/731394/Some(0)", "200/731394/Some(199)"]
+list.prepend tree 12 a function's update in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 12 a function's update in a fold, the old one read after: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 13 a method's update of a record: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199)
+list.prepend tree 13 a method's update, the old record too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+list.prepend tree 13 a method after the update: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+list.prepend tree 13 a method after the update, the old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+list.prepend tree 13 a method's update in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 14 the builtin as a value: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/128579/Some(0)
+list.prepend tree 14 the builtin as a value, the old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0)
+list.prepend tree 14 the builtin as a value in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 14 the builtin from a list: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 14 the builtin given to a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 14 list.prepend given to a fold of it: same 200/731394/Some(199) -> 200/731394/Some(199); made 2
+list.prepend tree 15 a record in a record: same 200/731394/Some(199) 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199) 200/731394/Some(199)
+list.prepend tree 15 a record in a record, the old one too: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/838180/Some(1) old 204/414140/Some(0) n3
+list.prepend tree 15 three records deep: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/128579/Some(0) 200/731394/Some(199)
+list.prepend tree 15 a record in a record, a field from another: same 200/731394/Some(199) -> 200/731394/Some(199); made 200/731394/Some(199) 201/731394/Some(0)
+list.prepend tree 15 a record in a record held nowhere else: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
+list.prepend tree 15 a record in a record in a fold: same 200/731394/Some(199) 200/731394/Some(199) -> 200/731394/Some(199) 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend tree 15 a record in a record, its inner one in a list: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
+list.prepend small 12 a function's update, last argument: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+list.prepend small 12 a function's update through a let: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+list.prepend small 12 a function's update with the old one: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+list.prepend small 12 a function's update, the old one read after: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) seen ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+list.prepend small 12 a function's update, a closure keeps the old one: same 3/1026/Some(1) -> 3/1026/Some(1); made 7/182675/Some(0) looks ["6/182675/Some(2)", "5/924547/Some(1)", "4/1026/Some(0)", "3/1026/Some(1)"]
+list.prepend small 12 a function's update in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 12 a function's update in a fold, the old one read after: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 13 a method's update of a record: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1)
+list.prepend small 13 a method's update, the old record too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+list.prepend small 13 a method after the update: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+list.prepend small 13 a method after the update, the old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+list.prepend small 13 a method's update in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 14 the builtin as a value: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/671801/Some(0)
+list.prepend small 14 the builtin as a value, the old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0)
+list.prepend small 14 the builtin as a value in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 14 the builtin from a list: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 14 the builtin given to a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 14 list.prepend given to a fold of it: same 3/1026/Some(1) -> 3/1026/Some(1); made 2
+list.prepend small 15 a record in a record: same 3/1026/Some(1) 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1) 3/1026/Some(1)
+list.prepend small 15 a record in a record, the old one too: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/714250/Some(1) old 7/182675/Some(0) n3
+list.prepend small 15 three records deep: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/671801/Some(0) 3/1026/Some(1)
+list.prepend small 15 a record in a record, a field from another: same 3/1026/Some(1) -> 3/1026/Some(1); made 3/1026/Some(1) 4/1026/Some(0)
+list.prepend small 15 a record in a record held nowhere else: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
+list.prepend small 15 a record in a record in a fold: same 3/1026/Some(1) 3/1026/Some(1) -> 3/1026/Some(1) 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend small 15 a record in a record, its inner one in a list: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
+list.prepend tree 16 another field read in the update: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o.......:207/128579/Some(0):200/731394/Some(199)
+list.prepend tree 16 the inner record read in the update: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o:207/128579/Some(0):206/128579/Some(2)
+list.prepend tree 16 the whole record read in the update: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o:200/731394/Some(199):200/731394/Some(199):201/731394/Some(0):200/731394/Some(199):202/170801/Some(1):200/731394/Some(199):203/414140/Some(2):200/731394/Some(199)
+list.prepend tree 16 two other fields read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o200/731394/Some(199)200/731394/Some(199)200/731394/Some(199)200/731394/Some(199)200/731394/Some(199):205/838180/Some(1):200/731394/Some(199)
+list.prepend tree 16 arms that read other fields: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oeeee:207/128579/Some(0):205/838180/Some(1)
+list.prepend tree 16 an alias read after: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oaaaaa:205/838180/Some(1):204/414140/Some(0)
+list.prepend tree 16 another field read, the old one too: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oooooo:205/838180/Some(1):200/731394/Some(199) old ooooo:204/414140/Some(0):200/731394/Some(199)
+list.prepend tree 16 three deep, fields read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made oddddddd:207/128579/Some(0):200/731394/Some(199) 7
+list.prepend tree 16 a fold, another field read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made offfffff:207/691120/Some(2):200/731394/Some(199)
+list.prepend tree 16 a fold, the inner record read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made o:207/691120/Some(2):206/688685/Some(0)
+list.prepend tree 16 held nowhere else, another field read: same o:200/731394/Some(199):200/731394/Some(199) -> o:200/731394/Some(199):200/731394/Some(199); made own...:203/414140/Some(2):200/731394/Some(199)
+list.prepend small 16 another field read in the update: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o.......:10/671801/Some(0):3/1026/Some(1)
+list.prepend small 16 the inner record read in the update: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o:10/671801/Some(0):9/671801/Some(2)
+list.prepend small 16 the whole record read in the update: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o:3/1026/Some(1):3/1026/Some(1):4/1026/Some(0):3/1026/Some(1):5/924547/Some(1):3/1026/Some(1):6/182675/Some(2):3/1026/Some(1)
+list.prepend small 16 two other fields read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o3/1026/Some(1)3/1026/Some(1)3/1026/Some(1)3/1026/Some(1)3/1026/Some(1):8/714250/Some(1):3/1026/Some(1)
+list.prepend small 16 arms that read other fields: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oeeee:10/671801/Some(0):8/714250/Some(1)
+list.prepend small 16 an alias read after: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oaaaaa:8/714250/Some(1):7/182675/Some(0)
+list.prepend small 16 another field read, the old one too: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oooooo:8/714250/Some(1):3/1026/Some(1) old ooooo:7/182675/Some(0):3/1026/Some(1)
+list.prepend small 16 three deep, fields read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made oddddddd:10/671801/Some(0):3/1026/Some(1) 7
+list.prepend small 16 a fold, another field read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made offfffff:10/95549/Some(2):3/1026/Some(1)
+list.prepend small 16 a fold, the inner record read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made o:10/95549/Some(2):9/411465/Some(0)
+list.prepend small 16 held nowhere else, another field read: same o:3/1026/Some(1):3/1026/Some(1) -> o:3/1026/Some(1):3/1026/Some(1); made own...:6/182675/Some(2):3/1026/Some(1)

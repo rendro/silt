@@ -151,15 +151,17 @@ regex.captures_all(text: String, re: Regex) -> List(List(String))
 ```
 
 Returns capture groups for every match. Each inner list has the full match at
-index 0 followed by numbered groups.
+index 0 followed by numbered groups, as `regex.captures` gives them: a group
+that took no part in its match is the empty string.
 
 ```silt
 import regex
 
 fn main() -> Result((), regex.RegexError) {
   let pair = regex.compile("(\\d+)-(\\d+)")?
-  println(regex.captures_all("1-2 and 3-4", pair))
-  -- [["1-2", "1", "2"], ["3-4", "3", "4"]]
+  println(regex.captures_all("1-2 and 3-4", pair)) -- [["1-2", "1", "2"], ["3-4", "3", "4"]]
+  let maybe = regex.compile("(a)?(b)")?
+  println(regex.captures_all("ab b", maybe)) -- [["ab", "a", "b"], ["b", "", "b"]]
   Ok(())
 }
 ```

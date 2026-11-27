@@ -1354,6 +1354,53 @@ fn two_lists_as_one_list() {
     assert!(long.concat(&List::new()).is_err());
 }
 
+/// An element put at the front of a list given away, and a short list
+/// joined to either end of one: the elements in order, whether the list
+/// is held elsewhere too (which stays as it was), or is the one holder
+/// of its tree (which is changed in place, and holds it alone still).
+#[test]
+fn a_list_given_away_grows_at_either_end_in_order() {
+    let n = Value::Int;
+    let ns = |ns: std::ops::Range<i64>| ns.map(n).collect::<Vec<_>>();
+    let mut alone = List::new();
+    for i in (0..200).rev() {
+        alone = alone.put_front(n(i)).expect("few elements");
+    }
+    assert!(alone.held_alone_in_tree());
+    assert_eq!(elements(&alone), ns(0..200));
+    let short = List::from(vec![n(-2), n(-1)]);
+    let alone = short.clone().put_concat(alone).expect("few elements");
+    assert!(alone.held_alone_in_tree());
+    let alone = alone.put_concat(short.clone()).expect("few elements");
+    assert!(alone.held_alone_in_tree());
+    let mut want = vec![n(-2), n(-1)];
+    want.extend(ns(0..200));
+    want.extend([n(-2), n(-1)]);
+    assert_eq!(elements(&alone), want);
+    let tree = (0..200).fold(List::new(), |xs, i| xs.put_back(n(i)).expect("few"));
+    let lists = [
+        tree.clone(),
+        tree.slice(5, 150),
+        made(0..200),
+        ints(0, 199),
+        made(0..10),
+        List::new(),
+    ];
+    for xs in lists {
+        let kept = elements(&xs);
+        let pushed = xs.clone().put_front(n(-1)).expect("few elements");
+        assert_eq!(elements(&pushed), [vec![n(-1)], kept.clone()].concat());
+        let front = short.clone().put_concat(xs.clone()).expect("few elements");
+        assert_eq!(elements(&front), [elements(&short), kept.clone()].concat());
+        let back = xs.clone().put_concat(short.clone()).expect("few elements");
+        assert_eq!(elements(&back), [kept.clone(), elements(&short)].concat());
+        let both = xs.clone().put_concat(xs.clone()).expect("few elements");
+        assert_eq!(elements(&both), [kept.clone(), kept.clone()].concat());
+        assert_eq!(elements(&xs), kept);
+    }
+    assert_eq!(elements(&tree), ns(0..200));
+}
+
 /// A list with an element more at either end, with one element in
 /// place of another, or without one: a new list, however the list is
 /// stored and whether it is a part of another, and the list stays as

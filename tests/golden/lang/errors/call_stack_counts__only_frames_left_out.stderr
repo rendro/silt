@@ -1,0 +1,23 @@
+error[runtime]: division by zero
+ --> call_stack_counts__only_frames_left_out.silt:7:10
+   |
+ 7 |     0 -> 1 / n
+   |          ^^^^^ division by zero
+
+call stack:
+  -> down  at call_stack_counts__only_frames_left_out.silt:7:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  ... (17 more frames)
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> down  at call_stack_counts__only_frames_left_out.silt:8:10
+  -> main  at call_stack_counts__only_frames_left_out.silt:13:11

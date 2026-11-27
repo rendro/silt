@@ -74,19 +74,10 @@ pub(crate) const FILE_OR_DIRECTORY: &str = "a .silt file or a directory";
 /// holds no `.silt` file either is not named).
 pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
     let enter = |path: &Path| !crate::file_discovery::should_skip_dir(path);
-    let manifest = |path: &Path| path.file_name().is_some_and(|name| name == "silt.toml");
     let silt_file = |path: &Path| path.to_string_lossy().ends_with(".silt");
-    let packages: Vec<String> = files_under(dir, &enter, &manifest)
-        .iter()
-        .filter_map(|toml| toml.parent())
-        .filter(|package| *package != dir)
-        .filter(|package| !files_under(package, &enter, &silt_file).is_empty())
-        .map(|package| {
-            // `./pk` (`.\pk` on Windows) is shown as `pk`.
-            let package = package.strip_prefix(".").unwrap_or(package);
-            crate::source::shown_path(package)
-        })
-        .collect();
+    let packages = packages_below(dir, &|package| {
+        !files_under(package, &enter, &silt_file).is_empty()
+    });
     let verb = if command == "fmt" { "format" } else { command };
     let shown = crate::git::escape_for_display(shown);
     match packages.as_slice() {
@@ -102,6 +93,25 @@ pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
         ),
     }
     std::process::exit(1);
+}
+
+/// The packages below `dir` (a directory under it that holds a
+/// `silt.toml`, not `dir` itself), which a walk of `dir` leaves to
+/// themselves, that `holds` takes: in the order of names, each as it is
+/// shown (`./pk`, `.\pk` on Windows, as `pk`).
+pub(crate) fn packages_below(dir: &Path, holds: &dyn Fn(&Path) -> bool) -> Vec<String> {
+    let enter = |path: &Path| !crate::file_discovery::should_skip_dir(path);
+    let manifest = |path: &Path| path.file_name().is_some_and(|name| name == "silt.toml");
+    files_under(dir, &enter, &manifest)
+        .iter()
+        .filter_map(|toml| toml.parent())
+        .filter(|package| *package != dir)
+        .filter(|package| holds(package))
+        .map(|package| {
+            let package = package.strip_prefix(".").unwrap_or(package);
+            crate::source::shown_path(package)
+        })
+        .collect()
 }
 
 /// Recursively find all .silt files in a directory, as `silt fmt` does:
