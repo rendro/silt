@@ -288,7 +288,29 @@ Some problems are warnings, not errors: an import that nothing uses, a name that
 
 Errors and warnings are shown in color when stderr is a terminal. `NO_COLOR` set to any value but the empty one turns color off, and so do `FORCE_COLOR=0` and `TERM=dumb`; `FORCE_COLOR` set to anything else turns it on, also into a pipe or a file. `NO_COLOR` wins over `FORCE_COLOR`.
 
-`silt repl` checks each input as `silt check` checks a file, and runs it. The REPL runs an input as soon as it is complete, so a line that starts with `|>` is a new input: end the line before it with `|>`, or put the pipeline in parentheses. It sees the directory it was started in as a script does: `import shapes` loads `shapes.silt` beside it, or `src/shapes.silt` and the dependencies of the package there. An input sees what the inputs before it define; an input with an error is dropped and changes nothing. Defining a function again replaces it for every caller: the functions, closures and tasks of earlier inputs call the new one from then on, so a fix to a helper reaches the code that uses it. While code of the session uses the function, the new one must have its type: one with another type is refused, with the names of what uses it, and the old one stays; once nothing uses it, the new type is accepted, as a new function. A function value taken before (`let f = h`) stays the function it was, though what it calls by name, itself too, is the newest. Defining a `let`, a type or a trait again makes a new definition for the inputs after it: code from earlier inputs keeps the one it was written against. Errors are shown at `<repl:n>:line:col`, the `n`th input. A module is read the first time an input imports it and kept for the session: edits to its file are seen after a restart. In a package, the REPL updates `silt.lock` as `silt run` does. `:type <expr>` shows the type of an expression without running it (`:type Some` is `Fn(a) -> Option(a)`; its expression is checked as an input, and counts as one), and `:doc <name>` what a builtin is: a function's signature, the declaration of a type, a trait or a variant's enum, with what its docs say first, or all a module declares (`:doc list.map`, `:doc Option`, `:doc string`). Of a function an input defined, or one of a module an input imported (`:doc shapes.area` after `import shapes`), `:doc` shows the signature and the doc comment. `:help` lists the commands.
+`silt repl` checks each input as `silt check` checks a file, and runs it. The REPL runs an input as soon as it is complete, so a line that starts with `|>` is a new input: end the line before it with `|>`, or put the pipeline in parentheses. It sees the directory it was started in as a script does: `import shapes` loads `shapes.silt` beside it, or `src/shapes.silt` and the dependencies of the package there. An input sees what the inputs before it define; an input with an error is dropped and changes nothing. Defining a function again replaces it for every caller: the functions, closures and tasks of earlier inputs call the new one from then on, so a fix to a helper reaches the code that uses it. While code of the session uses the function, the new one must have its type: one with another type is refused, with the names of what uses it, and the old one stays; once nothing uses it, the new type is accepted, as a new function. A function value taken before (`let f = h`) stays the function it was, and what it calls by name, itself too, is the newest: in the session below, `f(3)` runs the old body once and the new one below it, so it gives 21 where `h(3)` gives 30:
+
+```
+silt> deep fn h(n: Int) -> Int {
+  ...   match n {
+  ...     0 -> 0
+  ...     _ -> 1 + h(n - 1)
+  ...   }
+  ... }
+silt> let f = h
+silt> deep fn h(n: Int) -> Int {
+  ...   match n {
+  ...     0 -> 0
+  ...     _ -> 10 + h(n - 1)
+  ...   }
+  ... }
+silt> f(3)
+21
+silt> h(3)
+30
+```
+
+Defining a `let`, a type or a trait again makes a new definition for the inputs after it: code from earlier inputs keeps the one it was written against. Errors are shown at `<repl:n>:line:col`, the `n`th input. A module is read the first time an input imports it and kept for the session: edits to its file are seen after a restart. In a package, the REPL updates `silt.lock` as `silt run` does. `:type <expr>` shows the type of an expression without running it (`:type Some` is `Fn(a) -> Option(a)`; its expression is checked as an input, and counts as one), and `:doc <name>` what a builtin is: a function's signature, the declaration of a type, a trait or a variant's enum, with what its docs say first, or all a module declares (`:doc list.map`, `:doc Option`, `:doc string`). Of a function an input defined, or one of a module an input imported (`:doc shapes.area` after `import shapes`), `:doc` shows the signature and the doc comment. `:help` lists the commands.
 
 ### Staying up to date
 
