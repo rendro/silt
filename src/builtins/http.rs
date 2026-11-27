@@ -759,7 +759,8 @@ impl std::error::Error for NoSuchHost {}
 /// transport for TCP is: its buffers, the socket, and the read and write
 /// timeouts it has (set only when they change). Besides, what a stop
 /// shuts ([`Line`]) and the attempt it served last (0: none yet): each
-/// read and write enlists it in the attempt of the thread's call
+/// read and write, and the check of a kept connection that a call takes
+/// from the pool (`is_open`), enlists it in the attempt of the thread's call
 /// ([`Call::enlist`]), which so knows the connection it uses and
 /// whether that was kept.
 #[cfg(feature = "http")]
@@ -898,6 +899,13 @@ impl ureq::unversioned::transport::Transport for Connected {
 
     fn is_open(&mut self) -> bool {
         use std::io::Read;
+        // ureq asks this of a kept connection when a call takes it from
+        // the pool, on that call's thread: the call uses it from now on,
+        // so that a stop of the call that used it before shuts nothing
+        // of it. (A stopped call gets no connection.)
+        if self.enlist().is_err() {
+            return false;
+        }
         // Nothing may wait to be read on a connection that is kept: a read
         // that would wait says it is open.
         if self.stream.set_nonblocking(true).is_err() {
@@ -4388,6 +4396,64 @@ mod keep_alive_tests {
         );
         assert_ne!(got, "one");
         assert_eq!(get(&agent, &server.url), "three");
+    }
+
+    /// A call that takes a kept connection from the pool uses it from that
+    /// moment: a stop of the call that used it before, coming while that
+    /// call still names it, shuts nothing of it. Here the connection is
+    /// checked out by call B (ureq's check, `is_open`) before it writes,
+    /// and A's stop comes in between.
+    #[test]
+    fn a_connection_taken_from_the_pool_is_the_taker_s_at_once() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let near = TcpStream::connect(listener.local_addr().unwrap()).expect("a connection");
+        let (_far, _) = listener.accept().expect("accepted");
+        let mut conn = Connected {
+            stream: Arc::new(near),
+            buffers: ureq::unversioned::transport::LazyBuffers::new(1024, 1024),
+            timeout_read: None,
+            timeout_write: None,
+            line: Arc::new(Line::default()),
+            served: 0,
+        };
+        let (a, b) = (Arc::new(Call::default()), Arc::new(Call::default()));
+        in_call(&a, || {
+            a.begin();
+            conn.enlist().expect("A uses the connection");
+            // A's request is done; B takes the connection from the pool.
+            in_call(&b, || {
+                b.begin();
+                assert!(
+                    ureq::unversioned::transport::Transport::is_open(&mut conn),
+                    "open"
+                );
+            });
+            assert_eq!(*conn.line.user.lock(), b.now.lock().id, "B uses it");
+            // A's stop, while A still names the connection.
+            assert!(a.stop()());
+        });
+        assert!(!conn.line.shutter.is_shut(), "A's stop shut B's connection");
+    }
+
+    /// The same through the client: call A's request is done and its
+    /// connection back in the pool while A still names it; call B takes
+    /// it for a request that the server answers after a while; A's stop
+    /// in that while leaves B its answer.
+    #[test]
+    fn a_stop_of_one_call_leaves_the_next_call_its_connection() {
+        let server = Server::new(vec![vec![Reply::Answer("one"), Reply::Answer("two")]]);
+        let agent = Arc::new(agent());
+        let a = Arc::new(Call::default());
+        in_call(&a, || {
+            let got = request_hops(&agent, &a, "GET", &url_of(&server.url), &[], &[], true);
+            assert_eq!(answered(&got), "one");
+            let (agent, url) = (agent.clone(), server.url.clone());
+            let b = std::thread::spawn(move || get(&agent, &url));
+            std::thread::sleep(Duration::from_millis(100));
+            a.stop()();
+            assert_eq!(b.join().expect("B"), "two");
+        });
+        assert_eq!(server.connections(), 1);
     }
 
     /// A stop that comes after its call has ended (nobody took the value)
