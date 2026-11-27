@@ -15,7 +15,7 @@ call stack:
   -> down  at callback_frame_capture__tail_call_ring_buffer_caps_chain.silt:8:14
   -> count  at callback_frame_capture__tail_call_ring_buffer_caps_chain.silt:5:14
   -> down  at callback_frame_capture__tail_call_ring_buffer_caps_chain.silt:8:14
-  ... (19 more frames)
+  ... (19 more tail calls, which take no frame)
   -> down  at callback_frame_capture__tail_call_ring_buffer_caps_chain.silt:8:14
   -> count  at callback_frame_capture__tail_call_ring_buffer_caps_chain.silt:5:14
   -> down  at callback_frame_capture__tail_call_ring_buffer_caps_chain.silt:8:14
