@@ -1,0 +1,13 @@
+error[type]: the 3rd and 4th arguments look swapped: `map.update(m, key, default, f)`
+ --> swapped_arguments__two_neighbours_of_each_other_s_type_are_one_error.silt:15:30
+    |
+ 15 |   println(map.update(m, "a", { n -> n + 1 }, 0))
+    |                              ^^^^^^^^^^^^^^^^^ the 3rd and 4th arguments look swapped: `map.update(m, key, default, f)`
+  = help: the 3rd takes `Int` and the 4th takes `Fn(Int) -> Int`: write `map.update(m, "a", 0, { ... })`
+
+error[type]: the 1st and 2nd arguments of `label` look swapped
+ --> swapped_arguments__two_neighbours_of_each_other_s_type_are_one_error.silt:16:17
+    |
+ 16 |   println(label("kg", 3))
+    |                 ^^^^^^^ the 1st and 2nd arguments of `label` look swapped
+  = help: the 1st takes `Int` and the 2nd takes `String`: write `label(3, "kg")`

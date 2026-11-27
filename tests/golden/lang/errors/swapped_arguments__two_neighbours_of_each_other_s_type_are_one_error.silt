@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- Two neighbouring arguments, each of the type the other's place takes,
+-- are one error that says they look swapped, with the parameters of a
+-- builtin and the call written the right way round; not a mismatch at
+-- each.
+import map
+
+fn label(n: Int, unit: String) -> String {
+  "{n} {unit}"
+}
+
+fn main() {
+  let m = #{ "a": 1 }
+  println(map.update(m, "a", { n -> n + 1 }, 0))
+  println(label("kg", 3))
+}
