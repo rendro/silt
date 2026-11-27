@@ -61,6 +61,12 @@ pub struct Program {
     pub(crate) files: Arc<crate::source::SourceMap>,
     /// Its entry file among `files`.
     pub(crate) entry_file: crate::source::FileId,
+    /// For a REPL entry, each function it defines again with the type it
+    /// had, with the global slot of the function it replaces: the VM puts
+    /// it there before the entry runs (`Vm::run_cell`), so that every
+    /// caller calls it. None for any other program.
+    #[cfg_attr(not(feature = "repl"), allow(dead_code))]
+    pub(crate) redefined: Vec<(u16, crate::value::Value)>,
 }
 
 /// What a [`Program`] was compiled for.

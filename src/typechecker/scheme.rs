@@ -523,6 +523,10 @@ impl TypeChecker {
                 scheme.preds.push(bound.clone());
             }
         }
+        let mut owners = std::mem::take(&mut self.generalized_owners);
+        owners.resize(scheme.preds.len(), None);
+        order_trait_preds(&scheme.ty, &mut scheme.preds, &mut owners, bounds);
+        self.generalized_owners = owners;
         self.keep_owners(&scheme);
         scheme
     }
@@ -1588,5 +1592,77 @@ fn holds_constructor(ty: &Type) -> bool {
         Type::Container(c) => c.parts().any(holds_constructor),
         Type::Generic(_, parts) => parts.iter().any(holds_constructor),
         _ => false,
+    }
+}
+
+/// Put the trait predicates of a definition's scheme, `preds` of the
+/// type `ty`, in one order of their variables whatever order its body
+/// uses them in or its `where` clauses write them: by the place of the
+/// variable each is on among the variables of `ty` as they first
+/// appear. Of one variable, the bounds its `where` clauses write
+/// (`written`) keep their order, as the messages name them; those the
+/// body asks that pass a dictionary are in the order of their traits,
+/// after the written ones wherever the body asks them. The other
+/// predicates keep their places, and `owners` (one for each predicate)
+/// goes with them. The definition's
+/// dictionaries come in this order (`crate::evidence`): a function
+/// written again with its type in a REPL entry takes them as the callers
+/// of the old one pass them, however its body is written.
+pub(super) fn order_trait_preds<T: Clone>(
+    ty: &Type,
+    preds: &mut [Pred],
+    owners: &mut [T],
+    written: &[Pred],
+) {
+    let vars = free_vars_in(ty);
+    let key = |pred: &Pred| match pred {
+        Pred::Trait { subject, .. } => {
+            let at = match subject {
+                Type::Var(v) => vars.iter().position(|w| w == v),
+                Type::Rigid(r) => vars.iter().position(|w| *w == r.var),
+                _ => None,
+            };
+            Some(at.unwrap_or(usize::MAX))
+        }
+        _ => None,
+    };
+    let places: Vec<usize> = (0..preds.len())
+        .filter(|&i| matches!(preds[i], Pred::Trait { .. }))
+        .collect();
+    let is_written = |pred: &Pred| {
+        written.iter().any(|w| match (w, pred) {
+            (
+                Pred::Trait {
+                    tr, args, subject, ..
+                },
+                Pred::Trait {
+                    tr: tr2,
+                    args: args2,
+                    subject: subject2,
+                    ..
+                },
+            ) => tr == tr2 && args == args2 && subject == subject2,
+            _ => false,
+        })
+    };
+    // (The body's bounds that pass a dictionary after the others of
+    // their variable, in the order of their traits.)
+    let rank = |pred: &Pred| match pred {
+        Pred::Trait { tr, .. } if super::evidence::passes_dictionary(pred) && !is_written(pred) => {
+            (1, Some(tr.id))
+        }
+        _ => (0, None),
+    };
+    let mut order = places.clone();
+    order.sort_by_key(|&i| (key(&preds[i]), rank(&preds[i])));
+    if order == places {
+        return;
+    }
+    let moved: Vec<(Pred, T)> = (order.iter())
+        .map(|&i| (preds[i].clone(), owners[i].clone()))
+        .collect();
+    for (&at, (pred, owner)) in places.iter().zip(moved) {
+        preds[at] = pred;
+        owners[at] = owner;
     }
 }

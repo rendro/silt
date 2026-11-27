@@ -18,6 +18,14 @@ mod declare_types;
 pub(crate) mod decodable;
 mod env;
 mod evidence;
+
+/// Whether the predicate `pred` of a scheme passes a dictionary: a trait
+/// predicate of a trait that has them (the REPL compares those of two
+/// schemes in order).
+#[cfg(feature = "repl")]
+pub(crate) fn passes_dictionary(pred: &crate::types::Pred) -> bool {
+    evidence::passes_dictionary(pred)
+}
 mod exhaustiveness;
 mod infer;
 mod inference;

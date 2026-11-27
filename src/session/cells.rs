@@ -17,13 +17,24 @@
 //! when a later cell declares or imports it again: the session takes
 //! the failed cell's definitions out of its globals (`Cells::compiled`).
 //!
-//! Redefinition is early-bound: a cell's definitions are new ones. A name
-//! a later cell binds again shadows the earlier binding for the cells
-//! after it, while the code of the cells before keeps the definition it
-//! was checked against. In the VM each definition has a global slot of
-//! its own, which the session keeps for every cell (see
-//! `EarlierCells::globals`). A `let` that binds a name again reads the
-//! old value in its initializer (`let x = x + 1`).
+//! A cell's definitions are new ones, with one exception. A name a later
+//! cell binds again shadows the earlier binding for the cells after it,
+//! while the code of the cells before keeps the definition it was checked
+//! against: a type, a trait, a `let` (one that binds a name again reads
+//! the old value in its initializer, `let x = x + 1`). In the VM each
+//! definition has a global slot of its own, which the session keeps for
+//! every cell (see `EarlierCells::globals`).
+//!
+//! The exception is a function a cell defines again (owner, 2026-11-26,
+//! REPL-REDEF): it replaces the old one for every caller, the code of
+//! the cells before, their closures and their tasks. With the old one's
+//! type it takes the old one's global slot (`EarlierCells::redefined`),
+//! and the VM puts it there before the cell runs (`Vm::run_cell`); a
+//! call reads the slot as before, so it costs what it did. With another
+//! type it is refused while code that the session binds now names the
+//! old one (`Cells::users_of`), and is a new function in a slot of its
+//! own when nothing does. A function value taken before (`let f = h`)
+//! is the function it was then.
 
 // The bookkeeping of the REPL's entries: a build without the REPL keeps
 // it in the session but never adds an entry.
@@ -37,8 +48,10 @@ use crate::bytecode::Globals;
 use crate::compiler::EarlierCells;
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, Span};
+#[cfg(feature = "repl")]
+use crate::types::{Pred, Scheme, TyVar, Type, free_vars_in, substitute_vars};
 
-use crate::defs::ModuleId;
+use crate::defs::{DefId, DefKind, DefTable, ModuleId, Res};
 use crate::program::cell_name;
 
 /// What a top-level name of a cell is.
@@ -58,6 +71,8 @@ enum Kind {
 #[derive(Clone)]
 struct Binder {
     kind: Kind,
+    /// For a function, its definition.
+    def: Option<DefId>,
     /// Where it is bound: the name in the declaration.
     span: Span,
     /// For an import, the declaration as written and its span.
@@ -87,6 +102,18 @@ impl CellInfo {
     /// it is statements.
     pub(super) fn wrapper(&self) -> String {
         cell_name(self.n)
+    }
+
+    /// The names the cell binds.
+    pub(super) fn names(&self) -> HashSet<Symbol> {
+        self.own.iter().map(|(name, ..)| *name).collect()
+    }
+
+    /// The functions the cell declares, each with its name's place.
+    pub(super) fn functions(&self) -> impl Iterator<Item = (Symbol, Span)> + '_ {
+        (self.own.iter())
+            .filter(|(_, _, kind, _)| *kind == Kind::Fn)
+            .map(|(name, span, ..)| (*name, *span))
     }
 
     /// The cell's declarations as the compiler sees them: without the
@@ -131,6 +158,15 @@ pub(super) struct Cells {
     /// is committed: they are the session's then. If it is not (it
     /// failed when it ran), its definitions are taken back.
     compiled: Option<Globals>,
+    /// The global slots of the definitions that the code of each
+    /// top-level function and `let` the session binds now names, by its
+    /// name: what a function's body names, what the closures of a
+    /// `let`'s initializer name (the rest of it ran once). See
+    /// [`Cells::users_of`].
+    uses: HashMap<Symbol, HashSet<u16>>,
+    /// The same of each method of an impl and default method of a trait
+    /// of the committed cells, by its name (`Int.n`, `N.n`).
+    method_uses: Vec<(String, HashSet<u16>)>,
 }
 
 impl Cells {
@@ -279,6 +315,106 @@ impl Cells {
         );
     }
 
+    /// Note what the code of the declarations `own` of a cell that is
+    /// committed names (`uses`, `method_uses`): it binds `names`, and
+    /// its statements are the function `wrapper`, which ran.
+    fn note_uses(&mut self, own: &[Decl], names: &[Symbol], wrapper: Symbol) {
+        for name in names {
+            self.uses.remove(name);
+        }
+        for decl in own {
+            match decl {
+                Decl::Fn(f) if f.name == wrapper => {}
+                Decl::Fn(f) => {
+                    let slots = self.slots_named(&f.body, false);
+                    self.uses.insert(f.name, slots);
+                }
+                Decl::Let { pattern, value, .. } => self.note_let_uses(pattern, value),
+                Decl::TraitImpl(ti) => {
+                    for m in &ti.methods {
+                        let slots = self.slots_named(&m.body, false);
+                        let name = format!("{}.{}", ti.target_type, m.name);
+                        self.method_uses.push((name, slots));
+                    }
+                }
+                Decl::Trait(t) => {
+                    for m in t.methods.iter().filter(|m| !m.is_signature_only) {
+                        let slots = self.slots_named(&m.body, false);
+                        self.method_uses
+                            .push((format!("{}.{}", t.name, m.name), slots));
+                    }
+                }
+                Decl::Type(_) | Decl::Import(..) => {}
+            }
+        }
+    }
+
+    /// Note what the closures of the initializer `value` of a `let`
+    /// that binds `pattern` name, for each name it binds: of a tuple
+    /// written as one (`let (a, b) = ({ -> h() }, 1)`), what its own
+    /// part names; of any other part, what all of it names.
+    fn note_let_uses(&mut self, pattern: &ast::Pattern, value: &ast::Expr) {
+        if let (ast::PatternKind::Tuple(parts), ast::ExprKind::Tuple(values)) =
+            (&pattern.kind, &value.kind)
+            && parts.len() == values.len()
+        {
+            for (part, value) in parts.iter().zip(values) {
+                self.note_let_uses(part, value);
+            }
+            return;
+        }
+        let slots = self.slots_named(value, true);
+        pattern.for_each_binder(&mut |name, _, _| {
+            self.uses.insert(name, slots.clone());
+        });
+    }
+
+    /// The global slots of the definitions `body` names; with
+    /// `in_closures`, those its closures name only.
+    fn slots_named(&self, body: &ast::Expr, in_closures: bool) -> HashSet<u16> {
+        let mut slots = HashSet::new();
+        let mut named = |e: &ast::Expr| {
+            if let Some(Res::Def(def)) = e.res
+                && let Some(slot) = self.globals.def(def)
+            {
+                slots.insert(slot);
+            }
+        };
+        match in_closures {
+            false => body.for_each_expr(&mut named),
+            true => body.for_each_expr(&mut |e| {
+                if matches!(e.kind, ast::ExprKind::Lambda { .. }) {
+                    e.for_each_expr(&mut named);
+                }
+            }),
+        }
+        slots
+    }
+
+    /// The function the committed cells bind to `name`, with its slot.
+    pub(super) fn function(&self, name: Symbol) -> Option<(DefId, u16)> {
+        let def = self.scope.get(&name)?.def?;
+        Some((def, self.globals.def(def)?))
+    }
+
+    /// What names the definition of the global slot `slot` of what the
+    /// session binds now, but what a cell binds again (`replaced`): its
+    /// functions and the `let`s whose closures name it, by name, then
+    /// the methods of its impls and traits.
+    pub(super) fn users_of(&self, slot: u16, replaced: &HashSet<Symbol>) -> Vec<(String, bool)> {
+        let mut users: Vec<(String, bool)> = (self.uses.iter())
+            .filter(|(name, slots)| !replaced.contains(*name) && slots.contains(&slot))
+            .map(|(name, _)| (resolve(*name), true))
+            .collect();
+        users.sort();
+        users.extend(
+            (self.method_uses.iter())
+                .filter(|(_, slots)| slots.contains(&slot))
+                .map(|(name, _)| (name.clone(), false)),
+        );
+        users
+    }
+
     /// Each name that the `let` of a committed cell binds where an
     /// earlier cell imported a module by that name, with the module.
     pub(super) fn hidden_imports(&self) -> HashMap<Symbol, Symbol> {
@@ -298,6 +434,7 @@ impl Cells {
                 .collect(),
             globals: self.globals.clone(),
             repl: true,
+            redefined: HashMap::new(),
         }
     }
 
@@ -324,9 +461,16 @@ impl Cells {
         id: ModuleId,
         checked: &ast::Program,
         modules: &[ModuleId],
+        defs: &DefTable,
     ) -> Option<ModuleId> {
         let info = &self.info[&id];
         for (name, span, kind, import) in &info.own {
+            let def = (*kind == Kind::Fn)
+                .then(|| {
+                    (defs.named(id, *name).iter().copied())
+                        .find(|def| matches!(defs.get(*def).kind, DefKind::Fn))
+                })
+                .flatten();
             let hides = match (kind, self.scope.get(name)) {
                 (Kind::Let, Some(before)) if before.kind == Kind::Module => {
                     before.import.as_ref().map(|(target, _)| target.module())
@@ -338,6 +482,7 @@ impl Cells {
                 *name,
                 Binder {
                     kind: *kind,
+                    def,
                     span: *span,
                     import: import.clone(),
                     hides,
@@ -366,6 +511,9 @@ impl Cells {
         if let Some(globals) = self.compiled.take() {
             self.globals = globals;
         }
+        let names: Vec<Symbol> = info.own.iter().map(|(name, ..)| *name).collect();
+        let wrapper = intern(&info.wrapper());
+        self.note_uses(own, &names, wrapper);
         self.installed.extend(
             modules
                 .iter()
@@ -373,4 +521,179 @@ impl Cells {
         );
         self.last.replace(id).filter(|before| *before != id)
     }
+}
+
+/// Whether two schemes are one type: the same type, and the same
+/// bounds, whatever numbers their variables have. The bounds that pass
+/// a dictionary are compared in order, which is the order of the
+/// dictionaries: the checker orders a scheme's bounds by the place of
+/// their variables in its type whatever the body or the `where` clauses
+/// (`order_trait_preds`), so only two bounds of one variable can come in
+/// another order. The others, which pass nothing, in any order. A function defined again
+/// with the same type takes the place of the old one for its callers,
+/// which were checked against that type and pass its dictionaries.
+/// A variable the scheme does not quantify (a type a later entry
+/// decides, of a `let` the function reads) is one variable of the
+/// session's: the same in both, or they differ.
+#[cfg(feature = "repl")]
+pub(super) fn same_scheme(a: &Scheme, b: &Scheme, ordered: bool) -> bool {
+    fn canonical(scheme: &Scheme) -> (Type, Vec<Pred>) {
+        let mapping: HashMap<TyVar, Type> = (free_vars_in(&scheme.ty).into_iter())
+            .filter(|var| scheme.vars.contains(var))
+            .enumerate()
+            .map(|(k, var)| (var, Type::Var(usize::MAX - k)))
+            .collect();
+        let preds = scheme
+            .preds
+            .iter()
+            .map(|p| p.substitute(&mapping))
+            .collect();
+        (substitute_vars(&scheme.ty, &mapping), preds)
+    }
+    // (What a bound names to say who asks it is no part of the type.)
+    fn same_pred(a: &Pred, b: &Pred) -> bool {
+        match (a, b) {
+            (
+                Pred::Trait {
+                    tr, args, subject, ..
+                },
+                Pred::Trait {
+                    tr: tr2,
+                    args: args2,
+                    subject: subject2,
+                    ..
+                },
+            ) => tr == tr2 && args == args2 && subject == subject2,
+            (
+                Pred::Builtin { check, subject, .. },
+                Pred::Builtin {
+                    check: check2,
+                    subject: subject2,
+                    ..
+                },
+            ) => check.unwritten() == check2.unwritten() && subject == subject2,
+            // (Where in the body the method is called is not either.)
+            (
+                Pred::Via {
+                    tr,
+                    method,
+                    receiver,
+                    method_ty,
+                    ..
+                },
+                Pred::Via {
+                    tr: tr2,
+                    method: method2,
+                    receiver: receiver2,
+                    method_ty: method_ty2,
+                    ..
+                },
+            ) => tr == tr2 && method == method2 && receiver == receiver2 && method_ty == method_ty2,
+            (
+                Pred::Given {
+                    subject,
+                    given,
+                    passer,
+                    ..
+                },
+                Pred::Given {
+                    subject: subject2,
+                    given: given2,
+                    passer: passer2,
+                    ..
+                },
+            ) => subject == subject2 && given == given2 && passer == passer2,
+            _ => a == b,
+        }
+    }
+    let ((ty, preds), (ty2, preds2)) = (canonical(a), canonical(b));
+    let traits = |preds: &[Pred]| -> Vec<Pred> {
+        (preds.iter())
+            .filter(|p| crate::typechecker::passes_dictionary(p))
+            .cloned()
+            .collect()
+    };
+    let (traits1, traits2) = (traits(&preds), traits(&preds2));
+    let others = |preds: &[Pred]| -> Vec<Pred> {
+        (preds.iter())
+            .filter(|p| !crate::typechecker::passes_dictionary(p))
+            .cloned()
+            .collect()
+    };
+    let same_bag = |ones: &[Pred], mut twos: Vec<Pred>| {
+        ones.len() == twos.len()
+            && ones
+                .iter()
+                .all(|a| match twos.iter().position(|b| same_pred(a, b)) {
+                    Some(at) => {
+                        twos.swap_remove(at);
+                        true
+                    }
+                    None => false,
+                })
+    };
+    let same_traits = match ordered {
+        true => {
+            traits1.len() == traits2.len()
+                && traits1.iter().zip(&traits2).all(|(a, b)| same_pred(a, b))
+        }
+        false => same_bag(&traits1, traits2),
+    };
+    ty == ty2 && same_bag(&others(&preds), others(&preds2)) && same_traits
+}
+
+/// The error of the function `name`, at `span`, that a cell defines
+/// again with the type `is` where it was `was`, while `users` name it
+/// (each with whether a cell can define it again: a function or a
+/// `let`, not a method).
+#[cfg(feature = "repl")]
+pub(super) fn redefined_with_another_type(
+    name: Symbol,
+    span: Span,
+    was: &str,
+    is: &str,
+    users: &[(String, bool)],
+    reordered: bool,
+) -> crate::diagnostic::Diagnostic {
+    use crate::diagnostic::{Code, Diagnostic};
+    let listed = |names: &[&String]| {
+        let names: Vec<String> = names.iter().map(|name| format!("'{name}'")).collect();
+        match names.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            _ => names.concat(),
+        }
+    };
+    let all: Vec<&String> = users.iter().map(|(name, _)| name).collect();
+    let verb = if all.len() == 1 { "uses" } else { "use" };
+    let again: Vec<&String> = (users.iter())
+        .filter(|(_, again)| *again)
+        .map(|(name, _)| name)
+        .collect();
+    let old_bounds = was.split_once(" where ").map(|(_, bounds)| bounds);
+    let help = match again.is_empty() || again.len() < users.len() {
+        _ if reordered && let Some(bounds) = old_bounds => {
+            format!("write its bounds in the old order ({bounds})")
+        }
+        true => "give the new function another name".to_string(),
+        false => format!(
+            "give the new function another name, or first define {} again without '{name}'",
+            listed(&again)
+        ),
+    };
+    Diagnostic::error(
+        Code::TypeMismatch,
+        span,
+        format!(
+            "function '{name}' is defined again with another type, and {} {verb} it",
+            listed(&all)
+        ),
+    )
+    .with_note(match was == is && was.contains('_') {
+        true => format!("it was {was}, and is {is} here, where a later entry decides each '_'"),
+        false => format!("it was {was}, and is {is} here"),
+    })
+    .with_note(
+        "a function defined again replaces the old one for every caller, so it keeps its type",
+    )
+    .with_help(help)
 }

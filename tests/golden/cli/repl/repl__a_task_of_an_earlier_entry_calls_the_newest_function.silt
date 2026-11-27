@@ -1,0 +1,8 @@
+-- cmd: repl
+-- stdin: import stream\nimport channel\nfn h(x: Int) -> Int { x + 1 }\nlet jobs = channel.new(8)\nlet outs = channel.new(8)\nfn work() {\n  match channel.receive(jobs) {\n    Some(x) -> {\n      channel.send(outs, h(x))\n      work()\n    }\n    None -> ()\n  }\n}\nlet worker = stream.from_fn { _ -> work() }\nchannel.send(jobs, 1)\nchannel.receive(outs)\nfn h(x: Int) -> Int { x + 100 }\nchannel.send(jobs, 1)\nchannel.receive(outs)\nfn work() {\n  match channel.receive(jobs) {\n    Some(x) -> {\n      channel.send(outs, h(x) * 10)\n      work()\n    }\n    None -> ()\n  }\n}\nchannel.send(jobs, 2)\nchannel.receive(outs)\nchannel.send(jobs, 3)\nchannel.receive(outs)\nchannel.close(jobs)\nlet _ = stream.collect(worker)\n:quit\n
+-- A task started in an earlier entry calls the newest function too: the
+-- worker waits for a job, and its code calls `h`, which a later entry
+-- defines again. When the function the task loops in (`work`, which calls
+-- itself in tail position) is defined again, the round it is in ends in
+-- the old body, which calls the new `h`, and the next round runs the new
+-- body: in the REPL such a call reads the global each round.

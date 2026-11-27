@@ -1,0 +1,16 @@
+error[type]: function 'f' is defined again with another type, and 'g', 'h' and 'Int.n' use it
+ --> <repl:6>:1:4
+   |
+ 1 | fn f(x: Int) -> String { "str{x}" }
+   |    ^ function 'f' is defined again with another type, and 'g', 'h' and 'Int.n' use it
+  = note: it was Fn(Int) -> Int, and is Fn(Int) -> String here
+  = note: a function defined again replaces the old one for every caller, so it keeps its type
+  = help: give the new function another name
+error[type]: function 'lone' is defined again with another type, and 'uses_lone' uses it
+ --> <repl:16>:1:4
+   |
+ 1 | fn lone(x: Int) -> String { "lone {x}" }
+   |    ^^^^ function 'lone' is defined again with another type, and 'uses_lone' uses it
+  = note: it was Fn(Int) -> Int, and is Fn(Int) -> String here
+  = note: a function defined again replaces the old one for every caller, so it keeps its type
+  = help: give the new function another name, or first define 'uses_lone' again without 'lone'

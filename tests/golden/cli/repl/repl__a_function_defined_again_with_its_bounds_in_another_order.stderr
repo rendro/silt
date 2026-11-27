@@ -1,0 +1,8 @@
+error[type]: function 'h' is defined again with another type, and 'c' uses it
+ --> <repl:27>:1:4
+   |
+ 1 | fn h() -> String { "s" }
+   |    ^ function 'h' is defined again with another type, and 'c' uses it
+  = note: it was Fn() -> Int, and is Fn() -> String here
+  = note: a function defined again replaces the old one for every caller, so it keeps its type
+  = help: give the new function another name, or first define 'c' again without 'h'

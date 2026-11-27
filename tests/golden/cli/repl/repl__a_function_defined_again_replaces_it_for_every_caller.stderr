@@ -1,0 +1,5 @@
+error[type]: duplicate implementation of trait 'N' for type 'Int'
+ --> <repl:23>:1:1
+   |
+ 1 | trait N for Int { fn n(self) -> String { "again" } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'N' for type 'Int'

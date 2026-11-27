@@ -477,7 +477,10 @@ impl Session {
         let (Some(analysis), Some(result)) = (self.analyses.get(&id), self.results.get(&id)) else {
             return;
         };
-        if let Some(before) = self.cells.commit(id, &analysis.ast, &result.modules) {
+        if let Some(before) = self
+            .cells
+            .commit(id, &analysis.ast, &result.modules, &self.defs)
+        {
             self.release_cell(before);
         }
     }
@@ -1109,7 +1112,20 @@ impl Session {
             Entry::Cell => EntryPoint::Cell,
         };
 
-        let units = self.program_units(id, matches!(target, Entry::Cell));
+        // (A function a REPL entry defines again takes the slot of the
+        // one it replaces, if it has its type.)
+        let redefined = match target {
+            Entry::Cell => match self.redefinitions(id) {
+                Ok(redefined) => redefined,
+                Err(mut errors) => {
+                    errors.extend(entry_errors);
+                    return Err(errors);
+                }
+            },
+            _ => HashMap::new(),
+        };
+        let mut units = self.program_units(id, matches!(target, Entry::Cell));
+        units.earlier.redefined = redefined;
         let program = self.analyses[&id].ast.clone();
         let mut compiler = match Compiler::for_program(units) {
             Ok(compiler) => compiler,
@@ -1145,6 +1161,7 @@ impl Session {
             Ok(functions) => {
                 let globals = Arc::new(compiler.globals().clone());
                 let types = compiler.types();
+                let redefined = compiler.redefinitions();
                 // A cell's definitions are the session's when the cell
                 // has run to its end; until then the session's globals
                 // are what stands of the program.
@@ -1174,6 +1191,7 @@ impl Session {
                     entry,
                     files: Arc::new(self.sources.clone()),
                     entry_file,
+                    redefined,
                 })
             }
             Err(e) => {
@@ -1182,6 +1200,74 @@ impl Session {
                 Err(errors)
             }
         }
+    }
+
+    /// The functions the REPL cell `id` defines again, each with the
+    /// global slot of the one it replaces: a function of the name an
+    /// earlier cell defined, with the same type, replaces it for every
+    /// caller. One with another type is refused while a function, a
+    /// `let`'s closure or a method of the session names the old one
+    /// (but what the cell defines again itself); with none it is a
+    /// new function, in a slot of its own.
+    #[cfg(feature = "repl")]
+    fn redefinitions(
+        &self,
+        id: ModuleId,
+    ) -> Result<HashMap<crate::defs::DefId, u16>, Vec<Diagnostic>> {
+        let mut redefined = HashMap::new();
+        let Some(cell) = self.cells.info.get(&id) else {
+            return Ok(redefined);
+        };
+        let replaced = cell.names();
+        let mut errors = Vec::new();
+        for (name, span) in cell.functions() {
+            let Some((old, slot)) = self.cells.function(name) else {
+                continue;
+            };
+            let Some(new) = (self.defs.named(id, name).iter().copied())
+                .find(|def| matches!(self.defs.get(*def).kind, crate::defs::DefKind::Fn))
+            else {
+                continue;
+            };
+            let (Some(was), Some(is)) = (self.tables.scheme_of(old), self.tables.scheme_of(new))
+            else {
+                continue;
+            };
+            if cells::same_scheme(&was, &is, true) {
+                redefined.insert(new, slot);
+                continue;
+            }
+            let users = self.cells.users_of(slot, &replaced);
+            if users.is_empty() {
+                continue;
+            }
+            let written = |scheme: &crate::types::Scheme| {
+                crate::repl::written_scheme(scheme, |def, name| {
+                    self.shadowed_cell_name(cell.file, def, name)
+                })
+            };
+            errors.push(cells::redefined_with_another_type(
+                name,
+                span,
+                &written(&was),
+                &written(&is),
+                &users,
+                cells::same_scheme(&was, &is, false),
+            ));
+        }
+        match errors.is_empty() {
+            true => Ok(redefined),
+            false => Err(errors),
+        }
+    }
+
+    /// Without the REPL no cell defines anything again.
+    #[cfg(not(feature = "repl"))]
+    fn redefinitions(
+        &self,
+        _: ModuleId,
+    ) -> Result<HashMap<crate::defs::DefId, u16>, Vec<Diagnostic>> {
+        Ok(HashMap::new())
     }
 
     /// The modules of the analysed program of module `id`, as the

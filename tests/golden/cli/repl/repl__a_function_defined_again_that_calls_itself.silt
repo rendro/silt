@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: fn down(n: Int) -> Int {\n  match n {\n    0 -> 0\n    _ -> down(n - 1)\n  }\n}\nfn run() -> Int { down(3) }\nrun()\nfn down(n: Int) -> Int {\n  match n {\n    0 -> 1 / n\n    _ -> down(n - 1)\n  }\n}\nrun()\n:quit\n
+-- A function that calls itself in tail position, defined again: the new
+-- body runs, every round (a call of the old one's callers too), and the
+-- call stack of its error is that of the new one.

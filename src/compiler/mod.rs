@@ -334,6 +334,11 @@ pub(crate) struct EarlierCells {
     pub globals: Globals,
     /// Whether the entry is a REPL entry.
     pub(crate) repl: bool,
+    /// The functions the entry defines again with the type they had,
+    /// each with the slot of the one it replaces: it takes that slot, and
+    /// its value is put there before the entry runs
+    /// ([`Compiler::redefinitions`]), so every caller calls it.
+    pub(crate) redefined: HashMap<crate::defs::DefId, u16>,
 }
 
 pub(crate) struct Compiler<'a> {
@@ -366,6 +371,10 @@ pub(crate) struct Compiler<'a> {
     /// The global of the top-level `let` whose value is the closure
     /// compiled next, if its tail calls of itself jump.
     closure_global: Option<u16>,
+    /// The functions the entry defines again, each with the slot of the
+    /// one it replaces (`EarlierCells::redefined`): put there before
+    /// the entry runs, not by its code.
+    redefinitions: Vec<(u16, Value)>,
     /// The name in call stacks of the closure compiled next, which a
     /// `let` binds directly (`Compiler::let_closure_name`).
     closure_label: Option<String>,
@@ -489,6 +498,7 @@ impl<'a> Compiler<'a> {
             pattern_lets: HashMap::new(),
             held_types: HashMap::new(),
             callee_call: None,
+            redefinitions: Vec::new(),
         };
         compiler.owners = (compiler.units.modules.iter())
             .flat_map(|unit| unit.program.dict_owners.iter().copied())
@@ -536,9 +546,15 @@ impl<'a> Compiler<'a> {
                     true => format!("{}.{}", unit.qualifier, def.name),
                     false => resolve(def.name),
                 };
-                let slot = globals
-                    .add_def(id, name)
-                    .ok_or_else(|| too_many_globals(globals.len() + 1, def.span))?;
+                let slot = match self.units.earlier.redefined.get(&id) {
+                    Some(&slot) => {
+                        globals.redefine(id, slot);
+                        slot
+                    }
+                    None => globals
+                        .add_def(id, name)
+                        .ok_or_else(|| too_many_globals(globals.len() + 1, def.span))?,
+                };
                 own.insert((unit.id, def.name), slot);
             }
             for decl in &unit.program.decls {
@@ -648,6 +664,13 @@ impl<'a> Compiler<'a> {
     /// The global slots of the program, for the VM.
     pub(crate) fn globals(&self) -> &Globals {
         &self.globals
+    }
+
+    /// The functions a REPL entry defines again, each with the slot of
+    /// the one it replaces, for the VM to put there
+    /// (`Program::redefined`).
+    pub(crate) fn redefinitions(&mut self) -> Vec<(u16, Value)> {
+        std::mem::take(&mut self.redefinitions)
     }
 
     // ── Public entry point ────────────────────────────────────────
@@ -891,10 +914,15 @@ impl<'a> Compiler<'a> {
                 // Store the function as a VmClosure constant in the enclosing chunk.
                 let vm_closure = Arc::new(VmClosure::new(Arc::new(func), vec![]));
                 let closure_val = Value::VmClosure(vm_closure);
+                let slot = self.own_slot(fn_decl.name, span)?;
+                // (A function a REPL entry defines again is put in the
+                // slot of the one it replaces before the entry runs.)
+                if self.units.earlier.redefined.values().any(|s| *s == slot) {
+                    self.redefinitions.push((slot, closure_val));
+                    return Ok(());
+                }
                 let fi = self.add_constant(closure_val, span)?;
                 self.emit(Asm::Constant { k: fi }, span)?;
-
-                let slot = self.own_slot(fn_decl.name, span)?;
                 self.emit(Asm::SetGlobal { slot }, span)?;
                 self.emit(Asm::Pop, span)?;
 

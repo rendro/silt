@@ -1808,16 +1808,38 @@ mod tests {
     }
 
     #[test]
-    fn a_redefinition_is_early_bound() {
+    fn a_function_defined_again_replaces_it_for_every_caller() {
         let mut repl = repl();
         value(&mut repl, "fn f() { 1 }");
         value(&mut repl, "fn g() { f() }");
         value(&mut repl, "let call_f = { -> f() }");
-        value(&mut repl, r#"fn f() { "two" }"#);
-        assert_eq!(value(&mut repl, "g()"), "1");
-        assert_eq!(value(&mut repl, "call_f()"), "1");
-        assert_eq!(value(&mut repl, "f()"), "two");
-        // A `let` too, with a new type.
+        value(&mut repl, "let taken = f");
+        value(&mut repl, "fn f() { 2 }");
+        assert_eq!(value(&mut repl, "g()"), "2");
+        assert_eq!(value(&mut repl, "call_f()"), "2");
+        assert_eq!(value(&mut repl, "f()"), "2");
+        // A function value taken before is the function it was then.
+        assert_eq!(value(&mut repl, "taken()"), "1");
+        // Another type is refused while code of the session names it,
+        // and the old one stays.
+        let messages = errors(&mut repl, r#"fn f() { "two" }"#);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("'call_f' and 'g' use it")),
+            "{messages:?}"
+        );
+        assert_eq!(value(&mut repl, "g()"), "2");
+        // Defined again in the same entry as its users, it is accepted.
+        // (An entry of several declarations, which a terminal does not
+        // take.)
+        value(
+            &mut repl,
+            "fn f() -> String { \"two\" }\nfn g() -> String { f() }\nlet call_f = { -> f() }",
+        );
+        assert_eq!(value(&mut repl, "g()"), "two");
+        // A `let` binds a name again as before: the code that named the
+        // old one keeps it, whatever the new one's type.
         value(&mut repl, "let x = 1");
         value(&mut repl, "fn get_x() { x }");
         value(&mut repl, r#"let x = "s""#);
@@ -1827,6 +1849,24 @@ mod tests {
         value(&mut repl, "let n = 10");
         value(&mut repl, "let n = n + 1");
         assert_eq!(value(&mut repl, "n"), "11");
+    }
+
+    /// An entry that defines a function again and then fails gives the
+    /// old one back to its callers.
+    #[test]
+    fn a_function_defined_again_by_an_entry_that_fails_is_given_back() {
+        let mut repl = repl();
+        value(&mut repl, "fn f() -> Int { 1 }");
+        value(&mut repl, "fn g() -> Int { f() }");
+        let messages = errors(&mut repl, "fn f() -> Int { 2 }\nlet boom = 1 / (g() - 2)");
+        assert!(
+            messages.iter().any(|m| m.contains("division by zero")),
+            "{messages:?}"
+        );
+        assert_eq!(value(&mut repl, "g()"), "1");
+        assert_eq!(value(&mut repl, "f()"), "1");
+        value(&mut repl, "fn f() -> Int { 3 }");
+        assert_eq!(value(&mut repl, "g()"), "3");
     }
 
     // ── DX2: completion filters on module prefix ──────────────────

@@ -1,0 +1,9 @@
+-- cmd: repl
+-- stdin: fn f(x: Int) -> Int { x + 1 }\nfn g(y: Int) -> Int { f(y) * 2 }\nlet h = { y -> f(y) }\ntrait N { fn n(self) -> Int }\ntrait N for Int { fn n(self) -> Int { f(self) } }\nfn f(x: Int) -> String { "str{x}" }\ng(1)\nf(1)\nfn f(x: Int) -> Int { x + 10 }\ng(1)\nh(1)\nN.n(1)\nfn lone(x: Int) -> Int { x }\nlet old = lone\nfn uses_lone() -> Int { lone(1) }\nfn lone(x: Int) -> String { "lone {x}" }\nfn uses_lone() -> Int { 0 }\nfn lone(x: Int) -> String { "lone {x}" }\nlone(1)\nold(1)\nuses_lone()\n:quit\n
+-- A function defined again with another type is refused while code the
+-- session binds names it: a function, a closure a `let` holds, an impl's
+-- method. The error names them, and the old function stays. With the old
+-- type it replaces the old one for them all. Once the functions that used
+-- it are defined again without it, nothing names it and the new type is
+-- accepted: a new function, which the code still about of the old ones
+-- (a value taken before, here `old`) does not call.

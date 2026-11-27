@@ -2041,6 +2041,8 @@ impl Vm {
     /// Run a task's frames for up to `max_steps` steps and return a
     /// `SliceResult`. Used by the M:N scheduler's worker threads.
     pub(crate) fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
+        // (A wait that ended, or a slice given way: see the function.)
+        self.see_redefined();
         // A task of a program whose step budget is used up runs no
         // further.
         if let Err(e) = self.runtime.charge(0) {

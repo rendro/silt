@@ -1,0 +1,9 @@
+-- cmd: repl
+-- stdin: fn p(a, b) {\n  println(a)\n  println(b)\n}\nfn g() { p(1, "x") }\nfn p(a, b) {\n  println(b)\n  println(a)\n}\ng()\nfn q(x: a, y: b) -> String where b: Display, a: Display { "{x}{y}" }\nfn gq() { q(1, "x") }\nfn q(x: a, y: b) -> String where a: Display, b: Display { "{y}{x}" }\ngq()\ntrait N { fn n(self) -> String }\ntrait M { fn m(self) -> String }\ntrait N for Int { fn n(self) -> String { "N" } }\ntrait M for String { fn m(self) -> String { "M" } }\nfn r(x, y) { "{N.n(x)}{M.m(y)}" }\nfn gr() { r(1, "s") }\ngr()\nfn r(x, y) { "{M.m(y)}-{N.n(x)}" }\ngr()\n:type r\nfn t(x: a, y: b) -> String where b: M, a: N { "{N.n(x)}{M.m(y)}" }\nfn gt() { t(1, "s") }\ngt()\nfn t(x: a, y: b) -> String where a: N, b: M { "{M.m(y)}+{N.n(x)}" }\ngt()\n:type t\nfn h() -> Int { 1 }\nlet (c, d) = ({ -> h() }, 1)\nfn h() -> String { "s" }\n:quit\n
+-- A function defined again with the same bounds in another order has its
+-- type (review rv435 F1): the order its body uses them in, or its `where`
+-- clauses write them in, is not part of it. The bounds are in one order,
+-- by the place of their variables in the type, so the new function takes
+-- its callers' dictionaries as the old one did (`r` and `t` of traits the
+-- program declares). Last: a `let` of a tuple counts as a user only the name
+-- whose part names the function (`c`, not `d`; review rv435 C2).
