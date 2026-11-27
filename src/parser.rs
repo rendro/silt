@@ -2288,19 +2288,18 @@ impl<'src> Parser<'src> {
             self.source.get(range).map(str::to_string)
         });
         self.errors.truncate(errors);
-        let fix = match ty {
-            Some(ty) if !ty.contains('\n') => format!("write `{field}: {ty}`"),
-            _ => format!("write `{field}`"),
-        };
-        Diagnostic::error(
+        let d = Diagnostic::error(
             Code::ExpectedToken,
             span,
             format!(
                 "a type body whose first name starts with a capital is an enum's, so '{text}' \
                  reads as a variant: a record's first field starts with a lower-case letter"
             ),
-        )
-        .with_help(fix)
+        );
+        match field_fix(&field, ty.as_deref().filter(|ty| !ty.contains('\n'))) {
+            Some(fix) => d.with_help(fix),
+            None => d,
+        }
     }
 
     /// The fields of a record type and its closing brace; `open` is the
@@ -2336,21 +2335,18 @@ impl<'src> Parser<'src> {
                 let written = (p.source)
                     .get(ty.span.start as usize..ty.span.end as usize)
                     .filter(|ty| !ty.contains('\n'));
-                let fix = match written {
-                    Some(ty) => format!("write `{field}: {ty}`"),
-                    None => format!("write `{field}`"),
-                };
-                p.keep_or_count(
-                    Diagnostic::error(
-                        Code::ExpectedToken,
-                        name_span,
-                        format!(
-                            "record field '{text}' starts with a capital: a record's fields \
-                             start with a lower-case letter"
-                        ),
-                    )
-                    .with_help(fix),
+                let d = Diagnostic::error(
+                    Code::ExpectedToken,
+                    name_span,
+                    format!(
+                        "record field '{text}' starts with a capital: a record's fields \
+                         start with a lower-case letter"
+                    ),
                 );
+                p.keep_or_count(match field_fix(&field, written) {
+                    Some(fix) => d.with_help(fix),
+                    None => d,
+                });
                 name = intern::intern(&field);
             }
             Ok(RecordField {
@@ -5850,6 +5846,19 @@ fn snake_case(name: &str) -> String {
         out.extend(c.to_lowercase());
     }
     out
+}
+
+/// The help that writes a capitalised record field as `field`, its
+/// snake-case name, with its type `ty` as written where that is on one
+/// line; none where `field` is a value, not a name (`True` -> `true`).
+fn field_fix(field: &str, ty: Option<&str>) -> Option<String> {
+    if matches!(field, "true" | "false") {
+        return None;
+    }
+    Some(match ty {
+        Some(ty) => format!("write `{field}: {ty}`"),
+        None => format!("write `{field}`"),
+    })
 }
 
 /// `name` with its first character in upper case, for "did you mean"
