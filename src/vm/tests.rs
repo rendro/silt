@@ -4963,14 +4963,18 @@ mod abandon {
         (handle, abandoned)
     }
 
-    /// Wait until the probe has been abandoned, then long enough for a
-    /// second time to show, and give the count.
-    fn settled(abandoned: &AtomicUsize) -> usize {
-        let limit = Instant::now() + Duration::from_secs(10);
-        while abandoned.load(Ordering::SeqCst) == 0 && Instant::now() < limit {
-            std::thread::sleep(Duration::from_millis(2));
+    /// Wait until the probe's task has ended, and give the count. Its
+    /// frames are abandoned before its end is told (`Inner::end`), and
+    /// it has none after that, so the count is the last there will be:
+    /// a second abandon would be in it, whenever it came. (It once
+    /// waited for the first and then 50 ms for a second to show.) The
+    /// bound only stops a run whose task never ends.
+    fn settled(handle: &TaskHandle, abandoned: &AtomicUsize) -> usize {
+        let limit = Instant::now() + Duration::from_secs(60);
+        while !handle.has_stopped() {
+            assert!(Instant::now() < limit, "the task did not end");
+            std::thread::sleep(Duration::from_millis(1));
         }
-        std::thread::sleep(Duration::from_millis(50));
         abandoned.load(Ordering::SeqCst)
     }
 
@@ -5005,9 +5009,9 @@ mod abandon {
         let err = handle.try_get().unwrap().unwrap_err();
         handle.mark_read();
         assert_eq!(err.message, "the probe failed");
-        assert_eq!(settled(&abandoned), 1);
+        assert_eq!(settled(&handle, &abandoned), 1);
         drop(main);
-        assert_eq!(settled(&abandoned), 1);
+        assert_eq!(settled(&handle, &abandoned), 1);
     }
 
     #[test]
@@ -5019,9 +5023,9 @@ mod abandon {
         assert_eq!(abandoned.load(Ordering::SeqCst), 0);
         // What a stop of a task does.
         main.scheduler().cancel(&handle);
-        assert_eq!(settled(&abandoned), 1);
+        assert_eq!(settled(&handle, &abandoned), 1);
         drop(main);
-        assert_eq!(settled(&abandoned), 1);
+        assert_eq!(settled(&handle, &abandoned), 1);
     }
 
     #[test]
@@ -5032,7 +5036,7 @@ mod abandon {
         parked(&ch);
         assert_eq!(abandoned.load(Ordering::SeqCst), 0);
         drop(main);
-        assert_eq!(settled(&abandoned), 1);
+        assert_eq!(settled(&handle, &abandoned), 1);
         // The channel and the handle outlive the task: it was not
         // their end that dropped it.
         drop((ch, handle));
