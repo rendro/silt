@@ -312,8 +312,10 @@ fn run_tests(given: &[String], filter: Option<String>) {
             say(&format!("no test matches --filter '{filter}'\n"));
             crate::scheduler::exit_with_status(1);
         }
-        println!("{}", no_test_files(&walked));
-        return;
+        // So does finding no test file: a run that ran no test tested
+        // nothing.
+        say(&format!("{}\n", no_test_files(&walked)));
+        crate::scheduler::exit_with_status(1);
     }
 
     // Files that `--filter` did not rule out. Without a filter, all of them.
@@ -557,8 +559,9 @@ fn run_tests(given: &[String], filter: Option<String>) {
             "hint: test functions must be named 'fn test_*'; test files end with '_test.silt'\n";
     }
     say(&said);
-    // (The tests may have left threads: see `vm_run_file`.)
-    if failed > 0 || file_errors.any() {
+    // (The tests may have left threads: see `vm_run_file`.) Test files
+    // that hold no test fail the run, as finding no test file does.
+    if failed > 0 || file_errors.any() || total == 0 {
         crate::scheduler::exit_with_status(1);
     }
 }

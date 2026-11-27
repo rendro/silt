@@ -248,7 +248,9 @@ fn a_directory_whose_files_are_in_a_package_below_names_the_package() {
 /// `silt test` in a directory whose test files are all in packages below
 /// it: the walk leaves them to their packages, and the line that says no
 /// test file was found names those packages and the command that tests
-/// them. FAILS on the base: "no test files found" alone.
+/// them; no test was run, so the run fails (on stderr, as a filter that
+/// selects nothing does). FAILS on the base: "no test files found"
+/// alone, on stdout, with success.
 #[test]
 fn silt_test_names_the_packages_below_that_hold_the_test_files() {
     let dir = workspace("test_nested");
@@ -281,33 +283,33 @@ fn silt_test_names_the_packages_below_that_hold_the_test_files() {
         "fn main() {\n  ()\n}\n",
     )
     .unwrap();
-    let stdout = |out: &Output| String::from_utf8_lossy(&out.stdout).replace('\\', "/");
+    let stderr = |out: &Output| String::from_utf8_lossy(&out.stderr).replace('\\', "/");
     let out = silt(&dir, &["test", "outer"]);
-    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
-        stdout(&out),
+        stderr(&out),
         "no test files found, but for those of the packages in outer/pk and outer/second: \
          run `silt test outer/pk outer/second`\n"
     );
     let out = silt(&dir.join("outer"), &["test"]);
-    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
-        stdout(&out),
+        stderr(&out),
         "no test files found, but for those of the packages in pk and second: run \
          `silt test pk second`\n"
     );
     fs::remove_file(dir.join("outer/second/src/a_test.silt")).unwrap();
     let out = silt(&dir, &["test", "outer"]);
-    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
-        stdout(&out),
+        stderr(&out),
         "no test files found, but for those of the package in outer/pk: run \
          `silt test outer/pk`\n"
     );
     // Where no package below holds a test file, the line says no more.
     let out = silt(&dir, &["test", "outer/second", "plain"]);
-    assert!(out.status.success(), "{out:?}");
-    assert_eq!(stdout(&out), "no test files found\n");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(stderr(&out), "no test files found\n");
     // A name that cannot be pasted in a command line (a space) is no
     // command: what to do is said in words.
     fs::rename(dir.join("outer/second"), dir.join("outer/my pkg")).unwrap();
@@ -317,17 +319,17 @@ fn silt_test_names_the_packages_below_that_hold_the_test_files() {
     )
     .unwrap();
     let out = silt(&dir, &["test", "outer"]);
-    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
-        stdout(&out),
+        stderr(&out),
         "no test files found, but for those of the packages in outer/my pkg and outer/pk: \
          name their directories to test them\n"
     );
     fs::remove_file(dir.join("outer/pk/src/main_test.silt")).unwrap();
     let out = silt(&dir, &["test", "outer"]);
-    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
-        stdout(&out),
+        stderr(&out),
         "no test files found, but for those of the package in outer/my pkg: name its \
          directory to test it\n"
     );
