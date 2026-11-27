@@ -1,0 +1,27 @@
+-- The group of shape__each_function_of_a_group_that_breaks_the_rule_has_an_error
+-- with `deep` on the two functions its errors name: it passes, and no
+-- `deep` is needless.
+deep fn a(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + b(n - 1)
+  }
+}
+
+fn b(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> c(n)
+  }
+}
+
+deep fn c(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 2 * a(n - 1)
+  }
+}
+
+fn main() {
+  println(a(4))
+}
