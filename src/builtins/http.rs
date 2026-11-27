@@ -2076,7 +2076,7 @@ impl Conn {
                         held,
                         waiting,
                     };
-                    Go::Step(Step::Park(wait))
+                    Go::Step(Step::park(wait))
                 }
                 // And as many requests wait as may.
                 Admitted::Full => self.unavailable(vm, reply),
@@ -2186,7 +2186,7 @@ impl Conn {
             body_follows,
             deadline,
         };
-        Step::Park(wait)
+        Step::park(wait)
     }
 
     /// Send `bytes`, and go on with `then`. What the system takes at
@@ -2211,7 +2211,7 @@ impl Conn {
         );
         let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
         self.state = ConnState::Sending { op, then };
-        Go::Step(Step::Park(wait))
+        Go::Step(Step::park(wait))
     }
 
     /// A response has been sent.
@@ -2244,7 +2244,7 @@ impl Conn {
         );
         let wait = op.wait(vm, Limit::Own(wire::REFUSAL_TIME));
         self.state = ConnState::Draining(op);
-        Step::Park(wait)
+        Step::park(wait)
     }
 
     /// The handler failed, and its task with it. The request is
@@ -2338,7 +2338,7 @@ impl Conn {
                             body_follows,
                             deadline,
                         };
-                        Go::Step(Step::Park(wait))
+                        Go::Step(Step::park(wait))
                     }
                 },
                 // The head is there: the body has its own time.
@@ -2352,7 +2352,7 @@ impl Conn {
                         body_follows,
                         deadline,
                     };
-                    Go::Step(Step::Park(wait))
+                    Go::Step(Step::park(wait))
                 }
                 Fired::Arm(..) => {
                     drop(op);
@@ -2382,7 +2382,7 @@ impl Conn {
                         let _ = self.stream.write_last_in_turn(&bytes);
                         let wait = op.wait(vm, Limit::Own(wire::REFUSAL_TIME));
                         self.state = ConnState::Draining(op);
-                        Go::Step(Step::Park(wait))
+                        Go::Step(Step::park(wait))
                     }
                 },
             },
@@ -2642,7 +2642,7 @@ impl crate::vm::Native for Serve {
                 // it begins here.
                 if vm.takes_nothing_new() {
                     drop(op);
-                    return Ok(Step::Park(Vm::no_wait()));
+                    return Ok(Step::park(Vm::no_wait()));
                 }
                 let accepted = op.outcome(&fired);
                 drop(op);
@@ -2666,7 +2666,7 @@ impl crate::vm::Native for Serve {
                         }
                         self.state = ServeState::Draining;
                         let wait = Wait::new(vec![Arm::Cell(self.server.drained.clone())]);
-                        return Ok(Step::Park(wait));
+                        return Ok(Step::park(wait));
                     }
                     // No descriptor left, no thread for the accept: the
                     // server stays, and tries again in a moment.
@@ -2685,7 +2685,7 @@ impl crate::vm::Native for Serve {
                     self.state = ServeState::Retrying;
                     let wait = Wait::new(vec![])
                         .deadline(vm.runtime.io.deadline_after(wire::ACCEPT_RETRY));
-                    return Ok(Step::Park(wait));
+                    return Ok(Step::park(wait));
                 };
                 self.failing = false;
                 self.connection(vm, stream);
@@ -2699,7 +2699,7 @@ impl crate::vm::Native for Serve {
         let op = super::tcp::accept_op(vm, &self.listener, true);
         let wait = op.wait(vm, Limit::None);
         self.state = ServeState::Accepting(op);
-        Ok(Step::Park(wait))
+        Ok(Step::park(wait))
     }
 }
 

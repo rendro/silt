@@ -183,14 +183,20 @@ impl Row {
         }
     }
 
-    /// Call the row with `args`.
-    pub(crate) fn call(&self, vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
+    /// Call the row with the values of the VM's stack from the slot `at`
+    /// on as its arguments ([`TypedCall`]). (Inlined into `Vm::enter_row`:
+    /// see `catch_builtin_panic`.)
+    #[inline(always)]
+    pub(crate) fn call(&self, vm: &mut Vm, at: usize) -> Result<Step, Box<VmError>> {
         match &self.body {
-            Body::Typed(call) => call(vm, args).unwrap_or_else(|| Err(self.misfit(args))),
-            Body::Const(_) | Body::Off => Err(VmError::new(format!(
+            Body::Typed(call) => call(vm, at).unwrap_or_else(|| {
+                let args = vm.stack.get(at..).unwrap_or_default();
+                Err(Box::new(self.misfit(args)))
+            }),
+            Body::Const(_) | Body::Off => Err(Box::new(VmError::new(format!(
                 "{} is not a function",
                 self.qualified()
-            ))),
+            )))),
         }
     }
 
@@ -198,6 +204,8 @@ impl Row {
     /// many, or one of another kind than its parameter's type. It is
     /// the one such error of every builtin, and no checked program
     /// meets it: the checker read the same signature.
+    #[cold]
+    #[inline(never)]
     fn misfit(&self, args: &[Value]) -> VmError {
         let params = self
             .signature
@@ -1041,6 +1049,19 @@ mod tests {
     /// what the builtin takes, and the kinds of what it was given.
     #[test]
     fn arguments_that_are_not_the_row_s_are_one_error() {
+        // (A call of the row with `args` on the stack, as a call of a
+        // builtin makes it.)
+        fn call(
+            row: &Row,
+            vm: &mut Vm,
+            args: &[Value],
+        ) -> Result<crate::vm::Step, Box<crate::vm::VmError>> {
+            let at = vm.stack.len();
+            vm.stack.extend_from_slice(args);
+            let called = row.call(vm, at);
+            vm.stack.truncate(at);
+            called
+        }
         let mut vm = Vm::new(crate::vm::HostIo::process());
         let abs = registry().row("int", "abs").expect("int.abs");
         let map = Value::Map(crate::value::Map::new());
@@ -1055,19 +1076,19 @@ mod tests {
                 "int.abs takes (n: Int), but was called with (Int, String)",
             ),
         ] {
-            let Err(error) = abs.call(&mut vm, &args) else {
+            let Err(error) = call(abs, &mut vm, &args) else {
                 panic!("{said}");
             };
             assert_eq!(error.message, said);
             assert!(error.type_confusion);
         }
         // An error of the builtin's own is no such error.
-        let Err(overflow) = abs.call(&mut vm, &[Value::Int(i64::MIN)]) else {
+        let Err(overflow) = call(abs, &mut vm, &[Value::Int(i64::MIN)]) else {
             panic!("abs of the least Int");
         };
         assert!(!overflow.type_confusion, "{}", overflow.message);
         let random = registry().row("math", "random").expect("math.random");
-        let Err(error) = random.call(&mut vm, &[map]) else {
+        let Err(error) = call(random, &mut vm, &[map]) else {
             panic!("math.random of a map");
         };
         assert_eq!(

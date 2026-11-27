@@ -5,7 +5,9 @@
 //! writes, around each such function, the one function a call of the
 //! row runs ([`TypedCall`]): it takes the arguments out of the values,
 //! each as the type its parameter says ([`Arg`]), calls the body, and
-//! makes the result a value ([`Ret`]).
+//! makes the result a value ([`Ret`]). A body that does not name the VM
+//! reads its arguments where the call left them, on the VM's stack; one
+//! that does has them taken off the stack first, for it may push on it.
 //!
 //! That is the one check of a call's arguments: how many they are, and
 //! of which kinds. Arguments that do not fit are not an error a body
@@ -25,11 +27,16 @@ use crate::vm::{Step, Vm, VmError};
 
 /// What a typed call gives: what the body did, or `None` if the
 /// arguments are not the body's (their number, or the kind of one).
-pub(crate) type Called = Option<Result<Step, VmError>>;
+/// (An error is boxed: what a call gives is handed up through the
+/// row and the catch of a panic, and a `VmError` is large.)
+pub(crate) type Called = Option<Result<Step, Box<VmError>>>;
 
-/// A call of a builtin with its arguments as values: written around a
-/// typed body by [`builtins!`].
-pub(crate) type TypedCall = fn(&mut Vm, &[Value]) -> Called;
+/// A call of a builtin: written around a typed body by [`builtins!`].
+/// Its arguments are the values of the VM's stack from the slot it is
+/// given on. They are the call's, and stay where they are until the body
+/// has returned: the caller cuts the stack back to that slot then
+/// (`Vm::enter_row`), whatever the body did with them.
+pub(crate) type TypedCall = fn(&mut Vm, usize) -> Called;
 
 /// An argument of a builtin, as its body takes it: borrowed from the
 /// value, or copied out of it where it is a number.
@@ -281,36 +288,36 @@ impl<'a> Arg<'a> for Type<'a> {
 
 /// The result of a typed body, made the result of the call.
 pub(crate) trait Ret {
-    fn ret(self) -> Result<Step, VmError>;
+    fn ret(self) -> Result<Step, Box<VmError>>;
 }
 
 impl Ret for Value {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(self))
     }
 }
 
 /// A body that goes on as a frame, or waits ([`Step`]).
 impl Ret for Step {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(self)
     }
 }
 
 impl Ret for () {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(Value::Unit))
     }
 }
 
 impl Ret for i64 {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(Value::Int(self)))
     }
 }
 
 impl Ret for bool {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(Value::Bool(self)))
     }
 }
@@ -321,39 +328,39 @@ impl Ret for bool {
 /// gave a number that is no `Float` all the same is a defect of silt,
 /// and an error here, not a value.)
 impl Ret for f64 {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         match crate::value::Float::new(self) {
             Some(float) => Ok(Step::Done(Value::Float(float))),
-            None => Err(VmError::type_confusion(format!(
+            None => Err(Box::new(VmError::type_confusion(format!(
                 "a builtin's result is no Float: {self}"
-            ))),
+            )))),
         }
     }
 }
 
 impl Ret for String {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(Value::string(self)))
     }
 }
 
 /// A `List`.
 impl Ret for Vec<Value> {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(Value::list(self)))
     }
 }
 
 /// A `Bytes`.
 impl Ret for Vec<u8> {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(Value::Bytes(Arc::new(self))))
     }
 }
 
 /// An `Option`: `Some(value)` or `None`.
 impl Ret for Option<Value> {
-    fn ret(self) -> Result<Step, VmError> {
+    fn ret(self) -> Result<Step, Box<VmError>> {
         Ok(Step::Done(match self {
             Some(value) => Value::variant(bv::SOME, [value]),
             None => Value::variant(bv::NONE, []),
@@ -363,8 +370,11 @@ impl Ret for Option<Value> {
 
 /// A body that can fail with a runtime error.
 impl<T: Ret> Ret for Result<T, VmError> {
-    fn ret(self) -> Result<Step, VmError> {
-        self?.ret()
+    fn ret(self) -> Result<Step, Box<VmError>> {
+        match self {
+            Ok(value) => value.ret(),
+            Err(error) => Err(Box::new(error)),
+        }
     }
 }
 
@@ -384,27 +394,46 @@ macro_rules! builtins {
     };
     (@one [$($meta:tt)*] $name:ident ( $vm:ident $(, $arg:ident : $ty:ty)* $(,)? ) [$($ret:ty)?] $body:block) => {
         $($meta)*
+        // (A body of no parameters breaks out of no label.)
+        #[allow(unused_labels)]
         pub(crate) fn $name(
             vm: &mut $crate::vm::Vm,
-            args: &[$crate::value::Value],
+            at: usize,
         ) -> $crate::builtins::typed::Called {
             #[allow(clippy::too_many_arguments)]
             fn typed($vm: &mut $crate::vm::Vm, $($arg: $ty),*) $(-> $ret)? $body
-            let [$($arg),*] = args else {
-                return None;
+            // (The body has the VM, and may push on its stack: the
+            // arguments are seen to fit where they are, then leave the
+            // stack before it runs.)
+            {
+                let Some([$($arg),*]) = vm.stack.get(at..) else {
+                    return None;
+                };
+                $(<$ty as $crate::builtins::typed::Arg>::take($arg)?;)*
+            }
+            let args = vm.take_args(at);
+            let called = match &args[..] {
+                [$($arg),*] => 'fit: {
+                    $(let Some($arg) = <$ty as $crate::builtins::typed::Arg>::take($arg) else {
+                        break 'fit None;
+                    };)*
+                    Some($crate::builtins::typed::Ret::ret(typed(vm, $($arg),*)))
+                }
+                _ => None,
             };
-            $(let $arg = <$ty as $crate::builtins::typed::Arg>::take($arg)?;)*
-            Some($crate::builtins::typed::Ret::ret(typed(vm, $($arg),*)))
+            vm.give_args_back(args);
+            called
         }
     };
     (@one [$($meta:tt)*] $name:ident ( $($arg:ident : $ty:ty),* $(,)? ) [$($ret:ty)?] $body:block) => {
         $($meta)*
         pub(crate) fn $name(
-            _vm: &mut $crate::vm::Vm,
-            args: &[$crate::value::Value],
+            vm: &mut $crate::vm::Vm,
+            at: usize,
         ) -> $crate::builtins::typed::Called {
             fn typed($($arg: $ty),*) $(-> $ret)? $body
-            let [$($arg),*] = args else {
+            // (Read where they are: the body has not the VM.)
+            let Some([$($arg),*]) = vm.stack.get(at..) else {
                 return None;
             };
             $(let $arg = <$ty as $crate::builtins::typed::Arg>::take($arg)?;)*

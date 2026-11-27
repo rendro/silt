@@ -158,10 +158,13 @@ impl Vm {
     /// and its slot, leave the stack.
     fn call_other(&mut self, callee: Value, func_slot: usize) -> Result<Entered, VmError> {
         match callee {
-            Value::BuiltinFn(id) => self.with_args(func_slot + 1, |vm, args| {
-                vm.stack.truncate(func_slot);
-                vm.enter_builtin(id, args)
-            }),
+            Value::BuiltinFn(id) => {
+                // (The callee's slot leaves the stack first: under the
+                // arguments the body has the stack under the call, the
+                // height a `task.guard` cuts it back to.)
+                self.stack.remove(func_slot);
+                self.enter_builtin(id, func_slot)
+            }
             Value::HostFn(host) => self.with_args(func_slot + 1, |vm, args| {
                 vm.stack.truncate(func_slot);
                 invoke_host_fn(&host, args).map(Entered::Value)
@@ -195,11 +198,13 @@ impl Vm {
     }
 
     /// Run `call` with the values of the stack from `at` on, which
-    /// leave the stack, as the arguments of a builtin.
+    /// leave the stack, as the arguments of a host function or of a
+    /// builtin whose body names the VM.
     ///
-    /// A builtin's body has the VM and its arguments at once, and may
-    /// push on the stack: the arguments are off the stack before it
-    /// runs. They are moved to the VM's one list for them
+    /// Such a body has the VM and its arguments at once, and may push
+    /// on the stack: the arguments are off the stack before it runs. (A
+    /// body that does not name the VM reads them where they are:
+    /// [`crate::builtins::typed::TypedCall`].) They are moved to the VM's one list for them
     /// (`builtin_args`), which is out of the VM for the time of the
     /// call and back, emptied, after it: a call allocates no list of
     /// its own. The list is given up where the VM waits
@@ -211,15 +216,45 @@ impl Vm {
         at: usize,
         call: impl FnOnce(&mut Vm, &[Value]) -> T,
     ) -> T {
+        let args = self.take_args(at);
+        let result = call(self, &args);
+        self.give_args_back(args);
+        result
+    }
+
+    /// The values of the stack from `at` on, taken off it into the VM's
+    /// list for the arguments of a call ([`Vm::with_args`]).
+    #[inline(never)]
+    pub(crate) fn take_args(&mut self, at: usize) -> Vec<Value> {
         let mut args = std::mem::take(&mut self.builtin_args);
         for value in &mut self.stack[at..] {
             args.push(std::mem::replace(value, Value::Unit));
         }
         self.stack.truncate(at);
-        let result = call(self, &args);
+        args
+    }
+
+    /// The list [`Vm::take_args`] gave, the VM's again, emptied.
+    #[inline(never)]
+    pub(crate) fn give_args_back(&mut self, mut args: Vec<Value>) {
         args.clear();
         self.builtin_args = args;
-        result
+    }
+
+    /// What the body `body` of a builtin gives for `args`, called as a
+    /// call of its row calls it: on the stack, which is cut back when it
+    /// has returned.
+    #[cfg(test)]
+    pub(crate) fn call_body(
+        &mut self,
+        body: crate::builtins::typed::TypedCall,
+        args: &[Value],
+    ) -> crate::builtins::typed::Called {
+        let at = self.stack.len();
+        self.stack.extend_from_slice(args);
+        let called = body(self, at);
+        self.stack.truncate(at);
+        called
     }
 
     /// The step of a builtin's frame that calls `callee` with `args`
@@ -244,20 +279,21 @@ impl Vm {
         }
     }
 
-    /// Call the builtin `id`, a row of the builtin registry, with
-    /// `args`: the row's body. A panic inside it becomes a clean
+    /// Call the builtin `id`, a row of the builtin registry, with the
+    /// values of the stack from `at` on as its arguments: the row's
+    /// body. The stack is cut back to `at` when the body has returned,
+    /// whatever it returned: the arguments are let go of before its
+    /// value is anybody's, before the frame it goes on as is resumed,
+    /// before its error is looked at. A panic inside it becomes a clean
     /// `VmError` instead of tearing down the current scheduler worker
     /// thread, as for a host function (`invoke_host_fn`). A host clock
     /// that has panicked, in this call or on one of the runtime's
     /// threads, fails the call: the readings the builtin got since are
     /// not real, and the waits it was woken from have not ended.
-    pub(super) fn enter_builtin(
-        &mut self,
-        id: BuiltinId,
-        args: &[Value],
-    ) -> Result<Entered, VmError> {
+    #[inline(never)]
+    pub(super) fn enter_builtin(&mut self, id: BuiltinId, at: usize) -> Result<Entered, VmError> {
         match registry().builtin(id) {
-            Some(row) => self.enter_row(row, args),
+            Some(row) => self.enter_row(row, at),
             None => Err(VmError::internal(format_args!(
                 "a call of the builtin {}, and there is none",
                 id.0
@@ -265,8 +301,8 @@ impl Vm {
         }
     }
 
-    /// Call the builtin that is `row`.
-    pub(super) fn enter_row(&mut self, row: &Row, args: &[Value]) -> Result<Entered, VmError> {
+    /// Call the builtin that is `row` ([`Vm::enter_builtin`]).
+    pub(super) fn enter_row(&mut self, row: &Row, at: usize) -> Result<Entered, VmError> {
         // (What a panic is reported under: the module, or the name of a
         // function of the prelude.)
         let owner = match row.module {
@@ -278,9 +314,11 @@ impl Vm {
             AssertUnwindSafe(|| {
                 #[cfg(any(test, feature = "test-hooks"))]
                 self.runtime.scheduler.panic_in_a_builtin_for_test();
-                row.call(self, args)
+                row.call(self, at)
             }),
-        )?;
+        );
+        self.stack.truncate(at);
+        let step = step.map_err(|error| *error)?;
         if let Some(failure) = self.runtime.io.clock_failure() {
             return Err(VmError::ending(failure));
         }

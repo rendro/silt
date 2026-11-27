@@ -103,17 +103,22 @@ fn decode_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
 ///
 /// Callers that capture `&mut Vm` (or other non-`UnwindSafe` state) should
 /// wrap the closure in [`AssertUnwindSafe`] before passing it here.
-pub(super) fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, VmError>
+/// (The error is boxed, as a row gives it: [`crate::builtins::typed::Called`].)
+// Inlined into its one caller (`Vm::enter_row`), with the row's call:
+// as calls they were a third of what a call of `string.length` costs
+// on top of its body (rustc 1.99.1, measured 2026-11-27).
+#[inline(always)]
+pub(super) fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, Box<VmError>>
 where
-    F: FnOnce() -> Result<T, VmError> + std::panic::UnwindSafe,
+    F: FnOnce() -> Result<T, Box<VmError>> + std::panic::UnwindSafe,
 {
     match crate::scheduler::catch_as_error(f) {
         Ok(result) => result,
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
-            Err(VmError::ending(format!(
+            Err(Box::new(VmError::ending(format!(
                 "builtin module '{module}' panicked: {msg}"
-            )))
+            ))))
         }
     }
 }

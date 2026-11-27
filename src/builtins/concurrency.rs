@@ -454,7 +454,7 @@ impl Native for Each {
         // message it was called with last is the last.
         if vm.takes_nothing_new() {
             self.state = EachState::Waited;
-            return Ok(Step::Park(Vm::no_wait()));
+            return Ok(Step::park(Vm::no_wait()));
         }
         // `channel.each` reads the channel to the end: what feeds it
         // works ahead. A fold may stop: it asks for one message at a time.
@@ -466,7 +466,7 @@ impl Native for Each {
             TryReceive::Closed(close) => self.ended(close),
             TryReceive::Empty => {
                 self.state = EachState::Waited;
-                Ok(Step::Park(Wait::new(vec![Arm::Recv(self.ch.clone())])))
+                Ok(Step::park(Wait::new(vec![Arm::Recv(self.ch.clone())])))
             }
         }
     }
@@ -702,13 +702,13 @@ impl Native for Deadline {
                 ])
                 .unbounded()
                 .stays();
-                return Ok(Step::Park(wait));
+                return Ok(Step::park(wait));
             }
             DeadlineState::Waiting => {
                 vm.woken()?;
                 if !self.task.has_result() {
                     self.state = DeadlineState::Over;
-                    return Ok(Step::Park(Wait::new(vec![])));
+                    return Ok(Step::park(Wait::new(vec![])));
                 }
                 // A cancel of the caller gave the task its result at
                 // once; the caller ends after the task's last step.
@@ -721,7 +721,7 @@ impl Native for Deadline {
                     let wait = Wait::new(vec![Arm::Cell(self.task.stopped())])
                         .unbounded()
                         .stays();
-                    return Ok(Step::Park(wait));
+                    return Ok(Step::park(wait));
                 }
             }
             DeadlineState::Stopping => {
@@ -733,7 +733,7 @@ impl Native for Deadline {
         // the caller ends here.
         if self.task.was_ended_by_cancel() && self.task.has_stopped() && vm.takes_nothing_new() {
             self.state = DeadlineState::Over;
-            return Ok(Step::Park(Wait::new(vec![])));
+            return Ok(Step::park(Wait::new(vec![])));
         }
         if self.task.is_expired() {
             // A clock that has panicked ended every wait that was
@@ -748,7 +748,7 @@ impl Native for Deadline {
             let inherited = self.task.deadline().zip(vm.deadline);
             if inherited.is_some_and(|(its, own)| its >= own) {
                 self.state = DeadlineState::Over;
-                return Ok(Step::Park(Wait::new(vec![])));
+                return Ok(Step::park(Wait::new(vec![])));
             }
             return timeout();
         }
@@ -943,7 +943,7 @@ impl Joined {
         // caller was stopped with them: a wait that begins now ends
         // its task.
         self.state = JoinedState::Over;
-        Ok(Step::Park(Wait::new(vec![])))
+        Ok(Step::park(Wait::new(vec![])))
     }
 }
 
@@ -964,7 +964,7 @@ impl Native for Joined {
                 let wait = Wait::new(vec![Arm::Cell(self.together.settled())])
                     .unbounded()
                     .stays();
-                Ok(Step::Park(wait))
+                Ok(Step::park(wait))
             }
             JoinedState::Settling => {
                 vm.woken()?;
@@ -973,7 +973,7 @@ impl Native for Joined {
                 let wait = Wait::new(vec![Arm::Cell(self.together.ended())])
                     .unbounded()
                     .stays();
-                Ok(Step::Park(wait))
+                Ok(Step::park(wait))
             }
             JoinedState::Ending => {
                 vm.woken()?;
@@ -1050,7 +1050,7 @@ impl Native for MapWorker {
         // outside) starts no further call: it ends here.
         if vm.takes_nothing_new() {
             self.ended = true;
-            return Ok(Step::Park(Vm::no_wait()));
+            return Ok(Step::park(Vm::no_wait()));
         }
         let at = self.mapping.next.fetch_add(1, Ordering::SeqCst);
         let Some(item) = self.mapping.xs.get(at) else {

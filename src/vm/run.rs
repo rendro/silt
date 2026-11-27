@@ -1216,8 +1216,7 @@ impl Vm {
                         give::let_go_of_copies(&mut self.stack, chunk, ip, base, args_at);
                     }
                     save!();
-                    let entered =
-                        ok!(self.with_args(args_at, |vm, args| vm.enter_builtin(builtin, args)));
+                    let entered = ok!(self.enter_builtin(builtin, args_at));
                     go_on!(self.entered(entered));
                 }
                 Instr::MakeClosure { f, captures } => {
@@ -1675,6 +1674,7 @@ impl Vm {
                     Entered::Native
                 }
                 Ok(Step::Park(wait)) => {
+                    let wait = *wait;
                     self.frames.push(Frame::Native(native));
                     // A VM that waits holds no list for the arguments of
                     // its next builtin: a program can have a hundred
