@@ -443,6 +443,10 @@ impl TypeChecker {
             }
         }
 
+        // (In one order, whatever order the clauses are written in.)
+        let mut none = vec![(); bounds.len()];
+        super::scheme::order_trait_preds(&fn_type, &mut bounds, &mut none);
+
         let written_return_only: Vec<(Symbol, TyVar)> = (param_map.iter())
             .filter(|(name, _)| !pre_return_keys.contains(*name))
             .filter_map(|(name, ty)| match ty {

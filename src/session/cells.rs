@@ -329,12 +329,7 @@ impl Cells {
                     let slots = self.slots_named(&f.body, false);
                     self.uses.insert(f.name, slots);
                 }
-                Decl::Let { pattern, value, .. } => {
-                    let slots = self.slots_named(value, true);
-                    pattern.for_each_binder(&mut |name, _, _| {
-                        self.uses.insert(name, slots.clone());
-                    });
-                }
+                Decl::Let { pattern, value, .. } => self.note_let_uses(pattern, value),
                 Decl::TraitImpl(ti) => {
                     for m in &ti.methods {
                         let slots = self.slots_named(&m.body, false);
@@ -352,6 +347,26 @@ impl Cells {
                 Decl::Type(_) | Decl::Import(..) => {}
             }
         }
+    }
+
+    /// Note what the closures of the initializer `value` of a `let`
+    /// that binds `pattern` name, for each name it binds: of a tuple
+    /// written as one (`let (a, b) = ({ -> h() }, 1)`), what its own
+    /// part names; of any other part, what all of it names.
+    fn note_let_uses(&mut self, pattern: &ast::Pattern, value: &ast::Expr) {
+        if let (ast::PatternKind::Tuple(parts), ast::ExprKind::Tuple(values)) =
+            (&pattern.kind, &value.kind)
+            && parts.len() == values.len()
+        {
+            for (part, value) in parts.iter().zip(values) {
+                self.note_let_uses(part, value);
+            }
+            return;
+        }
+        let slots = self.slots_named(value, true);
+        pattern.for_each_binder(&mut |name, _, _| {
+            self.uses.insert(name, slots.clone());
+        });
     }
 
     /// The global slots of the definitions `body` names; with
@@ -509,8 +524,12 @@ impl Cells {
 }
 
 /// Whether two schemes are one type: the same type, and the same
-/// bounds in the same order (which give a function its dictionaries),
-/// whatever numbers their variables have. A function defined again
+/// bounds, whatever numbers their variables have. The bounds that pass
+/// a dictionary are compared in order, which is the order of the
+/// dictionaries: the checker orders a scheme's bounds by the place of
+/// their variables in its type whatever the body or the `where` clauses
+/// (`order_trait_preds`), so only two bounds of one variable can come in
+/// another order. The others, which pass nothing, in any order. A function defined again
 /// with the same type takes the place of the old one for its callers,
 /// which were checked against that type and pass its dictionaries.
 /// A variable the scheme does not quantify (a type a later entry
@@ -553,13 +572,69 @@ pub(super) fn same_scheme(a: &Scheme, b: &Scheme) -> bool {
                     ..
                 },
             ) => check.unwritten() == check2.unwritten() && subject == subject2,
+            // (Where in the body the method is called is not either.)
+            (
+                Pred::Via {
+                    tr,
+                    method,
+                    receiver,
+                    method_ty,
+                    ..
+                },
+                Pred::Via {
+                    tr: tr2,
+                    method: method2,
+                    receiver: receiver2,
+                    method_ty: method_ty2,
+                    ..
+                },
+            ) => tr == tr2 && method == method2 && receiver == receiver2 && method_ty == method_ty2,
+            (
+                Pred::Given {
+                    subject,
+                    given,
+                    passer,
+                    ..
+                },
+                Pred::Given {
+                    subject: subject2,
+                    given: given2,
+                    passer: passer2,
+                    ..
+                },
+            ) => subject == subject2 && given == given2 && passer == passer2,
             _ => a == b,
         }
     }
     let ((ty, preds), (ty2, preds2)) = (canonical(a), canonical(b));
+    let traits = |preds: &[Pred]| -> Vec<Pred> {
+        (preds.iter())
+            .filter(|p| crate::typechecker::passes_dictionary(p))
+            .cloned()
+            .collect()
+    };
+    let (traits1, traits2) = (traits(&preds), traits(&preds2));
+    let others = |preds: &[Pred]| -> Vec<Pred> {
+        (preds.iter())
+            .filter(|p| !crate::typechecker::passes_dictionary(p))
+            .cloned()
+            .collect()
+    };
+    let (others1, mut others2) = (others(&preds), others(&preds2));
+    let same_others = others1.len() == others2.len()
+        && others1
+            .iter()
+            .all(|a| match others2.iter().position(|b| same_pred(a, b)) {
+                Some(at) => {
+                    others2.swap_remove(at);
+                    true
+                }
+                None => false,
+            });
     ty == ty2
-        && preds.len() == preds2.len()
-        && preds.iter().zip(&preds2).all(|(a, b)| same_pred(a, b))
+        && same_others
+        && traits1.len() == traits2.len()
+        && traits1.iter().zip(&traits2).all(|(a, b)| same_pred(a, b))
 }
 
 /// The error of the function `name`, at `span`, that a cell defines
@@ -603,7 +678,7 @@ pub(super) fn redefined_with_another_type(
             listed(&all)
         ),
     )
-    .with_note(match was == is {
+    .with_note(match was == is && was.contains('_') {
         true => format!("it was {was}, and is {is} here, where a later entry decides each '_'"),
         false => format!("it was {was}, and is {is} here"),
     })

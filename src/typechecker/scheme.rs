@@ -523,6 +523,10 @@ impl TypeChecker {
                 scheme.preds.push(bound.clone());
             }
         }
+        let mut owners = std::mem::take(&mut self.generalized_owners);
+        owners.resize(scheme.preds.len(), None);
+        order_trait_preds(&scheme.ty, &mut scheme.preds, &mut owners);
+        self.generalized_owners = owners;
         self.keep_owners(&scheme);
         scheme
     }
@@ -1588,5 +1592,45 @@ fn holds_constructor(ty: &Type) -> bool {
         Type::Container(c) => c.parts().any(holds_constructor),
         Type::Generic(_, parts) => parts.iter().any(holds_constructor),
         _ => false,
+    }
+}
+
+/// Put the trait predicates of a definition's scheme, `preds` of the
+/// type `ty`, in one order of their variables whatever order its body
+/// uses them in or its `where` clauses write them: by the place of the
+/// variable each is on among the variables of `ty` as they first
+/// appear. The bounds of one variable keep their order (as written, the
+/// messages name them so). The other predicates keep their places, and `owners`
+/// (one for each predicate) goes with them. The definition's
+/// dictionaries come in this order (`crate::evidence`): a function
+/// written again with its type in a REPL entry takes them as the callers
+/// of the old one pass them, however its body is written.
+pub(super) fn order_trait_preds<T: Clone>(ty: &Type, preds: &mut [Pred], owners: &mut [T]) {
+    let vars = free_vars_in(ty);
+    let key = |pred: &Pred| match pred {
+        Pred::Trait { subject, .. } => {
+            let at = match subject {
+                Type::Var(v) => vars.iter().position(|w| w == v),
+                Type::Rigid(r) => vars.iter().position(|w| *w == r.var),
+                _ => None,
+            };
+            Some(at.unwrap_or(usize::MAX))
+        }
+        _ => None,
+    };
+    let places: Vec<usize> = (0..preds.len())
+        .filter(|&i| matches!(preds[i], Pred::Trait { .. }))
+        .collect();
+    let mut order = places.clone();
+    order.sort_by_key(|&i| key(&preds[i]));
+    if order == places {
+        return;
+    }
+    let moved: Vec<(Pred, T)> = (order.iter())
+        .map(|&i| (preds[i].clone(), owners[i].clone()))
+        .collect();
+    for (&at, (pred, owner)) in places.iter().zip(moved) {
+        preds[at] = pred;
+        owners[at] = owner;
     }
 }

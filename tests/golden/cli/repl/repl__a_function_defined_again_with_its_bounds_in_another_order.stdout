@@ -1,0 +1,10 @@
+Silt REPL (type :quit to exit, :help for commands)
+x
+1
+x1
+NM
+M-N
+Fn(a, b) -> String where a: N, b: M
+NM
+M+N
+Fn(a, b) -> String where a: N, b: M
