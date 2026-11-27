@@ -2,10 +2,10 @@
 true
 2025-11-01T12:26:40.123456789
 Ok([1ns])
-Err(json type mismatch at byte 13: expected Int, got a number with a fraction at d.ns)
+Err(json type mismatch at line 1, column 14: expected Int, got a number with a fraction at d.ns)
 Ok(D { d: -7ns })
-Err(json missing field at byte 7: at.epoch_ns)
-Err(json type mismatch at byte 7: expected object, got string at at)
+Err(json missing field at line 1, column 8: at.epoch_ns)
+Err(json type mismatch at line 1, column 8: expected object, got string at at)
 Ok(W { at: Instant { epoch_ns: 1 } })
 true
 Ok("[at]\nepoch_ns = 1762000000123456789\n\n[d]\nns = 3000000000\n\n[[ds]]\nns = 5000000\n")

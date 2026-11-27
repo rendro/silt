@@ -1,4 +1,4 @@
-Err(toml syntax error at byte 4: a value is missing at the end of the line)
-Err(toml syntax error at byte 6: a value is missing at the end of the line)
-Err(toml syntax error at byte 4: a value is missing at the end of the line)
-Err(toml syntax error at byte 4: invalid string: expected `"`, `'`)
+Err(toml syntax error at line 1, column 5: a value is missing at the end of the line)
+Err(toml syntax error at line 1, column 7: a value is missing at the end of the line)
+Err(toml syntax error at line 1, column 5: a value is missing at the end of the line)
+Err(toml syntax error at line 1, column 5: invalid string: expected `"`, `'`)

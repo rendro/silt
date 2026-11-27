@@ -370,6 +370,7 @@ io.read_file(path: String) -> Result(String, IoError)
 io.read_line() -> Result(Option(String), IoError)
 io.read_stdin() -> Result(String, IoError)
 io.read_stdin_bytes() -> Result(Bytes, IoError)
+io.stdin_is_terminal() -> Bool
 io.write_bytes(path: String, contents: Bytes) -> Result((), IoError)
 io.write_file(path: String, contents: String) -> Result((), IoError)
 ```
@@ -425,6 +426,10 @@ int.abs(n: Int) -> Int
 int.bit_and(a: Int, b: Int) -> Int
 int.bit_or(a: Int, b: Int) -> Int
 int.bit_xor(a: Int, b: Int) -> Int
+int.checked_add(a: Int, b: Int) -> Option(Int)
+int.checked_div(a: Int, b: Int) -> Option(Int)
+int.checked_mul(a: Int, b: Int) -> Option(Int)
+int.checked_sub(a: Int, b: Int) -> Option(Int)
 int.clamp(x: Int, lo: Int, hi: Int) -> Int
 int.max(a: Int, b: Int) -> Int
 int.max_value: Int
@@ -626,7 +631,7 @@ regex.split(text: String, re: Regex) -> List(String)
 ### json
 
 ```
-type JsonError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }
+type JsonError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int) }
 type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }
 trait Encode { fn encode(self) -> Value }
 trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
@@ -640,7 +645,7 @@ json.stringify(value: a) -> String where a: Encode
 ### toml
 
 ```
-type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }
+type TomlError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int), UnknownField(String, List(String), Int, Int, Int) }
 toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
 toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode
@@ -954,6 +959,7 @@ process.stop_signals() -> Channel(Signal)
 type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
 csv.join_line(fields: List(String)) -> String
 csv.parse(text: String, type a) -> Result(List(a), CsvError)
+csv.parse_with(text: String, columns: Map(String, String), type a) -> Result(List(a), CsvError)
 csv.split_line(line: String) -> Result(List(String), CsvError)
 csv.stringify(rows: List(a)) -> String
 ```

@@ -16,14 +16,14 @@ trait json.Decode for P {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     println("  impl P {value}")
     match value {
-      json.String("bad") -> Err(json.Other("P refuses bad", 0))
+      json.String("bad") -> Err(json.Other("P refuses bad", 0, 0, 0))
       json.String(s) -> Ok(P { s: s })
       json.Int(n) -> Ok(P { s: "{n}" })
       json.Object(m) -> match json.decode(json.Object(m), Inner) {
         Ok(inner) -> Ok(P { s: "obj {inner.a}" })
         Err(e) -> Err(e)
       }
-      _ -> Err(json.TypeMismatch("string", "other", 0))
+      _ -> Err(json.TypeMismatch("string", "other", 0, 0, 0))
     }
   }
 }
@@ -37,7 +37,7 @@ trait json.Decode for Q {
     println("  impl Q {value}")
     match value {
       json.Int(n) -> Ok(Qb(n))
-      json.Null -> Err(json.MissingField("q", 0))
+      json.Null -> Err(json.MissingField("q", 0, 0, 0))
       _ -> Ok(Qa)
     }
   }

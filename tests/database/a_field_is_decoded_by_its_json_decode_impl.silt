@@ -20,7 +20,7 @@ trait json.Decode for Tags {
     match value {
       json.String(text) -> Ok(Tags { s: set.from_list([text]) })
       json.Array(items) -> Ok(Tags { s: set.from_list(list.map(items) { item -> "{item}" }) })
-      _ -> Err(json.Other("tags are a string or an array", 0))
+      _ -> Err(json.Other("tags are a string or an array", 0, 0, 0))
     }
   }
 }
@@ -34,7 +34,7 @@ trait json.Decode for Level {
         true -> Ok(High)
         false -> Ok(Low)
       }
-      _ -> Err(json.TypeMismatch("a level", "no number", 0))
+      _ -> Err(json.TypeMismatch("a level", "no number", 0, 0, 0))
     }
   }
 }

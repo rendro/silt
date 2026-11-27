@@ -1,0 +1,31 @@
+-- csv.parse_with reads each field the map names from the column the map
+-- gives for it, every other field from the column of its own name; a
+-- header no field can be named after (Date, Amount (USD)) is read.
+import csv
+
+type Row { date: String, description: String, amount: String }
+type Typed { date: String, amount: Float, note: Option(String) }
+type Two { a: String, b: String }
+
+fn main() {
+  let text = "Date,Description,Amount\n2026-01-02,Coffee,-3.50\n"
+  -- csv.parse matches the field names exactly, so the fields find no column.
+  println(csv.parse(text, Row))
+  println(csv.parse_with(text, #{"date": "Date", "description": "Description", "amount": "Amount"}, Row))
+  -- Fields the map leaves out read the column of their own name; a column
+  -- no field reads is passed over; an Option field with no column is None.
+  let bank = "Posting Date,Amount (USD),description\n2026-01-02,-3.50,Coffee\n2026-01-03,x,Tea\n"
+  println(csv.parse_with("Posting Date,Amount (USD)\n2026-01-02,-3.5\n", #{"date": "Posting Date", "amount": "Amount (USD)"}, Typed))
+  -- An error of a cell names the column as the header writes it.
+  println(csv.parse_with(bank, #{"date": "Posting Date", "amount": "Amount (USD)"}, Typed))
+  -- A column the header lacks is the column the map gives.
+  println(csv.parse_with("Date,amount\n1,2\n", #{"date": "Posting Date"}, Typed))
+  -- The map's names are matched exactly too.
+  println(csv.parse_with(" Posting Date,amount\n1,2\n", #{"date": "Posting Date"}, Typed))
+  -- Two fields may read one column.
+  println(csv.parse_with("X\n1\n2\n", #{"a": "X", "b": "X"}, Two))
+  -- A column of a field's name that the map sends elsewhere is not read.
+  println(csv.parse_with("a,b,date\n1,2,3\n", #{"a": "date"}, Two))
+  println(csv.parse_with("a,b\n1,2\n", #{}, Two))
+  println(csv.parse_with("", #{"a": "A"}, Two))
+}

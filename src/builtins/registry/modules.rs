@@ -89,6 +89,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn read_line() -> Result(Option(String), IoError)", "Read one line from stdin, or None at its end", io::read_line),
                 f("fn read_stdin() -> Result(String, IoError)", "Read all of stdin as a string", io::read_stdin),
                 f("fn read_stdin_bytes() -> Result(Bytes, IoError)", "Read all of stdin as bytes", io::read_stdin_bytes),
+                f("fn stdin_is_terminal() -> Bool", "True when stdin is a terminal, false for a file or a pipe", io::stdin_is_terminal),
                 f("fn write_bytes(path: String, contents: Bytes) -> Result((), IoError)", "Write bytes to file", io::write_bytes),
                 f("fn write_file(path: String, contents: String) -> Result((), IoError)", "Write string to file", io::write_file),
             ],
@@ -149,6 +150,10 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn bit_and(a: Int, b: Int) -> Int", "The bits set in both", int::bit_and),
                 f("fn bit_or(a: Int, b: Int) -> Int", "The bits set in either", int::bit_or),
                 f("fn bit_xor(a: Int, b: Int) -> Int", "The bits set in one but not both", int::bit_xor),
+                f("fn checked_add(a: Int, b: Int) -> Option(Int)", "`a + b`, or None where the sum is no Int", int::checked_add),
+                f("fn checked_div(a: Int, b: Int) -> Option(Int)", "`a / b` rounded down, or None for a division by zero or a quotient that is no Int", int::checked_div),
+                f("fn checked_mul(a: Int, b: Int) -> Option(Int)", "`a * b`, or None where the product is no Int", int::checked_mul),
+                f("fn checked_sub(a: Int, b: Int) -> Option(Int)", "`a - b`, or None where the difference is no Int", int::checked_sub),
                 f("fn clamp(x: Int, lo: Int, hi: Int) -> Int", "Clamp value to `[lo, hi]`", int::clamp),
                 f("fn max(a: Int, b: Int) -> Int", "Larger of two values", int::max),
                 f("fn min(a: Int, b: Int) -> Int", "Smaller of two values", int::min),
@@ -371,7 +376,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "json",
             page: "json.md",
             types: "\
-                pub type JsonError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }\n\
+                pub type JsonError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int) }\n\
                 pub type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }\n\
             ",
             traits: "\
@@ -391,7 +396,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "toml",
             page: "toml.md",
             types: "\
-                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }\n\
+                pub type TomlError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int), UnknownField(String, List(String), Int, Int, Int) }\n\
             ",
             error: "TomlError" => toml::error_text,
             rows: [
@@ -754,6 +759,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 f("fn parse(text: String, type a) -> Result(List(a), CsvError)", "Every row of a text with a header as a record of the type, its fields by their columns' names", csv::parse).decodes(Decoding::CSV),
                 f("fn join_line(fields: List(String)) -> String", "The fields as one line: a field with a comma, a quote or a line break quoted, its quotes doubled", csv::join_line),
+                f("fn parse_with(text: String, columns: Map(String, String), type a) -> Result(List(a), CsvError)", "As `csv.parse`, each field the map names read from the column the map gives for it", csv::parse_with).decodes(Decoding::CSV),
                 f("fn split_line(line: String) -> Result(List(String), CsvError)", "The fields of one line: quoted fields and `\"\"` escapes as RFC 4180 writes them", csv::split_line),
                 f("fn stringify(rows: List(a)) -> String", "A header of the field names, then a line for each record: the text `csv.parse` reads back", csv::stringify).writes(Decoding::CSV),
             ],

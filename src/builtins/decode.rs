@@ -102,11 +102,15 @@ pub(crate) enum Seg {
 /// is about (of a missing field, the table it is missing from), and the
 /// byte offset of that value in the text, once the reader of a text has
 /// found it there ([`Error::locate`]; 0 until then, and for a
-/// `json.Value`, which has no text).
+/// `json.Value`, which has no text), with its line and column
+/// ([`Error::count_lines`]; 0 where it has no place in a text).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Where {
     pub(crate) path: Vec<Seg>,
     pub(crate) offset: usize,
+    /// The 1-based line and character column of `offset`.
+    pub(crate) line: usize,
+    pub(crate) column: usize,
     /// Whether the error is about the key at the end of the path, not
     /// its value: a key no field names is found where the key is.
     pub(crate) key: bool,
@@ -118,6 +122,8 @@ impl Where {
         Where {
             path: at.path(),
             offset: 0,
+            line: 0,
+            column: 0,
             key: false,
         }
     }
@@ -877,9 +883,10 @@ pub(crate) enum Error {
     MissingField(std::string::String, Where),
     /// `Other(message)`.
     Other(std::string::String, Where),
-    /// `UnknownField(path)`: a key of a record's table that no field of
-    /// the record names, where the format refuses one ([`Rules::unknown`]).
-    UnknownField(std::string::String, Where),
+    /// `UnknownField(path, expected)`: a key of a record's table that no
+    /// field of the record names, where the format refuses one
+    /// ([`Rules::unknown`]), and the keys the table takes.
+    UnknownField(std::string::String, Vec<std::string::String>, Where),
     /// A value was present for a type no decoder exists for (the type as
     /// written): [`record`] turns it into an `Other` that names the field
     /// whose type it is.
@@ -912,7 +919,7 @@ impl Error {
             Error::TypeMismatch(_, _, at)
             | Error::MissingField(_, at)
             | Error::Other(_, at)
-            | Error::UnknownField(_, at)
+            | Error::UnknownField(_, _, at)
             | Error::Given(_, at) => Some(at),
             Error::Unsupported(_) => None,
         }
@@ -924,6 +931,14 @@ impl Error {
     pub(crate) fn locate(&mut self, find: impl FnOnce(&[Seg], bool) -> usize) {
         if let Some(at) = self.place_mut() {
             at.offset = find(&at.path, at.key);
+        }
+    }
+
+    /// The error with the line and the column of its offset in `text`,
+    /// the text its offset was found in ([`Error::locate`]).
+    pub(crate) fn count_lines(&mut self, text: &[u8]) {
+        if let Some(at) = self.place_mut() {
+            (at.line, at.column) = line_column(text, at.offset);
         }
     }
 
@@ -939,10 +954,11 @@ impl Error {
     pub(crate) fn variant(self, rules: &Rules) -> Value {
         let [mismatch, missing, other] = rules.errors;
         let string = |s: std::string::String| Value::string(s);
-        // (The offset, last, where the format's errors have one.)
+        // (The offset, the line and the column, last, where the format's
+        // errors have them.)
         let fields = |mut fields: Vec<Value>, at: &Where| {
             if rules.offsets {
-                fields.push(Value::Int(at.offset as i64));
+                fields.extend(place(at.offset, at.line, at.column));
             }
             fields
         };
@@ -955,22 +971,25 @@ impl Error {
                 Value::variant(missing, fields(vec![string(path)], &at))
             }
             Error::Other(message, at) => Value::variant(other, fields(vec![string(message)], &at)),
-            Error::UnknownField(path, at) => match rules.unknown {
-                Some(unknown) => Value::variant(unknown, fields(vec![string(path)], &at)),
+            Error::UnknownField(path, expected, at) => match rules.unknown {
+                Some(unknown) => {
+                    let expected = Value::list(expected.into_iter().map(string).collect());
+                    Value::variant(unknown, fields(vec![string(path), expected], &at))
+                }
                 // (Only a format that refuses such a key has the error.)
                 None => Value::variant(
                     other,
                     fields(vec![string(format!("unknown field {path}"))], &at),
                 ),
             },
-            // An impl's error is placed at its part: what offset the impl
-            // gave, it read no text.
+            // An impl's error is placed at its part: what offset, line
+            // and column the impl gave, it read no text.
             Error::Given(error, at) => match &error {
-                Value::Variant(given) if rules.offsets => {
+                Value::Variant(given) if rules.offsets && given.fields().len() >= 3 => {
                     let mut fields = given.fields().to_vec();
-                    if let Some(offset @ Value::Int(_)) = fields.last_mut() {
-                        *offset = Value::Int(at.offset as i64);
-                    }
+                    let own = fields.len() - 3;
+                    fields.truncate(own);
+                    fields.extend(place(at.offset, at.line, at.column));
                     Value::variant(given.tag(), fields)
                 }
                 _ => error,
@@ -989,6 +1008,38 @@ impl Error {
         }
     }
 }
+
+/// The 1-based line and the 1-based column, counted in characters, of
+/// the byte `offset` of `text` (as silt's own errors count them); a
+/// byte order mark at the start is no column. An offset past the end is
+/// the end.
+pub(crate) fn line_column(text: &[u8], offset: usize) -> (usize, usize) {
+    let before = &text[..offset.min(text.len())];
+    let line_start = before
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |at| at + 1);
+    let line = 1 + before.iter().filter(|b| **b == b'\n').count();
+    let mut part = &before[line_start..];
+    if line_start == 0 {
+        part = part.strip_prefix("\u{feff}".as_bytes()).unwrap_or(part);
+    }
+    // (A byte that starts a character: no continuation byte.)
+    let column = 1 + part.iter().filter(|b| (**b & 0xC0) != 0x80).count();
+    (line, column)
+}
+
+/// The last three fields of a `JsonError` and a `TomlError`: the byte
+/// `offset` and its `line` and `column` (0 and 0 where it has no place
+/// in a text).
+pub(crate) fn place(offset: usize, line: usize, column: usize) -> [Value; 3] {
+    let int = |n: usize| Value::Int(i64::try_from(n).unwrap_or(i64::MAX));
+    [int(offset), int(line), int(column)]
+}
+
+/// The place of an error of no place in a text: `toml.stringify`'s, or
+/// one of a `json.Value` (`json.decode`).
+pub(crate) const NO_PLACE: [Value; 3] = [Value::Int(0), Value::Int(0), Value::Int(0)];
 
 /// `Ok` of the value `decoded`, or `Err` of its error in the format of
 /// `rules`.
@@ -1191,7 +1242,7 @@ mod tests {
             Err(Error::TypeMismatch(_, actual, _)) => format!("TypeMismatch at {}", path(&actual)),
             Err(Error::MissingField(at, _)) => format!("MissingField {at}"),
             Err(Error::Other(message, _)) => format!("Other {message}"),
-            Err(Error::UnknownField(at, _)) => format!("UnknownField {at}"),
+            Err(Error::UnknownField(at, _, _)) => format!("UnknownField {at}"),
             Err(Error::Unsupported(declared)) => format!("Unsupported {declared}"),
             Err(Error::Given(error, _)) => format!("Given {error}"),
         }
@@ -1417,5 +1468,27 @@ mod tests {
             shown(&F::JsonValue, "[1, 2.5]", "v = [1, 2.5]"),
             ["V { v: Array([Int(1), Float(2.5)]) }"; 2]
         );
+    }
+
+    /// Lines and columns count from 1, columns in characters; a byte
+    /// order mark is no column; an offset past the end is the end.
+    #[test]
+    fn a_byte_has_its_line_and_character_column() {
+        let line_column = super::line_column;
+        let text = "ab\nλx\r\n\ny".as_bytes();
+        assert_eq!(line_column(text, 0), (1, 1));
+        assert_eq!(line_column(text, 2), (1, 3));
+        assert_eq!(line_column(text, 3), (2, 1));
+        // `λ` is two bytes, one column.
+        assert_eq!(line_column(text, 5), (2, 2));
+        assert_eq!(line_column(text, 6), (2, 3));
+        assert_eq!(line_column(text, 8), (3, 1));
+        assert_eq!(line_column(text, 9), (4, 1));
+        assert_eq!(line_column(text, 10), (4, 2));
+        assert_eq!(line_column(text, 99), (4, 2));
+        let marked = "\u{feff}ab".as_bytes();
+        assert_eq!(line_column(marked, 3), (1, 1));
+        assert_eq!(line_column(marked, 4), (1, 2));
+        assert_eq!(line_column(b"", 0), (1, 1));
     }
 }

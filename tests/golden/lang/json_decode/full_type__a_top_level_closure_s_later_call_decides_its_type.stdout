@@ -1,3 +1,3 @@
 Ok(Box { v: 2 })
-Err(json type mismatch at byte 6: expected Int, got string at v)
+Err(json type mismatch at line 1, column 7: expected Int, got string at v)
 Ok(Box { v: 3 })

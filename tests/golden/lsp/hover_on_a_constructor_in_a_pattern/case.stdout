@@ -2,7 +2,7 @@
 135:14 warning 'y' is never used\nhelp: remove it, or name it `_y`
 > hover 74:14
 ```silt
-Fn(String, Int) -> json.JsonError
+Fn(String, Int, Int, Int) -> json.JsonError
 ```
 
 ---
@@ -11,10 +11,10 @@ A variant of `json.JsonError`, reached as `json.Syntax`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong JSON type for target |
-| `MissingField(String, Int)` | the field's path, byte offset of its object | required field absent |
-| `Other(String, Int)` | message, byte offset | unclassified parse failure |
+| `Syntax(String, Int, Int, Int)` | message, byte offset, line, column | syntactically invalid JSON |
+| `TypeMismatch(String, String, Int, Int, Int)` | expected, actual (ending with the value's path), byte offset, line, column | wrong JSON type for target |
+| `MissingField(String, Int, Int, Int)` | the field's path, byte offset, line and column of its object | required field absent |
+| `Other(String, Int, Int, Int)` | message, byte offset, line, column | unclassified parse failure |
 > hover 74:21
 ```silt
 String
@@ -25,7 +25,7 @@ Int
 ```
 > hover 75:14
 ```silt
-Fn(String, Int) -> json.JsonError
+Fn(String, Int, Int, Int) -> json.JsonError
 ```
 
 ---
@@ -34,10 +34,10 @@ A variant of `json.JsonError`, reached as `json.MissingField`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong JSON type for target |
-| `MissingField(String, Int)` | the field's path, byte offset of its object | required field absent |
-| `Other(String, Int)` | message, byte offset | unclassified parse failure |
+| `Syntax(String, Int, Int, Int)` | message, byte offset, line, column | syntactically invalid JSON |
+| `TypeMismatch(String, String, Int, Int, Int)` | expected, actual (ending with the value's path), byte offset, line, column | wrong JSON type for target |
+| `MissingField(String, Int, Int, Int)` | the field's path, byte offset, line and column of its object | required field absent |
+| `Other(String, Int, Int, Int)` | message, byte offset, line, column | unclassified parse failure |
 > hover 75:27
 ```silt
 String

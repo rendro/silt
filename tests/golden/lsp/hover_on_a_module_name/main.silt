@@ -51,7 +51,7 @@ fn send(x: a) -> String where a: json.Encode + shapes.Area {
 fn read(text: String) -> Int {
   match json.parse(text, Box) {
     Ok(b) -> b.w
-    Err(json.Syntax(_, at)) -> at
+    Err(json.Syntax(_, at, _, _)) -> at
     Err(_) -> 0
   }
 }

@@ -425,6 +425,8 @@ mod tests {
                     "String" => "\"\"".to_string(),
                     "Int" => "1".to_string(),
                     "Value" => "json.Null".to_string(),
+                    // (`csv.parse_with`'s map of columns.)
+                    "Map(String, String)" => "#{}".to_string(),
                     "PgTx" => "tx".to_string(),
                     // The connection, a pool; the parameters, none.
                     "a" => "db".to_string(),

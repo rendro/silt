@@ -86,7 +86,7 @@ fn main() {
   -- "nikc" and "m" name no field: skipped
   let text = """{"name": "Ann", "nikc": "A", "inner": {"n": 1, "m": 2}}"""
   println(json.parse(text, Out)) -- Ok(Out { name: "Ann", inner: Inner { n: 1 }, nick: None })
-  println(json.parse("""{"nmae": "Ann", "inner": {"n": 1}}""", Out)) -- Err(json missing field at byte 0: name)
+  println(json.parse("""{"nmae": "Ann", "inner": {"n": 1}}""", Out)) -- Err(json missing field at line 1, column 1: name)
 }
 ```
 
@@ -103,7 +103,7 @@ stored as UTC:
 
 A value that is no string is a `TypeMismatch` that names the field's type,
 as for an `Int` field: `{"d": 1}` for a `Date` field `d` is
-`Err(TypeMismatch("time.Date", "number at d", _))`.
+`Err(TypeMismatch("time.Date", "number at d", ..))`.
 
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an

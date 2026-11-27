@@ -98,7 +98,8 @@ let ch = channel.new(10)
 ```
 
 `channel.new(n)` takes the channel's capacity: 0 makes a rendezvous channel,
-more makes a buffer of that many values. Channels carry any value type,
+more makes a buffer of that many values. The capacity is a limit, not memory
+taken up front: a channel holds only what is in it, up to 10,000,000 values. Channels carry any value type,
 even other channels; the type is inferred from usage.
 ([`channel.new`](stdlib/channel-task.md#channelnew))
 

@@ -30,7 +30,7 @@ trait json.Decode for Tags {
         Ok(Tags { s: set.from_list(names) })
       }
       json.Object(members) -> Ok(Tags { s: set.from_list(map.keys(members)) })
-      _ -> Err(json.TypeMismatch("tags", "something else", 0))
+      _ -> Err(json.TypeMismatch("tags", "something else", 0, 0, 0))
     }
   }
 }

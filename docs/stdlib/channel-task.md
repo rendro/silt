@@ -157,12 +157,16 @@ blocks until a receiver is ready and vice versa. With a larger capacity it is
 buffered: sends block when the buffer is full, receives block when the buffer
 is empty. A negative capacity is an error.
 
+The capacity is a limit, not memory taken up front: a channel holds only what
+is in it. The largest capacity is 10,000,000.
+
 ```silt
 import channel
 
 fn main() {
   let _rendezvous = channel.new(0) -- true rendezvous (capacity 0)
   let _buffered = channel.new(10) -- buffered (capacity 10)
+  let _large = channel.new(10_000_000) -- as small as the other two while empty
 }
 ```
 

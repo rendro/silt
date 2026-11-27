@@ -1,5 +1,5 @@
 Ok("resize to 3x4")
-Err(json missing field at byte 0: height)
-Err(json type mismatch at byte 0: expected object, got array)
+Err(json missing field: height)
+Err(json type mismatch: expected object, got array)
 Ok("ignored quit")
-Err(json missing field at byte 0: data)
+Err(json missing field at line 1, column 1: data)

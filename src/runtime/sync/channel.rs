@@ -496,6 +496,13 @@ impl Channel {
         (open(&state.recvq), open(&state.sendq))
     }
 
+    /// How many values the buffer has room for without growing: what
+    /// the channel's memory holds for values, whatever its capacity.
+    #[cfg(test)]
+    pub(super) fn buffer_room(&self) -> usize {
+        self.state.lock().buf.capacity()
+    }
+
     /// How many feeders wait here to be asked for a value.
     #[cfg(test)]
     pub(crate) fn feeders(&self) -> usize {

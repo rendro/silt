@@ -12,7 +12,8 @@ writes them. Fields are separated by commas, records end at a line break
 quoted, `"Smith, John"`, and a quote inside a quoted field is doubled:
 `"say ""hi"""` is `say "hi"`. `string.split(line, ",")` breaks such a field
 in two; `csv.split_line` does not, and `csv.parse` reads a whole text into
-a list of records, as `json.parse` reads a document into a type. The other
+a list of records, as `json.parse` reads a document into a type
+(`csv.parse_with` where a column's name can be no field's, `Posting Date`). The other
 way, `csv.stringify` writes a list of records as a text that `csv.parse`
 reads back, and `csv.join_line` writes one line that `csv.split_line` reads
 back, quoting what needs it.
@@ -23,6 +24,7 @@ back, quoting what needs it.
 |----------|-----------|-------------|
 | `join_line` | `(List(String)) -> String` | The fields as one line: a field with a comma, a quote or a line break quoted, its quotes doubled |
 | `parse` | `(String, type a) -> Result(List(a), CsvError)` | Every row of a text with a header as a record of the type, its fields by their columns' names |
+| `parse_with` | `(String, Map(String, String), type a) -> Result(List(a), CsvError)` | As `csv.parse`, each field the map names read from the column the map gives for it |
 | `split_line` | `(String) -> Result(List(String), CsvError)` | The fields of one line: quoted fields and `""` escapes as RFC 4180 writes them |
 | `stringify` | `(List(a)) -> String` | A header of the field names, then a line for each record: the text `csv.parse` reads back |
 
@@ -31,8 +33,8 @@ back, quoting what needs it.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(msg, offset)` | `String`, `Int` | Malformed CSV, `offset` being the 0-based byte of the text where it goes wrong: the opening quote of a quoted field that is not closed, the first byte after a closing quote that is no comma and no line end; for `csv.parse` also a row with another number of fields than the header (at the row's first byte) and a header that names a column twice. A message of `csv.parse` begins with the line (`line 3: ...`) |
-| `TypeMismatch(expected, got)` | `String`, `String` | `csv.parse`: a cell that is no value of its field's type, `got` the cell and where (`'abc' at line 3, column age`) |
-| `MissingField(name)` | `String` | `csv.parse`: the header has no column for a field that is no `Option` |
+| `TypeMismatch(expected, got)` | `String`, `String` | `csv.parse`, `csv.parse_with`: a cell that is no value of its field's type, `got` the cell and where (`'abc' at line 3, column age`) |
+| `MissingField(name)` | `String` | `csv.parse`, `csv.parse_with`: the header has no column for a field that is no `Option`; `name` is the column the field reads (for `csv.parse`, the field's name) |
 | `Other(msg)` | `String` | unclassified failure |
 
 A `CsvError` is shown as its message: `"{e}"` of a
@@ -138,6 +140,61 @@ fn main() {
   match csv.parse("name,age\nBob,old\n", Person) {
     Ok(_) -> println("read")
     Err(e) -> println("{e}") -- csv type mismatch: expected Int, got 'old' at line 2, column age
+  }
+}
+```
+
+## `csv.parse_with`
+
+```
+csv.parse_with(text: String, columns: Map(String, String), type a) -> Result(List(a), CsvError)
+```
+
+Reads a CSV text as `csv.parse` does, but each field that `columns` names
+is read from the column the map gives for it: `#{"date": "Posting Date"}`
+reads the field `date` from the column `Posting Date`. A field the map
+does not name is read from the column of its own name, as `csv.parse`
+reads it. This reads a header that can never be a field's name: a
+capital letter (`Date`), a space or a bracket (`Amount (USD)`). Column
+names are still matched exactly, the map's as the fields' own, and two
+fields may read one column.
+
+A key of the map that is no field of the type is a runtime error
+(``csv.parse_with: the map names the field `dtae`, and Row has no field
+of that name``): the map is the program's, not the text's. A column the
+header lacks, of a field that is no `Option`, is `Err(MissingField(column))`,
+the column's name as the map gives it; an error of a cell names its column
+as the header writes it (`at line 3, column Amount (USD)`). Everything
+else is as for `csv.parse`: the types of the fields, the errors, the
+blank lines and the byte order mark.
+
+| Function | Type argument |
+|----------|---------------|
+| `csv.parse_with` | a record type |
+
+```silt
+import csv
+import list
+
+type Row {
+  date: String,
+  description: String,
+  amount: Float,
+}
+
+fn main() {
+  let text = "Date,Description,Amount (USD)\n2026-01-02,Coffee,-3.50\n2026-01-03,Rent,-950\n"
+  let columns = #{ "date": "Date", "description": "Description", "amount": "Amount (USD)" }
+  match csv.parse_with(text, columns, Row) {
+    Ok(rows) -> list.each(rows) { r -> println("{r.date} {r.description} {r.amount}") }
+    Err(e) -> println("{e}")
+  }
+  -- 2026-01-02 Coffee -3.5
+  -- 2026-01-03 Rent -950.0
+  println(csv.parse(text, Row)) -- Err(csv missing field: date)
+  match csv.parse_with("Date,Description,Amount (USD)\n2026-01-02,Tea,two\n", columns, Row) {
+    Ok(_) -> println("read")
+    Err(e) -> println("{e}") -- csv type mismatch: expected Float, got 'two' at line 2, column Amount (USD)
   }
 }
 ```

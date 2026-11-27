@@ -11,7 +11,7 @@ trait json.Decode for Box(a) where a: json.Decode {
         Ok(v) -> Ok(Box { v: v })
         Err(e) -> Err(e)
       }
-      _ -> Err(json.Other("not a box", 0))
+      _ -> Err(json.Other("not a box", 0, 0, 0))
     }
   }
 }

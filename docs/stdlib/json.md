@@ -28,31 +28,36 @@ show it with `"{e}"` when you just want a rendered string:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON, `offset` being the 0-based byte of the text where reading stopped (the text's length when it ends too soon), or a number beyond `Float`'s range (`1e400`: `number out of range`) |
-| `TypeMismatch(expected, actual, offset)` | `String`, `String`, `Int` | A value's JSON type did not match the type it decodes into; `actual` ends with the value's path, `offset` is the byte where the value starts |
-| `MissingField(name, offset)` | `String`, `Int` | A required (non-`Option`) field was absent; `name` is its path, `offset` the byte where the object it is missing from starts |
-| `Other(msg, offset)` | `String`, `Int` | Anything else: a tuple's array of the wrong length, a date that is none, a value too deep for `json.decode`; `offset` is the byte where the value starts |
+| `Syntax(msg, offset, line, column)` | `String`, `Int`, `Int`, `Int` | Malformed JSON, `offset` being the 0-based byte of the text where reading stopped (the text's length when it ends too soon), or a number beyond `Float`'s range (`1e400`: `number out of range`) |
+| `TypeMismatch(expected, actual, offset, line, column)` | `String`, `String`, `Int`, `Int`, `Int` | A value's JSON type did not match the type it decodes into; `actual` ends with the value's path, `offset` is the byte where the value starts |
+| `MissingField(name, offset, line, column)` | `String`, `Int`, `Int`, `Int` | A required (non-`Option`) field was absent; `name` is its path, `offset` the byte where the object it is missing from starts |
+| `Other(msg, offset, line, column)` | `String`, `Int`, `Int`, `Int` | Anything else: a tuple's array of the wrong length, a date that is none, a value too deep for `json.decode`; `offset` is the byte where the value starts |
 
 An error about a value of the document ends with the path of that value:
 the fields of a record and the keys of a map by name (`inner.a`), a key
 that is not made of ASCII letters, digits, `_` and `-` as a JSON string in
 brackets (`tags["a b"]`), and the elements of a list or a tuple by index
 (`xs[1]`; `[2]` for an element of a list the document is).
-`TypeMismatch("Int", "string at inner.a", _)` reads `json type mismatch at byte
-<offset>: expected Int, got string at inner.a`; a missing field is `MissingField("inner.a", _)`;
+`TypeMismatch("Int", "string at inner.a", ..)` reads `json type mismatch at line
+<line>, column <column>: expected Int, got string at inner.a`; a missing field is `MissingField("inner.a", ..)`;
 an `Other` about a value (a tuple of the wrong length, a date that is none)
 ends with ` at <path>`. An error about the document itself, such as a
 `Syntax` error or an array where a record is expected, has no path.
 
-Every error says where in the text its value is, as a 0-based byte
-offset, its last field: `Syntax` where reading stopped, the others where
-the value starts (for `MissingField`, the object the field is missing
-from; 0 for the document). A `TypeMismatch` and a `MissingField` show it
-(`json type mismatch at byte 23: expected List, got number at tags`), an
-`Other` shows its message alone. `json.decode` reads no text: its
-offsets are 0. A `json.Decode` impl's error is placed at the part the
-impl was given, whatever offset the impl wrote (write 0). A byte order
-mark before the document is counted.
+Every error says where in the text its value is, in its last three
+fields: the 0-based byte `offset`, and its `line` and `column`, both
+counted from 1, the column in characters (as silt's own errors count
+them). `Syntax` is where reading stopped, the others where the value
+starts (for `MissingField`, the object the field is missing from; the
+start of the document for the document). A `Syntax`, a `TypeMismatch` and
+a `MissingField` show the line and the column (`json type mismatch at line
+3, column 11: expected List, got number at tags`), an `Other` shows its
+message alone; the byte is for a program that cuts the text. `json.decode`
+reads no text: its errors' offset, line and column are 0, and they show
+no place (`json type mismatch: expected Int, got string at x`). A
+`json.Decode` impl's error is placed at the part the impl was given,
+whatever place the impl wrote (write `0, 0, 0`). A byte order mark before
+the document is counted in the byte, and is no column.
 
 See [stdlib errors](errors.md) for how every error enum is shown.
 
@@ -164,7 +169,7 @@ fn main() {
   println(through(r, "7", Option(Int))) -- Ok(Some(Some(7)))
   match boxed(r, """{"items": [7]}""", Option(Int)) {
     Ok(_) -> println("read")
-    Err(json.Other(why, _)) -> println(why) -- cannot decode field `items` of `Box`: a value of type List(Option(Option(Int))) cannot be decoded
+    Err(json.Other(why, _, _, _)) -> println(why) -- cannot decode field `items` of `Box`: a value of type List(Option(Option(Int))) cannot be decoded
     Err(e) -> println(e)
   }
 }
@@ -175,7 +180,7 @@ Option(Int))`, are refused when the program is checked.
 
 A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
-that range, is `Err(TypeMismatch("Int", ..., _))`: nothing is cut off or rounded.
+that range, is `Err(TypeMismatch("Int", ..., ..))`: nothing is cut off or rounded.
 `json.decode` reads a `json.Value`'s numbers as `json.parse` holds them: a
 `json.Int` goes into an `Int`, and a `json.Float` into no `Int`, whatever its
 value (`json.decode(json.Float(2.0), Int)` is an `Err`), so a value decodes as
@@ -228,17 +233,17 @@ the error of a record does (here of an enum at the top):
 
 | Document | Error |
 |----------|-------|
-| a string the enum has no variant of | ``Other("`Status` has no variant `Gone`", _)`` |
-| the name of a variant with fields | ``Other("variant `Paused` of `Status` has 1 field, got 0", _)`` |
-| no string and no object (a number, an array) | `TypeMismatch("String or object", "number", _)` |
-| an object that names a variant without fields | `TypeMismatch("String", "object", _)` |
-| an object without a `"variant"` key | `MissingField("variant", _)` |
-| an object without a `"fields"` key | `MissingField("fields", _)` |
-| a `"variant"` that is no string | `TypeMismatch("String", "number at variant", _)` |
-| a `"variant"` the enum has no variant of | ``Other("`Status` has no variant `Gone` at variant", _)`` |
-| `"fields"` that is no array | `TypeMismatch("array", "number at fields", _)` |
-| the wrong number of fields | ``Other("variant `Paused` of `Status` has 1 field, got 2 at fields", _)`` |
-| a field of the wrong type | the error of a value of that type, such as `TypeMismatch("Int", "string at fields[0]", _)` |
+| a string the enum has no variant of | ``Other("`Status` has no variant `Gone`", ..)`` |
+| the name of a variant with fields | ``Other("variant `Paused` of `Status` has 1 field, got 0", ..)`` |
+| no string and no object (a number, an array) | `TypeMismatch("String or object", "number", ..)` |
+| an object that names a variant without fields | `TypeMismatch("String", "object", ..)` |
+| an object without a `"variant"` key | `MissingField("variant", ..)` |
+| an object without a `"fields"` key | `MissingField("fields", ..)` |
+| a `"variant"` that is no string | `TypeMismatch("String", "number at variant", ..)` |
+| a `"variant"` the enum has no variant of | ``Other("`Status` has no variant `Gone` at variant", ..)`` |
+| `"fields"` that is no array | `TypeMismatch("array", "number at fields", ..)` |
+| the wrong number of fields | ``Other("variant `Paused` of `Status` has 1 field, got 2 at fields", ..)`` |
+| a field of the wrong type | the error of a value of that type, such as `TypeMismatch("Int", "string at fields[0]", ..)` |
 
 ```silt
 import json
@@ -286,7 +291,7 @@ one nested deeper. A value written at more levels than that is valid JSON
 that silt itself does not read back.
 
 `json.decode` reads a `json.Value` nested up to 1,000 levels deep, counted
-as for `json.stringify`; one nested deeper is an `Err(Other(msg, _))`:
+as for `json.stringify`; one nested deeper is an `Err(Other(msg, ..))`:
 
 ```text
 json.decode: the value is nested more than 1000 levels deep
@@ -497,11 +502,11 @@ variant's field, in a list or a map in one. The fields of `T` are then not
 looked into, so `T` may hold a type no decoder has. An `Option` around it
 stays structural (`null` is `None`). The `Err` it returns is the decoder's
 error, with the path of its part appended as to the decoder's own errors:
-`Other("bad tags", _)` at `posts[1].tags` is `Other("bad tags at
-posts[1].tags", _)`, a `MissingField("name", _)` there is
-`MissingField("posts[1].tags.name", _)`. A message is the impl's text, and the
+`Other("bad tags", ..)` at `posts[1].tags` is `Other("bad tags at
+posts[1].tags", ..)`, a `MissingField("name", ..)` there is
+`MissingField("posts[1].tags.name", ..)`. A message is the impl's text, and the
 path is appended to it as it is: an error the impl got from `json.decode` of
-a part of its value, `TypeMismatch("Int", "string at k", _)`, ends with `at k at
+a part of its value, `TypeMismatch("Int", "string at k", ..)`, ends with `at k at
 posts[1].tags`. The first error counts, the impl's or the decoder's: a
 record's errors in the order its type declares the fields, a map's in the
 sorted order of its keys; a syntax error anywhere in the text wins. The toml
@@ -531,7 +536,7 @@ trait json.Decode for Tags {
         }
         Ok(Tags { names: set.from_list(names) })
       }
-      _ -> Err(json.Other("tags are a string or a list of strings", 0))
+      _ -> Err(json.Other("tags are a string or a list of strings", 0, 0, 0))
     }
   }
 }
@@ -679,7 +684,7 @@ fn main() {
   -- "nikc" and "m" name no field: skipped
   let text = """{"name": "Ann", "nikc": "A", "inner": {"n": 1, "m": 2}}"""
   println(json.parse(text, Out)) -- Ok(Out { name: "Ann", inner: Inner { n: 1 }, nick: None })
-  println(json.parse("""{"nmae": "Ann", "inner": {"n": 1}}""", Out)) -- Err(json missing field at byte 0: name)
+  println(json.parse("""{"nmae": "Ann", "inner": {"n": 1}}""", Out)) -- Err(json missing field at line 1, column 1: name)
 }
 ```
 
@@ -696,7 +701,7 @@ stored as UTC:
 
 A value that is no string is a `TypeMismatch` that names the field's type,
 as for an `Int` field: `{"d": 1}` for a `Date` field `d` is
-`Err(TypeMismatch("time.Date", "number at d", _))`.
+`Err(TypeMismatch("time.Date", "number at d", ..))`.
 
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an

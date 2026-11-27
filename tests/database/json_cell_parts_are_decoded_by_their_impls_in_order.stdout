@@ -97,8 +97,8 @@ postgres type mismatch on column `xs`: expected Inner, got jsonb[]: P refuses ba
 postgres type mismatch on column `y`: expected Inner, got jsonb: P refuses bad at m.b
 == {"n": 1, "l": [], "m": {}, "z": "z"} / {"n": 1, "l": ["l0"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"}
   impl P String("z")
-postgres type mismatch on column `x`: expected Inner, got jsonb: json missing field at byte 0: a
+postgres type mismatch on column `x`: expected Inner, got jsonb: json missing field at line 1, column 1: a
   impl P String("z")
-postgres type mismatch on column `xs`: expected Inner, got jsonb[]: json missing field at byte 0: a
+postgres type mismatch on column `xs`: expected Inner, got jsonb[]: json missing field at line 1, column 1: a
   impl P String("z")
-postgres type mismatch on column `x`: expected Inner, got jsonb: json missing field at byte 0: a
+postgres type mismatch on column `x`: expected Inner, got jsonb: json missing field at line 1, column 1: a

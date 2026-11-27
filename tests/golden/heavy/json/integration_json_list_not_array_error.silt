@@ -4,7 +4,7 @@ type Employee { name: String }
 fn program() {
   match json.parse("\{\"name\": \"Alice\"\}", List(Employee)) {
     Ok(_) -> "unexpected"
-    Err(json.TypeMismatch(expected, actual, _)) -> "{expected}/{actual}"
+    Err(json.TypeMismatch(expected, actual, _, _, _)) -> "{expected}/{actual}"
     Err(e) -> "{e}"
   }
 }

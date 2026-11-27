@@ -26,11 +26,11 @@ show it with `"{e}"` when you just want a rendered string:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(msg, offset)` | `String`, `Int` | Malformed TOML at `offset` bytes |
-| `TypeMismatch(expected, actual, offset)` | `String`, `String`, `Int` | A value's TOML type did not match the type it decodes into; `actual` ends with the value's path, `offset` is the byte where the value starts |
-| `MissingField(name, offset)` | `String`, `Int` | A required (non-`Option`) field was absent; `name` is its path, `offset` the byte where its table's header starts (`[server]`, `[[posts]]`, the `{` of an inline table), 0 for the top level |
-| `Other(msg, offset)` | `String`, `Int` | Anything else (a date that is none, serialization failures, document-shape violations); `offset` is the byte where the value starts, 0 for one of no place in a text |
-| `UnknownField(name, offset)` | `String`, `Int` | A key of a record's table that no field names; `name` is its path, `offset` the byte where the key is written |
+| `Syntax(msg, offset, line, column)` | `String`, `Int`, `Int`, `Int` | Malformed TOML at the byte `offset` |
+| `TypeMismatch(expected, actual, offset, line, column)` | `String`, `String`, `Int`, `Int`, `Int` | A value's TOML type did not match the type it decodes into; `actual` ends with the value's path, `offset` is the byte where the value starts |
+| `MissingField(name, offset, line, column)` | `String`, `Int`, `Int`, `Int` | A required (non-`Option`) field was absent; `name` is its path, `offset` the byte where its table's header starts (`[server]`, `[[posts]]`, the `{` of an inline table), 0 for the top level |
+| `Other(msg, offset, line, column)` | `String`, `Int`, `Int`, `Int` | Anything else (a date that is none, serialization failures, document-shape violations); `offset` is the byte where the value starts; offset, line and column are 0 for one of no place in a text |
+| `UnknownField(name, expected, offset, line, column)` | `String`, `List(String)`, `Int`, `Int`, `Int` | A key of a record's table that no field names; `name` is its path, `expected` the keys the table takes (the record's fields, in the order its type declares them), `offset` the byte where the key is written |
 
 An error about a value of the document ends with the path of that value:
 the fields of a record and the keys of a map by name (`inner.a`), a key
@@ -38,29 +38,31 @@ that is not made of ASCII letters, digits, `_` and `-` as a JSON string in
 brackets (`tags["a b"]`), and the elements of a list or a tuple by index
 (`xs[1]`; the list that `toml.parse_list` reads is under its one key, so
 its elements are `points[2]`).
-`TypeMismatch("Int", "string at inner.a", _)` reads `toml type mismatch at byte
-<offset>: expected Int, got string at inner.a`; a missing field is `MissingField("inner.a", _)`;
+`TypeMismatch("Int", "string at inner.a", ..)` reads `toml type mismatch at line
+<line>, column <column>: expected Int, got string at inner.a`; a missing field is `MissingField("inner.a", ..)`;
 an `Other` about a value (a tuple of the wrong length, a date that is none)
 ends with ` at <path>`. An error about the document itself, such as a
 `Syntax` error or a document `toml.parse_list` finds no one array in, has
 no path.
 
-Every error says where in the text its value is, as a 0-based byte
-offset, its last field, as `Syntax` does: the byte where the value starts;
-for a `MissingField`, where the header of the table it is missing from
-starts, the `{` of an inline table, or 0 for the top level; for a table
-written by dotted keys (`server.port = 1`), the key. A `TypeMismatch` and a
-`MissingField` show it (`toml type mismatch at byte 19: expected List, got
-integer at tags`), as an `UnknownField` does; an `Other` shows its message
-alone. `toml.stringify` and
-`toml.pretty` read no text: their offsets are 0. A `json.Decode` impl's
-error is placed at the part the impl was given, whatever offset the impl
-wrote (write 0). The line of an offset is one more than the newlines
-before it:
+Every error says where in the text its value is, in its last three
+fields, as `Syntax` does: the 0-based byte `offset`, and its `line` and
+`column`, both counted from 1, the column in characters (as silt's own
+errors count them; a byte order mark is no column). The place is where the
+value starts; for a `MissingField`, where the header of the table it is
+missing from starts, the `{` of an inline table, or the top of the text
+(line 1, column 1) for the top level; for a table written by dotted keys
+(`server.port = 1`), the key; for an `UnknownField`, the key. Every error
+but an `Other` shows its line and column (`toml type mismatch at line 2,
+column 8: expected List, got integer at tags`), and an `UnknownField`
+the keys its table takes (`toml unknown field at line 10, column 1:
+rules[0].macth, expected match or account`); an `Other` shows its message
+alone. The byte is for a program that cuts the text. `toml.stringify` and
+`toml.pretty` read no text: their errors' offset, line and column are 0.
+A `json.Decode` impl's error is placed at the part the impl was given,
+whatever place the impl wrote (write `0, 0, 0`).
 
 ```silt
-import bytes
-import list
 import toml
 
 type Meta {
@@ -68,19 +70,13 @@ type Meta {
   tags: List(String),
 }
 
--- The line of the text `text` that the byte `offset` is on, from 1.
-fn line_of(text: String, offset: Int) -> Int {
-  let before = bytes.slice(bytes.from_string(text), 0, offset)
-  1 + list.length(list.filter(bytes.to_list(before)) { b -> b == 10 })
-}
-
 fn main() {
   let text = "title = \"T\"\ntags = 3\n"
   match toml.parse(text, Meta) {
     Ok(meta) -> println(meta.title)
-    Err(toml.TypeMismatch(expected, actual, at)) ->
-      println("a.md:{line_of(text, at)}: expected {expected}, got {actual}") -- a.md:2: expected List, got integer at tags
-    Err(e) -> println("a.md: {e}")
+    Err(toml.TypeMismatch(expected, actual, _, line, column)) ->
+      println("a.toml:{line}:{column}: expected {expected}, got {actual}") -- a.toml:2:8: expected List, got integer at tags
+    Err(e) -> println("a.toml: {e}")
   }
 }
 ```
@@ -148,13 +144,13 @@ looks at a file whose shape it does not know.
 
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
-field is `Err(TypeMismatch("Int", "float at x", _))`, because TOML says
+field is `Err(TypeMismatch("Int", "float at x", ..))`, because TOML says
 which kind a number is. In the same way a datetime literal (`1990-01-01`,
 `07:32:00`) goes into a `Date`, `Time` or `DateTime` field only: for a
-`String` field `s` it is `Err(TypeMismatch("String", "datetime at s", _))`, and the
+`String` field `s` it is `Err(TypeMismatch("String", "datetime at s", ..))`, and the
 text in quotes (`"1990-01-01"`) is a string. A value that is neither a
 datetime literal nor a string, for a `Date` field `d`, is
-`Err(TypeMismatch("time.Date", "integer at d", _))` (`time.Time`, `time.DateTime` likewise).
+`Err(TypeMismatch("time.Date", "integer at d", ..))` (`time.Time`, `time.DateTime` likewise).
 
 The type a decoder is given is checked where it is known, as for
 `json.parse`: written at the call (`toml.parse(text, Config)`), held in a
@@ -199,20 +195,20 @@ time literal a `json.String` of its text as TOML writes it, offset kept
 `1979-05-27T07:32:00Z`, `1979-05-27T00:32:00-07:00`), which `json.decode`
 reads back as a `Date`, `Time` or `DateTime`. A float that is no number
 (`nan`, `inf`) has no `json.Value`: in such a part it is
-`Err(TypeMismatch("json.Value", "a non-finite float at readings[1]", _))`.
+`Err(TypeMismatch("json.Value", "a non-finite float at readings[1]", ..))`.
 
 The fields of `T` are not looked into, so `T` may hold a type no decoder
 has (a `Set`). An `Option` around it stays structural (a key left out is
 `None`). The `JsonError` the impl returns is the `TomlError` of the same
 variant, with the path of its part appended as to the decoder's own
-errors: `Other("bad tags", _)` at `posts[1].tags` is `Other("bad tags at
-posts[1].tags", _)`, `MissingField("name", _)` there is
-`MissingField("posts[1].tags.name", _)`; a message is the impl's text with
+errors: `Other("bad tags", ..)` at `posts[1].tags` is `Other("bad tags at
+posts[1].tags", ..)`, `MissingField("name", ..)` there is
+`MissingField("posts[1].tags.name", ..)`; a message is the impl's text with
 the path appended as it is (`TypeMismatch("Int", "string at k at
-posts[1].tags", _)` for one the impl got from `json.decode`). A `Syntax` error (an impl that
+posts[1].tags", ..)` for one the impl got from `json.decode`). A `Syntax` error (an impl that
 parses a JSON text of its own) is an `Other` of json's message of it,
-`Other("json syntax error at byte 3: ... at posts[1].tags", _)`, since its
-offset is in that text and not in the TOML document. The first error
+`Other("json syntax error at line 1, column 4: ... at posts[1].tags", ..)`, since its
+place is in that text and not in the TOML document. The first error
 counts, the impl's or the decoder's own: a record's errors in the order
 its type declares the fields, a map's in the sorted order of its keys; a
 syntax error anywhere in the text wins.
@@ -256,7 +252,7 @@ deep (the same bound as `json.stringify`). The element of a list or of a
 tuple, the field of a record or of an enum variant and the value of a map are
 each one level further in than what holds them; the content of a `Some` is
 not (it is written in the `Some`'s place). A value nested deeper is an
-`Err(Other(msg, _))`:
+`Err(Other(msg, ..))`:
 
 ```text
 toml.stringify: the value is nested more than 1000 levels deep
@@ -281,8 +277,8 @@ a variant with fields (see [Enums](#enums)), a `json.Value`, or a type with a
 `type` parameter (see [Generics](../language/generics.md) — not a string).
 Fields are matched by name; `Option` fields default to `None` if missing
 from the document. A key that no field names is an error, in a table at any
-depth: `Err(UnknownField(path, offset))`, the key's path and the byte where
-the key is written, so a misspelled key in a file a person wrote is never
+depth: `Err(UnknownField(path, expected, offset, line, column))`, the key's
+path, the keys the table takes and where the key is written, so a misspelled key in a file a person wrote is never
 lost. (`json.parse` and `csv.parse` skip such a key: their documents come
 from other programs, which add fields over time.) The first such key in
 the text is the table's error, before the errors of its fields. The table
@@ -300,9 +296,9 @@ type Meta {
 
 fn main() {
   -- "drafts" for "draft": an error at the key
-  println(toml.parse("title = \"T\"\ndrafts = true\n", Meta)) -- Err(toml unknown field at byte 12: drafts)
-  println(toml.parse("titel = \"T\"\n", Meta)) -- Err(toml unknown field at byte 0: titel)
-  println(toml.parse("draft = true\n", Meta)) -- Err(toml missing field at byte 0: title)
+  println(toml.parse("title = \"T\"\ndrafts = true\n", Meta)) -- Err(toml unknown field at line 2, column 1: drafts, expected title or draft)
+  println(toml.parse("titel = \"T\"\n", Meta)) -- Err(toml unknown field at line 1, column 1: titel, expected title or draft)
+  println(toml.parse("draft = true\n", Meta)) -- Err(toml missing field at line 1, column 1: title)
 }
 ```
 
@@ -479,16 +475,16 @@ follows:
 |-------|------------|
 | `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false`; a `Float` with the digits `json.stringify` writes (`1e+300`, `1e-7`, `0.5`) |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1, "a"]` |
-| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a string inside a key is quoted (`["a", "b"]` reads `'["a", "b"]'`); two keys shown as one text (two `Bytes` longer than the 32 bytes their text shows, alike in those) are `Err(Other("toml.stringify: two keys of a map show as the same text: bytes(...)", _))`; a key whose value is `None` is left out (TOML has no null), so a round trip loses the key: the map read back has no such key |
+| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a string inside a key is quoted (`["a", "b"]` reads `'["a", "b"]'`); two keys shown as one text (two `Bytes` longer than the 32 bytes their text shows, alike in those) are `Err(Other("toml.stringify: two keys of a map show as the same text: bytes(...)", ..))`; a key whose value is `None` is left out (TOML has no null), so a round trip loses the key: the map read back has no such key |
 | a record | a table of its fields, in the order the type declares them; a field that is `None` is left out (TOML has no null), and reads back as `None` |
 | `Some(x)` | `x`, as `x` is written |
-| `None` in an array (a list, a tuple, the fields of a variant) | nothing: `Err(Other("toml.stringify: TOML has no null: a None in an array", _))` |
+| `None` in an array (a list, a tuple, the fields of a variant) | nothing: `Err(Other("toml.stringify: TOML has no null: a None in an array", ..))` |
 | a `json.Value` | the TOML value it holds: `json.Int(1)` as `1`, `json.Array` as an array, `json.Object` as a table (its keys sorted); `json.Null` as `None` is |
 | a value of a type with a written [`json.Encode`](json.md#jsonencode) impl | the `json.Value` its `encode` gives, as a `json.Value` is written, wherever the value is |
 | any other variant (of `Result` too) | a table with the keys `fields` (an array) and `variant` (its name); a variant without fields is the string of its name |
 | `Date`, `Time`, `DateTime` | TOML's own literals: `2026-10-19`, `12:30:00` (with a fractional second only when the value has one: `12:30:00.25`) and `2026-10-19T12:30:00` |
 | `Duration`, `Instant` | as the records they are: a table with `ns` or `epoch_ns` |
-| `()` | nothing: `Err(Other("toml.stringify: TOML cannot represent ()", _))` |
+| `()` | nothing: `Err(Other("toml.stringify: TOML cannot represent ()", ..))` |
 
 The keys of a map are written in sorted order, the fields of a record in the
 order its type declares them; either way the plain keys of a table come

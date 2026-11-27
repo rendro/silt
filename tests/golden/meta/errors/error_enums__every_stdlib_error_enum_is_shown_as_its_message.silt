@@ -14,9 +14,9 @@ import bytes
 
 fn main() {
   println(io.NotFound("missing.txt"))
-  println(json.MissingField("name", 0))
-  println(toml.MissingField("key", 0))
-  println(toml.UnknownField("drafts", 12))
+  println(json.MissingField("name", 0, 0, 0))
+  println(toml.MissingField("key", 0, 0, 0))
+  println(toml.UnknownField("drafts", [], 12, 0, 0))
   println("{int.Empty}")
   println("{regex.TooBig}")
   println(time.OutOfRange("month 13"))

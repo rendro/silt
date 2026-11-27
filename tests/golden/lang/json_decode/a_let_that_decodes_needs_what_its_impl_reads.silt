@@ -12,7 +12,7 @@ trait json.Decode for T {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.Int(n) -> Ok(T { n: n + later })
-      _ -> Err(json.Other("no", 0))
+      _ -> Err(json.Other("no", 0, 0, 0))
     }
   }
 }

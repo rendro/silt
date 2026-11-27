@@ -9,7 +9,7 @@ import toml
 fn said(result: Result(String, toml.TomlError)) -> String {
   match result {
     Ok(text) -> text
-    Err(toml.Other(message, _)) -> message
+    Err(toml.Other(message, _, _, _)) -> message
     Err(other) -> "another error: {other}"
   }
 }

@@ -1,4 +1,4 @@
 2
 8
 seven
-err: toml type mismatch at byte 4: expected Map, got string at m
+err: toml type mismatch at line 1, column 5: expected Map, got string at m

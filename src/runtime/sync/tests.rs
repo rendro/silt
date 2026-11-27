@@ -1728,3 +1728,21 @@ fn selects_on_threads_deliver_every_value_once() {
     assert_eq!(got, (0..2 * ROUNDS).collect::<Vec<_>>());
     assert_eq!((a.queued(), b.queued()), ((0, 0), (0, 0)));
 }
+
+/// A capacity is a limit, not memory taken up front (as
+/// docs/stdlib/channel-task.md says of `channel.new`): a channel of the
+/// largest capacity has room for no value until one is sent, and the
+/// room grows with what it holds, not with its capacity.
+#[test]
+fn a_large_capacity_takes_no_memory_up_front() {
+    let channel = Channel::new(1, crate::value::MAX_COLLECTION_LEN);
+    assert_eq!(channel.buffer_room(), 0);
+    let double = Double::new();
+    for value in 0..3 {
+        assert!(
+            double.block(1, send(&channel, value)).is_some(),
+            "the send waits"
+        );
+    }
+    assert!(channel.buffer_room() < 1000, "{}", channel.buffer_room());
+}

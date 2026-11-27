@@ -26,7 +26,7 @@ trait json.Decode for Tree(a) where a: json.Decode {
         }
         Err(e) -> Err(e)
       }
-      _ -> Err(json.Other("not a tree", 0))
+      _ -> Err(json.Other("not a tree", 0, 0, 0))
     }
   }
 }

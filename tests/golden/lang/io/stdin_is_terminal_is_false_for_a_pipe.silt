@@ -1,0 +1,14 @@
+-- stdin: first line\n
+-- io.stdin_is_terminal() is false when stdin is a pipe, as the harness
+-- gives it: a REPL written in silt shows no prompt to a piped file.
+import io
+
+fn main() {
+  let piped = !io.stdin_is_terminal()
+  println("piped: {piped}")
+  match io.read_line() {
+    Ok(Some(line)) -> println(line)
+    Ok(None) -> println("(no input)")
+    Err(e) -> println("Error: {e}")
+  }
+}

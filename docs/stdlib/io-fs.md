@@ -22,6 +22,7 @@ inspection.
 | `read_line` | `() -> Result(Option(String), IoError)` | Read one line from stdin, or None at its end |
 | `read_stdin` | `() -> Result(String, IoError)` | Read all of stdin as a string |
 | `read_stdin_bytes` | `() -> Result(Bytes, IoError)` | Read all of stdin as bytes |
+| `stdin_is_terminal` | `() -> Bool` | True when stdin is a terminal, false for a file or a pipe |
 | `write_bytes` | `(String, Bytes) -> Result((), IoError)` | Write bytes to file |
 | `write_file` | `(String, String) -> Result((), IoError)` | Write string to file |
 
@@ -276,6 +277,36 @@ import io
 fn main() {
   match io.read_stdin_bytes() {
     Ok(b) -> println("{bytes.length(b)} bytes")
+    Err(e) -> println("Error: {e}")
+  }
+}
+```
+
+
+## `io.stdin_is_terminal`
+
+```
+io.stdin_is_terminal() -> Bool
+```
+
+`true` when standard input is a terminal, where a person types the
+program's input; `false` when it is a file or a pipe (`silt run prog.silt <
+input.txt`, `cat input.txt | silt run prog.silt`), and in the playground.
+A program that reads commands from stdin uses it to show a prompt to a
+person and none to a file.
+
+```silt
+import io
+
+fn main() {
+  let prompt = match io.stdin_is_terminal() {
+    true -> "> "
+    false -> ""
+  }
+  print(prompt)
+  match io.read_line() {
+    Ok(Some(line)) -> println("read {line}")
+    Ok(None) -> println("(no input)")
     Err(e) -> println("Error: {e}")
   }
 }

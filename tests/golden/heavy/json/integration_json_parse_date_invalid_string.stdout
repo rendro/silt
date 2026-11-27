@@ -1,1 +1,1 @@
-Err(Other("invalid date 'not-a-date' (expected YYYY-MM-DD): input contains invalid characters at date", 22))
+Err(Other("invalid date 'not-a-date' (expected YYYY-MM-DD): input contains invalid characters at date", 22, 1, 23))
