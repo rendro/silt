@@ -45,6 +45,10 @@ enum Slice {
     /// One step (`SILT_TIME_SLICE=1`): every instruction of a task is
     /// a place where the session and the other tasks come in between.
     OneStep,
+    /// A slice longer than the session (`SILT_TIME_SLICE=4000000000`): a
+    /// task that never waits runs the whole session in its first slice,
+    /// and begins none after it was started.
+    Endless,
 }
 
 /// [`repl`] in a directory that has the module files `modules`, each a
@@ -66,8 +70,14 @@ fn repl_beside(modules: &[(&str, &str)], input: &str, slice: Slice) -> (String, 
     }
     let open = |name: &str| std::fs::File::create(file(name)).expect("a file of the session");
     let mut silt = Command::new(env!("CARGO_BIN_EXE_silt"));
-    if let Slice::OneStep = slice {
-        silt.env("SILT_TIME_SLICE", "1");
+    match slice {
+        Slice::Whole => {}
+        Slice::OneStep => {
+            silt.env("SILT_TIME_SLICE", "1");
+        }
+        Slice::Endless => {
+            silt.env("SILT_TIME_SLICE", "4000000000");
+        }
     }
     let mut silt = silt
         .arg("repl")
@@ -481,6 +491,82 @@ let _ = stream.collect(worker)
             "error[runtime]: division by zero"
         ]
     );
+}
+
+/// A function that a later entry defines again with its type replaces
+/// the old one for every caller (owner, 2026-11-26, REPL-REDEF): a
+/// function of an earlier entry that a task runs calls the new one, also
+/// in a task that never waits and ran while the later entry was taken in
+/// (it takes the new one with the job, whose channel orders the two), and
+/// with a slice of one step.
+#[test]
+fn a_task_calls_the_newest_function_that_a_later_entry_defines_again() {
+    let (earlier, later) = (
+        "fn h() -> Int { 1 }\nfn g() -> Int { h() * 10 }",
+        "fn h() -> Int { 2 }",
+    );
+    assert_tasks_see(earlier, later, "g()", "20");
+    // (A task that never waits and never begins a slice after the
+    // redefinition: it takes the new function with the job.)
+    let input = session(Workers::Polling, earlier, later, "g()");
+    let (output, errors) = repl_beside(&[], &input, Slice::Endless);
+    assert_eq!(output, "Some(20)\n", "{input}\nstderr:\n{errors}");
+}
+
+/// An entry that defines a function again and then fails gives the slot
+/// the old one back: a task that called the new one while the entry ran
+/// calls the old one again. No slot is set twice by the code of an entry
+/// (the new function is put in its slot before the entry runs).
+#[test]
+#[cfg(feature = "test-hooks")]
+fn an_entry_that_fails_gives_a_task_the_function_it_defined_again_back() {
+    use silt::session::ProjectSetup;
+    use silt::testing::repl::Repl;
+
+    let dir = std::env::temp_dir().join(format!("silt_repl_redefined_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory for the session");
+    let mut repl = Repl::new(ProjectSetup::Discover(dir.clone()));
+    let before = silt::testing::vm::slots_set_again();
+    let mut run = |entry: &str| -> Result<String, String> {
+        let evaluation = repl.eval(entry);
+        let errors: Vec<String> = (evaluation.diagnostics.iter())
+            .filter(|d| d.is_error())
+            .map(|d| d.message().to_string())
+            .collect();
+        match (evaluation.committed, evaluation.value) {
+            (true, Some(value)) => Ok(repl.show(&value).0),
+            _ => Err(errors.join("; ")),
+        }
+    };
+    for entry in [
+        "import stream\nimport channel",
+        "let jobs = channel.new(8)\nlet outs = channel.new(8)",
+        "fn h() -> Int { 1 }\nfn g() -> Int { h() * 10 }",
+        "fn work() {\n  match channel.receive(jobs) {\n    Some(job) -> {\n      \
+         channel.send(outs, job())\n      work()\n    }\n    None -> ()\n  }\n}",
+        "let worker = stream.from_fn { _ -> work() }",
+    ] {
+        assert_eq!(run(entry), Ok("()".to_string()), "{entry}");
+    }
+    // The task calls the new `h` while the entry runs: `got` is 20.
+    assert_eq!(
+        run("fn h() -> Int { 2 }\n\
+             let sent = channel.send(jobs, { -> g() })\n\
+             let got = channel.receive(outs)\n\
+             let boom = match got {\n  Some(20) -> 1 / 0\n  _ -> 0\n}"),
+        Err("division by zero".to_string())
+    );
+    assert_eq!(run("g()"), Ok("10".to_string()));
+    assert_eq!(run("channel.send(jobs, { -> g() })"), Ok("()".to_string()));
+    assert_eq!(run("channel.receive(outs)"), Ok("Some(10)".to_string()));
+    assert_eq!(run("fn h() -> Int { 3 }"), Ok("()".to_string()));
+    assert_eq!(run("channel.send(jobs, { -> g() })"), Ok("()".to_string()));
+    assert_eq!(run("channel.receive(outs)"), Ok("Some(30)".to_string()));
+    assert_eq!(run("channel.close(jobs)"), Ok("()".to_string()));
+    assert_eq!(run("let _ = stream.collect(worker)"), Ok("()".to_string()));
+    assert_eq!(silt::testing::vm::slots_set_again(), before);
+    drop(repl);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A task calls a copy of its own of a top-level function. When a

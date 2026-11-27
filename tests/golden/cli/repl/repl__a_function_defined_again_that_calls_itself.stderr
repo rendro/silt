@@ -1,0 +1,13 @@
+error[runtime]: division by zero
+ --> <repl:4>:3:10
+   |
+ 3 |     0 -> 1 / n
+   |          ^^^^^ division by zero
+
+call stack:
+  -> down  at <repl:4>:3:10
+  -> down  at <repl:4>:4:10
+  -> down  at <repl:4>:4:10
+  -> down  at <repl:4>:4:10
+  -> run  at <repl:2>:1:19
+  -> <repl:5>  at <repl:5>:1:1

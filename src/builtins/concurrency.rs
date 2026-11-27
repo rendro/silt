@@ -148,7 +148,10 @@ pub(crate) mod channel {
                 return Ok(vm.end_here("channel.receive"));
             }
             match ch.try_receive(vm.scheduler().wake()) {
-                TryReceive::Value(value) => return Ok(Step::Done(received(Some(value)))),
+                TryReceive::Value(value) => {
+                    vm.see_redefined();
+                    return Ok(Step::Done(received(Some(value))));
+                }
                 TryReceive::Closed(close) => {
                     raise_failure(close)?;
                     return Ok(Step::Done(received(None)));
@@ -194,7 +197,10 @@ pub(crate) mod channel {
                 return Ok(vm.end_here("channel.try_receive"));
             }
             Ok(Step::Done(match ch.try_receive(vm.scheduler().wake()) {
-                TryReceive::Value(value) => message(value),
+                TryReceive::Value(value) => {
+                    vm.see_redefined();
+                    message(value)
+                }
                 TryReceive::Empty => empty(),
                 TryReceive::Closed(close) => {
                     raise_failure(close)?;
@@ -271,7 +277,10 @@ pub(crate) mod channel {
                 return Ok(vm.end_here("channel.receive_timeout"));
             }
             match ch.try_receive(vm.scheduler().wake()) {
-                TryReceive::Value(value) => return Ok(Step::Done(message(value))),
+                TryReceive::Value(value) => {
+                    vm.see_redefined();
+                    return Ok(Step::Done(message(value)));
+                }
                 TryReceive::Closed(close) => {
                     raise_failure(close)?;
                     return Ok(Step::Done(closed()));

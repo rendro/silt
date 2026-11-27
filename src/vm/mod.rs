@@ -489,13 +489,30 @@ impl Vm {
     /// Run the program of a REPL entry, as [`Vm::run_program`] does, and
     /// give the entry's value. A session runs each entry's program on
     /// one `Vm`.
+    ///
+    /// The functions the entry defines again (`Program::redefined`) are
+    /// put in the slots of the ones they replace before its code runs:
+    /// every caller, of an earlier entry, a closure, a task, calls them
+    /// from then on. An entry that fails gives the slots back what they
+    /// held.
     #[cfg(feature = "repl")]
     pub(crate) fn run_cell(&mut self, program: &crate::program::Program) -> Result<Value, VmError> {
-        self.run_loaded(program)
+        self.load(program);
+        let replaced = self.redefine(&program.redefined);
+        let result = self.run_loaded_script(program);
+        if result.is_err() && !replaced.is_empty() {
+            self.redefine(&replaced);
+        }
+        result
     }
 
     fn run_loaded(&mut self, program: &crate::program::Program) -> Result<Value, VmError> {
         self.load(program);
+        self.run_loaded_script(program)
+    }
+
+    /// Run the script of `program`, which [`Vm::load`] has taken in.
+    fn run_loaded_script(&mut self, program: &crate::program::Program) -> Result<Value, VmError> {
         let script = program
             .functions
             .first()
@@ -703,9 +720,14 @@ impl Vm {
     ///
     /// Looking only after a failure misses nothing, because what a VM
     /// has found once never changes: a session only ever ADDS to the
-    /// slots and to the table the VMs of its tasks keep.
-    /// - A slot is set once. A definition that is made again gets a
-    ///   slot of its own: an entry's definitions are new ones; and what
+    /// slots and to the table the VMs of its tasks keep. (But for a
+    /// function a later entry defines again with its type, which takes
+    /// the old one's slot: a task takes that where its next slice begins
+    /// or where it takes a value from a channel, [`Vm::see_redefined`].)
+    /// - A slot is set once by the code of the program. A definition that
+    ///   is made again gets a slot of its own: an entry's definitions are
+    ///   new ones (but for a function defined again with its type, which
+    ///   the VM puts in the old one's slot, [`Vm::redefine`]); and what
     ///   an entry that FAILED when it ran had defined (the entry's own
     ///   impls, a module it imported) is defined in new slots when it
     ///   is entered again, because the session takes the failed entry's
@@ -738,6 +760,59 @@ impl Vm {
     /// The value of the global slot `slot`, if it is set.
     pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
         self.view.global(slot)
+    }
+
+    /// Take the program's newest view if a REPL entry has defined a
+    /// function again since this VM took its own ([`Vm::redefine`]):
+    /// from here on the VM calls the new one, as the session's code does.
+    /// Asked where a slice of a task begins (after a wait that ended,
+    /// after the task gave way) and where a task has taken a value from
+    /// a channel without waiting: what the session sent after it defined
+    /// the function again is ordered after it by the channel's lock, so
+    /// the code the value is, a closure, calls the new one. Never on a
+    /// call or a read of a global; a program that defines nothing again
+    /// never moves the count it compares.
+    #[inline]
+    pub(crate) fn see_redefined(&mut self) {
+        if self.runtime.newest.redefined.load(Ordering::Relaxed) > self.view_count {
+            self.look_again();
+        }
+    }
+
+    /// Put each value of `values` in its global slot, in place of what
+    /// the slot holds: the functions a REPL entry defines again, each in
+    /// the slot of the function of the name it replaces, with the same
+    /// type (`Session::compile`). Gives back what the slots held.
+    ///
+    /// The slots are new ones, published for the tasks, and the count
+    /// of the view they are in is noted ([`runtime::Newest::redefined`]):
+    /// a task takes them when its next slice begins, where it would
+    /// otherwise keep what it has found until a lookup fails
+    /// ([`Vm::look_again`]). So a call costs what it did; a REPL entry
+    /// that defines a function again copies the slots once.
+    #[cfg_attr(not(feature = "repl"), allow(dead_code))]
+    pub(crate) fn redefine(&mut self, values: &[(u16, Value)]) -> Vec<(u16, Value)> {
+        if values.is_empty() {
+            return Vec::new();
+        }
+        let runtime = self.runtime.clone();
+        let mut newest = runtime.newest.view.lock();
+        let mut slots: Vec<OnceLock<Value>> = self.view.slots.iter().cloned().collect();
+        let mut replaced = Vec::with_capacity(values.len());
+        for (slot, value) in values {
+            let Some(place) = slots.get_mut(usize::from(*slot)) else {
+                continue;
+            };
+            if let Some(was) = place.get() {
+                replaced.push((*slot, was.clone()));
+            }
+            *place = OnceLock::from(value.clone());
+            self.own.forget(*slot);
+        }
+        self.view.slots = slots.into();
+        self.publish(&mut newest);
+        (runtime.newest.redefined).store(self.view_count, Ordering::Relaxed);
+        replaced
     }
 
     /// Set the global slot `slot`. `false` if the VM has no such slot.

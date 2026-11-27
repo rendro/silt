@@ -1,0 +1,11 @@
+-- cmd: repl
+-- stdin: fn h(x: Int) -> Int { x + 1 }\nfn g(x: Int) -> Int { h(x) }\nlet k = { x -> h(x) }\nlet f = h\nfn twice(t: Fn(Int) -> Int, x: Int) -> Int { t(t(x)) }\nfn go() { twice(h, 1) }\ng(1)\nfn h(x: Int) -> Int { x + 100 }\ng(1)\nk(1)\ngo()\nh(1)\nf(1)\nfn h(x) { x * 2 }\ng(5)\ntrait N { fn n(self) -> String }\ntrait N for Int { fn n(self) -> String { "int" } }\nfn named(x: a) -> String where a: N { N.n(x) }\nfn use_named() { named(1) }\nuse_named()\nfn named(y: b) -> String where b: N { "<{N.n(y)}>" }\nuse_named()\ntrait N for Int { fn n(self) -> String { "again" } }\nlet x = 1\nfn get_x() { x }\nlet x = 2\nget_x()\nimport set\nfn size(s: Set(Int)) -> Int { set.length(s) }\nfn both(s: Set(Int)) {\n  let n = size(s)\n  (s, n)\n}\nfn size(s: Set(Int)) -> Int { set.length(set.insert(s, 99)) }\nboth(set.from_list([1, 2]))\n:quit\n
+-- A function defined again replaces the old one for every caller (owner,
+-- 2026-11-26, REPL-REDEF): a function, a closure a `let` holds and a
+-- function the old one was handed to call the newest `h`. A function value
+-- taken before (`let f = h`) is the function it was then. The new one may
+-- leave its type to be inferred, if it is the same; one with bounds keeps
+-- them and is passed its dictionaries. A `let` binds a name again as
+-- before: code that named the old one keeps its value. A second impl is
+-- refused as in a file. A collection a caller still reads is left as it
+-- was by the new function that changes its own copy.

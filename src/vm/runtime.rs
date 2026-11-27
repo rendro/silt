@@ -347,6 +347,12 @@ pub(crate) struct Newest {
     /// How often `view` was written. A VM that has the view of this
     /// count has the newest: it need not take the lock to know.
     pub(crate) count: std::sync::atomic::AtomicU64,
+    /// The count of the view in which a REPL entry last put a function
+    /// it defines again in the slot of the one it replaces
+    /// ([`Vm::redefine`](super::Vm::redefine)); none for a program that
+    /// never did. A VM whose view is older takes the newest when its
+    /// next slice begins ([`Vm::execute_slice`](super::Vm::execute_slice)).
+    pub(crate) redefined: std::sync::atomic::AtomicU64,
     pub(crate) view: parking_lot::Mutex<View>,
 }
 

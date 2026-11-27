@@ -442,6 +442,13 @@ impl Globals {
         Some(slot)
     }
 
+    /// Give the definition `def` the slot `slot` of another one: a
+    /// function a REPL entry defines again, with the type of the one it
+    /// replaces, takes its slot (`EarlierCells::redefined`).
+    pub(crate) fn redefine(&mut self, def: DefId, slot: u16) {
+        self.defs.insert(def, slot);
+    }
+
     /// The default methods of the trait `t`, each with its slot, in
     /// the order they were added.
     fn defaults_of(&self, t: TraitId) -> impl Iterator<Item = &(String, u16)> {
