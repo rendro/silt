@@ -85,7 +85,7 @@ type Out {
 fn main() {
   -- "nikc" and "m" name no field: skipped
   let text = """{"name": "Ann", "nikc": "A", "inner": {"n": 1, "m": 2}}"""
-  println(json.parse(text, Out)) -- Ok(Out {name: "Ann", inner: Inner {n: 1}, nick: None})
+  println(json.parse(text, Out)) -- Ok(Out { name: "Ann", inner: Inner { n: 1 }, nick: None })
   println(json.parse("""{"nmae": "Ann", "inner": {"n": 1}}""", Out)) -- Err(json missing field at line 1, column 1: name)
 }
 ```

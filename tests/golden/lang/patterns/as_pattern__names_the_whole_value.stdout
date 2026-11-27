@@ -1,0 +1,13 @@
+eof at 4
+num 7 at 1, 1 more
+small 1
+digit 5
+big 50
+a=5 w=(1, 5)
+a=5 w=(5, 1)
+none
+1 [1, 2] Some([1, 2])
+3 4 (3, 4)
+(5, 6) becomes (6, 5)
+3 Some(3)
+1 2 (1, 2)

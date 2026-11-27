@@ -1591,6 +1591,14 @@ fn binder_renames(pattern: &Pattern) -> Vec<(Symbol, Span, Vec<(Span, std::strin
                 }
                 out.extend(first);
             }
+            PatternKind::As {
+                pattern,
+                name,
+                name_span,
+            } => {
+                walk(pattern, out);
+                out.push((*name, *name_span, vec![(*name_span, format!("_{name}"))]));
+            }
             _ => p.for_each_child(|sub| walk(sub, out)),
         }
     }
@@ -2776,6 +2784,7 @@ impl Resolver<'_> {
                     self.pattern(sub);
                 }
             }
+            PatternKind::As { pattern, .. } => self.pattern(pattern),
             PatternKind::Wildcard
             | PatternKind::Ident(_)
             | PatternKind::Int(_)

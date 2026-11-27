@@ -129,6 +129,23 @@ enum Origin {
     Other,
 }
 
+impl Origin {
+    /// What a name is that is `self` in one alternative of an
+    /// or-pattern and `other` in another: a strict part only when it is
+    /// one in both, the parameter or a part of it when it is that in
+    /// both.
+    fn or(self, other: Origin) -> Origin {
+        match (self, other) {
+            (Origin::Part(n, p), Origin::Part(m, q)) if (n, p) == (m, q) => self,
+            (
+                Origin::Part(n, p) | Origin::Param(n, p),
+                Origin::Part(m, q) | Origin::Param(m, q),
+            ) if (n, p) == (m, q) => Origin::Param(n, p),
+            _ => Origin::Other,
+        }
+    }
+}
+
 /// What an argument is of the parameters of the node it is written in:
 /// the parameter `param` itself, or a strict part of it.
 #[derive(Clone, Copy, Debug)]
@@ -510,19 +527,37 @@ impl<'a, 'd> Walk<'a, 'd> {
                 }
             }
             // (Every alternative binds the same names.)
+            // Every alternative binds the same names, and a name is what
+            // it is in all of them: the `y` of `Node(y) | y` may be the
+            // value itself.
             PatternKind::Or(alternatives) => {
-                if let Some(first) = alternatives.first() {
-                    let below = below
-                        || alternatives
-                            .iter()
-                            .all(|a| !matches!(a.kind, PatternKind::Ident(_)));
-                    self.bind(first, rel, below);
+                let start = self.scopes.len();
+                let mut merged: Option<Vec<(Symbol, Origin)>> = None;
+                for alternative in alternatives {
+                    self.bind(alternative, rel, below);
+                    let bound: Vec<(Symbol, Origin)> = self.scopes.drain(start..).collect();
+                    merged = Some(match merged {
+                        None => bound,
+                        Some(first) => (first.into_iter())
+                            .map(|(name, origin)| {
+                                let other = bound.iter().rev().find(|(n, _)| *n == name);
+                                (name, other.map_or(Origin::Other, |(_, o)| origin.or(*o)))
+                            })
+                            .collect(),
+                    });
                 }
+                self.scopes.extend(merged.unwrap_or_default());
             }
             PatternKind::Map(entries) => {
                 for (_, value) in entries {
                     self.bind(value, rel, true);
                 }
+            }
+            // The name is the value itself, as a name pattern in its
+            // place would be.
+            PatternKind::As { pattern, name, .. } => {
+                self.bind(pattern, rel, below);
+                self.scopes.push((*name, origin(below)));
             }
             PatternKind::Wildcard
             | PatternKind::Int(_)
@@ -538,18 +573,29 @@ impl<'a, 'd> Walk<'a, 'd> {
     /// Bind the names of `pattern` matched against `value`: a tuple
     /// written out is matched an element at a time.
     fn bind_matched(&mut self, pattern: &Pattern, value: Option<&Expr>) {
+        // (`(a, b) as both`: the names behind `as` are the tuple, which
+        // is built here and is no part of a parameter.)
+        let mut tuple = pattern;
+        let mut whole = Vec::new();
+        while let PatternKind::As { pattern, name, .. } = &tuple.kind {
+            whole.push(*name);
+            tuple = pattern;
+        }
         if let (
             Some(Expr {
                 kind: ExprKind::Tuple(values),
                 ..
             }),
             PatternKind::Tuple(items),
-        ) = (value, &pattern.kind)
+        ) = (value, &tuple.kind)
             && values.len() == items.len()
         {
             let measures: Vec<_> = values.iter().map(|v| self.measure(v)).collect();
             for (item, m) in items.iter().zip(measures) {
                 self.bind(item, m, false);
+            }
+            for name in whole {
+                self.scopes.push((name, Origin::Other));
             }
             return;
         }

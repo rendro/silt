@@ -429,7 +429,7 @@ fn a_record_holds_its_fields_in_declaration_order() {
             vec![Value::Int(1), Value::Int(9), Value::Int(7)]
         )
     );
-    assert_eq!(format!("{record}"), "Ver {major: 1, build: 9, label: 7}");
+    assert_eq!(format!("{record}"), "Ver { major: 1, build: 9, label: 7 }");
     assert!(std::ptr::eq(written.clone().fields(), written.fields()));
 
     // Not the type's fields: one missing, one too many, one twice.
@@ -504,7 +504,7 @@ fn a_builtin_record_has_the_fields_its_type_declares() {
         [Value::Int(2024), Value::Int(3), Value::Int(9)]
     );
     assert_eq!(record.get("month"), Some(&Value::Int(3)));
-    assert_eq!(date.format_silt(), "Date {year: 2024, month: 3, day: 9}");
+    assert_eq!(date.format_silt(), "Date { year: 2024, month: 3, day: 9 }");
     assert_eq!(date.to_string(), "2024-03-09");
     assert!(make_date(2024, 3, 9) < make_date(2024, 10, 1));
 }
@@ -917,7 +917,7 @@ fn the_key_is_the_same_where_the_walk_changes_its_stack() {
 #[test]
 fn a_program_type_named_time_is_not_the_builtin_time() {
     let rec = Value::record(record_type(9002, "Time", &["h"]), vec![Value::Int(1)]);
-    assert_eq!(format!("{rec}"), "Time {h: 1}");
+    assert_eq!(format!("{rec}"), "Time { h: 1 }");
 }
 
 #[test]
@@ -1016,7 +1016,7 @@ fn display_time_record_with_ns() {
 fn display_generic_record() {
     let ty = record_type(9003, "Point", &["x", "y"]);
     let rec = Value::record(ty, vec![Value::Int(10), Value::Int(20)]);
-    assert_eq!(format!("{}", rec), "Point {x: 10, y: 20}");
+    assert_eq!(format!("{}", rec), "Point { x: 10, y: 20 }");
 }
 
 /// One formatter writes a value in two ways: as it is shown, and as it
@@ -1093,8 +1093,8 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         // without fields.
         (
             Value::record(point.clone(), vec![Value::Int(2), text("one")]),
-            "Point {y: 2, x: \"one\"}",
-            "Point {y: 2, x: \"one\"}",
+            "Point { y: 2, x: \"one\" }",
+            "Point { y: 2, x: \"one\" }",
         ),
         (
             Value::record(record_type(9201, "Empty", &[]), vec![]),
@@ -1106,17 +1106,17 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         (
             make_date(2024, 3, 9),
             "2024-03-09",
-            "Date {year: 2024, month: 3, day: 9}",
+            "Date { year: 2024, month: 3, day: 9 }",
         ),
         (
             make_time(7, 30, 5, 0),
             "07:30:05",
-            "Time {hour: 7, minute: 30, second: 5, ns: 0}",
+            "Time { hour: 7, minute: 30, second: 5, ns: 0 }",
         ),
         (
             Value::list(vec![make_date(2024, 3, 9)]),
             "[2024-03-09]",
-            "[Date {year: 2024, month: 3, day: 9}]",
+            "[Date { year: 2024, month: 3, day: 9 }]",
         ),
         (Value::variant(bv::NONE, []), "None", "None"),
         (
@@ -1171,8 +1171,8 @@ fn a_deep_value_is_written_and_dropped_without_the_native_stack() {
         // A record whose first field is the next level.
         (
             &|rest| Value::record(node.clone(), vec![rest, Value::Int(1)]),
-            "Node {next: ",
-            ", tag: 1}",
+            "Node { next: ",
+            ", tag: 1 }",
         ),
     ];
     for (wrap, open, close) in shapes {

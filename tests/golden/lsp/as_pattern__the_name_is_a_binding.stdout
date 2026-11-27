@@ -1,0 +1,20 @@
+> hover 13:16
+```silt
+List(Int)
+```
+> references 13:16
+as_pattern__the_name_is_a_binding.silt:13:16-13:19
+as_pattern__the_name_is_a_binding.silt:13:32-13:35
+> rename 13:32 tokens
+as_pattern__the_name_is_a_binding.silt:13:16-13:19 => tokens
+as_pattern__the_name_is_a_binding.silt:13:32-13:35 => tokens
+> definition 13:32
+as_pattern__the_name_is_a_binding.silt:13:16-13:19
+> references 20:58
+as_pattern__the_name_is_a_binding.silt:20:16-20:17
+as_pattern__the_name_is_a_binding.silt:20:32-20:33
+as_pattern__the_name_is_a_binding.silt:20:58-20:59
+> rename 20:32 both
+as_pattern__the_name_is_a_binding.silt:20:16-20:17 => both
+as_pattern__the_name_is_a_binding.silt:20:32-20:33 => both
+as_pattern__the_name_is_a_binding.silt:20:58-20:59 => both

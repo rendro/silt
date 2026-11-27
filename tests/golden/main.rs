@@ -474,12 +474,39 @@ fn portable_paths(text: &str) -> String {
         .collect()
 }
 
+/// `silt test`'s result lines without the time a slow test shows
+/// (`  PASS a_test.silt::test_x (1.3 s)`): how long a test takes depends
+/// on the machine and its load, so one expected file serves every run.
+fn without_test_times(text: &str) -> String {
+    let timed = |line: &str| -> Option<usize> {
+        if !(line.starts_with("  PASS ") || line.starts_with("  FAIL ")) {
+            return None;
+        }
+        let at = line.rfind(" (")?;
+        let (whole, tenth) = line[at + 2..].strip_suffix(" s)")?.split_once('.')?;
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        (digits(whole) && tenth.len() == 1 && digits(tenth)).then_some(at)
+    };
+    text.split_inclusive('\n')
+        .map(|line| {
+            let (body, end) = match line.strip_suffix('\n') {
+                Some(body) => (body, "\n"),
+                None => (line, ""),
+            };
+            match timed(body) {
+                Some(at) => format!("{}{end}", &body[..at]),
+                None => line.to_string(),
+            }
+        })
+        .collect()
+}
+
 /// The problems with `out` for `case`, empty when it passes.
 fn judge(case: &Case, out: &Output, bless: bool) -> Vec<String> {
     let out = &Output {
         code: out.code,
         stdout: portable_paths(&out.stdout),
-        stderr: portable_paths(&out.stderr),
+        stderr: without_test_times(&portable_paths(&out.stderr)),
         timed_out: out.timed_out,
         harness_error: out.harness_error.clone(),
     };

@@ -16,7 +16,7 @@ an interval in a json.Value row: TypeMismatch(r, json.Value, interval)
   postgres type mismatch on column `r`: expected json.Value, got interval; cast it in SQL, for example r::text
 two columns a field reads: Other(postgres: column `id` appears twice in the result; rename one with AS)
   postgres: column `id` appears twice in the result; rename one with AS
-two columns no field reads: [Id {id: 1}]
+two columns no field reads: [Id { id: 1 }]
 two columns of a json.Value row: Other(postgres: column `x` appears twice in the result; rename one with AS)
   postgres: column `x` appears twice in the result; rename one with AS
 a NULL for an Int: TypeMismatch(id, Int, NULL)
@@ -29,7 +29,7 @@ a NaN in a json.Value row: TypeMismatch(r, json.Value, NaN)
   postgres type mismatch on column `r`: expected json.Value, got NaN; cast it in SQL, for example r::text
 a document that does not fit: TypeMismatch(doc, Meta, jsonb: json type mismatch at line 1, column 11: expected Int, got string at level)
   postgres type mismatch on column `doc`: expected Meta, got jsonb: json type mismatch at line 1, column 11: expected Int, got string at level
-a document null for an Option: [MaybeDoc {doc: None}]
+a document null for an Option: [MaybeDoc { doc: None }]
 text for a record: TypeMismatch(doc, Meta, text)
   postgres type mismatch on column `doc`: expected Meta, got text; a field of type `Meta` is filled only from a json or jsonb column
 text for an Option of a record: TypeMismatch(doc, Meta, text)
@@ -50,4 +50,4 @@ a date that is infinity: TypeMismatch(d, time.Date, Infinity)
   postgres type mismatch on column `d`: expected time.Date, got Infinity; cast it in SQL, for example d::text
 an INSERT whose RETURNING does not fit: TypeMismatch(id, Int, float8)
   postgres type mismatch on column `id`: expected Int, got float8; cast it in SQL, for example id::text
-rows in the table: [Id {id: 0}]
+rows in the table: [Id { id: 0 }]

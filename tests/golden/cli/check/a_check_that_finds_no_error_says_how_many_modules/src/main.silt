@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+-- A check that finds no error says so in one line, after the warnings,
+-- with the number of modules checked: here main, a (imported by main and
+-- by the test file, counted once), b (imported by nothing) and the test
+-- file.
+import a
+fn main() {
+  println(a.f())
+}

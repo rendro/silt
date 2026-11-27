@@ -1,0 +1,10 @@
+-- `as` with a type behind it in braces is an ascription in a block, not
+-- a closure's parameter named with `as`; with a name behind it, it is
+-- a closure.
+fn main() {
+  let g = { x -> x + 1 }
+  let h = { g as Fn(Int) -> Int }
+  let k = { (a, b) as both -> "{a} {b} {both}" }
+  println(h(1))
+  println(k((1, 2)))
+}

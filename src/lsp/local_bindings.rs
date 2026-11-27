@@ -441,6 +441,31 @@ fn collect_pattern_bindings(
                 collect_pattern_bindings(r, visible_from, list_ty.as_ref(), scope_end, out);
             }
         }
+        // `p as name`: the name is the whole value, of the type `p`
+        // matches.
+        PatternKind::As {
+            pattern,
+            name,
+            name_span,
+        } => {
+            collect_pattern_bindings(pattern, visible_from, expr_ty, scope_end, out);
+            out.bindings.push(LocalBinding {
+                name: *name,
+                binding_offset: name_span.start as usize,
+                binding_len: resolve(*name).len(),
+                scope_start: visible_from,
+                scope_end,
+                ty: expr_ty.cloned(),
+                same_as: None,
+            });
+            if out.untyped {
+                out.names.push(PatternName {
+                    span: *name_span,
+                    ty: None,
+                    matched: None,
+                });
+            }
+        }
         _ => {}
     }
 }

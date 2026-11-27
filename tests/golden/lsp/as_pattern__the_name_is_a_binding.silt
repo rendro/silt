@@ -1,0 +1,32 @@
+-- cmd: lsp
+-- lsp: hover 13:16
+-- lsp: references 13:16
+-- lsp: rename 13:32 tokens
+-- lsp: definition 13:32
+-- lsp: references 20:58
+-- lsp: rename 20:32 both
+-- The name behind `as` is a binding as a name pattern is: its hover
+-- shows the whole value's type, and its uses are found and renamed with
+-- it, in every alternative of an or-pattern.
+fn first(ts: List(Int)) -> String {
+  match ts {
+    [x, ..] as all -> "{x} of {all}"
+    [] -> "none"
+  }
+}
+
+fn pick(p: (Int, Int)) -> Int {
+  match p {
+    ((a, _) as w) | ((_, a) as w) when a > 3 -> a + size(w)
+    _ -> 0
+  }
+}
+
+fn size(_p: (Int, Int)) -> Int {
+  2
+}
+
+fn main() {
+  println(first([1]))
+  println(pick((1, 5)))
+}

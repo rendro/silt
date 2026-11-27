@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 fn pick(a: a, b: a) -> a where a: Compare {
   match Compare.compare(a, b) {
     1 -> a

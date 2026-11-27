@@ -207,6 +207,12 @@ impl Compiler<'_> {
             // depth is unchanged from the base.
             PatternKind::Wildcard | PatternKind::Ident(_) => Ok(vec![]),
 
+            // The name tests nothing: the inner pattern's test, of the
+            // same value.
+            PatternKind::As { pattern, .. } => {
+                self.compile_pattern_test_tracked(pattern, span, base_depth)
+            }
+
             PatternKind::Int(n) => {
                 let idx = self.add_constant(Value::Int(*n), span)?;
                 self.emit(Asm::TestEqual { k: idx }, span)?;
@@ -610,6 +616,14 @@ impl Compiler<'_> {
                 self.add_local(*name, span)?;
             }
 
+            // The name's local is a copy of the value, on top; the inner
+            // pattern binds from it there, as from the value itself.
+            PatternKind::As { pattern, name, .. } => {
+                self.emit(Asm::Dup, span)?;
+                self.add_local(*name, span)?;
+                self.compile_pattern_bind_parts(pattern, span)?;
+            }
+
             PatternKind::Constructor { args: fields, .. } => {
                 self.compile_compound_bind(
                     fields
@@ -963,6 +977,7 @@ impl Compiler<'_> {
                 product(&mut fields.iter().filter_map(|(_, _, part)| part.as_ref()))
             }
             PatternKind::Map(entries) => product(&mut entries.iter().map(|(_, part)| part)),
+            PatternKind::As { pattern, .. } => Self::or_way_count(pattern),
             _ => 1,
         }
     }
@@ -1063,6 +1078,19 @@ impl Compiler<'_> {
                     })
                     .collect()
             }
+            PatternKind::As {
+                pattern: inner,
+                name,
+                name_span,
+            } => (Self::or_ways(inner).into_iter())
+                .map(|way| {
+                    rebuilt(PatternKind::As {
+                        pattern: Box::new(way),
+                        name: *name,
+                        name_span: *name_span,
+                    })
+                })
+                .collect(),
             _ => vec![pattern.clone()],
         }
     }

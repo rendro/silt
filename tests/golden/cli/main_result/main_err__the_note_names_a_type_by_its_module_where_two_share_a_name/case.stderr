@@ -1,2 +1,2 @@
-error: geo.Point {x: 2}
+error: geo.Point { x: 2 }
 note: the Display impl of geo.Point failed: panic: geo point 2 (geo.silt:7:5)

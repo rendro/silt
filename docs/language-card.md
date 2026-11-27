@@ -164,7 +164,10 @@ fn main() {
 - Patterns: literals, `_`, names, variants `Some(x)` and `m.Variant(x)`,
   tuples, records `User { name, .. }`, lists `[a, b]`, `[h, ..t]`,
   maps `#{ "k": v }`, ranges `1..9`, or-patterns `a | b`, guards
-  `p when cond`, and pins `^x` (equal to the existing `x`).
+  `p when cond`, pins `^x` (equal to the existing `x`), and
+  `p as name` (matches `p` and binds the whole value to `name`:
+  `[Token { tok: TEof, .. } as t, ..]`; an or-pattern before `as` is in
+  parentheses, `(0 | 1) as bit`).
 - A `match` without a subject has conditions for patterns (`x > 0 ->
   ...`): it takes the first arm whose condition is true, and ends with a
   `_ -> ...` arm.

@@ -1,5 +1,5 @@
 the first row of slow impls:
-  Some(Some(Ok(S {slow: Slow {n: 1}})))
+  Some(Some(Ok(S { slow: Slow { n: 1 } })))
 an impl that waits for the reader:
   read 1
   read 2
@@ -8,4 +8,4 @@ an impl that waits for the reader:
   read 5
 an impl that sleeps, read under a deadline:
   None
-  the next statement: Ok([One {n: 1}])
+  the next statement: Ok([One { n: 1 }])

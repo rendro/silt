@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 trait Parent(a) {
     fn parent_fn(self) -> a
 }

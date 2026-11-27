@@ -9,3 +9,5 @@ warning[type]: `_guard` is let go at this call
     |       ------ `_guard` is bound here
   = note: a call that ends its block is a tail call: the function's values are let go before the call runs
   = help: to keep `_guard` until the call returns, bind its value and end with it: `let result = work(n)`, then `result`
+
+checked 1 module: no errors

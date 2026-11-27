@@ -2,7 +2,7 @@ a+
 pattern a+
 a+
 [a+, a+]
-Rule {name: "as", re: a+}
+Rule { name: "as", re: a+ }
 Ok(\d+)
 <a+>
 true

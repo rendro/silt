@@ -664,7 +664,7 @@ fn a_wrong_part_within_the_bound_is_refused() {
     assert!(
         err.contains(
             "h.same: its signature returns a, here Box(Int) (the type of its argument `x`), but it \
-             returned Record Box {v: \"s\"}"
+             returned Record Box { v: \"s\" }"
         ),
         "got: {err}"
     );

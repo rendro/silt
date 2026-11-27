@@ -159,7 +159,7 @@ payload is shown by its structure, and one line under it says which
 impl failed, what its failure said and where:
 
 ```text
-error: E {a: 1}
+error: E { a: 1 }
 note: the Display impl of E failed: panic: display panics (main.silt:3:32)
 ```
 

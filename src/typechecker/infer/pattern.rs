@@ -238,7 +238,8 @@ impl TypeChecker {
             | PatternKind::Ident(_)
             | PatternKind::Tuple(_)
             | PatternKind::Record { .. }
-            | PatternKind::Or(_) => false,
+            | PatternKind::Or(_)
+            | PatternKind::As { .. } => false,
             PatternKind::Constructor { .. } => self
                 .pattern_constructor_enum(pattern)
                 .is_none_or(|(_, info)| info.variants.len() != 1),
@@ -305,7 +306,8 @@ impl TypeChecker {
             | PatternKind::Ident(_)
             | PatternKind::Tuple(_)
             | PatternKind::Record { .. }
-            | PatternKind::Or(_) => self.refutable_type_reason(ty),
+            | PatternKind::Or(_)
+            | PatternKind::As { .. } => self.refutable_type_reason(ty),
         }
     }
 
@@ -464,6 +466,18 @@ impl TypeChecker {
                 }
                 for (name, sp) in union_binders {
                     seen.insert(name, sp);
+                }
+            }
+            PatternKind::As {
+                pattern,
+                name,
+                name_span,
+            } => {
+                Self::collect_pattern_binders_into(pattern, seen, on_dup);
+                if seen.contains_key(name) {
+                    on_dup(*name, *name_span);
+                } else {
+                    seen.insert(*name, *name_span);
                 }
             }
             _ => pattern.for_each_child(|p| Self::collect_pattern_binders_into(p, seen, on_dup)),
@@ -883,6 +897,18 @@ impl TypeChecker {
                     self.error_help(Code::UndefinedVariable, msg, pattern_span);
                 }
                 Pat::Lit
+            }
+            // The name is the whole value: what the pattern tests is the
+            // inner pattern's test.
+            PatternKind::As { pattern, name, .. } => {
+                let pat = self.type_pattern(pattern, expected, env, cx);
+                if let Type::Var(v) = self.apply(expected)
+                    && !self.met_never_class(v)
+                {
+                    self.open_bindings.push(v);
+                }
+                env.define(*name, Scheme::mono(expected.clone()));
+                pat
             }
         }
     }

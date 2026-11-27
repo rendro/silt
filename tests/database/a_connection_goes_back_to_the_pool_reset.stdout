@@ -4,7 +4,7 @@ set_config: 1ms
   a statement after it: Ok
 SET application_name: Ok
   after it: silt_reset_case
-SET in a transaction, seen in it: Ok([S {s: "silt_nowhere"}])
+SET in a transaction, seen in it: Ok([S { s: "silt_nowhere" }])
   after it: "$user", public
   its cursor WITH HOLD after it: 0
 CREATE TEMP TABLE: Ok

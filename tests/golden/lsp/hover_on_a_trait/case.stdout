@@ -277,7 +277,7 @@ fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode 
 }
 
 fn main() {
-  println(load("""{"port": 80}""", Config)) -- Ok(Config {port: 80})
+  println(load("""{"port": 80}""", Config)) -- Ok(Config { port: 80 })
 }
 ```
 
@@ -363,7 +363,7 @@ type Post {
 
 fn main() {
   println(json.parse("""{"title": "a", "tags": "x"}""", Post))
-  -- Ok(Post {title: a, tags: Tags {names: #[x]}})
+  -- Ok(Post { title: a, tags: Tags { names: #[x] } })
   println(json.parse("""{"title": "a", "tags": 3}""", Post))
   -- Err(tags are a string or a list of strings at tags)
 }

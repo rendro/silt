@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 type Shape { Circle, Square }
 trait Area { fn area(self) -> Int }
 trait Area for Shape { fn area(self) -> Int { 1 } }

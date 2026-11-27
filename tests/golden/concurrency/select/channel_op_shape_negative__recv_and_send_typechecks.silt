@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
--- stderr-not-contains: error
+-- stderr-not-contains: error[
 -- Positive control: Recv(ch) and Send(ch, v) typecheck.
 import channel
 fn main() {

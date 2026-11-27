@@ -7,7 +7,7 @@
   impl P String("o")
   impl P String("t0")
   impl Q Int(5)
-R {"n": 1, "t": ["t0", 5], "o": "o", "l": ["l0", "l1"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"} -> Ok R {z: P {s: "z"}, a: P {s: "a"}, m: #{"a": P {s: "ma"}, "b": P {s: "mb"}}, l: [P {s: "l0"}, P {s: "l1"}], o: Some(P {s: "o"}), t: (P {s: "t0"}, Qb(5)), n: 1}
+R {"n": 1, "t": ["t0", 5], "o": "o", "l": ["l0", "l1"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"} -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{"a": P { s: "ma" }, "b": P { s: "mb" }}, l: [P { s: "l0" }, P { s: "l1" }], o: Some(P { s: "o" }), t: (P { s: "t0" }, Qb(5)), n: 1 }
   impl P String("z")
   impl P String("a")
   impl P String("ma")
@@ -38,11 +38,11 @@ R {"z": "z", "n": 1, "t": ["t0", 1], "l": [], "m": {}} -> Err json missing field
 R {"n": 1, "t": ["t0", 1], "l": [], "m": {}, "a": [1], "z": "z"} -> Err json type mismatch at line 1, column 49: expected string, got other at a
   impl P String("p")
   impl Q Int(1)
-E {"variant": "Two", "fields": ["p", 1]} -> Ok Two(P {s: "p"}, Qb(1))
+E {"variant": "Two", "fields": ["p", 1]} -> Ok Two(P { s: "p" }, Qb(1))
 [E] {"variant": "Two", "fields": ["p", 1]} -> Err json type mismatch at line 1, column 1: expected List, got object
   impl P String("p")
   impl Q Int(1)
-E {"fields": ["p", 1], "variant": "Two"} -> Ok Two(P {s: "p"}, Qb(1))
+E {"fields": ["p", 1], "variant": "Two"} -> Ok Two(P { s: "p" }, Qb(1))
 [E] {"fields": ["p", 1], "variant": "Two"} -> Err json type mismatch at line 1, column 1: expected List, got object
   impl P String("bad")
 E {"fields": ["bad", 1], "variant": "Two"} -> Err P refuses bad at fields[0]
@@ -56,11 +56,11 @@ E {"fields": ["p"], "variant": "Two"} -> Err variant `Two` of `E` has 2 fields, 
 E {"fields": ["p", 1], "variant": "Nope"} -> Err `E` has no variant `Nope` at variant
 [E] {"fields": ["p", 1], "variant": "Nope"} -> Err json type mismatch at line 1, column 1: expected List, got object
   impl P String("in")
-E {"variant": "Wrap", "fields": [{"fields": ["in"], "variant": "One"}]} -> Ok Wrap(One(P {s: "in"}))
+E {"variant": "Wrap", "fields": [{"fields": ["in"], "variant": "One"}]} -> Ok Wrap(One(P { s: "in" }))
 [E] {"variant": "Wrap", "fields": [{"fields": ["in"], "variant": "One"}]} -> Err json type mismatch at line 1, column 1: expected List, got object
   impl P String("b")
   impl Q Int(2)
-E {"variant": "One", "fields": ["a"], "variant": "Two", "fields": ["b", 2]} -> Ok Two(P {s: "b"}, Qb(2))
+E {"variant": "One", "fields": ["a"], "variant": "Two", "fields": ["b", 2]} -> Ok Two(P { s: "b" }, Qb(2))
 [E] {"variant": "One", "fields": ["a"], "variant": "Two", "fields": ["b", 2]} -> Err json type mismatch at line 1, column 1: expected List, got object
   impl P String("bad")
 E {"fields": ["a"], "variant": "One", "fields": ["bad"]} -> Err P refuses bad at fields[0]
@@ -75,7 +75,7 @@ E ["Plain", {"variant": "One", "fields": ["x"]}, {"variant": "One", "fields": ["
   impl Q Int(1)
   impl Box String("q")
   impl Q String("q")
-B -> Ok B {b: Box {v: P {s: "x"}}, bs: [Box {v: Qb(1)}, Box {v: Qa}]}
+B -> Ok B { b: Box { v: P { s: "x" } }, bs: [Box { v: Qb(1) }, Box { v: Qa }] }
   impl Box String("bad")
   impl P String("bad")
 B bad -> Err P refuses bad at b
@@ -90,13 +90,13 @@ Map(Option(P)) -> Err P refuses bad at b
   impl P String("x")
   impl P String("t0")
   impl Q Int(5)
-decode R -> Ok R {z: P {s: "z"}, a: P {s: "a"}, m: #{"a": P {s: "ma"}, "b": P {s: "mb"}}, l: [P {s: "x"}], o: None, t: (P {s: "t0"}, Qb(5)), n: 1}
+decode R -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{"a": P { s: "ma" }, "b": P { s: "mb" }}, l: [P { s: "x" }], o: None, t: (P { s: "t0" }, Qb(5)), n: 1 }
   impl P String("z")
   impl P String("bad")
 decode R bad -> Err P refuses bad at a
   impl P String("p")
   impl Q Int(1)
-decode E -> Ok Two(P {s: "p"}, Qb(1))
+decode E -> Ok Two(P { s: "p" }, Qb(1))
   impl P String("z")
   impl P String("a")
   impl P String("ma")
@@ -113,7 +113,7 @@ a = "a"
 [m]
 b = "mb"
 a = "ma"
- -> Ok R {z: P {s: "z"}, a: P {s: "a"}, m: #{"a": P {s: "ma"}, "b": P {s: "mb"}}, l: [P {s: "l0"}, P {s: "l1"}], o: None, t: (P {s: "t0"}, Qb(5)), n: 1}
+ -> Ok R { z: P { s: "z" }, a: P { s: "a" }, m: #{"a": P { s: "ma" }, "b": P { s: "mb" }}, l: [P { s: "l0" }, P { s: "l1" }], o: None, t: (P { s: "t0" }, Qb(5)), n: 1 }
   impl P String("z")
   impl P String("bad")
 toml R n = 1

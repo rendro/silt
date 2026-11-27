@@ -246,7 +246,7 @@ fn a_task_finds_an_impl_of_a_later_entry_through_an_earlier_generic_function() {
 
 /// A `Display` impl of a later entry is used wherever the value is
 /// shown: in an interpolation and by `string.from`, inside a list. It
-/// was not used, and nothing said so: `[Q {q: 2}]|[Q {q: 2}]`.
+/// was not used, and nothing said so: `[Q { q: 2 }]|[Q { q: 2 }]`.
 #[test]
 fn a_task_shows_a_value_with_the_display_impl_of_a_later_entry() {
     assert_tasks_see(
@@ -280,7 +280,7 @@ fn a_task_decodes_a_document_with_the_json_decode_impl_of_a_later_entry() {
         "type Q { q: Int }\n\
          trait json.Decode for Q { fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Q { q: 9 }) } }",
         "ld(\"[1]\", Q)",
-        "Ok([Q {q: 9}])",
+        "Ok([Q { q: 9 }])",
     );
 }
 
@@ -306,7 +306,7 @@ fn a_task_decodes_into_record_types_of_a_later_entry() {
         "import json",
         "type Inner { n: Int }\ntype Outer { name: String, inner: Inner, all: List(Inner) }",
         r#"json.parse("\{\"name\": \"a\", \"inner\": \{\"n\": 2\}, \"all\": [\{\"n\": 3\}]\}", Outer)"#,
-        "Ok(Outer {name: \"a\", inner: Inner {n: 2}, all: [Inner {n: 3}]})",
+        "Ok(Outer { name: \"a\", inner: Inner { n: 2 }, all: [Inner { n: 3 }] })",
     );
 }
 

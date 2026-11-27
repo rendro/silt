@@ -1026,6 +1026,11 @@ impl ShapeWriter {
                 self.open("pin");
                 self.sym(*name);
             }
+            PatternKind::As { pattern, name, .. } => {
+                self.open("as");
+                self.pattern(pattern);
+                self.sym(*name);
+            }
         }
         self.close();
     }

@@ -1,5 +1,5 @@
-Ok(D {x: 1979-05-27, i: 1})
+Ok(D { x: 1979-05-27, i: 1 })
 Err(toml type mismatch at line 1, column 5: expected String, got datetime at x)
 Err(toml syntax error at line 1, column 36: invalid datetime, expected year or hour)
-Ok(D {x: 1979-05-27, i: 1})
+Ok(D { x: 1979-05-27, i: 1 })
 Err(toml type mismatch at line 1, column 5: expected String, got table at x)

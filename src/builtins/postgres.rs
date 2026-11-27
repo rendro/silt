@@ -3939,7 +3939,7 @@ mod tests {
         let told = make_notification("jobs", "42", 7);
         assert_eq!(
             told.to_string(),
-            "Notification {channel: \"jobs\", payload: \"42\", pid: 7}"
+            "Notification { channel: \"jobs\", payload: \"42\", pid: 7 }"
         );
     }
 

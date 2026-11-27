@@ -1331,10 +1331,10 @@ mod tests {
         let records = [
             (
                 with("{}"),
-                "Cfg {name: \"x\", inner: Inner {n: 2, tag: None}, xs: [1, 2], \
+                "Cfg { name: \"x\", inner: Inner { n: 2, tag: None }, xs: [1, 2], \
                  m: #{\"a\": 1.0, \"b c\": 2.5}, t: (1, \"s\"), d: 2026-10-19, \
                  tm: 12:30:00.250, at: 2026-10-19T10:30:00, o: None, \
-                 rows: [Inner {n: 1, tag: Some(\"a\")}, Inner {n: 2, tag: None}]}",
+                 rows: [Inner { n: 1, tag: Some(\"a\") }, Inner { n: 2, tag: None }] }",
             ),
             (with(r#"{"o": true}"#), "o: Some(true)"),
             (
@@ -1423,7 +1423,7 @@ mod tests {
         }
         // A map of records.
         let maps = [
-            (r#"{"a": {"n": 1}}"#, "#{\"a\": Inner {n: 1, tag: None}}"),
+            (r#"{"a": {"n": 1}}"#, "#{\"a\": Inner { n: 1, tag: None }}"),
             (r#"{"a": {"n": 1}, "b": {}}"#, "MissingField b.n"),
         ];
         let map = F::Map(Box::new(F::Record(inner.id)));
@@ -1445,28 +1445,28 @@ mod tests {
         // A whole float: an `Int` by its value to JSON, a float to TOML.
         assert_eq!(
             shown(&F::Int, "2.0", "v = 2.0"),
-            ["V {v: 2}", "TypeMismatch at v"]
+            ["V { v: 2 }", "TypeMismatch at v"]
         );
         // A datetime literal: a `Date` as its string is, no `String`.
         assert_eq!(
             shown(&F::Date, r#""2026-10-19""#, "v = 2026-10-19"),
-            ["V {v: 2026-10-19}"; 2]
+            ["V { v: 2026-10-19 }"; 2]
         );
         assert_eq!(
             shown(&F::String, r#""2026-10-19""#, "v = 2026-10-19"),
-            ["V {v: \"2026-10-19\"}", "TypeMismatch at v"]
+            ["V { v: \"2026-10-19\" }", "TypeMismatch at v"]
         );
         // A null: JSON's is a `None` and no `String`; TOML leaves it out.
         assert_eq!(
             shown(&F::Option(Box::new(F::Int)), "null", ""),
-            ["V {v: None}"; 2]
+            ["V { v: None }"; 2]
         );
         assert_eq!(shown(&F::String, "null", "")[0], "TypeMismatch at v");
         // A `json.Value` is decoded from both: TOML's array is a
         // `json.Array` of its values.
         assert_eq!(
             shown(&F::JsonValue, "[1, 2.5]", "v = [1, 2.5]"),
-            ["V {v: Array([Int(1), Float(2.5)])}"; 2]
+            ["V { v: Array([Int(1), Float(2.5)]) }"; 2]
         );
     }
 

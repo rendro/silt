@@ -345,6 +345,14 @@ fn pattern_head(pattern: &Pattern, out: &mut Vec<Token>) {
                 pattern_head(alt, out);
             }
         }
+        // (An or-pattern in front of the `as` stands in parentheses.)
+        PatternKind::As { pattern, name, .. } => {
+            match pattern.kind {
+                PatternKind::Or(_) => out.push(Token::LParen),
+                _ => pattern_head(pattern, out),
+            }
+            out.extend([Token::As, Token::Ident(*name)]);
+        }
     }
 }
 
@@ -702,6 +710,7 @@ fn closure_reads(pattern: &Pattern) -> bool {
         | PatternKind::FloatRange(..)
         | PatternKind::Pin(_) => false,
         PatternKind::Or(alts) => alts.iter().all(closure_reads),
+        PatternKind::As { pattern, .. } => closure_reads(pattern),
         _ => true,
     }
 }
@@ -2547,9 +2556,11 @@ impl Printer<'_> {
     /// comment stands at their inside.
     fn pattern_in(&mut self, pattern: &Pattern, needed: bool) -> Doc {
         // The parentheses in front of an or-pattern are around it or
-        // around its first alternative.
+        // around its first alternative; those in front of `p as x`
+        // around it or around `p`.
         let first_end = match &pattern.kind {
             PatternKind::Or(alts) => alts.first().map(|alt| alt.span.end),
+            PatternKind::As { pattern: inner, .. } => Some(inner.span.end),
             _ => None,
         };
         let wrappers = self.cur.pattern_wrappers(pattern.span.start, first_end);
@@ -2597,8 +2608,9 @@ impl Printer<'_> {
                 docs.extend([Doc::Line, self.tok(Token::Bar), space()]);
             }
             // In a closure's parameter, where the or-pattern has no
-            // parentheses of its own.
-            if in_closure && !closure_reads(alt) {
+            // parentheses of its own; and an alternative named with
+            // `as`, which has them.
+            if (in_closure && !closure_reads(alt)) || matches!(alt.kind, PatternKind::As { .. }) {
                 docs.push(self.pattern_in(alt, true));
                 continue;
             }
@@ -2760,6 +2772,17 @@ impl Printer<'_> {
                 },
             ),
             PatternKind::Pin(_) => Doc::concat(vec![self.tok(Token::Caret), self.name()]),
+            // An or-pattern in front of the `as` keeps its parentheses.
+            PatternKind::As { pattern: inner, .. } => {
+                let inner = self.pattern_in(inner, matches!(inner.kind, PatternKind::Or(_)));
+                Doc::concat(vec![
+                    inner,
+                    space(),
+                    self.tok(Token::As),
+                    space(),
+                    self.name(),
+                ])
+            }
         }
     }
 

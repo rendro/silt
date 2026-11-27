@@ -9,3 +9,5 @@ warning[type]: 'kind' is never used
    |           ------------------------ `{kind}` in this raw string is text
   = help: a raw string `"""..."""` does not interpolate: to put the value of `kind` in, write the text as a `"..."` string, with `\{` for a literal brace and `\"` for a quote
   = help: remove it, or name it `_kind`
+
+checked 1 module: no errors
