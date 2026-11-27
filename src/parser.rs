@@ -2326,6 +2326,33 @@ impl<'src> Parser<'src> {
             }
             p.expect(&Token::Colon)?;
             let ty = p.parse_type_expr()?;
+            // Every field starts lower case, not only the first one that
+            // made the body a record's. The field goes on under its
+            // lower-case name, so the program's uses of it check.
+            let mut name = name;
+            if !p.cut_short && intern::resolve(name).starts_with(char::is_uppercase) {
+                let text = intern::resolve(name);
+                let field = lower_first_word(&text);
+                let written = (p.source)
+                    .get(ty.span.start as usize..ty.span.end as usize)
+                    .filter(|ty| !ty.contains('\n'));
+                let fix = match written {
+                    Some(ty) => format!("write `{field}: {ty}`"),
+                    None => format!("write `{field}`"),
+                };
+                p.keep_or_count(
+                    Diagnostic::error(
+                        Code::ExpectedToken,
+                        name_span,
+                        format!(
+                            "record field '{text}' starts with a capital: a record's fields \
+                             start with a lower-case letter"
+                        ),
+                    )
+                    .with_help(fix),
+                );
+                name = intern::intern(&field);
+            }
             Ok(RecordField {
                 name,
                 name_span,
