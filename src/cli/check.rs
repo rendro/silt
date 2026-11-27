@@ -531,8 +531,9 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         if any_shown {
             eprintln!();
         }
-        let noun = if modules.len() == 1 { "module" } else { "modules" };
-        eprintln!("checked {} {noun}: no errors", modules.len());
+        let n = modules.len();
+        let noun = if n == 1 { "module" } else { "modules" };
+        eprintln!("checked {n} {noun}: no errors");
     }
 }
 
