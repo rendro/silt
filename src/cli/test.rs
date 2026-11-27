@@ -185,6 +185,39 @@ fn check_package_first(dir: &Path) {
     process::exit(1);
 }
 
+/// What `silt test` says when it found no test file in the directories
+/// it walked (`walked`): where packages below them that the walk left to
+/// themselves have test files, it names them and the command that tests
+/// them.
+fn no_test_files(walked: &[String]) -> String {
+    let mut packages: Vec<String> = Vec::new();
+    for dir in walked {
+        let found = crate::cli::paths::packages_below(Path::new(dir), &|package| {
+            !package_test_files(package).is_empty()
+        });
+        for package in found {
+            if !packages.contains(&package) {
+                packages.push(package);
+            }
+        }
+    }
+    let shown: Vec<String> = (packages.iter())
+        .map(|package| crate::git::escape_for_display(package))
+        .collect();
+    match shown.as_slice() {
+        [] => "no test files found".to_string(),
+        [one] => format!(
+            "no test files found, but for those of the package in {one}: run `silt test {one}`"
+        ),
+        [init @ .., last] => format!(
+            "no test files found, but for those of the packages in {} and {last}: run \
+             `silt test {}`",
+            init.join(", "),
+            shown.join(" ")
+        ),
+    }
+}
+
 fn run_tests(given: &[String], filter: Option<String>) {
     // Each path given is what the commands that take one make of it
     // (`paths::path_arg`); one that is none of them, or names nothing
@@ -218,12 +251,16 @@ fn run_tests(given: &[String], filter: Option<String>) {
         }
     };
     let mut paths: Vec<String> = Vec::new();
+    // The directories walked for test files: where none is found, the
+    // packages below them that the walk left to themselves are named.
+    let mut walked: Vec<String> = Vec::new();
     for arg in args {
         match arg {
             // silt test dir/ — find all test files in directory recursively
             PathArg::Package(dir) | PathArg::Dir(dir) => {
                 check_first(Path::new(&dir));
                 paths.extend(package_test_files(Path::new(&dir)));
+                walked.push(dir);
             }
             // silt test file.silt — single file
             PathArg::File(f) => {
@@ -249,6 +286,7 @@ fn run_tests(given: &[String], filter: Option<String>) {
     if given.is_empty() {
         check_first(Path::new("."));
         paths = package_test_files(Path::new("."));
+        walked.push(".".to_string());
     }
     // A file given twice (two spellings of its path, a link and what it
     // leads to, a file and a directory it is in) is run once.
@@ -263,7 +301,7 @@ fn run_tests(given: &[String], filter: Option<String>) {
             say(&format!("no test matches --filter '{filter}'\n"));
             crate::scheduler::exit_with_status(1);
         }
-        println!("no test files found");
+        println!("{}", no_test_files(&walked));
         return;
     }
 

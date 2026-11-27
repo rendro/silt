@@ -245,6 +245,72 @@ fn a_directory_whose_files_are_in_a_package_below_names_the_package() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// `silt test` in a directory whose test files are all in packages below
+/// it: the walk leaves them to their packages, and the line that says no
+/// test file was found names those packages and the command that tests
+/// them. FAILS on the base: "no test files found" alone.
+#[test]
+fn silt_test_names_the_packages_below_that_hold_the_test_files() {
+    let dir = workspace("test_nested");
+    fs::create_dir_all(dir.join("outer/second/src")).unwrap();
+    fs::rename(dir.join("pk"), dir.join("outer/pk")).unwrap();
+    fs::write(
+        dir.join("outer/second/silt.toml"),
+        "[package]\nname = \"second\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("outer/second/src/main.silt"),
+        "fn main() {\n  ()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("outer/second/src/a_test.silt"),
+        "import test\n\nfn test_one() {\n  test.assert_eq(1, 1)\n}\n",
+    )
+    .unwrap();
+    // A package that holds no test file is not named.
+    fs::create_dir_all(dir.join("outer/bare/src")).unwrap();
+    fs::write(
+        dir.join("outer/bare/silt.toml"),
+        "[package]\nname = \"bare\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("outer/bare/src/main.silt"),
+        "fn main() {\n  ()\n}\n",
+    )
+    .unwrap();
+    let stdout = |out: &Output| String::from_utf8_lossy(&out.stdout).replace('\\', "/");
+    let out = silt(&dir, &["test", "outer"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        stdout(&out),
+        "no test files found, but for those of the packages in outer/pk and outer/second: \
+         run `silt test outer/pk outer/second`\n"
+    );
+    let out = silt(&dir.join("outer"), &["test"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        stdout(&out),
+        "no test files found, but for those of the packages in pk and second: run \
+         `silt test pk second`\n"
+    );
+    fs::remove_file(dir.join("outer/second/src/a_test.silt")).unwrap();
+    let out = silt(&dir, &["test", "outer"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        stdout(&out),
+        "no test files found, but for those of the package in outer/pk: run \
+         `silt test outer/pk`\n"
+    );
+    // Where no package below holds a test file, the line says no more.
+    let out = silt(&dir, &["test", "outer/second", "plain"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(stdout(&out), "no test files found\n");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A test file reached through a link from outside its package is run in
 /// the package of the file it leads to, so that package is checked
 /// first. FAILS on the base: the package of the link's directory (none)
