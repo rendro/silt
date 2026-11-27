@@ -146,6 +146,31 @@ fn main() { fib(25) }
     "#,
     );
 
+    // A function that gives a variant, matched at once: the variant is
+    // made where its constructor is, not called (`run::constructed`).
+    bench(
+        "calls: returns Ok(VI(n)) 200K",
+        r#"
+type V {
+  VI(Int),
+  VN,
+}
+fn give(n: Int) -> Result(V, String) {
+  Ok(VI(n))
+}
+fn walk(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> match give(n) {
+      Ok(VI(k)) -> walk(n - 1, acc + k)
+      _ -> acc
+    }
+  }
+}
+fn main() { walk(200000, 0) }
+    "#,
+    );
+
     println!();
 
     // ── Collections ─────────────────────────────────────────────────

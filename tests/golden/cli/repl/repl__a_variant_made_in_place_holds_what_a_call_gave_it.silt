@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: import list\ntype V {\n  VI(Int),\n  VN,\n}\nfn mk(n: Int) -> V {\n  VI(n)\n}\nfn ok(n: Int) -> Result(V, String) {\n  Ok(VI(n))\n}\nlet a = mk(1)\nlet xs = [1, 2, 3]\nlet held = Some(xs)\nfn mk(n: Int) -> V {\n  VI(n * 10)\n}\n(a, mk(2), ok(3), held, list.map([4], Some), list.map([5], VI))\n:quit\n
+-- stdout-contains: (VI(1), VI(20), Ok(VI(3)), Some([1, 2, 3]), [Some(4)], [VI(5)])
+-- A variant an entry's function makes with its fields holds what a call
+-- of the constructor gave it, and so does one a later entry makes with
+-- a function defined again.

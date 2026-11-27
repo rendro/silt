@@ -8329,3 +8329,91 @@ fn main() {
         assert_eq!(run_on(&mut large, main).unwrap(), Value::Int(50000));
     }
 }
+
+/// A call of a variant's constructor in a function's code with its
+/// fields (`VI(n)`, `Ok(VI(n))`, a constructor a local holds) makes the
+/// variant where the constructor is: no call through `Vm::call_value`.
+/// A builtin that calls a constructor it is given (`list.map(xs, Some)`)
+/// calls it. The values are those of a call.
+mod constructors_in_place {
+    use crate::value::Value;
+
+    #[test]
+    fn a_variant_made_in_a_function_s_code_is_no_call() {
+        let (program, given) = crate::session::testing::compile_given(
+            r#"
+import host
+import list
+type V {
+  VI(Int),
+  VP(Int, String),
+  VN,
+}
+fn just(n: Int) -> V {
+  VI(n)
+}
+fn ok(n: Int) -> Result(V, String) {
+  Ok(VI(n))
+}
+fn pair(n: Int) -> V {
+  let v = VP(n, "p")
+  v
+}
+fn walk(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> {
+      let f = VI
+      let a = match just(n) {
+        VI(k) -> k
+        _ -> 0
+      }
+      let b = match ok(n) {
+        Ok(VI(k)) -> k
+        _ -> 0
+      }
+      let c = match pair(n) {
+        VP(k, _) -> k
+        _ -> 0
+      }
+      let d = match f(n) {
+        VI(k) -> k
+        _ -> 0
+      }
+      let e = match VN {
+        VN -> 1
+        _ -> 0
+      }
+      walk(n - 1, acc + a + b + c + d + e)
+    }
+  }
+}
+fn main() {
+  let xs = [1, 2, 3]
+  let held = Some(xs)
+  let mapped = list.map(list.map(1..10) { i -> i }, Some)
+  host.give((walk(1000, 0), held, list.length(mapped), list.first(mapped), xs))
+}
+"#,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        let before = super::super::calls::constructor_calls::count();
+        crate::vm::Vm::new(crate::HostIo::process())
+            .run_program(&program)
+            .expect("it runs");
+        let calls = super::super::calls::constructor_calls::count() - before;
+        let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| Value::Int(n)).collect());
+        let some = |v: Value| Value::variant(crate::typeinfo::bv::SOME, [v]);
+        assert_eq!(
+            given.last(),
+            Some(Value::tuple(vec![
+                Value::Int(4 * 500_500 + 1_000),
+                some(ints(&[1, 2, 3])),
+                Value::Int(10),
+                some(some(Value::Int(1))),
+                ints(&[1, 2, 3]),
+            ]))
+        );
+        assert_eq!(calls, 10, "the constructors called through call_value");
+    }
+}
