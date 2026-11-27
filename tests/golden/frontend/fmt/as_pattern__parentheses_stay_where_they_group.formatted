@@ -1,0 +1,40 @@
+-- cmd: fmt
+-- Parentheses around an or-pattern in front of `as`, and around an
+-- alternative that has a name of its own, stay; the others go.
+type Shape {
+  Circle(Int),
+  Square(Int),
+}
+
+fn f(s: Shape) -> Int {
+  match s {
+    (Circle(n) | Square(n)) as whole -> n + whole_size(whole)
+  }
+}
+
+fn whole_size(s: Shape) -> Int {
+  match s {
+    (Circle(n) as w) | (Square(n) as w) -> n + size(w)
+  }
+}
+
+fn size(_s: Shape) -> Int {
+  1
+}
+
+fn h(xs: List(Int)) -> Int {
+  match xs {
+    [x as y, ..] as _all -> x + y
+    [] -> 0
+  }
+}
+
+fn k(p: (Int, Int)) -> Int {
+  let (a, b) as q as r = p
+  let c = { (u, v) as _w -> u + v }
+  a + b + c(q) + c(r)
+}
+
+fn main() {
+  println(f(Circle(1)) + h([3]) + k((1, 2)))
+}

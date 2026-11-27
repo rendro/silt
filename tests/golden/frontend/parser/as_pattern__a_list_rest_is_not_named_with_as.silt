@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: error[parse]: expected ']' or ',' to continue list pattern
+-- stderr-contains: help: `..rest` already names the rest
+-- A list pattern's rest has its name: `as` names no rest.
+fn f(xs: List(Int)) -> Int {
+  match xs {
+    [a, ..rest as r] -> a
+    [] -> 0
+  }
+}
+
+fn main() {
+  println(f([1]))
+}

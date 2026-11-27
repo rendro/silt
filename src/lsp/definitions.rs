@@ -244,6 +244,20 @@ fn collect_let_pattern_defs(
                 collect_let_pattern_defs(r, list_ty.as_ref(), None, false, defs, records);
             }
         }
+        // `p as name`: the name is the whole value.
+        PatternKind::As { pattern, name, .. } => {
+            collect_let_pattern_defs(pattern, value_ty, None, false, defs, records);
+            defs.insert(
+                *name,
+                DefInfo {
+                    signature: None,
+                    fields: None,
+                    ty: value_ty.cloned(),
+                    params: vec![],
+                    doc: None,
+                },
+            );
+        }
         _ => {}
     }
 }

@@ -363,6 +363,15 @@ pub enum PatternKind {
     Map(Vec<(String, Pattern)>),
     /// Pin pattern: ^name -- matches against the existing variable's value
     Pin(Symbol),
+    /// `pattern as name`: what `pattern` matches, with the whole value
+    /// also bound to `name`. An or-pattern stands in parentheses in
+    /// front of the `as`: `(A | B) as x`.
+    As {
+        pattern: Box<Pattern>,
+        name: Symbol,
+        /// Span of the name behind the `as`.
+        name_span: Span,
+    },
 }
 
 // ── Parameters & type expressions ────────────────────────────────────
@@ -1173,6 +1182,7 @@ impl Pattern {
                 .try_for_each(f),
             PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).try_for_each(f),
             PatternKind::Map(entries) => entries.iter().try_for_each(|(_, p)| f(p)),
+            PatternKind::As { pattern, .. } => f(pattern),
         }
     }
 
@@ -1214,6 +1224,14 @@ impl Pattern {
                     first.for_each_binder(f);
                 }
             }
+            PatternKind::As {
+                pattern,
+                name,
+                name_span,
+            } => {
+                pattern.for_each_binder(f);
+                f(*name, *name_span, self);
+            }
             _ => self.for_each_child(|child| child.for_each_binder(f)),
         }
     }
@@ -1236,7 +1254,7 @@ impl Pattern {
     /// name.
     pub(crate) fn binds_any(&self) -> bool {
         match &self.kind {
-            PatternKind::Ident(_) => true,
+            PatternKind::Ident(_) | PatternKind::As { .. } => true,
             PatternKind::Record { fields, .. } if fields.iter().any(|(_, _, p)| p.is_none()) => {
                 true
             }

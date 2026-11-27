@@ -280,7 +280,8 @@ let b = a + 1
 **Destructuring** works in `let` for irrefutable patterns, the ones that
 match every value of their type: tuples and records, the constructor of a
 single-variant type, an or-pattern whose alternatives cover the type
-between them, and any nesting of these:
+between them, one of these with `as name` behind it (`let (x, y) as point =
+p`), and any nesting of these:
 
 ```silt
 let (x, y) = (1, "hello")

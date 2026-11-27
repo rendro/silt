@@ -1,0 +1,69 @@
+-- verdict: same
+-- `pattern as name` matches what the pattern matches and binds the whole
+-- value to the name: in an arm, inside another pattern, behind an
+-- or-pattern in parentheses, in a `let`, a `when let`, a closure's
+-- parameter, a top-level `let`, and under a guard.
+import list
+
+type Tok {
+  TEof,
+  TNum(Int),
+}
+
+type Token {
+  tok: Tok,
+  pos: Int,
+}
+
+let (top_a, top_b) as top = (1, 2)
+
+fn first(ts: List(Token)) -> String {
+  match ts {
+    [Token { tok: TEof, .. } as t, ..] -> "eof at {t.pos}"
+    [Token { tok: TNum(n), .. } as t, ..rest] -> "num {n} at {t.pos}, {list.length(rest)} more"
+    [] -> "empty"
+  }
+}
+
+fn kind(n: Int) -> String {
+  match n {
+    (0 | 1) as small -> "small {small}"
+    2..9 as d -> "digit {d}"
+    m -> "big {m}"
+  }
+}
+
+fn guarded(x: (Int, Int)) -> String {
+  match x {
+    ((a, _) as w) | ((_, a) as w) when a > 3 -> "a={a} w={w}"
+    _ -> "none"
+  }
+}
+
+fn nested(o: Option(List(Int))) -> String {
+  match o {
+    Some([x, ..] as xs) as whole -> "{x} {xs} {whole}"
+    _ -> "none"
+  }
+}
+
+fn main() {
+  println(first([Token { tok: TEof, pos: 4 }]))
+  println(first([Token { tok: TNum(7), pos: 1 }, Token { tok: TEof, pos: 2 }]))
+  println(kind(1))
+  println(kind(5))
+  println(kind(50))
+  println(guarded((1, 5)))
+  println(guarded((5, 1)))
+  println(guarded((1, 1)))
+  println(nested(Some([1, 2])))
+  let (a, b) as pair = (3, 4)
+  println("{a} {b} {pair}")
+  let swap = { (x, y) as p -> "{p} becomes ({y}, {x})" }
+  println(swap((5, 6)))
+  when let Some(v) as o = Some(3) else {
+    return
+  }
+  println("{v} {o}")
+  println("{top_a} {top_b} {top}")
+}

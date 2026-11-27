@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: error[parse]: expected '}' or ',' to continue record pattern
+-- stderr-contains: help: write `P { x: x as y }`
+-- A field written alone is a name already: to name its value with `as`
+-- too, the field takes a pattern.
+type P {
+  x: Int,
+}
+
+fn f(p: P) -> Int {
+  match p {
+    P { x as y } -> y
+  }
+}
+
+fn main() {
+  println(f(P { x: 1 }))
+}
