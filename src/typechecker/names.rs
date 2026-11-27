@@ -173,6 +173,9 @@ pub(crate) struct Source<'a> {
     /// binds where an earlier entry imported a module by that name, with
     /// the module.
     pub hidden_imports: &'a HashMap<Symbol, Symbol>,
+    /// Whether `import name` would load a module other than this one:
+    /// a module of the package or a key of its `[dependencies]`.
+    pub importable: &'a dyn Fn(Symbol) -> bool,
 }
 
 /// What an import of a module binds a name to, for the warning about a
@@ -431,6 +434,7 @@ pub(crate) fn resolve_module(
         builtins: &builtins,
         imported_names,
         hidden_imports: source.hidden_imports,
+        importable: source.importable,
         locals: Vec::new(),
         previous: HashMap::new(),
         named_closures: Vec::new(),
@@ -1475,6 +1479,8 @@ struct Resolver<'a> {
     imported_names: HashMap<Symbol, ImportedName>,
     /// See [`Source::hidden_imports`].
     hidden_imports: &'a HashMap<Symbol, Symbol>,
+    /// See [`Source::importable`].
+    importable: &'a dyn Fn(Symbol) -> bool,
     /// The local bindings in scope, innermost last.
     locals: Vec<Vec<Local>>,
     /// Top-level names that mean an earlier REPL cell's definition while
@@ -1860,6 +1866,26 @@ impl Resolver<'_> {
     }
 
     /// The help for a builtin module used without its import.
+    /// The error for `module.x` (at `span`) where nothing imports the
+    /// module `module`, a builtin one or one the file can import.
+    fn not_imported(&mut self, module: Symbol, span: Span) {
+        let module_str = resolve(module);
+        let mut d = Diagnostic::error(
+            Code::ModuleNotImported,
+            span,
+            format!("module '{module_str}' is not imported"),
+        )
+        .with_help(self.import_help(&module_str));
+        // An import of a module this build lacks would not help.
+        if crate::module::missing_feature(&module_str).is_none() {
+            d = d.with_fix(
+                format!("Add import for `{module_str}`"),
+                vec![(Span::point(span.file, 0), format!("import {module_str}\n"))],
+            );
+        }
+        self.error(d);
+    }
+
     fn import_help(&self, module: &str) -> String {
         if let Some(feature) = crate::module::missing_feature(module) {
             return crate::module::needs_feature(&format!("module `{module}`"), feature);
@@ -4046,21 +4072,7 @@ impl Resolver<'_> {
             None if crate::module::is_builtin_module(&resolve(head_name))
                 && self.alias_of(head_name).is_none() =>
             {
-                let module_str = resolve(head_name);
-                let mut d = Diagnostic::error(
-                    Code::ModuleNotImported,
-                    span,
-                    format!("module '{module_str}' is not imported"),
-                )
-                .with_help(self.import_help(&module_str));
-                // An import of a module this build lacks would not help.
-                if crate::module::missing_feature(&module_str).is_none() {
-                    d = d.with_fix(
-                        format!("Add import for `{module_str}`"),
-                        vec![(Span::point(span.file, 0), format!("import {module_str}\n"))],
-                    );
-                }
-                self.error(d);
+                self.not_imported(head_name, span);
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
             }
@@ -4075,6 +4087,13 @@ impl Resolver<'_> {
             None if self.type_vars.contains(&head_name) => {
                 obj.res = Some(Res::Local);
                 None
+            }
+            // `money.parse(s)` without `import money`: a module of the
+            // package (`src/money.silt`) or a key of its `[dependencies]`.
+            None if (self.importable)(head_name) && self.alias_of(head_name).is_none() => {
+                self.not_imported(head_name, span);
+                obj.res = Some(Res::Error);
+                Some(Res::Error)
             }
             None => {
                 self.unresolved_value(head_name, head_span);
