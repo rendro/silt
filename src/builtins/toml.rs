@@ -60,12 +60,13 @@ use crate::typeinfo::FieldType;
 // surfaces a typed `TomlError` variant wrapped in `Err(...)` instead of
 // a bare `Err(String)`. Mirrors `json_*_err` in `src/builtins/json.rs`.
 //
-// `TomlError` variants:
-//   Syntax(message, byte_offset)
-//   TypeMismatch(expected, actual, byte_offset)
-//   MissingField(name, byte_offset)
-//   Other(message, byte_offset)
-//   UnknownField(path, byte_offset)
+// `TomlError` variants, each with the byte offset of where it is and
+// that byte's line and column (`decode::place`):
+//   Syntax(message, byte_offset, line, column)
+//   TypeMismatch(expected, actual, byte_offset, line, column)
+//   MissingField(name, byte_offset, line, column)
+//   Other(message, byte_offset, line, column)
+//   UnknownField(path, expected_keys, byte_offset, line, column)
 
 fn toml_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, [inner])
@@ -77,12 +78,23 @@ fn toml_err_wrap(inner: Value) -> Value {
 /// don't have a span (extremely rare in practice) we fall back to 0.
 pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error, text: &str) -> Value {
     let start = err.span().map_or(0, |s| s.start);
-    let offset = start as i64;
+    syntax(err, text, start, start)
+}
+
+/// The `Syntax` error of `err`, an error at the byte `at` of `text`
+/// that is the byte `offset` of the text the program gave, `s` (where
+/// `text` is `s` with literals marked, [`marking`], which keeps the
+/// lines; the column is counted in `text`).
+fn syntax(err: &::toml::de::Error, text: &str, at: usize, offset: usize) -> Value {
+    let (line, column) = decode::line_column(text.as_bytes(), at);
+    let [offset, line, column] = decode::place(offset, line, column);
     Value::variant(
         bv::TOML_SYNTAX,
         [
-            Value::string(toml_reason(err.message(), text.get(start..).unwrap_or(""))),
-            Value::Int(offset),
+            Value::string(toml_reason(err.message(), text.get(at..).unwrap_or(""))),
+            offset,
+            line,
+            column,
         ],
     )
 }
@@ -123,39 +135,89 @@ pub(crate) fn toml_de_result_err(err: &::toml::de::Error, text: &str) -> Value {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type,
 /// serialization errors, document-shape violations, etc.).
 pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
+    let [offset, line, column] = decode::NO_PLACE;
     toml_err_wrap(Value::variant(
         bv::TOML_OTHER,
-        [Value::string(msg), Value::Int(0)],
+        [Value::string(msg), offset, line, column],
     ))
 }
 
 /// How `TomlError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    use super::json::at_place;
     Some(match (tag, fields) {
-        ("Syntax", [Value::String(m, _), Value::Int(offset)]) => {
-            format!("toml syntax error at byte {offset}: {m}")
+        (
+            "Syntax",
+            [
+                Value::String(m, _),
+                Value::Int(_),
+                Value::Int(line),
+                Value::Int(column),
+            ],
+        ) => {
+            format!("toml syntax error{}: {m}", at_place(*line, *column))
         }
         (
             "TypeMismatch",
             [
                 Value::String(exp, _),
                 Value::String(act, _),
-                Value::Int(offset),
+                Value::Int(_),
+                Value::Int(line),
+                Value::Int(column),
             ],
         ) => {
-            format!("toml type mismatch at byte {offset}: expected {exp}, got {act}")
+            let at = at_place(*line, *column);
+            format!("toml type mismatch{at}: expected {exp}, got {act}")
         }
-        ("MissingField", [Value::String(n, _), Value::Int(offset)]) => {
-            format!("toml missing field at byte {offset}: {n}")
+        (
+            "MissingField",
+            [
+                Value::String(n, _),
+                Value::Int(_),
+                Value::Int(line),
+                Value::Int(column),
+            ],
+        ) => {
+            format!("toml missing field{}: {n}", at_place(*line, *column))
         }
-        // (Its offset is a field of its own: the message is the text.)
-        ("Other", [Value::String(m, _), Value::Int(_)]) => m.to_string(),
-        ("UnknownField", [Value::String(n, _), Value::Int(offset)]) => {
-            format!("toml unknown field at byte {offset}: {n}")
+        // (Its place is in fields of its own: the message is the text.)
+        (
+            "Other",
+            [
+                Value::String(m, _),
+                Value::Int(_),
+                Value::Int(_),
+                Value::Int(_),
+            ],
+        ) => m.to_string(),
+        (
+            "UnknownField",
+            [
+                Value::String(n, _),
+                Value::List(expected),
+                Value::Int(_),
+                Value::Int(line),
+                Value::Int(column),
+            ],
+        ) => {
+            let at = at_place(*line, *column);
+            format!("toml unknown field{at}: {n}, {}", expected_keys(expected))
         }
         _ => return None,
     })
+}
+
+/// What an `UnknownField` says of the keys its table takes: `expected
+/// match or account`, `expected a, b or c`, `expected no key`.
+fn expected_keys(keys: &crate::value::List) -> String {
+    let keys: Vec<String> = keys.iter().map(|key| key.to_string()).collect();
+    match keys.as_slice() {
+        [] => "expected no key".to_string(),
+        [one] => format!("expected {one}"),
+        [rest @ .., last] => format!("expected {} or {last}", rest.join(", ")),
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -306,7 +368,7 @@ pub(crate) const RULES: Rules = Rules {
 /// same name, the path added as json's decoder adds it
 /// ([`decode::at_part`]). A `Syntax`, whose offset is in the impl's
 /// JSON text and not in the TOML document, is an `Other` of json's
-/// message of it ("json syntax error at byte 3: ...").
+/// message of it ("json syntax error at line 1, column 4: ...").
 fn from_impl(error: &Value, at: &str) -> Value {
     let error = decode::at_part(error, at);
     let Value::Variant(json) = &error else {
@@ -320,7 +382,11 @@ fn from_impl(error: &Value, at: &str) -> Value {
         _ if json.is(bv::JSON_SYNTAX) => {
             let message =
                 super::json::error_text(json.name(), &fields).unwrap_or_else(|| error.to_string());
-            return Value::variant(bv::TOML_OTHER, [Value::string(message), Value::Int(0)]);
+            let [offset, line, column] = decode::NO_PLACE;
+            return Value::variant(
+                bv::TOML_OTHER,
+                [Value::string(message), offset, line, column],
+            );
         }
         _ => return error,
     };
@@ -524,6 +590,7 @@ pub(crate) fn read_text(
     let located = |mut outcome: seed::Outcome, text: &str, in_s: &dyn Fn(usize) -> usize| {
         if let Err(e) = &mut outcome {
             e.locate(|path, key| in_s(offset_at(text, path, key)));
+            e.count_lines(s.as_bytes());
         }
         outcome
     };
@@ -669,12 +736,11 @@ fn marking<T>(
                         .filter(|(end, _)| *end <= at)
                         .map(|(_, by)| by)
                         .sum();
-                    return Err(toml_err_wrap(Value::variant(
-                        bv::TOML_SYNTAX,
-                        [
-                            Value::string(toml_reason(e.message(), text.get(at..).unwrap_or(""))),
-                            Value::Int(at.saturating_sub(growth) as i64),
-                        ],
+                    return Err(toml_err_wrap(syntax(
+                        &e,
+                        &text,
+                        at,
+                        at.saturating_sub(growth),
                     )));
                 };
                 first.get_or_insert(e);
@@ -871,6 +937,65 @@ mod tests {
     }
     use crate::builtins::data::MAX_ENCODE_DEPTH;
 
+    /// An error has the line and the character column of its byte, and
+    /// an unknown key's names the keys its table takes: the shown text
+    /// says the line and the column, not the byte.
+    #[test]
+    fn an_error_says_its_line_and_column() {
+        let text = |name: &str, fields: Vec<Value>| error_text(name, &fields).expect(name);
+        let place = |offset, line, column| decode::place(offset, line, column).to_vec();
+        let keys = Value::list(vec![Value::string("match"), Value::string("account")]);
+        let unknown = [
+            vec![Value::string("rules[0].macth"), keys],
+            place(182, 10, 1),
+        ]
+        .concat();
+        assert_eq!(
+            text("UnknownField", unknown),
+            "toml unknown field at line 10, column 1: rules[0].macth, expected match or account"
+        );
+        let one = Value::list(vec![Value::string("title")]);
+        let unknown = [vec![Value::string("x"), one], place(0, 1, 1)].concat();
+        assert_eq!(
+            text("UnknownField", unknown),
+            "toml unknown field at line 1, column 1: x, expected title"
+        );
+        let three = ["a", "b", "c"].map(Value::string).to_vec();
+        let unknown = [vec![Value::string("x"), Value::list(three)], place(0, 1, 1)].concat();
+        assert_eq!(
+            text("UnknownField", unknown),
+            "toml unknown field at line 1, column 1: x, expected a, b or c"
+        );
+        let unknown = [
+            vec![Value::string("x"), Value::list(vec![])],
+            place(0, 1, 1),
+        ]
+        .concat();
+        assert_eq!(
+            text("UnknownField", unknown),
+            "toml unknown field at line 1, column 1: x, expected no key"
+        );
+        let syntax = [vec![Value::string("bad")], place(9, 2, 4)].concat();
+        assert_eq!(
+            text("Syntax", syntax),
+            "toml syntax error at line 2, column 4: bad"
+        );
+        // (An error of no place in a text shows none.)
+        let mismatch = [
+            vec![Value::string("Int"), Value::string("string at a")],
+            place(0, 0, 0),
+        ];
+        assert_eq!(
+            text("TypeMismatch", mismatch.concat()),
+            "toml type mismatch: expected Int, got string at a"
+        );
+        // (The old shape, without a line and a column, is no TomlError.)
+        assert_eq!(
+            error_text("Syntax", &[Value::string("bad"), Value::Int(9)]),
+            None
+        );
+    }
+
     /// The offset of a value is where it starts; of a table, its header,
     /// the `{` of an inline one, the key of a dotted one; of the document,
     /// 0; of a path that leads out of the text, as far as it leads.
@@ -946,7 +1071,7 @@ mod tests {
             refused,
             format!(
                 "Err(Other(\"toml.pretty: the value is nested more than \
-                 {MAX_ENCODE_DEPTH} levels deep\", 0))"
+                 {MAX_ENCODE_DEPTH} levels deep\", 0, 0, 0))"
             )
         );
     }

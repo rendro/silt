@@ -376,7 +376,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "json",
             page: "json.md",
             types: "\
-                pub type JsonError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }\n\
+                pub type JsonError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int) }\n\
                 pub type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }\n\
             ",
             traits: "\
@@ -396,7 +396,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "toml",
             page: "toml.md",
             types: "\
-                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }\n\
+                pub type TomlError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int), UnknownField(String, List(String), Int, Int, Int) }\n\
             ",
             error: "TomlError" => toml::error_text,
             rows: [

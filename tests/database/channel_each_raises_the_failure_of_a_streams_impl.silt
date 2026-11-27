@@ -13,7 +13,7 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.Int(n) -> Ok(Code { digits: "{100 / n}" })
-      _ -> Err(json.Other("no code here", 0))
+      _ -> Err(json.Other("no code here", 0, 0, 0))
     }
   }
 }

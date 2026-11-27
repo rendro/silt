@@ -1,4 +1,4 @@
 Ok(Holder {b: Empty})
 Ok(Holder {b: Full(4)})
-Err(json type mismatch at byte 37: expected Int, got string at b.fields[0])
+Err(json type mismatch at line 1, column 38: expected Int, got string at b.fields[0])
 Ok(Holder {b: Full(7)})

@@ -628,7 +628,7 @@ regex.split(text: String, re: Regex) -> List(String)
 ### json
 
 ```
-type JsonError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int) }
+type JsonError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int) }
 type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }
 trait Encode { fn encode(self) -> Value }
 trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
@@ -642,7 +642,7 @@ json.stringify(value: a) -> String where a: Encode
 ### toml
 
 ```
-type TomlError { Syntax(String, Int), TypeMismatch(String, String, Int), MissingField(String, Int), Other(String, Int), UnknownField(String, Int) }
+type TomlError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int, Int, Int), MissingField(String, Int, Int, Int), Other(String, Int, Int, Int), UnknownField(String, List(String), Int, Int, Int) }
 toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
 toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode

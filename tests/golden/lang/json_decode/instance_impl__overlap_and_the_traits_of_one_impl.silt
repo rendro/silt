@@ -9,7 +9,7 @@ trait json.Decode for Box(Int) {
   fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
 }
 trait json.Decode for Box(a) {
-  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Err(json.Other("x", 0)) }
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Err(json.Other("x", 0, 0, 0)) }
 }
 trait json.Encode for Box(Int) {
   fn encode(self) -> json.Value { json.Null }

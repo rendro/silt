@@ -20,7 +20,7 @@ type HasShape { s: Shape }
 fn show(text: String) {
   match toml.parse(text, Cfg) {
     Ok(cfg) -> println("Ok {cfg}")
-    Err(toml.UnknownField(key, at)) -> println("UnknownField({key}, {at})")
+    Err(toml.UnknownField(key, _, at, _, _)) -> println("UnknownField({key}, {at})")
     Err(e) -> println("Err {e}")
   }
 }

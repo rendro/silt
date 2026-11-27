@@ -1,0 +1,14 @@
+3:16: wrong type string at y (byte 28)
+  json type mismatch at line 3, column 16: expected Int, got string at y
+3:8: expected value (byte 19)
+  json syntax error at line 3, column 8: expected value
+1:6: EOF while parsing a list (byte 5)
+  json syntax error at line 1, column 6: EOF while parsing a list
+1:1: missing y (byte 3)
+  json missing field at line 1, column 1: y
+1:9: EOF while parsing a value (byte 11)
+  json syntax error at line 1, column 9: EOF while parsing a value
+2:2: wrong type a number with a fraction at [1] (byte 5)
+  json type mismatch at line 2, column 2: expected Int, got a number with a fraction at [1]
+0:0: wrong type string at x (byte 0)
+  json type mismatch: expected Int, got string at x

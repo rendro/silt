@@ -15,7 +15,7 @@ trait json.Decode for Code {
     match value {
       json.String(text) -> Ok(Code { digits: text })
       json.Int(n) -> Ok(Code { digits: "{100 / n}" })
-      _ -> Err(json.Other("no code here", 0))
+      _ -> Err(json.Other("no code here", 0, 0, 0))
     }
   }
 }

@@ -236,7 +236,7 @@ module json
 Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 54:14
 ```silt
-Fn(String, Int) -> json.JsonError
+Fn(String, Int, Int, Int) -> json.JsonError
 ```
 
 ---
@@ -245,10 +245,10 @@ A variant of `json.JsonError`, reached as `json.Syntax`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong JSON type for target |
-| `MissingField(String, Int)` | the field's path, byte offset of its object | required field absent |
-| `Other(String, Int)` | message, byte offset | unclassified parse failure |
+| `Syntax(String, Int, Int, Int)` | message, byte offset, line, column | syntactically invalid JSON |
+| `TypeMismatch(String, String, Int, Int, Int)` | expected, actual (ending with the value's path), byte offset, line, column | wrong JSON type for target |
+| `MissingField(String, Int, Int, Int)` | the field's path, byte offset, line and column of its object | required field absent |
+| `Other(String, Int, Int, Int)` | message, byte offset, line, column | unclassified parse failure |
 > hover 60:10
 ```silt
 module json

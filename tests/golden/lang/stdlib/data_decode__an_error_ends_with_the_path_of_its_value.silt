@@ -39,11 +39,11 @@ fn main() {
   println(json.parse("""{"ok": 1, "x.y": "z"}""", Map(String, Int)))
   println(json.decode(json.Array([json.Int(1), json.Null]), Int))
   match json.parse("""[{"a": 1}, {"a": "x"}]""", List(Inner)) {
-    Err(json.TypeMismatch(expected, actual, _)) -> println("TypeMismatch: {expected} | {actual}")
+    Err(json.TypeMismatch(expected, actual, _, _, _)) -> println("TypeMismatch: {expected} | {actual}")
     other -> println(other)
   }
   match json.parse("""[{"a": 1}, {}]""", List(Inner)) {
-    Err(json.MissingField(path, _)) -> println("MissingField: {path}")
+    Err(json.MissingField(path, _, _, _)) -> println("MissingField: {path}")
     other -> println(other)
   }
 

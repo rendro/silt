@@ -1,0 +1,49 @@
+-- Every toml error that has a place carries its byte, line and column
+-- (from 1, the column in characters) and shows the line and the column;
+-- an unknown key's error names the keys its table takes. A program can
+-- say file:line:column without counting lines itself.
+import toml
+
+type Rule { match: String, account: String }
+type Rules { rules: List(Rule) }
+type P { x: Int, y: Int }
+
+fn report(file: String, r: Result(a, toml.TomlError)) {
+  match r {
+    Ok(_) -> println("{file}: ok")
+    Err(toml.UnknownField(key, expected, byte, line, column)) ->
+      println("{file}:{line}:{column}: unknown key {key} (byte {byte}), expected {expected}")
+    Err(toml.TypeMismatch(_, actual, byte, line, column)) ->
+      println("{file}:{line}:{column}: wrong type {actual} (byte {byte})")
+    Err(toml.MissingField(name, byte, line, column)) ->
+      println("{file}:{line}:{column}: missing {name} (byte {byte})")
+    Err(toml.Syntax(why, byte, line, column)) ->
+      println("{file}:{line}:{column}: {why} (byte {byte})")
+    Err(toml.Other(why, byte, line, column)) ->
+      println("{file}:{line}:{column}: {why} (byte {byte})")
+  }
+  match r {
+    Ok(_) -> ()
+    Err(e) -> println("  {e}")
+  }
+}
+
+fn main() {
+  let rules = "# rules\n\n[[rules]]\nmatch = \"coffee\"\naccount = \"food\"\n\n[[rules]]\nmacth = \"rent\"\naccount = \"home\"\n"
+  report("rules.toml", toml.parse(rules, Rules))
+  report("p.toml", toml.parse("x = 1\ny = \"é\"\n", P))
+  -- The column counts characters: é is two bytes and one column.
+  report("q.toml", toml.parse("# q\np = \{ name = \"éé\", y = \"s\" }\n", Q))
+  report("p.toml", toml.parse("x = 1\ny = ", P))
+  report("p.toml", toml.parse("x = 1\n", P))
+  report("p.toml", toml.parse("[t]\nx = 1\n", P))
+  report("p.toml", toml.parse("x = 1\ny = 2\nzz = 3\n", P))
+  -- A variant's table takes variant and fields.
+  report("e.toml", toml.parse_list("[[xs]]\nvariant = \"A\"\nfeilds = [1]\n", Shape))
+  -- toml.stringify reads no text: no place.
+  report("out", toml.stringify(1))
+}
+
+type Shape { A(Int), B }
+type N { name: String, y: Int }
+type Q { p: N }

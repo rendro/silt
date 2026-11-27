@@ -1,4 +1,4 @@
 x
-json: json syntax error at byte 1: expected ident
+json: json syntax error at line 1, column 2: expected ident
 custom: direct
 custom: as a value

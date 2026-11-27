@@ -383,7 +383,12 @@ fn fake_impl(json: &crate::value::Value) -> Result<crate::value::Value, crate::v
     match text.len() % 4 {
         0 => Err(Value::variant(
             bv::JSON_OTHER,
-            [Value::string(format!("no {text}")), Value::Int(0)],
+            [
+                Value::string(format!("no {text}")),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
+            ],
         )),
         _ => Ok(Value::string(text)),
     }

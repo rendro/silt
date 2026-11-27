@@ -17,10 +17,10 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.String(text) -> Ok(Code { digits: text })
-      json.Int(_) -> Err(json.TypeMismatch("String", "an integer", 0))
-      json.Bool(_) -> Err(json.MissingField("digits", 0))
+      json.Int(_) -> Err(json.TypeMismatch("String", "an integer", 0, 0, 0))
+      json.Bool(_) -> Err(json.MissingField("digits", 0, 0, 0))
       json.Array(_) -> json.parse("[1,", Code)
-      _ -> Err(json.Other("no code here", 0))
+      _ -> Err(json.Other("no code here", 0, 0, 0))
     }
   }
 }
@@ -33,11 +33,11 @@ type Counted { codes: List(Code), count: Int }
 fn variant(r: Result(a, toml.TomlError)) -> String {
   match r {
     Ok(_) -> "Ok"
-    Err(toml.Syntax(_, _)) -> "Syntax"
-    Err(toml.TypeMismatch(_, _, _)) -> "TypeMismatch"
-    Err(toml.MissingField(_, _)) -> "MissingField"
-    Err(toml.Other(_, _)) -> "Other"
-    Err(toml.UnknownField(_, _)) -> "UnknownField"
+    Err(toml.Syntax(_, _, _, _)) -> "Syntax"
+    Err(toml.TypeMismatch(_, _, _, _, _)) -> "TypeMismatch"
+    Err(toml.MissingField(_, _, _, _)) -> "MissingField"
+    Err(toml.Other(_, _, _, _)) -> "Other"
+    Err(toml.UnknownField(_, _, _, _, _)) -> "UnknownField"
   }
 }
 

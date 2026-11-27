@@ -1,0 +1,34 @@
+-- Every json error of a text carries its byte, line and column and shows
+-- the line and the column; a byte order mark is counted in the byte and is
+-- no column; json.decode reads no text, and its errors show no place.
+import json
+
+type P { x: Int, y: Int }
+
+fn report(r: Result(a, json.JsonError)) {
+  match r {
+    Ok(_) -> println("ok")
+    Err(json.TypeMismatch(_, actual, byte, line, column)) ->
+      println("{line}:{column}: wrong type {actual} (byte {byte})")
+    Err(json.MissingField(name, byte, line, column)) ->
+      println("{line}:{column}: missing {name} (byte {byte})")
+    Err(json.Syntax(why, byte, line, column)) ->
+      println("{line}:{column}: {why} (byte {byte})")
+    Err(json.Other(why, byte, line, column)) ->
+      println("{line}:{column}: {why} (byte {byte})")
+  }
+  match r {
+    Ok(_) -> ()
+    Err(e) -> println("  {e}")
+  }
+}
+
+fn main() {
+  report(json.parse("\{\n  \"x\": 1,\n  \"é\": 0, \"y\": \"é\"\n}", P))
+  report(json.parse("\{\n  \"x\": 1,\n  \"y\": }", P))
+  report(json.parse("[1, 2", List(Int)))
+  report(json.parse("\u{feff}\{\"x\": 1}", P))
+  report(json.parse("\u{feff}\{\"x\": 1,", P))
+  report(json.parse("[1,\n 2.5]", List(Int)))
+  report(json.decode(json.encode(#{"x": "a"}), P))
+}

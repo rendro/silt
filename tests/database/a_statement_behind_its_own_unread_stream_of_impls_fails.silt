@@ -18,7 +18,7 @@ trait json.Decode for Num {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.Int(n) -> Ok(Num { n: n })
-      _ -> Err(json.Other("no number here", 0))
+      _ -> Err(json.Other("no number here", 0, 0, 0))
     }
   }
 }

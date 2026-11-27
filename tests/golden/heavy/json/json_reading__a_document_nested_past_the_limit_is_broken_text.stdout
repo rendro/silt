@@ -1,6 +1,6 @@
 read
-json syntax error at byte 127: recursion limit exceeded
-json type mismatch at byte 0: expected Int, got array
-json syntax error at byte 127: recursion limit exceeded
-json type mismatch at byte 6: expected Int, got string at x
-json syntax error at byte 143: recursion limit exceeded
+json syntax error at line 1, column 128: recursion limit exceeded
+json type mismatch at line 1, column 1: expected Int, got array
+json syntax error at line 1, column 128: recursion limit exceeded
+json type mismatch at line 1, column 7: expected Int, got string at x
+json syntax error at line 1, column 144: recursion limit exceeded

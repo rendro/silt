@@ -151,7 +151,7 @@ impl Server {
         }
 
         // A name in a pattern is no expression: a constructor (`Syntax` in
-        // `Err(json.Syntax(m, at)) ->`) has the type an expression that
+        // `Err(json.Syntax(m, at, line, column)) ->`) has the type an expression that
         // names it has, a field's name its field's type, `_` the type of
         // what it matches; not the one of the expression around the
         // pattern. Nor is an item of an import (`map` in `import list.{

@@ -57,20 +57,20 @@ modules.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong JSON type for target |
-| `MissingField(String, Int)` | the field's path, byte offset of its object | required field absent |
-| `Other(String, Int)` | message, byte offset | unclassified parse failure |
+| `Syntax(String, Int, Int, Int)` | message, byte offset, line, column | syntactically invalid JSON |
+| `TypeMismatch(String, String, Int, Int, Int)` | expected, actual (ending with the value's path), byte offset, line, column | wrong JSON type for target |
+| `MissingField(String, Int, Int, Int)` | the field's path, byte offset, line and column of its object | required field absent |
+| `Other(String, Int, Int, Int)` | message, byte offset, line, column | unclassified parse failure |
 
 ### `TomlError` (requires `import toml`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(String, Int)` | message, byte offset | syntactically invalid TOML |
-| `TypeMismatch(String, String, Int)` | expected, actual (ending with the value's path), byte offset | wrong TOML type for target |
-| `MissingField(String, Int)` | the field's path, byte offset of its table | required field absent |
-| `Other(String, Int)` | message, byte offset | unclassified parse failure |
-| `UnknownField(String, Int)` | the key's path, byte offset of the key | a key that no field of the record names |
+| `Syntax(String, Int, Int, Int)` | message, byte offset, line, column | syntactically invalid TOML |
+| `TypeMismatch(String, String, Int, Int, Int)` | expected, actual (ending with the value's path), byte offset, line, column | wrong TOML type for target |
+| `MissingField(String, Int, Int, Int)` | the field's path, byte offset, line and column of its table | required field absent |
+| `Other(String, Int, Int, Int)` | message, byte offset, line, column | unclassified parse failure |
+| `UnknownField(String, List(String), Int, Int, Int)` | the key's path, the keys the table takes, byte offset, line and column of the key | a key that no field of the record names |
 
 ### `IntError` (requires `import int`)
 

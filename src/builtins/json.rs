@@ -19,18 +19,20 @@ use crate::vm::{Source, Step, Vm, VmError};
 // `io_result_err` in `src/builtins/io.rs` so the two modules stay in
 // step.
 //
-// `JsonError` variants:
-//   Syntax(message, byte_offset)
-//   TypeMismatch(expected, actual, byte_offset)
-//   MissingField(name, byte_offset)
-//   Other(message, byte_offset)
+// `JsonError` variants, each with the byte offset of where it is and
+// that byte's line and column (`decode::place`):
+//   Syntax(message, byte_offset, line, column)
+//   TypeMismatch(expected, actual, byte_offset, line, column)
+//   MissingField(name, byte_offset, line, column)
+//   Other(message, byte_offset, line, column)
 
 fn json_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, [inner])
 }
 
 /// Classify a `serde_json::Error` of reading `text` into one of the
-/// `JsonError` variants. Syntax/Eof errors get `Syntax(msg, offset)`.
+/// `JsonError` variants. Syntax/Eof errors get `Syntax(msg, offset,
+/// line, column)`.
 /// Data and Io errors collapse to `Other` because serde_json does not
 /// expose the expected/actual type pair for a category=Data error in a
 /// way we can meaningfully surface; the typed decoder ([`decode`])
@@ -39,7 +41,8 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
     use serde_json::error::Category;
     match err.classify() {
         Category::Syntax | Category::Eof => {
-            let offset = syntax_offset(err, text) as i64;
+            let offset = syntax_offset(err, text);
+            let (line, column) = decode::line_column(text, offset);
             // serde's text ends with where it stopped, as a line and a
             // column; the offset says where, once.
             let full = err.to_string();
@@ -51,26 +54,36 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
                 "lone leading surrogate in hex escape" => "a \\u escape of half a surrogate pair",
                 message => message,
             };
+            let [offset, line, column] = decode::place(offset, line, column);
             Value::variant(
                 bv::JSON_SYNTAX,
-                [Value::string(message), Value::Int(offset)],
+                [Value::string(message), offset, line, column],
             )
         }
-        _ => Value::variant(
-            bv::JSON_OTHER,
-            [Value::string(err.to_string()), Value::Int(0)],
-        ),
+        _ => {
+            let [offset, line, column] = decode::NO_PLACE;
+            Value::variant(
+                bv::JSON_OTHER,
+                [Value::string(err.to_string()), offset, line, column],
+            )
+        }
     }
 }
 
 /// `error`, a `JsonError` of the text after a byte order mark of `mark`
-/// bytes, with a `Syntax` error's byte counted from before the mark.
+/// bytes, with a `Syntax` error's byte counted from before the mark (its
+/// line and column are the same: the mark is no column).
 fn after_mark(error: Value, mark: usize) -> Value {
     match &error {
         Value::Variant(v) if mark > 0 && v.is(bv::JSON_SYNTAX) => match v.fields() {
-            [message, Value::Int(at)] => Value::variant(
+            [message, Value::Int(at), line, column] => Value::variant(
                 bv::JSON_SYNTAX,
-                [message.clone(), Value::Int(at + mark as i64)],
+                [
+                    message.clone(),
+                    Value::Int(at + mark as i64),
+                    line.clone(),
+                    column.clone(),
+                ],
             ),
             _ => error,
         },
@@ -113,34 +126,72 @@ fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type
 /// descriptor, internal unexpected results, etc.).
 pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
+    let [offset, line, column] = decode::NO_PLACE;
     json_err_wrap(Value::variant(
         bv::JSON_OTHER,
-        [Value::string(msg), Value::Int(0)],
+        [Value::string(msg), offset, line, column],
     ))
+}
+
+/// Where an error is, as its shown text says it: ` at line 2, column 5`,
+/// nothing for one of no place in a text (line 0). `pub(crate)` for
+/// `toml`'s errors, which say it so too.
+pub(crate) fn at_place(line: i64, column: i64) -> String {
+    match line {
+        0 => String::new(),
+        line => format!(" at line {line}, column {column}"),
+    }
 }
 
 /// How `JsonError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Syntax", [Value::String(m, _), Value::Int(offset)]) => {
-            format!("json syntax error at byte {offset}: {m}")
+        (
+            "Syntax",
+            [
+                Value::String(m, _),
+                Value::Int(_),
+                Value::Int(line),
+                Value::Int(column),
+            ],
+        ) => {
+            format!("json syntax error{}: {m}", at_place(*line, *column))
         }
         (
             "TypeMismatch",
             [
                 Value::String(exp, _),
                 Value::String(act, _),
-                Value::Int(offset),
+                Value::Int(_),
+                Value::Int(line),
+                Value::Int(column),
             ],
         ) => {
-            format!("json type mismatch at byte {offset}: expected {exp}, got {act}")
+            let at = at_place(*line, *column);
+            format!("json type mismatch{at}: expected {exp}, got {act}")
         }
-        ("MissingField", [Value::String(n, _), Value::Int(offset)]) => {
-            format!("json missing field at byte {offset}: {n}")
+        (
+            "MissingField",
+            [
+                Value::String(n, _),
+                Value::Int(_),
+                Value::Int(line),
+                Value::Int(column),
+            ],
+        ) => {
+            format!("json missing field{}: {n}", at_place(*line, *column))
         }
-        // (Its offset is a field of its own: the message is the text.)
-        ("Other", [Value::String(m, _), Value::Int(_)]) => m.to_string(),
+        // (Its place is in fields of its own: the message is the text.)
+        (
+            "Other",
+            [
+                Value::String(m, _),
+                Value::Int(_),
+                Value::Int(_),
+                Value::Int(_),
+            ],
+        ) => m.to_string(),
         _ => return None,
     })
 }
@@ -442,6 +493,7 @@ fn located(mut outcome: decode::seed::Outcome, text: &[u8], mark: usize) -> deco
     if let Err(e) = &mut outcome {
         // (JSON refuses no key: every error is about a value.)
         e.locate(|path, _| offset_at(text, path));
+        e.count_lines(text);
         e.shift(mark);
     }
     outcome

@@ -28,7 +28,7 @@ trait Loader for Src {
 
 trait Loader for Other {
   fn load(self, type a) -> Result(a, json.JsonError) {
-    Err(json.Other("other", 0))
+    Err(json.Other("other", 0, 0, 0))
   }
 }
 

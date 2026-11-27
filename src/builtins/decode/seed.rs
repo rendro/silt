@@ -1313,7 +1313,8 @@ impl<'s> Seed<'s> {
                 }
                 None => {
                     if unknown.is_none() {
-                        unknown = self.unknown(&key);
+                        let names = || fields.iter().map(|(name, _)| name.clone()).collect();
+                        unknown = self.unknown(&key, names);
                     }
                     entries.value(self.skip())?
                 }
@@ -1412,7 +1413,8 @@ impl<'s> Seed<'s> {
                 }
                 _ => {
                     if unknown.is_none() {
-                        unknown = self.unknown(&key);
+                        let names = || vec!["variant".to_string(), "fields".to_string()];
+                        unknown = self.unknown(&key, names);
                     }
                     entries.value(self.skip())?
                 }
@@ -1455,11 +1457,16 @@ impl<'s> Seed<'s> {
     }
 
     /// The error of the key `key` of the table here that no field names,
-    /// where the format refuses such a key.
-    fn unknown(&self, key: &str) -> Option<Error> {
+    /// where the format refuses such a key, with the keys the table
+    /// takes (`expected`).
+    fn unknown(&self, key: &str, expected: impl FnOnce() -> Vec<String>) -> Option<Error> {
         self.cx.rules.unknown?;
         let at = self.at.key(key);
-        Some(Error::UnknownField(at.to_string(), Where::key(&at)))
+        Some(Error::UnknownField(
+            at.to_string(),
+            expected(),
+            Where::key(&at),
+        ))
     }
 
     /// The decoding of the `fields` of the variant `tag` at the type

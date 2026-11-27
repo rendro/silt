@@ -527,9 +527,9 @@ document's text), an `Option` field with `None` where the document is
 `null`, and no field that holds `Bytes` (in a record it names too); a
 document that does not fit its field is `TypeMismatch(column, field
 type, "jsonb: <why>")`, with the column's type and why as
-`json.parse` says it, the byte in the document and the path of the value
-there: `TypeMismatch("doc", "Meta", "jsonb: json type mismatch at byte 10:
-expected Int, got string at level")`. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
+`json.parse` says it, the line and column in the document and the path of
+the value there: `TypeMismatch("doc", "Meta", "jsonb: json type mismatch at
+line 1, column 11: expected Int, got string at level")`. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
 fills no field, and is an error in a `json.Value` row as well: cast it
 in SQL, `col::text`.
 
@@ -563,7 +563,8 @@ One data layer, one override: a record or enum type with a written
   `json.Object` of the row's columns, as a `json.Value` row is (every
   column, by its name): an enum type is a row type so. The `Err` the impl
   returns is the row's `Err(Other(message))`, the `JsonError`'s message:
-  `Other("json missing field at byte 0: n")`.
+  `Other("json missing field: n")` (the `json.Object` of the row is no
+text: the message has no place in it).
 
 The impls are the program's code, which the task that called
 `postgres.query` or `postgres.cursor_next` runs, after the rows are read

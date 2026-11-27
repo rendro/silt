@@ -17,9 +17,9 @@ trait json.Decode for Wrap {
           Ok(inner) -> Ok(Wrap { inner: inner })
           Err(e) -> Err(e)
         }
-        None -> Err(json.MissingField("i.k", 0))
+        None -> Err(json.MissingField("i.k", 0, 0, 0))
       }
-      _ -> Err(json.Other("not an object", 0))
+      _ -> Err(json.Other("not an object", 0, 0, 0))
     }
   }
 }

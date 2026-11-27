@@ -26,19 +26,19 @@ fn main() {
   println(io.inspect(float.parse("1x")))
   println(io.inspect(float.parse("-1e999")))
   match json.parse("[", Point) {
-    Err(json.Syntax(_, offset)) -> println("json.Syntax at {offset}")
+    Err(json.Syntax(_, offset, _, _)) -> println("json.Syntax at {offset}")
     other -> println(io.inspect(other))
   }
   match toml.parse("x = ", Point) {
-    Err(toml.Syntax(_, _)) -> println("toml.Syntax")
+    Err(toml.Syntax(_, _, _, _)) -> println("toml.Syntax")
     other -> println(io.inspect(other))
   }
   println(io.inspect(time.date(2024, 13, 1)))
   println(io.inspect(bytes.from_hex("zz")))
   let last: List(String) = [
     show(io.Other("io")),
-    show(json.Other("json", 0)),
-    show(toml.Other("toml", 0)),
+    show(json.Other("json", 0, 0, 0)),
+    show(toml.Other("toml", 0, 0, 0)),
     show(http.Other("http")),
   ]
   println(last)

@@ -71,8 +71,8 @@ type Box { B(Option(shapes.Shape)) }
 
 fn decode(r: Result(json.Value, json.JsonError)) -> Int {
   match r {
-    Err(json.Syntax(msg, at)) -> at
-    Err(json.MissingField(f, _)) -> string.length(f)
+    Err(json.Syntax(msg, at, _, _)) -> at
+    Err(json.MissingField(f, _, _, _)) -> string.length(f)
     Err(_) -> 1
     Ok(_) -> 2
   }

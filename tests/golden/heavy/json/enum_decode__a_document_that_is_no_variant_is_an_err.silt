@@ -40,19 +40,19 @@ fn main() {
   println(json.parse("""["Active", {"variant": "Paused", "fields": [1.5]}]""", List(Status)))
   println(json.parse("\"Active\"", List(Status)))
   match json.parse("\"Gone\"", Status) {
-    Err(json.Other(why, _)) -> println("Other: {why}")
+    Err(json.Other(why, _, _, _)) -> println("Other: {why}")
     other -> println("unexpected: {other}")
   }
   match json.parse("""{"variant": "Active"}""", Status) {
-    Err(json.TypeMismatch(expected, actual, _)) -> println("TypeMismatch: {expected}, {actual}")
+    Err(json.TypeMismatch(expected, actual, _, _, _)) -> println("TypeMismatch: {expected}, {actual}")
     other -> println("unexpected: {other}")
   }
   match json.parse("true", Status) {
-    Err(json.TypeMismatch(expected, actual, _)) -> println("TypeMismatch: {expected}, {actual}")
+    Err(json.TypeMismatch(expected, actual, _, _, _)) -> println("TypeMismatch: {expected}, {actual}")
     other -> println("unexpected: {other}")
   }
   match json.parse("""{}""", Status) {
-    Err(json.MissingField(name, _)) -> println("MissingField: {name}")
+    Err(json.MissingField(name, _, _, _)) -> println("MissingField: {name}")
     other -> println("unexpected: {other}")
   }
 }

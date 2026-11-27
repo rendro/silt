@@ -17,9 +17,9 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.String(text) -> Ok(Code { digits: text })
-      json.Int(_) -> Err(json.TypeMismatch("String", "an integer", 0))
-      json.Bool(_) -> Err(json.MissingField("digits", 0))
-      _ -> Err(json.Other("no code here", 0))
+      json.Int(_) -> Err(json.TypeMismatch("String", "an integer", 0, 0, 0))
+      json.Bool(_) -> Err(json.MissingField("digits", 0, 0, 0))
+      _ -> Err(json.Other("no code here", 0, 0, 0))
     }
   }
 }

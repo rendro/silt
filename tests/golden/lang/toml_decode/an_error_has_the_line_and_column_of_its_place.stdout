@@ -1,0 +1,18 @@
+rules.toml:8:1: unknown key rules[1].macth (byte 64), expected ["match", "account"]
+  toml unknown field at line 8, column 1: rules[1].macth, expected match or account
+p.toml:2:5: wrong type string at y (byte 10)
+  toml type mismatch at line 2, column 5: expected Int, got string at y
+q.toml:2:24: wrong type string at p.y (byte 29)
+  toml type mismatch at line 2, column 24: expected Int, got string at p.y
+p.toml:2:5: a value is missing at the end of the text (byte 10)
+  toml syntax error at line 2, column 5: a value is missing at the end of the text
+p.toml:1:1: missing y (byte 0)
+  toml missing field at line 1, column 1: y
+p.toml:1:2: unknown key t (byte 1), expected ["x", "y"]
+  toml unknown field at line 1, column 2: t, expected x or y
+p.toml:3:1: unknown key zz (byte 12), expected ["x", "y"]
+  toml unknown field at line 3, column 1: zz, expected x or y
+e.toml:3:1: unknown key xs[0].feilds (byte 21), expected ["variant", "fields"]
+  toml unknown field at line 3, column 1: xs[0].feilds, expected variant or fields
+out:0:0: toml.stringify: top-level value must be a table/record, got integer (byte 0)
+  toml.stringify: top-level value must be a table/record, got integer

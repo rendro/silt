@@ -21,7 +21,7 @@ trait json.Decode for Box(a) where a: json.Decode {
         Ok(v) -> Ok(Box { v: v })
         Err(e) -> Err(e)
       }
-      _ -> Err(json.Other("not a box", 0))
+      _ -> Err(json.Other("not a box", 0, 0, 0))
     }
   }
 }
@@ -33,7 +33,7 @@ trait json.Decode for Pt {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.Int(n) -> Ok(Pt { x: n * 100 })
-      _ -> Err(json.Other("not a point", 0))
+      _ -> Err(json.Other("not a point", 0, 0, 0))
     }
   }
 }
@@ -53,7 +53,7 @@ trait json.Decode for Many(a) where a: json.Decode {
           Err(e) -> Err(e)
         }
       }
-      _ -> Err(json.Other("not many", 0))
+      _ -> Err(json.Other("not many", 0, 0, 0))
     }
   }
 }
