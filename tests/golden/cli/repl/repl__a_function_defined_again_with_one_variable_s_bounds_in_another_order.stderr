@@ -1,0 +1,8 @@
+error[type]: function 'w' is defined again with another type, and 'gw' uses it
+ --> <repl:13>:1:4
+   |
+ 1 | fn w(x: a) -> String where a: Tb + Ta { "{Tb.tb(x)}{Ta.ta(x)}" }
+   |    ^ function 'w' is defined again with another type, and 'gw' uses it
+  = note: it was Fn(a) -> String where a: Ta + Tb, and is Fn(a) -> String where a: Tb + Ta here
+  = note: a function defined again replaces the old one for every caller, so it keeps its type
+  = help: write its bounds in the old order (a: Ta + Tb)

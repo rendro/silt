@@ -536,7 +536,7 @@ impl Cells {
 /// decides, of a `let` the function reads) is one variable of the
 /// session's: the same in both, or they differ.
 #[cfg(feature = "repl")]
-pub(super) fn same_scheme(a: &Scheme, b: &Scheme) -> bool {
+pub(super) fn same_scheme(a: &Scheme, b: &Scheme, ordered: bool) -> bool {
     fn canonical(scheme: &Scheme) -> (Type, Vec<Pred>) {
         let mapping: HashMap<TyVar, Type> = (free_vars_in(&scheme.ty).into_iter())
             .filter(|var| scheme.vars.contains(var))
@@ -620,21 +620,26 @@ pub(super) fn same_scheme(a: &Scheme, b: &Scheme) -> bool {
             .cloned()
             .collect()
     };
-    let (others1, mut others2) = (others(&preds), others(&preds2));
-    let same_others = others1.len() == others2.len()
-        && others1
-            .iter()
-            .all(|a| match others2.iter().position(|b| same_pred(a, b)) {
-                Some(at) => {
-                    others2.swap_remove(at);
-                    true
-                }
-                None => false,
-            });
-    ty == ty2
-        && same_others
-        && traits1.len() == traits2.len()
-        && traits1.iter().zip(&traits2).all(|(a, b)| same_pred(a, b))
+    let same_bag = |ones: &[Pred], mut twos: Vec<Pred>| {
+        ones.len() == twos.len()
+            && ones
+                .iter()
+                .all(|a| match twos.iter().position(|b| same_pred(a, b)) {
+                    Some(at) => {
+                        twos.swap_remove(at);
+                        true
+                    }
+                    None => false,
+                })
+    };
+    let same_traits = match ordered {
+        true => {
+            traits1.len() == traits2.len()
+                && traits1.iter().zip(&traits2).all(|(a, b)| same_pred(a, b))
+        }
+        false => same_bag(&traits1, traits2),
+    };
+    ty == ty2 && same_bag(&others(&preds), others(&preds2)) && same_traits
 }
 
 /// The error of the function `name`, at `span`, that a cell defines
@@ -648,6 +653,7 @@ pub(super) fn redefined_with_another_type(
     was: &str,
     is: &str,
     users: &[(String, bool)],
+    reordered: bool,
 ) -> crate::diagnostic::Diagnostic {
     use crate::diagnostic::{Code, Diagnostic};
     let listed = |names: &[&String]| {
@@ -663,7 +669,11 @@ pub(super) fn redefined_with_another_type(
         .filter(|(_, again)| *again)
         .map(|(name, _)| name)
         .collect();
+    let old_bounds = was.split_once(" where ").map(|(_, bounds)| bounds);
     let help = match again.is_empty() || again.len() < users.len() {
+        _ if reordered && let Some(bounds) = old_bounds => {
+            format!("write its bounds in the old order ({bounds})")
+        }
         true => "give the new function another name".to_string(),
         false => format!(
             "give the new function another name, or first define {} again without '{name}'",

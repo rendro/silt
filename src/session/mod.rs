@@ -1233,7 +1233,7 @@ impl Session {
             else {
                 continue;
             };
-            if cells::same_scheme(&was, &is) {
+            if cells::same_scheme(&was, &is, true) {
                 redefined.insert(new, slot);
                 continue;
             }
@@ -1252,6 +1252,7 @@ impl Session {
                 &written(&was),
                 &written(&is),
                 &users,
+                cells::same_scheme(&was, &is, false),
             ));
         }
         match errors.is_empty() {

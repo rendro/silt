@@ -1,0 +1,9 @@
+-- cmd: repl
+-- stdin: trait Ta { fn ta(self) -> String }\ntrait Tb { fn tb(self) -> String }\ntrait Ta for Int { fn ta(self) -> String { "a{self}" } }\ntrait Tb for Int { fn tb(self) -> String { "b{self}" } }\nfn h(x) { "{Ta.ta(x)}{Tb.tb(x)}" }\nfn g() { h(1) }\ng()\nfn h(x) { "{Tb.tb(x)}{Ta.ta(x)}" }\ng()\n:type h\nfn w(x: a) -> String where a: Ta + Tb { "{Ta.ta(x)}{Tb.tb(x)}" }\nfn gw() { w(2) }\nfn w(x: a) -> String where a: Tb + Ta { "{Tb.tb(x)}{Ta.ta(x)}" }\nfn w(x: a) -> String where a: Ta + Tb { "{Tb.tb(x)}{Ta.ta(x)}" }\ngw()\n:quit\n
+-- Two bounds of one variable on traits the program declares, which the
+-- body asks in another order (review rv435, re-check): the bounds a body
+-- asks are in the order of their traits, so the function defined again
+-- has the old one's type, and `g` calls it with its dictionaries. Bounds
+-- a `where` clause writes keep their written order, which messages name:
+-- in another order they are another type, and the help says to write them
+-- in the old order.
