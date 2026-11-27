@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: module 'shapes' is not imported
+-- stderr-contains: error[type]: module 'geo' is not imported
+-- stderr-contains: help: add `import shapes` at the top of the file
+-- stderr-contains: help: add `import geo` at the top of the file
+-- stderr-contains: undefined variable 'nowhere'
+-- stderr-not-contains: undefined variable 'shapes'
+-- stderr-not-contains: undefined variable 'geo'
+-- A module of the package (`src/shapes.silt`) or a dependency (`geo`)
+-- used without its import is told to be imported, as a builtin module
+-- is; a name that is no module stays an undefined variable.
+fn main() {
+  println(shapes.area(3))
+  println(geo.double(21))
+  println(nowhere.x)
+}

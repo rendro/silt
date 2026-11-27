@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: a type body whose first name starts with a capital is an enum's, so 'Date' reads as a variant: a record's first field starts with a lower-case letter
+-- stderr-contains: help: write `date: String`
+-- stderr-not-contains: enum variant list
+-- A record whose first field is spelled with a capital (a CSV header
+-- copied as it is) was read as an enum and refused at the `:`; the error
+-- says the first name decides and writes the field in lower case.
+type Row {
+  Date: String,
+  Amount: String,
+}
+
+fn main() {
+  println(Row { date: "x", amount: "y" })
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- An interpolation in which no name resolves was most likely meant as
+-- text, as code in a string is: its first undefined name gets the help
+-- about literal braces. One that names something (`{n + nope}`) is code,
+-- and its undefined name gets no such help.
+fn main() {
+  let s = "fn f(x) { x / (x - 2) } and { y }"
+  println(s)
+  let n = 1
+  println("{n + nope}")
+}

@@ -1,0 +1,13 @@
+-- cmd: repl
+-- stdin: shapes.area(3)\ngeo.double(21)\nimport shapes\nshapes.area(3)\n:quit\n
+-- stderr-contains: error[type]: module 'shapes' is not imported
+-- stderr-contains: help: enter `import shapes` first
+-- stderr-contains: error[type]: module 'geo' is not imported
+-- stderr-contains: help: enter `import geo` first
+-- stdout-contains: 9
+-- stderr-not-contains: undefined variable
+-- The REPL started in a package tells an input that uses a module of the
+-- package or a dependency without importing it to enter the import.
+fn main() {
+  println("not run")
+}

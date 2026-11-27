@@ -3,10 +3,11 @@
 -- stderr-contains: undefined variable 'nme'
 -- stderr-contains: help: did you mean `name`?
 -- stderr-contains: undefined variable 'zz'
--- stderr-not-contains: literal brace
--- A misspelt name in an interpolation keeps its "did you mean", and an
--- interpolation that is more than a name (`{zz.y}`) gets no help about
--- literal braces.
+-- stderr-contains: help: `zz` is inside a `{ }` of a string, which is an interpolation
+-- stderr-not-contains: `{nme}` in a string is an interpolation
+-- A misspelt name in an interpolation keeps its "did you mean" and gets
+-- no help about literal braces; a name bound to nothing in an
+-- interpolation that is more than a name (`{zz.y}`) gets it.
 fn main() {
   let name = "ann"
   println("hello {nme} {zz.y}")
