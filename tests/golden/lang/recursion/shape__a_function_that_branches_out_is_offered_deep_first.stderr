@@ -1,18 +1,46 @@
 error[type]: this call of `fib` takes a frame for every round
- --> shape__a_function_that_branches_out_is_offered_deep_first.silt:12:14
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:13:14
     |
- 12 |     false -> fib(n - 1) + fib(n - 2)
+ 13 |     false -> fib(n - 1) + fib(n - 2)
     |              ^^^^^^^^^^ this call of `fib` takes a frame for every round
   = note: not the last thing `fib` does, and `n - 1` is not a part of `n`
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn fib`
   = help: or carry the running value in a parameter, so that the call comes last
 
-error[type]: this call of `guarded` takes a frame for every round
- --> shape__a_function_that_branches_out_is_offered_deep_first.silt:17:32
+error[type]: this call of `scrutinee` takes a frame for every round
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:20:20
     |
- 17 |   when n > 5 else { return 1 + guarded(n - 1) }
+ 20 |     false -> match scrutinee(n - 1) {
+    |                    ^^^^^^^^^^^^^^^^ this call of `scrutinee` takes a frame for every round
+  = note: not the last thing `scrutinee` does, and `n - 1` is not a part of `n`
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn scrutinee`
+  = help: or carry the running value in a parameter, so that the call comes last
+
+error[type]: this call of `bound` takes a frame for every round
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:30:15
+    |
+ 30 |       let a = bound(n - 1)
+    |               ^^^^^^^^^^^^ this call of `bound` takes a frame for every round
+  = note: not the last thing `bound` does, and `n - 1` is not a part of `n`
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn bound`
+  = help: or carry the running value in a parameter, so that the call comes last
+
+error[type]: this call of `guarded` takes a frame for every round
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:40:32
+    |
+ 40 |   when n > 5 else { return 1 + guarded(n - 1) }
     |                                ^^^^^^^^^^^^^^ this call of `guarded` takes a frame for every round
   = note: not the last thing `guarded` does, and `n - 1` is not a part of `n`
   = help: count with the library: `list.fold(1..n, start) { acc, i -> ... }`
   = help: or carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn guarded`
+
+error[type]: this call of `ret_arm` takes a frame for every round
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:47:18
+    |
+ 47 |       return 1 + ret_arm(n - 1)
+    |                  ^^^^^^^^^^^^^^ this call of `ret_arm` takes a frame for every round
+  = note: not the last thing `ret_arm` does, and `n - 1` is not a part of `n`
+  = help: count with the library: `list.fold(1..n, start) { acc, i -> ... }`
+  = help: or carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn ret_arm`

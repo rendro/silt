@@ -126,6 +126,10 @@ enum Origin {
     Part(usize, usize),
     /// The closure of node `.0`.
     Node(usize),
+    /// The parameter `.1` of node `.0` under a name a pattern binds to
+    /// all of it (the `all` of `match xs { all -> ... }`): what a note
+    /// says it is, though it counts as no part of the parameter.
+    Whole(usize, usize),
     Other,
 }
 
@@ -141,6 +145,7 @@ impl Origin {
                 Origin::Part(n, p) | Origin::Param(n, p),
                 Origin::Part(m, q) | Origin::Param(m, q),
             ) if (n, p) == (m, q) => Origin::Param(n, p),
+            (Origin::Whole(n, p), Origin::Whole(m, q)) if (n, p) == (m, q) => self,
             _ => Origin::Other,
         }
     }
@@ -166,8 +171,10 @@ struct Site {
     /// For each argument, the parameter of the caller it is made from
     /// (the first one named in it), if any: what an error names.
     made_from: Vec<Option<usize>>,
-    /// The branch of the caller the site is in: its body, a match arm
-    /// or a closure. Two calls in one branch both run.
+    /// For each argument, the parameter of the caller it is all of under
+    /// a name a pattern binds (`Origin::Whole`), if it is that.
+    whole: Vec<Option<usize>>,
+    /// The branch of the caller the site is in (see `Branch`).
     branch: usize,
     /// For a member passed as a value to a call: the callee's span.
     passed_to: Option<Span>,
@@ -225,9 +232,34 @@ struct Walk<'a, 'd> {
     diagnostics: Vec<Diagnostic>,
     /// The methods that call a method of their own trait.
     trait_calls: Vec<(Span, Symbol)>,
-    /// The branch the walk is in, and how many there are.
+    /// The branch the walk is in, and every branch so far.
     branch: usize,
-    branches: usize,
+    branches: Vec<Branch>,
+    /// How many matches the walk has entered.
+    matches: usize,
+}
+
+/// A part of a node's body that runs as a whole: its body, an arm of a
+/// match, the else block of a `when`, the body of a closure.
+struct Branch {
+    /// The branch it is written in.
+    parent: usize,
+    fork: Fork,
+    /// Where it ends, when it leaves the function there (an else block,
+    /// an arm that ends in `return`): what is written from there on does
+    /// not run with it.
+    leaves: Option<u32>,
+}
+
+/// How a branch runs with the branch it is written in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fork {
+    /// The body of a node or of a closure: nothing around it runs with it.
+    Body,
+    /// An arm of the match numbered `.0`: only one of its arms runs.
+    Arm(usize),
+    /// The else block of a `when`, which leaves the function.
+    Else,
 }
 
 impl<'a, 'd> Walk<'a, 'd> {
@@ -329,14 +361,62 @@ impl<'a, 'd> Walk<'a, 'd> {
             diagnostics: Vec::new(),
             trait_calls: Vec::new(),
             branch: 0,
-            branches: 0,
+            branches: vec![Branch {
+                parent: 0,
+                fork: Fork::Body,
+                leaves: None,
+            }],
+            matches: 0,
         }
     }
 
     /// Enter a new branch; gives the one to go back to.
-    fn new_branch(&mut self) -> usize {
-        self.branches += 1;
-        std::mem::replace(&mut self.branch, self.branches)
+    fn new_branch(&mut self, fork: Fork, leaves: Option<u32>) -> usize {
+        let parent = self.branch;
+        self.branches.push(Branch {
+            parent,
+            fork,
+            leaves,
+        });
+        std::mem::replace(&mut self.branch, self.branches.len() - 1)
+    }
+
+    /// Whether the sites `a` and `b` of one node can both run: not in
+    /// two arms of one match, and not one in a branch that leaves the
+    /// function (an else block, an arm that ends in `return`) and the
+    /// other written after it.
+    fn run_together(&self, a: &Site, b: &Site) -> bool {
+        // (Each branch up to the body it is in.)
+        let up = |mut x: usize| {
+            let mut path = vec![x];
+            while self.branches[x].fork != Fork::Body {
+                x = self.branches[x].parent;
+                path.push(x);
+            }
+            path
+        };
+        let (pa, pb) = (up(a.branch), up(b.branch));
+        let Some((ia, ib)) =
+            (pa.iter().enumerate()).find_map(|(i, x)| Some((i, pb.iter().position(|y| y == x)?)))
+        else {
+            return false;
+        };
+        let fork = |x: usize| self.branches[x].fork;
+        if ia > 0
+            && ib > 0
+            && let (Fork::Arm(m), Fork::Arm(n)) = (fork(pa[ia - 1]), fork(pb[ib - 1]))
+            && m == n
+        {
+            return false;
+        }
+        let left_before = |path: &[usize], other: &Site| {
+            (path.iter()).any(|&x| {
+                self.branches[x]
+                    .leaves
+                    .is_some_and(|end| other.span.start >= end)
+            })
+        };
+        !left_before(&pa[..ia], b) && !left_before(&pb[..ib], a)
     }
 
     fn run(&mut self, program: &'a Program) {
@@ -374,7 +454,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         let outer_node = self.node.replace(n);
         let outer_closure = self.closure.take();
         let outer_held = std::mem::take(&mut self.held);
-        let outer_branch = self.new_branch();
+        let outer_branch = self.new_branch(Fork::Body, None);
         let depth = self.scopes.len();
         let (params, body) = (self.nodes[n].params, self.nodes[n].body);
         for (i, param) in params.iter().enumerate() {
@@ -496,6 +576,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         let node = self.node;
         let origin = |strict: bool| match (rel, node) {
             (Some(m), Some(n)) if m.strict || strict => Origin::Part(n, m.param),
+            (Some(m), Some(n)) => Origin::Whole(n, m.param),
             _ => Origin::Other,
         };
         match &pattern.kind {
@@ -638,9 +719,12 @@ impl<'a, 'd> Walk<'a, 'd> {
                 if let Some(scrutinee) = expr {
                     self.expr(scrutinee, false);
                 }
+                self.matches += 1;
+                let this = self.matches;
                 for arm in arms {
                     let depth = self.scopes.len();
-                    let outer_branch = self.new_branch();
+                    let leaves = ends_in_return(&arm.body).then_some(arm.body.span.end);
+                    let outer_branch = self.new_branch(Fork::Arm(this), leaves);
                     self.bind_matched(&arm.pattern, expr.as_deref());
                     if let Some(guard) = &arm.guard {
                         self.expr(guard, false);
@@ -720,8 +804,9 @@ impl<'a, 'd> Walk<'a, 'd> {
                     else_body,
                 } => {
                     self.expr(expr, false);
-                    // (The else block is a branch of its own: it ends the block.)
-                    let outer_branch = self.new_branch();
+                    // (The else block is a branch of its own: it leaves the
+                    // function.)
+                    let outer_branch = self.new_branch(Fork::Else, Some(else_body.span.end));
                     self.expr(else_body, false);
                     self.branch = outer_branch;
                     self.bind_matched(pattern, Some(expr));
@@ -731,7 +816,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                     else_body,
                 } => {
                     self.expr(condition, false);
-                    let outer_branch = self.new_branch();
+                    let outer_branch = self.new_branch(Fork::Else, Some(else_body.span.end));
                     self.expr(else_body, false);
                     self.branch = outer_branch;
                 }
@@ -754,7 +839,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         let coll = element.and_then(|(coll, _)| coll);
         let outer_closure = self.closure.replace((coll, element.is_some()));
         let outer_held = std::mem::take(&mut self.held);
-        let outer_branch = self.new_branch();
+        let outer_branch = self.new_branch(Fork::Body, None);
         let depth = self.scopes.len();
         for (i, param) in params.iter().enumerate() {
             match (coll, element) {
@@ -849,6 +934,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         }
         if let Some(from) = self.node {
             let made_from = args.iter().map(|a| self.made_from(a)).collect();
+            let whole = args.iter().map(|a| self.whole_of(a)).collect();
             self.sites.push(Site {
                 from,
                 to,
@@ -856,10 +942,25 @@ impl<'a, 'd> Walk<'a, 'd> {
                 kind,
                 args: args.iter().map(|a| a.span).collect(),
                 made_from,
+                whole,
                 branch: self.branch,
                 passed_to,
                 named_at,
             });
+        }
+    }
+
+    /// The parameter of the node the walk is in that `e` is all of under
+    /// a name a pattern binds, if it is that.
+    fn whole_of(&self, e: &Expr) -> Option<usize> {
+        let node = self.node?;
+        match &e.kind {
+            ExprKind::Ident(name) if e.res == Some(Res::Local) => match self.lookup(*name)? {
+                Origin::Whole(n, param) if n == node => Some(param),
+                _ => None,
+            },
+            ExprKind::Ascription(inner, _) => self.whole_of(inner),
+            _ => None,
         }
     }
 
@@ -1106,54 +1207,33 @@ impl<'a, 'd> Walk<'a, 'd> {
 
     /// Try each choice of one descending parameter per member.
     fn solve(&self, members: &[usize], sites: &[usize]) -> Solved {
-        if sites.iter().all(|&s| self.sites[s].is_tail_call()) {
-            return Solved::Tail;
-        }
-        let choices: Vec<usize> = (members.iter())
-            .map(|&m| self.nodes[m].params.len().max(1))
-            .collect();
+        let (params, edges) = self.edges(members, sites);
+        solve(&params, &edges, MAX_CHOICES)
+    }
+
+    /// Whether `solve` passes the group over `sites` (`Tail` or `Data`),
+    /// found without trying every choice before the first that passes.
+    fn passes(&self, members: &[usize], sites: &[usize]) -> bool {
+        let (params, edges) = self.edges(members, sites);
+        passes(&params, &edges, MAX_CHOICES)
+    }
+
+    /// How many parameters each member takes, and the `sites` as calls
+    /// between the members' places.
+    fn edges(&self, members: &[usize], sites: &[usize]) -> (Vec<usize>, Vec<Edge<'_>>) {
         let at = |n: usize| members.iter().position(|m| *m == n).expect("a member");
-        let mut pick = vec![0usize; members.len()];
-        // (The members a choice breaks the rule in, then the calls: each
-        // member broken is a `deep` to write.)
-        let cost = |fails: &[usize]| {
-            let broken: HashSet<usize> = fails.iter().map(|&s| self.sites[s].from).collect();
-            (broken.len(), fails.len())
-        };
-        let mut best: Option<(Vec<Option<usize>>, Vec<usize>)> = None;
-        for _ in 0..MAX_CHOICES {
-            let d: Vec<Option<usize>> = (members.iter().zip(&pick))
-                .map(|(&m, &i)| (!self.nodes[m].params.is_empty()).then_some(i))
-                .collect();
-            let fails: Vec<usize> = (sites.iter().copied())
-                .filter(|&s| {
-                    let site = &self.sites[s];
-                    !site_ok(site, d[at(site.from)], d[at(site.to)])
-                })
-                .collect();
-            if fails.is_empty() {
-                return Solved::Data(d);
-            }
-            if best.as_ref().is_none_or(|(_, b)| cost(&fails) < cost(b)) {
-                best = Some((d, fails));
-            }
-            // The next choice.
-            let mut k = 0;
-            loop {
-                if k == pick.len() {
-                    let (d, fails) = best.expect("one choice tried");
-                    return Solved::Refused(d, fails);
-                }
-                pick[k] += 1;
-                if pick[k] < choices[k] {
-                    break;
-                }
-                pick[k] = 0;
-                k += 1;
-            }
-        }
-        let (d, fails) = best.expect("one choice tried");
-        Solved::Refused(d, fails)
+        let params = (members.iter())
+            .map(|&m| self.nodes[m].params.len())
+            .collect();
+        let edges = (sites.iter())
+            .map(|&s| Edge {
+                id: s,
+                from: at(self.sites[s].from),
+                to: at(self.sites[s].to),
+                site: &self.sites[s],
+            })
+            .collect();
+        (params, edges)
     }
 
     /// E0345 for a refused group (`checked`: the calls of members not
@@ -1197,11 +1277,10 @@ impl<'a, 'd> Walk<'a, 'd> {
             let left: Vec<usize> = (checked.iter().copied())
                 .filter(|&s| !others.contains(&self.sites[s].from))
                 .collect();
-            match self.solve(members, &left) {
-                Solved::Tail | Solved::Data(_) => {
-                    firsts.remove(k);
-                }
-                Solved::Refused(..) => k += 1,
+            if self.passes(members, &left) {
+                firsts.remove(k);
+            } else {
+                k += 1;
             }
         }
         let errors: Vec<Diagnostic> = (firsts.iter().enumerate())
@@ -1296,6 +1375,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                 args: measures,
             } => {
                 let measure = d_to.and_then(|i| measures.get(i).copied().flatten());
+                let whole = d_to.and_then(|i| site.whole.get(i).copied().flatten());
                 // The parameter the argument is made from, or the caller's
                 // only one (said when it descends on none).
                 let made_from = (d_to.and_then(|i| site.made_from.get(i).copied().flatten()))
@@ -1315,6 +1395,13 @@ impl<'a, 'd> Walk<'a, 'd> {
                                 format!("{not_last}, and `{arg}` is `{p}` itself, not a part of it")
                             }
                         }
+                    }
+                    // (`all` of `match xs { all -> ... }` reads as a copy does.)
+                    (Some(arg), None, _)
+                        if whole.is_some_and(|p| d_from.is_none_or(|d| d == p)) =>
+                    {
+                        let p = self.param_name(site.from, whole.expect("a parameter"));
+                        format!("{not_last}, and `{arg}` is `{p}` itself, not a part of it")
                     }
                     (Some(arg), Some(m), Some(d)) if m.strict => format!(
                         "{not_last}, and `{arg}` is a part of `{}`, not of `{}`",
@@ -1346,18 +1433,17 @@ impl<'a, 'd> Walk<'a, 'd> {
                     .and_then(|i| site.args.get(i))
                     .and_then(|s| self.counted_down(*s));
                 let carry = "carry the running value in a parameter, so that the call comes last";
-                // Two calls of the group that keep a frame where one runs
-                // (`fib(n - 1) + fib(n - 2)`) branch out: `deep` is the usual
-                // answer, and no fold counts it.
-                let branches_out = (self.sites.iter())
-                    .filter(|other| {
-                        other.from == site.from
-                            && other.branch == site.branch
-                            && members.contains(&other.to)
-                            && matches!(other.kind, SiteKind::Call { tail: false, .. })
-                    })
-                    .nth(1)
-                    .is_some();
+                // Two calls of the group that keep a frame and both run
+                // (`fib(n - 1) + fib(n - 2)`, or one in a match's scrutinee
+                // and one in its arm) branch out: `deep` is the usual answer,
+                // and no fold counts it.
+                let branches_out = (self.sites.iter().enumerate()).any(|(j, other)| {
+                    j != s
+                        && other.from == site.from
+                        && members.contains(&other.to)
+                        && matches!(other.kind, SiteKind::Call { tail: false, .. })
+                        && self.run_together(site, other)
+                });
                 match (branches_out, counted) {
                     (true, _) => d.with_help(deep_help).with_help(format!("or {carry}")),
                     (false, Some(n)) => d
@@ -1487,6 +1573,188 @@ fn site_ok(site: &Site, d_from: Option<usize>, d_to: Option<usize>) -> bool {
     }
 }
 
+/// A site of a group as the choices see it: its caller and callee by
+/// their place among the members, and the site's number.
+struct Edge<'s> {
+    id: usize,
+    from: usize,
+    to: usize,
+    site: &'s Site,
+}
+
+/// The member at place `k` descends on `pick` of its `params` (none when
+/// it takes none).
+fn descends(params: &[usize], k: usize, pick: usize) -> Option<usize> {
+    (params[k] > 0).then_some(pick)
+}
+
+/// Try each choice of one descending parameter per member (`params`: how
+/// many each takes), the first member's choice counted fastest, at most
+/// `cap` of them.
+fn solve(params: &[usize], edges: &[Edge], cap: usize) -> Solved {
+    if edges.iter().all(|e| e.site.is_tail_call()) {
+        return Solved::Tail;
+    }
+    let choices: Vec<usize> = params.iter().map(|&p| p.max(1)).collect();
+    let mut pick = vec![0usize; params.len()];
+    // (The members a choice breaks the rule in, then the calls: each
+    // member broken is a `deep` to write.)
+    // (`fails` by place in `edges`.)
+    let cost = |fails: &[usize]| {
+        let broken: HashSet<usize> = fails.iter().map(|&i| edges[i].from).collect();
+        (broken.len(), fails.len())
+    };
+    let refused = |(d, fails): (Vec<Option<usize>>, Vec<usize>)| {
+        Solved::Refused(d, fails.iter().map(|&i| edges[i].id).collect())
+    };
+    let mut best: Option<(Vec<Option<usize>>, Vec<usize>)> = None;
+    let mut best_cost = (usize::MAX, usize::MAX);
+    for _ in 0..cap {
+        let d: Vec<Option<usize>> = (pick.iter().enumerate())
+            .map(|(k, &i)| descends(params, k, i))
+            .collect();
+        let fails: Vec<usize> = (0..edges.len())
+            .filter(|&i| !site_ok(edges[i].site, d[edges[i].from], d[edges[i].to]))
+            .collect();
+        if fails.is_empty() {
+            return Solved::Data(d);
+        }
+        let this = cost(&fails);
+        if this < best_cost {
+            best_cost = this;
+            best = Some((d, fails));
+        }
+        // The next choice.
+        let mut k = 0;
+        loop {
+            if k == pick.len() {
+                return refused(best.expect("one choice tried"));
+            }
+            pick[k] += 1;
+            if pick[k] < choices[k] {
+                break;
+            }
+            pick[k] = 0;
+            k += 1;
+        }
+    }
+    refused(best.expect("one choice tried"))
+}
+
+/// Whether `solve` with the same arguments passes, without trying the
+/// choices one by one: a choice passes when every site keeps the rule,
+/// and `solve` finds one when one is among the first `cap` it tries. So:
+/// drop each parameter no choice that passes can pick (a site that no
+/// choice of the member at its other end lets keep the rule), then look
+/// for a passing choice in `solve`'s order, the last member's choice
+/// first, and give up where the choices left all come after the first
+/// `cap`.
+fn passes(params: &[usize], edges: &[Edge], cap: usize) -> bool {
+    if edges.iter().all(|e| e.site.is_tail_call()) {
+        return true;
+    }
+    let n = params.len();
+    let choices: Vec<usize> = params.iter().map(|&p| p.max(1)).collect();
+    let ok = |e: &Edge, a: usize, b: usize| {
+        site_ok(
+            e.site,
+            descends(params, e.from, a),
+            descends(params, e.to, b),
+        )
+    };
+    // The parameters a passing choice can pick for each member.
+    let mut open: Vec<Vec<bool>> = choices.iter().map(|&c| vec![true; c]).collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for e in edges {
+            for a in 0..choices[e.from] {
+                if open[e.from][a] {
+                    let kept = match e.from == e.to {
+                        true => ok(e, a, a),
+                        false => (0..choices[e.to]).any(|b| open[e.to][b] && ok(e, a, b)),
+                    };
+                    if !kept {
+                        open[e.from][a] = false;
+                        changed = true;
+                    }
+                }
+            }
+            for b in 0..choices[e.to] {
+                if open[e.to][b]
+                    && e.from != e.to
+                    && !(0..choices[e.from]).any(|a| open[e.from][a] && ok(e, a, b))
+                {
+                    open[e.to][b] = false;
+                    changed = true;
+                }
+            }
+        }
+        if open.iter().any(|o| !o.contains(&true)) {
+            return false;
+        }
+    }
+    // How far apart in `solve`'s order two choices of each member are
+    // (as far as `cap` counts).
+    let mut weight = vec![1usize; n];
+    for k in 1..n {
+        weight[k] = weight[k - 1].saturating_mul(choices[k - 1]).min(cap);
+    }
+    // The sites between each member and the members after it, and its own.
+    let mut back: Vec<Vec<&Edge>> = vec![Vec::new(); n];
+    for e in edges {
+        back[e.from.min(e.to)].push(e);
+    }
+    // Choose from the last member down; `pick[k]` is the next parameter
+    // to try for member `k`, `index` where the choices so far stand in
+    // `solve`'s order.
+    let mut pick = vec![0usize; n];
+    let mut index = vec![0usize; n + 1];
+    let mut k = n;
+    loop {
+        // Member `k - 1` is to choose: its next parameter that is open,
+        // still among the first `cap` choices, and keeps the rule with
+        // the members after it.
+        let m = k - 1;
+        let mut found = false;
+        while pick[m] < choices[m] {
+            let a = pick[m];
+            pick[m] += 1;
+            let at = index[k].saturating_add(weight[m].saturating_mul(a));
+            if at >= cap {
+                pick[m] = choices[m];
+                break;
+            }
+            let fits = open[m][a]
+                && back[m].iter().all(|e| {
+                    let (x, y) = match (e.from == m, e.to == m) {
+                        (true, true) => (a, a),
+                        (true, false) => (a, pick[e.to] - 1),
+                        (false, _) => (pick[e.from] - 1, a),
+                    };
+                    ok(e, x, y)
+                });
+            if fits {
+                index[m] = at;
+                found = true;
+                break;
+            }
+        }
+        match found {
+            true if m == 0 => return true,
+            true => k -= 1,
+            false => {
+                // Back to the member after it.
+                pick[m] = 0;
+                if k == n {
+                    return false;
+                }
+                k += 1;
+            }
+        }
+    }
+}
+
 /// How a member of a `()` loop ends without saying so.
 #[derive(Clone, Copy)]
 enum Ending {
@@ -1532,6 +1800,21 @@ fn endings(
             out.push((e.span, Ending::Call, in_arm));
         }
         _ => {}
+    }
+}
+
+/// Whether `e` leaves the function when it ends: it ends in `return`
+/// (in a block, in every arm of a match).
+fn ends_in_return(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Return(_) => true,
+        ExprKind::Block(stmts) => {
+            matches!(stmts.last(), Some(Stmt::Expr(last)) if ends_in_return(last))
+        }
+        ExprKind::Match { arms, .. } => {
+            !arms.is_empty() && arms.iter().all(|a| ends_in_return(&a.body))
+        }
+        _ => false,
     }
 }
 
@@ -1627,4 +1910,106 @@ fn strongly_connected(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
         }
     }
     s.out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A small random number source (no seed from outside: the same runs
+    /// every time).
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 33) % n as u64) as usize
+        }
+    }
+
+    fn site(rng: &mut Rng, from: usize, to: usize, params: &[usize]) -> Site {
+        let measure = |rng: &mut Rng| match rng.below(4) {
+            0 => None,
+            _ if params[from] == 0 => None,
+            _ => Some(Measure {
+                param: rng.below(params[from]),
+                strict: rng.below(2) == 0,
+            }),
+        };
+        let args = (0..params[to]).map(|_| measure(rng)).collect();
+        let kind = match rng.below(8) {
+            0 => SiteKind::Closure {
+                coll: measure(rng),
+                element: rng.below(2) == 0,
+                args,
+            },
+            1 => SiteKind::Value {
+                elem: measure(rng).map(|m| (m, rng.below(params[to].max(1)))),
+            },
+            _ => SiteKind::Call {
+                tail: rng.below(3) == 0,
+                args,
+            },
+        };
+        Site {
+            from,
+            to,
+            span: Span::BUILTIN,
+            kind,
+            args: Vec::new(),
+            made_from: Vec::new(),
+            whole: Vec::new(),
+            branch: 0,
+            passed_to: None,
+            named_at: Span::BUILTIN,
+        }
+    }
+
+    /// `passes` says what `solve` finds, also where `solve` stops at its
+    /// cap before the first choice that passes.
+    #[test]
+    fn passes_agrees_with_solve() {
+        let mut rng = Rng(7);
+        let mut passed = 0;
+        let mut capped = 0;
+        for _ in 0..20_000 {
+            let n = 1 + rng.below(6);
+            let params: Vec<usize> = (0..n).map(|_| rng.below(4)).collect();
+            let count = 1 + rng.below(3 * n);
+            let sites: Vec<Site> = (0..count)
+                .map(|_| {
+                    let (from, to) = (rng.below(n), rng.below(n));
+                    site(&mut rng, from, to, &params)
+                })
+                .collect();
+            let edges: Vec<Edge> = (sites.iter().enumerate())
+                .map(|(id, s)| Edge {
+                    id,
+                    from: s.from,
+                    to: s.to,
+                    site: s,
+                })
+                .collect();
+            let cap = match rng.below(3) {
+                0 => 1 + rng.below(40),
+                _ => MAX_CHOICES,
+            };
+            let solves = |cap: usize| !matches!(solve(&params, &edges, cap), Solved::Refused(..));
+            let solved = solves(cap);
+            passed += usize::from(solved);
+            capped += usize::from(!solved && solves(MAX_CHOICES));
+            assert_eq!(
+                passes(&params, &edges, cap),
+                solved,
+                "params {params:?}, cap {cap}, sites {:?}",
+                (sites.iter()).map(|s| (s.from, s.to)).collect::<Vec<_>>()
+            );
+        }
+        // (Both answers are seen often, and a cap that hides a choice.)
+        assert!(passed > 1_000 && passed < 19_000, "{passed} pass");
+        assert!(capped > 0, "no cap seen");
+    }
 }

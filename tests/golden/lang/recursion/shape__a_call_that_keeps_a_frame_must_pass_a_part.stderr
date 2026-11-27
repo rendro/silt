@@ -22,7 +22,7 @@ error[type]: this call of `whole` takes a frame for every round
     |
  27 |     all -> 1 + whole(all)
     |                ^^^^^^^^^^ this call of `whole` takes a frame for every round
-  = note: not the last thing `whole` does, and `all` is not a part of `xs`
+  = note: not the last thing `whole` does, and `all` is `xs` itself, not a part of it
   = help: carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn whole`
 

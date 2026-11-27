@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[type]: this call of `walk` takes a frame for every round
--- stderr-contains: `whole` is not a part of `t`
+-- stderr-contains: `whole` is `t` itself, not a part of it
 -- stderr-not-contains: this call of `count`
 -- The name behind `as` is the value itself, not a part of it: a call
 -- on it does not descend. A call on what the pattern takes apart does,

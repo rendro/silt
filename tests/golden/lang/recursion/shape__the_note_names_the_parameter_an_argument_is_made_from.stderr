@@ -1,56 +1,65 @@
 error[type]: this call of `walk` takes a frame for every round
- --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:12:14
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:13:14
     |
- 12 |     _ -> 1 + walk(xs, n - 1)
+ 13 |     _ -> 1 + walk(xs, n - 1)
     |              ^^^^^^^^^^^^^^^ this call of `walk` takes a frame for every round
   = note: not the last thing `walk` does, and it passes `xs` itself, not a part of it
   = help: carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn walk`
 
-error[type]: this call of `zip_len` takes a frame for every round
- --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:21:26
+error[type]: this call of `again` takes a frame for every round
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:20:16
     |
- 21 |       [_, ..more] -> 1 + zip_len(more, rest)
+ 20 |     all -> 1 + again(all)
+    |                ^^^^^^^^^^ this call of `again` takes a frame for every round
+  = note: not the last thing `again` does, and `all` is `xs` itself, not a part of it
+  = help: carry the running value in a parameter, so that the call comes last
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn again`
+
+error[type]: this call of `zip_len` takes a frame for every round
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:29:26
+    |
+ 29 |       [_, ..more] -> 1 + zip_len(more, rest)
     |                          ^^^^^^^^^^^^^^^^^^^ this call of `zip_len` takes a frame for every round
   = note: not the last thing `zip_len` does, and `more` is a part of `ys`, not of `xs`
   = help: carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn zip_len`
 
 error[type]: this call of `grow` takes a frame for every round
- --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:29:24
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:37:24
     |
- 29 |     [x, ..rest] -> 1 + grow([x, x, ..rest], k)
+ 37 |     [x, ..rest] -> 1 + grow([x, x, ..rest], k)
     |                        ^^^^^^^^^^^^^^^^^^^^^^^ this call of `grow` takes a frame for every round
   = note: not the last thing `grow` does, and `[x, x, ..rest]` is not a part of `xs`
   = help: carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn grow`
 
 error[type]: this call of `fresh` takes a frame for every round
- --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:36:20
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:44:20
     |
- 36 |     [_, ..] -> 1 + fresh([1, 2], n)
+ 44 |     [_, ..] -> 1 + fresh([1, 2], n)
     |                    ^^^^^^^^^^^^^^^^ this call of `fresh` takes a frame for every round
   = note: not the last thing `fresh` does, and `[1, 2]` is not a part of `xs`
   = help: carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn fresh`
 
 error[type]: this call of `two` takes a frame for every round
- --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:43:20
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:51:20
     |
- 43 |     [_, ..] -> 1 + two(list.concat(ys, xs), ys)
+ 51 |     [_, ..] -> 1 + two(list.concat(ys, xs), ys)
     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this call of `two` takes a frame for every round
   = note: not the last thing `two` does, and `list.concat(ys, xs)` is not a part of `xs`
   = help: carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn two`
 
 error[type]: this call of `parse_unary` takes a frame for every round
- --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:50:20
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:58:20
     |
- 50 |     [_, ..rest] -> parse_unary(ts) + parse_binary(rest, min)
+ 58 |     [_, ..rest] -> parse_unary(ts) + parse_binary(rest, min)
     |                    ^^^^^^^^^^^^^^^ this call of `parse_unary` takes a frame for every round
- ::: shape__the_note_names_the_parameter_an_argument_is_made_from.silt:57:20
+ ::: shape__the_note_names_the_parameter_an_argument_is_made_from.silt:65:20
     |
- 57 |     [x, ..] -> x + parse_binary(ts, 0)
+ 65 |     [x, ..] -> x + parse_binary(ts, 0)
     |                    ------------------- `parse_unary` calls `parse_binary` here
   = note: not the last thing `parse_binary` does, and it passes `ts` itself, not a part of it
   = note: `parse_binary` and `parse_unary` call each other, so they are checked together
@@ -58,9 +67,9 @@ error[type]: this call of `parse_unary` takes a frame for every round
   = help: or carry the running value in a parameter, so that the call comes last
 
 error[type]: this call of `parse_binary` takes a frame for every round
- --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:57:20
+ --> shape__the_note_names_the_parameter_an_argument_is_made_from.silt:65:20
     |
- 57 |     [x, ..] -> x + parse_binary(ts, 0)
+ 65 |     [x, ..] -> x + parse_binary(ts, 0)
     |                    ^^^^^^^^^^^^^^^^^^^ this call of `parse_binary` takes a frame for every round
   = note: not the last thing `parse_unary` does, and it passes `ts` itself, not a part of it
   = help: carry the running value in a parameter, so that the call comes last
