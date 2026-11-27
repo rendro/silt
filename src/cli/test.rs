@@ -188,7 +188,8 @@ fn check_package_first(dir: &Path) {
 /// What `silt test` says when it found no test file in the directories
 /// it walked (`walked`): where packages below them that the walk left to
 /// themselves have test files, it names them and the command that tests
-/// them.
+/// them; where a name cannot be pasted in a command line
+/// (`source::pasteable`), it says what to do in words.
 fn no_test_files(walked: &[String]) -> String {
     let mut packages: Vec<String> = Vec::new();
     for dir in walked {
@@ -201,19 +202,29 @@ fn no_test_files(walked: &[String]) -> String {
             }
         }
     }
-    let shown: Vec<String> = (packages.iter())
-        .map(|package| crate::git::escape_for_display(package))
-        .collect();
-    match shown.as_slice() {
-        [] => "no test files found".to_string(),
-        [one] => format!(
+    // (Each is named as `source::shown_path` shows it.)
+    let pasteable = packages
+        .iter()
+        .all(|package| crate::source::pasteable(package));
+    match (packages.as_slice(), pasteable) {
+        ([], _) => "no test files found".to_string(),
+        ([one], true) => format!(
             "no test files found, but for those of the package in {one}: run `silt test {one}`"
         ),
-        [init @ .., last] => format!(
+        ([one], false) => format!(
+            "no test files found, but for those of the package in {one}: name its directory to \
+             test it"
+        ),
+        ([init @ .., last], true) => format!(
             "no test files found, but for those of the packages in {} and {last}: run \
              `silt test {}`",
             init.join(", "),
-            shown.join(" ")
+            packages.join(" ")
+        ),
+        ([init @ .., last], false) => format!(
+            "no test files found, but for those of the packages in {} and {last}: name their \
+             directories to test them",
+            init.join(", ")
         ),
     }
 }

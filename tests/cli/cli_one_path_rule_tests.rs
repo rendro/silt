@@ -308,6 +308,29 @@ fn silt_test_names_the_packages_below_that_hold_the_test_files() {
     let out = silt(&dir, &["test", "outer/second", "plain"]);
     assert!(out.status.success(), "{out:?}");
     assert_eq!(stdout(&out), "no test files found\n");
+    // A name that cannot be pasted in a command line (a space) is no
+    // command: what to do is said in words.
+    fs::rename(dir.join("outer/second"), dir.join("outer/my pkg")).unwrap();
+    fs::write(
+        dir.join("outer/my pkg/src/a_test.silt"),
+        "import test\n\nfn test_one() {\n  test.assert_eq(1, 1)\n}\n",
+    )
+    .unwrap();
+    let out = silt(&dir, &["test", "outer"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        stdout(&out),
+        "no test files found, but for those of the packages in outer/my pkg and outer/pk: \
+         name their directories to test them\n"
+    );
+    fs::remove_file(dir.join("outer/pk/src/main_test.silt")).unwrap();
+    let out = silt(&dir, &["test", "outer"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        stdout(&out),
+        "no test files found, but for those of the package in outer/my pkg: name its \
+         directory to test it\n"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

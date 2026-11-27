@@ -37,7 +37,7 @@ yet is an error on its line of `silt.toml`, "not fetched: run
 | Feature | Description |
 |---------|-------------|
 | **Diagnostics** | Lex, parse, and type errors on every edit |
-| **Hover** | Show inferred type for any expression (`K` in nvim); on the name of a function that calls itself, or of one of a group that call each other, its stack verdict: constant stack, depth follows the data (and the parameter it descends on), or deep (not checked) |
+| **Hover** | Show inferred type for any expression (`K` in nvim); on the name of a function that calls itself, or of one of a group that call each other, its stack verdict: constant stack, depth follows the data (and the parameter it descends on), or deep (not checked); on a method that calls a method of its own trait: not checked (trait call) |
 | **Go to definition** | Jump to where a function, `let`, type, variant, trait, method, record field or local is declared; from an import or a module's alias to the module's file, from an item of `import m.{ f }` to `f` (`gd`) |
 | **Go to type definition** | Jump from a value to the definition of its type |
 | **Go to implementation** | Jump from a trait method to its implementations |
