@@ -1,9 +1,11 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: help: write `url: String`
--- stderr-contains: help: write `httpCode: Int`
--- The help lowers the whole leading run of capitals of an acronym, but
--- the capital that starts the next word.
+-- stderr-contains: help: write `http_code: Int`
+-- stderr-contains: help: write `date_time: String`
+-- The help writes the field in snake case, as record fields are written:
+-- an acronym is one word, and each capital that starts a word after the
+-- first starts a word behind an underscore.
 type Link {
   URL: String,
 }
@@ -12,7 +14,12 @@ type Reply {
   HTTPCode: Int,
 }
 
+type Stamp {
+  DateTime: String,
+}
+
 fn main() {
   println(Link { url: "x" })
-  println(Reply { httpCode: 1 })
+  println(Reply { http_code: 1 })
+  println(Stamp { date_time: "t" })
 }
