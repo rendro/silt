@@ -2027,7 +2027,7 @@ impl Inner {
             queue.sleepers -= 1;
             drop(queue);
             if deadline.is_some() && self.parking.timer().fire_due(&self.parking) > 0 {
-                self.check_all();
+                self.check_after_the_timer();
             }
         }
     }
@@ -2278,7 +2278,7 @@ impl Inner {
             };
             if next.is_some_and(|next| next.is_zero()) {
                 if timer.fire_due(&self.parking) > 0 {
-                    self.check_all();
+                    self.check_after_the_timer();
                 }
                 // (What a task that its deadline ended let go of.)
                 run_deferred();
@@ -2302,7 +2302,7 @@ impl Inner {
                 drop(state);
                 timer.pass_to_next_deadline();
                 if timer.fire_due(&self.parking) > 0 {
-                    self.check_all();
+                    self.check_after_the_timer();
                 }
                 run_deferred();
                 continue;
@@ -2321,7 +2321,7 @@ impl Inner {
             }
             drop(state);
             if next.is_some() && timer.fire_due(&self.parking) > 0 {
-                self.check_all();
+                self.check_after_the_timer();
             }
             run_deferred();
         }
@@ -2400,7 +2400,7 @@ impl Inner {
         if *self.timer_lock.lock() == TimerThread::Unavailable
             && self.parking.timer().fire_due(&self.parking) > 0
         {
-            self.check_all();
+            self.check_after_the_timer();
         }
         self.queued.load(Ordering::SeqCst) == 0
     }
@@ -2645,6 +2645,15 @@ impl Inner {
         for group in groups {
             self.check(&group);
         }
+    }
+
+    /// [`Inner::check_all`] after the timer has fired: what it woke
+    /// may have run to a stop since, before this look (its own end
+    /// looks too; whichever comes first gives a verdict).
+    fn check_after_the_timer(&self) {
+        #[cfg(test)]
+        let _at = GivenAt::event("a timer fired");
+        self.check_all();
     }
 }
 
@@ -2965,7 +2974,7 @@ fn fire_timers(inner: &Inner) {
         // A deadline that ended nobody's wait (a channel that closed
         // unheard) may have been the last thing pending.
         if timer.fire_due(&inner.parking) > 0 {
-            inner.check_all();
+            inner.check_after_the_timer();
         }
         // What a task that its deadline ended let go of (`expire_task`).
         run_deferred();
@@ -3751,20 +3760,27 @@ mod tests {
         (result, at)
     }
 
-    /// The verdict was given at `event`, the last event of the program.
-    /// (Its task sleeps 150 ms first, so that the program's thread has
-    /// parked by then. Where a busy machine held the program's thread
-    /// up for longer, its park was the last event and gave it: as
-    /// right, and no failure.) Or by the look that the check of that
-    /// event left for when the stops pending then had run: the stops
-    /// are those of every program of the process (`DEFERRED`), and a
-    /// test beside this one may have had one pending at that moment
-    /// (about 1 run in 200 of the scheduler's tests, four at once).
+    /// The verdict was given at `event`, the last event of the program,
+    /// or by another look that an event of the program makes, never by
+    /// one that nothing made. Each look that can give it is named
+    /// (`GivenAt`), so which one did is no matter of time:
+    /// - the park of the program's thread: its task sleeps 150 ms first,
+    ///   so that the thread has parked by then, but where a busy machine
+    ///   held the thread up for longer, its park was the last event;
+    /// - the look that the check of the event left for when the stops
+    ///   pending then had run: the stops are those of every program of
+    ///   the process (`DEFERRED`), and a test beside this one may have
+    ///   had one pending at that moment (1 run in 200 of the scheduler's
+    ///   tests, four at once);
+    /// - the look after the timer fired the task's sleep: the task may run
+    ///   to its park or its end on a worker before the timer's thread
+    ///   looks, and then that look comes first.
     fn assert_given_by_the_last(at: Option<&'static str>, event: &str) {
         assert!(
             at == Some(event)
                 || at == Some("a thread parked")
-                || at == Some("the stops pending ran"),
+                || at == Some("the stops pending ran")
+                || at == Some("a timer fired"),
             "the verdict was given at {at:?}, not at the last event ({event})"
         );
     }
