@@ -25,6 +25,18 @@ pub(super) fn plural<'a>(n: usize, singular: &'a str, plural_form: &'a str) -> &
     if n == 1 { singular } else { plural_form }
 }
 
+/// `n` as an ordinal word: `1st`, `2nd`, `3rd`, `4th`, `11th`, `22nd`.
+fn ordinal(n: usize) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
 /// How a call is written, for what it reports: `f(a)` and `a |> f(b)`
 /// are calls with a written argument list; `a |> f` has none.
 #[derive(Clone, Copy)]
@@ -74,6 +86,9 @@ struct ArgumentsSoFar {
     type_for_record: bool,
     given_at: Vec<Option<(Span, Option<Symbol>, Type)>>,
     named_args: Vec<(Expr, Type)>,
+    /// Each argument not of its parameter's type: its index, the errors
+    /// that say so (from, to) and its type.
+    mismatches: Vec<(usize, usize, usize, Type)>,
 }
 
 /// The call to write for a method without `self` where only a type
@@ -3891,6 +3906,7 @@ impl TypeChecker {
             type_for_record: false,
             given_at: vec![None; args.len()],
             named_args: Vec::new(),
+            mismatches: Vec::new(),
         };
         for i in others.into_iter().chain(closures) {
             self.check_argument(call, args, i, &shown_args, &mut so_far, env);
@@ -3899,9 +3915,11 @@ impl TypeChecker {
             mismatched,
             type_for_record,
             given_at,
+            mismatches,
             ..
         } = so_far;
         given.extend(given_at.into_iter().flatten());
+        self.swapped_arguments(call, args, &mismatches);
         // An argument of the wrong type is the one thing wrong
         // with the call: what the callee owes for it is not
         // asked as well.
@@ -3955,6 +3973,7 @@ impl TypeChecker {
             type_for_record,
             given_at,
             named_args,
+            mismatches,
         } = so_far;
         let arg = &mut args[i];
         let param = params.get(i + implicit_self);
@@ -4060,6 +4079,7 @@ impl TypeChecker {
                     param,
                     (before_arg, reported),
                 );
+                mismatches.push((i, reported, self.errors.len(), arg_ty.clone()));
             } else {
                 self.pass_on_reading(callee, i, &arg_ty);
             }
@@ -4069,6 +4089,111 @@ impl TypeChecker {
         }
         if matches!(arg.kind, ExprKind::Ident(_)) {
             named_args.push(((**arg).clone(), arg_ty.clone()));
+        }
+    }
+
+    /// Two neighbouring arguments of a call, each of the type the other's
+    /// parameter takes (`map.update(m, k, { n -> n + 1 }, 0)`): one error
+    /// that says they look swapped, in place of the mismatch of each.
+    /// `mismatches` are the arguments that are not of their parameter's
+    /// type (`ArgumentsSoFar::mismatches`).
+    fn swapped_arguments(
+        &mut self,
+        call: CallSite<'_>,
+        args: &[&mut Expr],
+        mismatches: &[(usize, usize, usize, Type)],
+    ) {
+        let CallSite {
+            callee,
+            params,
+            form,
+            through_trait,
+            implicit_self,
+            ..
+        } = call;
+        // (Of a call with another number of arguments than parameters,
+        // the arguments do not line up with the places they are compared
+        // with.)
+        if implicit_self != 0
+            || through_trait
+            || !matches!(form, CallForm::Call)
+            || args.len() != params.len()
+        {
+            return;
+        }
+        // (The one plain mismatch of argument `k`, and its type.)
+        let mismatch_of = |this: &Self, k: usize| {
+            let (_, from, to, ty) = mismatches.iter().find(|(i, ..)| *i == k)?;
+            let plain = *to == from + 1
+                && (this.errors.get(*from))
+                    .is_some_and(|e| e.message.starts_with("type mismatch: expected"));
+            let ty = this.apply(ty);
+            let known = !ty.holds_error() && !matches!(ty, Type::Var(_) | Type::Never);
+            (plain && known).then_some((*from, ty))
+        };
+        for k in 0..args.len().saturating_sub(1) {
+            let (Some((first, a)), Some((second, b))) =
+                (mismatch_of(self, k), mismatch_of(self, k + 1))
+            else {
+                continue;
+            };
+            let (Some(pa), Some(pb)) = (params.get(k), params.get(k + 1)) else {
+                continue;
+            };
+            let (pa, pb) = (self.apply(pa), self.apply(pb));
+            if (self.could_unify(&[a, b], &[pb.clone(), pa.clone()])).is_none() {
+                continue;
+            }
+            let (nth_a, nth_b) = (ordinal(k + 1), ordinal(k + 2));
+            let who = Self::callee_label(callee).map(resolve);
+            // (A builtin function's parameters have names.)
+            let names = (self.res_def(callee.res))
+                .filter(|def| def.module.is_builtin())
+                .map(|def| (def.module.builtin_name().unwrap_or(""), resolve(def.name)))
+                .and_then(|(module, name)| {
+                    let registry = crate::builtins::registry::registry();
+                    let row = match module {
+                        "" => registry.named(&name),
+                        _ => registry.row(module, &name),
+                    }?;
+                    (row.params.len() == params.len()).then(|| row.params.join(", "))
+                });
+            let message = match (&who, names) {
+                (Some(who), Some(names)) => {
+                    format!("the {nth_a} and {nth_b} arguments look swapped: `{who}({names})`")
+                }
+                (Some(who), None) => {
+                    format!("the {nth_a} and {nth_b} arguments of `{who}` look swapped")
+                }
+                (None, _) => format!("the {nth_a} and {nth_b} arguments look swapped"),
+            };
+            let mut help = format!(
+                "the {nth_a} takes `{}` and the {nth_b} takes `{}`",
+                self.show_type(&pa),
+                self.show_type(&pb)
+            );
+            // (The call written with the two swapped, each argument as the
+            // file writes it, when each is on one line.)
+            let written: Option<Vec<&str>> = (args.iter())
+                .map(|arg| {
+                    let text = self.source_text.as_deref()?;
+                    let range = arg.span.start as usize..arg.span.end as usize;
+                    text.get(range).filter(|written| !written.contains('\n'))
+                })
+                .collect();
+            if let (Some(who), Some(mut written)) = (&who, written) {
+                written.swap(k, k + 1);
+                help.push_str(&format!(": write `{who}({})`", written.join(", ")));
+            }
+            let span = Span {
+                file: args[k].span.file,
+                start: args[k].span.start,
+                end: args[k + 1].span.end,
+            };
+            self.errors.remove(first.max(second));
+            self.errors.remove(first.min(second));
+            self.error_help(Code::TypeMismatch, (message, Some(help)), span);
+            return;
         }
     }
 

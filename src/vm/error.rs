@@ -72,8 +72,19 @@ pub struct VmError {
     pub(crate) by_a_cancel: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
-    /// Call stack at the time of the error: (function_name, span).
-    pub(crate) call_stack: Vec<(String, Span)>,
+    /// Call stack at the time of the error, innermost first.
+    pub(crate) call_stack: Vec<Call>,
+}
+
+/// A line of the call stack of an error: a function and its place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Call {
+    pub(crate) name: String,
+    pub(crate) span: Span,
+    /// A tail call of another function, which took no frame: the
+    /// function it called took the place of its frame, and its place is
+    /// the call.
+    pub(crate) tail: bool,
 }
 
 impl VmError {
@@ -354,8 +365,9 @@ impl VmError {
         d.labels = self
             .call_stack
             .iter()
-            .map(|(name, span)| (*span, name.clone()))
+            .map(|call| (call.span, call.name.clone()))
             .collect();
+        d.tail_calls = self.call_stack.iter().map(|call| call.tail).collect();
         d
     }
 }
@@ -441,25 +453,27 @@ impl From<crate::value::TooLong> for VmError {
 /// (`closure in main`).  Each returned
 /// line is already prefixed with "  -> " and has no trailing newline.
 ///
+/// The line that stands for the calls left out counts the tail calls
+/// among them apart from the frames: a tail call of another function
+/// takes no frame, and a frame can have made 32 of them
+/// (`TCO_ELIDED_CAP`) that are kept.
+///
 /// `format_frame` turns a (name, span) pair into its location string —
 /// callers pass the exact formatting they want (e.g. `file:line:col`).
 ///
 /// Returns an empty vec when the filtered stack is too short to be
 /// informative (a single-frame stack would just restate the error site).
-pub(crate) fn render_call_stack<F>(
-    call_stack: &[(String, Span)],
-    mut format_frame: F,
-) -> Vec<String>
+pub(crate) fn render_call_stack<F>(call_stack: &[Call], mut format_frame: F) -> Vec<String>
 where
     F: FnMut(&str, &Span) -> String,
 {
-    let meaningful: Vec<&(String, Span)> = call_stack
+    let meaningful: Vec<&Call> = call_stack
         .iter()
-        .filter(|(name, _)| {
+        .filter(|Call { name, .. }| {
             !name.starts_with('<') || name.starts_with("<module:") || name.starts_with("<repl:")
         })
         .collect();
-    let any_real_span = meaningful.iter().any(|(_, s)| s.is_in_source());
+    let any_real_span = meaningful.iter().any(|call| call.span.is_in_source());
     if meaningful.len() < 2 || !any_real_span {
         return Vec::new();
     }
@@ -478,20 +492,45 @@ where
     };
     let mut out = Vec::new();
     if meaningful.len() <= head + tail {
-        for (name, span) in &meaningful {
-            out.push(line(name, span));
+        for call in &meaningful {
+            out.push(line(&call.name, &call.span));
         }
     } else {
-        for (name, span) in &meaningful[..head] {
-            out.push(line(name, span));
+        for call in &meaningful[..head] {
+            out.push(line(&call.name, &call.span));
         }
-        let omitted = meaningful.len() - head - tail;
-        out.push(format!("  ... ({omitted} more frames)"));
-        for (name, span) in &meaningful[meaningful.len() - tail..] {
-            out.push(line(name, span));
+        out.push(left_out(&meaningful[head..meaningful.len() - tail]));
+        for call in &meaningful[meaningful.len() - tail..] {
+            out.push(line(&call.name, &call.span));
         }
     }
     out
+}
+
+/// The line of a call stack that stands for `calls`, which it leaves
+/// out: `  ... (19 more frames)`, with the tail calls among them
+/// counted apart.
+fn left_out(calls: &[&Call]) -> String {
+    let tails = calls.iter().filter(|call| call.tail).count();
+    let frames = calls.len() - tails;
+    let frames_text = |more: &str| match frames {
+        1 => format!("1{more} frame"),
+        n => format!("{n}{more} frames"),
+    };
+    let tails_text = |more: &str| match tails {
+        1 => format!("1{more} tail call, which takes no frame"),
+        n => format!("{n}{more} tail calls, which take no frame"),
+    };
+    match (frames, tails) {
+        (_, 0) => format!("  ... ({})", frames_text(" more")),
+        (0, _) => format!("  ... ({})", tails_text(" more")),
+        _ => format!(
+            "  ... ({} more calls: {} and {})",
+            frames + tails,
+            frames_text(""),
+            tails_text("")
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -517,5 +556,60 @@ mod tests {
         assert!(VmError::new("division by zero".into()).catchable());
         assert!(VmError::panic("boom").catchable());
         assert_eq!(VmError::internal("x").message, "internal VM error: x",);
+    }
+
+    /// The line for the calls a long call stack leaves out counts the
+    /// tail calls among them apart from the frames: a tail call of
+    /// another function takes no frame.
+    #[test]
+    fn the_calls_left_out_count_tail_calls_apart_from_frames() {
+        let place = Span::point(crate::source::FileId::default(), 0);
+        let stack = |kinds: &[bool]| -> Vec<Call> {
+            (kinds.iter().enumerate())
+                .map(|(at, &tail)| Call {
+                    name: format!("f{at}"),
+                    span: place,
+                    tail,
+                })
+                .collect()
+        };
+        let left_out = |kinds: &[bool]| -> String {
+            let lines = render_call_stack(&stack(kinds), |_, _| "x.silt:1:1".to_string());
+            let cut: Vec<&String> = lines
+                .iter()
+                .filter(|line| line.starts_with("  ... ("))
+                .collect();
+            assert_eq!(lines.len(), 16, "{lines:?}");
+            cut[0].clone()
+        };
+        // Ten lines first, five last: what is left out is in between.
+        let with = |middle: &[bool]| -> Vec<bool> {
+            let mut kinds = vec![false; 10];
+            kinds.extend_from_slice(middle);
+            kinds.extend([false; 5]);
+            kinds
+        };
+        assert_eq!(left_out(&with(&[false])), "  ... (1 more frame)");
+        assert_eq!(left_out(&with(&[false; 7])), "  ... (7 more frames)");
+        assert_eq!(
+            left_out(&with(&[true])),
+            "  ... (1 more tail call, which takes no frame)"
+        );
+        assert_eq!(
+            left_out(&with(&[true; 19])),
+            "  ... (19 more tail calls, which take no frame)"
+        );
+        assert_eq!(
+            left_out(&with(&[true, false, true, true])),
+            "  ... (4 more calls: 1 frame and 3 tail calls, which take no frame)"
+        );
+        assert_eq!(
+            left_out(&with(&[false, true, false])),
+            "  ... (3 more calls: 2 frames and 1 tail call, which takes no frame)"
+        );
+        // The lines that are shown are not counted, whatever they are.
+        let mut kinds = with(&[false; 3]);
+        kinds[..10].fill(true);
+        assert_eq!(left_out(&kinds), "  ... (3 more frames)");
     }
 }

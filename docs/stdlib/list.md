@@ -404,7 +404,7 @@ fn main() {
 list.flatten(xs: List(List(a))) -> List(a)
 ```
 
-Flattens one level of nesting. Non-list elements are kept as-is.
+Flattens one level of nesting.
 
 ```silt
 import list

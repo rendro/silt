@@ -103,7 +103,10 @@ between two jobs. A wait on it is never a deadlock, since a signal may come
 at any time: a `main` that only waits for the stop runs until it is stopped,
 and a task that still waits on it when `main` has returned keeps the program
 running until the signal comes, as one that waits on a `channel.timeout` does
-until its time.
+until its time. So a task that waits for the stop keeps a deadlock of the
+other tasks from being reported: the program waits for the signal, and
+when it comes reports the deadlock (exit 1). A run that must end by itself
+gives the waits that can get stuck a `task.deadline`.
 The program may send into the channel itself (`channel.send(stop,
 process.Terminate)`), to stop from inside, or in a test.
 

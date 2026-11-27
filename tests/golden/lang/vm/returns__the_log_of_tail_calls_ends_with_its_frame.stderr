@@ -72,7 +72,7 @@ warning[type]: 'b' is never used
       -> tailboom_on  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:79:3
       -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:74:10
       -> tailboom_on  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:79:3
-      ... (19 more frames)
+      ... (19 more tail calls, which take no frame)
       -> tailboom_on  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:79:3
       -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:74:10
       -> tailboom_on  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:79:3

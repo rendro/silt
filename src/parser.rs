@@ -2273,6 +2273,36 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// The error for a record's first field `name` (at `span`) spelled
+    /// with a capital, which made the body an enum's; the `:` behind it
+    /// is the current token.
+    fn capital_field_err(&mut self, name: Symbol, span: Span) -> Diagnostic {
+        let text = intern::resolve(name);
+        let field = lower_first_word(&text);
+        // The type behind the `:`, as written, for the help; whatever is
+        // wrong in it is not this error's business.
+        self.advance();
+        let errors = self.errors.len();
+        let ty = self.parse_type_expr().ok().and_then(|ty| {
+            let range = ty.span.start as usize..ty.span.end as usize;
+            self.source.get(range).map(str::to_string)
+        });
+        self.errors.truncate(errors);
+        let fix = match ty {
+            Some(ty) if !ty.contains('\n') => format!("write `{field}: {ty}`"),
+            _ => format!("write `{field}`"),
+        };
+        Diagnostic::error(
+            Code::ExpectedToken,
+            span,
+            format!(
+                "a type body whose first name starts with a capital is an enum's, so '{text}' \
+                 reads as a variant: a record's first field starts with a lower-case letter"
+            ),
+        )
+        .with_help(fix)
+    }
+
     /// The fields of a record type and its closing brace; `open` is the
     /// `{` in front of them.
     fn parse_record_body(&mut self, open: Span) -> Result<TypeBody> {
@@ -2308,12 +2338,19 @@ impl<'src> Parser<'src> {
     /// The variants of an enum and its closing brace; `open` is the `{`
     /// in front of them.
     fn parse_enum_body(&mut self, open: Span) -> Result<TypeBody> {
+        let mut first = true;
         let variants = self.comma_list(
             "enum variant list",
             open,
             ListEnd::Close(&Token::RBrace),
             |p| {
                 let (name, name_span) = p.expect_ident()?;
+                // The body was taken for an enum because its first name is
+                // upper case. A `:` behind it makes it a record field
+                // spelled with a capital (`Date: String`).
+                if std::mem::take(&mut first) && p.peek() == &Token::Colon {
+                    return Err(p.capital_field_err(name, name_span));
+                }
                 let fields = if p.at_on_line(&Token::LParen) {
                     let open = p.advance().span;
                     let fields = p.comma_list(
@@ -5750,6 +5787,25 @@ fn is_constructor(name: Symbol) -> bool {
 
 /// `name` with its first character in upper case, for "did you mean"
 /// suggestions.
+/// `name` with its leading capitals lowered, as a record field's name
+/// is written: `Date` -> `date`, `URL` -> `url`, `HTTPCode` -> `httpCode`
+/// (the capital that starts the next word stays).
+fn lower_first_word(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let run = chars.iter().take_while(|c| c.is_uppercase()).count();
+    // (In `HTTPCode`, the run's last capital starts `Code`.)
+    let lowered = match chars.get(run) {
+        Some(next) if run > 1 && next.is_lowercase() => run - 1,
+        _ => run,
+    };
+    (chars.iter().enumerate())
+        .flat_map(|(k, c)| match k < lowered {
+            true => c.to_lowercase().collect::<Vec<_>>(),
+            false => vec![*c],
+        })
+        .collect()
+}
+
 fn capitalized(name: &str) -> String {
     // `_red` and `_Red` both suggest `Red`: a leading underscore does not
     // make a name start with an upper-case letter.

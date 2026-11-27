@@ -767,6 +767,9 @@ pub(crate) struct TypeChecker {
     /// The library module of each dependency of the module's package the
     /// session has, by its key (`ModuleContext::dependencies`).
     pub(super) dependency_keys: HashMap<crate::defs::ModuleId, Symbol>,
+    /// The module's text (`ModuleContext::text`), for a help that
+    /// writes code as the file wrote it.
+    pub(super) source_text: Option<std::sync::Arc<str>>,
     /// The module's type declarations that are rejected (a reserved or
     /// builtin type's name): a use of one, or of a variant of one, is
     /// already reported, so it is an error type, silently.
@@ -1033,6 +1036,7 @@ impl TypeChecker {
             own_traits: HashMap::new(),
             import_paths: HashMap::new(),
             dependency_keys: HashMap::new(),
+            source_text: None,
             rejected_types: std::collections::HashSet::new(),
             refused_traits: std::collections::HashSet::new(),
             refused_imports: HashMap::new(),
@@ -2447,6 +2451,9 @@ pub(crate) struct ModuleContext<'a> {
     /// Whether to keep what only an editor reads
     /// (`ModuleCheck::module_names`).
     pub(crate) for_editor: bool,
+    /// The module's text, if it has one: a help may write code as the
+    /// file wrote it.
+    pub(crate) text: Option<std::sync::Arc<str>>,
 }
 
 /// The modules a module imports, and theirs, and so on: the modules that
@@ -2510,6 +2517,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
         defs,
         tables,
         for_editor,
+        text,
     } = context;
     tables.forget(module);
     tables.vars.begin(module);
@@ -2541,6 +2549,7 @@ pub(crate) fn check_module(program: &mut Program, context: ModuleContext<'_>) ->
     checker.module = module;
     checker.module_name = module_name;
     checker.dependency_keys = dependencies.into_iter().map(|(key, m)| (m, key)).collect();
+    checker.source_text = text;
     checker.refused_traits = scope.refused_traits.clone();
     checker.refused_imports = scope.refused_imports.clone();
     for binding in scope.types.values() {
