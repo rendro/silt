@@ -138,6 +138,13 @@ Running `silt test` in a directory containing this file produces:
 as found from it, and the `./` prefix is omitted and you see `PASS math_test.silt::test_addition`
 instead.)
 
+A test that takes over a second shows how long it took on its line, so
+that a slow test stands out:
+
+```
+  PASS ./math_test.silt::test_sum_to_a_million (15.1 s)
+```
+
 ## Filtering Tests
 
 Use `--filter <pattern>` to run only tests whose names contain the pattern:

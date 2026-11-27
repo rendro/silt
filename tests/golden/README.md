@@ -58,6 +58,9 @@ Comparison:
   package file (`silt.toml`, `silt.lock`) are turned into `/` before the
   comparison, so one expected file serves every platform: write
   `deps/x/silt.toml`, which Windows prints as `deps\x\silt.toml`.
+- The time that `silt test` shows on the result line of a test that
+  took over a second (`  PASS a_test.silt::test_x (1.3 s)`) is taken off
+  before the comparison: it depends on the machine and its load.
 - A case with no expectation beyond the exit status is allowed only when
   the exit status itself is the point (say `-- exit: 0` for "this compiles
   and runs").
