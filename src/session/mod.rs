@@ -821,6 +821,47 @@ impl Session {
                 Some((*key, self.graph.module_at(&src.join("lib.silt"))?))
             })
             .collect();
+        // (Each key of the `[dependencies]` of a package the package
+        // depends on, nearer ones first, whose library the session has: a
+        // dependency's dependency is named by the key it has there. Not a
+        // key an import here would load something else by.)
+        let farther_dependencies = {
+            let lib_of = |package: crate::package_graph::PackageId| {
+                (packages.packages.get(package.0 as usize))
+                    .and_then(|package| package.src.as_ref())
+                    .and_then(|src| self.graph.module_at(&src.join("lib.silt")))
+            };
+            // (Each package with the library of the dependency of the
+            // package it is reached through first.)
+            let mut order = vec![(module.package, None)];
+            let mut found = Vec::new();
+            let mut at = 0;
+            while let Some((from, through)) = order.get(at).copied() {
+                at += 1;
+                let Some(from) = packages.packages.get(from.0 as usize) else {
+                    continue;
+                };
+                for (key, dep, _) in &from.deps {
+                    let direct = from.id == module.package;
+                    if !direct
+                        && let Some(lib) = lib_of(*dep)
+                        && !importable(*key)
+                        && *key != own_name
+                        && crate::defs::ModuleId::builtin(&resolve(*key)).is_none()
+                    {
+                        found.push(typechecker::FartherKey {
+                            key: *key,
+                            library: lib,
+                            through,
+                        });
+                    }
+                    if order.iter().all(|(seen, _)| seen != dep) {
+                        order.push((*dep, if direct { lib_of(*dep) } else { through }));
+                    }
+                }
+            }
+            found
+        };
         let package_name = (packages.packages.get(module.package.0 as usize))
             .map_or_else(|| intern(""), |package| package.name);
         let mut check = typechecker::check_module(
@@ -829,6 +870,7 @@ impl Session {
                 module: id,
                 package: module.package,
                 dependencies,
+                farther_dependencies,
                 package_name,
                 module_name: module.name,
                 kind,

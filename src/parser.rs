@@ -2278,7 +2278,7 @@ impl<'src> Parser<'src> {
     /// is the current token.
     fn capital_field_err(&mut self, name: Symbol, span: Span) -> Diagnostic {
         let text = intern::resolve(name);
-        let field = lower_first_word(&text);
+        let field = snake_case(&text);
         // The type behind the `:`, as written, for the help; whatever is
         // wrong in it is not this error's business.
         self.advance();
@@ -2288,19 +2288,18 @@ impl<'src> Parser<'src> {
             self.source.get(range).map(str::to_string)
         });
         self.errors.truncate(errors);
-        let fix = match ty {
-            Some(ty) if !ty.contains('\n') => format!("write `{field}: {ty}`"),
-            _ => format!("write `{field}`"),
-        };
-        Diagnostic::error(
+        let d = Diagnostic::error(
             Code::ExpectedToken,
             span,
             format!(
                 "a type body whose first name starts with a capital is an enum's, so '{text}' \
                  reads as a variant: a record's first field starts with a lower-case letter"
             ),
-        )
-        .with_help(fix)
+        );
+        match field_fix(&field, ty.as_deref().filter(|ty| !ty.contains('\n'))) {
+            Some(fix) => d.with_help(fix),
+            None => d,
+        }
     }
 
     /// The fields of a record type and its closing brace; `open` is the
@@ -2332,25 +2331,22 @@ impl<'src> Parser<'src> {
             let mut name = name;
             if !p.cut_short && intern::resolve(name).starts_with(char::is_uppercase) {
                 let text = intern::resolve(name);
-                let field = lower_first_word(&text);
+                let field = snake_case(&text);
                 let written = (p.source)
                     .get(ty.span.start as usize..ty.span.end as usize)
                     .filter(|ty| !ty.contains('\n'));
-                let fix = match written {
-                    Some(ty) => format!("write `{field}: {ty}`"),
-                    None => format!("write `{field}`"),
-                };
-                p.keep_or_count(
-                    Diagnostic::error(
-                        Code::ExpectedToken,
-                        name_span,
-                        format!(
-                            "record field '{text}' starts with a capital: a record's fields \
-                             start with a lower-case letter"
-                        ),
-                    )
-                    .with_help(fix),
+                let d = Diagnostic::error(
+                    Code::ExpectedToken,
+                    name_span,
+                    format!(
+                        "record field '{text}' starts with a capital: a record's fields \
+                         start with a lower-case letter"
+                    ),
                 );
+                p.keep_or_count(match field_fix(&field, written) {
+                    Some(fix) => d.with_help(fix),
+                    None => d,
+                });
                 name = intern::intern(&field);
             }
             Ok(RecordField {
@@ -5828,27 +5824,47 @@ fn is_constructor(name: Symbol) -> bool {
     intern::resolve(name).starts_with(|c: char| c.is_uppercase())
 }
 
-/// `name` with its first character in upper case, for "did you mean"
-/// suggestions.
-/// `name` with its leading capitals lowered, as a record field's name
-/// is written: `Date` -> `date`, `URL` -> `url`, `HTTPCode` -> `httpCode`
-/// (the capital that starts the next word stays).
-fn lower_first_word(name: &str) -> String {
+/// `name` as a record field's name is written, in snake case: `Date` ->
+/// `date`, `URL` -> `url`, `DateTime` -> `date_time`, `HTTPCode` ->
+/// `http_code`. A capital starts a word, but in a run of capitals only
+/// the last one before a lower-case letter does (`HTTP` + `Code`), and
+/// not before a lone `s`, which ends the run's word (`PDFs` -> `pdfs`).
+fn snake_case(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
-    let run = chars.iter().take_while(|c| c.is_uppercase()).count();
-    // (In `HTTPCode`, the run's last capital starts `Code`.)
-    let lowered = match chars.get(run) {
-        Some(next) if run > 1 && next.is_lowercase() => run - 1,
-        _ => run,
-    };
-    (chars.iter().enumerate())
-        .flat_map(|(k, c)| match k < lowered {
-            true => c.to_lowercase().collect::<Vec<_>>(),
-            false => vec![*c],
-        })
-        .collect()
+    let mut out = String::new();
+    for (k, c) in chars.iter().enumerate() {
+        let before = k.checked_sub(1).map(|k| chars[k]);
+        let after = chars.get(k + 1);
+        let lone_s = after == Some(&'s') && !chars.get(k + 2).is_some_and(|c| c.is_lowercase());
+        let starts_word = c.is_uppercase()
+            && before.is_some_and(|b| {
+                b.is_lowercase()
+                    || b.is_ascii_digit()
+                    || (b.is_uppercase() && after.is_some_and(|a| a.is_lowercase()) && !lone_s)
+            });
+        if starts_word && !out.ends_with('_') {
+            out.push('_');
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
 }
 
+/// The help that writes a capitalised record field as `field`, its
+/// snake-case name, with its type `ty` as written where that is on one
+/// line; none where `field` is a value, not a name (`True` -> `true`).
+fn field_fix(field: &str, ty: Option<&str>) -> Option<String> {
+    if matches!(field, "true" | "false") {
+        return None;
+    }
+    Some(match ty {
+        Some(ty) => format!("write `{field}: {ty}`"),
+        None => format!("write `{field}`"),
+    })
+}
+
+/// `name` with its first character in upper case, for "did you mean"
+/// suggestions.
 fn capitalized(name: &str) -> String {
     // `_red` and `_Red` both suggest `Red`: a leading underscore does not
     // make a name start with an upper-case letter.
@@ -5931,6 +5947,28 @@ mod tests {
     use super::*;
     use crate::intern;
     use crate::lexer::Lexer;
+
+    #[test]
+    fn a_capitalised_field_name_is_written_in_snake_case() {
+        for (name, field) in [
+            ("Date", "date"),
+            ("URL", "url"),
+            ("DateTime", "date_time"),
+            ("HTTPCode", "http_code"),
+            ("UserID", "user_id"),
+            ("Base64Url", "base64_url"),
+            ("My_Field", "my_field"),
+            ("X", "x"),
+            ("PDFs", "pdfs"),
+            ("URLs", "urls"),
+            ("IDs", "ids"),
+            ("UserIDs", "user_ids"),
+            ("PDFsByDate", "pdfs_by_date"),
+            ("HTTPServer", "http_server"),
+        ] {
+            assert_eq!(snake_case(name), field, "{name}");
+        }
+    }
 
     fn parse(input: &str) -> Program {
         let tokens = Lexer::new(crate::source::FileId::default(), input)

@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: error[parse]: record field 'B' starts with a capital: a record's fields start with a lower-case letter
 -- stderr-contains: help: write `b: Int`
--- stderr-contains: help: write `httpCode: List(Int)`
+-- stderr-contains: help: write `http_code: List(Int)`
 -- stderr-not-contains: 'c'
 -- stderr-not-contains: error[type]
 -- Every field of a record starts lower case, not only the first one,
@@ -16,5 +16,5 @@ type T {
 }
 
 fn main() {
-  println(T { a: 1, b: 2, c: 3, httpCode: [] })
+  println(T { a: 1, b: 2, c: 3, http_code: [] })
 }
