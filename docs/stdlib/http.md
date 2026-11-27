@@ -117,10 +117,12 @@ open after a response carries the next request to that server, from any
 task of the program, so a program that asks one server many times
 connects to it once (`req.peer`, which the server sees, stays the same).
 An idle connection is kept for 15 s, at most 3 to one server and 10 in
-all. A server may close an idle connection at any time. A request that
+all. A server may close an idle connection at any time. A `GET`, `HEAD`,
+`PUT`, `DELETE` or `OPTIONS` (the methods that may be sent twice) that
 went out on a kept connection which then ended before a byte of the
-answer came is sent once more, on a new connection; any other failure
-is the program's.
+answer came (over `https` too) is sent once more, on a new connection.
+A `POST` or a `PATCH` is not: the server may have acted on it before it
+closed, so it is `Err(ClosedEarly)`. Any other failure is the program's.
 
 To bound a request by a time of your own, put a `task.deadline` around
 it. A request that nobody waits for any more (its deadline passed, its
@@ -339,8 +341,7 @@ import url
 -- Where `page` ends after at most `hops` redirects, and the response
 -- there; each redirect is printed.
 fn fetch(page: url.Url, hops: Int) -> Result((url.Url, http.Response), String) {
-  let resp = http.request_once(http.GET, page, bytes.empty(), #{})
-    |> result.map_err { e -> "{e}" }?
+  let resp = http.request_once(http.GET, page, bytes.empty(), #{}) |> result.map_err { e -> "{e}" }?
   let redirected = resp.status >= 300 && resp.status < 400
   match (redirected, map.get(resp.headers, "location")) {
     (true, Some(location)) -> {

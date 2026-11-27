@@ -893,9 +893,6 @@ impl ureq::unversioned::transport::Transport for Connected {
         };
         let read = read.map_err(|e| io_of(e, &timeout))?;
         self.buffers.input_appended(read);
-        if read > 0 {
-            with_call(|call| call.now.lock().answered = true);
-        }
         Ok(read > 0)
     }
 
@@ -938,6 +935,19 @@ fn client_resolving(
     global: Duration,
     resolver: impl ureq::unversioned::resolver::Resolver,
 ) -> ureq::Agent {
+    client_of(connect, global, resolver, ureq::tls::TlsConfig::default())
+}
+
+/// A client as [`client_resolving`] makes it, whose TLS is `tls`. On top
+/// of its connections, which may be TLS, it notes when the answer begins
+/// ([`Answering`]).
+#[cfg(feature = "http")]
+fn client_of(
+    connect: Duration,
+    global: Duration,
+    resolver: impl ureq::unversioned::resolver::Resolver,
+    tls: ureq::tls::TlsConfig,
+) -> ureq::Agent {
     use ureq::unversioned::transport::{ConnectProxyConnector, Connector, RustlsConnector};
     let config = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -945,12 +955,82 @@ fn client_resolving(
         .timeout_global(Some(global))
         .user_agent(format!("silt/{}", crate::VERSION))
         .accept_encoding("gzip")
+        .tls_config(tls)
         .build();
     let connector =
         ().chain(ConnectProxyConnector::default())
             .chain(Connecting)
-            .chain(RustlsConnector::default());
+            .chain(RustlsConnector::default())
+            .chain(Answering);
     ureq::Agent::with_parts(config, connector, Resolving(resolver))
+}
+
+/// The top of the connector of the http client: it hands up the
+/// connection made below it (TCP, and TLS on it for `https`), noting in
+/// the attempt of the thread's call when a byte of the answer comes
+/// ([`Answered`]).
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct Answering;
+
+#[cfg(feature = "http")]
+impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Connector<In>
+    for Answering
+{
+    type Out = Answered<In>;
+
+    fn connect(
+        &self,
+        _details: &ureq::unversioned::transport::ConnectionDetails,
+        chained: Option<In>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        Ok(chained.map(Answered))
+    }
+}
+
+/// A connection of the client as ureq reads the answer from it: what it
+/// reads is the answer itself, above TLS. A byte of it that comes says
+/// so in the attempt of the thread's call ([`Attempt::answered`]); the
+/// records of TLS below it do not (a server that closes a kept
+/// connection sends one, `close_notify`, and no answer).
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct Answered<T>(T);
+
+#[cfg(feature = "http")]
+impl<T: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Transport
+    for Answered<T>
+{
+    fn buffers(&mut self) -> &mut dyn ureq::unversioned::transport::Buffers {
+        self.0.buffers()
+    }
+
+    fn transmit_output(
+        &mut self,
+        amount: usize,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<(), ureq::Error> {
+        self.0.transmit_output(amount, timeout)
+    }
+
+    fn await_input(
+        &mut self,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<bool, ureq::Error> {
+        let came = self.0.await_input(timeout)?;
+        if came {
+            with_call(|call| call.now.lock().answered = true);
+        }
+        Ok(came)
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.0.is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        self.0.is_tls()
+    }
 }
 
 /// Test-only: an HTTP GET as `http.get` makes it, with a client of its
@@ -1139,10 +1219,12 @@ fn drain(response: &mut ureq::http::Response<ureq::Body>) {
 }
 
 /// Sends one request of `call` ([`send_request`]) as a new attempt. A
-/// request that went out on a kept connection which ended before a byte
-/// of the response came is sent once more, on a new connection: the
-/// server had closed the connection while it was idle, and the client
-/// saw it too late.
+/// request of a method that may be sent twice (GET, HEAD, PUT, DELETE,
+/// OPTIONS: idempotent, RFC 9110) that went out on a kept connection
+/// which ended before a byte of the response came is sent once more, on
+/// a new connection: the server had closed the connection while it was
+/// idle, and the client saw it too late. A POST or a PATCH is not: the
+/// server may have acted on it before it closed.
 #[cfg(feature = "http")]
 fn send_once(
     agent: &ureq::Agent,
@@ -1154,8 +1236,9 @@ fn send_once(
 ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
     call.begin();
     let result = send_request(agent, method, url, body, headers, false);
+    let idempotent = matches!(method, "GET" | "HEAD" | "PUT" | "DELETE" | "OPTIONS");
     match &result {
-        Err(e) if ended_unanswered(e) && call.met_a_closed_connection() => {
+        Err(e) if idempotent && ended_unanswered(e) && call.met_a_closed_connection() => {
             call.begin();
             send_request(agent, method, url, body, headers, true)
         }
@@ -4120,11 +4203,11 @@ mod keep_alive_tests {
     }
 
     /// A server that closes a kept connection just as the next request
-    /// goes out on it, before a byte of the answer: the request is sent
-    /// once more, on a new connection, whatever its method.
+    /// goes out on it, before a byte of the answer: a request of a method
+    /// that may be sent twice is sent once more, on a new connection.
     #[test]
     fn a_request_that_meets_a_kept_connection_closed_is_sent_again_on_a_new_one() {
-        for method in ["GET", "POST", "DELETE"] {
+        for method in ["GET", "PUT", "DELETE", "OPTIONS"] {
             let server = Server::new(vec![
                 vec![Reply::Answer("one"), Reply::Close],
                 vec![Reply::Answer("two")],
@@ -4140,6 +4223,119 @@ mod keep_alive_tests {
                 "{method}"
             );
         }
+    }
+
+    /// A POST or a PATCH that meets a kept connection closed so is not
+    /// sent again: the server may have acted on it. It is `ClosedEarly`.
+    #[test]
+    fn a_post_or_patch_that_meets_a_kept_connection_closed_is_closed_early() {
+        for method in ["POST", "PATCH"] {
+            let server = Server::new(vec![
+                vec![Reply::Answer("one"), Reply::Close],
+                vec![Reply::Answer("two")],
+            ]);
+            let agent = agent();
+            let call = || Arc::new(Call::default());
+            assert_eq!(ask(&agent, &call(), method, &server.url, b"abc"), "one");
+            assert_eq!(
+                ask(&agent, &call(), method, &server.url, b"abc"),
+                "ClosedEarly"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+            let line = format!("{method} / HTTP/1.1");
+            assert_eq!(
+                server.requests(),
+                vec![vec![line.clone(), line]],
+                "{method}"
+            );
+        }
+    }
+
+    /// The same over TLS: a server that closes a kept connection as the
+    /// next request goes out sends `close_notify` before it closes, a
+    /// record of TLS and no byte of the answer, so the request is sent
+    /// once more as over plain http. The client takes the server's
+    /// self-signed certificate (verification off, in this test only).
+    #[test]
+    #[cfg(feature = "tcp-tls")]
+    fn a_kept_https_connection_closed_with_close_notify_is_sent_again() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("a certificate");
+        let chain = vec![CertificateDer::from(cert.cert.der().to_vec())];
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
+        let config = Arc::new(
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(chain, key)
+                .expect("a server config"),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let url = format!("https://{}/", listener.local_addr().expect("its address"));
+        let got: Arc<Mutex<Vec<usize>>> = Arc::default();
+        let seen = got.clone();
+        std::thread::spawn(move || {
+            for (n, stream) in listener.incoming().enumerate() {
+                let Ok(stream) = stream else { return };
+                let conn = rustls::ServerConnection::new(config.clone()).expect("a connection");
+                let mut tls = rustls::StreamOwned::new(conn, stream);
+                seen.lock().push(0);
+                // The first connection answers one request and closes
+                // with close_notify when the second has come; the next
+                // answers.
+                let replies: &[Option<&str>] = match n {
+                    0 => &[Some("one"), None],
+                    _ => &[Some("two")],
+                };
+                for reply in replies {
+                    if read_tls_request(&mut tls).is_none() {
+                        break;
+                    }
+                    seen.lock()[n] += 1;
+                    match reply {
+                        Some(body) => {
+                            let answer = format!(
+                                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = tls.write_all(answer.as_bytes());
+                            let _ = tls.flush();
+                        }
+                        None => {
+                            tls.conn.send_close_notify();
+                            let _ = tls.flush();
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let tls = ureq::tls::TlsConfig::builder()
+            .disable_verification(true)
+            .build();
+        let agent = client_of(
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            ureq::unversioned::resolver::DefaultResolver::default(),
+            tls,
+        );
+        assert_eq!(get(&agent, &url), "one");
+        assert_eq!(get(&agent, &url), "two");
+        assert_eq!(*got.lock(), vec![2, 1]);
+    }
+
+    /// The head of the next request of `tls`; `None` at its end.
+    #[cfg(feature = "tcp-tls")]
+    fn read_tls_request(tls: &mut impl Read) -> Option<()> {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            match tls.read(&mut byte) {
+                Ok(1) => head.push(byte[0]),
+                _ => return None,
+            }
+        }
+        Some(())
     }
 
     /// The request is sent again once: a new connection that ends
