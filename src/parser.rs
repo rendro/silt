@@ -2278,10 +2278,7 @@ impl<'src> Parser<'src> {
     /// is the current token.
     fn capital_field_err(&mut self, name: Symbol, span: Span) -> Diagnostic {
         let text = intern::resolve(name);
-        let mut chars = text.chars();
-        let field: String = (chars.next())
-            .map(|c| c.to_lowercase().chain(chars).collect())
-            .unwrap_or_default();
+        let field = lower_first_word(&text);
         // The type behind the `:`, as written, for the help; whatever is
         // wrong in it is not this error's business.
         self.advance();
@@ -2299,8 +2296,8 @@ impl<'src> Parser<'src> {
             Code::ExpectedToken,
             span,
             format!(
-                "a record field's name starts with a lower-case letter, so '{text}' reads as \
-                 an enum variant"
+                "a type body whose first name starts with a capital is an enum's, so '{text}' \
+                 reads as a variant: a record's first field starts with a lower-case letter"
             ),
         )
         .with_help(fix)
@@ -5727,6 +5724,25 @@ fn is_constructor(name: Symbol) -> bool {
 
 /// `name` with its first character in upper case, for "did you mean"
 /// suggestions.
+/// `name` with its leading capitals lowered, as a record field's name
+/// is written: `Date` -> `date`, `URL` -> `url`, `HTTPCode` -> `httpCode`
+/// (the capital that starts the next word stays).
+fn lower_first_word(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let run = chars.iter().take_while(|c| c.is_uppercase()).count();
+    // (In `HTTPCode`, the run's last capital starts `Code`.)
+    let lowered = match chars.get(run) {
+        Some(next) if run > 1 && next.is_lowercase() => run - 1,
+        _ => run,
+    };
+    (chars.iter().enumerate())
+        .flat_map(|(k, c)| match k < lowered {
+            true => c.to_lowercase().collect::<Vec<_>>(),
+            false => vec![*c],
+        })
+        .collect()
+}
+
 fn capitalized(name: &str) -> String {
     // `_red` and `_Red` both suggest `Red`: a leading underscore does not
     // make a name start with an upper-case letter.

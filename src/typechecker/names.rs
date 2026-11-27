@@ -1877,7 +1877,6 @@ impl Resolver<'_> {
         }
     }
 
-    /// The help for a builtin module used without its import.
     /// The error for `module.x` (at `span`) where nothing imports the
     /// module `module`, a builtin one or one the file can import.
     fn not_imported(&mut self, module: Symbol, span: Span) {
@@ -1898,6 +1897,7 @@ impl Resolver<'_> {
         self.error(d);
     }
 
+    /// The help for a module used without its import.
     fn import_help(&self, module: &str) -> String {
         if let Some(feature) = crate::module::missing_feature(module) {
             return crate::module::needs_feature(&format!("module `{module}`"), feature);

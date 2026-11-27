@@ -3919,7 +3919,7 @@ impl TypeChecker {
             ..
         } = so_far;
         given.extend(given_at.into_iter().flatten());
-        self.swapped_arguments(call, args, &mismatches, &shown_args);
+        self.swapped_arguments(call, args, &mismatches);
         // An argument of the wrong type is the one thing wrong
         // with the call: what the callee owes for it is not
         // asked as well.
@@ -4096,14 +4096,12 @@ impl TypeChecker {
     /// parameter takes (`map.update(m, k, { n -> n + 1 }, 0)`): one error
     /// that says they look swapped, in place of the mismatch of each.
     /// `mismatches` are the arguments that are not of their parameter's
-    /// type (`ArgumentsSoFar::mismatches`); `shown`, the arguments as a
-    /// help writes them.
+    /// type (`ArgumentsSoFar::mismatches`).
     fn swapped_arguments(
         &mut self,
         call: CallSite<'_>,
         args: &[&mut Expr],
         mismatches: &[(usize, usize, usize, Type)],
-        shown: &[String],
     ) {
         let CallSite {
             callee,
@@ -4113,7 +4111,14 @@ impl TypeChecker {
             implicit_self,
             ..
         } = call;
-        if implicit_self != 0 || through_trait || !matches!(form, CallForm::Call) {
+        // (Of a call with another number of arguments than parameters,
+        // the arguments do not line up with the places they are compared
+        // with.)
+        if implicit_self != 0
+            || through_trait
+            || !matches!(form, CallForm::Call)
+            || args.len() != params.len()
+        {
             return;
         }
         // (The one plain mismatch of argument `k`, and its type.)
@@ -4167,12 +4172,16 @@ impl TypeChecker {
                 self.show_type(&pa),
                 self.show_type(&pb)
             );
-            // (The call written with the two swapped, when every argument
-            // can be written.)
-            if let Some(who) = &who
-                && shown.iter().all(|s| s != "...")
-            {
-                let mut written = shown.to_vec();
+            // (The call written with the two swapped, each argument as the
+            // file writes it, when each is on one line.)
+            let written: Option<Vec<&str>> = (args.iter())
+                .map(|arg| {
+                    let text = self.source_text.as_deref()?;
+                    let range = arg.span.start as usize..arg.span.end as usize;
+                    text.get(range).filter(|written| !written.contains('\n'))
+                })
+                .collect();
+            if let (Some(who), Some(mut written)) = (&who, written) {
                 written.swap(k, k + 1);
                 help.push_str(&format!(": write `{who}({})`", written.join(", ")));
             }

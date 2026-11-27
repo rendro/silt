@@ -839,6 +839,7 @@ impl Session {
                 defs: self.defs.clone(),
                 tables: &mut self.tables,
                 for_editor: self.for_editor,
+                text: text.map(|file| file.text.clone()),
             },
         );
         say_hidden_modules(

@@ -1117,6 +1117,7 @@ src/typechecker/names.rs: pub exports
 src/typechecker/names.rs: pub fn implied
 src/typechecker/names.rs: pub hidden_imports
 src/typechecker/names.rs: pub hidden_modules
+src/typechecker/names.rs: pub importable
 src/typechecker/names.rs: pub module
 src/typechecker/names.rs: pub modules
 src/typechecker/names.rs: pub name

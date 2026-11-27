@@ -1,14 +1,21 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: 13:31
+-- stderr-contains: 15:31
 -- stderr-contains: type mismatch: expected Int, got String
--- stderr-contains: 13:36
+-- stderr-contains: 15:36
 -- stderr-contains: type mismatch: expected Int, got Bool
+-- stderr-contains: `label` expects 2 arguments, got 3
 -- stderr-not-contains: look swapped
 -- Two arguments of the wrong type that swapping would not mend are each
--- their own mismatch.
+-- their own mismatch; so are two swapped ones of a call with another
+-- number of arguments than the function has parameters.
 import string
 
 fn main() {
   println(string.slice("abc", "x", true))
+  println(label("kg", 3, 4))
+}
+
+fn label(n: Int, unit: String) -> String {
+  "{n} {unit}"
 }
