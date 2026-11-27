@@ -13,7 +13,7 @@ error[type]: this call of `swap` takes a frame for every round
     |
  20 |     [_, ..rest] -> 1 + swap(ys, rest)
     |                        ^^^^^^^^^^^^^^ this call of `swap` takes a frame for every round
-  = note: not the last thing `swap` does, and `ys` is not a part of `xs`
+  = note: not the last thing `swap` does, and it passes `ys` itself, not a part of it
   = help: carry the running value in a parameter, so that the call comes last
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn swap`
 

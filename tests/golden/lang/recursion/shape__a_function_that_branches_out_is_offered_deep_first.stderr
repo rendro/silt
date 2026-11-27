@@ -1,0 +1,8 @@
+error[type]: this call of `fib` takes a frame for every round
+ --> shape__a_function_that_branches_out_is_offered_deep_first.silt:10:14
+    |
+ 10 |     false -> fib(n - 1) + fib(n - 2)
+    |              ^^^^^^^^^^ this call of `fib` takes a frame for every round
+  = note: not the last thing `fib` does, and `n - 1` is not a part of `n`
+  = help: if its depth is bounded by something the compiler cannot see, write `deep fn fib`
+  = help: or carry the running value in a parameter, so that the call comes last

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A function that calls itself twice where one runs (tree recursion,
+-- as fib does) is offered `deep` first and no fold: no count down by
+-- one covers it. A count down by one call (sum_to in
+-- shape__a_call_that_keeps_a_frame_must_pass_a_part) keeps the fold first.
+fn fib(n: Int) -> Int {
+  match n < 2 {
+    true -> n
+    false -> fib(n - 1) + fib(n - 2)
+  }
+}
+
+fn main() {
+  println(fib(10))
+}

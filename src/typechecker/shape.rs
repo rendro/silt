@@ -146,6 +146,12 @@ struct Site {
     kind: SiteKind,
     /// The spans of the call's arguments.
     args: Vec<Span>,
+    /// For each argument, the parameter of the caller it is made from
+    /// (the first one named in it), if any: what an error names.
+    made_from: Vec<Option<usize>>,
+    /// The branch of the caller the site is in: its body, a match arm
+    /// or a closure. Two calls in one branch both run.
+    branch: usize,
     /// For a member passed as a value to a call: the callee's span.
     passed_to: Option<Span>,
     /// Where the member is named: an alias's name, if it is one.
@@ -202,6 +208,9 @@ struct Walk<'a, 'd> {
     diagnostics: Vec<Diagnostic>,
     /// The methods that call a method of their own trait.
     trait_calls: Vec<(Span, Symbol)>,
+    /// The branch the walk is in, and how many there are.
+    branch: usize,
+    branches: usize,
 }
 
 impl<'a, 'd> Walk<'a, 'd> {
@@ -302,7 +311,15 @@ impl<'a, 'd> Walk<'a, 'd> {
             held: Vec::new(),
             diagnostics: Vec::new(),
             trait_calls: Vec::new(),
+            branch: 0,
+            branches: 0,
         }
+    }
+
+    /// Enter a new branch; gives the one to go back to.
+    fn new_branch(&mut self) -> usize {
+        self.branches += 1;
+        std::mem::replace(&mut self.branch, self.branches)
     }
 
     fn run(&mut self, program: &'a Program) {
@@ -340,6 +357,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         let outer_node = self.node.replace(n);
         let outer_closure = self.closure.take();
         let outer_held = std::mem::take(&mut self.held);
+        let outer_branch = self.new_branch();
         let depth = self.scopes.len();
         let (params, body) = (self.nodes[n].params, self.nodes[n].body);
         for (i, param) in params.iter().enumerate() {
@@ -360,6 +378,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         self.node = outer_node;
         self.closure = outer_closure;
         self.held = outer_held;
+        self.branch = outer_branch;
     }
 
     /// Walk a method of an impl of the trait `trait_id` (or of the
@@ -550,7 +569,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                         to,
                         e.span,
                         SiteKind::Value { elem: None },
-                        Vec::new(),
+                        &[],
                         None,
                         e.span,
                     );
@@ -575,12 +594,14 @@ impl<'a, 'd> Walk<'a, 'd> {
                 }
                 for arm in arms {
                     let depth = self.scopes.len();
+                    let outer_branch = self.new_branch();
                     self.bind_matched(&arm.pattern, expr.as_deref());
                     if let Some(guard) = &arm.guard {
                         self.expr(guard, false);
                     }
                     self.expr(&arm.body, tail);
                     self.scopes.truncate(depth);
+                    self.branch = outer_branch;
                 }
             }
             ExprKind::Return(Some(value)) => self.expr(value, true),
@@ -682,6 +703,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         let coll = element.and_then(|(coll, _)| coll);
         let outer_closure = self.closure.replace((coll, element.is_some()));
         let outer_held = std::mem::take(&mut self.held);
+        let outer_branch = self.new_branch();
         let depth = self.scopes.len();
         for (i, param) in params.iter().enumerate() {
             match (coll, element) {
@@ -695,6 +717,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         self.scopes.truncate(depth);
         self.closure = outer_closure;
         self.held = outer_held;
+        self.branch = outer_branch;
     }
 
     /// The call `e` of `callee` with `args` (a pipe's left side first).
@@ -715,8 +738,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                     args: measures,
                 },
             };
-            let spans = args.iter().map(|a| a.span).collect();
-            self.site(to, e.span, kind, spans, None, callee.span);
+            self.site(to, e.span, kind, &args, None, callee.span);
             self.args(callee, &args);
             return;
         }
@@ -734,7 +756,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                     Some(to) => {
                         let elem = coll.map(|m| (m, at));
                         let kind = SiteKind::Value { elem };
-                        self.site(to, fun.span, kind, Vec::new(), Some(callee.span), fun.span);
+                        self.site(to, fun.span, kind, &[], Some(callee.span), fun.span);
                     }
                     None => self.expr(fun, false),
                 },
@@ -752,7 +774,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             match self.node_named(arg) {
                 Some(to) => {
                     let kind = SiteKind::Value { elem: None };
-                    self.site(to, arg.span, kind, Vec::new(), Some(callee.span), arg.span);
+                    self.site(to, arg.span, kind, &[], Some(callee.span), arg.span);
                 }
                 None => self.expr(arg, false),
             }
@@ -764,7 +786,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         to: usize,
         span: Span,
         kind: SiteKind,
-        args: Vec<Span>,
+        args: &[&Expr],
         passed_to: Option<Span>,
         named_at: Span,
     ) {
@@ -775,16 +797,30 @@ impl<'a, 'd> Walk<'a, 'd> {
             return;
         }
         if let Some(from) = self.node {
+            let made_from = args.iter().map(|a| self.made_from(a)).collect();
             self.sites.push(Site {
                 from,
                 to,
                 span,
                 kind,
-                args,
+                args: args.iter().map(|a| a.span).collect(),
+                made_from,
+                branch: self.branch,
                 passed_to,
                 named_at,
             });
         }
+    }
+
+    /// The parameter of the node the walk is in that `e` is made from:
+    /// the first one named in it (or a part of it), if any.
+    fn made_from(&self, e: &Expr) -> Option<usize> {
+        let mut param = None;
+        e.any_expr(&mut |x| {
+            param = self.measure(x).map(|m| m.param);
+            param.is_some()
+        });
+        param
     }
 
     /// The tail call `e` of `callee` lets go of what the function holds:
@@ -1027,6 +1063,12 @@ impl<'a, 'd> Walk<'a, 'd> {
             .collect();
         let at = |n: usize| members.iter().position(|m| *m == n).expect("a member");
         let mut pick = vec![0usize; members.len()];
+        // (The members a choice breaks the rule in, then the calls: each
+        // member broken is a `deep` to write.)
+        let cost = |fails: &[usize]| {
+            let broken: HashSet<usize> = fails.iter().map(|&s| self.sites[s].from).collect();
+            (broken.len(), fails.len())
+        };
         let mut best: Option<(Vec<Option<usize>>, Vec<usize>)> = None;
         for _ in 0..MAX_CHOICES {
             let d: Vec<Option<usize>> = (members.iter().zip(&pick))
@@ -1041,7 +1083,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             if fails.is_empty() {
                 return Solved::Data(d);
             }
-            if best.as_ref().is_none_or(|(_, b)| fails.len() < b.len()) {
+            if best.as_ref().is_none_or(|(_, b)| cost(&fails) < cost(b)) {
                 best = Some((d, fails));
             }
             // The next choice.
@@ -1063,24 +1105,46 @@ impl<'a, 'd> Walk<'a, 'd> {
         Solved::Refused(d, fails)
     }
 
-    /// E0345: the first call of a refused group that breaks the rule
-    /// under the choice of parameters that breaks it fewest times.
+    /// E0345 for a refused group, under the choice of parameters that
+    /// breaks the rule in fewest members: one error for each member with
+    /// a call that breaks it, at the first such call. The first of the
+    /// errors names the group.
     fn refuse(&mut self, members: &[usize], best: &[Option<usize>], fails: &[usize]) {
         // A member passed as a value says most, then a call inside a
         // closure, then a call; each the first in the text.
-        let rank = |s: usize| match self.sites[s].kind {
-            SiteKind::Value { .. } => 0,
-            SiteKind::Closure { .. } => 1,
-            SiteKind::Call { .. } => 2,
+        let key = |s: usize| {
+            let rank = match self.sites[s].kind {
+                SiteKind::Value { .. } => 0,
+                SiteKind::Closure { .. } => 1,
+                SiteKind::Call { .. } => 2,
+            };
+            (rank, self.sites[s].span.start)
         };
-        let Some(&first) = fails
-            .iter()
-            .min_by_key(|&&s| (rank(s), self.sites[s].span.start))
-        else {
-            return;
-        };
+        let mut firsts: Vec<usize> = (members.iter())
+            .filter_map(|&m| {
+                (fails.iter().copied())
+                    .filter(|&s| self.sites[s].from == m)
+                    .min_by_key(|&s| key(s))
+            })
+            .collect();
+        firsts.sort_by_key(|&s| key(s));
+        let errors: Vec<Diagnostic> = (firsts.iter().enumerate())
+            .map(|(i, &s)| self.refused(members, best, s, i == 0))
+            .collect();
+        self.diagnostics.extend(errors);
+    }
+
+    /// The E0345 error of the call `s` of a refused group; `names_group`:
+    /// it says which functions are checked together.
+    fn refused(
+        &self,
+        members: &[usize],
+        best: &[Option<usize>],
+        s: usize,
+        names_group: bool,
+    ) -> Diagnostic {
         let at = |n: usize| members.iter().position(|m| *m == n).expect("a member");
-        let site = &self.sites[first];
+        let site = &self.sites[s];
         let (from, to) = (&self.nodes[site.from], &self.nodes[site.to]);
         let (from_name, to_name) = (from.name, to.name);
         let d_from = best[at(site.from)];
@@ -1151,23 +1215,42 @@ impl<'a, 'd> Walk<'a, 'd> {
                 )
                 .with_help(deep_help)
             }
-            SiteKind::Call { tail: false, .. } => {
-                let label = match (&arg, d_from) {
-                    (Some(arg), Some(i)) => format!(
-                        "not the last thing `{from_name}` does, and `{arg}` is not a part of \
-                         `{}`",
-                        self.param_name(site.from, i)
+            SiteKind::Call {
+                tail: false,
+                args: measures,
+            } => {
+                let measure = d_to.and_then(|i| measures.get(i).copied().flatten());
+                // The parameter the argument is made from, or the caller's
+                // only one.
+                let made_from = (d_to.and_then(|i| site.made_from.get(i).copied().flatten()))
+                    .or_else(|| (from.params.len() == 1).then_some(0));
+                let not_last = format!("not the last thing `{from_name}` does");
+                let label = match (&arg, measure, d_from) {
+                    (Some(arg), Some(m), _) if !m.strict => match self
+                        .param_name(site.from, m.param)
+                    {
+                        p if p == *arg => {
+                            format!("{not_last}, and it passes `{arg}` itself, not a part of it")
+                        }
+                        p => format!("{not_last}, and `{arg}` is `{p}` itself, not a part of it"),
+                    },
+                    (Some(arg), Some(m), Some(d)) => format!(
+                        "{not_last}, and `{arg}` is a part of `{}`, not of `{}`",
+                        self.param_name(site.from, m.param),
+                        self.param_name(site.from, d),
                     ),
-                    (Some(arg), None) => format!(
-                        "not the last thing `{from_name}` does, and `{arg}` is not a part of \
-                         a parameter"
-                    ),
-                    (None, _) => format!(
-                        "not the last thing `{from_name}` does, and `{to_name}` takes no \
-                         argument that gets smaller"
-                    ),
+                    (Some(arg), _, _) => match made_from {
+                        Some(p) => format!(
+                            "{not_last}, and `{arg}` is not a part of `{}`",
+                            self.param_name(site.from, p)
+                        ),
+                        None => format!("{not_last}, and `{arg}` is not a part of a parameter"),
+                    },
+                    (None, _, _) => {
+                        format!("{not_last}, and `{to_name}` takes no argument that gets smaller")
+                    }
                 };
-                let mut d = Diagnostic::error(
+                let d = Diagnostic::error(
                     Code::RecursionShape,
                     site.span,
                     format!("this call of `{to_name}` takes a frame for every round"),
@@ -1177,16 +1260,29 @@ impl<'a, 'd> Walk<'a, 'd> {
                     .and_then(|i| site.args.get(i))
                     .and_then(|s| self.counted_down(*s));
                 let carry = "carry the running value in a parameter, so that the call comes last";
-                d = match counted {
-                    Some(n) => d
+                // Two calls of the group that keep a frame where one runs
+                // (`fib(n - 1) + fib(n - 2)`) branch out: `deep` is the usual
+                // answer, and no fold counts it.
+                let branches_out = (self.sites.iter())
+                    .filter(|other| {
+                        other.from == site.from
+                            && other.branch == site.branch
+                            && members.contains(&other.to)
+                            && matches!(other.kind, SiteKind::Call { tail: false, .. })
+                    })
+                    .nth(1)
+                    .is_some();
+                match (branches_out, counted) {
+                    (true, _) => d.with_help(deep_help).with_help(format!("or {carry}")),
+                    (false, Some(n)) => d
                         .with_help(format!(
                             // (The fold the rule offers, by the module's own name)
                             "count with the library: `list.fold(1..{n}, start) {{ acc, i -> ... }}`"
                         ))
-                        .with_help(format!("or {carry}")),
-                    None => d.with_help(carry),
-                };
-                d.with_help(deep_help)
+                        .with_help(format!("or {carry}"))
+                        .with_help(deep_help),
+                    (false, None) => d.with_help(carry).with_help(deep_help),
+                }
             }
         };
         // (Named through an alias: say what the alias is.)
@@ -1196,7 +1292,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                 "`{written}` is `{to_name}`: an alias is the function it names"
             ));
         }
-        if members.len() > 1 {
+        if names_group && members.len() > 1 {
             let names: Vec<String> = members
                 .iter()
                 .map(|&m| format!("`{}`", self.nodes[m].name))
@@ -1226,7 +1322,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                 }
             }
         }
-        self.diagnostics.push(d);
+        d
     }
 
     /// The `n` of an argument `n - 1` (an Int counted down), written as

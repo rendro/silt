@@ -1,0 +1,53 @@
+-- cmd: check
+-- exit: 1
+-- The note of a call that keeps a frame says what the argument is of
+-- the caller's parameters: the parameter itself, a part of another
+-- parameter, something made from a parameter, or none of them.
+fn walk(xs: List(Int), n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + walk(xs, n - 1)
+  }
+}
+
+fn zip_len(xs: List(Int), ys: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..rest] -> match ys {
+      [] -> 0
+      [_, ..more] -> 1 + zip_len(more, rest)
+    }
+  }
+}
+
+fn grow(xs: List(Int), k: Int) -> Int {
+  match xs {
+    [] -> k
+    [x, ..rest] -> 1 + grow([x, x, ..rest], k)
+  }
+}
+
+fn fresh(xs: List(Int), n: Int) -> Int {
+  match xs {
+    [] -> n
+    [_, ..] -> 1 + fresh([1, 2], n)
+  }
+}
+
+fn parse_binary(ts: List(Int), min: Int) -> Int {
+  match ts {
+    [] -> min
+    [_, ..rest] -> parse_unary(ts) + parse_binary(rest, min)
+  }
+}
+
+fn parse_unary(ts: List(Int)) -> Int {
+  match ts {
+    [] -> 0
+    [x, ..] -> x + parse_binary(ts, 0)
+  }
+}
+
+fn main() {
+  println(walk([], 3) + zip_len([], []) + grow([], 0) + fresh([], 0) + parse_binary([1, 2], 0))
+}
