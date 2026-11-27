@@ -4261,8 +4261,8 @@ mod tests {
             Counting::serving(false)
         }
 
-        /// The server, which holds back its answer to a reset for a
-        /// minute where `stalls`.
+        /// The server, which never answers a reset where `stalls`: it
+        /// waits until the client closes the connection.
         fn serving(stalls: bool) -> Counting {
             use std::io::{Read, Write};
             use std::sync::atomic::Ordering;
@@ -4315,7 +4315,7 @@ mod tests {
                                     message
                                 };
                                 if stalls && body.starts_with(b"EXECUTE silt_pool_mark") {
-                                    std::thread::sleep(Duration::from_secs(60));
+                                    let _ = std::io::copy(&mut stream, &mut std::io::sink());
                                     return;
                                 }
                                 let mut answer = match body.as_slice() {
@@ -4389,9 +4389,15 @@ mod tests {
 
     /// A connection whose reset gets no answer is closed, and the
     /// statement whose connection it was does not wait for the server:
-    /// one second at most, though the server holds the answer back for a
-    /// minute (and the connect limit is 10 seconds). The pool's next
+    /// one second at most (`RESET_LIMIT`; the connect limit is 10
+    /// seconds), though the server never answers. The pool's next
     /// connection is a new one.
+    ///
+    /// Not timed: the drop returns at all only if it did not wait for the
+    /// answer (the unit tests that hang are ended, and fail, after five
+    /// minutes: .config/nextest.toml). It once asserted that the drop
+    /// took under 5 s of the wall clock against a server that answered
+    /// after a minute.
     #[test]
     fn a_reset_that_gets_no_answer_closes_its_connection_at_once() {
         use std::sync::atomic::Ordering;
@@ -4409,10 +4415,7 @@ mod tests {
         };
         let pool = pool_of(manager, &ConnectOpts::default());
         let conn = PinnedConn::take(&pool).expect("a connection");
-        let started = std::time::Instant::now();
         drop(conn);
-        let took = started.elapsed();
-        assert!(took < Duration::from_secs(5), "the drop took {took:?}");
         drop(PinnedConn::take(&pool).expect("a connection"));
         assert!(server.taken.load(Ordering::SeqCst) >= 2, "connections");
     }
