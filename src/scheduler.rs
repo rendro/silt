@@ -3876,9 +3876,12 @@ fn main() {
         vm.set_task_owner(1);
         let first = vm.run_program(&leaves_tasks);
         vm.set_task_owner(2);
-        let before = Instant::now();
+        // Not timed: the verdict comes at all only if the first owner's
+        // task asleep for an hour does not hold it up (a hanging test of
+        // the lib suite is ended after five minutes as a failure,
+        // .config/nextest.toml). It once asserted that the run took
+        // under 30 s of the wall clock.
         let second = vm.run_program(&deadlocked);
-        let took = before.elapsed();
         assert_eq!(first.map_err(|e| e.message), Ok(()));
         let error = second.expect_err("the second program is deadlocked");
         assert_eq!(
@@ -3887,7 +3890,6 @@ fn main() {
         );
         // Its own task is listed, the first owner's two are not.
         assert_eq!(error.help.len(), 1, "{:?}", error.help);
-        assert!(took < Duration::from_secs(30), "the verdict took {took:?}");
     }
 
     /// Where the timer thread cannot be started, the threads that
