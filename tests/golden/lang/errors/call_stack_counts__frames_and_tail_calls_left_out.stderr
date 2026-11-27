@@ -1,0 +1,23 @@
+error[runtime]: division by zero
+ --> call_stack_counts__frames_and_tail_calls_left_out.silt:8:10
+   |
+ 8 |     0 -> 1 / n
+   |          ^^^^^ division by zero
+
+call stack:
+  -> down  at call_stack_counts__frames_and_tail_calls_left_out.silt:8:10
+  -> hop  at call_stack_counts__frames_and_tail_calls_left_out.silt:14:3
+  -> down  at call_stack_counts__frames_and_tail_calls_left_out.silt:9:10
+  -> hop  at call_stack_counts__frames_and_tail_calls_left_out.silt:14:3
+  -> down  at call_stack_counts__frames_and_tail_calls_left_out.silt:9:10
+  -> hop  at call_stack_counts__frames_and_tail_calls_left_out.silt:14:3
+  -> down  at call_stack_counts__frames_and_tail_calls_left_out.silt:9:10
+  -> hop  at call_stack_counts__frames_and_tail_calls_left_out.silt:14:3
+  -> down  at call_stack_counts__frames_and_tail_calls_left_out.silt:9:10
+  -> hop  at call_stack_counts__frames_and_tail_calls_left_out.silt:14:3
+  ... (27 more calls: 14 frames and 13 tail calls, which take no frame)
+  -> hop  at call_stack_counts__frames_and_tail_calls_left_out.silt:14:3
+  -> down  at call_stack_counts__frames_and_tail_calls_left_out.silt:9:10
+  -> hop  at call_stack_counts__frames_and_tail_calls_left_out.silt:14:3
+  -> down  at call_stack_counts__frames_and_tail_calls_left_out.silt:9:10
+  -> main  at call_stack_counts__frames_and_tail_calls_left_out.silt:18:11

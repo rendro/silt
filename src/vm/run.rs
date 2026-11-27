@@ -239,6 +239,25 @@ fn push_int(stack: &mut Vec<Value>, n: i64) {
     push_with(stack, || Value::Int(n));
 }
 
+/// A call of a variant's constructor with as many values as it has
+/// fields (`Ok(x)`, `VI(n)`): the variant of them, made where the
+/// constructor was, and the values off the stack. (Not a call: no frame,
+/// nothing saved. Another number of values is `call_value`'s, which
+/// refuses it.)
+#[inline(always)]
+fn constructed(stack: &mut Vec<Value>, func_slot: usize, argc: usize) -> bool {
+    if !matches!(&stack[func_slot], Value::VariantConstructor(tag) if tag.arity() == argc) {
+        return false;
+    }
+    let Value::VariantConstructor(tag) = std::mem::replace(&mut stack[func_slot], Value::Unit)
+    else {
+        unreachable!("the slot holds a constructor")
+    };
+    let variant = Value::variant(tag, stack.drain(func_slot + 1..));
+    stack[func_slot] = variant;
+    true
+}
+
 #[inline(never)]
 fn push_float(stack: &mut Vec<Value>, f: Float) {
     push_with(stack, || Value::Float(f));
@@ -625,6 +644,14 @@ impl Vm {
             ($argc:expr) => {{
                 let argc = $argc;
                 let func_slot = self.stack.len() - 1 - argc;
+                if !constructed(&mut self.stack, func_slot, argc) {
+                    call_other!(argc, func_slot)
+                }
+            }};
+        }
+        macro_rules! call_other {
+            ($argc:expr, $func_slot:expr) => {{
+                let (argc, func_slot) = ($argc, $func_slot);
                 save!();
                 // (A closure is called by its pointer: the value in
                 // the slot is not cloned and moved.)
@@ -652,6 +679,16 @@ impl Vm {
             ($argc:expr) => {{
                 let argc = $argc;
                 let func_slot = self.stack.len() - 1 - argc;
+                if constructed(&mut self.stack, func_slot, argc) {
+                    // (The variant is the frame's value: `Return` follows.)
+                } else {
+                    tail_call_other!(argc, func_slot)
+                }
+            }};
+        }
+        macro_rules! tail_call_other {
+            ($argc:expr, $func_slot:expr) => {{
+                let (argc, func_slot) = ($argc, $func_slot);
                 let callee = self.stack[func_slot].clone();
                 save!();
                 if let Value::VmClosure(callee) = callee {
@@ -1093,7 +1130,7 @@ impl Vm {
                     let at = self.stack.len() - argc + usize::from(at);
                     save!();
                     ok!(self.check_receiver(template, at));
-                    call!(argc)
+                    call_other!(argc, self.stack.len() - 1 - argc)
                 }
                 Instr::TailCall { argc } => {
                     // (A closure takes the frame over, and the frame's
@@ -1116,7 +1153,7 @@ impl Vm {
                     let at = self.stack.len() - argc + usize::from(at);
                     save!();
                     ok!(self.check_receiver(template, at));
-                    tail_call!(argc)
+                    tail_call_other!(argc, self.stack.len() - 1 - argc)
                 }
                 Instr::TailCallKeep { argc, keep } => {
                     save!();
@@ -1261,6 +1298,19 @@ impl Vm {
                     }
                 }
                 Instr::ListConcat => {
+                    // The frame lets go of the copies of the two lists
+                    // it reads no more, and one the operands alone hold
+                    // is changed in place (`[x, ..acc]`).
+                    let args_at = self.stack.len() - 2;
+                    let long = match &self.stack[args_at..] {
+                        [Value::List(a), Value::List(b)] => {
+                            a.may_be_put_into() || b.may_be_put_into()
+                        }
+                        _ => false,
+                    };
+                    if long {
+                        give::let_go_of_operands(&mut self.stack, chunk, ip, base, args_at);
+                    }
                     let b = pop(&mut self.stack);
                     let a = pop(&mut self.stack);
                     let (Value::List(a), Value::List(b)) = (a, b) else {
@@ -1268,8 +1318,11 @@ impl Vm {
                             "ListConcat: an operand is not a list",
                         ));
                     };
-                    let list = ok!(crate::builtins::collections::concat("list literal", &a, &b));
-                    self.stack.push(list);
+                    let list = match long {
+                        true => crate::builtins::collections::put_concat("list literal", a, b),
+                        false => crate::builtins::collections::concat("list literal", &a, &b),
+                    };
+                    self.stack.push(ok!(list));
                 }
                 // A read of a field writes the field over the record,
                 // on top of the stack: the record is not taken off and

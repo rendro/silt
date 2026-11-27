@@ -1,0 +1,128 @@
+-- A variant a function's code makes with its fields (VI(n), Ok(VI(n)),
+-- Some(xs), a constructor a local holds, one in tail position, one of
+-- a generic type) holds what a call of the constructor gave it, and what
+-- it holds stays as it was when a copy of it is changed: a list or a map
+-- put into a variant and changed after, a variant sent to another task
+-- and matched there, a constructor handed to a builtin, a variant of a
+-- variant. This file's output is what it was when each was a call.
+import channel
+import list
+import map
+import option
+import task
+
+type V {
+  VI(Int),
+  VS(String),
+  VL(List(Int)),
+  VP(Int, V),
+  VN,
+}
+
+type Box(a) {
+  Full(a),
+  Empty,
+}
+
+fn shown(v: V) -> String {
+  match v {
+    VI(n) -> "VI({n})"
+    VS(s) -> "VS({s})"
+    VL(xs) -> "VL({xs})"
+    VP(n, inner) -> "VP({n}, {shown(inner)})"
+    VN -> "VN"
+  }
+}
+
+fn tail(n: Int) -> V {
+  VI(n)
+}
+
+fn nested(n: Int) -> Result(V, String) {
+  Ok(VP(n, VI(n + 1)))
+}
+
+fn boxed(x: a) -> Box(a) {
+  Full(x)
+}
+
+fn held(xs: List(Int)) -> V {
+  VL(xs)
+}
+
+fn by_local(n: Int) -> V {
+  let make = VI
+  make(n)
+}
+
+fn chain(n: Int, v: V) -> V {
+  match n {
+    0 -> v
+    _ -> chain(n - 1, VP(n, v))
+  }
+}
+
+fn grow(v: V, n: Int) -> V {
+  match v {
+    VL(xs) -> VL(list.append(xs, n))
+    other -> other
+  }
+}
+
+fn main() {
+  println("{shown(tail(1))} {shown(by_local(2))} {shown(chain(3, VN))}")
+  match nested(4) {
+    Ok(v) -> println("ok {shown(v)}")
+    Err(e) -> println("err {e}")
+  }
+  let b = boxed([1, 2])
+  let c = boxed("s")
+  match (b, c) {
+    (Full(xs), Full(s)) -> println("boxed {xs} {s}")
+    _ -> println("empty")
+  }
+  -- a list put into a variant, then changed: the variant's copy stays
+  let xs = list.fold(0..99, []) { a, i -> list.append(a, i) }
+  let v = held(xs)
+  let grown = grow(v, 100)
+  let ys = list.append(xs, 7)
+  println(
+    "held {list.length(xs)} {shown(v) == shown(VL(xs))} grown {shown(grown) == shown(VL(list.append(xs, 100)))} ys {list.length(ys)}",
+  )
+  let w = list.fold(0..9, held(xs)) { acc, i -> grow(acc, i) }
+  println(
+    "folded {shown(w) == shown(VL(list.concat(xs, list.map(0..9) { i -> i })))} xs {list.length(xs)}",
+  )
+  -- a map in a variant
+  let m = list.fold(0..99, #{}) { a, i -> map.set(a, i, i) }
+  let o = Some(m)
+  let m2 = map.set(m, 1, -1)
+  println("map {option.map(o) { x -> map.get(x, 1) }} {map.get(m2, 1)} {map.get(m, 1)}")
+  -- a variant sent to another task
+  let ch = channel.new(4)
+  let out = channel.new(4)
+  task.join(
+    [
+      { ->
+        list.each(0..2) { _ ->
+          match channel.receive(ch) {
+            Some(v) -> channel.send(out, shown(v))
+            None -> ()
+          }
+        }
+      },
+      { ->
+        channel.send(ch, VI(5))
+        channel.send(ch, held(list.take(xs, 3)))
+        channel.send(ch, VP(6, VS("t")))
+      },
+    ],
+  )
+  channel.close(out)
+  let got = list.map(0..2) { _ -> option.unwrap_or(channel.receive(out), "closed") }
+  println("task {got}")
+  let made = task.map([1, 2, 3], 2) { n -> shown(chain(n, by_local(n))) }
+  println("task.map {made}")
+  -- a constructor handed to a builtin
+  println("map Some {list.map([1, 2], Some)} {list.map([3], VI) |> list.map { v -> shown(v) }}")
+}

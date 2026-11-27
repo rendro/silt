@@ -1042,16 +1042,21 @@ impl Vm {
             let Frame::Code(frame) = frame else {
                 continue;
             };
-            let func_name = frame.closure.function.name().to_string();
-            let span = place(frame);
-            stack.push((func_name, span));
+            stack.push(crate::vm::error::Call {
+                name: frame.closure.function.name().to_string(),
+                span: place(frame),
+                tail: false,
+            });
             // Newer (later-pushed) entries for this depth are more recent
             // callers, so they come first: the chain stays callee-first.
             // A caller's place is the tail call: the instruction before
             // the one it had come to.
             while let Some((_, caller, ip)) = elided.next_if(|(d, _, _)| *d >= depth) {
-                let span = caller.chunk().span_at(ip.saturating_sub(1));
-                stack.push((caller.name().to_string(), span));
+                stack.push(crate::vm::error::Call {
+                    name: caller.name().to_string(),
+                    span: caller.chunk().span_at(ip.saturating_sub(1)),
+                    tail: true,
+                });
             }
         }
         err.call_stack = stack;

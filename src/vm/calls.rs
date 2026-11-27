@@ -167,8 +167,12 @@ impl Vm {
                 invoke_host_fn(&host, args).map(Entered::Value)
             }),
             Value::VariantConstructor(tag) => {
+                #[cfg(test)]
+                constructor_calls::COUNT.set(constructor_calls::COUNT.get() + 1);
                 // (The fields are taken off the stack into the variant:
-                // one of a single field makes no list of them.)
+                // one of a single field makes no list of them; a `Call`
+                // of a constructor in a function's code with its fields
+                // is made by `run::constructed` and comes here not.)
                 let (arity, given) = (tag.arity(), self.stack.len() - func_slot - 1);
                 if given != arity {
                     self.stack.truncate(func_slot);
@@ -293,5 +297,23 @@ impl Vm {
                 )))
             }
         }
+    }
+}
+
+/// How many variants a call of a constructor as a value made through
+/// [`Vm::call_value`] on this thread: what the tests of `VI(n)`
+/// and `Ok(x)` in a function's code count, which are made where the
+/// constructor is, without it.
+#[cfg(test)]
+pub(crate) mod constructor_calls {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static COUNT: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The variants made by a call of a constructor so far.
+    pub(crate) fn count() -> u64 {
+        COUNT.get()
     }
 }
