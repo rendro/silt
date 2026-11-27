@@ -5,6 +5,10 @@
 -- the program ends. With a sender that went on waiting the program
 -- would print the same two lines and never exit, and the suite would
 -- report that it did not exit within its 60 seconds.
+--
+-- The helper then waits on `never`, which nobody sends to. Waiting on
+-- `got` it could take its own line back when it sent before the body
+-- waited, and both would wait for ever.
 import channel
 import env
 import json
@@ -22,6 +26,7 @@ fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
       let got: Channel(String) = channel.new(1)
+      let never: Channel(String) = channel.new(1)
       let reader = { ->
         match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", (), json.Value) {
           Ok(rows) -> {
@@ -32,8 +37,7 @@ fn main() {
             }
             channel.send(got, first)
             -- Waits until it is stopped.
-            let _ = channel.receive(got)
-            let _ = channel.receive(got)
+            let _ = channel.receive(never)
             ()
           }
           Err(e) -> channel.send(got, "postgres.stream: {e}")
