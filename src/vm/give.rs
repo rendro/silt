@@ -1,7 +1,8 @@
 //! Before a call of a builtin that changes a collection where it is
 //! when it is given the one holder of it (`map.set`, `map.update`,
-//! `set.insert`, `list.append`, `list.set`:
-//! [`crate::value::Map::put`]), the frame lets go of the copies of it
+//! `set.insert`, `list.append`, `list.prepend`, `list.set`:
+//! [`crate::value::Map::put`]), and before a list literal joins two
+//! lists (`[x, ..acc]`), the frame lets go of the copies of it
 //! that the code after the call never reads again: the local it was
 //! read from, most often. A fold's step ends in the call (`{ m, k ->
 //! map.set(m, k, 1) }`); a function that calls itself hands the result
@@ -42,6 +43,25 @@ pub(super) fn let_go_of_copies(
         return;
     }
     let_go(stack, chunk, ip, base, args_at, args_at..args_at + 1);
+}
+
+/// Before a `ListConcat` of the two lists from `args_at` (`[x, ..acc]`),
+/// after which the code goes on at `ip`: let go of each value of the
+/// frame that is no more read and is a copy of one of them (see
+/// [`let_go`]), so that one the operands alone hold is changed in
+/// place ([`crate::value::List::put_concat`]).
+#[inline(never)]
+pub(super) fn let_go_of_operands(
+    stack: &mut [Value],
+    chunk: &Chunk,
+    ip: usize,
+    base: usize,
+    args_at: usize,
+) {
+    if !matches!(&stack[args_at..], [Value::List(_), Value::List(_)]) {
+        return;
+    }
+    let_go(stack, chunk, ip, base, args_at, args_at..args_at + 2);
 }
 
 /// Before a call of a function, a method or a builtin as a value (in

@@ -1261,6 +1261,11 @@ impl Vm {
                     }
                 }
                 Instr::ListConcat => {
+                    // The frame lets go of the copies of the two lists
+                    // it reads no more, and one the operands alone hold
+                    // is changed in place (`[x, ..acc]`).
+                    let args_at = self.stack.len() - 2;
+                    give::let_go_of_operands(&mut self.stack, chunk, ip, base, args_at);
                     let b = pop(&mut self.stack);
                     let a = pop(&mut self.stack);
                     let (Value::List(a), Value::List(b)) = (a, b) else {
@@ -1268,7 +1273,7 @@ impl Vm {
                             "ListConcat: an operand is not a list",
                         ));
                     };
-                    let list = ok!(crate::builtins::collections::concat("list literal", &a, &b));
+                    let list = ok!(crate::builtins::collections::put_concat("list literal", a, b));
                     self.stack.push(list);
                 }
                 // A read of a field writes the field over the record,

@@ -530,6 +530,9 @@ impl List {
             return Ok(List::from(items));
         }
         let tree = if self.len() <= PUSHED_MOST && self.len() <= other.len() {
+            if other.in_tree() {
+                shared_change();
+            }
             let mut tree = other.to_tree();
             copied(self.len());
             for item in self.iter().rev() {
@@ -537,6 +540,9 @@ impl List {
             }
             tree
         } else if other.len() <= PUSHED_MOST {
+            if self.in_tree() {
+                shared_change();
+            }
             let mut tree = self.to_tree();
             copied(other.len());
             tree.extend(other.iter());
@@ -558,6 +564,9 @@ impl List {
             items.push(value);
             self.write_into(&mut items);
             return Ok(List::from(items));
+        }
+        if self.in_tree() {
+            shared_change();
         }
         let mut tree = self.to_tree();
         copied(1);
@@ -644,6 +653,55 @@ impl List {
             return Ok(self);
         }
         self.push_back(value)
+    }
+
+    /// [`List::push_front`] of a list given away, changed in place as by
+    /// [`List::put_back`]. (`[x, ..acc]` or `list.prepend` of the list a
+    /// fold hands from step to step, or a function hands to itself.)
+    pub(crate) fn put_front(mut self, value: Value) -> Result<List, TooLong> {
+        if !self.flat_for(self.len() + 1)
+            && let Some((tree, len)) = self.own_tree()
+        {
+            copied(1);
+            tree.push_front(value);
+            *len += 1;
+            return Ok(self);
+        }
+        self.push_front(value)
+    }
+
+    /// [`List::concat`] of two lists given away: when one of them is
+    /// put into the tree of the other ([`PUSHED_MOST`]) and the other is
+    /// the one holder of its elements, they are put into that tree where
+    /// it is, as by [`List::put_back`]. (`[x, ..acc]` and `[..acc, x]`.)
+    pub(crate) fn put_concat(mut self, mut other: List) -> Result<List, TooLong> {
+        let len = self.len() + other.len();
+        if self.is_empty() || other.is_empty() {
+            return self.concat(&other);
+        }
+        if self.len() <= PUSHED_MOST && self.len() <= other.len() {
+            if !other.flat_for(len)
+                && self.writable().is_ok()
+                && let Some((tree, at)) = other.own_tree()
+            {
+                copied(self.len());
+                for item in self.iter().rev() {
+                    tree.push_front(item);
+                }
+                *at = len;
+                return Ok(other);
+            }
+        } else if other.len() <= PUSHED_MOST
+            && !self.flat_for(len)
+            && other.writable().is_ok()
+            && let Some((tree, at)) = self.own_tree()
+        {
+            copied(other.len());
+            tree.extend(other.iter());
+            *at = len;
+            return Ok(self);
+        }
+        self.concat(&other)
     }
 
     /// [`List::set`] of a list given away, changed in place as by

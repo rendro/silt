@@ -3,8 +3,9 @@
 //!
 //! A builtin that changes a collection where it is when it is given
 //! the one holder of it (`map.set`, `map.update`, `set.insert`,
-//! `list.append`, `list.set`: [`crate::value::Map::put`]) is called
-//! with the collection, and the frame often holds a copy of it still:
+//! `list.append`, `list.prepend`, `list.set`:
+//! [`crate::value::Map::put`]) is called with the collection (and a
+//! list literal that joins lists, `[x, ..acc]`, is given its lists), and the frame often holds a copy of it still:
 //! the local it was read from. From the call on, the code is read along
 //! every path up to the end of the frame (`Return`, a self tail call
 //! `Recur`, `Panic`), and of each of the frame's values below the
@@ -24,11 +25,12 @@ use super::ops::{Flow, Instr, Operand, decode};
 const AHEAD: usize = 64;
 
 /// The builtins that change a collection they are given in place.
-const PUTS: [&str; 5] = [
+const PUTS: [&str; 6] = [
     "map.set",
     "map.update",
     "set.insert",
     "list.append",
+    "list.prepend",
     "list.set",
 ];
 
@@ -536,7 +538,9 @@ impl Sites {
         while let Some((instr, next)) = decode(code, at) {
             let site = match instr {
                 Instr::CallBuiltin { builtin, .. } => puts(builtin),
-                Instr::Call { .. }
+                // (`[x, ..acc]`: `crate::vm::give::let_go_of_operands`.)
+                Instr::ListConcat
+                | Instr::Call { .. }
                 | Instr::TailCall { .. }
                 | Instr::CallChecked { .. }
                 | Instr::CallMethod { .. }

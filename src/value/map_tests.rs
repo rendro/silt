@@ -903,6 +903,66 @@ import host
     assert!(lists < 20, "{lists} changes of lists copied a shared tree");
 }
 
+/// A fold or a function that calls itself and puts an element at the
+/// front of the list it grows (`[x, ..acc]`, `list.prepend`), or at its
+/// back by a literal (`[..acc, x]`), changes it in place: 21,000 such
+/// changes find the list held nowhere else. (Each copied the edge of
+/// the list's tree.)
+#[test]
+fn a_list_grown_at_the_front_is_changed_in_place() {
+    let (given, _, lists) = run_counting_shared(
+        r#"
+import list
+fn front(i: Int, acc: List(Int)) -> List(Int) {
+  match i == 0 {
+    true -> acc
+    false -> front(i - 1, [i, ..acc])
+  }
+}
+fn prepended(acc: List(Int), i: Int) -> List(Int) {
+  match i == 0 {
+    true -> acc
+    false -> prepended(list.prepend(acc, i), i - 1)
+  }
+}
+fn back(i: Int, acc: List(Int)) -> List(Int) {
+  match i == 0 {
+    true -> acc
+    false -> {
+      let next = [..acc, i]
+      back(i - 1, next)
+    }
+  }
+}
+fn pushed(l: List(Int), x: Int) -> List(Int) {
+  [x, x + 1, ..l]
+}
+fn main() {
+  let xs = list.map(1..3000) { i -> i * 3 }
+  let a = list.fold(xs, []) { acc, x -> [x, ..acc] }
+  let b = list.fold(xs, []) { acc, x -> list.prepend(acc, x) }
+  let c = front(3000, [])
+  let d = prepended([], 3000)
+  let e = back(3000, [])
+  let f = list.fold(xs, []) { acc, x -> pushed(acc, x) }
+  host.give([list.length(a), list.sum(a), option.unwrap_or(list.first(a), 0), list.length(b),
+    option.unwrap_or(list.first(b), 0), list.length(c), option.unwrap_or(list.first(c), 0),
+    option.unwrap_or(list.first(d), 0), list.length(e), option.unwrap_or(list.first(e), 0),
+    list.length(f), option.unwrap_or(list.first(f), 0)])
+}
+import host
+import option
+"#,
+    );
+    let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
+    let sum: i64 = (1..=3_000).map(|i| i * 3).sum();
+    assert_eq!(
+        given,
+        ints(&[3_000, sum, 9_000, 3_000, 9_000, 3_000, 1, 1, 3_000, 3_000, 6_000, 9_000])
+    );
+    assert!(lists < 20, "{lists} of 21,000 changes copied a shared list");
+}
+
 /// An update made by a function of the program or by a method, of the
 /// collection a function hands to itself, changes it in place, and so
 /// does an update with a method call after it: 15,000 changes of maps,
