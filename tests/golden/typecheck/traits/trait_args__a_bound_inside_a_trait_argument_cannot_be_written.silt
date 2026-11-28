@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type variable 'a' in impl-level where clause is inside a trait argument of 'Conv', not a target type argument: a bound on it can be written neither on the impl nor on the trait's methods
+-- stderr-not-contains: where a: Number`
+-- A variable inside a trait argument (`Map(String, a)`) is no parameter
+-- of the trait: the error does not send the bound to the trait's method,
+-- where no name reaches it.
+trait Conv(t) {
+  fn conv(self) -> t
+}
+
+type W {
+  v: Int,
+}
+
+trait Conv(Map(String, a)) for W where a: Number {
+  fn conv(self) -> Map(String, a) { #{ "v": a.from_int(self.v) } }
+}
+
+fn main() {
+  let m: Map(String, Float) = Conv.conv(W { v: 4 })
+  println(m)
+}
