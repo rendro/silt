@@ -2848,7 +2848,12 @@ impl TypeChecker {
             super::names::type_vars_of(te, &mut vars);
             vars.contains(type_param)
         };
-        match impl_param_map.get(type_param) {
+        // (A variable only a trait argument writes is that, also once a
+        // bound the trait declares has given it a variable: what follows
+        // does not depend on the order of the bounds.)
+        let trait_arg_only =
+            !ti.target_param_names.contains(type_param) && ti.trait_args.iter().any(names_it);
+        match impl_param_map.get(type_param).filter(|_| !trait_arg_only) {
             Some(ty) => {
                 let resolved = self.apply(ty);
                 if !self.bound_fits_kind(
@@ -2904,7 +2909,10 @@ impl TypeChecker {
                         })
                 });
                 if the_traits_own {
-                    let tv = self.fresh_var();
+                    let tv = match impl_param_map.get(type_param) {
+                        Some(tv) => tv.clone(),
+                        None => self.fresh_var(),
+                    };
                     impl_param_map.insert(*type_param, tv.clone());
                     if let Type::Var(tv) = tv {
                         impl_level_constraints.push(Pred::bound(
