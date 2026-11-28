@@ -1,0 +1,33 @@
+-- repeat: 5
+-- Reads that wait and reads that do not, in turn, on one stream.from_fn
+-- stream while its function sends: a read that does not wait takes from
+-- what the function sent while the stream's source holds no value it
+-- took, so every value comes once, in the order it was sent.
+import channel
+import list
+import stream
+import time
+
+fn read(s, n, expect) {
+  let got = match n % 3 {
+    0 -> channel.try_receive(s)
+    1 -> match channel.receive(s) {
+      Some(v) -> channel.Message(v)
+      None -> channel.Closed
+    }
+    _ -> channel.receive_timeout(s, time.ms(0))
+  }
+  match got {
+    channel.Message(v) -> match v == expect {
+      true -> read(s, n + 1, expect + 1)
+      false -> "{v} came for {expect}"
+    }
+    channel.Empty -> read(s, n + 1, expect)
+    channel.Closed -> "{expect - 1} values in order"
+  }
+}
+
+fn main() {
+  let s = stream.from_fn { ch -> list.each(1..3000) { i -> channel.send(ch, i) } }
+  println(read(s, 0, 1))
+}

@@ -297,7 +297,8 @@ pub(crate) mod channel {
                 .deadline_after(timer_span(dur))
                 .ok_or_else(no_timer)?;
             let wait = Wait::new(vec![Arm::Recv(ch.clone())]).deadline(Some(deadline));
-            Ok(vm.park("channel.receive_timeout", wait, |_, fired| {
+            let ch = ch.clone();
+            Ok(vm.park("channel.receive_timeout", wait, move |vm, fired| {
                 Ok(Step::Done(match fired {
                     Fired::Arm(_, Outcome::Received(value)) => message(value),
                     Fired::Arm(_, Outcome::Closed(close)) => {
@@ -305,7 +306,22 @@ pub(crate) mod channel {
                         closed()
                     }
                     Fired::Arm(..) => closed(),
-                    Fired::Deadline => empty(),
+                    // The time has passed: one more look, as a read that
+                    // does not wait. What came as the time passed is there
+                    // (a value that a stream's stage was passing on); what
+                    // `stream.from_fn`'s function has sent is too.
+                    Fired::Deadline if vm.takes_nothing_new() => empty(),
+                    Fired::Deadline => match ch.try_receive(vm.scheduler().wake()) {
+                        TryReceive::Value(value) => {
+                            vm.see_redefined();
+                            message(value)
+                        }
+                        TryReceive::Empty => empty(),
+                        TryReceive::Closed(close) => {
+                            raise_failure(close)?;
+                            closed()
+                        }
+                    },
                 }))
             }))
         }

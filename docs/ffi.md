@@ -422,10 +422,9 @@ dropped.
 
 The report of failures that nothing read is written when `run_program`
 returns, for the failures that have happened by then. A failure that
-nothing read is one of three: a stream stage that failed and whose
-output nobody read; the function of a `stream.from_fn` that failed after
-it closed its channel, so that no read could raise the failure; and the
-handler of an `http.serve` that a test started and that called
+nothing read is one of two: a stream stage that failed and whose
+output nobody read, and the handler of an `http.serve` that a test
+started and that called
 `process.exit` (`Exit::FailsTest`), which fails that test. The report
 does not change the result: `run_program` still says how `main` ended.
 A stage that fails later (one that a top-level binding holds goes on

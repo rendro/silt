@@ -1748,9 +1748,6 @@ pub struct TaskHandle {
     /// Set when the stage failed with the failure of an earlier stage,
     /// read from its input ([`TaskHandle::fails_with_its_input`]).
     failed_with_input: AtomicBool,
-    /// The stage failed after its output had been closed: the function
-    /// of `stream.from_fn`, which closed its channel itself.
-    failed_after_close: AtomicBool,
     /// Where the task was started (the call of `task.join`, of
     /// `task.background`, ...), when that is a place in the program:
     /// the deadlock report names it.
@@ -1788,7 +1785,6 @@ impl TaskHandle {
             late: Arc::default(),
             stage: None,
             failed_with_input: AtomicBool::new(false),
-            failed_after_close: AtomicBool::new(false),
             started: None,
             stopped: Cell::new(),
             family: Default::default(),
@@ -1865,17 +1861,6 @@ impl TaskHandle {
     /// an earlier stage raised.
     pub fn fails_with_its_input(&self) {
         self.failed_with_input.store(true, AtomicOrdering::SeqCst);
-    }
-
-    /// The stage fails after its output was closed, so that no reader
-    /// gets the failure.
-    pub(crate) fn fails_after_its_output_closed(&self) {
-        self.failed_after_close.store(true, AtomicOrdering::SeqCst);
-    }
-
-    /// Whether [`TaskHandle::fails_after_its_output_closed`] was called.
-    pub(crate) fn failed_after_its_output_closed(&self) -> bool {
-        self.failed_after_close.load(AtomicOrdering::SeqCst)
     }
 
     /// The place of the call that started the stage, if it failed with

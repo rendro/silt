@@ -1,0 +1,67 @@
+-- repeat: 10
+-- A stream.from_fn stream is a source: a read that does not wait
+-- (channel.try_receive, a channel.receive_timeout that runs out) gets
+-- what its function has sent, in order, and the stream's end once the
+-- function has returned, as from stream.from_list: after a read that
+-- waited, before the function sends and while it still sends, too.
+import channel
+import stream
+import time
+
+-- Polls until the read gives something other than Empty: the end of a
+-- function that returns comes once it has returned.
+fn poll(s, tries) {
+  match channel.try_receive(s) {
+    channel.Empty -> match tries {
+      0 -> "still Empty"
+      _ -> {
+        time.sleep(time.ms(1))
+        poll(s, tries - 1)
+      }
+    }
+    other -> "{other}"
+  }
+}
+
+fn main() {
+  let sent = channel.new(1)
+  let a = stream.from_fn { ch ->
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.send(ch, 3)
+    channel.send(sent, ())
+  }
+  let _ = channel.receive(sent)
+  println("a: {channel.try_receive(a)} {channel.try_receive(a)} {channel.receive_timeout(a, time.ms(0))}")
+  println("a end: {poll(a, 5000)}")
+  println("a after: {channel.try_receive(a)} {channel.receive(a)}")
+
+  let b = stream.from_fn { ch ->
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.send(ch, 3)
+    channel.send(sent, ())
+  }
+  let _ = channel.receive(sent)
+  println("b first: {channel.receive(b)}")
+  println("b: {channel.try_receive(b)} {channel.receive_timeout(b, time.ms(1))}")
+  println("b end: {poll(b, 5000)}")
+
+  let go = channel.new(0)
+  let c = stream.from_fn { ch ->
+    let _ = channel.receive(go)
+    channel.send(ch, 1)
+    channel.send(sent, ())
+    let _ = channel.receive(go)
+    channel.send(ch, 2)
+    channel.send(sent, ())
+  }
+  println("c before: {channel.try_receive(c)}")
+  channel.send(go, ())
+  let _ = channel.receive(sent)
+  println("c: {channel.try_receive(c)} {channel.try_receive(c)}")
+  channel.send(go, ())
+  let _ = channel.receive(sent)
+  println("c: {channel.try_receive(c)}")
+  println("c end: {poll(c, 5000)}")
+}

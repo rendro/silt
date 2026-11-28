@@ -139,7 +139,7 @@ missing belong to codes that are gone.
 |------|---------|
 | `E0701` | A runtime error: a panic, a division by zero, an out-of-range conversion, ... |
 | `E0702` | `main`, or a test function, returned `Err(..)`. |
-| `E0703` | A failure that nothing read: a stream stage failed and nobody read its output; the function of a `stream.from_fn` failed after it closed its channel; or the handler of an `http.serve` that a test started called `process.exit`. |
+| `E0703` | A failure that nothing read: a stream stage failed and nobody read its output, or the handler of an `http.serve` that a test started called `process.exit`. |
 | `E0704` | An instruction met a value of a kind it cannot work on: the typechecker let through a program it should have rejected. |
 
 ## Formatting (8xx)

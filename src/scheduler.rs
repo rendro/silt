@@ -3580,11 +3580,6 @@ fn unread_task_failure_headline(message: &str) -> String {
 const UNREAD_STAGE_FAILURE_HELP: &str =
     "read its output, where the failure is raised, or drop the stage if you don't need it";
 
-/// What the report of a failure of a `stream.from_fn` function after it
-/// closed its channel advises.
-const FAILED_AFTER_CLOSE_HELP: &str = "its stream ended when it closed its channel, so nothing reads \
-     what happens after: end the function by returning, or send nothing after the close";
-
 /// The first line of the report of a stream stage's failure that
 /// nobody read.
 fn unread_stage_failure_headline(stage: &str, message: &str) -> String {
@@ -3607,10 +3602,6 @@ pub struct UnreadFailure {
     pub stage_call: Option<crate::source::Span>,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
-    /// The stage failed after its output had been closed (the function
-    /// of `stream.from_fn`, which closed its channel itself): no read
-    /// could have raised the failure.
-    pub(crate) after_close: bool,
 }
 
 impl UnreadFailure {
@@ -3621,7 +3612,6 @@ impl UnreadFailure {
             stage: handle.stage(),
             stage_call: handle.stage_call_of_a_failed_input(),
             error,
-            after_close: handle.failed_after_its_output_closed(),
         }
     }
 
@@ -3637,13 +3627,6 @@ impl UnreadFailure {
             error.call_stack.clear();
         }
         match self.stage {
-            Some(stage) if self.after_close => {
-                error.message = format!(
-                    "the function of `{stage}` failed after it closed its channel: {}",
-                    self.error.message
-                );
-                error.with_help(FAILED_AFTER_CLOSE_HELP)
-            }
             Some(stage) => {
                 error.message = unread_stage_failure_headline(stage, &self.error.message);
                 error.with_help(UNREAD_STAGE_FAILURE_HELP)

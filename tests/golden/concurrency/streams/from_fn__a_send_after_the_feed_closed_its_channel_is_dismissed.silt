@@ -1,0 +1,28 @@
+-- repeat: 20
+-- stderr-not-contains: error
+-- A feed that sends after it closed its own channel fails with a send on
+-- a closed channel, after its stream ended at the close. Nothing reads a
+-- stream after its end, so that failure is dismissed, as every failure
+-- after the end of a stream is: the reader has what came before, and the
+-- program ends the same way on every run, whether it has let go of the
+-- stream by then or still holds it.
+import channel
+import stream
+import time
+
+fn closes_then_sends() {
+  stream.from_fn { ch ->
+    channel.send(ch, 1)
+    channel.close(ch)
+    channel.send(ch, 2)
+  }
+}
+
+fn main() {
+  println(stream.collect(closes_then_sends()))
+  let held = closes_then_sends()
+  println(stream.collect(held))
+  time.sleep(time.ms(30))
+  println(channel.try_receive(held))
+  println("end")
+}
