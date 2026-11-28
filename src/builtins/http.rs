@@ -444,6 +444,104 @@ fn client() -> &'static ureq::Agent {
     &CLIENT
 }
 
+/// The proxies that the environment names for the client, read once, at
+/// the first request ([`Proxies::of`]).
+#[cfg(feature = "http")]
+fn proxies() -> &'static Proxies {
+    static PROXIES: std::sync::LazyLock<Proxies> =
+        std::sync::LazyLock::new(|| Proxies::of(|name| std::env::var(name).ok()));
+    &PROXIES
+}
+
+/// The proxy of each scheme, and the hosts that are reached without
+/// one, as curl and Go read them from the environment.
+#[cfg(feature = "http")]
+#[derive(Debug, Default)]
+struct Proxies {
+    http: Option<ureq::Proxy>,
+    https: Option<ureq::Proxy>,
+    direct: Vec<Direct>,
+}
+
+/// An entry of `NO_PROXY`: the hosts it names.
+#[cfg(feature = "http")]
+#[derive(Debug, PartialEq)]
+enum Direct {
+    /// `*`: every host.
+    All,
+    /// `localhost`, `127.0.0.1`: that host.
+    Host(String),
+    /// `.example.com` or `*.example.com`: the hosts that end so.
+    Ending(String),
+    /// `10.` or `10.*`: the hosts that begin so.
+    Beginning(String),
+}
+
+#[cfg(feature = "http")]
+impl Proxies {
+    /// The proxies that the variables `var` gives name. A URL of
+    /// `http` goes through the first of `http_proxy`, `HTTP_PROXY`,
+    /// `all_proxy` and `ALL_PROXY` that holds a proxy's URL, one of
+    /// `https` through the first of `https_proxy`, `HTTPS_PROXY`,
+    /// `all_proxy` and `ALL_PROXY`: `ALL_PROXY` is for a scheme whose
+    /// own is not set. A variable that is empty is not set; one that holds
+    /// no proxy's URL is passed over. `no_proxy` (or `NO_PROXY`) lists
+    /// the hosts, separated by commas, that are reached without a proxy.
+    fn of(var: impl Fn(&str) -> Option<String>) -> Proxies {
+        let set = |name: &str| var(name).filter(|value| !value.trim().is_empty());
+        let first = |names: &[&str]| {
+            (names.iter())
+                .filter_map(|name| set(name))
+                .find_map(|value| ureq::Proxy::new(value.trim()).ok())
+        };
+        let direct = set("no_proxy").or_else(|| set("NO_PROXY"));
+        let direct = direct.unwrap_or_default();
+        let direct = direct
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty());
+        let direct = direct.map(|entry| {
+            let entry = entry.to_ascii_lowercase();
+            if entry == "*" {
+                Direct::All
+            } else if let Some(ending) = entry.strip_prefix('*') {
+                Direct::Ending(ending.to_string())
+            } else if entry.starts_with('.') {
+                Direct::Ending(entry)
+            } else if let Some(beginning) = entry.strip_suffix('*') {
+                Direct::Beginning(beginning.to_string())
+            } else if entry.ends_with('.') {
+                Direct::Beginning(entry)
+            } else {
+                Direct::Host(entry)
+            }
+        });
+        Proxies {
+            http: first(&["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]),
+            https: first(&["https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]),
+            direct: direct.collect(),
+        }
+    }
+
+    /// The proxy that a request to `url` goes through, if any.
+    fn of_url(&self, url: &Url) -> Option<&ureq::Proxy> {
+        let proxy = match url.scheme() {
+            "http" => self.http.as_ref()?,
+            "https" => self.https.as_ref()?,
+            _ => return None,
+        };
+        let host = url.host().to_ascii_lowercase();
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let direct = self.direct.iter().any(|entry| match entry {
+            Direct::All => true,
+            Direct::Host(named) => named == host,
+            Direct::Ending(ending) => host.ends_with(ending.as_str()),
+            Direct::Beginning(beginning) => host.starts_with(beginning.as_str()),
+        });
+        (!direct).then_some(proxy)
+    }
+}
+
 /// One call of `http.get`, `http.request` or `http.request_once`: whether
 /// it was stopped ([`Call::stop`]), and the attempt it makes now. The
 /// call is the one of the thread it runs on ([`in_call`]): the
@@ -965,6 +1063,8 @@ fn client_of(
         .user_agent(format!("silt/{}", crate::VERSION))
         .accept_encoding("gzip")
         .tls_config(tls)
+        // Each request names its own ([`Proxies`]).
+        .proxy(None)
         .build();
     let connector =
         ().chain(ConnectProxyConnector::default())
@@ -1188,7 +1288,8 @@ fn request_hops(
         if sent_url.as_str().len() > URL_MAX {
             return invalid_url(cut_short(&url.to_string()));
         }
-        let result = send_once(agent, call, method, sent_url.as_str(), body, &sent);
+        let proxy = proxies().of_url(&sent_url);
+        let result = send_once(agent, call, method, &sent_url, proxy, body, &sent);
         let shown = url.to_string();
         if !follow {
             return finish_http_response(result, &shown, method == "HEAD");
@@ -1274,17 +1375,19 @@ fn send_once(
     agent: &ureq::Agent,
     call: &Call,
     method: &str,
-    url: &str,
+    url: &Url,
+    proxy: Option<&ureq::Proxy>,
     body: &[u8],
     headers: &[(&str, &str)],
 ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
     call.begin();
-    let result = send_request(agent, method, url, body, headers, false);
+    let send = |new| send_request(agent, method, url.as_str(), proxy, body, headers, new);
+    let result = send(false);
     let idempotent = matches!(method, "GET" | "HEAD" | "PUT" | "DELETE" | "OPTIONS");
     match &result {
         Err(e) if idempotent && ended_unanswered(e) && call.met_a_closed_connection() => {
             call.begin();
-            send_request(agent, method, url, body, headers, true)
+            send(true)
         }
         _ => result,
     }
@@ -1362,6 +1465,7 @@ fn send_request(
     agent: &ureq::Agent,
     method: &str,
     url: &str,
+    proxy: Option<&ureq::Proxy>,
     body: &[u8],
     headers: &[(&str, &str)],
     new: bool,
@@ -1369,19 +1473,20 @@ fn send_request(
     fn headed<B>(
         mut req: ureq::RequestBuilder<B>,
         headers: &[(&str, &str)],
+        proxy: Option<&ureq::Proxy>,
         new: bool,
     ) -> ureq::RequestBuilder<B> {
         for (key, val) in headers {
             req = req.header(*key, *val);
         }
-        let config = req.config().max_redirects(0);
+        let config = req.config().max_redirects(0).proxy(proxy.cloned());
         match new {
             true => config.max_idle_age(Duration::ZERO).build(),
             false => config.build(),
         }
     }
     let with_body = |req: ureq::RequestBuilder<ureq::typestate::WithBody>| {
-        let req = headed(req, headers, new);
+        let req = headed(req, headers, proxy, new);
         if body.is_empty() {
             req.send_empty()
         } else {
@@ -1389,7 +1494,7 @@ fn send_request(
         }
     };
     let without_body = |req: ureq::RequestBuilder<ureq::typestate::WithoutBody>| {
-        let req = headed(req, headers, new);
+        let req = headed(req, headers, proxy, new);
         if body.is_empty() {
             req.call()
         } else {
@@ -3406,6 +3511,144 @@ mod serve_tests {
         assert!(
             listener.take_kept().is_some(),
             "the connection is not the listener's"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod proxy_tests {
+    use super::*;
+    use std::io::{BufRead, Write};
+
+    fn proxies(vars: &[(&str, &str)]) -> Proxies {
+        let vars: HashMap<String, String> = (vars.iter())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Proxies::of(|name| vars.get(name).cloned())
+    }
+
+    /// The proxy a request to `url` goes through, as `host:port`.
+    fn through(proxies: &Proxies, url: &str) -> Option<String> {
+        let proxy = proxies.of_url(&url_of(url))?;
+        Some(format!("{}:{}", proxy.host(), proxy.port()))
+    }
+
+    /// The proxy of a request is picked by its URL's scheme, as curl
+    /// does: `http_proxy` or `HTTP_PROXY` for `http`, `https_proxy` or
+    /// `HTTPS_PROXY` for `https`, `all_proxy` or `ALL_PROXY` where the
+    /// scheme's own is not set (empty is not set; no proxy's URL is passed
+    /// over); a host that `no_proxy` or `NO_PROXY` names goes without.
+    #[test]
+    fn the_proxy_is_picked_by_the_scheme_as_curl_does() {
+        let none = proxies(&[]);
+        assert_eq!(through(&none, "http://a.test/"), None);
+        assert_eq!(through(&none, "https://a.test/"), None);
+        let https_only = proxies(&[("HTTPS_PROXY", "http://s.test:3128")]);
+        assert_eq!(through(&https_only, "http://a.test/"), None);
+        assert_eq!(
+            through(&https_only, "https://a.test/").as_deref(),
+            Some("s.test:3128")
+        );
+        let http_only = proxies(&[("http_proxy", "http://h.test:8080")]);
+        assert_eq!(
+            through(&http_only, "http://a.test/").as_deref(),
+            Some("h.test:8080")
+        );
+        assert_eq!(through(&http_only, "https://a.test/"), None);
+        let all = proxies(&[
+            ("ALL_PROXY", "http://all.test:1"),
+            ("HTTP_PROXY", "http://h.test:2"),
+        ]);
+        assert_eq!(through(&all, "http://a.test/").as_deref(), Some("h.test:2"));
+        assert_eq!(
+            through(&all, "https://a.test/").as_deref(),
+            Some("all.test:1")
+        );
+        // The lower case first; an empty one is not set, and one that is
+        // no proxy's URL is passed over.
+        let cased = proxies(&[
+            ("https_proxy", "http://lower.test:1"),
+            ("HTTPS_PROXY", "http://upper.test:2"),
+            ("http_proxy", ""),
+            ("HTTP_PROXY", "http://"),
+            ("all_proxy", "http://all.test:3"),
+        ]);
+        assert_eq!(
+            through(&cased, "https://a.test/").as_deref(),
+            Some("lower.test:1")
+        );
+        assert_eq!(
+            through(&cased, "http://a.test/").as_deref(),
+            Some("all.test:3")
+        );
+        // The hosts that go without.
+        let direct = proxies(&[
+            ("ALL_PROXY", "http://p.test:1"),
+            (
+                "NO_PROXY",
+                "localhost, .internal.test,*.corp.test,10.*,192.168.,::1",
+            ),
+        ]);
+        for (url, proxied) in [
+            ("http://localhost:9/", false),
+            ("http://LOCALHOST/", false),
+            ("http://x.internal.test/", false),
+            ("http://internal.test/", true),
+            ("https://a.b.corp.test/", false),
+            ("http://10.0.0.1/", false),
+            ("http://192.168.1.1/", false),
+            ("http://[::1]:8/", false),
+            ("http://localhost.test/", true),
+            ("http://11.0.0.1/", true),
+        ] {
+            assert_eq!(through(&direct, url).is_some(), proxied, "{url}");
+        }
+        let lower_first = proxies(&[
+            ("ALL_PROXY", "http://p.test:1"),
+            ("no_proxy", "a.test"),
+            ("NO_PROXY", "*"),
+        ]);
+        assert_eq!(through(&lower_first, "http://a.test/"), None);
+        assert!(through(&lower_first, "http://b.test/").is_some());
+        assert_eq!(
+            through(
+                &proxies(&[("ALL_PROXY", "http://p.test:1"), ("NO_PROXY", "*")]),
+                "http://b.test/"
+            ),
+            None
+        );
+    }
+
+    /// A request with a proxy goes to it, as a tunnel; one without goes to
+    /// its host. (The client itself reads no proxy of its own.)
+    #[test]
+    fn a_request_goes_through_the_proxy_it_is_given() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let at = listener.local_addr().expect("its address");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let saw = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut line = String::new();
+                let _ = std::io::BufReader::new(&stream).read_line(&mut line);
+                saw.lock().push(line.trim_end().to_string());
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                );
+            }
+        });
+        let agent = client_with_times(Duration::from_secs(5), Duration::from_secs(10));
+        let proxy = ureq::Proxy::new(&format!("http://{at}")).expect("a proxy");
+        let url = "http://silt-target.test:81/x";
+        let _ = send_request(&agent, "GET", url, Some(&proxy), &[], &[], true);
+        assert_eq!(*seen.lock(), ["CONNECT silt-target.test:81 HTTP/1.1"]);
+        let direct = format!("http://{at}/y");
+        let got = send_request(&agent, "GET", &direct, None, &[], &[], true);
+        assert!(got.is_ok(), "{got:?}");
+        assert_eq!(
+            seen.lock().get(1).map(String::as_str),
+            Some("GET /y HTTP/1.1")
         );
     }
 }

@@ -138,15 +138,24 @@ system's own time.
 
 ## Proxies
 
-Like curl, Go and Python, the client goes through a proxy that the
-environment names. The first of `ALL_PROXY`, `all_proxy`, `HTTPS_PROXY`,
-`https_proxy`, `HTTP_PROXY` and `http_proxy` that holds a proxy's URL
-(`http://proxy.example:3128`) is the proxy of every request, to
-`http://` and `https://` URLs alike. A host that `NO_PROXY` (or
-`no_proxy`) names is reached without it: a list separated by commas, of
-hosts (`localhost`, `127.0.0.1`), of endings (`.example.com` or
-`*.example.com`, every host below `example.com`), or `*`, every host.
-The variables are read once, at the program's first request.
+The client goes through a proxy that the environment names, picked by
+the URL's scheme as curl does:
+
+| URL | Proxy |
+|---|---|
+| `http://` | `http_proxy`, else `HTTP_PROXY`, else `all_proxy`, else `ALL_PROXY` |
+| `https://` | `https_proxy`, else `HTTPS_PROXY`, else `all_proxy`, else `ALL_PROXY` |
+
+Each variable holds a proxy's URL (`http://proxy.example:3128`). One that
+is empty counts as not set, and one that holds no proxy's URL is passed
+over for the next. So `ALL_PROXY` is the proxy of a scheme whose own is
+not set, and with `HTTPS_PROXY` alone an `http://` URL is reached
+without a proxy. A host that `no_proxy` (else `NO_PROXY`) names is
+reached without one: a list separated by commas, of hosts (`localhost`,
+`127.0.0.1`, `::1`), of endings (`.example.com` or `*.example.com`,
+every host below `example.com`), of beginnings (`10.` or `10.*`), or
+`*`, every host; case does not matter. The variables are read once, at
+the program's first request.
 
 The client asks the proxy for a tunnel (`CONNECT host:port`) and sends the
 request through it, for an `http://` URL too: the proxy sees the host
