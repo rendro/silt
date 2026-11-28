@@ -678,16 +678,19 @@ When the task that serves is stopped (or its deadline passes):
 - Its accept is given up. A client that connects afterwards waits in the
   listener for whoever accepts next (or is refused, if the listener was
   closed).
-- A request whose handler has not returned is answered `503`, and its
-  connection is closed. A connection between two requests is closed.
 - From the stop on, the server serves no further request on any of its
   connections, also before they are closed: a request that comes on a
-  connection a client kept gets no answer, and the connection is closed
-  (`http.get` sends a `GET` again on a new connection, to whoever serves
-  the listener then; a `POST` is `Err(ClosedEarly)`). A handler that
-  returns after the stop has its response sent, with `Connection: close`. A
-  response that is being sent at that moment is cut off: the client
-  gets less than its `Content-Length` says.
+  connection a client kept gets no answer, and the connection is closed.
+  `http.get` and `http.request` send a request that may be sent twice
+  (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) again on a new connection,
+  to whoever serves the listener then; a `POST` or `PATCH` is
+  `Err(ClosedEarly)`.
+- A handler that returns after the stop, before the call that stopped the
+  server has returned, has its response sent with `Connection: close`. A
+  handler that has not returned by then is answered `503`, and its
+  connection is closed; a response that is being sent at that moment is
+  cut off: the client gets less than its `Content-Length` says. A
+  connection between two requests is closed.
 - After a stop, the listener is the program's again as soon as the call
   that stopped the server has returned: `tcp.accept` on it gets the next client,
   and another `http.serve` serves it. A closed listener serves nothing:
