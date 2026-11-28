@@ -865,6 +865,8 @@ pub struct Function {
     /// whose dictionary a call leaves in the slot of the callee
     /// (`Instr::FrameDict`).
     dict_slot: bool,
+    /// Where it is written: a closure's braces, a `fn`'s definition.
+    site: Span,
 }
 
 impl Function {
@@ -913,6 +915,12 @@ impl Function {
         &self.chunk
     }
 
+    /// Where the function is written, if that is a place in the
+    /// program.
+    pub(crate) fn site(&self) -> Option<Span> {
+        Some(self.site).filter(|site| site.is_in_source())
+    }
+
     /// The function `name` of no parameters made of `code` and
     /// `constants` as they are, which silt writes itself.
     pub(crate) fn of_code(name: String, code: Vec<u8>, constants: Vec<Value>) -> Self {
@@ -930,6 +938,7 @@ impl Function {
             },
             hidden: 0,
             dict_slot: false,
+            site: Span::BUILTIN,
         }
     }
 
@@ -956,6 +965,7 @@ impl Function {
             },
             hidden: 0,
             dict_slot: false,
+            site: Span::BUILTIN,
         }
     }
 }

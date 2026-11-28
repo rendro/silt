@@ -491,9 +491,9 @@ and so does an enclosing `task.join` or `task.background` that stops.
 
 When no piece can go on and the program's own thread waits in the join,
 the program is deadlocked: the report says `task.join with no progress
-possible`, with a line for each piece that waits and what it waits on
-(``a piece of `task.join` at main.silt:6:3 waits to receive from
-<channel:0>``).
+possible`, with a line for each piece that waits and what it waits on,
+placed where the piece's function is written (``a piece of `task.join`
+at main.silt:7:5 waits to receive from <channel:0>``).
 
 ```silt
 import channel
@@ -674,9 +674,11 @@ task.first_ok(works: List(Fn() -> Result(a, e))) -> Result(a, List(e))
 
 Runs each function of `works` as a task, all at the same time. The first
 that gives `Ok(value)` wins: the others are stopped, and the call gives
-`Ok(value)` when they have ended. If every function gives an `Err`, the
-call gives `Err` of the list of their errors, in the order of `works`
-(not the order they ended in); `task.first_ok([])` is `Err([])`.
+`Ok(value)` when they have ended. The winner is not stopped: a stream it
+built and gave in its `Ok` comes out whole. If every function gives an
+`Err`, the call gives `Err` of the list of their errors, in the order of
+`works` (not the order they ended in); `task.first_ok([])` is
+`Err([])`.
 
 A runtime error in a function is no `Err`: it stops the others and is
 raised in the caller, as in `task.join`, also when it comes while the

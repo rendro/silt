@@ -1,9 +1,9 @@
 -- exit: 1
 -- stderr-contains: deadlock on main thread: task.join with no progress possible
--- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_names_each_waiting_piece.silt:13:3 waits to receive from <channel:0>
--- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_names_each_waiting_piece.silt:13:3 waits to send to <channel:1>
+-- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_names_each_waiting_piece.silt:15:7 waits to receive from <channel:0>
+-- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_names_each_waiting_piece.silt:18:7 waits to send to <channel:1>
 -- A join whose pieces can never go on is a deadlock of the program's
--- thread: the report has one line for each piece, and what it waits on.
+-- thread: a line for each piece, placed at its function, and what it waits on.
 import channel
 import task
 

@@ -1,0 +1,33 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread: task.join with no progress possible
+-- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_places_each_piece_at_its_function.silt:23:7 waits to receive from <channel:0>
+-- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_places_each_piece_at_its_function.silt:26:7 waits to receive from <channel:0>
+-- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_places_each_piece_at_its_function.silt:29:7 waits to send to <channel:1>
+-- stderr-contains: help: a piece of `task.join` at task_join__the_deadlock_report_places_each_piece_at_its_function.silt:13:1 waits to receive from
+-- Each line of the deadlock report places its piece where the piece's
+-- function is written, not at the join: two pieces that wait on the same
+-- channel are told apart. A function given by name is placed at its fn.
+import channel
+import task
+
+fn stuck() {
+  let never: Channel(Int) = channel.new(0)
+  let _ = channel.receive(never)
+}
+
+fn main() {
+  let a: Channel(Int) = channel.new(0)
+  let b: Channel(Int) = channel.new(0)
+  task.join(
+    [
+      { ->
+        let _ = channel.receive(a)
+      },
+      { ->
+        let _ = channel.receive(a)
+      },
+      { -> channel.send(b, 1) },
+      stuck,
+    ],
+  )
+}

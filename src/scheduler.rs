@@ -2821,7 +2821,8 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                 };
             }
             // A task of a `task.join` or a `task.background` is named
-            // by what it is there, and the place of the call.
+            // by what it is there, and the place of its function (of a
+            // worker, which has none of its own: the call).
             if let Sleeper::Task(task) = waiting.sleeper
                 && let Some((_, role)) = task.handle.together()
             {

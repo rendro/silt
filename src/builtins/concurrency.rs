@@ -16,6 +16,7 @@ use super::typed::{Arg, Chan, List, builtins, unsound};
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::runtime::together::{Role, Together};
+use crate::source::Span;
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Native, Step, Vm, VmError};
@@ -311,6 +312,14 @@ pub(crate) mod channel {
 
         fn timeout(vm, dur: time::Duration) -> Result<Value, VmError> {
             let dur = span(dur);
+            // A duration of zero or less is no time: the channel is
+            // closed at once, before anybody reads it, and no timer is
+            // armed.
+            if dur.is_zero() {
+                let ch = Channel::new(vm.next_channel_id(), 1);
+                ch.close(Close::default(), vm.scheduler().wake());
+                return Ok(Value::Channel(ch));
+            }
             let deadline = vm
                 .runtime
                 .io
@@ -539,18 +548,20 @@ enum Work {
 /// the owner of the task that runs this, or the owner the front end set
 /// for the program. With `deadline` the task is over at that reading of
 /// the clock (`TaskHandle::deadline`). A task that is `role` in the
-/// call of `together`, if it is one. The handle of the task; an error
-/// of `scheduler.submit` as it is.
+/// call of `together`, if it is one. The task is placed at `at` (the
+/// function it runs), else at the call. The handle of the task; an
+/// error of `scheduler.submit` as it is.
 fn start_in(
     vm: &mut Vm,
     call: &'static str,
     work: Work,
     deadline: Option<Duration>,
     together: Option<(&Arc<Together>, Role)>,
+    at: Option<Span>,
 ) -> Result<Arc<TaskHandle>, VmError> {
     let task_id = vm.next_task_id();
     let mut handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner())
-        .started_at(vm.place_here())
+        .started_at(at.or_else(|| vm.place_here()))
         .for_call(call);
     if let Some((together, role)) = together {
         handle = handle.in_together(together.clone(), role);
@@ -579,6 +590,16 @@ fn start_in(
     vm.scheduler().submit(task_id, child_vm, handle.clone())?;
 
     Ok(handle)
+}
+
+/// Where `function` is written, if it is a function of the program: a
+/// task that runs it as a piece, a helper or the body of a call is
+/// placed there, so that the line of each in a report is its own.
+fn written_at(function: &Value) -> Option<Span> {
+    match function {
+        Value::VmClosure(closure) => closure.function.site(),
+        _ => None,
+    }
 }
 
 /// The body of a task that is no function of silt's own code (a piece
@@ -857,22 +878,24 @@ enum JoinedState {
 }
 
 impl Joined {
-    /// Start a task for each of `works`, each what its role says, for
-    /// the call `call` whose record is `together` (made for as many
-    /// tasks); what the call gives when they have ended is `gives`.
+    /// Start a task for each of `works`, each what its role says and
+    /// placed where its function is written (a worker, which has none of
+    /// its own: at the call), for the call `call` whose record is
+    /// `together` (made for as many tasks); what the call gives when
+    /// they have ended is `gives`.
     fn start(
         vm: &mut Vm,
         call: &'static str,
         together: Arc<Together>,
-        works: Vec<(Work, Role)>,
+        works: Vec<(Work, Role, Option<Span>)>,
         mut gives: Gives,
     ) -> Result<Step, VmError> {
         // The caller's own time, if it has one: a task of the call
         // goes on with the caller's count of late steps then.
         let deadline = vm.deadline;
         let mut tasks = Vec::with_capacity(works.len());
-        for (work, role) in works {
-            match start_in(vm, call, work, deadline, Some((&together, role))) {
+        for (work, role, at) in works {
+            match start_in(vm, call, work, deadline, Some((&together, role)), at) {
                 Ok(task) => {
                     if role == Role::Body {
                         gives = Gives::Body(Some(task.clone()));
@@ -897,10 +920,10 @@ impl Joined {
         })))
     }
 
-    /// Stop every task that has not ended.
-    fn stop_the_rest(&self, vm: &mut Vm) {
-        for task in &self.tasks {
-            if !task.has_stopped() {
+    /// Stop every task that has not ended, but the one at `keep`.
+    fn stop_the_rest(&self, vm: &mut Vm, keep: Option<usize>) {
+        for (at, task) in self.tasks.iter().enumerate() {
+            if Some(at) != keep && !task.has_stopped() {
                 vm.scheduler().stop_task(task);
             }
         }
@@ -968,7 +991,14 @@ impl Native for Joined {
             }
             JoinedState::Settling => {
                 vm.woken()?;
-                self.stop_the_rest(vm);
+                // The piece that gave the first `Ok` of a
+                // `task.first_ok` is not stopped: it is ending, and
+                // what it gave (a stream it built) is the call's.
+                let keep = match &self.gives {
+                    Gives::FirstOk(race) => race.winner(),
+                    _ => None,
+                };
+                self.stop_the_rest(vm, keep);
                 self.state = JoinedState::Ending;
                 let wait = Wait::new(vec![Arm::Cell(self.together.ended())])
                     .unbounded()
@@ -986,7 +1016,7 @@ impl Native for Joined {
     /// The caller was cancelled, or ended, or an error passes through
     /// the frame: what still runs of the call is stopped.
     fn abandon(&mut self, vm: &mut Vm) {
-        self.stop_the_rest(vm);
+        self.stop_the_rest(vm, None);
     }
 }
 
@@ -1063,8 +1093,8 @@ impl Native for MapWorker {
 
 /// The pieces of a `task.first_ok` and what they gave.
 struct Race {
-    /// The value of the first `Ok`.
-    won: Mutex<Option<Value>>,
+    /// The place of the piece that gave the first `Ok`, and its value.
+    won: Mutex<Option<(usize, Value)>>,
     /// The error of each piece that gave `Err`, in the order of the
     /// pieces.
     errs: Mutex<Vec<Option<Value>>>,
@@ -1074,7 +1104,7 @@ impl Race {
     /// `Ok` of the first `Ok`, or `Err` of every error if every piece
     /// gave `Err`.
     fn result(&self) -> Option<Value> {
-        if let Some(won) = self.won.lock().clone() {
+        if let Some((_, won)) = self.won.lock().clone() {
             return Some(Value::variant(bv::OK, [won]));
         }
         let errs = self
@@ -1085,10 +1115,16 @@ impl Race {
             .collect::<Option<Vec<_>>>()?;
         Some(Value::variant(bv::ERR, [Value::list(errs)]))
     }
+
+    /// The place of the piece that gave the first `Ok`, if one has.
+    fn winner(&self) -> Option<usize> {
+        self.won.lock().as_ref().map(|(at, _)| *at)
+    }
 }
 
 /// A piece of a `task.first_ok`: it calls its function and keeps what
-/// it gave. The first `Ok` settles the call, which stops the others.
+/// it gave. The first `Ok` settles the call, which stops the others
+/// (not this one: a stream it built and gave stays whole).
 struct Racer {
     /// The function, until it is called.
     work: Option<Value>,
@@ -1114,7 +1150,7 @@ impl Native for Racer {
                 };
                 let mut won = self.race.won.lock();
                 if won.is_none() {
-                    *won = Some(value.clone());
+                    *won = Some((self.at, value.clone()));
                     drop(won);
                     self.together.settle(vm.scheduler().wake());
                 }
@@ -1154,7 +1190,8 @@ pub(crate) mod task {
             }
             // No later than the caller's own time.
             let until = vm.deadline.map_or(until, |own| own.min(until));
-            let task = start_in(vm, "task.deadline", Work::Call(work.clone()), Some(until), None)?;
+            let task =
+                start_in(vm, "task.deadline", Work::Call(work.clone()), Some(until), None, None)?;
             Ok(Step::Run(Box::new(Deadline { task, state: DeadlineState::Started })))
         }
 
@@ -1168,9 +1205,14 @@ pub(crate) mod task {
             if vm.takes_nothing_new() {
                 return Ok(vm.end_here("task.background"));
             }
-            let mut works: Vec<(Work, Role)> =
-                helpers.iter().map(|helper| (Work::Call(helper), Role::Helper)).collect();
-            works.push((Work::Call(body.clone()), Role::Body));
+            let mut works: Vec<(Work, Role, Option<Span>)> = helpers
+                .iter()
+                .map(|helper| {
+                    let at = written_at(&helper);
+                    (Work::Call(helper), Role::Helper, at)
+                })
+                .collect();
+            works.push((Work::Call(body.clone()), Role::Body, written_at(body)));
             let together = Together::new(
                 "task.background",
                 "the body and helpers of its `task.background`",
@@ -1199,7 +1241,7 @@ pub(crate) mod task {
                         state: EachState::Start,
                         fold: None,
                     };
-                    (Work::Frame(Box::new(worker)), Role::EachWorker)
+                    (Work::Frame(Box::new(worker)), Role::EachWorker, None)
                 })
                 .collect();
             let together = Together::new("task.each", "the workers of its `task.each`", workers);
@@ -1226,13 +1268,14 @@ pub(crate) mod task {
                 .iter()
                 .enumerate()
                 .map(|(at, work)| {
+                    let written = written_at(&work);
                     let racer = Racer {
                         work: Some(work),
                         at,
                         race: race.clone(),
                         together: together.clone(),
                     };
-                    (Work::Frame(Box::new(racer)), Role::Racer)
+                    (Work::Frame(Box::new(racer)), Role::Racer, written)
                 })
                 .collect();
             Joined::start(vm, "task.first_ok", together, pieces, Gives::FirstOk(race))
@@ -1246,8 +1289,13 @@ pub(crate) mod task {
             if vm.takes_nothing_new() {
                 return Ok(vm.end_here("task.join"));
             }
-            let works: Vec<(Work, Role)> =
-                pieces.iter().map(|piece| (Work::Call(piece), Role::Piece)).collect();
+            let works: Vec<(Work, Role, Option<Span>)> = pieces
+                .iter()
+                .map(|piece| {
+                    let at = written_at(&piece);
+                    (Work::Call(piece), Role::Piece, at)
+                })
+                .collect();
             let together = Together::new("task.join", "the pieces of its `task.join`", works.len());
             Joined::start(vm, "task.join", together, works, Gives::Unit)
         }
@@ -1274,7 +1322,7 @@ pub(crate) mod task {
                         at: None,
                         ended: false,
                     };
-                    (Work::Frame(Box::new(worker)), Role::MapWorker)
+                    (Work::Frame(Box::new(worker)), Role::MapWorker, None)
                 })
                 .collect();
             let together = Together::new("task.map", "the workers of its `task.map`", workers);
