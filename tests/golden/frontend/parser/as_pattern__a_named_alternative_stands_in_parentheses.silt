@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[parse]: an alternative named with `as` stands in parentheses
--- stderr-contains: write `(A as x) | (B as x)`, or `(A | B) as x` to name the whole value
+-- stderr-contains: write `(0 as m) | (1 as m)`, or `(0 | 1) as m` to name the whole value
 -- stderr-contains: .silt:7:12
 fn f(n: Int) -> Int {
   match n {

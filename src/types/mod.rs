@@ -412,6 +412,9 @@ impl Type {
     pub fn applied(head: Type, arg: Type) -> Type {
         match head {
             Type::Con(h, rest) => h.apply(rest, arg),
+            // (A constructor already reported as unknown, applied, is
+            // unknown too: no `_(Int)` of it.)
+            Type::Error => Type::Error,
             other => Type::App(Box::new(other), Box::new(arg)),
         }
     }

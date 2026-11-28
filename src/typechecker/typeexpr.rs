@@ -635,6 +635,16 @@ impl TypeChecker {
         crate::types::canonical::canonicalize(&self.tables.resolver, &resolved)
     }
 
+    /// A part of a type being resolved (an argument, an element, a
+    /// parameter): canonical, or as written while an alias's target is
+    /// resolved (`alias_parts_as_written`).
+    fn resolve_type_part(&mut self, te: &TypeExpr, param_vars: &mut HashMap<Symbol, Type>) -> Type {
+        match self.alias_parts_as_written {
+            true => self.resolve_type_expr_inner(te, param_vars),
+            false => self.resolve_type_expr(te, param_vars),
+        }
+    }
+
     pub(super) fn resolve_type_expr_inner(
         &mut self,
         te: &TypeExpr,
@@ -788,7 +798,7 @@ impl TypeChecker {
                 }
                 let resolved_args: Vec<Type> = args
                     .iter()
-                    .map(|a| self.resolve_type_expr(a, param_vars))
+                    .map(|a| self.resolve_type_part(a, param_vars))
                     .collect();
                 if self.names_rejected(te.res, *name) {
                     return Type::Error;
@@ -865,16 +875,16 @@ impl TypeChecker {
                 }
                 let types: Vec<Type> = elems
                     .iter()
-                    .map(|e| self.resolve_type_expr(e, param_vars))
+                    .map(|e| self.resolve_type_part(e, param_vars))
                     .collect();
                 Type::Container(Container::Tuple(types))
             }
             TypeExprKind::Function(params, ret) => {
                 let param_types: Vec<Type> = params
                     .iter()
-                    .map(|p| self.resolve_type_expr(p, param_vars))
+                    .map(|p| self.resolve_type_part(p, param_vars))
                     .collect();
-                let ret_type = self.resolve_type_expr(ret, param_vars);
+                let ret_type = self.resolve_type_part(ret, param_vars);
                 Type::Fun(param_types, Box::new(ret_type))
             }
             TypeExprKind::SelfType => match param_vars.get(&intern("Self")) {

@@ -1,0 +1,12 @@
+error[type]: type mismatch: expected String, got Int
+ --> match_arms__a_declared_result_is_what_each_arm_is_checked_against.silt:11:10
+    |
+ 11 |     0 -> 5
+    |          ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected List(Int), got Option(Int)
+ --> match_arms__a_declared_result_is_what_each_arm_is_checked_against.silt:19:20
+    |
+ 19 |     [_, ..rest] -> list.first(rest)
+    |                    ^^^^^^^^^^^^^^^^ type mismatch: expected List(Int), got Option(Int)
+  = help: to chain through an `Option`, use `?` to propagate `None`, or `|> option.flat_map { x -> ... }` to continue the pipeline on the Some value

@@ -70,3 +70,18 @@ fn test_suggest_similar_long_names_scale_threshold() {
         Some("compute_total_amount".to_string())
     );
 }
+
+#[test]
+fn test_suggest_similar_prefers_the_name_in_other_case() {
+    // `Y` is the field `y` with a capital: it wins over `x`, which is
+    // as near by distance and sorts first.
+    assert_eq!(
+        suggest_similar("Y", ["x", "y"].iter()),
+        Some("y".to_string())
+    );
+    // Case and underscores only: `MaxSize` is `max_size`.
+    assert_eq!(
+        suggest_similar("MaxSize", ["max_side", "max_size"].iter()),
+        Some("max_size".to_string())
+    );
+}

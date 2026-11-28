@@ -1,21 +1,6 @@
 error[type]: type mismatch: expected Option(Int), got Guess
- --> a_local_some_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:9:3
-   |
- 9 |   match n {
-   |   ^^^^^^^^^ type mismatch: expected Option(Int), got Guess
- ::: a_local_some_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+ --> a_local_some_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
     |
  10 |     0 -> Some(n)
-    |          ------- this `Some` is the variant of `Guess`
-  = help: the variant `Some` of `Guess` hides the prelude's `Some`: write `Option.Some`
-
-error[type]: type mismatch: expected Guess, got Option(_)
- --> a_local_some_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:11:10
-    |
- 11 |     _ -> None
-    |          ^^^^ type mismatch: expected Guess, got Option(_)
- ::: a_local_some_where_an_option_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
-    |
- 10 |     0 -> Some(n)
-    |          ------- this `Some` is the variant of `Guess`
-  = help: the variant `Some` of `Guess` hides the prelude's `Some`: write `Option.Some`
+    |          ^^^^^^^ type mismatch: expected Option(Int), got Guess
+  = help: `Some` here is the variant of `Guess`, which hides the prelude's `Some`: write `Option.Some`

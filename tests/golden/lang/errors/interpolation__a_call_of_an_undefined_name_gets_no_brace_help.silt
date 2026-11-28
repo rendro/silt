@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'total'
+-- stderr-not-contains: literal brace
+-- A call in braces is meant as code, not as literal braces: the help
+-- about `\{` is not given for it.
+fn main() {
+  println("{total(10)}")
+}

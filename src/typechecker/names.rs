@@ -183,6 +183,9 @@ pub(crate) struct Source<'a> {
 struct Interpolation {
     /// Whether the code is a bare name (`"\p{L}"`).
     whole: bool,
+    /// Whether the code is a call of a bare name (`"{total(xs)}"`): meant
+    /// as code, not as literal braces.
+    call: bool,
     /// Whether a name in it resolves.
     resolved: bool,
     /// The diagnostic of its first undefined name with no help, and the
@@ -3473,6 +3476,8 @@ impl Resolver<'_> {
                     if let StringPart::Expr(e) = part {
                         let outer = self.interpolation.replace(Interpolation {
                             whole: matches!(e.kind, ExprKind::Ident(_)),
+                            call: matches!(&e.kind, ExprKind::Call(callee, _)
+                                if matches!(callee.kind, ExprKind::Ident(_))),
                             resolved: false,
                             first: None,
                         });
@@ -3661,7 +3666,7 @@ impl Resolver<'_> {
             }
             Some(Found::Binding(binding)) => self.binding_res(&binding),
             None => {
-                self.unresolved_value(name, span);
+                self.unresolved_value(name, span, false);
                 Res::Error
             }
         }
@@ -3765,7 +3770,10 @@ impl Resolver<'_> {
     }
 
     /// Report a value name that resolves to nothing.
-    fn unresolved_value(&mut self, name: Symbol, span: Span) {
+    /// A name in a value position that nothing binds; `with_field`: it
+    /// is read with a field behind it (`user.name`), so it is meant as a
+    /// value or a module, not as a builtin function of its name.
+    fn unresolved_value(&mut self, name: Symbol, span: Span, with_field: bool) {
         let name_str = resolve(name);
         if name_str == "if" {
             self.error(Diagnostic::error(Code::UnresolvedName, span, NO_IF).with_help(NO_IF_HELP));
@@ -3780,6 +3788,10 @@ impl Resolver<'_> {
             ),
             "while" | "for" => Some(NO_WHILE_FOR),
             "loop" => Some(NO_LOOP),
+            "deep" => Some(
+                "`deep` marks a top-level function, `deep fn name(...)`: a closure cannot be \
+                 deep, so make it a top-level `deep fn`",
+            ),
             "_" => Some(PLACEHOLDER_VALUE_HELP),
             "try" => Some(
                 "silt has no `try`: `?` passes an `Err` on, and `match` takes a `Result` apart",
@@ -3824,7 +3836,8 @@ impl Resolver<'_> {
                     suggest_similar(&name_str, candidates.iter())
                         .map(|hint| format!("did you mean `{hint}`?"))
                         .or_else(|| {
-                            let module = self.builtin_function_module(name)?;
+                            let module =
+                                self.builtin_function_module(name).filter(|_| !with_field)?;
                             // (No `import module` where the file binds
                             // the name: it would bind it twice.)
                             if self.scope.values.contains_key(&intern(module)) {
@@ -3873,6 +3886,7 @@ impl Resolver<'_> {
     fn literal_brace_help(&mut self, done: Option<Interpolation>) {
         let Some(Interpolation {
             whole,
+            call: false,
             resolved: false,
             first: Some((at, name)),
         }) = done
@@ -4166,7 +4180,7 @@ impl Resolver<'_> {
                 Some(Res::Error)
             }
             None => {
-                self.unresolved_value(head_name, head_span);
+                self.unresolved_value(head_name, head_span, true);
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
             }

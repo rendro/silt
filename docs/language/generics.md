@@ -462,6 +462,10 @@ trait HashTable(Fn(Int) -> Int) for OtherStore { ... }
 -- error: type 'Fn(Int) -> Int' does not implement trait 'Hash'
 ```
 
+An impl for every argument writes the trait's bound again on its
+variable, `trait HashTable(k) for AnyStore where k: Hash + Equal`, and
+each use of the impl owes it.
+
 Supertraits can also reference the enclosing trait's params. The args
 flow automatically — a `where x: Child(Int)` constraint lets `x` be
 given to `Parent`'s methods with Parent's own params bound to the same

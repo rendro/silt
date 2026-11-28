@@ -1,0 +1,21 @@
+-- An empty map or set literal is a value, as `[]` is: a `let` of one
+-- generalises, at the top level with a written type and inside a
+-- function, so each use takes its own element type.
+import map
+import set
+
+let names: Map(String, a) = #{}
+let seen: Set(a) = #[]
+
+fn main() {
+  println(map.set(names, "a", 1))
+  println(map.set(names, "b", "x"))
+  println(set.insert(seen, 1))
+  println(set.insert(seen, "s"))
+  let m = #{}
+  let s = #[]
+  println(map.set(m, 1, true))
+  println(map.set(m, "k", 2.5))
+  println(set.insert(s, 1))
+  println(set.insert(s, "s"))
+}

@@ -1,0 +1,11 @@
+-- A name starting with `_` starts with no capital: as the first field
+-- it makes the body a record's, as it is a field in any later place.
+type T {
+  _x: Int,
+  y: Int,
+}
+
+fn main() {
+  let t = T { _x: 1, y: 2 }
+  println(t._x + t.y)
+}

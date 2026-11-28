@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: help: write `y: Int`
+-- stderr-contains: unknown field 'Y' in T
+-- stderr-contains: help: did you mean `y`?
+-- stderr-not-contains: did you mean `x`?
+-- A field written with a capital is its own name in lower case, before
+-- a field as near to it by the count of letters.
+type T {
+  x: Int,
+  Y: Int,
+}
+
+fn main() {
+  println(T { x: 6, Y: 7 })
+}

@@ -1209,6 +1209,37 @@ impl TypeChecker {
         }
     }
 
+    /// Of the alias `alias` with parameters, given where a type
+    /// constructor goes: `None` when it renames one, its first parameter
+    /// standing for the constructor's first type argument and in no other
+    /// place (`type Opt(a) = Option(a)`, `type Res(a, e) = Result(a, e)`);
+    /// else its target as a message writes it (`List((a, a))` of `type
+    /// Pairs(a) = List((a, a))`), which no constructor stands for.
+    pub(super) fn alias_no_constructor(&self, alias: TypeRef) -> Option<String> {
+        let info = self.tables.resolver.lookup_alias(alias)?;
+        let target = crate::types::canonical::canonicalize(&self.tables.resolver, &info.target);
+        if let (Some(&first), Some((_, rest, Type::Var(hole)))) =
+            (info.param_var_ids.first(), target.split_constructor())
+            && hole == first
+            && !rest.iter().any(|t| free_vars_in(t).contains(&first))
+        {
+            return None;
+        }
+        // (Its parameters by their names.)
+        let named: HashMap<TyVar, Type> = (info.param_var_ids.iter().zip(&info.params))
+            .map(|(var, name)| {
+                (
+                    *var,
+                    Type::Rigid(RigidId {
+                        var: *var,
+                        name: *name,
+                    }),
+                )
+            })
+            .collect();
+        Some(self.show_type(&substitute_vars(&target, &named)))
+    }
+
     /// The type of an argument of the type `arg_ty` for the parameter
     /// `param`: a type given to a `type m` that the callee's signature
     /// applies is the type constructor of the type (`Option(_)` for
@@ -1219,7 +1250,7 @@ impl TypeChecker {
     fn constructor_argument(
         &mut self,
         param: &Type,
-        (arg_ty, full): (Type, bool),
+        (arg_ty, full, alias): (Type, bool, Option<TypeRef>),
         callee: &Expr,
         shown: (&[String], usize),
         at: Span,
@@ -1246,6 +1277,24 @@ impl TypeChecker {
             || self.of_constructors(&given)
         {
             return arg_ty;
+        }
+        // An alias stands for a constructor only where it renames one:
+        // its target's head is not what `Pairs` of `type Pairs(a) =
+        // List((a, a))` means.
+        if !full
+            && let Some(alias) = alias
+            && let Some(target) = self.alias_no_constructor(alias)
+        {
+            let message = format!(
+                "'{}' is an alias of `{target}`, which no type constructor stands for: an \
+                 alias given for a type constructor renames one, its first parameter the \
+                 constructor's first type argument (`type Opt(a) = Option(a)`)",
+                alias.name
+            );
+            self.error(Code::KindMismatch, message, at);
+            // (The constructor is unknown: what the call gives is too.)
+            self.unify(m, &Type::Error, at);
+            return Type::Error;
         }
         match given.split_constructor().filter(|_| !full) {
             Some((head, rest, _)) => Type::type_of(Type::Con(head, rest)),
@@ -2923,6 +2972,12 @@ impl TypeChecker {
             names,
             read_fields,
         });
+        // (A declared result is what each value the body ends in is
+        // checked against: the arm of a `match` that differs from it is
+        // the one reported, not the arms that agree with it.)
+        if f.return_type.is_some() && !matches!(ret_type, Type::Never | Type::Error) {
+            self.wanted_result = Some(ret_type.clone());
+        }
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
         env.pop();
@@ -4033,7 +4088,17 @@ impl TypeChecker {
         let reported = self.errors.len();
         let arg_ty = match param {
             Some(param) => {
-                self.constructor_argument(param, (arg_ty, full), callee, (shown_args, i), arg.span)
+                let alias = (self.res_def(arg.res))
+                    .filter(|def| def.kind == crate::defs::DefKind::TypeAlias)
+                    .and(self.res_type(arg.res))
+                    .filter(|_| alone);
+                self.constructor_argument(
+                    param,
+                    (arg_ty, full, alias),
+                    callee,
+                    (shown_args, i),
+                    arg.span,
+                )
             }
             None => arg_ty,
         };
@@ -4554,6 +4619,12 @@ impl TypeChecker {
     // ── Expression type inference ───────────────────────────────────
 
     pub(super) fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
+        // (What its place wants of it is for this expression only.)
+        let wanted = self.wanted_result.take();
+        self.wanted_here = match expr.kind {
+            ExprKind::Block(_) | ExprKind::Match { .. } => wanted,
+            _ => None,
+        };
         self.note_prelude_variant_use(expr);
         if !matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
             return self.infer_expr_kind(expr, env);
@@ -4899,10 +4970,15 @@ impl TypeChecker {
             ExprKind::Return(..) => self.infer_return(expr, env, span),
 
             ExprKind::Block(stmts) => {
+                let wanted = self.wanted_here.take();
                 let mut last_ty = Type::Unit;
                 env.push();
                 let last = stmts.len().saturating_sub(1);
                 for (i, stmt) in stmts.iter_mut().enumerate() {
+                    // (What the block is to be, its last expression is.)
+                    if i == last && matches!(stmt, Stmt::Expr(_)) {
+                        self.wanted_result = wanted.clone();
+                    }
                     last_ty = self.infer_stmt(stmt, env);
                     if i != last {
                         self.note_statement(stmt, &last_ty);
@@ -5240,7 +5316,7 @@ pub(super) fn arith_operand_message(op_str: &str, ty: &Type, shown: &str) -> Str
 impl TypeChecker {
     /// Whether an expression is a syntactic value, for the value
     /// restriction on let-generalization: a literal, a name, a closure,
-    /// or a tuple, list, record or constructor application of syntactic
+    /// or a tuple, list, map, set, record or constructor application of syntactic
     /// values. Those are safe to generalize; any other call is not,
     /// because it may produce a type with shared mutable state (a
     /// channel) that must remain monomorphic.
@@ -5269,6 +5345,11 @@ impl TypeChecker {
             ExprKind::RecordCreate { fields, .. } => {
                 fields.iter().all(|(_, e)| self.is_syntactic_value(e))
             }
+            // A map or set literal of values, as a list one: `#{}`, `#[]`.
+            ExprKind::Map(entries) => entries
+                .iter()
+                .all(|(k, v)| self.is_syntactic_value(k) && self.is_syntactic_value(v)),
+            ExprKind::SetLit(elems) => elems.iter().all(|e| self.is_syntactic_value(e)),
             // A variant applied to values: `Some(1)`, `Err("x")`. (The
             // builtin environment, which the builtin definitions are
             // made from, cannot ask what a name resolves to.)

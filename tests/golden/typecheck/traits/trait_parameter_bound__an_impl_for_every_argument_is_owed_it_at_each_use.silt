@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Float' does not implement trait 'Key'
+-- stderr-contains: note: the impl of 'Tbl' for 'W' asks `a: Key`
+-- stderr-not-contains: impl-level where clause
+-- The bound an impl for every trait argument repeats from its trait is
+-- asked of the argument at each use.
+trait Key {
+  fn key(self) -> String
+}
+
+trait Key for Int {
+  fn key(self) -> String { "i{self}" }
+}
+
+trait Tbl(k) where k: Key {
+  fn show(self, x: k) -> String { Key.key(x) }
+}
+
+type W {
+  v: Int,
+}
+
+trait Tbl(a) for W where a: Key {}
+
+fn main() {
+  println(Tbl.show(W { v: 1 }, 2.5))
+}

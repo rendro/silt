@@ -1,0 +1,19 @@
+-- exit: 1
+-- stderr-contains: error[parse]: `deep` stands right before `fn`: write `pub deep fn`
+-- stderr-contains: .silt:9:1
+-- stderr-not-contains: undefined variable
+-- stderr-not-contains: expected declaration
+-- `deep pub fn` is read as `pub deep fn`: one error, and the uses of
+-- the function are no errors of their own (no `fs.walk` help, no help
+-- about literal braces in an interpolation).
+deep pub fn walk(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + walk(n - 1)
+  }
+}
+
+fn main() {
+  println(walk(2))
+  println("{walk(3)}")
+}

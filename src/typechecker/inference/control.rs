@@ -279,11 +279,14 @@ impl TypeChecker {
         if arms.len() > 1 {
             (self.match_arm_bodies).push(arms.iter().map(|arm| arm.body.span).collect());
         }
+        // The type its place wants, when it says: each arm is checked
+        // against it, not against the first arm.
+        let wanted = self.wanted_here.take();
         match scrutinee {
             Some(scrutinee) => {
                 let scrutinee_span = scrutinee.span;
                 let scrutinee_ty = self.infer_expr(scrutinee, env);
-                let result_ty = self.fresh_var();
+                let result_ty = wanted.unwrap_or_else(|| self.fresh_var());
 
                 // Every arm checks its pattern against the SAME
                 // scrutinee. A mismatch at a pattern that repeats
@@ -431,7 +434,7 @@ impl TypeChecker {
                         }
                     }
                 }
-                let result_ty = self.fresh_var();
+                let result_ty = wanted.unwrap_or_else(|| self.fresh_var());
                 // Same rule as the scrutinee form: arms that all
                 // diverge make the match diverge.
                 let mut every_arm_diverges = !arms.is_empty();

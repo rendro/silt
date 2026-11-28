@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- Where the function declares its result, each arm of the `match` it ends
+-- in is checked against that type: the arm that differs is the one
+-- reported, also when it is the first, and the arms that give the
+-- declared type are not.
+import list
+
+fn word(n: Int) -> String {
+  match n {
+    0 -> 5
+    1 -> "one"
+    _ -> "many"
+  }
+}
+
+fn second(xs: List(Int)) -> List(Int) {
+  match xs {
+    [_, ..rest] -> list.first(rest)
+    [] -> []
+  }
+}
+
+fn main() {
+  println(word(1))
+  println(second([1, 2]))
+}

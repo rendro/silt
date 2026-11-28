@@ -2040,6 +2040,21 @@ impl TypeChecker {
             return false;
         }
         let trait_name = self.impl_trait_name(ti);
+        // An alias stands for a type constructor only where it renames
+        // one (`type B(a) = Box(List(a))` is no constructor of `a`): no
+        // impl, so its methods owe no second error.
+        if holes.as_slice() == [0]
+            && let Some(target) = self.alias_no_constructor(written)
+        {
+            let message = format!(
+                "'{head}' is an alias of `{target}`, which no type constructor stands for: an \
+                 impl for a type constructor names one, or an alias that renames one, its \
+                 first parameter the constructor's first type argument (`type Opt(a) = \
+                 Option(a)`)"
+            );
+            self.error(Code::KindMismatch, message, ti.header_span);
+            return false;
+        }
         match holes.as_slice() {
             [0] => self.header_rest_are_variables(ti, &trait_name, &head),
             // No `_`, or one more after the first: the header with `_`
@@ -2833,7 +2848,12 @@ impl TypeChecker {
             super::names::type_vars_of(te, &mut vars);
             vars.contains(type_param)
         };
-        match impl_param_map.get(type_param) {
+        // (A variable only a trait argument writes is that, also once a
+        // bound the trait declares has given it a variable: what follows
+        // does not depend on the order of the bounds.)
+        let trait_arg_only =
+            !ti.target_param_names.contains(type_param) && ti.trait_args.iter().any(names_it);
+        match impl_param_map.get(type_param).filter(|_| !trait_arg_only) {
             Some(ty) => {
                 let resolved = self.apply(ty);
                 if !self.bound_fits_kind(
@@ -2869,32 +2889,76 @@ impl TypeChecker {
             // bound goes on the method that needs it. (What the body
             // asks of the variable is not reported again.)
             None if ti.trait_args.iter().any(names_it) => {
+                // The trait's parameter the variable is the whole argument
+                // for, if it is one (`a` of `trait Conv(a) for W`).
+                let info = self.tables.traits.get(&impl_trait).cloned();
+                let param = (ti.trait_args.iter())
+                    .position(|te| {
+                        matches!(&te.kind, TypeExprKind::Named { module: None, name, .. }
+                            if name == type_param)
+                    })
+                    .and_then(|at| info.as_ref()?.params.get(at).copied());
+                // The trait's own bound on that parameter, written again
+                // (`trait Tbl(k) where k: Equal`, `trait Tbl(a) for W where
+                // a: Equal`): every use of the impl owes it, as it owes the
+                // trait's, and the impl's methods have it.
+                let the_traits_own = param.zip(info.as_ref()).is_some_and(|(param, info)| {
+                    resolved_bound_args.is_empty()
+                        && (info.param_where_clauses.iter()).any(|(p, bound, args)| {
+                            *p == param && bound == trait_name && args.is_empty()
+                        })
+                });
+                if the_traits_own {
+                    let tv = match impl_param_map.get(type_param) {
+                        Some(tv) => tv.clone(),
+                        None => self.fresh_var(),
+                    };
+                    impl_param_map.insert(*type_param, tv.clone());
+                    if let Type::Var(tv) = tv {
+                        impl_level_constraints.push(Pred::bound(
+                            tv,
+                            *trait_name,
+                            resolved_bound_args.clone(),
+                        ));
+                    }
+                    return;
+                }
                 let method = ti.methods.iter().find(|m| {
                     (m.params.iter().filter_map(|p| p.ty.as_ref())).any(names_it)
                         || m.return_type.as_ref().is_some_and(names_it)
                 });
-                let example = match method {
-                    Some(m) => format!(
+                // (The bound is written with the trait's own name of the
+                // parameter: the method is the trait's.)
+                let example = match (method, param) {
+                    (Some(m), Some(param)) => format!(
                         ": `fn {}(...) where {}: {}`",
                         m.name,
-                        resolve(*type_param),
+                        resolve(param),
                         self.show_bound(*trait_name, &resolved_bound_args)
                     ),
-                    None => String::new(),
+                    _ => String::new(),
                 };
-                // (The one place a call through the trait owes it: the
-                // trait's own method.)
-                self.error(
-                    Code::InvalidTypeAnnotation,
-                    format!(
+                // (A variable inside a trait argument, `Map(String, a)`:
+                // no bound of the trait's method can name it.)
+                let message = match param {
+                    Some(_) => format!(
                         "type variable '{}' in impl-level where clause is a trait argument, \
                          not a target type argument; declare the bound on the method in trait \
                          '{}'{example}",
                         resolve(*type_param),
                         self.impl_trait_name(ti),
                     ),
-                    ti.span,
-                );
+                    None => format!(
+                        "type variable '{}' in impl-level where clause is inside a trait \
+                         argument of '{}', not a target type argument: a bound on it can be \
+                         written neither on the impl nor on the trait's methods",
+                        resolve(*type_param),
+                        self.impl_trait_name(ti),
+                    ),
+                };
+                // (The one place a call through the trait owes it: the
+                // trait's own method.)
+                self.error(Code::InvalidTypeAnnotation, message, ti.span);
                 refused_trait_arg_bounds.push(*type_param);
             }
             None => {

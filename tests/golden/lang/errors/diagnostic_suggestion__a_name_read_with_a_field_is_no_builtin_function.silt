@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'user'
+-- stderr-not-contains: url.user
+-- stderr-not-contains: help
+-- A name read with a field behind it is meant as a value: the builtin
+-- function `url.user` of that name is not suggested.
+fn main() {
+  println(user.name)
+}

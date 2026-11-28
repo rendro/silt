@@ -1,21 +1,6 @@
 error[type]: type mismatch: expected Result(Int, String), got Reply
- --> a_local_ok_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:9:3
-   |
- 9 |   match n {
-   |   ^^^^^^^^^ type mismatch: expected Result(Int, String), got Reply
- ::: a_local_ok_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+ --> a_local_ok_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
     |
  10 |     0 -> Ok(n)
-    |          ----- this `Ok` is the variant of `Reply`
-  = help: the variant `Ok` of `Reply` hides the prelude's `Ok`: write `Result.Ok`
-
-error[type]: type mismatch: expected Reply, got Result(_, String)
- --> a_local_ok_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:11:10
-    |
- 11 |     _ -> Err("no")
-    |          ^^^^^^^^^ type mismatch: expected Reply, got Result(_, String)
- ::: a_local_ok_where_a_result_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
-    |
- 10 |     0 -> Ok(n)
-    |          ----- this `Ok` is the variant of `Reply`
-  = help: the variant `Ok` of `Reply` hides the prelude's `Ok`: write `Result.Ok`
+    |          ^^^^^ type mismatch: expected Result(Int, String), got Reply
+  = help: `Ok` here is the variant of `Reply`, which hides the prelude's `Ok`: write `Result.Ok`

@@ -1291,8 +1291,9 @@ impl<'src> Parser<'src> {
                 break;
             }
             let start = self.pos;
-            let is_fn =
-                self.fn_decl_at(start) || self.at(&Token::Pub) && self.fn_decl_at(start + 1);
+            let is_fn = self.fn_decl_at(start)
+                || self.at(&Token::Pub) && self.fn_decl_at(start + 1)
+                || self.deep_pub_fn_at(start);
             self.fn_stub = None;
             match self.parse_decl() {
                 Ok(decl) => {
@@ -1883,6 +1884,35 @@ impl<'src> Parser<'src> {
             }
             Token::Fn => Ok(Decl::Fn(self.parse_fn_decl(self.top_level_body())?)),
             Token::Ident(_) if self.deep_fn_at(self.pos) => Ok(Decl::Fn(self.parse_top_fn_decl()?)),
+            // `deep pub fn`: the function is read as `pub deep fn`.
+            Token::Ident(_) if self.deep_pub_fn_at(self.pos) => {
+                let deep = self.advance().span;
+                let public = self.span();
+                self.keep_or_count(
+                    Diagnostic::error(
+                        Code::ExpectedDeclaration,
+                        deep,
+                        "`deep` stands right before `fn`: write `pub deep fn`",
+                    )
+                    .with_fix(
+                        "Change `deep pub fn` to `pub deep fn`",
+                        vec![(deep.to(public), "pub deep".to_string())],
+                    ),
+                );
+                let mark = |f: &mut FnDecl| {
+                    f.deep = Some(deep);
+                    f.span = deep.to(f.span);
+                };
+                let parsed = self.parse_decl();
+                if let Some(stub) = &mut self.fn_stub {
+                    mark(stub);
+                }
+                let mut decl = parsed?;
+                if let Decl::Fn(f) = &mut decl {
+                    mark(f);
+                }
+                Ok(decl)
+            }
             Token::Type => Ok(Decl::Type(self.parse_type_decl()?)),
             Token::Trait => self.parse_trait_or_impl(),
             Token::Import => self.parse_import(),
@@ -1915,6 +1945,21 @@ impl<'src> Parser<'src> {
             Some(Token::Ident(word)) if intern::resolve(*word) == "deep"
         ) && matches!(
             self.tokens.get(at + 1).map(|tok| &tok.kind),
+            Some(Token::Fn)
+        )
+    }
+
+    /// Whether the tokens from `at` on are `deep pub fn`, the marker
+    /// in front of `pub`.
+    fn deep_pub_fn_at(&self, at: usize) -> bool {
+        matches!(
+            self.tokens.get(at).map(|tok| &tok.kind),
+            Some(Token::Ident(word)) if intern::resolve(*word) == "deep"
+        ) && matches!(
+            self.tokens.get(at + 1).map(|tok| &tok.kind),
+            Some(Token::Pub)
+        ) && matches!(
+            self.tokens.get(at + 2).map(|tok| &tok.kind),
             Some(Token::Fn)
         )
     }
@@ -2266,8 +2311,15 @@ impl<'src> Parser<'src> {
             return true;
         }
         if let Token::Ident(ref name) = self.tokens[self.pos].kind {
-            // lowercase first char → likely record field
-            intern::resolve(*name).starts_with(|c: char| c.is_lowercase())
+            // A first name that starts lower case is a field's; one that
+            // starts with `_` is a field's when a `:` follows it (`_x:
+            // Int`, as a later field may start with `_`), else it is
+            // taken for a variant spelled with `_` (`_Red`).
+            let text = intern::resolve(*name);
+            match text.starts_with('_') {
+                true => self.tokens.get(self.pos + 1).map(|tok| &tok.kind) == Some(&Token::Colon),
+                false => text.starts_with(|c: char| c.is_lowercase()),
+            }
         } else {
             false
         }
@@ -2374,7 +2426,9 @@ impl<'src> Parser<'src> {
                 if std::mem::take(&mut first) && p.peek() == &Token::Colon {
                     return Err(p.capital_field_err(name, name_span));
                 }
-                let fields = if p.at_on_line(&Token::LParen) {
+                let fields = if p.at_on_line(&Token::LBrace) {
+                    p.braced_variant(name)?
+                } else if p.at_on_line(&Token::LParen) {
                     let open = p.advance().span;
                     let fields = p.comma_list(
                         "enum variant field list",
@@ -2397,6 +2451,44 @@ impl<'src> Parser<'src> {
             },
         )?;
         Ok(TypeBody::Enum(variants))
+    }
+
+    /// A variant `name` declared with named fields in braces, `Circle {
+    /// radius: Float }`, the `{` being the current token: an error (a
+    /// variant's fields are written in parentheses), and the fields'
+    /// types as the variant's, so that the rest of the program checks.
+    fn braced_variant(&mut self, name: Symbol) -> Result<Vec<TypeExpr>> {
+        let open = self.advance().span;
+        let text = intern::resolve(name);
+        let errors = self.errors.len();
+        let parsed = self.parse_record_body(open);
+        self.errors.truncate(errors);
+        let d = Diagnostic::error(
+            Code::ExpectedToken,
+            open,
+            format!("the fields of variant '{text}' are written in parentheses, not braces"),
+        );
+        let fields = match parsed {
+            Ok(TypeBody::Record(fields)) if !fields.is_empty() => fields,
+            _ => return Err(d.with_help(format!("write `{text}(Int)`, a type for each field"))),
+        };
+        let types: Option<Vec<&str>> = fields.iter().map(|f| self.written(f.ty.span)).collect();
+        let d = match types {
+            Some(types) => {
+                let named: Vec<String> = (fields.iter().zip(&types))
+                    .map(|(f, ty)| format!("{}: {ty}", intern::resolve(f.name)))
+                    .collect();
+                d.with_help(format!("write `{text}({})`", types.join(", ")))
+                    .with_help(format!(
+                        "or, to name the fields, declare a record, `type {text} {{ {} }}`, \
+                         and write the variant `{text}({text})`",
+                        named.join(", ")
+                    ))
+            }
+            None => d,
+        };
+        self.keep_or_count(d);
+        Ok(fields.into_iter().map(|f| f.ty).collect())
     }
 
     /// Parse an optional `where` clause list. Consumes the `where` token
@@ -2464,6 +2556,14 @@ impl<'src> Parser<'src> {
             .into_iter()
             .flat_map(|(.., bounds)| bounds)
             .collect())
+    }
+
+    /// The text of `span` as written, when it stands on one line (for a
+    /// help that repeats what the program wrote).
+    fn written(&self, span: Span) -> Option<&'src str> {
+        (self.source)
+            .get(span.start as usize..span.end as usize)
+            .filter(|text| !text.contains('\n'))
     }
 
     /// The tokens `range` (indices) as `silt fmt` spaces a type: each
@@ -5219,16 +5319,32 @@ impl<'src> Parser<'src> {
             if self.at(&Token::As) {
                 // (Whether `A | B as x` names the whole or only `B` is
                 // not for the reader to guess.)
+                let last = alts.last().map_or(or_span, |alt| alt.span);
+                let whole = self.written(or_span.to(last)).unwrap_or("A | B");
+                let name = self.as_name_at(self.pos + 1);
                 return Err(Diagnostic::error(
                     Code::ExpectedToken,
                     self.found_span(),
                     "an or-pattern named with `as` stands in parentheses",
                 )
-                .with_help("write `(A | B) as x` to name the whole value"));
+                .with_help(format!(
+                    "write `({whole}) as {name}` to name the whole value"
+                )));
             }
             Ok(self.mk_pattern(PatternKind::Or(alts), or_span))
         } else {
             self.parse_as_names(first)
+        }
+    }
+
+    /// The name an `as` at token `at - 1` gives, for a help: the name
+    /// written there, or `x`.
+    fn as_name_at(&self, at: usize) -> String {
+        match self.tokens.get(at).map(|tok| &tok.kind) {
+            Some(Token::Ident(name)) if !is_constructor(*name) && *name != intern::intern("_") => {
+                intern::resolve(*name).to_string()
+            }
+            _ => "x".to_string(),
         }
     }
 
@@ -5264,14 +5380,28 @@ impl<'src> Parser<'src> {
                 start,
             );
             if self.at(&Token::Bar) {
+                let at = self.found_span();
+                let named = match &pattern.kind {
+                    PatternKind::As { pattern, .. } => self.written(pattern.span),
+                    _ => None,
+                };
+                let named = named.unwrap_or("A").to_string();
+                // The alternative behind the `|`, as written, for the help.
+                self.advance();
+                let errors = self.errors.len();
+                let next = self.parse_primary_pattern().ok();
+                self.errors.truncate(errors);
+                let next = next.and_then(|p| self.written(p.span)).unwrap_or("B");
+                let name = intern::resolve(name);
                 return Err(Diagnostic::error(
                     Code::ExpectedToken,
-                    self.found_span(),
+                    at,
                     "an alternative named with `as` stands in parentheses",
                 )
-                .with_help(
-                    "write `(A as x) | (B as x)`, or `(A | B) as x` to name the whole value",
-                ));
+                .with_help(format!(
+                    "write `({named} as {name}) | ({next} as {name})`, or `({named} | {next}) as \
+                     {name}` to name the whole value"
+                )));
             }
         }
         Ok(pattern)
@@ -5404,8 +5534,9 @@ impl<'src> Parser<'src> {
             // Record pattern: User { name, age, .. }
             let open = self.advance().span;
             let mut has_rest = false;
-            // (A field written alone with `as` behind it, `P { x as y }`.)
-            let mut alone_then_as = false;
+            // (A field written alone with `as` behind it, `P { x as y }`:
+            // the field and the name behind the `as`.)
+            let mut alone_then_as = None;
             let fields = self.comma_list(
                 "record pattern",
                 open,
@@ -5428,13 +5559,19 @@ impl<'src> Parser<'src> {
                         return Ok(None);
                     }
                     let field = p.parse_field_pattern()?;
-                    alone_then_as = field.2.is_none() && p.at(&Token::As);
+                    alone_then_as = (field.2.is_none() && p.at(&Token::As))
+                        .then(|| (intern::resolve(field.0), p.as_name_at(p.pos + 1)));
                     Ok(Some(field))
                 },
             )
-            .map_err(|err| match alone_then_as {
-                true => err.with_help("write `P { x: x as y }`"),
-                false => err,
+            .map_err(|err| match &alone_then_as {
+                Some((field, name)) => {
+                    let ty = self.written(start.to(name_span)).unwrap_or("P");
+                    err.with_help(format!(
+                        "to bind the field `{field}` to the name `{name}`, write `{ty} {{ {field}: {name} }}`"
+                    ))
+                }
+                None => err,
             })?;
             let fields = fields.into_iter().flatten().collect();
             // A record type is reached through at most its module.

@@ -1,0 +1,42 @@
+-- An impl for every trait argument (`trait Tbl(a) for W`) writes the
+-- trait's own bound on that parameter again, `where a: Key`: each use
+-- of the impl owes it, and its methods and the trait's default methods
+-- have it.
+trait Key {
+  fn key(self) -> String
+}
+
+trait Key for Int {
+  fn key(self) -> String { "i{self}" }
+}
+
+trait Key for String {
+  fn key(self) -> String { "s{self}" }
+}
+
+trait Tbl(k) where k: Key {
+  fn show(self, x: k) -> String { Key.key(x) }
+  fn twice(self, x: k) -> String
+}
+
+type W {
+  v: Int,
+}
+
+trait Tbl(a) for W where a: Key {
+  fn twice(self, x: a) -> String { "{Key.key(x)}{Key.key(x)}" }
+}
+
+trait Same(k) where k: Equal {
+  fn same(self, a: k, b: k) -> Bool { a == b }
+}
+
+trait Same(a) for W where a: Equal {}
+
+fn main() {
+  println(Tbl.show(W { v: 1 }, 5))
+  println(Tbl.show(W { v: 1 }, "x"))
+  println(Tbl.twice(W { v: 1 }, 7))
+  println(Same.same(W { v: 1 }, 1, 1))
+  println(Same.same(W { v: 1 }, "a", "b"))
+}

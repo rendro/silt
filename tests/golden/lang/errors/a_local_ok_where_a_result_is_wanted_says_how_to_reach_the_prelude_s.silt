@@ -1,8 +1,8 @@
 -- exit: 1
 -- A variant `Ok` of the program's `Reply` hides the prelude's `Ok`:
--- as an arm of a `match` that is to give a `Result(Int, String)`, it makes the
--- `match` a `Reply`. The mismatch, and the one at the other arm, mark the
--- `Ok` and name `Result.Ok`, which reaches the prelude's.
+-- as an arm of a `match` that is to give a `Result(Int, String)`, it is a
+-- `Reply`, and the mismatch is at that arm alone: it marks the `Ok` and
+-- names `Result.Ok`, which reaches the prelude's.
 type Reply { Ok(Int), Refused }
 
 fn pick(n: Int) -> Result(Int, String) {

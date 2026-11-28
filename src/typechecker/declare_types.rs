@@ -459,12 +459,15 @@ impl TypeChecker {
         // already in the registry, collapsing a multi-step chain
         // (`A -> B -> A`) to a one-step self-reference and obscuring
         // the diagnostic. The inner resolver leaves alias references
-        // as `Type::Generic(alias_name, args)` so `find_alias_cycle`
-        // can walk the full chain by lookup_alias-driven recursion.
+        // as `Type::Generic(alias_name, args)`, in its parts too
+        // (`alias_parts_as_written`), so `find_alias_cycle` can walk the
+        // full chain by lookup_alias-driven recursion.
         // The outer registration step (`register_alias` below) then
         // stores the un-expanded target — canonicalisation expands at
         // every use site instead.
+        let outer = std::mem::replace(&mut self.alias_parts_as_written, true);
         let target_ty = self.resolve_declared(td, target_te, known, param_vars, false);
+        self.alias_parts_as_written = outer;
 
         // Detect cycles before registering. Build a chain that names
         // every alias visited; if `td.name` appears, report it.

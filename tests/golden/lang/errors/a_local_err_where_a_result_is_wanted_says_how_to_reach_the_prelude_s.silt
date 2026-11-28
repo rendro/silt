@@ -1,8 +1,8 @@
 -- exit: 1
 -- A variant `Err` of the program's `Fault` hides the prelude's `Err`:
--- as an arm of a `match` that is to give a `Result(Int, String)`, it makes the
--- `match` a `Fault`. The mismatch, and the one at the other arm, mark the
--- `Err` and name `Result.Err`, which reaches the prelude's.
+-- as an arm of a `match` that is to give a `Result(Int, String)`, it is a
+-- `Fault`, and the mismatch is at that arm alone: it marks the `Err` and
+-- names `Result.Err`, which reaches the prelude's.
 type Fault { Err(String), Fine }
 
 fn pick(n: Int) -> Result(Int, String) {

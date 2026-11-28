@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: the fields of variant 'Circle' are written in parentheses, not braces
+-- stderr-contains: help: write `Circle(Float)`
+-- stderr-contains: help: or, to name the fields, declare a record, `type Circle { radius: Float }`, and write the variant `Circle(Circle)`
+-- stderr-contains: error[parse]: the fields of variant 'Rect' are written in parentheses, not braces
+-- stderr-contains: help: write `Rect(Float, Float)`
+-- stderr-not-contains: enum variant list
+-- stderr-not-contains: error[type]
+-- A variant with named fields, as Rust and Swift write it: the error
+-- says how silt writes it, and the variant goes on with the fields'
+-- types, so the uses of it check.
+type Shape {
+  Circle { radius: Float },
+  Rect { w: Float, h: Float },
+}
+
+fn main() {
+  match Circle(1.0) {
+    Circle(r) -> println(r)
+    Rect(w, h) -> println(w * h)
+  }
+}

@@ -162,6 +162,14 @@ pub(crate) struct TypeChecker {
     pub(super) written_bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
+    /// The type the next expression checked is to be, when its place
+    /// says (a function's declared result, for its body): a block hands
+    /// it to its last expression, a `match` checks each arm against it.
+    /// Any other expression drops it.
+    pub(super) wanted_result: Option<Type>,
+    /// The `wanted_result` of the block or `match` being checked, taken
+    /// by `infer_expr` for it.
+    pub(super) wanted_here: Option<Type>,
     /// The function whose body is being checked, when it is declared to
     /// return `Never`: a `return` in it is an error.
     pub(super) never_fn: Option<Symbol>,
@@ -544,6 +552,10 @@ pub(crate) struct TypeChecker {
     /// parameters: they are types (`type parameter 'm' of 'Wrapped' is
     /// written with a type argument`).
     pub(super) declaring_type: Option<(Symbol, Vec<Symbol>)>,
+    /// While the target of a type alias is resolved: the aliases in its
+    /// parts stay as written (`Option(A)` keeps `A`, not what `A`
+    /// stands for), so that a cycle through them names each alias.
+    pub(super) alias_parts_as_written: bool,
     /// Where a signature first writes each of its type constructor
     /// variables applied (`xs: m(Int)`), for the error of an annotation
     /// in its body that writes one without a type argument.
@@ -872,6 +884,8 @@ impl TypeChecker {
             bounds: HashMap::new(),
             written_bounds: HashMap::new(),
             current_return_type: None,
+            wanted_result: None,
+            wanted_here: None,
             never_fn: None,
             written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
@@ -975,6 +989,7 @@ impl TypeChecker {
             type_param_vars: Default::default(),
             constructor_traits: Default::default(),
             declaring_type: None,
+            alias_parts_as_written: false,
             constructor_labels: HashMap::new(),
             bare_labels: HashMap::new(),
             refused_bodies: std::collections::HashSet::new(),
