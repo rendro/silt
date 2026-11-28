@@ -756,9 +756,10 @@ fn a_request_beyond_a_limit_is_refused() {
 }
 
 /// The bodies that the server holds for requests that no handler has
-/// yet have a bound together: a body that would go beyond it is
-/// refused before the client is told to send it, and there is room
-/// again when a body has been handed to its handler.
+/// yet have a bound together, of the bytes of them that have come: a
+/// head that announces a body takes no room, so every client is told to
+/// send its body; the one whose bytes go beyond the room that is left is
+/// refused then, and the others are served.
 #[test]
 fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
     let server = Server::new(
@@ -767,16 +768,16 @@ fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
     let largest = format!(
         "POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {BODY_MAX}\r\n\r\n"
     );
-    // A client that is told to send its body has room for it.
+    // A client that is told to send its body.
     let told_to_go_on = |client: &mut Client| {
         let mut line = String::new();
         client.0.read_line(&mut line).expect("the interim response");
         assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
         client.0.read_line(&mut line).expect("its end");
     };
-    // As many bodies of the largest size as the bound holds, none of
-    // them sent.
-    let mut waiting: Vec<Client> = (0..BODIES_MAX / BODY_MAX)
+    // One more body of the largest size than the bound holds: each is
+    // announced and told to go on, as no byte of it has come.
+    let mut clients: Vec<Client> = (0..=BODIES_MAX / BODY_MAX)
         .map(|_| {
             let mut client = server.connect();
             client.send(largest.as_bytes());
@@ -784,41 +785,33 @@ fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
             client
         })
         .collect();
-    // One more has no room, and is not told to send.
-    let mut refused = server.connect();
-    refused.send(largest.as_bytes());
+    // What the announced bodies hold leaves room for a small one.
+    let small = server.ask(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
+    assert_eq!((small.status, small.body.as_str()), (200, "5"));
+    // All of each body but its last byte, from all of them: more than
+    // the bound, and no body is whole. One is refused when its bytes
+    // go beyond what is left: once all of them have come, at the latest.
+    // (A refused client is read and dropped for a while: its bytes go.)
+    let all_but_one = vec![b'b'; BODY_MAX - 1];
+    for client in &mut clients {
+        let _ = client.0.get_ref().write_all(&all_but_one);
+    }
+    let limit = Instant::now() + PATIENCE;
+    let refused = loop {
+        if let Some(at) = clients.iter_mut().position(|client| client.has_word()) {
+            break at;
+        }
+        assert!(Instant::now() < limit, "no body was refused");
+        thread::sleep(Duration::from_millis(2));
+    };
+    let mut refused = clients.remove(refused);
     let response = refused.response();
     assert_eq!(response.status, 503);
     assert_eq!(response.header("Connection"), Some("close"));
-    assert_eq!(refused.rest(), b"");
-    // What is left of the room still serves a small one.
-    let small = server.ask(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
-    assert_eq!((small.status, small.body.as_str()), (200, "5"));
-    // A body that has reached its handler makes room for another.
-    let mut first = waiting.pop().expect("a waiting client");
-    first.send(&vec![b'b'; BODY_MAX]);
-    assert_eq!(first.response().body, BODY_MAX.to_string());
-    let mut next = server.connect();
-    next.send(largest.as_bytes());
-    told_to_go_on(&mut next);
-    // And so does a client that leaves without sending its body, once
-    // the server has seen it leave.
-    drop(waiting.pop());
-    let limit = Instant::now() + PATIENCE;
-    loop {
-        let mut another = server.connect();
-        another.send(largest.as_bytes());
-        let mut line = String::new();
-        another.0.read_line(&mut line).expect("an answer");
-        if line == "HTTP/1.1 100 Continue\r\n" {
-            break;
-        }
-        assert!(line.starts_with("HTTP/1.1 503 "), "{line:?}");
-        assert!(
-            Instant::now() < limit,
-            "a client that left still has its room"
-        );
-        thread::sleep(Duration::from_millis(2));
+    // The others fit: each is served when its last byte comes.
+    for client in &mut clients {
+        client.send(b"b");
+        assert_eq!(client.response().body, BODY_MAX.to_string());
     }
 }
 

@@ -543,11 +543,12 @@ say `text/plain; charset=UTF-8`.) There is no `Server` header.
 | Headers of a request | 100 | `431`, connection closed |
 | The body of a request | 10,000,000 bytes | `413`, connection closed |
 | The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10,000,000 bytes | `Err(InvalidResponse("the body is larger than 10000000 bytes"))`; no more than one byte beyond the limit is read |
-| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known), those that wait in the queue for a handler, and those about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
+| The bodies, together, of the requests that no handler has yet: those being read (a body counts the bytes of it that have come, as they come, not the length its head announces), those that wait in the queue for a handler, and those about to be handed over | 256 MiB | `503`, connection closed: the request whose body grows past the room that is left is refused then, and the rest of its body is not read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
 | What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A body of 10,000,000 bytes in chunks of 100 bytes is within it; a body cut into single bytes is not.) |
 | The trailers of a chunked body | 64 KiB | `431`, connection closed |
+| Connections open at once | 1,024 | the connection that has waited longest for its next request, and has sent nothing of it, is closed without a word to make room for the new one; if none waits so, no connection more is accepted until one ends (clients wait in the listener's queue) |
 | Handlers being called | 128 | the request waits in the queue |
 | Requests that wait for a handler | 1,024 | `503` at once |
 | Time a request waits for a handler | 5 s | `503` |
@@ -592,7 +593,12 @@ An `Expect` header that asks for anything but `100-continue` is answered
   `http://`, the host the request names (its `Host` header) and the target
   as sent, in its normal form. Route on `url.segments(req.url)`, the
   path's segments decoded (`/users/a%20b` is `["users", "a b"]`, `%2F` a
-  `/` inside one segment, a `/` at the end a last `""`); read the query
+  `/` inside one segment, a `/` at the end a last `""`). Once decoded, a
+  segment may hold a `/`, a `\`, a NUL byte, and `..` with them:
+  `/a/..%2F..%2Fetc%2Fpasswd` is `["a", "../../etc/passwd"]`. Check a
+  segment before you use it as a file name: a handler that serves files
+  and joins the segments with `/` serves what is outside its folder too.
+  Read the query
   with `url.query(req.url)`, its pairs decoded. `.` and `..` are taken out
   before the handler sees the URL (`/a/../b` arrives as `/b`), and so is
   a needless escape (`%7e` arrives as `~`): the text exactly as the client
@@ -631,7 +637,9 @@ serves does: the listener stays bound and can be served again.
 
 Every connection that waits for a request has one I/O operation in
 flight, of the 4,096 a program can have (see
-[concurrency](../concurrency.md)).
+[concurrency](../concurrency.md)). With at most 1,024 connections open,
+a server leaves the rest of the program 3,072 of them, however many
+clients connect.
 
 ### The listener while it is served
 

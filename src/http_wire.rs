@@ -49,12 +49,14 @@ pub(crate) const METHOD_MAX: usize = 32;
 
 /// The most bytes of request bodies that the server holds at a time
 /// for requests that no handler has yet: bodies that are being read
-/// (a body counts from when its length is known, or chunk by chunk)
-/// and bodies that are read and wait to be handed over. A request
-/// whose body does not fit is refused, 503: it is not made to wait,
-/// which would hold its connection and a thread for a body that has
-/// no room, on the client's time. A body of the largest size always
-/// fits when no other is held.
+/// (a body counts the bytes of it that have arrived, not the length
+/// its head announces: a peer that announces long bodies and sends
+/// little of them holds what it sent) and bodies that are read and
+/// wait to be handed over. A request whose body grows past the room
+/// that is left is refused then, 503: it is not made to wait, which
+/// would hold its connection and a thread for a body that has no room,
+/// on the client's time. A body of the largest size always fits when
+/// no other is held.
 ///
 /// The limit of handlers bounds the bodies beyond this: with every
 /// handler holding a request of the largest size, `HANDLERS_MAX`
@@ -105,9 +107,19 @@ pub const TRANSFER_TIME: Duration = Duration::from_secs(5 * 60);
 /// is still sending before the answer does.
 pub const REFUSAL_TIME: Duration = Duration::from_secs(5);
 
+/// The most connections a server keeps open at a time. A client
+/// beyond it closes the connection that has waited longest for its
+/// next request, one that sent nothing of it; if none waits, it is
+/// not accepted until a connection ends. Each open connection may
+/// have one I/O operation in flight, of the program's 4,096
+/// (`IO_POOL_THREADS_MAX`): the rest of the program keeps 3,072 of
+/// them, whoever connects.
+pub(crate) const CONNS_MAX: usize = 1024;
+
 /// How long the server waits before it accepts again after an accept
 /// that failed (the process has no descriptor left, the I/O pool no
-/// thread).
+/// thread), and at most before it looks again when it has
+/// [`CONNS_MAX`] connections and none of them waits for a request.
 pub(crate) const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
 /// A request, read whole.
@@ -165,8 +177,8 @@ pub struct Reader<R> {
     /// ([`Reader::has_begun`]), for who waits for the reader
     /// elsewhere.
     begun: Arc<AtomicBool>,
-    /// Asked before so many more bytes of a body are read: whether
-    /// the server has room for them ([`BODIES_MAX`]).
+    /// Asked as bytes of a body arrive, for so many more: whether the
+    /// server has room for them ([`BODIES_MAX`]).
     room: Box<dyn FnMut(usize) -> bool + Send>,
 }
 
@@ -178,8 +190,8 @@ impl<R: Read> Reader<R> {
         Reader::with_room(stream, |_| true)
     }
 
-    /// A reader that asks `room` before it reads so many more bytes
-    /// of a body, and refuses the request (503) where there is none.
+    /// A reader that asks `room` for the bytes of a body as they arrive,
+    /// and refuses the request (503) where there is none.
     pub(crate) fn with_room(
         stream: R,
         room: impl FnMut(usize) -> bool + Send + 'static,
@@ -280,11 +292,12 @@ impl<R: Read> Reader<R> {
         let body = match framing {
             Framing::None | Framing::Length(0) => Vec::new(),
             Framing::Length(length) => {
-                if !(self.room)(length) {
-                    return Err(Next::Refused(NO_ROOM));
-                }
+                // What of the body came with the head counts now, the
+                // rest as it arrives.
+                let mut counted = 0;
+                self.count(length, &mut counted)?;
                 announce(self)?;
-                self.exactly(length)?
+                self.exactly(length, &mut counted)?
             }
             Framing::Chunked => {
                 announce(self)?;
@@ -425,12 +438,30 @@ impl<R: Read> Reader<R> {
         }
     }
 
-    /// Exactly `length` bytes.
-    fn exactly(&mut self, length: usize) -> Step<Vec<u8>> {
+    /// Count the bytes of a body of `length` that have come and are not
+    /// in `counted` yet ([`Reader::with_room`]): a body takes room for
+    /// what has arrived, not for what its length announces. Beyond the
+    /// room there is: 503.
+    fn count(&mut self, length: usize, counted: &mut usize) -> Step<()> {
+        let here = self.buf.len().min(length);
+        if here > *counted {
+            if !(self.room)(here - *counted) {
+                return Err(Next::Refused(NO_ROOM));
+            }
+            *counted = here;
+        }
+        Ok(())
+    }
+
+    /// Exactly `length` bytes of a body, each counted as it arrives;
+    /// `counted` of them have been.
+    fn exactly(&mut self, length: usize, counted: &mut usize) -> Step<Vec<u8>> {
+        self.count(length, counted)?;
         while self.buf.len() < length {
             if !self.more()? {
                 return Err(Next::End);
             }
+            self.count(length, counted)?;
         }
         // The bytes themselves, not a copy of them: what was read
         // beyond them is the lesser part.
@@ -505,10 +536,7 @@ impl<R: Read> Reader<R> {
             if size > (BODY_MAX - body.len()) as u64 {
                 return Err(Next::Refused(BODY_TOO_LARGE));
             }
-            if !(self.room)(size as usize) {
-                return Err(Next::Refused(NO_ROOM));
-            }
-            body.extend(self.exactly(size as usize)?);
+            body.extend(self.exactly(size as usize, &mut 0)?);
             if !self.line(0, BAD_CHUNKS)?.is_empty() {
                 return Err(Next::Refused(BAD_CHUNKS));
             }
@@ -969,9 +997,10 @@ mod tests {
         ));
     }
 
-    /// A reader that is told there is no room refuses the body, by
-    /// its length before a byte of it is read, or at the chunk that
-    /// does not fit; and it asks for no more than the body has.
+    /// A reader that is told there is no room refuses the body, at the
+    /// bytes of it that do not fit (those that came with the head before
+    /// the client is told to send the rest), or at the chunk that does
+    /// not fit; and it asks for no more than the body has.
     #[test]
     fn a_body_that_has_no_room_is_refused() {
         let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1012,6 +1041,61 @@ mod tests {
         let next = reader(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n", 0).next(&mut |_| Ok(()));
         assert!(matches!(next, Next::Request(_)));
         assert!(asked.lock().unwrap().is_empty());
+    }
+
+    /// A body takes room for the bytes of it that have arrived, as they
+    /// arrive, not for the length its head announces: a head that
+    /// announces 10,000,000 bytes and is followed by one takes one. A
+    /// body that grows past the room left is refused then (503).
+    #[test]
+    fn a_body_takes_room_for_what_has_arrived() {
+        /// A stream that gives its pieces one read each, then ends.
+        struct Pieces(std::collections::VecDeque<&'static [u8]>);
+        impl Read for Pieces {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let Some(piece) = self.0.pop_front() else {
+                    return Ok(0);
+                };
+                buf[..piece.len()].copy_from_slice(piece);
+                Ok(piece.len())
+            }
+        }
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let reader = |pieces: &[&'static [u8]], room: usize| {
+            let asked = asked.clone();
+            asked.lock().unwrap().clear();
+            let mut left = room;
+            let stream = Pieces(pieces.iter().copied().collect());
+            Reader::with_room(stream, move |wanted| {
+                asked.lock().unwrap().push(wanted);
+                let fits = wanted <= left;
+                if fits {
+                    left -= wanted;
+                }
+                fits
+            })
+        };
+        let head: &[u8] = b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10000000\r\n\r\n";
+        let next = reader(&[head, b"a"], 1).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::End), "{next:?}");
+        assert_eq!(*asked.lock().unwrap(), [1]);
+        // With the head, and after it.
+        let head: &[u8] = b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhe";
+        let next = reader(&[head, b"l", b"lo"], 5).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::Request(request) if request.body == b"hello"));
+        assert_eq!(*asked.lock().unwrap(), [2, 1, 2]);
+        let next = reader(&[head, b"l", b"lo"], 4).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::Refused(Refused { status: 503, .. })));
+        assert_eq!(*asked.lock().unwrap(), [2, 1, 2]);
+        // A chunk the same way, and the bytes beyond a body are not its.
+        let head: &[u8] = b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+        let next = reader(&[head, b"ff\r\nab", b"c"], 3).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::End), "{next:?}");
+        assert_eq!(*asked.lock().unwrap(), [2, 1]);
+        let pipelined: &[u8] = b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n";
+        let next = reader(&[pipelined, b"abGET / HTTP/1.1\r\n"], 2).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::Request(request) if request.body == b"ab"));
+        assert_eq!(*asked.lock().unwrap(), [2]);
     }
 
     /// HTTP/1.0 had no Host header: a request without one is served.

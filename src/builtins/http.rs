@@ -1488,6 +1488,19 @@ struct Server {
     /// The tasks of the connections that have not ended; `None` once
     /// the server has ended: no connection goes on then.
     conns: Mutex<Option<HashMap<usize, Arc<TaskHandle>>>>,
+    /// How many connections the server keeps open at a time
+    /// ([`wire::CONNS_MAX`]).
+    conns_max: usize,
+    /// The connections that wait for their next request, by when they
+    /// began to wait (oldest first): at the limit of connections, the
+    /// one that has waited longest is closed ([`Server::room_for_one_more`]).
+    idle: Mutex<std::collections::BTreeMap<u64, Idler>>,
+    /// Where the next of `idle` is put.
+    idle_keys: std::sync::atomic::AtomicU64,
+    /// Completed when a connection ends, for a server that has as many
+    /// as it may keep and none that waits for a request. Set and taken
+    /// under the lock of `conns`.
+    room: Mutex<Option<Arc<Cell<()>>>>,
     /// The flags that stop the task that serves: its cancel and the end
     /// of its deadline. Once one is set the server is stopped
     /// ([`Server::stopped`]), though its frame may not have ended yet.
@@ -1553,6 +1566,46 @@ impl Server {
         left == 0
     }
 
+    /// Room for one more connection ([`wire::CONNS_MAX`]): there is, or
+    /// the connection that has waited longest for its next request is
+    /// closed to make it. `Err(room)` if there is none, every connection
+    /// being busy with a request: `room` is completed when one ends.
+    fn room_for_one_more(&self) -> Result<(), Arc<Cell<()>>> {
+        let open = |conns: &Option<HashMap<usize, Arc<TaskHandle>>>| {
+            conns.as_ref().map_or(0, HashMap::len)
+        };
+        if open(&self.conns.lock()) < self.conns_max || self.close_the_longest_idle() {
+            return Ok(());
+        }
+        let conns = self.conns.lock();
+        if open(&conns) < self.conns_max {
+            return Ok(());
+        }
+        let room = Cell::new();
+        *self.room.lock() = Some(room.clone());
+        Err(room)
+    }
+
+    /// Close the connection that has waited longest for its next
+    /// request and has had none of it: `false` if no connection waits
+    /// so. Its task ends as one whose client went away.
+    fn close_the_longest_idle(&self) -> bool {
+        let mut idle = self.idle.lock();
+        let Some(key) = idle
+            .iter()
+            .find(|(_, idler)| idler.waits())
+            .map(|(key, _)| *key)
+        else {
+            return false;
+        };
+        let idler = idle.remove(&key);
+        drop(idle);
+        if let Some(idler) = idler {
+            idler.stream.shut_down();
+        }
+        true
+    }
+
     /// Complete `cell`, of a request that waits: `false` if it is
     /// complete already.
     fn complete(&self, cell: &Cell<()>) -> bool {
@@ -1560,6 +1613,48 @@ impl Server {
             Some(scheduler) => cell.complete((), scheduler.wake()).is_ok(),
             None => cell.complete((), &Nobody).is_ok(),
         }
+    }
+}
+
+/// A connection that waits for its next request, as the server sees
+/// it ([`Server::idle`]).
+#[cfg(feature = "http")]
+struct Idler {
+    stream: Arc<TcpStreamHandle>,
+    /// Bytes of the request were there when the wait began
+    /// ([`wire::Reader::begun`]).
+    begun: Arc<AtomicBool>,
+    /// Bytes have come since the wait began ([`Reads`]).
+    heard: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "http")]
+impl Idler {
+    /// Whether the connection has had nothing of its next request: its
+    /// client sends nothing.
+    fn waits(&self) -> bool {
+        !self.begun.load(Ordering::SeqCst) && !self.heard.load(Ordering::SeqCst)
+    }
+}
+
+/// A connection's place among those that wait for a request
+/// ([`Server::idle`]), until this is dropped: when its wait is over.
+#[cfg(feature = "http")]
+struct IdleMark(Arc<Server>, u64);
+
+#[cfg(feature = "http")]
+impl IdleMark {
+    fn new(server: &Arc<Server>, idler: Idler) -> IdleMark {
+        let key = server.idle_keys.fetch_add(1, Ordering::Relaxed);
+        server.idle.lock().insert(key, idler);
+        IdleMark(server.clone(), key)
+    }
+}
+
+#[cfg(feature = "http")]
+impl Drop for IdleMark {
+    fn drop(&mut self) {
+        self.0.idle.lock().remove(&self.1);
     }
 }
 
@@ -1833,13 +1928,19 @@ pub(crate) fn request_url(target: &str, headers: &[(String, String)], local: &st
 }
 
 /// The read half of a connection, for the reader of its requests.
+/// The second is set when bytes come: the connection was heard from
+/// ([`Idler::heard`]).
 #[cfg(feature = "http")]
-struct Reads(Arc<TcpStreamHandle>);
+struct Reads(Arc<TcpStreamHandle>, Arc<AtomicBool>);
 
 #[cfg(feature = "http")]
 impl std::io::Read for Reads {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.0.read(buf)
+        let n = self.0.read(buf)?;
+        if n > 0 {
+            self.1.store(true, Ordering::SeqCst);
+        }
+        Ok(n)
     }
 }
 
@@ -2005,6 +2106,12 @@ struct Conn {
     /// The bytes that the reader has had counted for the body of the
     /// request it is reading ([`Held::reserve`]).
     pending: Arc<AtomicUsize>,
+    /// Bytes have come since the wait for the next request began
+    /// ([`Reads`]).
+    heard: Arc<AtomicBool>,
+    /// The connection's place among those that wait for their next
+    /// request, while it waits for one.
+    idle: Option<IdleMark>,
     /// How many requests the task has served since it last gave way
     /// (see [`Conn::TURN`]).
     served: usize,
@@ -2179,6 +2286,16 @@ impl Conn {
     fn read(&mut self, vm: &mut Vm) -> Step {
         // The task waits: its turn is over.
         self.served = 0;
+        // It waits for its next request, which may be long: at the
+        // limit of connections, one that has waited longest and had
+        // nothing of it is closed.
+        self.heard.store(false, Ordering::SeqCst);
+        let idler = Idler {
+            stream: self.stream.clone(),
+            begun: self.begun.clone(),
+            heard: self.heard.clone(),
+        };
+        self.idle = Some(IdleMark::new(&self.server, idler));
         let got: Arc<Mutex<Option<Got>>> = Arc::default();
         let body_follows: Arc<Cell<()>> = Cell::new();
         let (reader, stream, stopped) = (
@@ -2328,6 +2445,8 @@ impl Conn {
             reader: self.reader.clone(),
             begun: self.begun.clone(),
             pending: self.pending.clone(),
+            heard: self.heard.clone(),
+            idle: None,
             served: 0,
             state: ConnState::Answering {
                 bytes: plain_response(vm, 500, wire::reason(500), reply),
@@ -2347,6 +2466,8 @@ impl Conn {
     /// Go on from the state the task is in. `input` is what the
     /// handler returned, where it was called.
     fn go(&mut self, vm: &mut Vm, input: Value) -> Result<Go, VmError> {
+        // A wait for the next request is over, whatever it gave.
+        self.idle = None;
         Ok(match std::mem::replace(&mut self.state, ConnState::Ended) {
             // A task that was cancelled, or whose server was stopped,
             // serves no further request.
@@ -2579,14 +2700,19 @@ impl Drop for Conn {
         // An operation in flight first: it is given up with the
         // connection.
         self.state = ConnState::Ended;
+        self.idle = None;
         self.stream.shut_down();
-        let left = match self.server.conns.lock().as_mut() {
+        let (left, room) = match self.server.conns.lock().as_mut() {
             Some(conns) => {
                 conns.remove(&self.handle.id);
-                conns.len()
+                (conns.len(), self.server.room.lock().take())
             }
-            None => 0,
+            None => (0, None),
         };
+        // A server that waits for room for a connection has it.
+        if let Some(room) = room {
+            self.server.complete(&room);
+        }
         // The last connection of a server that drains: the drain is over.
         if left == 0 && self.server.draining() {
             self.server.complete(&self.server.drained);
@@ -2635,10 +2761,11 @@ impl Serve {
         let mut child = vm.spawn_child();
         child.spawned = true;
         let pending = Arc::new(AtomicUsize::new(0));
+        let heard = Arc::new(AtomicBool::new(false));
         let (server, counted) = (self.server.clone(), pending.clone());
-        let reader = wire::Reader::with_room(Reads(stream.clone()), move |bytes| {
-            Held::reserve(&server, &counted, bytes)
-        });
+        let reads = Reads(stream.clone(), heard.clone());
+        let reader =
+            wire::Reader::with_room(reads, move |bytes| Held::reserve(&server, &counted, bytes));
         let begun = reader.begun();
         // (A connection whose address cannot be read, already reset by
         // its client, has an empty one: it reads nothing either.)
@@ -2658,6 +2785,8 @@ impl Serve {
             reader: Arc::new(Mutex::new(reader)),
             begun,
             pending,
+            heard,
+            idle: None,
             served: 0,
             stream,
             state: ConnState::Next,
@@ -2666,6 +2795,20 @@ impl Serve {
         // A task that cannot be started (the program has as many as it
         // may have) is dropped, and its connection closed.
         let _ = vm.scheduler().submit(id, child, handle);
+    }
+}
+
+#[cfg(feature = "http")]
+impl Serve {
+    /// The server has as many connections as it keeps, and none waits
+    /// for a request: it accepts again when one ends (`room`), and
+    /// looks again after [`wire::ACCEPT_RETRY`] (a connection may have
+    /// come to wait, or the listener been closed).
+    fn wait_for_room(&mut self, vm: &mut Vm, room: Arc<Cell<()>>) -> Step {
+        self.state = ServeState::Retrying;
+        let wait = Wait::new(vec![Arm::Cell(room)])
+            .deadline(vm.runtime.io.deadline_after(wire::ACCEPT_RETRY));
+        Step::park(wait)
     }
 }
 
@@ -2742,9 +2885,22 @@ impl crate::vm::Native for Serve {
                     return Ok(Step::park(wait));
                 };
                 self.failing = false;
+                // At the limit of connections, with none that waits for
+                // a request, the client waits in the listener's queue
+                // until one ends.
+                if let Err(room) = self.server.room_for_one_more() {
+                    if let Some(socket) = stream.socket() {
+                        self.listener.keep(socket);
+                    }
+                    return Ok(self.wait_for_room(vm, room));
+                }
                 self.connection(vm, stream);
                 // The accept took what else was ready with it.
                 while let Some(ready) = self.listener.take_kept() {
+                    if let Err(room) = self.server.room_for_one_more() {
+                        self.listener.keep(ready);
+                        return Ok(self.wait_for_room(vm, room));
+                    }
                     let ready = TcpStreamHandle::plain(vm.next_tcp_id(), ready);
                     self.connection(vm, ready);
                 }
@@ -2863,6 +3019,10 @@ builtins! {
                 drained: Cell::new(),
                 bodies: AtomicUsize::new(0),
                 conns: Mutex::new(Some(HashMap::new())),
+                conns_max: wire::CONNS_MAX,
+                idle: Mutex::default(),
+                idle_keys: Default::default(),
+                room: Mutex::default(),
                 stops: vm.cancelled.iter().chain(&vm.over).cloned().collect(),
             }),
             listener: listener.clone(),
@@ -3064,17 +3224,18 @@ mod serve_tests {
 
     /// A connection of server A on the server's side, and the client's
     /// end of it.
-    fn connection_of(vm: &mut Vm, server: &Arc<Server>) -> (Conn, std::net::TcpStream) {
+    pub(super) fn connection_of(vm: &mut Vm, server: &Arc<Server>) -> (Conn, std::net::TcpStream) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
         let client =
             std::net::TcpStream::connect(listener.local_addr().unwrap()).expect("a connection");
         let (accepted, _) = listener.accept().expect("accepted");
         let stream = TcpStreamHandle::plain(vm.next_tcp_id(), accepted);
         let pending = Arc::new(AtomicUsize::new(0));
+        let heard = Arc::new(AtomicBool::new(false));
         let (held_by, counted) = (server.clone(), pending.clone());
-        let reader = wire::Reader::with_room(Reads(stream.clone()), move |bytes| {
-            Held::reserve(&held_by, &counted, bytes)
-        });
+        let reads = Reads(stream.clone(), heard.clone());
+        let reader =
+            wire::Reader::with_room(reads, move |bytes| Held::reserve(&held_by, &counted, bytes));
         let conn = Conn {
             peer: "127.0.0.1:1".into(),
             local: "127.0.0.1:2".into(),
@@ -3083,6 +3244,8 @@ mod serve_tests {
             begun: reader.begun(),
             reader: Arc::new(Mutex::new(reader)),
             pending,
+            heard,
+            idle: None,
             served: 0,
             stream,
             state: ConnState::Next,
@@ -3104,12 +3267,16 @@ mod serve_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            conns_max: wire::CONNS_MAX,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
             stops: vec![stop.clone()],
         })
     }
 
     /// All that the client gets until the connection ends.
-    fn all_of(mut client: std::net::TcpStream) -> String {
+    pub(super) fn all_of(mut client: std::net::TcpStream) -> String {
         use std::io::Read;
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -3214,6 +3381,10 @@ mod serve_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            conns_max: wire::CONNS_MAX,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
             stops: Vec::new(),
         });
         let mut serve = Serve {
@@ -3236,6 +3407,134 @@ mod serve_tests {
             listener.take_kept().is_some(),
             "the connection is not the listener's"
         );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod conns_max_tests {
+    use super::serve_tests::{all_of, connection_of};
+    use super::*;
+    use crate::runtime::sync::Outcome;
+    use crate::vm::Native;
+    use std::time::Instant;
+
+    /// A server that keeps at most `max` connections open.
+    fn keeping(vm: &Vm, max: usize) -> Arc<Server> {
+        Arc::new(Server {
+            handler: Value::Unit,
+            owner: 0,
+            handlers: AtomicUsize::new(0),
+            queue: Mutex::default(),
+            scheduler: Arc::downgrade(vm.scheduler()),
+            draining: AtomicBool::new(false),
+            drain_begun: Cell::new(),
+            drained: Cell::new(),
+            bodies: AtomicUsize::new(0),
+            conns: Mutex::new(Some(HashMap::new())),
+            conns_max: max,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
+            stops: Vec::new(),
+        })
+    }
+
+    /// `conn` counts among the server's open connections.
+    fn opened(server: &Server, conn: &Conn) {
+        let mut conns = server.conns.lock();
+        conns
+            .as_mut()
+            .expect("a server")
+            .insert(conn.handle.id, conn.handle.clone());
+    }
+
+    /// At the limit of connections, the one that has waited longest
+    /// for its next request, and had nothing of it, is closed to make
+    /// room; one whose client has begun to send its request is not.
+    /// With none that waits, there is no room until a connection ends,
+    /// and then the server is told.
+    #[test]
+    fn at_the_limit_the_connection_that_waited_longest_for_a_request_is_closed() {
+        use std::io::Write;
+        let mut vm = Vm::new(crate::HostIo::process());
+        let server = keeping(&vm, 3);
+        let (mut old, old_client) = connection_of(&mut vm, &server);
+        let (mut begun, mut begun_client) = connection_of(&mut vm, &server);
+        let (mut new, _new_client) = connection_of(&mut vm, &server);
+        for conn in [&mut begun, &mut old, &mut new] {
+            opened(&server, conn);
+        }
+        // The first to wait has begun its request; the second waits
+        // longest of those that sent nothing.
+        for conn in [&mut begun, &mut old, &mut new] {
+            let step = conn.resume(&mut vm, Value::Unit);
+            assert!(matches!(step, Ok(Step::Park(_))), "it did not wait");
+        }
+        begun_client.write_all(b"GE").expect("a part of a request");
+        let limit = Instant::now() + Duration::from_secs(10);
+        while !begun.heard.load(Ordering::SeqCst) {
+            assert!(Instant::now() < limit, "the bytes did not come");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(server.room_for_one_more().is_ok(), "no room was made");
+        assert_eq!(all_of(old_client), "", "the oldest waiting was not closed");
+        assert!(!begun.stream.is_closed() && !new.stream.is_closed());
+        // The newer one that waits is next.
+        assert!(server.room_for_one_more().is_ok(), "no room was made");
+        assert!(new.stream.is_closed() && !begun.stream.is_closed());
+        // None waits: no room, until a connection ends.
+        let Err(room) = server.room_for_one_more() else {
+            panic!("room without a connection that waits");
+        };
+        assert!(room.get().is_none());
+        drop(old);
+        assert!(room.get().is_some(), "the end of a connection was not told");
+        assert!(server.room_for_one_more().is_ok());
+        drop((begun, new));
+    }
+
+    /// A server at its limit of connections, none of which waits for a
+    /// request, leaves a client it accepts to the listener, for the
+    /// accept after a connection has ended: it starts no task for it,
+    /// and waits.
+    #[test]
+    fn at_the_limit_a_client_is_left_to_the_listener() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let bound = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let addr = bound.local_addr().expect("its address");
+        let listener = Arc::new(TcpListenerHandle::new(0, bound));
+        let token = listener.serve(None).expect("nobody serves it");
+        let op = super::super::tcp::accept_op(&mut vm, &listener, true);
+        let _client = std::net::TcpStream::connect(addr).expect("a connection");
+        let limit = Instant::now() + Duration::from_secs(10);
+        while !op.finished() {
+            assert!(Instant::now() < limit, "the accept did not return");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let server = keeping(&vm, 1);
+        let (busy, _busy_client) = connection_of(&mut vm, &server);
+        opened(&server, &busy);
+        let mut serve = Serve {
+            server: server.clone(),
+            listener: listener.clone(),
+            token,
+            scheduler: Arc::downgrade(vm.scheduler()),
+            state: ServeState::Accepting(op),
+            failing: false,
+        };
+        vm.woken = Some(Fired::Arm(0, Outcome::Done));
+        let step = serve.resume(&mut vm, Value::Unit);
+        assert!(matches!(step, Ok(Step::Park(_))), "the server went on");
+        assert!(matches!(serve.state, ServeState::Retrying));
+        let open = server.conns.lock().as_ref().map(HashMap::len);
+        assert_eq!(open, Some(1), "a task was started for the client");
+        assert!(server.room.lock().is_some(), "the server waits for nothing");
+        assert!(
+            listener.take_kept().is_some(),
+            "the client is not the listener's"
+        );
+        drop(busy);
+        assert!(server.room.lock().is_none());
     }
 }
 
@@ -3277,6 +3576,10 @@ mod queue_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            conns_max: wire::CONNS_MAX,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
             stops: Vec::new(),
         })
     }
