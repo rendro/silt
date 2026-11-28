@@ -10,8 +10,9 @@
 //!
 //! What cannot be renamed: one of silt's own definitions (`Some`,
 //! `list.map`, `Int`) and their fields, a field of a type of another
-//! package, a name that a file of a fetched git dependency holds, `self`, and anything the resolver gave no meaning (a
-//! keyword). The new name must be one identifier to the lexer, of the
+//! package, a name that a file of a fetched git dependency holds,
+//! `self`, and anything the resolver gave no meaning (a keyword). The
+//! new name must be one identifier to the lexer, of the
 //! same kind as the old one (a type, a variant or a trait starts with
 //! an upper-case letter, anything else does not), and free where the
 //! old one is written: a rename that would capture another name, or be

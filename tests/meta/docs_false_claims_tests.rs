@@ -98,7 +98,7 @@ fn no_doc_resolves_an_import_by_an_order() {
 #[test]
 fn no_doc_calls_a_trait_method_on_its_value() {
     assert_no_doc_says(
-        &["`x.show()`"],
+        &["(`Show.show(left)`, `x.show()`)"],
         "a doc calls a trait's method with a dot after the value",
     );
 }

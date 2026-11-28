@@ -197,6 +197,12 @@ pub(crate) fn run_repl() {
                 let mut line = line.as_str();
 
                 if buffer.is_empty() {
+                    // (A command between a comment and a declaration: the
+                    // comment documents nothing, as nothing can stand
+                    // between them in a file.)
+                    if line.trim().starts_with(':') && !line.trim().starts_with("::") {
+                        repl.borrow_mut().pending_doc.clear();
+                    }
                     match line.trim() {
                         ":quit" | ":q" => break,
                         ":help" | ":h" => {
