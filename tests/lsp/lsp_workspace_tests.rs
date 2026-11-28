@@ -389,3 +389,45 @@ fn workspace_symbol_returns_matches_across_files() {
     );
     client.shutdown();
 }
+
+/// A rename that would make an import bind a name a local of that file
+/// has is refused: the local would hide the import (a warning that
+/// `--deny-warnings` fails on). Another new name is renamed.
+#[test]
+fn rename_refuses_an_import_that_a_local_would_hide() {
+    let mut client = LspClient::spawn();
+    let geo = "file:///tmp/silt_wspace_hide_geo.silt";
+    let other = "file:///tmp/silt_wspace_hide_other.silt";
+    client.did_open_and_wait(geo, "pub fn area(n: Int) -> Int {\n  n * n\n}\n");
+    client.did_open_and_wait(
+        other,
+        "import silt_wspace_hide_geo.{ area }\n\npub fn use3() -> Int {\n  let f = area\n  f(1)\n}\n",
+    );
+    let rename = |client: &mut LspClient, new_name: &str| {
+        client.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": geo },
+                "position": { "line": 0, "character": 8 },
+                "newName": new_name
+            }),
+        )
+    };
+    let resp = rename(&mut client, "f");
+    let message = resp
+        .pointer("/error/message")
+        .and_then(|m| m.as_str())
+        .unwrap_or_else(|| panic!("expected the rename to f refused; got {resp}"));
+    assert_eq!(
+        message,
+        "`area` cannot be renamed to `f`: `f` is a local name in \
+         silt_wspace_hide_other.silt (bound at line 4), which would hide the import of `f` there"
+    );
+    let resp = rename(&mut client, "g");
+    let changes = resp
+        .pointer("/result/changes")
+        .and_then(|c| c.as_object())
+        .unwrap_or_else(|| panic!("expected the rename to g planned; got {resp}"));
+    assert!(changes.contains_key(other), "{resp}");
+    client.shutdown();
+}

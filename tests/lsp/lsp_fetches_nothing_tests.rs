@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::support::LspClient;
 
@@ -168,6 +168,88 @@ fn opening_a_file_fetches_no_git_dependency() {
         messages(&published),
         Vec::<String>::new(),
         "got {published}"
+    );
+    client.shutdown();
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A rename of a function of a fetched git dependency is refused, also
+/// from a use in the project: its files are kept as they were fetched,
+/// and an edit there fails every later command (the lock's checksum).
+/// prepareRename says there is nothing to rename. FAILS on the base:
+/// the edit plan held an edit of the cached checkout.
+#[test]
+fn a_rename_edits_no_fetched_git_dependency() {
+    if !git_installed() {
+        eprintln!("SKIP: `git` is not installed");
+        return;
+    }
+    let ws = std::env::temp_dir().join(format!("silt_lsp_no_cache_rename_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&ws);
+    fs::create_dir_all(&ws).unwrap();
+    let ws = silt::testing::source::canonical_path(&ws);
+    fs::write(ws.join("gitconfig"), "").unwrap();
+    let repo = ws.join("dep");
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(
+        repo.join("silt.toml"),
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(repo.join("src/lib.silt"), "pub fn two() -> Int {\n  2\n}\n").unwrap();
+    git(&ws, &repo, &["init", "-q", "-b", "main"]);
+    git(&ws, &repo, &["add", "."]);
+    git(&ws, &repo, &["commit", "-q", "-m", "dep"]);
+    let app = ws.join("app");
+    fs::create_dir_all(app.join("src")).unwrap();
+    let url = repo.display().to_string().replace('\\', "/");
+    fs::write(
+        app.join("silt.toml"),
+        format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
+             dep = {{ git = \"{url}\", branch = \"main\" }}\n"
+        ),
+    )
+    .unwrap();
+    let main = "import dep\n\nfn main() {\n  println(dep.two())\n}\n";
+    fs::write(app.join("src/main.silt"), main).unwrap();
+    let main_uri = path_to_uri(&app.join("src/main.silt"));
+    let out = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("check")
+        .current_dir(&app)
+        .envs(hermetic_env(&ws))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+
+    let env = hermetic_env(&ws);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let mut client = LspClient::spawn_with_root_and_env(Some(&path_to_uri(&app)), &env);
+    let published = client.did_open_and_wait(&main_uri, main);
+    assert_eq!(
+        messages(&published),
+        Vec::<String>::new(),
+        "got {published}"
+    );
+    // `two` in `dep.two()`.
+    let at = json!({ "line": 3, "character": 15 });
+    let resp = client.request(
+        "textDocument/prepareRename",
+        json!({ "textDocument": { "uri": main_uri }, "position": at }),
+    );
+    assert_eq!(resp.get("result"), Some(&Value::Null), "got {resp}");
+    let resp = client.request(
+        "textDocument/rename",
+        json!({ "textDocument": { "uri": main_uri }, "position": at, "newName": "three" }),
+    );
+    let message = resp
+        .pointer("/error/message")
+        .and_then(|m| m.as_str())
+        .unwrap_or_else(|| panic!("expected the rename refused; got {resp}"));
+    assert_eq!(
+        message,
+        "`two` cannot be renamed: it is named in the files of `dep`, a git dependency that \
+         silt fetched and keeps as it was fetched; rename it in its repository"
     );
     client.shutdown();
     let _ = fs::remove_dir_all(&ws);
