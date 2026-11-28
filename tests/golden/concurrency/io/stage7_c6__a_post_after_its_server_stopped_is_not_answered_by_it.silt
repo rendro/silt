@@ -1,0 +1,58 @@
+-- timeout: 120
+-- requires-feature: http
+-- One listener; a server is started on it, answers a POST and is stopped
+-- (its body returned), and the next server is started on the same
+-- listener at once: 300 times. The client keeps its connection to each
+-- server, and the next POST may go out on it before the stopped server's
+-- connection has closed. A stopped server answers nothing more: the POST
+-- is answered by the server of its round, or is `ClosedEarly` (a POST is
+-- not sent twice), never answered by the server before.
+import bytes
+import http
+import list
+import result
+import task
+import tcp
+import url
+
+-- A body as text.
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("(no text)")
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let link = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let wrong = 1..300
+    |> list.fold(0) { wrong, round ->
+      let server = { ->
+        http.serve(listener) { _req ->
+          http.Response { status: 200, body: bytes.from_string("round {round}"), headers: #{} }
+        }
+      }
+      let answer = task.background([server]) { ->
+        match http.request(http.POST, url_of(link), bytes.from_string("x"), #{}) {
+          Ok(r) -> text(r.body)
+          Err(http.ClosedEarly) -> "round {round}"
+          Err(e) -> "{e}"
+        }
+      }
+      match answer == "round {round}" {
+        true -> wrong
+        false -> {
+          println("round {round}: {answer}")
+          wrong + 1
+        }
+      }
+    }
+  println("{wrong} of 300 posts were answered by another server or failed otherwise")
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
+}

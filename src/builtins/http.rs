@@ -1452,6 +1452,10 @@ struct Server {
     /// The tasks of the connections that have not ended; `None` once
     /// the server has ended: no connection goes on then.
     conns: Mutex<Option<HashMap<usize, Arc<TaskHandle>>>>,
+    /// The flags that stop the task that serves: its cancel and the end
+    /// of its deadline. Once one is set the server is stopped
+    /// ([`Server::stopped`]), though its frame may not have ended yet.
+    stops: Vec<Arc<AtomicBool>>,
 }
 
 /// What a request is given when it asks for a handler.
@@ -1468,6 +1472,15 @@ enum Admitted {
 
 #[cfg(feature = "http")]
 impl Server {
+    /// Whether the server was stopped: its task was, or it has ended. A
+    /// stopped server serves no further request on any of its
+    /// connections, also before its frame has ended and cancelled their
+    /// tasks: a client that keeps a connection to it may send the next
+    /// request on it while another server already serves the listener.
+    fn stopped(&self) -> bool {
+        self.stops.iter().any(|stop| stop.load(Ordering::SeqCst)) || self.conns.lock().is_none()
+    }
+
     /// A handler for a request, if one is free and no request waits
     /// for one; else a place in the queue, if it has one.
     fn admit(self: &Arc<Self>) -> Admitted {
@@ -2055,9 +2068,14 @@ impl Conn {
         }
     }
 
-    /// Do what a read gave asks for: call the handler, or answer.
+    /// Do what a read gave asks for: call the handler, or answer. A
+    /// stopped server answers nothing more: the connection is closed,
+    /// and the client sends the request again elsewhere if it may.
     fn serve(&mut self, vm: &mut Vm, got: Got) -> Go {
         self.served += 1;
+        if self.server.stopped() {
+            return Conn::END;
+        }
         match got {
             Got::Request(request, reply, held) => match self.server.admit() {
                 Admitted::Called(called) => self.call(vm, request, reply, held, called),
@@ -2294,9 +2312,9 @@ impl Conn {
     /// handler returned, where it was called.
     fn go(&mut self, vm: &mut Vm, input: Value) -> Result<Go, VmError> {
         Ok(match std::mem::replace(&mut self.state, ConnState::Ended) {
-            // A task that was cancelled (the server has ended)
+            // A task that was cancelled, or whose server was stopped,
             // serves no further request.
-            ConnState::Next if self.handle.is_cancelled() => Conn::END,
+            ConnState::Next if self.handle.is_cancelled() || self.server.stopped() => Conn::END,
             // The server drains: the request answered was the last one.
             ConnState::Next if self.server.draining() => Conn::END,
             // Its turn is over: the other tasks have theirs before the
@@ -2403,9 +2421,9 @@ impl Conn {
             ConnState::Calling { reply, called } => {
                 // The handler has returned.
                 drop(called);
-                // (A server that drains closes the connection after it,
-                // and tells the client so.)
-                let reply = match self.server.draining() {
+                // (A server that drains, or was stopped, closes the
+                // connection after it, and tells the client so.)
+                let reply = match self.server.draining() || self.server.stopped() {
                     true => Reply {
                         close: true,
                         keep_alive: false,
@@ -2809,6 +2827,7 @@ builtins! {
                 drained: Cell::new(),
                 bodies: AtomicUsize::new(0),
                 conns: Mutex::new(Some(HashMap::new())),
+                stops: vm.cancelled.iter().chain(&vm.over).cloned().collect(),
             }),
             listener: listener.clone(),
             token,
@@ -3007,6 +3026,120 @@ mod serve_tests {
         assert_eq!(request_url("/x", &[], ""), None);
     }
 
+    /// A connection of server A on the server's side, and the client's
+    /// end of it.
+    fn connection_of(vm: &mut Vm, server: &Arc<Server>) -> (Conn, std::net::TcpStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let client =
+            std::net::TcpStream::connect(listener.local_addr().unwrap()).expect("a connection");
+        let (accepted, _) = listener.accept().expect("accepted");
+        let stream = TcpStreamHandle::plain(vm.next_tcp_id(), accepted);
+        let pending = Arc::new(AtomicUsize::new(0));
+        let (held_by, counted) = (server.clone(), pending.clone());
+        let reader = wire::Reader::with_room(Reads(stream.clone()), move |bytes| {
+            Held::reserve(&held_by, &counted, bytes)
+        });
+        let conn = Conn {
+            peer: "127.0.0.1:1".into(),
+            local: "127.0.0.1:2".into(),
+            server: server.clone(),
+            handle: Arc::new(TaskHandle::with_owner(vm.next_task_id(), 0)),
+            begun: reader.begun(),
+            reader: Arc::new(Mutex::new(reader)),
+            pending,
+            served: 0,
+            stream,
+            state: ConnState::Next,
+            handed_on: false,
+        };
+        (conn, client)
+    }
+
+    /// A server whose task's stop flag is `stop`.
+    fn stoppable(stop: &Arc<AtomicBool>) -> Arc<Server> {
+        Arc::new(Server {
+            handler: Value::Unit,
+            owner: 0,
+            handlers: AtomicUsize::new(0),
+            queue: Mutex::default(),
+            scheduler: std::sync::Weak::new(),
+            draining: AtomicBool::new(false),
+            drain_begun: Cell::new(),
+            drained: Cell::new(),
+            bodies: AtomicUsize::new(0),
+            conns: Mutex::new(Some(HashMap::new())),
+            stops: vec![stop.clone()],
+        })
+    }
+
+    /// All that the client gets until the connection ends.
+    fn all_of(mut client: std::net::TcpStream) -> String {
+        use std::io::Read;
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("a timeout");
+        let mut got = Vec::new();
+        let _ = client.read_to_end(&mut got);
+        String::from_utf8_lossy(&got).into_owned()
+    }
+
+    /// The race of a server stopped while a client keeps a connection to
+    /// it, made certain: the task that served (server A) was stopped,
+    /// but its frame has not ended, so the task of the connection was
+    /// not cancelled; the client's next request comes on the kept
+    /// connection, meant for the server that serves the listener now (B).
+    /// A's connection answers nothing and is closed: the client sends a
+    /// GET again on a new connection, which B accepts. (Before, A's
+    /// handler answered it.)
+    #[test]
+    fn a_stopped_server_answers_no_request_on_a_kept_connection() {
+        use std::io::Write;
+        let mut vm = Vm::new(crate::HostIo::process());
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = stoppable(&stop);
+        let (mut conn, mut client) = connection_of(&mut vm, &server);
+        stop.store(true, Ordering::SeqCst);
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: h\r\n\r\n")
+            .expect("the request");
+        // The request is there to be read when the task runs.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!conn.handle.is_cancelled());
+        let step = conn.resume(&mut vm, Value::Unit);
+        assert!(matches!(step, Ok(Step::Done(_))), "the connection went on");
+        drop(conn);
+        assert_eq!(all_of(client), "", "a stopped server answered");
+    }
+
+    /// A request whose handler runs when its server is stopped is
+    /// answered, and the answer says `connection: close`: the client
+    /// sends nothing more on the connection.
+    #[test]
+    fn a_request_handled_when_its_server_stops_is_answered_with_connection_close() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = stoppable(&stop);
+        let (mut conn, client) = connection_of(&mut vm, &server);
+        let Admitted::Called(called) = server.admit() else {
+            panic!("a free handler");
+        };
+        let reply = Reply {
+            close: false,
+            keep_alive: false,
+            head_only: false,
+        };
+        conn.state = ConnState::Calling { reply, called };
+        stop.store(true, Ordering::SeqCst);
+        let response = make_http_response(200, header_map(Vec::new()), b"A".to_vec());
+        let step = conn.resume(&mut vm, response);
+        assert!(matches!(step, Ok(Step::Done(_))), "the connection was kept");
+        drop(conn);
+        let got = all_of(client).to_ascii_lowercase();
+        assert!(got.starts_with("http/1.1 200"), "{got}");
+        assert!(got.contains("\r\nconnection: close\r\n"), "{got}");
+        assert!(got.ends_with("\r\n\r\na"), "{got}");
+    }
+
     /// A server whose task was cancelled just as its accept was given
     /// a connection takes nothing: the task still runs for some steps,
     /// and a server that took the connection then would start a task
@@ -3045,6 +3178,7 @@ mod serve_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            stops: Vec::new(),
         });
         let mut serve = Serve {
             server: server.clone(),
@@ -3107,6 +3241,7 @@ mod queue_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            stops: Vec::new(),
         })
     }
 
