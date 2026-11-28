@@ -99,11 +99,11 @@ rendered string.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
+| `Connect(msg)` | `String` | no connection was made: refused, no route, no such host. Also a proxy (see [Proxies](#proxies)) that cannot be reached, that refuses the tunnel (`CONNECT proxy failed: proxy server responded 403/403`) or closes without an answer, and a SOCKS proxy, which the client does not speak |
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
-| `InvalidUrl(url)` | `String` | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes (the transport's limit), or has a user with a `:` in it once decoded; no connection is made. Also the location of a redirect that is no URL or has such a scheme, which is not followed. The URL is shown with its user and password hidden |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
+| `InvalidUrl(url)` | `String` | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes (the transport's limit), or has a user with a `:` in it once decoded; no connection is made. Also the location of a redirect that is no URL or has such a scheme, or that leads from `https` to `http`, which is not followed. The URL is shown with its user and password hidden |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes. Also a proxy (see [Proxies](#proxies)) that answers no HTTP |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `TooManyRedirects` | — | `http.get` or `http.request` was redirected more than ten times |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a header given twice (in two cases of its name), a `Host` or `Authorization` that is no ASCII text |
@@ -135,6 +135,45 @@ counted until then among the I/O operations that cannot be interrupted
 pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)).
 The name lookup of a host name cannot be interrupted: it ends by the
 system's own time.
+
+## Proxies
+
+The client goes through a proxy that the environment names, picked by
+the URL's scheme as curl does:
+
+| URL | Proxy |
+|---|---|
+| `http://` | `http_proxy`, else `HTTP_PROXY`, else `all_proxy`, else `ALL_PROXY` |
+| `https://` | `https_proxy`, else `HTTPS_PROXY`, else `all_proxy`, else `ALL_PROXY` |
+
+Each variable holds a proxy's URL (`http://proxy.example:3128`). One that
+is empty counts as not set, and one that holds no proxy's URL is passed
+over for the next. So `ALL_PROXY` is the proxy of a scheme whose own is
+not set, and with `HTTPS_PROXY` alone an `http://` URL is reached
+without a proxy. A host that `no_proxy` (else `NO_PROXY`) names is
+reached without one: a list separated by commas (the spaces around an
+entry do not count), of hosts (`localhost`, `127.0.0.1`, `::1`), of
+endings (`.example.com` or `*.example.com`, every host below
+`example.com`), of beginnings (`10.` or `10.*`), or `*`, every host;
+case does not matter. An entry names a host without its port:
+`127.0.0.1:9` matches no host. The variables are read once, at the
+program's first request.
+
+The client speaks no SOCKS. A `socks5://`, `socks4://` or `socks://` URL
+in the variable that a request's scheme picks refuses the request, as
+`Err(Connect("ALL_PROXY: a socks proxy is not supported"))` (the name of
+that variable): it is not sent without the proxy, and the later variables
+are not looked at. A host that `no_proxy` names is reached as before.
+
+The client asks the proxy for a tunnel (`CONNECT host:port`) and sends the
+request through it, for an `http://` URL too: the proxy sees the host
+and the port, not the request. A user and password in the proxy's URL
+(`http://user:pw@proxy.example:3128`) go to the proxy only, as
+`proxy-authorization`, and no error shows them. A proxy that cannot be
+reached, that refuses the tunnel (any answer but `200`, such as a `403`
+or a `407`) or that closes without an answer is `Err(Connect(_))`, its
+message naming the status (`CONNECT proxy failed: proxy server responded
+403/403`); a server that answers no HTTP is `Err(InvalidResponse(_))`.
 
 
 ## `http.get`
@@ -278,7 +317,10 @@ also when it leads to the same host: the `authorization`,
 the URL. Every other header among `headers` is, and so is the body after
 a 307 or 308, also to another host, as curl and Go send them. A `Host`
 among `headers` goes on only where the scheme, the host and the port stay
-the same: a request to another names the host it goes to. A location
+the same: a request to another names the host it goes to. A header
+that is left behind stays behind, as the credentials do: a `Host`
+dropped on one redirect is not sent again on a later one, also where
+that one leads back to the first scheme, host and port. A location
 is resolved against the URL that answered with `url.resolve`: `?y=2` on
 its path, `//host/x` on its scheme, `../x` next to its path. An
 empty location, or one that is a fragment alone (`#top`), is the URL that
@@ -291,7 +333,10 @@ cannot hold (a space, the bytes of `é`) is escaped first (`%20`,
 (`url.resolve` refuses it: escapes that are no UTF-8 text, a host that is
 none, `mailto:a@b`), or that resolves to one of a scheme other than
 `http` and `https` (`file:///x`, `ftp://host/x`), is not followed: it is
-`Err(InvalidUrl(location))`, a user and password in it hidden.
+`Err(InvalidUrl(location))`, a user and password in it hidden. So is a
+redirect from `https` to `http`: it would send the headers and the body
+in clear text, to anyone on the way. A program that means to go there
+follows the redirect itself, with `http.request_once`.
 
 Like `http.get`, this transparently yields to the scheduler when called from
 a task.
@@ -517,11 +562,12 @@ say `text/plain; charset=UTF-8`.) There is no `Server` header.
 | Headers of a request | 100 | `431`, connection closed |
 | The body of a request | 10,000,000 bytes | `413`, connection closed |
 | The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10,000,000 bytes | `Err(InvalidResponse("the body is larger than 10000000 bytes"))`; no more than one byte beyond the limit is read |
-| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known), those that wait in the queue for a handler, and those about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
+| The bodies, together, of the requests that no handler has yet: those being read (a body counts the bytes of it that have come, as they come, not the length its head announces), those that wait in the queue for a handler, and those about to be handed over | 256 MiB | `503`, connection closed: the request whose body grows past the room that is left is refused then, and the rest of its body is not read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
 | What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A body of 10,000,000 bytes in chunks of 100 bytes is within it; a body cut into single bytes is not.) |
 | The trailers of a chunked body | 64 KiB | `431`, connection closed |
+| Connections open at once | 1,024 | the connection that has waited longest for its next request, and has sent nothing of it, is closed without a word to make room for the new one; if none waits so, no connection more is accepted until one ends (clients wait in the listener's queue) |
 | Handlers being called | 128 | the request waits in the queue |
 | Requests that wait for a handler | 1,024 | `503` at once |
 | Time a request waits for a handler | 5 s | `503` |
@@ -566,7 +612,12 @@ An `Expect` header that asks for anything but `100-continue` is answered
   `http://`, the host the request names (its `Host` header) and the target
   as sent, in its normal form. Route on `url.segments(req.url)`, the
   path's segments decoded (`/users/a%20b` is `["users", "a b"]`, `%2F` a
-  `/` inside one segment, a `/` at the end a last `""`); read the query
+  `/` inside one segment, a `/` at the end a last `""`). Once decoded, a
+  segment may hold a `/`, a `\`, a NUL byte, and `..` with them:
+  `/a/..%2F..%2Fetc%2Fpasswd` is `["a", "../../etc/passwd"]`. Check a
+  segment before you use it as a file name: a handler that serves files
+  and joins the segments with `/` serves what is outside its folder too.
+  Read the query
   with `url.query(req.url)`, its pairs decoded. `.` and `..` are taken out
   before the handler sees the URL (`/a/../b` arrives as `/b`), and so is
   a needless escape (`%7e` arrives as `~`): the text exactly as the client
@@ -605,7 +656,9 @@ serves does: the listener stays bound and can be served again.
 
 Every connection that waits for a request has one I/O operation in
 flight, of the 4,096 a program can have (see
-[concurrency](../concurrency.md)).
+[concurrency](../concurrency.md)). With at most 1,024 connections open,
+a server leaves the rest of the program 3,072 of them, however many
+clients connect.
 
 ### The listener while it is served
 

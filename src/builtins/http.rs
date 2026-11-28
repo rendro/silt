@@ -444,6 +444,144 @@ fn client() -> &'static ureq::Agent {
     &CLIENT
 }
 
+/// The proxies that the environment names for the client, read once, at
+/// the first request ([`Proxies::of`]).
+#[cfg(feature = "http")]
+fn proxies() -> &'static Proxies {
+    static PROXIES: std::sync::LazyLock<Proxies> =
+        std::sync::LazyLock::new(|| Proxies::of(|name| std::env::var(name).ok()));
+    &PROXIES
+}
+
+/// The proxy of each scheme, and the hosts that are reached without
+/// one, as curl and Go read them from the environment.
+#[cfg(feature = "http")]
+#[derive(Debug, Default)]
+struct Proxies {
+    http: Option<Picked>,
+    https: Option<Picked>,
+    direct: Vec<Direct>,
+}
+
+/// The proxy of a scheme, as its variable names it.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+enum Picked {
+    Proxy(ureq::Proxy),
+    /// A SOCKS proxy (`socks5://`, `socks4://`, `socks://`), named by
+    /// this variable: the client speaks no SOCKS, and a request that
+    /// would go through it is refused, not sent without it.
+    Socks(&'static str),
+}
+
+/// An entry of `NO_PROXY`: the hosts it names.
+#[cfg(feature = "http")]
+#[derive(Debug, PartialEq)]
+enum Direct {
+    /// `*`: every host.
+    All,
+    /// `localhost`, `127.0.0.1`: that host.
+    Host(String),
+    /// `.example.com` or `*.example.com`: the hosts that end so.
+    Ending(String),
+    /// `10.` or `10.*`: the hosts that begin so.
+    Beginning(String),
+}
+
+#[cfg(feature = "http")]
+impl Proxies {
+    /// The proxies that the variables `var` gives name. A URL of
+    /// `http` goes through the first of `http_proxy`, `HTTP_PROXY`,
+    /// `all_proxy` and `ALL_PROXY` that holds a proxy's URL, one of
+    /// `https` through the first of `https_proxy`, `HTTPS_PROXY`,
+    /// `all_proxy` and `ALL_PROXY`: `ALL_PROXY` is for a scheme whose
+    /// own is not set. A variable that is empty is not set; one that holds
+    /// no proxy's URL is passed over; one that names a SOCKS proxy is
+    /// taken, and refuses the requests it would carry. `no_proxy` (or
+    /// `NO_PROXY`) lists the hosts, separated by commas, that are reached
+    /// without a proxy.
+    fn of(var: impl Fn(&str) -> Option<String>) -> Proxies {
+        let set = |name: &str| var(name).filter(|value| !value.trim().is_empty());
+        let first = |names: &[&'static str]| {
+            names.iter().find_map(|name| {
+                let proxy = ureq::Proxy::new(set(name)?.trim()).ok()?;
+                let connect = matches!(
+                    proxy.protocol(),
+                    ureq::ProxyProtocol::Http | ureq::ProxyProtocol::Https
+                );
+                Some(match connect {
+                    true => Picked::Proxy(proxy),
+                    false => Picked::Socks(name),
+                })
+            })
+        };
+        let direct = set("no_proxy").or_else(|| set("NO_PROXY"));
+        let direct = direct.unwrap_or_default();
+        let direct = direct
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty());
+        let direct = direct.map(|entry| {
+            let entry = entry.to_ascii_lowercase();
+            if entry == "*" {
+                Direct::All
+            } else if let Some(ending) = entry.strip_prefix('*') {
+                Direct::Ending(ending.to_string())
+            } else if entry.starts_with('.') {
+                Direct::Ending(entry)
+            } else if let Some(beginning) = entry.strip_suffix('*') {
+                Direct::Beginning(beginning.to_string())
+            } else if entry.ends_with('.') {
+                Direct::Beginning(entry)
+            } else {
+                Direct::Host(entry)
+            }
+        });
+        Proxies {
+            http: first(&["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]),
+            https: first(&["https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]),
+            direct: direct.collect(),
+        }
+    }
+
+    /// The proxy that a request to `url` goes through, if any; `Err` of
+    /// the variable that names a SOCKS proxy for it.
+    fn of_url(&self, url: &Url) -> Result<Option<&ureq::Proxy>, &'static str> {
+        let picked = match url.scheme() {
+            "http" => self.http.as_ref(),
+            "https" => self.https.as_ref(),
+            _ => None,
+        };
+        let Some(picked) = picked else {
+            return Ok(None);
+        };
+        let host = url.host().to_ascii_lowercase();
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let direct = self.direct.iter().any(|entry| match entry {
+            Direct::All => true,
+            Direct::Host(named) => named == host,
+            Direct::Ending(ending) => host.ends_with(ending.as_str()),
+            Direct::Beginning(beginning) => host.starts_with(beginning.as_str()),
+        });
+        match (direct, picked) {
+            (true, _) => Ok(None),
+            (false, Picked::Proxy(proxy)) => Ok(Some(proxy)),
+            (false, Picked::Socks(name)) => Err(name),
+        }
+    }
+}
+
+/// The failure of a request that would go through the SOCKS proxy that
+/// the variable `name` names.
+#[cfg(feature = "http")]
+fn socks_refused(name: &str) -> Value {
+    let why = format!("{name}: a socks proxy is not supported");
+    Value::variant(
+        bv::ERR,
+        [Value::variant(bv::HTTP_CONNECT, [Value::string(why)])],
+    )
+}
+
 /// One call of `http.get`, `http.request` or `http.request_once`: whether
 /// it was stopped ([`Call::stop`]), and the attempt it makes now. The
 /// call is the one of the thread it runs on ([`in_call`]): the
@@ -965,6 +1103,8 @@ fn client_of(
         .user_agent(format!("silt/{}", crate::VERSION))
         .accept_encoding("gzip")
         .tls_config(tls)
+        // Each request names its own ([`Proxies`]).
+        .proxy(None)
         .build();
     let connector =
         ().chain(ConnectProxyConnector::default())
@@ -1188,7 +1328,13 @@ fn request_hops(
         if sent_url.as_str().len() > URL_MAX {
             return invalid_url(cut_short(&url.to_string()));
         }
-        let result = send_once(agent, call, method, sent_url.as_str(), body, &sent);
+        // (A SOCKS proxy is not gone around: the program's traffic would
+        // go where its environment says it must not.)
+        let proxy = match proxies().of_url(&sent_url) {
+            Ok(proxy) => proxy,
+            Err(name) => return socks_refused(name),
+        };
+        let result = send_once(agent, call, method, &sent_url, proxy, body, &sent);
         let shown = url.to_string();
         if !follow {
             return finish_http_response(result, &shown, method == "HEAD");
@@ -1201,8 +1347,12 @@ fn request_hops(
             Err(location) => return invalid_url(location),
         };
         // A redirect to another scheme is not followed: `file:`, `ftp:`
-        // and the like are no URL of http's.
-        if !matches!(next.scheme(), "http" | "https") {
+        // and the like are no URL of http's. Nor is one from `https` to
+        // `http`: the headers and the body would go on in clear text,
+        // to whoever is on the path. (`http.request_once` lets a program
+        // that wants to go there follow it itself.)
+        let downgrade = url.scheme() == "https" && next.scheme() == "http";
+        if !matches!(next.scheme(), "http" | "https") || downgrade {
             return invalid_url(next.to_string());
         }
         // A 303 goes on without a body, as a GET (a HEAD stays a HEAD);
@@ -1270,17 +1420,19 @@ fn send_once(
     agent: &ureq::Agent,
     call: &Call,
     method: &str,
-    url: &str,
+    url: &Url,
+    proxy: Option<&ureq::Proxy>,
     body: &[u8],
     headers: &[(&str, &str)],
 ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
     call.begin();
-    let result = send_request(agent, method, url, body, headers, false);
+    let send = |new| send_request(agent, method, url.as_str(), proxy, body, headers, new);
+    let result = send(false);
     let idempotent = matches!(method, "GET" | "HEAD" | "PUT" | "DELETE" | "OPTIONS");
     match &result {
         Err(e) if idempotent && ended_unanswered(e) && call.met_a_closed_connection() => {
             call.begin();
-            send_request(agent, method, url, body, headers, true)
+            send(true)
         }
         _ => result,
     }
@@ -1358,6 +1510,7 @@ fn send_request(
     agent: &ureq::Agent,
     method: &str,
     url: &str,
+    proxy: Option<&ureq::Proxy>,
     body: &[u8],
     headers: &[(&str, &str)],
     new: bool,
@@ -1365,19 +1518,20 @@ fn send_request(
     fn headed<B>(
         mut req: ureq::RequestBuilder<B>,
         headers: &[(&str, &str)],
+        proxy: Option<&ureq::Proxy>,
         new: bool,
     ) -> ureq::RequestBuilder<B> {
         for (key, val) in headers {
             req = req.header(*key, *val);
         }
-        let config = req.config().max_redirects(0);
+        let config = req.config().max_redirects(0).proxy(proxy.cloned());
         match new {
             true => config.max_idle_age(Duration::ZERO).build(),
             false => config.build(),
         }
     }
     let with_body = |req: ureq::RequestBuilder<ureq::typestate::WithBody>| {
-        let req = headed(req, headers, new);
+        let req = headed(req, headers, proxy, new);
         if body.is_empty() {
             req.send_empty()
         } else {
@@ -1385,7 +1539,7 @@ fn send_request(
         }
     };
     let without_body = |req: ureq::RequestBuilder<ureq::typestate::WithoutBody>| {
-        let req = headed(req, headers, new);
+        let req = headed(req, headers, proxy, new);
         if body.is_empty() {
             req.call()
         } else {
@@ -1484,6 +1638,19 @@ struct Server {
     /// The tasks of the connections that have not ended; `None` once
     /// the server has ended: no connection goes on then.
     conns: Mutex<Option<HashMap<usize, Arc<TaskHandle>>>>,
+    /// How many connections the server keeps open at a time
+    /// ([`wire::CONNS_MAX`]).
+    conns_max: usize,
+    /// The connections that wait for their next request, by when they
+    /// began to wait (oldest first): at the limit of connections, the
+    /// one that has waited longest is closed ([`Server::room_for_one_more`]).
+    idle: Mutex<std::collections::BTreeMap<u64, Idler>>,
+    /// Where the next of `idle` is put.
+    idle_keys: std::sync::atomic::AtomicU64,
+    /// Completed when a connection ends, for a server that has as many
+    /// as it may keep and none that waits for a request. Set and taken
+    /// under the lock of `conns`.
+    room: Mutex<Option<Arc<Cell<()>>>>,
     /// The flags that stop the task that serves: its cancel and the end
     /// of its deadline. Once one is set the server is stopped
     /// ([`Server::stopped`]), though its frame may not have ended yet.
@@ -1549,6 +1716,46 @@ impl Server {
         left == 0
     }
 
+    /// Room for one more connection ([`wire::CONNS_MAX`]): there is, or
+    /// the connection that has waited longest for its next request is
+    /// closed to make it. `Err(room)` if there is none, every connection
+    /// being busy with a request: `room` is completed when one ends.
+    fn room_for_one_more(&self) -> Result<(), Arc<Cell<()>>> {
+        let open = |conns: &Option<HashMap<usize, Arc<TaskHandle>>>| {
+            conns.as_ref().map_or(0, HashMap::len)
+        };
+        if open(&self.conns.lock()) < self.conns_max || self.close_the_longest_idle() {
+            return Ok(());
+        }
+        let conns = self.conns.lock();
+        if open(&conns) < self.conns_max {
+            return Ok(());
+        }
+        let room = Cell::new();
+        *self.room.lock() = Some(room.clone());
+        Err(room)
+    }
+
+    /// Close the connection that has waited longest for its next
+    /// request and has had none of it: `false` if no connection waits
+    /// so. Its task ends as one whose client went away.
+    fn close_the_longest_idle(&self) -> bool {
+        let mut idle = self.idle.lock();
+        let Some(key) = idle
+            .iter()
+            .find(|(_, idler)| idler.waits())
+            .map(|(key, _)| *key)
+        else {
+            return false;
+        };
+        let idler = idle.remove(&key);
+        drop(idle);
+        if let Some(idler) = idler {
+            idler.stream.shut_down();
+        }
+        true
+    }
+
     /// Complete `cell`, of a request that waits: `false` if it is
     /// complete already.
     fn complete(&self, cell: &Cell<()>) -> bool {
@@ -1556,6 +1763,48 @@ impl Server {
             Some(scheduler) => cell.complete((), scheduler.wake()).is_ok(),
             None => cell.complete((), &Nobody).is_ok(),
         }
+    }
+}
+
+/// A connection that waits for its next request, as the server sees
+/// it ([`Server::idle`]).
+#[cfg(feature = "http")]
+struct Idler {
+    stream: Arc<TcpStreamHandle>,
+    /// Bytes of the request were there when the wait began
+    /// ([`wire::Reader::begun`]).
+    begun: Arc<AtomicBool>,
+    /// Bytes have come since the wait began ([`Reads`]).
+    heard: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "http")]
+impl Idler {
+    /// Whether the connection has had nothing of its next request: its
+    /// client sends nothing.
+    fn waits(&self) -> bool {
+        !self.begun.load(Ordering::SeqCst) && !self.heard.load(Ordering::SeqCst)
+    }
+}
+
+/// A connection's place among those that wait for a request
+/// ([`Server::idle`]), until this is dropped: when its wait is over.
+#[cfg(feature = "http")]
+struct IdleMark(Arc<Server>, u64);
+
+#[cfg(feature = "http")]
+impl IdleMark {
+    fn new(server: &Arc<Server>, idler: Idler) -> IdleMark {
+        let key = server.idle_keys.fetch_add(1, Ordering::Relaxed);
+        server.idle.lock().insert(key, idler);
+        IdleMark(server.clone(), key)
+    }
+}
+
+#[cfg(feature = "http")]
+impl Drop for IdleMark {
+    fn drop(&mut self) {
+        self.0.idle.lock().remove(&self.1);
     }
 }
 
@@ -1615,25 +1864,39 @@ impl Held {
     /// Count `bytes` more as held, if the server has room for them.
     /// What is counted is noted in `pending`, for who makes the
     /// [`Held`] of it.
+    ///
+    /// Where there is no room, the body is refused, and what was
+    /// counted for it (`pending`) is given back in the same step as the
+    /// refusal: a body of another connection that asks a moment later
+    /// finds it free. (Given back later, when the refused request's
+    /// [`Held`] is dropped, two bodies that meet the limit together could
+    /// both be refused, though one alone was beyond it.)
     fn reserve(server: &Server, pending: &AtomicUsize, bytes: usize) -> bool {
+        // (Only the reader of this connection changes `pending` now.)
+        let mine = pending.load(Ordering::Acquire);
         let mut held = server.bodies.load(Ordering::Acquire);
-        loop {
-            if bytes > wire::BODIES_MAX.saturating_sub(held) {
-                return false;
-            }
+        let fits = loop {
+            let fits = bytes <= wire::BODIES_MAX.saturating_sub(held);
+            let next = match fits {
+                true => held + bytes,
+                false => held.saturating_sub(mine),
+            };
             let counted = server.bodies.compare_exchange_weak(
                 held,
-                held + bytes,
+                next,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             );
             match counted {
-                Ok(_) => break,
+                Ok(_) => break fits,
                 Err(now) => held = now,
             }
-        }
-        pending.fetch_add(bytes, Ordering::AcqRel);
-        true
+        };
+        match fits {
+            true => pending.fetch_add(bytes, Ordering::AcqRel),
+            false => pending.swap(0, Ordering::AcqRel),
+        };
+        fits
     }
 }
 
@@ -1829,13 +2092,19 @@ pub(crate) fn request_url(target: &str, headers: &[(String, String)], local: &st
 }
 
 /// The read half of a connection, for the reader of its requests.
+/// The second is set when bytes come: the connection was heard from
+/// ([`Idler::heard`]).
 #[cfg(feature = "http")]
-struct Reads(Arc<TcpStreamHandle>);
+struct Reads(Arc<TcpStreamHandle>, Arc<AtomicBool>);
 
 #[cfg(feature = "http")]
 impl std::io::Read for Reads {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.0.read(buf)
+        let n = self.0.read(buf)?;
+        if n > 0 {
+            self.1.store(true, Ordering::SeqCst);
+        }
+        Ok(n)
     }
 }
 
@@ -2001,6 +2270,12 @@ struct Conn {
     /// The bytes that the reader has had counted for the body of the
     /// request it is reading ([`Held::reserve`]).
     pending: Arc<AtomicUsize>,
+    /// Bytes have come since the wait for the next request began
+    /// ([`Reads`]).
+    heard: Arc<AtomicBool>,
+    /// The connection's place among those that wait for their next
+    /// request, while it waits for one.
+    idle: Option<IdleMark>,
     /// How many requests the task has served since it last gave way
     /// (see [`Conn::TURN`]).
     served: usize,
@@ -2175,6 +2450,16 @@ impl Conn {
     fn read(&mut self, vm: &mut Vm) -> Step {
         // The task waits: its turn is over.
         self.served = 0;
+        // It waits for its next request, which may be long: at the
+        // limit of connections, one that has waited longest and had
+        // nothing of it is closed.
+        self.heard.store(false, Ordering::SeqCst);
+        let idler = Idler {
+            stream: self.stream.clone(),
+            begun: self.begun.clone(),
+            heard: self.heard.clone(),
+        };
+        self.idle = Some(IdleMark::new(&self.server, idler));
         let got: Arc<Mutex<Option<Got>>> = Arc::default();
         let body_follows: Arc<Cell<()>> = Cell::new();
         let (reader, stream, stopped) = (
@@ -2324,6 +2609,8 @@ impl Conn {
             reader: self.reader.clone(),
             begun: self.begun.clone(),
             pending: self.pending.clone(),
+            heard: self.heard.clone(),
+            idle: None,
             served: 0,
             state: ConnState::Answering {
                 bytes: plain_response(vm, 500, wire::reason(500), reply),
@@ -2343,6 +2630,8 @@ impl Conn {
     /// Go on from the state the task is in. `input` is what the
     /// handler returned, where it was called.
     fn go(&mut self, vm: &mut Vm, input: Value) -> Result<Go, VmError> {
+        // A wait for the next request is over, whatever it gave.
+        self.idle = None;
         Ok(match std::mem::replace(&mut self.state, ConnState::Ended) {
             // A task that was cancelled, or whose server was stopped,
             // serves no further request.
@@ -2575,14 +2864,19 @@ impl Drop for Conn {
         // An operation in flight first: it is given up with the
         // connection.
         self.state = ConnState::Ended;
+        self.idle = None;
         self.stream.shut_down();
-        let left = match self.server.conns.lock().as_mut() {
+        let (left, room) = match self.server.conns.lock().as_mut() {
             Some(conns) => {
                 conns.remove(&self.handle.id);
-                conns.len()
+                (conns.len(), self.server.room.lock().take())
             }
-            None => 0,
+            None => (0, None),
         };
+        // A server that waits for room for a connection has it.
+        if let Some(room) = room {
+            self.server.complete(&room);
+        }
         // The last connection of a server that drains: the drain is over.
         if left == 0 && self.server.draining() {
             self.server.complete(&self.server.drained);
@@ -2631,10 +2925,11 @@ impl Serve {
         let mut child = vm.spawn_child();
         child.spawned = true;
         let pending = Arc::new(AtomicUsize::new(0));
+        let heard = Arc::new(AtomicBool::new(false));
         let (server, counted) = (self.server.clone(), pending.clone());
-        let reader = wire::Reader::with_room(Reads(stream.clone()), move |bytes| {
-            Held::reserve(&server, &counted, bytes)
-        });
+        let reads = Reads(stream.clone(), heard.clone());
+        let reader =
+            wire::Reader::with_room(reads, move |bytes| Held::reserve(&server, &counted, bytes));
         let begun = reader.begun();
         // (A connection whose address cannot be read, already reset by
         // its client, has an empty one: it reads nothing either.)
@@ -2654,6 +2949,8 @@ impl Serve {
             reader: Arc::new(Mutex::new(reader)),
             begun,
             pending,
+            heard,
+            idle: None,
             served: 0,
             stream,
             state: ConnState::Next,
@@ -2662,6 +2959,20 @@ impl Serve {
         // A task that cannot be started (the program has as many as it
         // may have) is dropped, and its connection closed.
         let _ = vm.scheduler().submit(id, child, handle);
+    }
+}
+
+#[cfg(feature = "http")]
+impl Serve {
+    /// The server has as many connections as it keeps, and none waits
+    /// for a request: it accepts again when one ends (`room`), and
+    /// looks again after [`wire::ACCEPT_RETRY`] (a connection may have
+    /// come to wait, or the listener been closed).
+    fn wait_for_room(&mut self, vm: &mut Vm, room: Arc<Cell<()>>) -> Step {
+        self.state = ServeState::Retrying;
+        let wait = Wait::new(vec![Arm::Cell(room)])
+            .deadline(vm.runtime.io.deadline_after(wire::ACCEPT_RETRY));
+        Step::park(wait)
     }
 }
 
@@ -2738,9 +3049,22 @@ impl crate::vm::Native for Serve {
                     return Ok(Step::park(wait));
                 };
                 self.failing = false;
+                // At the limit of connections, with none that waits for
+                // a request, the client waits in the listener's queue
+                // until one ends.
+                if let Err(room) = self.server.room_for_one_more() {
+                    if let Some(socket) = stream.socket() {
+                        self.listener.keep(socket);
+                    }
+                    return Ok(self.wait_for_room(vm, room));
+                }
                 self.connection(vm, stream);
                 // The accept took what else was ready with it.
                 while let Some(ready) = self.listener.take_kept() {
+                    if let Err(room) = self.server.room_for_one_more() {
+                        self.listener.keep(ready);
+                        return Ok(self.wait_for_room(vm, room));
+                    }
                     let ready = TcpStreamHandle::plain(vm.next_tcp_id(), ready);
                     self.connection(vm, ready);
                 }
@@ -2859,6 +3183,10 @@ builtins! {
                 drained: Cell::new(),
                 bodies: AtomicUsize::new(0),
                 conns: Mutex::new(Some(HashMap::new())),
+                conns_max: wire::CONNS_MAX,
+                idle: Mutex::default(),
+                idle_keys: Default::default(),
+                room: Mutex::default(),
                 stops: vm.cancelled.iter().chain(&vm.over).cloned().collect(),
             }),
             listener: listener.clone(),
@@ -3060,17 +3388,18 @@ mod serve_tests {
 
     /// A connection of server A on the server's side, and the client's
     /// end of it.
-    fn connection_of(vm: &mut Vm, server: &Arc<Server>) -> (Conn, std::net::TcpStream) {
+    pub(super) fn connection_of(vm: &mut Vm, server: &Arc<Server>) -> (Conn, std::net::TcpStream) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
         let client =
             std::net::TcpStream::connect(listener.local_addr().unwrap()).expect("a connection");
         let (accepted, _) = listener.accept().expect("accepted");
         let stream = TcpStreamHandle::plain(vm.next_tcp_id(), accepted);
         let pending = Arc::new(AtomicUsize::new(0));
+        let heard = Arc::new(AtomicBool::new(false));
         let (held_by, counted) = (server.clone(), pending.clone());
-        let reader = wire::Reader::with_room(Reads(stream.clone()), move |bytes| {
-            Held::reserve(&held_by, &counted, bytes)
-        });
+        let reads = Reads(stream.clone(), heard.clone());
+        let reader =
+            wire::Reader::with_room(reads, move |bytes| Held::reserve(&held_by, &counted, bytes));
         let conn = Conn {
             peer: "127.0.0.1:1".into(),
             local: "127.0.0.1:2".into(),
@@ -3079,6 +3408,8 @@ mod serve_tests {
             begun: reader.begun(),
             reader: Arc::new(Mutex::new(reader)),
             pending,
+            heard,
+            idle: None,
             served: 0,
             stream,
             state: ConnState::Next,
@@ -3088,7 +3419,7 @@ mod serve_tests {
     }
 
     /// A server whose task's stop flag is `stop`.
-    fn stoppable(stop: &Arc<AtomicBool>) -> Arc<Server> {
+    pub(super) fn stoppable(stop: &Arc<AtomicBool>) -> Arc<Server> {
         Arc::new(Server {
             handler: Value::Unit,
             owner: 0,
@@ -3100,12 +3431,16 @@ mod serve_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            conns_max: wire::CONNS_MAX,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
             stops: vec![stop.clone()],
         })
     }
 
     /// All that the client gets until the connection ends.
-    fn all_of(mut client: std::net::TcpStream) -> String {
+    pub(super) fn all_of(mut client: std::net::TcpStream) -> String {
         use std::io::Read;
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -3210,6 +3545,10 @@ mod serve_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            conns_max: wire::CONNS_MAX,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
             stops: Vec::new(),
         });
         let mut serve = Serve {
@@ -3232,6 +3571,394 @@ mod serve_tests {
             listener.take_kept().is_some(),
             "the connection is not the listener's"
         );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod proxy_tests {
+    use super::*;
+    use std::io::{BufRead, Write};
+
+    fn proxies(vars: &[(&str, &str)]) -> Proxies {
+        let vars: HashMap<String, String> = (vars.iter())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Proxies::of(|name| vars.get(name).cloned())
+    }
+
+    /// The proxy a request to `url` goes through, as `host:port`.
+    fn through(proxies: &Proxies, url: &str) -> Option<String> {
+        match proxies.of_url(&url_of(url)) {
+            Ok(proxy) => proxy.map(|proxy| format!("{}:{}", proxy.host(), proxy.port())),
+            Err(name) => Some(format!("refused by {name}")),
+        }
+    }
+
+    /// A SOCKS proxy in the variable picked for a request refuses the
+    /// request: the client speaks no SOCKS, and does not go around it,
+    /// nor on to a later variable. A host that `NO_PROXY` names is
+    /// reached without it.
+    #[test]
+    fn a_socks_proxy_refuses_the_requests_it_would_carry() {
+        let socks = proxies(&[
+            ("all_proxy", "socks5://127.0.0.1:1"),
+            ("ALL_PROXY", "http://p.test:1"),
+            ("HTTPS_PROXY", "socks://s.test:2"),
+            ("NO_PROXY", "direct.test"),
+        ]);
+        assert_eq!(
+            through(&socks, "http://a.test/").as_deref(),
+            Some("refused by all_proxy")
+        );
+        assert_eq!(
+            through(&socks, "https://a.test/").as_deref(),
+            Some("refused by HTTPS_PROXY")
+        );
+        assert_eq!(through(&socks, "http://direct.test/"), None);
+        let socks4 = proxies(&[("http_proxy", "socks4://127.0.0.1:1")]);
+        assert_eq!(
+            through(&socks4, "http://a.test/").as_deref(),
+            Some("refused by http_proxy")
+        );
+        assert_eq!(through(&socks4, "https://a.test/"), None);
+        assert_eq!(
+            http_error_tests::failure(&socks_refused("ALL_PROXY")),
+            "Connect(ALL_PROXY: a socks proxy is not supported)"
+        );
+    }
+
+    /// The proxy of a request is picked by its URL's scheme, as curl
+    /// does: `http_proxy` or `HTTP_PROXY` for `http`, `https_proxy` or
+    /// `HTTPS_PROXY` for `https`, `all_proxy` or `ALL_PROXY` where the
+    /// scheme's own is not set (empty is not set; no proxy's URL is passed
+    /// over); a host that `no_proxy` or `NO_PROXY` names goes without.
+    #[test]
+    fn the_proxy_is_picked_by_the_scheme_as_curl_does() {
+        let none = proxies(&[]);
+        assert_eq!(through(&none, "http://a.test/"), None);
+        assert_eq!(through(&none, "https://a.test/"), None);
+        let https_only = proxies(&[("HTTPS_PROXY", "http://s.test:3128")]);
+        assert_eq!(through(&https_only, "http://a.test/"), None);
+        assert_eq!(
+            through(&https_only, "https://a.test/").as_deref(),
+            Some("s.test:3128")
+        );
+        let http_only = proxies(&[("http_proxy", "http://h.test:8080")]);
+        assert_eq!(
+            through(&http_only, "http://a.test/").as_deref(),
+            Some("h.test:8080")
+        );
+        assert_eq!(through(&http_only, "https://a.test/"), None);
+        let all = proxies(&[
+            ("ALL_PROXY", "http://all.test:1"),
+            ("HTTP_PROXY", "http://h.test:2"),
+        ]);
+        assert_eq!(through(&all, "http://a.test/").as_deref(), Some("h.test:2"));
+        assert_eq!(
+            through(&all, "https://a.test/").as_deref(),
+            Some("all.test:1")
+        );
+        // The lower case first; an empty one is not set, and one that is
+        // no proxy's URL is passed over.
+        let cased = proxies(&[
+            ("https_proxy", "http://lower.test:1"),
+            ("HTTPS_PROXY", "http://upper.test:2"),
+            ("http_proxy", ""),
+            ("HTTP_PROXY", "http://"),
+            ("all_proxy", "http://all.test:3"),
+        ]);
+        assert_eq!(
+            through(&cased, "https://a.test/").as_deref(),
+            Some("lower.test:1")
+        );
+        assert_eq!(
+            through(&cased, "http://a.test/").as_deref(),
+            Some("all.test:3")
+        );
+        // The hosts that go without.
+        let direct = proxies(&[
+            ("ALL_PROXY", "http://p.test:1"),
+            (
+                "NO_PROXY",
+                "localhost, .internal.test,*.corp.test,10.*,192.168.,::1",
+            ),
+        ]);
+        for (url, proxied) in [
+            ("http://localhost:9/", false),
+            ("http://LOCALHOST/", false),
+            ("http://x.internal.test/", false),
+            ("http://internal.test/", true),
+            ("https://a.b.corp.test/", false),
+            ("http://10.0.0.1/", false),
+            ("http://192.168.1.1/", false),
+            ("http://[::1]:8/", false),
+            ("http://localhost.test/", true),
+            ("http://11.0.0.1/", true),
+        ] {
+            assert_eq!(through(&direct, url).is_some(), proxied, "{url}");
+        }
+        let lower_first = proxies(&[
+            ("ALL_PROXY", "http://p.test:1"),
+            ("no_proxy", "a.test"),
+            ("NO_PROXY", "*"),
+        ]);
+        assert_eq!(through(&lower_first, "http://a.test/"), None);
+        assert!(through(&lower_first, "http://b.test/").is_some());
+        assert_eq!(
+            through(
+                &proxies(&[("ALL_PROXY", "http://p.test:1"), ("NO_PROXY", "*")]),
+                "http://b.test/"
+            ),
+            None
+        );
+    }
+
+    /// A request with a proxy goes to it, as a tunnel; one without goes to
+    /// its host. (The client itself reads no proxy of its own.)
+    #[test]
+    fn a_request_goes_through_the_proxy_it_is_given() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let at = listener.local_addr().expect("its address");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let saw = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut line = String::new();
+                let _ = std::io::BufReader::new(&stream).read_line(&mut line);
+                saw.lock().push(line.trim_end().to_string());
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                );
+            }
+        });
+        let agent = client_with_times(Duration::from_secs(5), Duration::from_secs(10));
+        let proxy = ureq::Proxy::new(&format!("http://{at}")).expect("a proxy");
+        let url = "http://silt-target.test:81/x";
+        let _ = send_request(&agent, "GET", url, Some(&proxy), &[], &[], true);
+        assert_eq!(*seen.lock(), ["CONNECT silt-target.test:81 HTTP/1.1"]);
+        let direct = format!("http://{at}/y");
+        let got = send_request(&agent, "GET", &direct, None, &[], &[], true);
+        assert!(got.is_ok(), "{got:?}");
+        assert_eq!(
+            seen.lock().get(1).map(String::as_str),
+            Some("GET /y HTTP/1.1")
+        );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod bodies_room_tests {
+    use super::serve_tests::connection_of;
+    use super::*;
+    use crate::runtime::sync::Outcome;
+    use crate::vm::Native;
+    use std::io::Write;
+    use std::time::Instant;
+
+    /// Wait until the server holds `bytes` of bodies.
+    fn holds(server: &Server, bytes: usize) {
+        let limit = Instant::now() + Duration::from_secs(10);
+        while server.bodies.load(Ordering::SeqCst) != bytes {
+            let now = server.bodies.load(Ordering::SeqCst);
+            assert!(
+                Instant::now() < limit,
+                "the server holds {now}, not {bytes}"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// A body that does not fit gives back what was counted for it as it
+    /// is refused, in the same step: not when its request is dropped.
+    #[test]
+    fn a_refused_body_gives_its_room_back_as_it_is_refused() {
+        let server = super::serve_tests::stoppable(&Arc::new(AtomicBool::new(false)));
+        let pending = AtomicUsize::new(0);
+        assert!(Held::reserve(&server, &pending, 4));
+        server
+            .bodies
+            .fetch_add(wire::BODIES_MAX - 5, Ordering::SeqCst);
+        assert!(Held::reserve(&server, &pending, 1));
+        assert_eq!(server.bodies.load(Ordering::SeqCst), wire::BODIES_MAX);
+        assert!(!Held::reserve(&server, &pending, 1));
+        assert_eq!(pending.load(Ordering::SeqCst), 0);
+        assert_eq!(server.bodies.load(Ordering::SeqCst), wire::BODIES_MAX - 5);
+        // The request's Held, made of what is pending, gives back nothing more.
+        drop(Held(server.clone(), pending.swap(0, Ordering::SeqCst)));
+        assert_eq!(server.bodies.load(Ordering::SeqCst), wire::BODIES_MAX - 5);
+    }
+
+    /// A body takes room for exactly the bytes of it that have come; the
+    /// room comes back, all of it, when its client leaves in the middle
+    /// of it, and when it is handed to its handler.
+    #[test]
+    fn the_room_of_a_body_comes_back_when_its_client_leaves_and_when_it_is_handed_over() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let server = super::serve_tests::stoppable(&Arc::new(AtomicBool::new(false)));
+        let head = b"POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\n";
+        // A client that leaves after 4 bytes of its 10.
+        let (mut leaves, mut client) = connection_of(&mut vm, &server);
+        assert!(matches!(
+            leaves.resume(&mut vm, Value::Unit),
+            Ok(Step::Park(_))
+        ));
+        client.write_all(head).expect("the head");
+        client.write_all(b"abcd").expect("a part of the body");
+        holds(&server, 4);
+        drop(client);
+        holds(&server, 0);
+        drop(leaves);
+        // A body that is handed to its handler.
+        let (mut handed, mut client) = connection_of(&mut vm, &server);
+        assert!(matches!(
+            handed.resume(&mut vm, Value::Unit),
+            Ok(Step::Park(_))
+        ));
+        client.write_all(head).expect("the head");
+        client.write_all(b"abc").expect("a part of the body");
+        holds(&server, 3);
+        client.write_all(b"defghij").expect("the rest");
+        holds(&server, 10);
+        let limit = Instant::now() + Duration::from_secs(10);
+        while !matches!(&handed.state, ConnState::Reading { got, .. } if got.lock().is_some()) {
+            assert!(Instant::now() < limit, "the request was not read");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // (The handler is no function: what its call comes to is not the
+        // point, the body is the handler's once it is called.)
+        vm.woken = Some(Fired::Arm(0, Outcome::Done));
+        let _ = handed.resume(&mut vm, Value::Unit);
+        assert_eq!(server.bodies.load(Ordering::SeqCst), 0);
+        drop((handed, client));
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod conns_max_tests {
+    use super::serve_tests::{all_of, connection_of};
+    use super::*;
+    use crate::runtime::sync::Outcome;
+    use crate::vm::Native;
+    use std::time::Instant;
+
+    /// A server that keeps at most `max` connections open.
+    fn keeping(vm: &Vm, max: usize) -> Arc<Server> {
+        Arc::new(Server {
+            handler: Value::Unit,
+            owner: 0,
+            handlers: AtomicUsize::new(0),
+            queue: Mutex::default(),
+            scheduler: Arc::downgrade(vm.scheduler()),
+            draining: AtomicBool::new(false),
+            drain_begun: Cell::new(),
+            drained: Cell::new(),
+            bodies: AtomicUsize::new(0),
+            conns: Mutex::new(Some(HashMap::new())),
+            conns_max: max,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
+            stops: Vec::new(),
+        })
+    }
+
+    /// `conn` counts among the server's open connections.
+    fn opened(server: &Server, conn: &Conn) {
+        let mut conns = server.conns.lock();
+        conns
+            .as_mut()
+            .expect("a server")
+            .insert(conn.handle.id, conn.handle.clone());
+    }
+
+    /// At the limit of connections, the one that has waited longest
+    /// for its next request, and had nothing of it, is closed to make
+    /// room; one whose client has begun to send its request is not.
+    /// With none that waits, there is no room until a connection ends,
+    /// and then the server is told.
+    #[test]
+    fn at_the_limit_the_connection_that_waited_longest_for_a_request_is_closed() {
+        use std::io::Write;
+        let mut vm = Vm::new(crate::HostIo::process());
+        let server = keeping(&vm, 3);
+        let (mut old, old_client) = connection_of(&mut vm, &server);
+        let (mut begun, mut begun_client) = connection_of(&mut vm, &server);
+        let (mut new, _new_client) = connection_of(&mut vm, &server);
+        for conn in [&mut begun, &mut old, &mut new] {
+            opened(&server, conn);
+        }
+        // The first to wait has begun its request; the second waits
+        // longest of those that sent nothing.
+        for conn in [&mut begun, &mut old, &mut new] {
+            let step = conn.resume(&mut vm, Value::Unit);
+            assert!(matches!(step, Ok(Step::Park(_))), "it did not wait");
+        }
+        begun_client.write_all(b"GE").expect("a part of a request");
+        let limit = Instant::now() + Duration::from_secs(10);
+        while !begun.heard.load(Ordering::SeqCst) {
+            assert!(Instant::now() < limit, "the bytes did not come");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(server.room_for_one_more().is_ok(), "no room was made");
+        assert_eq!(all_of(old_client), "", "the oldest waiting was not closed");
+        assert!(!begun.stream.is_closed() && !new.stream.is_closed());
+        // The newer one that waits is next.
+        assert!(server.room_for_one_more().is_ok(), "no room was made");
+        assert!(new.stream.is_closed() && !begun.stream.is_closed());
+        // None waits: no room, until a connection ends.
+        let Err(room) = server.room_for_one_more() else {
+            panic!("room without a connection that waits");
+        };
+        assert!(room.get().is_none());
+        drop(old);
+        assert!(room.get().is_some(), "the end of a connection was not told");
+        assert!(server.room_for_one_more().is_ok());
+        drop((begun, new));
+    }
+
+    /// A server at its limit of connections, none of which waits for a
+    /// request, leaves a client it accepts to the listener, for the
+    /// accept after a connection has ended: it starts no task for it,
+    /// and waits.
+    #[test]
+    fn at_the_limit_a_client_is_left_to_the_listener() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let bound = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let addr = bound.local_addr().expect("its address");
+        let listener = Arc::new(TcpListenerHandle::new(0, bound));
+        let token = listener.serve(None).expect("nobody serves it");
+        let op = super::super::tcp::accept_op(&mut vm, &listener, true);
+        let _client = std::net::TcpStream::connect(addr).expect("a connection");
+        let limit = Instant::now() + Duration::from_secs(10);
+        while !op.finished() {
+            assert!(Instant::now() < limit, "the accept did not return");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let server = keeping(&vm, 1);
+        let (busy, _busy_client) = connection_of(&mut vm, &server);
+        opened(&server, &busy);
+        let mut serve = Serve {
+            server: server.clone(),
+            listener: listener.clone(),
+            token,
+            scheduler: Arc::downgrade(vm.scheduler()),
+            state: ServeState::Accepting(op),
+            failing: false,
+        };
+        vm.woken = Some(Fired::Arm(0, Outcome::Done));
+        let step = serve.resume(&mut vm, Value::Unit);
+        assert!(matches!(step, Ok(Step::Park(_))), "the server went on");
+        assert!(matches!(serve.state, ServeState::Retrying));
+        let open = server.conns.lock().as_ref().map(HashMap::len);
+        assert_eq!(open, Some(1), "a task was started for the client");
+        assert!(server.room.lock().is_some(), "the server waits for nothing");
+        assert!(
+            listener.take_kept().is_some(),
+            "the client is not the listener's"
+        );
+        drop(busy);
+        assert!(server.room.lock().is_none());
     }
 }
 
@@ -3273,6 +4000,10 @@ mod queue_tests {
             drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
+            conns_max: wire::CONNS_MAX,
+            idle: Mutex::default(),
+            idle_keys: Default::default(),
+            room: Mutex::default(),
             stops: Vec::new(),
         })
     }
@@ -4497,6 +5228,92 @@ mod keep_alive_tests {
         assert_eq!(get(&agent, &url), "one");
         assert_eq!(get(&agent, &url), "two");
         assert_eq!(*got.lock(), vec![2, 1]);
+    }
+
+    /// A redirect from `https` to `http` is not followed: the call is
+    /// `Err(InvalidUrl(location))`, and the plain server gets nothing,
+    /// neither the body nor the program's headers. (A redirect from
+    /// `https` to `https` is followed.)
+    #[test]
+    #[cfg(feature = "tcp-tls")]
+    fn a_redirect_from_https_to_http_is_not_followed() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("a certificate");
+        let chain = vec![CertificateDer::from(cert.cert.der().to_vec())];
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
+        let config = Arc::new(
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(chain, key)
+                .expect("a server config"),
+        );
+        let plain = Server::new(vec![vec![Reply::Answer("plain")]]);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let url = format!("https://{}/", listener.local_addr().expect("its address"));
+        let (to_plain, to_tls) = (format!("{}x", plain.url), format!("{url}done"));
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { return };
+                let conn = rustls::ServerConnection::new(config.clone()).expect("a connection");
+                let mut tls = rustls::StreamOwned::new(conn, stream);
+                // The request to /done is answered; any other is sent on:
+                // /plain to the plain server, else to /done.
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match tls.read(&mut byte) {
+                        Ok(1) => head.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                // (The body is read: a connection closed with it unread
+                // could be reset before the answer reaches the client.)
+                let length = head.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    let named = name.eq_ignore_ascii_case("content-length");
+                    named.then(|| value.trim().parse::<usize>().ok()).flatten()
+                });
+                let mut body = vec![0u8; length.unwrap_or(0)];
+                let _ = tls.read_exact(&mut body);
+                let answer = match head.split(' ').nth(1) {
+                    Some("/done") => {
+                        "HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\ndone"
+                            .to_string()
+                    }
+                    Some("/plain") => format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nlocation: {to_plain}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    ),
+                    _ => format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nlocation: {to_tls}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    ),
+                };
+                let _ = tls.write_all(answer.as_bytes());
+                let _ = tls.flush();
+            }
+        });
+        let tls = ureq::tls::TlsConfig::builder()
+            .disable_verification(true)
+            .build();
+        let agent = client_of(
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            ureq::unversioned::resolver::DefaultResolver::default(),
+            tls,
+        );
+        let call = Arc::new(Call::default());
+        let headers = [("x-api-key".to_string(), "k".to_string())];
+        let post = |path: &str| {
+            let to = url_of(&format!("{url}{path}"));
+            do_http_request_on(&agent, &call, "POST", &to, b"secret", &headers, true)
+        };
+        assert_eq!(
+            http_error_tests::failure(&post("plain")),
+            format!("InvalidUrl({}x)", plain.url)
+        );
+        assert_eq!(plain.connections(), 0, "the plain server was reached");
+        assert_eq!(answered(&post("other")), "done");
     }
 
     /// The head of the next request of `tls`; `None` at its end.

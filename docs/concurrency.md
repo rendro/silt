@@ -1436,7 +1436,7 @@ operation that waited for a thread might be the very one that would have
 released the others. A server that holds more connections than that open
 in blocking reads has to refuse some. (`http.serve` has one operation in
 flight for its accept, and one for each connection that waits for a
-request or sends a response.)
+request or sends a response; it keeps at most 1,024 connections open.)
 
 A task stops waiting for its operation when `SILT_IO_TIMEOUT` passes,
 when it is stopped (see [What stops a task](#what-stops-a-task)), or when the program ends.

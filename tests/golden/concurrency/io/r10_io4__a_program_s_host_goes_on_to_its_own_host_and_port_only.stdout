@@ -10,6 +10,11 @@ GET port
   A: /to/port host app.example
   B: /echo host the URL's
   the client: 200
+GET back
+  A: /to/back host app.example
+  B: /to/a host the URL's
+  A: /echo host the URL's
+  the client: 200
 GET refused 2
   the client: Other: the header host is given twice
 GET refused 2

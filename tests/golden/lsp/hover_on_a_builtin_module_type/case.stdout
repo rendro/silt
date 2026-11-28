@@ -344,11 +344,11 @@ type http.HttpError {
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(String)` | message | no connection was made: refused, no route, no such host |
+| `Connect(String)` | message | no connection was made: refused, no route, no such host; a proxy that cannot be reached or refuses the tunnel, or a SOCKS proxy |
 | `Tls(String)` | message | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed |
-| `InvalidUrl(String)` | url, its user and password hidden | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes, or has a user with a `:`; or a redirect leads to a location that is no URL or has such a scheme |
-| `InvalidResponse(String)` | message | what the server sent is no HTTP, or its body is larger than 10,000,000 bytes |
+| `InvalidUrl(String)` | url, its user and password hidden | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes, or has a user with a `:`; or a redirect leads to a location that is no URL or has such a scheme, or leads from `https` to `http` |
+| `InvalidResponse(String)` | message | what the server sent (or a proxy) is no HTTP, or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete |
 | `TooManyRedirects` | — | `http.get` or `http.request` was redirected more than ten times |
 | `Other(String)` | message | unclassified transport error |
