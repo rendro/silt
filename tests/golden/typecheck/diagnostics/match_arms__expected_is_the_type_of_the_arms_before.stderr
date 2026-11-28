@@ -4,11 +4,11 @@ error[type]: type mismatch: expected String, got Int
  9 |     _ -> n
    |          ^ type mismatch: expected String, got Int
 
-error[type]: type mismatch: expected Result(_, String), got Int
+error[type]: type mismatch: expected Result(Int, String), got Int
  --> match_arms__expected_is_the_type_of_the_arms_before.silt:16:10
     |
  16 |     _ -> n
-    |          ^ type mismatch: expected Result(_, String), got Int
+    |          ^ type mismatch: expected Result(Int, String), got Int
 
 error[type]: type mismatch: expected Int, got String
  --> match_arms__expected_is_the_type_of_the_arms_before.silt:23:10

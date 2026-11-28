@@ -1,21 +1,6 @@
 error[type]: type mismatch: expected Step(Int), got Light
- --> a_local_stop_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:9:3
-   |
- 9 |   match n {
-   |   ^^^^^^^^^ type mismatch: expected Step(Int), got Light
- ::: a_local_stop_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
+ --> a_local_stop_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
     |
  10 |     0 -> Stop
-    |          ---- this `Stop` is the variant of `Light`
-  = help: the variant `Stop` of `Light` hides the prelude's `Stop`: write `Step.Stop`
-
-error[type]: type mismatch: expected Light, got Step(Int)
- --> a_local_stop_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:11:10
-    |
- 11 |     _ -> Continue(n)
-    |          ^^^^^^^^^^^ type mismatch: expected Light, got Step(Int)
- ::: a_local_stop_where_a_step_is_wanted_says_how_to_reach_the_prelude_s.silt:10:10
-    |
- 10 |     0 -> Stop
-    |          ---- this `Stop` is the variant of `Light`
-  = help: the variant `Stop` of `Light` hides the prelude's `Stop`: write `Step.Stop`
+    |          ^^^^ type mismatch: expected Step(Int), got Light
+  = help: `Stop` here is the variant of `Light`, which hides the prelude's `Stop`: write `Step.Stop`

@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- An arm whose type differs from the arms before it is the one reported,
--- and what is expected is the type of those arms: an arm that is not a
--- Result where the arms before are gets the help to wrap it in `Ok(...)`.
+-- and what is expected is the function's declared result, where there
+-- is one, else the type of the arms before (the `let` of `m`).
 fn word(n: Int) -> String {
   match n {
     0 -> "zero"

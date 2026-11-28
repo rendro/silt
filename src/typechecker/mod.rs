@@ -162,6 +162,14 @@ pub(crate) struct TypeChecker {
     pub(super) written_bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
+    /// The type the next expression checked is to be, when its place
+    /// says (a function's declared result, for its body): a block hands
+    /// it to its last expression, a `match` checks each arm against it.
+    /// Any other expression drops it.
+    pub(super) wanted_result: Option<Type>,
+    /// The `wanted_result` of the block or `match` being checked, taken
+    /// by `infer_expr` for it.
+    pub(super) wanted_here: Option<Type>,
     /// The function whose body is being checked, when it is declared to
     /// return `Never`: a `return` in it is an error.
     pub(super) never_fn: Option<Symbol>,
@@ -876,6 +884,8 @@ impl TypeChecker {
             bounds: HashMap::new(),
             written_bounds: HashMap::new(),
             current_return_type: None,
+            wanted_result: None,
+            wanted_here: None,
             never_fn: None,
             written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),

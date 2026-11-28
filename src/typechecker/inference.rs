@@ -2923,6 +2923,12 @@ impl TypeChecker {
             names,
             read_fields,
         });
+        // (A declared result is what each value the body ends in is
+        // checked against: the arm of a `match` that differs from it is
+        // the one reported, not the arms that agree with it.)
+        if f.return_type.is_some() && !matches!(ret_type, Type::Never | Type::Error) {
+            self.wanted_result = Some(ret_type.clone());
+        }
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
         env.pop();
@@ -4554,6 +4560,12 @@ impl TypeChecker {
     // ── Expression type inference ───────────────────────────────────
 
     pub(super) fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
+        // (What its place wants of it is for this expression only.)
+        let wanted = self.wanted_result.take();
+        self.wanted_here = match expr.kind {
+            ExprKind::Block(_) | ExprKind::Match { .. } => wanted,
+            _ => None,
+        };
         self.note_prelude_variant_use(expr);
         if !matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
             return self.infer_expr_kind(expr, env);
@@ -4899,10 +4911,15 @@ impl TypeChecker {
             ExprKind::Return(..) => self.infer_return(expr, env, span),
 
             ExprKind::Block(stmts) => {
+                let wanted = self.wanted_here.take();
                 let mut last_ty = Type::Unit;
                 env.push();
                 let last = stmts.len().saturating_sub(1);
                 for (i, stmt) in stmts.iter_mut().enumerate() {
+                    // (What the block is to be, its last expression is.)
+                    if i == last && matches!(stmt, Stmt::Expr(_)) {
+                        self.wanted_result = wanted.clone();
+                    }
                     last_ty = self.infer_stmt(stmt, env);
                     if i != last {
                         self.note_statement(stmt, &last_ty);
