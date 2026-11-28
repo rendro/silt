@@ -544,6 +544,10 @@ pub(crate) struct TypeChecker {
     /// parameters: they are types (`type parameter 'm' of 'Wrapped' is
     /// written with a type argument`).
     pub(super) declaring_type: Option<(Symbol, Vec<Symbol>)>,
+    /// While the target of a type alias is resolved: the aliases in its
+    /// parts stay as written (`Option(A)` keeps `A`, not what `A`
+    /// stands for), so that a cycle through them names each alias.
+    pub(super) alias_parts_as_written: bool,
     /// Where a signature first writes each of its type constructor
     /// variables applied (`xs: m(Int)`), for the error of an annotation
     /// in its body that writes one without a type argument.
@@ -975,6 +979,7 @@ impl TypeChecker {
             type_param_vars: Default::default(),
             constructor_traits: Default::default(),
             declaring_type: None,
+            alias_parts_as_written: false,
             constructor_labels: HashMap::new(),
             bare_labels: HashMap::new(),
             refused_bodies: std::collections::HashSet::new(),

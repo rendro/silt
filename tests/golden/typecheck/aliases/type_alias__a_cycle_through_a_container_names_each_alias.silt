@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type alias 'B' forms a cycle: B -> A -> B
+-- stderr-not-contains: B -> B
+-- An alias inside a container of the other alias's target is part of the
+-- cycle: the chain names it, as it does for a cycle of bare aliases.
+type A = B
+type B = Option(A)
+
+fn main() {
+  ()
+}
