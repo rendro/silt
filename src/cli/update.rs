@@ -128,32 +128,93 @@ fn run_dependency_update(names: &[String]) {
 
 /// What changed between the lock `before` and the lock `after` (of the
 /// package in `root`): a line for each dependency, by name, whose pin is
-/// new, gone or another. The package itself is not one.
+/// new, gone or another. The package itself is not one. Where packages
+/// of one name come from different places, each is paired with the one
+/// of its own place (its repository, or its directory), and its line
+/// names the place after the name.
 fn lock_changes(before: Option<&Lockfile>, after: Option<&Lockfile>, root: &Path) -> Vec<String> {
-    let dependencies = |lock: Option<&Lockfile>| -> BTreeMap<String, LockedPackage> {
-        lock.map(|lock| lock.packages.as_slice())
-            .unwrap_or_default()
-            .iter()
-            .filter(|p| p.source != LockedSource::Local)
-            .map(|p| (p.name.clone(), p.clone()))
-            .collect()
+    let dependencies = |lock: Option<&Lockfile>| -> BTreeMap<String, Vec<LockedPackage>> {
+        let mut by_name: BTreeMap<String, Vec<LockedPackage>> = BTreeMap::new();
+        for p in (lock
+            .map(|lock| lock.packages.as_slice())
+            .unwrap_or_default())
+        .iter()
+        .filter(|p| p.source != LockedSource::Local)
+        {
+            by_name.entry(p.name.clone()).or_default().push(p.clone());
+        }
+        by_name
     };
     let (old, new) = (dependencies(before), dependencies(after));
     let mut names: Vec<&String> = old.keys().chain(new.keys()).collect();
     names.sort();
     names.dedup();
-    names
-        .into_iter()
-        .filter_map(|name| {
-            let change = match (old.get(name), new.get(name)) {
+    let mut lines = Vec::new();
+    for name in names {
+        let (old, new) = (
+            old.get(name).map(Vec::as_slice).unwrap_or_default(),
+            new.get(name).map(Vec::as_slice).unwrap_or_default(),
+        );
+        let shown = escape_for_display(name);
+        if old.len() <= 1 && new.len() <= 1 {
+            let change = match (old.first(), new.first()) {
                 (None, Some(new)) => format!("added, {}", pin(&new.source)),
                 (Some(_), None) => "removed".to_string(),
-                (Some(old), Some(new)) => change(old, new, root)?,
-                (None, None) => return None,
+                (Some(old), Some(new)) => match change(old, new, root) {
+                    Some(change) => change,
+                    None => continue,
+                },
+                (None, None) => continue,
             };
-            Some(format!("{}: {change}", escape_for_display(name)))
-        })
-        .collect()
+            lines.push(format!("{shown}: {change}"));
+            continue;
+        }
+        let mut paired = vec![false; new.len()];
+        for old in old {
+            let at = new
+                .iter()
+                .enumerate()
+                .position(|(i, new)| !paired[i] && same_origin(&old.source, &new.source, root));
+            let change = match at {
+                Some(i) => {
+                    paired[i] = true;
+                    match change(old, &new[i], root) {
+                        Some(change) => change,
+                        None => continue,
+                    }
+                }
+                None => "removed".to_string(),
+            };
+            lines.push(format!("{shown} ({}): {change}", place(&old.source)));
+        }
+        for (new, _) in new.iter().zip(&paired).filter(|(_, paired)| !**paired) {
+            // (A path is its own place.)
+            let (place, pin) = (place(&new.source), pin(&new.source));
+            match place == pin {
+                true => lines.push(format!("{shown}: added, {pin}")),
+                false => lines.push(format!("{shown} ({place}): added, {pin}")),
+            }
+        }
+    }
+    lines
+}
+
+/// Whether `old` and `new` come from one place: one directory, or one
+/// repository (at any commit).
+fn same_origin(old: &LockedSource, new: &LockedSource, root: &Path) -> bool {
+    match (old, new) {
+        (LockedSource::Git { url: a, .. }, LockedSource::Git { url: b, .. }) => a == b,
+        (a, b) => a.same_place(b, root),
+    }
+}
+
+/// Where a package of a lock comes from, in words: its directory or its
+/// repository.
+fn place(source: &LockedSource) -> String {
+    match source {
+        LockedSource::Git { url, .. } => crate::git::display_url(url),
+        _ => pin(source),
+    }
 }
 
 /// How the pin of one dependency changed from `old` to `new`, or `None`

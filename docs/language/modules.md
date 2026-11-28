@@ -359,6 +359,15 @@ package (`src/x.silt` beside the dependency `x`, E0605) are errors. A
 dependency's own dependencies are its own: to import one, declare it in
 your `silt.toml` too.
 
+A package is known by where it comes from (its directory, or its
+repository and commit), not by its name: two packages of one name from
+different places, such as two libraries that each depend on a `utils` of
+their own, are two packages, and their types are two types (a message
+tells them apart: ``Thing of package utils (dependency `helpers` of `lb`)``).
+One repository at two commits is an error (E0604, "`utils` is required at
+two commits"), and so is one commit reached by URLs written in different
+ways: a program holds one copy of a library.
+
 A package consumed as a dependency exposes `src/lib.silt` instead of
 `src/main.silt` (`silt init --lib` creates one). Such a library-only package has nothing to execute — `silt
 run` refuses it — but a bare `silt check` works, falling back to

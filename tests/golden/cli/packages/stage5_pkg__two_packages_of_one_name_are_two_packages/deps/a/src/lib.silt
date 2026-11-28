@@ -1,0 +1,3 @@
+import x
+
+pub fn f() { x.which() }

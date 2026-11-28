@@ -1,0 +1,6 @@
+[package]
+name = "lb"
+version = "0.1.0"
+
+[dependencies]
+helpers = { path = "../u2" }

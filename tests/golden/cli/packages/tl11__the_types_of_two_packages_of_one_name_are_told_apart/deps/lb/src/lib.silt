@@ -1,0 +1,3 @@
+import helpers
+
+pub fn take(t: helpers.Thing) -> Int { t.n }

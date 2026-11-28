@@ -1,0 +1,9 @@
+-- Two different sources named `x` in one graph, each the private
+-- dependency of another package: each is a package of its own.
+import a
+import b
+
+fn main() {
+  println(a.f())
+  println(b.f())
+}

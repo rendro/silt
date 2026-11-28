@@ -33,8 +33,11 @@
 //! - The `[dependencies]` key is the name the importing package knows the
 //!   dependency by (`import <key>` loads that package's `src/lib.silt`).
 //!   A dependency's own `[package].name` is for display and the lockfile.
-//! - Two different sources with the same `[package].name` in one graph
-//!   are `DuplicatePackage`, with both dependency chains as labels.
+//! - Two packages of one name from different sources are two packages:
+//!   a package's name is for display and the lockfile. One repository
+//!   at two commits, or at one commit by two spellings of its URL, is
+//!   `DuplicatePackage`, with every dependency chain as labels: a graph
+//!   holds one copy of a library, whose types are one program's.
 //! - A dependency key equal to a module of the same package
 //!   (`src/<key>.silt`) is `DependencyKeyCollision`.
 //! - A relative path, and a git URL that is a relative local path (`./x`,
@@ -288,7 +291,7 @@ fn resolve(
             resolver.lead_to(id, key, &entry, reported);
         }
     }
-    resolver.check_duplicate_names();
+    resolver.check_one_copy_per_repository();
     resolver.check_key_collisions();
     resolver.check_dependency_targets();
     if !resolver.diagnostics.is_empty() {
@@ -753,19 +756,29 @@ impl Resolver<'_> {
         })
     }
 
-    /// `DuplicatePackage` for every name that two sources have.
-    fn check_duplicate_names(&mut self) {
-        let mut by_name: HashMap<Symbol, Vec<PackageId>> = HashMap::new();
+    /// `DuplicatePackage` for every repository that two packages come
+    /// from (two commits of it, or one commit by two spellings of its
+    /// URL). Two packages of one name from different sources are not
+    /// one: each is known by its source.
+    fn check_one_copy_per_repository(&mut self) {
+        let mut by_repository: HashMap<String, Vec<PackageId>> = HashMap::new();
         for node in &self.nodes {
-            by_name.entry(node.name).or_default().push(node.id);
+            if let Some((repository, _)) = self.repository(node.id) {
+                by_repository.entry(repository).or_default().push(node.id);
+            }
         }
-        let mut names: Vec<_> = by_name
-            .into_iter()
-            .filter(|(_, ids)| ids.len() > 1)
+        let mut repositories: Vec<Vec<PackageId>> = by_repository
+            .into_values()
+            .filter(|ids| ids.len() > 1)
+            .map(|mut ids| {
+                ids.sort();
+                ids
+            })
             .collect();
-        names.sort_by_key(|(_, ids)| ids[1]);
-        for (name, ids) in names {
-            let name = intern::resolve(name);
+        repositories.sort_by_key(|ids| ids[1]);
+        for ids in repositories {
+            // By the name of the package that the graph reached first.
+            let name = intern::resolve(self.nodes[ids[0].0 as usize].name);
             // The last is never the root, which is the first package.
             let last = *ids.last().expect("two or more");
             let (_, at) = self.via[last.0 as usize].expect("only the root has no parent");
@@ -778,36 +791,25 @@ impl Resolver<'_> {
                 // The last key of the last chain is the primary span.
                 d.labels
                     .extend(self.chain(id).into_iter().filter(|(span, _)| *span != at));
-                d.notes.push(self.source_note(&name, id));
+                let own = intern::resolve(self.nodes[id.0 as usize].name);
+                d.notes.push(self.source_note(&own, id));
             }
             d.help.push(format!(
-                "a graph holds one package per name: make every dependency on `{name}` \
+                "a graph holds one copy of a repository: make every dependency on `{name}` \
                  point at the same source"
             ));
             self.diagnostics.push(d);
         }
     }
 
-    /// What `DuplicatePackage` says of the packages `ids`, named `name`:
-    /// that one repository is required at several commits, when they are
-    /// all one repository's (however its URL is written), else that they
-    /// are different packages.
+    /// What `DuplicatePackage` says of the packages `ids` of one
+    /// repository (however its URL is written), the first named `name`:
+    /// that it is required at several commits, or at one by URLs written
+    /// in different ways.
     fn duplicate_message(&self, name: &str, ids: &[PackageId]) -> String {
         let count = count_word(ids.len());
-        let different = || format!("{count} different packages are named `{name}`");
-        let Some(found) = ids
-            .iter()
-            .map(|id| self.repository(*id))
-            .collect::<Option<Vec<(String, String)>>>()
-        else {
-            return different();
-        };
-        if found
-            .iter()
-            .any(|(repository, _)| *repository != found[0].0)
-        {
-            return different();
-        }
+        let found: Vec<(String, String)> =
+            (ids.iter()).filter_map(|id| self.repository(*id)).collect();
         let mut commits: Vec<&String> = found.iter().map(|(_, commit)| commit).collect();
         commits.sort();
         commits.dedup();
@@ -1103,7 +1105,7 @@ impl Resolver<'_> {
                 checksum: checksum.clone(),
             })
             .collect();
-        packages.sort_by(|a, b| a.name.cmp(&b.name));
+        packages.sort_by(crate::lockfile::LockedPackage::order);
         Lockfile {
             version: 1,
             packages,

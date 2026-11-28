@@ -255,7 +255,8 @@ codes! {
     DependencyNotFound = "E0602", Package;
     /// A dependency whose directory holds no `silt.toml`.
     DependencyNotPackage = "E0603", Package;
-    /// Two different package sources with one `[package].name`.
+    /// One repository required at two commits, or at one commit by URLs
+    /// written in different ways.
     DuplicatePackage = "E0604", Package;
     /// A dependency key equal to a module of the same package.
     DependencyKeyCollision = "E0605", Package;

@@ -31,7 +31,8 @@ pub enum ProjectSetup {
 #[derive(Debug, Clone)]
 pub(crate) struct Package {
     pub id: PackageId,
-    /// `[package].name`, unique in a graph; `__local__` for a script.
+    /// `[package].name`; `__local__` for a script. Two packages of a
+    /// graph may have one name: each is known by its source.
     pub name: Symbol,
     /// The directory of its modules; `None` when there is no project.
     pub src: Option<PathBuf>,
@@ -65,6 +66,37 @@ impl Packages {
             .iter()
             .find(|(k, _, _)| *k == key)
             .map(|(_, id, _)| *id)
+    }
+
+    /// The name a message gives the package `id`: its own, and where
+    /// another package of the program has that name too, with the
+    /// dependency that brings it in (`utils (dependency `helpers` of
+    /// `lb`)`) or `(this package)`, so that the types of the two are
+    /// never written alike.
+    pub(crate) fn shown_name(&self, id: PackageId) -> Symbol {
+        let Some(package) = self.packages.get(id.0 as usize) else {
+            return intern("");
+        };
+        let name = package.name;
+        if !(self.packages.iter()).any(|other| other.id != id && other.name == name) {
+            return name;
+        }
+        let name = crate::intern::resolve(name);
+        if id == self.root {
+            return intern(&format!("{name} (this package)"));
+        }
+        let by = self.packages.iter().find_map(|from| {
+            let (key, _, _) = from.deps.iter().find(|(_, dep, _)| *dep == id)?;
+            Some((*key, from.name))
+        });
+        match by {
+            Some((key, from)) => intern(&format!(
+                "{name} (dependency `{}` of `{}`)",
+                crate::intern::resolve(key),
+                crate::intern::resolve(from)
+            )),
+            None => intern(&name),
+        }
     }
 
     /// One unnamed package whose modules are in `src`.

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Thing of package utils (dependency `helpers` of `lb`), got Thing of package utils (dependency `utils` of `la`)
+-- Two packages named `utils`, each another package's private
+-- dependency: their types are two types, told apart where a message
+-- names them.
+import la
+import lb
+
+fn main() {
+  println(lb.take(la.make()))
+}
