@@ -117,8 +117,9 @@ fn main() {
 The host names its machine plainly:
 
 - a name is ASCII letters, digits, `-`, `_` and `.`, in lower case once
-  read; it has no empty label (`a..b`, `.a`), no label over 63 characters and
-  is at most 253 characters long. One `.` at its end is kept, and
+  read; it has no empty label (`a..b`, `.a`), no label over 63 characters,
+  no label that starts or ends with `-` (`-h`, `h-`), and is at most 253
+  characters long. One `.` at its end is kept, and
   `example.com.` is another host than `example.com`, as in DNS;
 - a host that looks like a number (its last label is all digits, or starts
   with `0x`) must be an IPv4 address of four numbers 0-255 with dots between

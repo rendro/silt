@@ -326,6 +326,26 @@ fn host_faults() {
         ("http://.a/", "a host name has no empty label", 7),
         ("http://a../", "a host name has no empty label", 9),
         ("http://./", "a host name has no empty label", 7),
+        (
+            "http://-h/",
+            "a label of a host name does not start with `-`",
+            7,
+        ),
+        (
+            "http://a.-h/",
+            "a label of a host name does not start with `-`",
+            9,
+        ),
+        (
+            "http://h-/",
+            "a label of a host name does not end with `-`",
+            8,
+        ),
+        (
+            "http://a.h-.b/",
+            "a label of a host name does not end with `-`",
+            10,
+        ),
         ("http://[::1/", "the `[` of an IPv6 address has no `]`", 7),
         (
             "http://[::1]x/",
