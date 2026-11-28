@@ -48,8 +48,8 @@ fn main() {
   -- found by multiplying 0 by each of the others, one by one, and of
   -- `-100..100` it was the overflow of the product of the Ints up to
   -- the 0.) It is 0 for a list that holds those elements, too.
-  println(list.product(0..9223372036854775807))
-  println(list.product(-9223372036854775807..9223372036854775807))
+  println(list.product(0..9223372036854775806))
+  println(list.product(-4611686018427387903..4611686018427387903))
   println(list.product(-100..100))
   println(list.product(list.reverse(list.reverse(-100..100))))
   println(list.product([9223372036854775807, 2, 0]))

@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: range -4611686018427387904..4611686018427387903 has 9223372036854775808 elements: a list has at most 9223372036854775807
+-- A range of more elements than an Int counts is refused where it is
+-- made, so list.length of a list never overflows.
+import list
+fn main() {
+  -- positive control first: a small range still works
+  println(list.length(1..10))
+  -- one element more than an Int counts
+  let r = -4611686018427387904..4611686018427387903
+  println(list.length(r))
+}

@@ -63,8 +63,8 @@ fn test_all_the_ints_there_are() {
   let _ = -9223372036854775807 - 1..9223372036854775807
 }
 
-fn test_length_of_more_than_an_int_counts() {
-  let _ = list.length(0..9223372036854775807)
+fn test_more_elements_than_an_int_counts() {
+  let _ = 0..9223372036854775807
 }
 
 fn test_sum_that_is_no_int() {

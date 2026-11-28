@@ -957,14 +957,10 @@ pub(crate) mod list {
             Ok(xs.contains(elem))
         }
 
-        // The list of the Ints between two far ends can have more
-        // elements than an `Int` counts.
-        fn length(xs: List) -> Result<i64, VmError> {
-            i64::try_from(xs.len()).map_err(|_| {
-                VmError::new(
-                    "list.length overflow: the list has more elements than an Int counts".into(),
-                )
-            })
+        // A list has at most as many elements as an `Int` counts: a
+        // range of more is refused where it is made.
+        fn length(xs: List) -> i64 {
+            xs.len() as i64
         }
 
         fn is_empty(xs: List) -> bool {
@@ -1069,10 +1065,8 @@ pub(crate) mod list {
             let Some(at) = xs.position(target) else {
                 return Ok(None);
             };
-            let at = i64::try_from(at).map_err(|_| {
-                VmError::new("list.index_of overflow: index too large to represent as Int".into())
-            })?;
-            Ok(Some(Value::Int(at)))
+            // An index is less than the length, an `Int`.
+            Ok(Some(Value::Int(at as i64)))
         }
 
         fn remove_at(xs: List, index: i64) -> Result<Option<Value>, VmError> {

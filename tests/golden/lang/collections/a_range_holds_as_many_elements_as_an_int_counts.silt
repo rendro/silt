@@ -1,0 +1,19 @@
+-- A range holds at most as many elements as an Int counts, so its
+-- length and the index of each element are Ints. (One more is refused
+-- where the range is made: range_too_long_to_write_out.)
+import list
+
+fn id(x: Int) -> Int {
+  x
+}
+
+fn main() {
+  let max = id(9223372036854775807)
+  let naturals = 1..max
+  println(list.length(naturals))
+  println(list.index_of(naturals, max))
+  let negatives = -max - 1..-2
+  println(list.length(negatives))
+  println(list.index_of(negatives, -2))
+  println(list.last(negatives))
+}
