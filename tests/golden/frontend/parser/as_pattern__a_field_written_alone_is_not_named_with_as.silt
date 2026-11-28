@@ -1,8 +1,8 @@
 -- exit: 1
 -- stderr-contains: error[parse]: expected '}' or ',' to continue record pattern
--- stderr-contains: help: write `P { x: x as y }`
--- A field written alone is a name already: to name its value with `as`
--- too, the field takes a pattern.
+-- stderr-contains: help: to bind the field `x` to the name `y`, write `P { x: y }`
+-- A field written alone is a name already: to give its value another
+-- name, the field takes that name as its pattern.
 type P {
   x: Int,
 }

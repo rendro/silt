@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'deep'
+-- stderr-contains: help: `deep` marks a top-level function, `deep fn name(...)`: a closure cannot be deep, so make it a top-level `deep fn`
+fn main() {
+  let go = deep { n -> n }
+  println(go(1))
+}
