@@ -581,7 +581,7 @@ top-level binding holds one) may still be at work.
 `vm.settle()` waits until the program has ended as `silt run` defines
 it: until none of its tasks can do more (each has ended or waits, and
 no timer and no I/O is pending). It then drops the tasks that still
-wait, and reports on stderr the failures that nothing read (the three
+wait, and reports on stderr the failures that nothing read (the two
 kinds above). An embedder that wants the exit rule of `silt run` calls it
 after a `run_program` that returned `Ok`.
 

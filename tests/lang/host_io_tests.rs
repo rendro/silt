@@ -81,8 +81,9 @@ const WAITS_FOR_A_FAILURE_MS: [u64; 4] = [50, 500, 3_000, 10_000];
 /// The report of a failure nobody read at the end of a run (the
 /// function of a `stream.from_fn` that a top-level binding holds, which
 /// fails with nobody reading the stream) is the runtime's, not the
-/// program's: it goes to the host's stderr, once. It is there when `run_program` returns, whose result it
-/// does not change, if the function has failed by then.
+/// program's: it goes to the host's stderr, once. It is there when
+/// `run_program` returns, whose result it does not change, if the
+/// function has failed by then.
 #[test]
 fn a_failure_nobody_read_is_reported_on_the_stderr_buffer() {
     for wait_ms in WAITS_FOR_A_FAILURE_MS {
@@ -198,31 +199,43 @@ fn main() {
 }
 
 /// A panic of the stderr output is dropped, like an error it returns:
-/// the report (here of a `stream.from_fn` function that failed after it
-/// closed its channel) is lost, the program's result stands.
+/// the report (here of the function of a `stream.from_fn` that a
+/// top-level binding holds, which fails with nobody reading the stream)
+/// is lost, the program's result stands.
 #[test]
 fn a_panicking_stderr_loses_the_report_only() {
+    /// Panics as `Panics` does, and says that something was written.
+    struct Tried(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Output for Tried {
+        fn write(&self, _text: &str) -> io::Result<()> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            panic!("the sink panicked")
+        }
+    }
+
     let out = Buffer::new();
+    let tried = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let source = r#"
 import channel
 import stream
 import time
+let about_to_fail: Channel(Int) = channel.new(1)
+let s: Channel(Int) = stream.from_fn({ ch ->
+  channel.send(about_to_fail, 1)
+  panic("boom")
+})
 fn main() {
-  let about_to_fail = channel.new(1)
-  let s = stream.from_fn({ ch ->
-    channel.send(ch, 1)
-    channel.close(ch)
-    channel.send(about_to_fail, 1)
-    panic("boom")
-  })
-  let _ = stream.collect(s)
   let _ = channel.receive(about_to_fail)
   time.sleep(time.ms(300))
   println("main done")
 }
 "#;
-    assert_eq!(run(source, HostIo::new(out.clone(), Panics)), Ok(()));
+    let err = Tried(tried.clone());
+    assert_eq!(run(source, HostIo::new(out.clone(), err)), Ok(()));
     assert_eq!(out.contents(), "main done\n");
+    // There was a report to lose.
+    assert!(tried.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 /// `io.eprint` and `io.eprintln` write to stderr, and nothing of them
