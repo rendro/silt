@@ -27,19 +27,36 @@ use crate::text::levenshtein;
 ///   get stuck at the absolute-1 threshold.
 ///
 /// Among accepted candidates the smallest edit distance wins; ties break
-/// lexicographically to keep the hint deterministic.
+/// lexicographically to keep the hint deterministic. A candidate that
+/// differs from `typo` only in case and underscores (`Y` and `y`,
+/// `MaxSize` and `max_size`) is the name meant: it wins before any
+/// distance is counted.
 pub(crate) fn suggest_similar<I, S>(typo: &str, candidates: I) -> Option<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let folded = |name: &str| -> String {
+        (name.chars())
+            .filter(|c| *c != '_')
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let typo_folded = folded(typo);
     let mut best: Option<(usize, String)> = None;
+    let mut same: Option<String> = None;
     for c in candidates {
         let c = c.as_ref();
         if c == typo {
             // Never suggest the typo itself — this can happen when the
             // caller sweeps its own env and the name is present under
             // a different scope (e.g. a shadowed fn param).
+            continue;
+        }
+        if !typo_folded.is_empty() && folded(c) == typo_folded {
+            if same.as_ref().is_none_or(|s| c < s.as_str()) {
+                same = Some(c.to_string());
+            }
             continue;
         }
         let d = levenshtein(typo, c);
@@ -58,7 +75,7 @@ where
             _ => best = Some((d, c.to_string())),
         }
     }
-    best.map(|(_, c)| c)
+    same.or(best.map(|(_, c)| c))
 }
 
 #[cfg(test)]
