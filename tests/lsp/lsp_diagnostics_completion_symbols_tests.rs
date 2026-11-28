@@ -223,3 +223,40 @@ fn lsp_document_symbols_includes_trait_impls() {
 
     client.shutdown();
 }
+
+// `deep` is a word of its own only before `fn`: completion offers
+// `deep fn` with the keywords.
+#[test]
+fn lsp_completion_offers_deep_fn() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri("comp_deep");
+    let source = "fn main() { 0 }\n\n";
+    client.did_open_and_wait(&uri, source);
+    let result = client.request_result(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 0 },
+        }),
+    );
+    let items = result
+        .as_array()
+        .or_else(|| result.pointer("/items").and_then(|v| v.as_array()))
+        .unwrap_or_else(|| panic!("unexpected completion response: {result}"));
+    let deep: Vec<&Value> = items.iter().filter(|it| it["label"] == "deep fn").collect();
+    assert_eq!(
+        deep.len(),
+        1,
+        "completion offers no `deep fn` once: {result}"
+    );
+    // CompletionItemKind::KEYWORD is 14.
+    assert_eq!(
+        deep[0]["kind"], 14,
+        "`deep fn` is not offered as a keyword: {result}"
+    );
+    assert!(
+        !items.iter().any(|it| it["label"] == "deep"),
+        "completion offers a bare `deep`, which is a name there: {result}"
+    );
+    client.shutdown();
+}

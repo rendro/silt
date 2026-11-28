@@ -55,6 +55,11 @@ syntax keyword siltBuiltin panic print println
 syntax match siltModule "\<\(io\|string\|int\|float\|list\|map\|result\|option\|test\|channel\|task\|regex\|json\|toml\|set\|math\|time\|http\|fs\|env\|postgres\|bytes\|crypto\|url\|tcp\|stream\|uuid\|process\|csv\)\>\ze\."
 " ── End of the generated names ──────────────────────────────────────────
 
+" ── deep ────────────────────────────────────────────────────────────
+" `deep` is a word of its own only right before `fn` (`deep fn`,
+" `pub deep fn`); everywhere else it is a name.
+syntax match siltKeyword "\<deep\ze\s\+fn\>"
+
 " ── Comments ────────────────────────────────────────────────────────
 syntax match siltLineComment "--.*$" contains=siltTodo
 syntax region siltBlockComment start="{-" end="-}" contains=siltBlockComment,siltTodo

@@ -94,6 +94,14 @@ impl Server {
             });
         }
 
+        // `deep` is a word of its own only right before `fn`, so it is
+        // offered with it.
+        items.push(CompletionItem {
+            label: "deep fn".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            ..CompletionItem::default()
+        });
+
         for kw in KEYWORD_LITERALS {
             items.push(CompletionItem {
                 label: kw.to_string(),
