@@ -915,14 +915,16 @@ types arithmetic is on, `Int` and `Float`, and nothing else. `Functor`,
 | `Equal`   | Equality comparison              | by structure | no (an error) |
 | `Hash`    | Hash value for maps/sets         | by structure | no (an error) |
 | `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
-| `Number`  | `+ - * / %`, unary `-`, and `from_int` | Int and Float only | no |
+| `Number`  | `+ - * / %`, unary `-`, and `from_int`; includes `Equal`, `Compare`, `Hash`, `Display` | Int and Float only | no |
 | `Functor` | `map` over a type constructor | `List`, `Option`, `Result`, `Channel`; types with an impl | yes, for a type of your own |
 | `Applicative` | `pure` and `map2`; includes `Functor` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
 | `Monad` | `flat_map`; includes `Applicative` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
 
 Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
 `>=` need `Compare`, interpolation and `println` need `Display`,
-arithmetic needs `Number`. A function without annotations is general
+arithmetic needs `Number`, which brings the other four: Int and Float
+have them all, so `where a: Number` lets a body compare, print and hash
+its numbers too. A function without annotations is general
 over them (`fn add(a, b) { a + b }` is `(a, a) -> a where a: Number`);
 with annotation variables it declares them:
 

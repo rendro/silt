@@ -19,13 +19,13 @@ fn bump(x: a) -> a where a: Number {
   x + a.from_int(1)
 }
 
-trait Display for Money(a) where a: Number + Display {
+trait Display for Money(a) where a: Number {
   fn display(self) -> String {
     "{self.amount + a.from_int(1)}"
   }
 }
 
-trait Display for Cents(a) where a: Number + Display {
+trait Display for Cents(a) where a: Number {
   fn display(self) -> String {
     "{bump(self.amount)}"
   }

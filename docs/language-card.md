@@ -259,8 +259,8 @@ fn main() {
   never imported.
 - Built in: `Display` (by structure, or a written impl), `Equal`, `Hash`
   and `Compare` (always by structure; an impl of them is an error),
-  `Number` (`Int` and `Float`; `a.from_int(0)` is
-  the 0 of the type). `Functor`,
+  `Number` (`Int` and `Float`; it brings `Equal`, `Compare`, `Hash`
+  and `Display`; `a.from_int(0)` is the 0 of the type). `Functor`,
   `Applicative` and `Monad` are traits of type constructors (see
   [Functors](language/functors.md)). A record compares
   field by field in declared order, an enum by variant order, then
@@ -352,7 +352,7 @@ type Result(a, e) { Ok(a), Err(e) }
 type Option(a) { Some(a), None }
 type Step(a) { Stop(a), Continue(a) }
 type Bytes  -- opaque
-trait Number { fn from_int(n: Int) -> Self }
+trait Number: Equal + Compare + Hash + Display { fn from_int(n: Int) -> Self }
 trait Functor { fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b) }
 trait Applicative: Functor { fn pure(x: a) -> Self(a); fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c) }
 trait Monad: Applicative { fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b) }

@@ -2037,7 +2037,9 @@ mod tests {
         assert_eq!(doc_text("Option.Ok"), None);
         let text = doc_text("Number.from_int").expect(":doc Number.from_int");
         assert!(
-            text.starts_with("trait Number { fn from_int(n: Int) -> Self }\n"),
+            text.starts_with(
+                "trait Number: Equal + Compare + Hash + Display { fn from_int(n: Int) -> Self }\n"
+            ),
             "{text}"
         );
         assert_eq!(doc_text("Number.to_int"), None);

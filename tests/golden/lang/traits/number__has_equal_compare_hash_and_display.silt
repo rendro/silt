@@ -1,0 +1,23 @@
+-- Number brings Equal, Compare, Hash and Display: Int and Float, its
+-- two types, have all four, so `where n: Number` is all that generic
+-- number code writes. A bound that repeats one of them is accepted.
+fn largest(a: n, b: n) -> n where n: Number {
+  match {
+    a > b -> a
+    _ -> b
+  }
+}
+
+fn describe(a: n) -> String where n: Number {
+  "{a} {a == a} {#[a, a]}"
+}
+
+fn both(a: n) -> String where n: Number + Compare {
+  "{largest(a, a)}"
+}
+
+fn main() {
+  println(largest(1, 2))
+  println(describe(2.5))
+  println(both(1))
+}

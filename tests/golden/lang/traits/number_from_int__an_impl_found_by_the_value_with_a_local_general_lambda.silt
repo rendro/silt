@@ -5,7 +5,7 @@ type Money(a) {
   amount: a,
 }
 
-trait Display for Money(a) where a: Number + Display {
+trait Display for Money(a) where a: Number {
   fn display(self) -> String {
     let g = { y -> y + y }
     "{g(self.amount)} {g(1)}"
