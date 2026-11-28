@@ -99,11 +99,11 @@ rendered string.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
+| `Connect(msg)` | `String` | no connection was made: refused, no route, no such host. Also a proxy (see [Proxies](#proxies)) that cannot be reached, that refuses the tunnel (`CONNECT proxy failed: proxy server responded 403/403`) or closes without an answer, and a SOCKS proxy, which the client does not speak |
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
 | `InvalidUrl(url)` | `String` | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes (the transport's limit), or has a user with a `:` in it once decoded; no connection is made. Also the location of a redirect that is no URL or has such a scheme, or that leads from `https` to `http`, which is not followed. The URL is shown with its user and password hidden |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes. Also a proxy (see [Proxies](#proxies)) that refuses the tunnel or is no proxy |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes. Also a proxy (see [Proxies](#proxies)) that answers no HTTP |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `TooManyRedirects` | — | `http.get` or `http.request` was redirected more than ten times |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a header given twice (in two cases of its name), a `Host` or `Authorization` that is no ASCII text |
@@ -151,19 +151,29 @@ is empty counts as not set, and one that holds no proxy's URL is passed
 over for the next. So `ALL_PROXY` is the proxy of a scheme whose own is
 not set, and with `HTTPS_PROXY` alone an `http://` URL is reached
 without a proxy. A host that `no_proxy` (else `NO_PROXY`) names is
-reached without one: a list separated by commas, of hosts (`localhost`,
-`127.0.0.1`, `::1`), of endings (`.example.com` or `*.example.com`,
-every host below `example.com`), of beginnings (`10.` or `10.*`), or
-`*`, every host; case does not matter. The variables are read once, at
-the program's first request.
+reached without one: a list separated by commas (the spaces around an
+entry do not count), of hosts (`localhost`, `127.0.0.1`, `::1`), of
+endings (`.example.com` or `*.example.com`, every host below
+`example.com`), of beginnings (`10.` or `10.*`), or `*`, every host;
+case does not matter. An entry names a host without its port:
+`127.0.0.1:9` matches no host. The variables are read once, at the
+program's first request.
+
+The client speaks no SOCKS. A `socks5://`, `socks4://` or `socks://` URL
+in the variable that a request's scheme picks refuses the request, as
+`Err(Connect("ALL_PROXY: a socks proxy is not supported"))` (the name of
+that variable): it is not sent without the proxy, and the later variables
+are not looked at. A host that `no_proxy` names is reached as before.
 
 The client asks the proxy for a tunnel (`CONNECT host:port`) and sends the
 request through it, for an `http://` URL too: the proxy sees the host
 and the port, not the request. A user and password in the proxy's URL
 (`http://user:pw@proxy.example:3128`) go to the proxy only, as
 `proxy-authorization`, and no error shows them. A proxy that cannot be
-reached is `Err(Connect(_))`; one that refuses the tunnel, or a server
-that is no proxy, is `Err(InvalidResponse(_))`.
+reached, that refuses the tunnel (any answer but `200`, such as a `403`
+or a `407`) or that closes without an answer is `Err(Connect(_))`, its
+message naming the status (`CONNECT proxy failed: proxy server responded
+403/403`); a server that answers no HTTP is `Err(InvalidResponse(_))`.
 
 
 ## `http.get`

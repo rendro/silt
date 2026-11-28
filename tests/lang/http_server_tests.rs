@@ -759,7 +759,9 @@ fn a_request_beyond_a_limit_is_refused() {
 /// yet have a bound together, of the bytes of them that have come: a
 /// head that announces a body takes no room, so every client is told to
 /// send its body; the one whose bytes go beyond the room that is left is
-/// refused then, and the others are served.
+/// refused then, and the others are served. Then the room is all there
+/// again: a body handed to its handler, and one refused, hold none of
+/// it, so the same comes out a second time.
 #[test]
 fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
     let server = Server::new(
@@ -775,43 +777,52 @@ fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
         assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
         client.0.read_line(&mut line).expect("its end");
     };
-    // One more body of the largest size than the bound holds: each is
-    // announced and told to go on, as no byte of it has come.
-    let mut clients: Vec<Client> = (0..=BODIES_MAX / BODY_MAX)
-        .map(|_| {
-            let mut client = server.connect();
-            client.send(largest.as_bytes());
-            told_to_go_on(&mut client);
-            client
-        })
-        .collect();
-    // What the announced bodies hold leaves room for a small one.
-    let small = server.ask(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
-    assert_eq!((small.status, small.body.as_str()), (200, "5"));
-    // All of each body but its last byte, from all of them: more than
-    // the bound, and no body is whole. One is refused when its bytes
-    // go beyond what is left: once all of them have come, at the latest.
-    // (A refused client is read and dropped for a while: its bytes go.)
-    let all_but_one = vec![b'b'; BODY_MAX - 1];
-    for client in &mut clients {
-        let _ = client.0.get_ref().write_all(&all_but_one);
-    }
-    let limit = Instant::now() + PATIENCE;
-    let refused = loop {
-        if let Some(at) = clients.iter_mut().position(|client| client.has_word()) {
-            break at;
+    for round in 0..2 {
+        // One more body of the largest size than the bound holds: each is
+        // announced and told to go on, as no byte of it has come.
+        let mut clients: Vec<Client> = (0..=BODIES_MAX / BODY_MAX)
+            .map(|_| {
+                let mut client = server.connect();
+                client.send(largest.as_bytes());
+                told_to_go_on(&mut client);
+                client
+            })
+            .collect();
+        // What the announced bodies hold leaves room for a small one.
+        let small = server.ask(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
+        assert_eq!((small.status, small.body.as_str()), (200, "5"));
+        // All of each body but its last byte, from all of them: more than
+        // the bound, and no body is whole. One is refused when its bytes
+        // go beyond what is left: once all of them have come, at the latest.
+        // (A refused client is read and dropped for a while: its bytes go.)
+        let all_but_one = vec![b'b'; BODY_MAX - 1];
+        for client in &mut clients {
+            let _ = client.0.get_ref().write_all(&all_but_one);
         }
-        assert!(Instant::now() < limit, "no body was refused");
-        thread::sleep(Duration::from_millis(2));
-    };
-    let mut refused = clients.remove(refused);
-    let response = refused.response();
-    assert_eq!(response.status, 503);
-    assert_eq!(response.header("Connection"), Some("close"));
-    // The others fit: each is served when its last byte comes.
-    for client in &mut clients {
-        client.send(b"b");
-        assert_eq!(client.response().body, BODY_MAX.to_string());
+        let limit = Instant::now() + PATIENCE;
+        let refused = loop {
+            if let Some(at) = clients.iter_mut().position(|client| client.has_word()) {
+                break at;
+            }
+            assert!(
+                Instant::now() < limit,
+                "no body was refused in round {round}"
+            );
+            thread::sleep(Duration::from_millis(2));
+        };
+        let mut refused = clients.remove(refused);
+        let response = refused.response();
+        assert_eq!(response.status, 503);
+        assert_eq!(response.header("Connection"), Some("close"));
+        // The others fit: each is served when its last byte comes.
+        for client in &mut clients {
+            client.send(b"b");
+            assert_eq!(
+                client.response().body,
+                BODY_MAX.to_string(),
+                "round {round}"
+            );
+        }
     }
 }
 

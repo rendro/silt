@@ -458,9 +458,20 @@ fn proxies() -> &'static Proxies {
 #[cfg(feature = "http")]
 #[derive(Debug, Default)]
 struct Proxies {
-    http: Option<ureq::Proxy>,
-    https: Option<ureq::Proxy>,
+    http: Option<Picked>,
+    https: Option<Picked>,
     direct: Vec<Direct>,
+}
+
+/// The proxy of a scheme, as its variable names it.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+enum Picked {
+    Proxy(ureq::Proxy),
+    /// A SOCKS proxy (`socks5://`, `socks4://`, `socks://`), named by
+    /// this variable: the client speaks no SOCKS, and a request that
+    /// would go through it is refused, not sent without it.
+    Socks(&'static str),
 }
 
 /// An entry of `NO_PROXY`: the hosts it names.
@@ -485,14 +496,24 @@ impl Proxies {
     /// `https` through the first of `https_proxy`, `HTTPS_PROXY`,
     /// `all_proxy` and `ALL_PROXY`: `ALL_PROXY` is for a scheme whose
     /// own is not set. A variable that is empty is not set; one that holds
-    /// no proxy's URL is passed over. `no_proxy` (or `NO_PROXY`) lists
-    /// the hosts, separated by commas, that are reached without a proxy.
+    /// no proxy's URL is passed over; one that names a SOCKS proxy is
+    /// taken, and refuses the requests it would carry. `no_proxy` (or
+    /// `NO_PROXY`) lists the hosts, separated by commas, that are reached
+    /// without a proxy.
     fn of(var: impl Fn(&str) -> Option<String>) -> Proxies {
         let set = |name: &str| var(name).filter(|value| !value.trim().is_empty());
-        let first = |names: &[&str]| {
-            (names.iter())
-                .filter_map(|name| set(name))
-                .find_map(|value| ureq::Proxy::new(value.trim()).ok())
+        let first = |names: &[&'static str]| {
+            names.iter().find_map(|name| {
+                let proxy = ureq::Proxy::new(set(name)?.trim()).ok()?;
+                let connect = matches!(
+                    proxy.protocol(),
+                    ureq::ProxyProtocol::Http | ureq::ProxyProtocol::Https
+                );
+                Some(match connect {
+                    true => Picked::Proxy(proxy),
+                    false => Picked::Socks(name),
+                })
+            })
         };
         let direct = set("no_proxy").or_else(|| set("NO_PROXY"));
         let direct = direct.unwrap_or_default();
@@ -523,12 +544,16 @@ impl Proxies {
         }
     }
 
-    /// The proxy that a request to `url` goes through, if any.
-    fn of_url(&self, url: &Url) -> Option<&ureq::Proxy> {
-        let proxy = match url.scheme() {
-            "http" => self.http.as_ref()?,
-            "https" => self.https.as_ref()?,
-            _ => return None,
+    /// The proxy that a request to `url` goes through, if any; `Err` of
+    /// the variable that names a SOCKS proxy for it.
+    fn of_url(&self, url: &Url) -> Result<Option<&ureq::Proxy>, &'static str> {
+        let picked = match url.scheme() {
+            "http" => self.http.as_ref(),
+            "https" => self.https.as_ref(),
+            _ => None,
+        };
+        let Some(picked) = picked else {
+            return Ok(None);
         };
         let host = url.host().to_ascii_lowercase();
         let host = host.trim_start_matches('[').trim_end_matches(']');
@@ -538,8 +563,23 @@ impl Proxies {
             Direct::Ending(ending) => host.ends_with(ending.as_str()),
             Direct::Beginning(beginning) => host.starts_with(beginning.as_str()),
         });
-        (!direct).then_some(proxy)
+        match (direct, picked) {
+            (true, _) => Ok(None),
+            (false, Picked::Proxy(proxy)) => Ok(Some(proxy)),
+            (false, Picked::Socks(name)) => Err(name),
+        }
     }
+}
+
+/// The failure of a request that would go through the SOCKS proxy that
+/// the variable `name` names.
+#[cfg(feature = "http")]
+fn socks_refused(name: &str) -> Value {
+    let why = format!("{name}: a socks proxy is not supported");
+    Value::variant(
+        bv::ERR,
+        [Value::variant(bv::HTTP_CONNECT, [Value::string(why)])],
+    )
 }
 
 /// One call of `http.get`, `http.request` or `http.request_once`: whether
@@ -1288,7 +1328,12 @@ fn request_hops(
         if sent_url.as_str().len() > URL_MAX {
             return invalid_url(cut_short(&url.to_string()));
         }
-        let proxy = proxies().of_url(&sent_url);
+        // (A SOCKS proxy is not gone around: the program's traffic would
+        // go where its environment says it must not.)
+        let proxy = match proxies().of_url(&sent_url) {
+            Ok(proxy) => proxy,
+            Err(name) => return socks_refused(name),
+        };
         let result = send_once(agent, call, method, &sent_url, proxy, body, &sent);
         let shown = url.to_string();
         if !follow {
@@ -3360,7 +3405,7 @@ mod serve_tests {
     }
 
     /// A server whose task's stop flag is `stop`.
-    fn stoppable(stop: &Arc<AtomicBool>) -> Arc<Server> {
+    pub(super) fn stoppable(stop: &Arc<AtomicBool>) -> Arc<Server> {
         Arc::new(Server {
             handler: Value::Unit,
             owner: 0,
@@ -3529,8 +3574,43 @@ mod proxy_tests {
 
     /// The proxy a request to `url` goes through, as `host:port`.
     fn through(proxies: &Proxies, url: &str) -> Option<String> {
-        let proxy = proxies.of_url(&url_of(url))?;
-        Some(format!("{}:{}", proxy.host(), proxy.port()))
+        match proxies.of_url(&url_of(url)) {
+            Ok(proxy) => proxy.map(|proxy| format!("{}:{}", proxy.host(), proxy.port())),
+            Err(name) => Some(format!("refused by {name}")),
+        }
+    }
+
+    /// A SOCKS proxy in the variable picked for a request refuses the
+    /// request: the client speaks no SOCKS, and does not go around it,
+    /// nor on to a later variable. A host that `NO_PROXY` names is
+    /// reached without it.
+    #[test]
+    fn a_socks_proxy_refuses_the_requests_it_would_carry() {
+        let socks = proxies(&[
+            ("all_proxy", "socks5://127.0.0.1:1"),
+            ("ALL_PROXY", "http://p.test:1"),
+            ("HTTPS_PROXY", "socks://s.test:2"),
+            ("NO_PROXY", "direct.test"),
+        ]);
+        assert_eq!(
+            through(&socks, "http://a.test/").as_deref(),
+            Some("refused by all_proxy")
+        );
+        assert_eq!(
+            through(&socks, "https://a.test/").as_deref(),
+            Some("refused by HTTPS_PROXY")
+        );
+        assert_eq!(through(&socks, "http://direct.test/"), None);
+        let socks4 = proxies(&[("http_proxy", "socks4://127.0.0.1:1")]);
+        assert_eq!(
+            through(&socks4, "http://a.test/").as_deref(),
+            Some("refused by http_proxy")
+        );
+        assert_eq!(through(&socks4, "https://a.test/"), None);
+        assert_eq!(
+            http_error_tests::failure(&socks_refused("ALL_PROXY")),
+            "Connect(ALL_PROXY: a socks proxy is not supported)"
+        );
     }
 
     /// The proxy of a request is picked by its URL's scheme, as curl
@@ -3650,6 +3730,73 @@ mod proxy_tests {
             seen.lock().get(1).map(String::as_str),
             Some("GET /y HTTP/1.1")
         );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod bodies_room_tests {
+    use super::serve_tests::connection_of;
+    use super::*;
+    use crate::runtime::sync::Outcome;
+    use crate::vm::Native;
+    use std::io::Write;
+    use std::time::Instant;
+
+    /// Wait until the server holds `bytes` of bodies.
+    fn holds(server: &Server, bytes: usize) {
+        let limit = Instant::now() + Duration::from_secs(10);
+        while server.bodies.load(Ordering::SeqCst) != bytes {
+            let now = server.bodies.load(Ordering::SeqCst);
+            assert!(
+                Instant::now() < limit,
+                "the server holds {now}, not {bytes}"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// A body takes room for exactly the bytes of it that have come; the
+    /// room comes back, all of it, when its client leaves in the middle
+    /// of it, and when it is handed to its handler.
+    #[test]
+    fn the_room_of_a_body_comes_back_when_its_client_leaves_and_when_it_is_handed_over() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let server = super::serve_tests::stoppable(&Arc::new(AtomicBool::new(false)));
+        let head = b"POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\n";
+        // A client that leaves after 4 bytes of its 10.
+        let (mut leaves, mut client) = connection_of(&mut vm, &server);
+        assert!(matches!(
+            leaves.resume(&mut vm, Value::Unit),
+            Ok(Step::Park(_))
+        ));
+        client.write_all(head).expect("the head");
+        client.write_all(b"abcd").expect("a part of the body");
+        holds(&server, 4);
+        drop(client);
+        holds(&server, 0);
+        drop(leaves);
+        // A body that is handed to its handler.
+        let (mut handed, mut client) = connection_of(&mut vm, &server);
+        assert!(matches!(
+            handed.resume(&mut vm, Value::Unit),
+            Ok(Step::Park(_))
+        ));
+        client.write_all(head).expect("the head");
+        client.write_all(b"abc").expect("a part of the body");
+        holds(&server, 3);
+        client.write_all(b"defghij").expect("the rest");
+        holds(&server, 10);
+        let limit = Instant::now() + Duration::from_secs(10);
+        while !matches!(&handed.state, ConnState::Reading { got, .. } if got.lock().is_some()) {
+            assert!(Instant::now() < limit, "the request was not read");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // (The handler is no function: what its call comes to is not the
+        // point, the body is the handler's once it is called.)
+        vm.woken = Some(Fired::Arm(0, Outcome::Done));
+        let _ = handed.resume(&mut vm, Value::Unit);
+        assert_eq!(server.bodies.load(Ordering::SeqCst), 0);
+        drop((handed, client));
     }
 }
 
