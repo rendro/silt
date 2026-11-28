@@ -46,6 +46,7 @@ static UNTAKEN: OnceLock<fn(bool)> = OnceLock::new();
 /// Called again, it listens again where a signal that a program took
 /// has put the system's way back. Where the signals cannot be listened
 /// for, nothing is done: the system's way stays.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn when_untaken(action: fn(bool)) {
     if !os::HAS_STOP_SIGNALS {
         return;
