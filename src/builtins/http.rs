@@ -1864,25 +1864,39 @@ impl Held {
     /// Count `bytes` more as held, if the server has room for them.
     /// What is counted is noted in `pending`, for who makes the
     /// [`Held`] of it.
+    ///
+    /// Where there is no room, the body is refused, and what was
+    /// counted for it (`pending`) is given back in the same step as the
+    /// refusal: a body of another connection that asks a moment later
+    /// finds it free. (Given back later, when the refused request's
+    /// [`Held`] is dropped, two bodies that meet the limit together could
+    /// both be refused, though one alone was beyond it.)
     fn reserve(server: &Server, pending: &AtomicUsize, bytes: usize) -> bool {
+        // (Only the reader of this connection changes `pending` now.)
+        let mine = pending.load(Ordering::Acquire);
         let mut held = server.bodies.load(Ordering::Acquire);
-        loop {
-            if bytes > wire::BODIES_MAX.saturating_sub(held) {
-                return false;
-            }
+        let fits = loop {
+            let fits = bytes <= wire::BODIES_MAX.saturating_sub(held);
+            let next = match fits {
+                true => held + bytes,
+                false => held.saturating_sub(mine),
+            };
             let counted = server.bodies.compare_exchange_weak(
                 held,
-                held + bytes,
+                next,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             );
             match counted {
-                Ok(_) => break,
+                Ok(_) => break fits,
                 Err(now) => held = now,
             }
-        }
-        pending.fetch_add(bytes, Ordering::AcqRel);
-        true
+        };
+        match fits {
+            true => pending.fetch_add(bytes, Ordering::AcqRel),
+            false => pending.swap(0, Ordering::AcqRel),
+        };
+        fits
     }
 }
 
@@ -3753,6 +3767,26 @@ mod bodies_room_tests {
             );
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    /// A body that does not fit gives back what was counted for it as it
+    /// is refused, in the same step: not when its request is dropped.
+    #[test]
+    fn a_refused_body_gives_its_room_back_as_it_is_refused() {
+        let server = super::serve_tests::stoppable(&Arc::new(AtomicBool::new(false)));
+        let pending = AtomicUsize::new(0);
+        assert!(Held::reserve(&server, &pending, 4));
+        server
+            .bodies
+            .fetch_add(wire::BODIES_MAX - 5, Ordering::SeqCst);
+        assert!(Held::reserve(&server, &pending, 1));
+        assert_eq!(server.bodies.load(Ordering::SeqCst), wire::BODIES_MAX);
+        assert!(!Held::reserve(&server, &pending, 1));
+        assert_eq!(pending.load(Ordering::SeqCst), 0);
+        assert_eq!(server.bodies.load(Ordering::SeqCst), wire::BODIES_MAX - 5);
+        // The request's Held, made of what is pending, gives back nothing more.
+        drop(Held(server.clone(), pending.swap(0, Ordering::SeqCst)));
+        assert_eq!(server.bodies.load(Ordering::SeqCst), wire::BODIES_MAX - 5);
     }
 
     /// A body takes room for exactly the bytes of it that have come; the
