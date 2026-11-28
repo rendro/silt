@@ -1,0 +1,60 @@
+-- repeat: 5
+-- A stream that a task built and handed on (sent it on a channel) is no
+-- longer the task's to stop: when the task is stopped while it still
+-- runs (the body of its task.background returned, another piece of its
+-- task.join failed, the time of its task.deadline passed), the stream
+-- stays whole for whoever has it, and ends when its reader lets it go.
+import channel
+import stream
+import task
+import time
+
+fn main() {
+  let out = channel.new(1)
+  let s = task.background([{ ->
+    channel.send(out, stream.from_list([4, 5]) |> stream.map { x -> x * 10 })
+    time.sleep(time.ms(10000))
+  }]) { ->
+    match channel.receive(out) {
+      Some(s) -> s
+      None -> stream.from_list([])
+    }
+  }
+  println("helper: {stream.collect(s)}")
+
+  let out2 = channel.new(1)
+  let sent = channel.new(1)
+  let joined = task.guard { ->
+    task.join([
+      { ->
+        channel.send(out2, stream.from_range(1, 3) |> stream.map { x -> x + 1 })
+        channel.send(sent, ())
+        time.sleep(time.ms(10000))
+      },
+      { ->
+        let _ = channel.receive(sent)
+        panic("the other piece")
+      },
+    ])
+  }
+  match joined {
+    Ok(_) -> println("join: no failure")
+    Err(_) -> println("join: failed")
+  }
+  match channel.receive(out2) {
+    Some(s) -> println("join: {stream.collect(s)}")
+    None -> println("join: nothing")
+  }
+
+  let out3 = channel.new(1)
+  let never: Channel(Int) = channel.new(0)
+  let late = task.deadline(time.ms(20)) { ->
+    channel.send(out3, stream.from_list([7, 8, 9]) |> stream.filter { x -> x > 7 })
+    channel.receive(never)
+  }
+  println("deadline: {late}")
+  match channel.receive(out3) {
+    Some(s) -> println("deadline: {stream.collect(s)}")
+    None -> println("deadline: nothing")
+  }
+}
