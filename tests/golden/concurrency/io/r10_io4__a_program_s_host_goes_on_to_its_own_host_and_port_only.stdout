@@ -1,0 +1,25 @@
+GET same
+  A: /to/same host app.example
+  A: /echo host app.example
+  the client: 200
+GET host
+  A: /to/host host app.example
+  A: /echo host the URL's
+  the client: 200
+GET port
+  A: /to/port host app.example
+  B: /echo host the URL's
+  the client: 200
+GET refused 2
+  the client: Other: the header host is given twice
+GET refused 2
+  the client: Other: the header user-agent is given twice
+GET refused 3
+  the client: Other: the header x-a is given twice
+GET refused 1
+  the client: Other: the header host is no ASCII text
+GET refused 1
+  the client: Other: the header authorization is no ASCII text
+GET once
+  A: /echo host the URL's
+  the client: 200

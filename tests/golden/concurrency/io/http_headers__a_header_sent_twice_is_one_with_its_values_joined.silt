@@ -3,11 +3,15 @@
 -- A header that comes more than once is one entry of the map, its values
 -- joined with ", " in the order they came: of a request, in what the
 -- handler gets, and of a response, in what `http.request` returns. A
--- header that comes once is as it came.
+-- header that comes once is as it came. (The request is sent by hand: a
+-- client of silt's refuses two keys that are one header name.)
 import bytes
 import http
+import list
 import map
 import option
+import result
+import string
 import task
 import tcp
 import url
@@ -22,29 +26,51 @@ fn answer(req: http.Request) -> http.Response {
   }
 }
 
+-- The body of what the server answers to a GET with `X-A` twice.
+fn ask(port: Int) -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else {
+    return "cannot connect"
+  }
+  let head = [
+    "GET / HTTP/1.1",
+    "Host: h",
+    "X-A: 1",
+    "x-a: 2",
+    "X-B: 3",
+    "Connection: close",
+    "",
+    "",
+  ]
+  let _ = tcp.write(conn, bytes.from_string(string.join(head, "{cr}\n")))
+  let answer = bytes.to_string(read_all(conn, bytes.empty())) |> result.unwrap_or("(no text)")
+  tcp.close(conn)
+  answer |> string.split("{cr}\n{cr}\n") |> list.get(1) |> option.unwrap_or("")
+}
+
+fn read_all(conn: tcp.TcpStream, got: Bytes) -> Bytes {
+  match tcp.read(conn, 65536) {
+    Ok(more) when bytes.length(more) > 0 -> read_all(conn, bytes.concat(got, more))
+    _ -> got
+  }
+}
+
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
     panic("cannot listen")
   }
-  let link = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let port = tcp.local_port(listener)
+  let link = "http://127.0.0.1:{port}/"
   let server = { -> http.serve(listener, answer) }
   task.background([server]) { ->
-    let sent = #{ "X-A": "1", "x-a": "2", "X-B": "3" }
-    match http.request(http.GET, url_of(link), bytes.empty(), sent) {
+    println(ask(port))
+    match http.request(http.GET, url_of(link), bytes.empty(), #{}) {
       Ok(response) -> {
-        println(bytes.to_string(response.body) |> result_text)
         println("set-cookie: {map.get(response.headers, "set-cookie") |> option.unwrap_or("none")}")
         println("x-one: {map.get(response.headers, "x-one") |> option.unwrap_or("none")}")
       }
       Err(e) -> println("error: {e}")
     }
-  }
-}
-
-fn result_text(r: Result(String, bytes.BytesError)) -> String {
-  match r {
-    Ok(text) -> text
-    Err(_) -> "(no text)"
   }
 }
 

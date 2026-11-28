@@ -1,11 +1,13 @@
 -- timeout: 30
 -- requires-feature: http
 -- stderr-contains: http.serve: handler returned malformed Response: Response.status out of range: 1000
+-- stderr-contains: http.serve: handler returned malformed Response: Response.status out of range: 600 is not the status of a response (200..=599)
 -- stderr-contains: http.serve: handler error: panic: boom
 -- stderr-not-contains: error[runtime]
 -- A handler that fails, or returns a response that is none, is answered
 -- 500, and the failure is written to stderr as one line: its message
--- only, with no diagnostic header nested in it.
+-- only, with no diagnostic header nested in it. A status is one of
+-- 200 to 599: 600 is none.
 import bytes
 import http
 import task
@@ -15,6 +17,8 @@ import url
 fn answer(req: http.Request) -> http.Response {
   match url.segments(req.url) {
     ["status"] -> http.Response { status: 1000, body: bytes.empty(), headers: #{} }
+    ["six"] -> http.Response { status: 600, body: bytes.empty(), headers: #{} }
+    ["five"] -> http.Response { status: 599, body: bytes.empty(), headers: #{} }
     ["fail"] -> panic("boom")
     _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
   }
@@ -35,6 +39,8 @@ fn main() {
   let server = { -> http.serve(listener, answer) }
   task.background([server]) { ->
     show("status", http.get(url_of("{base}/status")))
+    show("six", http.get(url_of("{base}/six")))
+    show("five", http.get(url_of("{base}/five")))
     show("fail", http.get(url_of("{base}/fail")))
     show("after", http.get(url_of("{base}/")))
   }

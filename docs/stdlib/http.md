@@ -106,7 +106,7 @@ rendered string.
 | `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `TooManyRedirects` | — | `http.get` or `http.request` was redirected more than ten times |
-| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none |
+| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a header given twice (in two cases of its name), a `Host` or `Authorization` that is no ASCII text |
 
 Which variant a failure is, is decided by the kind of failure the
 transport reports, never by the wording of its message: the message is
@@ -248,6 +248,11 @@ say, in a `Content-Type` header among `headers`: none is added. A
 `Host` instead of the URL's host. A `Content-Length`, a
 `Transfer-Encoding` and a `Connection` among `headers` are not sent: the
 body goes whole, with its own length, and the connection is the client's.
+A header's name is the same in any case: two keys of `headers` that
+differ only in case (`User-Agent` and `user-agent`) are one header given
+twice, and the request is `Err(Other("the header user-agent is given
+twice"))`; so is a `Host` or an `Authorization` that is no ASCII text
+(`Err(Other("the header host is no ASCII text"))`). Nothing is sent then.
 
 The user and password of the URL (`url.with_user`, `url.with_password`,
 which escape them) are sent as `authorization: Basic ...` (RFC 7617),
@@ -271,7 +276,9 @@ method and body. The credentials are not sent to where a redirect leads,
 also when it leads to the same host: the `authorization`,
 `proxy-authorization` and `cookie` headers, and the user and password of
 the URL. Every other header among `headers` is, and so is the body after
-a 307 or 308, also to another host, as curl and Go send them. A location
+a 307 or 308, also to another host, as curl and Go send them. A `Host`
+among `headers` goes on only where the scheme, the host and the port stay
+the same: a request to another names the host it goes to. A location
 is resolved against the URL that answered with `url.resolve`: `?y=2` on
 its path, `//host/x` on its scheme, `../x` next to its path. An
 empty location, or one that is a fragment alone (`#top`), is the URL that
@@ -431,7 +438,7 @@ request of the connection. So:
   poll) holds no thread while it does.
 
 The handler receives a `Request` and must return a `Response` whose
-`status` is the status of a response: 200 to 999.
+`status` is the status of a response: 200 to 599.
 
 | What happens | What the client gets |
 |---|---|
