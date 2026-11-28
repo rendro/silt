@@ -359,7 +359,10 @@ names is read from the key the map gives for it, as
 [`json.parse_with`](json.md#jsonparse_with) reads a JSON document: a field
 of a nested record by its path of fields (`package.default_features`), a
 list, an `Option`, a map, a tuple or a variant on the way adding nothing to
-it. This reads a key with a `-` (`default-features`) or a capital letter,
+it, and a field of a recursive type named at each depth by its own path
+(`kids.label` is the label of the children only). An entry whose path goes
+into a type with a `json.Decode` impl, which decodes its part itself, is a
+runtime error. This reads a key with a `-` (`default-features`) or a capital letter,
 which no field can be named. A key that no field reads is still an error,
 and `UnknownField` lists the keys the table takes as the document writes
 them. A key of the map that is no path of a field of the type, and a map

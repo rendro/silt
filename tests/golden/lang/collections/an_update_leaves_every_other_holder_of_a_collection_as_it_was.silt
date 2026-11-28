@@ -303,7 +303,7 @@ fn eachM(kind: String, make: Fn() -> Map(Int, Int)) {
     "map.set {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpM(h) }}; made {fpM(made)}",
   )
   let snapshots = list.scan(xs, c) { acc, x -> map.set(acc, x, x * 3 + 1) }
-  println("map.set {kind} 7 list.scan: {list.map(snapshots) { s -> fpM(s) }}")
+  println("map.set {kind} 7 list.scan from {fpM(c)}: {list.map(snapshots) { s -> fpM(s) }}")
   let made = list.fold(xs, c) { acc, x ->
     match x == 1 {
       true -> acc
@@ -697,7 +697,7 @@ fn eachU(kind: String, make: Fn() -> Map(Int, Int)) {
     "map.update {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpU(h) }}; made {fpU(made)}",
   )
   let snapshots = list.scan(xs, c) { acc, x -> map.update(acc, x, 0) { v -> v + 1 } }
-  println("map.update {kind} 7 list.scan: {list.map(snapshots) { s -> fpU(s) }}")
+  println("map.update {kind} 7 list.scan from {fpU(c)}: {list.map(snapshots) { s -> fpU(s) }}")
   let made = list.fold(xs, c) { acc, x ->
     match x == 1 {
       true -> acc
@@ -1090,7 +1090,7 @@ fn eachS(kind: String, make: Fn() -> Set(Int)) {
     "set.insert {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpS(h) }}; made {fpS(made)}",
   )
   let snapshots = list.scan(xs, c) { acc, x -> set.insert(acc, x + 500) }
-  println("set.insert {kind} 7 list.scan: {list.map(snapshots) { s -> fpS(s) }}")
+  println("set.insert {kind} 7 list.scan from {fpS(c)}: {list.map(snapshots) { s -> fpS(s) }}")
   let made = list.fold(xs, c) { acc, x ->
     match x == 1 {
       true -> acc
@@ -1480,7 +1480,7 @@ fn eachA(kind: String, make: Fn() -> List(Int)) {
     "list.append {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpA(h) }}; made {fpA(made)}",
   )
   let snapshots = list.scan(xs, c) { acc, x -> list.append(acc, x) }
-  println("list.append {kind} 7 list.scan: {list.map(snapshots) { s -> fpA(s) }}")
+  println("list.append {kind} 7 list.scan from {fpA(c)}: {list.map(snapshots) { s -> fpA(s) }}")
   let made = list.fold(xs, c) { acc, x ->
     match x == 1 {
       true -> acc
@@ -2031,7 +2031,7 @@ fn eachL(kind: String, make: Fn() -> List(Int)) {
       None -> []
     }
   }
-  println("list.set {kind} 7 list.scan: {list.map(snapshots) { s -> fpL(s) }}")
+  println("list.set {kind} 7 list.scan from {fpL(c)}: {list.map(snapshots) { s -> fpL(s) }}")
   let made = list.fold(xs, c) { acc, x ->
     match x == 1 {
       true -> acc

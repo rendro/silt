@@ -297,7 +297,7 @@ fn eachP(kind: String, make: Fn() -> List(Int)) {
     "[x, ..acc] {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpP(h) }}; made {fpP(made)}",
   )
   let snapshots = list.scan(xs, c) { acc, x -> [x, ..acc] }
-  println("[x, ..acc] {kind} 7 list.scan: {list.map(snapshots) { s -> fpP(s) }}")
+  println("[x, ..acc] {kind} 7 list.scan from {fpP(c)}: {list.map(snapshots) { s -> fpP(s) }}")
   let made = list.fold(xs, c) { acc, x ->
     match x == 1 {
       true -> acc
@@ -1099,7 +1099,7 @@ fn eachQ(kind: String, make: Fn() -> List(Int)) {
     "list.prepend {kind} 7 a step that keeps the old ones: {list.map(history) { h -> fpQ(h) }}; made {fpQ(made)}",
   )
   let snapshots = list.scan(xs, c) { acc, x -> list.prepend(acc, x) }
-  println("list.prepend {kind} 7 list.scan: {list.map(snapshots) { s -> fpQ(s) }}")
+  println("list.prepend {kind} 7 list.scan from {fpQ(c)}: {list.map(snapshots) { s -> fpQ(s) }}")
   let made = list.fold(xs, c) { acc, x ->
     match x == 1 {
       true -> acc

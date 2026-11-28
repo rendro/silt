@@ -1,0 +1,24 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: toml.parse_with: the map names the field `tags.names`, and Tags decodes itself with its json.Decode impl
+-- As for json.parse_with: the map reaches no field of a type with a
+-- written json.Decode, which decodes its part itself.
+import json
+import toml
+
+type Tags { names: List(String) }
+type Post { title: String, tags: Tags }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { names: [text] })
+      _ -> Err(json.Other("tags are a string", 0, 0, 0))
+    }
+  }
+}
+
+fn main() {
+  println(toml.parse_with("title = \"a\"\nTags = \"x\"\n", #{"tags": "Tags"}, Post))
+  println(toml.parse_with("title = \"a\"\n", #{"tags.names": "Names"}, Post))
+}

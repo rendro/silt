@@ -191,6 +191,8 @@ of more than 10,000,000 elements. A range holds at most as many
 elements as an `Int` counts (9,223,372,036,854,775,807): one of more,
 like `0..9223372036854775807`, is a runtime error where it is made, so
 the length of every list and the index of every element is an `Int`.
+Where silt runs with 32-bit addresses (the playground), a list holds at
+most 4,294,967,295 elements, and the error names that limit.
 
 Range binds tighter than `|>` so `1..10 |> list.sum` needs no parens, and looser than arithmetic so `a+1..b-1` works.
 

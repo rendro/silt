@@ -412,7 +412,11 @@ fn parse_text(
 ) -> Result<Step, VmError> {
     let expected = decode::target(decoder, ty)?.element();
     let keys = match keys {
-        Some(keys) => decode::Keys::of(&vm.runtime, decoder.name, &expected, keys)?,
+        Some(keys) => {
+            let table = vm.decoding_table();
+            let written = |id, args: &[FieldType]| table.decoded(id, args).is_some();
+            decode::Keys::of(&vm.runtime, decoder.name, &expected, keys, &written)?
+        }
         None => decode::Keys::default(),
     };
     let read = |r: &decode::Reader, expected: &FieldType, parts: &seed::Parts| {
