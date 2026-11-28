@@ -311,6 +311,14 @@ pub(crate) mod channel {
 
         fn timeout(vm, dur: time::Duration) -> Result<Value, VmError> {
             let dur = span(dur);
+            // A duration of zero or less is no time: the channel is
+            // closed at once, before anybody reads it, and no timer is
+            // armed.
+            if dur.is_zero() {
+                let ch = Channel::new(vm.next_channel_id(), 1);
+                ch.close(Close::default(), vm.scheduler().wake());
+                return Ok(Value::Channel(ch));
+            }
             let deadline = vm
                 .runtime
                 .io

@@ -3,8 +3,9 @@
 -- A negative duration is no time, as for `time.sleep` and
 -- `task.deadline`. `channel.receive_timeout` with one is a try-receive:
 -- a value that is there, `Closed`, or `Empty` without waiting (the value
--- sent later is not taken). `channel.timeout` with one is closed at once:
--- it wins a select against a timer of ten seconds.
+-- sent later is not taken). `channel.timeout` with one, or with zero, is
+-- closed at once: it wins a select against a timer of ten seconds, and a
+-- read that does not wait finds it `Closed`.
 import channel
 import stream
 import time
@@ -29,4 +30,8 @@ fn main() {
   let _ = stream.collect(sender)
   channel.close(ch)
   println(channel.receive_timeout(ch, time.ms(-5)))
+  let zero: Channel(Int) = channel.timeout(time.ms(0))
+  println(channel.try_receive(zero))
+  let negative: Channel(Int) = channel.timeout(time.ms(-1))
+  println(channel.try_receive(negative))
 }
