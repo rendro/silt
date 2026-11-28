@@ -498,10 +498,20 @@ impl TypeChecker {
             return found.3.clone();
         }
         // A method that calls itself on the same types: what it asks is
-        // what the outer call gathers.
-        if (self.leaf_busy.iter()).any(|(t, m, r, ty)| {
-            *t == tr && *m == method && same_shape(&[r, ty], &[&receiver, &method_ty])
-        }) {
+        // what the outer call gathers. One that calls itself at another
+        // type (a default method's `Nest.nest(self, [x], n - 1)`) would
+        // ask at a new type each round: past the second round, what it
+        // asks is what the rounds before it gather.
+        let mut rounds = 0;
+        for (t, m, r, ty) in &self.leaf_busy {
+            if *t == tr && *m == method && same_shape(&[r], &[&receiver]) {
+                if same_shape(&[ty], &[&method_ty]) {
+                    return Rc::new(Vec::new());
+                }
+                rounds += 1;
+            }
+        }
+        if rounds >= 2 {
             return Rc::new(Vec::new());
         }
         let mut out = Vec::new();

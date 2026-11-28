@@ -1,0 +1,31 @@
+-- A default method that calls itself at another type (a list of what
+-- it was given), alone or through another default, checks and runs as
+-- the same method of an impl does.
+trait Nest {
+  fn nest(self, x: a, n: Int) -> String where a: Display {
+    match n {
+      0 -> "{x}"
+      _ -> Nest.nest(self, [x], n - 1)
+    }
+  }
+
+  fn depth(self, x: a, n: Int) -> Int {
+    match n {
+      0 -> 0
+      _ -> 1 + Nest.again(self, [x], n - 1)
+    }
+  }
+
+  fn again(self, x: a, n: Int) -> Int {
+    Nest.depth(self, x, n)
+  }
+}
+
+type B { v: Int }
+
+trait Nest for B { }
+
+fn main() {
+  println(Nest.nest(B { v: 2 }, 1, 3))
+  println(Nest.depth(B { v: 2 }, 1, 4))
+}
