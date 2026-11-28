@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type variable 'b' in impl-level where clause is written neither in the target type's arguments nor in the trait's; declare it as a target parameter: `trait Conv(List(a)) for W(b, ...)`
+-- stderr-contains: .silt:14:1
+-- A bound may name a variable of the target type or of the trait's
+-- arguments; one on a variable neither writes is refused, and the example
+-- keeps the trait's arguments as the impl wrote them.
+trait Conv(t) {
+  fn conv(self) -> t
+}
+
+type W { v: Int }
+
+trait Conv(List(a)) for W where b: Display {
+  fn conv(self) -> List(a) { [] }
+}
+
+fn main() {
+  println(1)
+}

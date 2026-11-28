@@ -2892,12 +2892,19 @@ impl TypeChecker {
                 }
             }
             None => {
-                self.error(Code::InvalidTypeAnnotation,
+                // (The example keeps the trait's arguments as written.)
+                let args: Vec<String> = ti.trait_args.iter().map(type_expr_text).collect();
+                let head = match args.is_empty() {
+                    true => self.impl_trait_name(ti),
+                    false => format!("{}({})", self.impl_trait_name(ti), args.join(", ")),
+                };
+                self.error(
+                    Code::InvalidTypeAnnotation,
                     format!(
-                        "type variable '{}' in impl-level where clause is not declared in the target type arguments; \
-                         declare it as a target parameter: `trait {} for {}({}, ...)`",
+                        "type variable '{}' in impl-level where clause is written neither in the \
+                         target type's arguments nor in the trait's; declare it as a target \
+                         parameter: `trait {head} for {}({}, ...)`",
                         resolve(*type_param),
-                        self.impl_trait_name(ti),
                         resolve(ti.target_type),
                         resolve(*type_param)
                     ),
