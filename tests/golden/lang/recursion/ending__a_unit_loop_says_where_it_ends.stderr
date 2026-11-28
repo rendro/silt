@@ -4,7 +4,7 @@ error[type]: this arm ends `serve`, but does not say so
  15 |     Some(line) -> println(line)
     |                   ^^^^^^^^^^^^^ this arm ends `serve`, but does not say so
   = note: `serve` goes on in other arms; this one stops it
-  = help: to go on, end the arm with `serve(inbox)`
+  = help: to go on, end the arm with a call of `serve`
   = help: to stop here, write `return println(line)`
 
 error[type]: this arm ends `count`, but does not say so
@@ -13,7 +13,7 @@ error[type]: this arm ends `count`, but does not say so
  23 |       let _done = println("done")
     |           ^^^^^^^^^^^^^^^^^^^^^^^ this arm ends `count`, but does not say so
   = note: `count` goes on in other arms; this one stops it
-  = help: to go on, end the arm with `count(n)`
+  = help: to go on, end the arm with a call of `count`
   = help: to stop here, end the block with `()`
 
 error[type]: this arm ends `handshake`, but does not say so
@@ -22,5 +22,5 @@ error[type]: this arm ends `handshake`, but does not say so
  32 |     Some(_) -> serve(inbox)
     |                ^^^^^^^^^^^^ this arm ends `handshake`, but does not say so
   = note: `handshake` goes on in other arms; this one stops it
-  = help: to go on, end the arm with `handshake(inbox)`
+  = help: to go on, end the arm with a call of `handshake`
   = help: to stop here, write `return serve(inbox)`

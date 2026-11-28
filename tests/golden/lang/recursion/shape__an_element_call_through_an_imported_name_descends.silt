@@ -1,0 +1,20 @@
+-- A call of a list function imported by name (`import list.{ fold }`)
+-- hands its closure the elements as `list.fold` does: a call on the
+-- element descends.
+import list
+import list.{ fold }
+
+type T { v: Int, kids: List(T) }
+
+fn total(t: T) -> Int {
+  t.v + fold(t.kids, 0, { acc, k -> acc + total(k) })
+}
+
+fn total2(t: T) -> Int {
+  t.v + (t.kids |> list.fold(0) { acc, k -> acc + total2(k) })
+}
+
+fn main() {
+  let t = T { v: 1, kids: [T { v: 2, kids: [] }, T { v: 3, kids: [T { v: 4, kids: [] }] }] }
+  println("{total(t)} {total2(t)}")
+}

@@ -229,6 +229,9 @@ struct Walk<'a, 'd> {
     /// The `let`-bound `_names` the current function holds on its way to
     /// a tail call.
     held: Vec<(Symbol, Span)>,
+    /// The warnings of `W0302` without their help, which waits for the
+    /// groups: the caller's node, the callee's node and what to keep.
+    let_go: Vec<LetGo>,
     diagnostics: Vec<Diagnostic>,
     /// The methods that call a method of their own trait.
     trait_calls: Vec<(Span, Symbol)>,
@@ -358,6 +361,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             closure: None,
             sites: Vec::new(),
             held: Vec::new(),
+            let_go: Vec::new(),
             diagnostics: Vec::new(),
             trait_calls: Vec::new(),
             branch: 0,
@@ -496,7 +500,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             };
             let by_name = matches!(&receiver.kind, ExprKind::Ident(name) if *name == trait_name);
             by_selection || by_name
-        });
+        }) || decodes_own_type(m, trait_id);
         if calls_own_trait {
             self.trait_calls.push((m.name_span, m.name));
         }
@@ -982,23 +986,62 @@ impl<'a, 'd> Walk<'a, 'd> {
             return;
         }
         let call = self.shown(e.span);
+        let to = self.node_named(callee);
         for (name, at) in self.held.clone() {
-            self.diagnostics.push(
-                Diagnostic::warning(
-                    Code::LetGoAtTailCall,
-                    e.span,
-                    format!("`{name}` is let go at this call"),
-                )
-                .with_label(at, format!("`{name}` is bound here"))
-                .with_note(
-                    "a call that ends its block is a tail call: the function's values are \
-                     let go before the call runs",
-                )
-                .with_help(format!(
+            let warning = Diagnostic::warning(
+                Code::LetGoAtTailCall,
+                e.span,
+                format!("`{name}` is let go at this call"),
+            )
+            .with_label(at, format!("`{name}` is bound here"))
+            .with_note(
+                "a call that ends its block is a tail call: the function's values are \
+                 let go before the call runs",
+            );
+            self.let_go.push(LetGo {
+                warning,
+                name,
+                call: call.clone(),
+                from: self.node,
+                to,
+            });
+        }
+    }
+
+    /// The warnings of `W0302` with their help: a call of the caller's
+    /// own group goes on with its loop, and binding its value would keep
+    /// a frame each round (`E0345`), unless the caller is `deep`.
+    fn let_go_helps(&mut self, groups: &[Vec<usize>]) {
+        for LetGo {
+            warning,
+            name,
+            call,
+            from,
+            to,
+        } in std::mem::take(&mut self.let_go)
+        {
+            let looped = match (from, to) {
+                (Some(from), Some(to)) => {
+                    self.nodes[from].deep.is_none()
+                        && (groups.iter()).any(|g| g.contains(&from) && g.contains(&to))
+                }
+                _ => false,
+            };
+            let warning = match (looped, from) {
+                (true, Some(from)) => {
+                    let caller = self.nodes[from].name;
+                    warning.with_help(format!(
+                        "this call goes on with the loop of `{caller}`, and a call whose value \
+                         is bound keeps a frame for every round: to keep `{name}` for the whole \
+                         loop, bind it in the function that starts the loop and pass it in"
+                    ))
+                }
+                _ => warning.with_help(format!(
                     "to keep `{name}` until the call returns, bind its value and end with it: \
                      `let result = {call}`, then `result`"
                 )),
-            );
+            };
+            self.diagnostics.push(warning);
         }
     }
 
@@ -1053,22 +1096,11 @@ impl<'a, 'd> Walk<'a, 'd> {
         }
     }
 
-    /// `n` called with its own parameters: what "go on" writes.
-    fn call_text(&self, n: usize) -> String {
-        let node = &self.nodes[n];
-        let params: Vec<String> = (node.params.iter())
-            .map(|p| match &p.pattern.kind {
-                PatternKind::Ident(name) => name.to_string(),
-                _ => self.shown(p.pattern.span),
-            })
-            .collect();
-        format!("{}({})", node.name, params.join(", "))
-    }
-
     // ── The groups ──────────────────────────────────────────────────
 
     fn finish(mut self, report: bool) -> Shape {
         let groups = self.groups();
+        self.let_go_helps(&groups);
         let mut verdicts = Vec::new();
         let mut grouped = HashSet::new();
         for members in &groups {
@@ -1160,8 +1192,8 @@ impl<'a, 'd> Walk<'a, 'd> {
         if !report {
             return;
         }
-        if let Solved::Refused(best, fails) = &solved {
-            self.refuse(members, &checked, best, fails);
+        if let Solved::Refused(best, fails, capped) = &solved {
+            self.refuse(members, &checked, best, fails, *capped);
         }
         // A `deep` the check would not need.
         if members.iter().any(|&m| self.nodes[m].deep.is_some()) {
@@ -1247,6 +1279,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         checked: &[usize],
         best: &[Option<usize>],
         fails: &[usize],
+        capped: bool,
     ) {
         // A member passed as a value says most, then a call inside a
         // closure, then a call; each the first in the text.
@@ -1284,7 +1317,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             }
         }
         let errors: Vec<Diagnostic> = (firsts.iter().enumerate())
-            .map(|(i, &s)| self.refused(members, best, s, i == 0))
+            .map(|(i, &s)| self.refused(members, best, s, i == 0, capped))
             .collect();
         self.diagnostics.extend(errors);
     }
@@ -1297,6 +1330,7 @@ impl<'a, 'd> Walk<'a, 'd> {
         best: &[Option<usize>],
         s: usize,
         names_group: bool,
+        capped: bool,
     ) -> Diagnostic {
         let at = |n: usize| members.iter().position(|m| *m == n).expect("a member");
         let site = &self.sites[s];
@@ -1494,6 +1528,14 @@ impl<'a, 'd> Walk<'a, 'd> {
                 }
             }
         }
+        // (The notes are about the choice of the first that were tried.)
+        if names_group && capped {
+            d = d.with_note(format!(
+                "the check gave up after trying {} of the ways the functions can each \
+                 descend on one parameter: one it did not try may keep the rule",
+                thousands(MAX_CHOICES)
+            ));
+        }
         d
     }
 
@@ -1522,7 +1564,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             ),
         };
         let place = if in_arm { "the arm" } else { "it" };
-        let go_on = format!("to go on, end {place} with `{}`", self.call_text(m));
+        let go_on = format!("to go on, end {place} with a call of `{name}`");
         let stop = match ending {
             Ending::Call => match self.shown(span) {
                 text if text.ends_with("...") => {
@@ -1541,14 +1583,39 @@ impl<'a, 'd> Walk<'a, 'd> {
     }
 }
 
+/// `n` as a message writes it: `20,000`.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A warning of `W0302` waiting for its help (`Walk::let_go_helps`).
+struct LetGo {
+    warning: Diagnostic,
+    name: Symbol,
+    /// The call, as written.
+    call: String,
+    /// The node the call is in, and the node it calls.
+    from: Option<usize>,
+    to: Option<usize>,
+}
+
 enum Solved {
     /// Every call is a tail call.
     Tail,
     /// Each member descends on the parameter given (none for one that
     /// takes none).
     Data(Vec<Option<usize>>),
-    /// The choice that breaks the rule fewest times, and where it does.
-    Refused(Vec<Option<usize>>, Vec<usize>),
+    /// The choice that breaks the rule fewest times, and where it does;
+    /// whether the check gave up before it had tried every choice.
+    Refused(Vec<Option<usize>>, Vec<usize>, bool),
 }
 
 /// Whether `site` keeps the rule when its caller descends on `d_from` and
@@ -1588,72 +1655,12 @@ fn descends(params: &[usize], k: usize, pick: usize) -> Option<usize> {
     (params[k] > 0).then_some(pick)
 }
 
-/// Try each choice of one descending parameter per member (`params`: how
-/// many each takes), the first member's choice counted fastest, at most
-/// `cap` of them.
-fn solve(params: &[usize], edges: &[Edge], cap: usize) -> Solved {
-    if edges.iter().all(|e| e.site.is_tail_call()) {
-        return Solved::Tail;
-    }
-    let choices: Vec<usize> = params.iter().map(|&p| p.max(1)).collect();
-    let mut pick = vec![0usize; params.len()];
-    // (The members a choice breaks the rule in, then the calls: each
-    // member broken is a `deep` to write.)
-    // (`fails` by place in `edges`.)
-    let cost = |fails: &[usize]| {
-        let broken: HashSet<usize> = fails.iter().map(|&i| edges[i].from).collect();
-        (broken.len(), fails.len())
-    };
-    let refused = |(d, fails): (Vec<Option<usize>>, Vec<usize>)| {
-        Solved::Refused(d, fails.iter().map(|&i| edges[i].id).collect())
-    };
-    let mut best: Option<(Vec<Option<usize>>, Vec<usize>)> = None;
-    let mut best_cost = (usize::MAX, usize::MAX);
-    for _ in 0..cap {
-        let d: Vec<Option<usize>> = (pick.iter().enumerate())
-            .map(|(k, &i)| descends(params, k, i))
-            .collect();
-        let fails: Vec<usize> = (0..edges.len())
-            .filter(|&i| !site_ok(edges[i].site, d[edges[i].from], d[edges[i].to]))
-            .collect();
-        if fails.is_empty() {
-            return Solved::Data(d);
-        }
-        let this = cost(&fails);
-        if this < best_cost {
-            best_cost = this;
-            best = Some((d, fails));
-        }
-        // The next choice.
-        let mut k = 0;
-        loop {
-            if k == pick.len() {
-                return refused(best.expect("one choice tried"));
-            }
-            pick[k] += 1;
-            if pick[k] < choices[k] {
-                break;
-            }
-            pick[k] = 0;
-            k += 1;
-        }
-    }
-    refused(best.expect("one choice tried"))
-}
-
-/// Whether `solve` with the same arguments passes, without trying the
-/// choices one by one: a choice passes when every site keeps the rule,
-/// and `solve` finds one when one is among the first `cap` it tries. So:
-/// drop each parameter no choice that passes can pick (a site that no
-/// choice of the member at its other end lets keep the rule), then look
-/// for a passing choice in `solve`'s order, the last member's choice
-/// first, and give up where the choices left all come after the first
-/// `cap`.
-fn passes(params: &[usize], edges: &[Edge], cap: usize) -> bool {
-    if edges.iter().all(|e| e.site.is_tail_call()) {
-        return true;
-    }
-    let n = params.len();
+/// The parameters a passing choice can pick for each member (`params`:
+/// how many each takes): each one a site of the member cannot keep the
+/// rule with, whatever the member at its other end picks of those left,
+/// is dropped, until none is. `None` when a member has none left: no
+/// choice passes.
+fn open_choices(params: &[usize], edges: &[Edge]) -> Option<Vec<Vec<bool>>> {
     let choices: Vec<usize> = params.iter().map(|&p| p.max(1)).collect();
     let ok = |e: &Edge, a: usize, b: usize| {
         site_ok(
@@ -1662,7 +1669,6 @@ fn passes(params: &[usize], edges: &[Edge], cap: usize) -> bool {
             descends(params, e.to, b),
         )
     };
-    // The parameters a passing choice can pick for each member.
     let mut open: Vec<Vec<bool>> = choices.iter().map(|&c| vec![true; c]).collect();
     let mut changed = true;
     while changed {
@@ -1691,49 +1697,156 @@ fn passes(params: &[usize], edges: &[Edge], cap: usize) -> bool {
             }
         }
         if open.iter().any(|o| !o.contains(&true)) {
-            return false;
+            return None;
         }
     }
+    Some(open)
+}
+
+/// Try each choice of one descending parameter per member (`params`: how
+/// many each takes) among those `open_choices` leaves, the first
+/// member's choice counted fastest, at most `cap` of them. A group it
+/// refuses is refused under the choice of all that breaks the rule
+/// fewest times (among the first `cap`).
+fn solve(params: &[usize], edges: &[Edge], cap: usize) -> Solved {
+    if edges.iter().all(|e| e.site.is_tail_call()) {
+        return Solved::Tail;
+    }
+    let fails_under = |d: &[Option<usize>]| -> Vec<usize> {
+        (0..edges.len())
+            .filter(|&i| !site_ok(edges[i].site, d[edges[i].from], d[edges[i].to]))
+            .collect()
+    };
+    // (Whether the choices left were more than `cap`.)
+    let mut capped = false;
+    if let Some(open) = open_choices(params, edges) {
+        let left: Vec<Vec<usize>> = (open.iter())
+            .map(|o| (0..o.len()).filter(|&a| o[a]).collect())
+            .collect();
+        let mut pick = vec![0usize; params.len()];
+        capped = 'choices: {
+            for _ in 0..cap {
+                let d: Vec<Option<usize>> = (pick.iter().enumerate())
+                    .map(|(k, &i)| descends(params, k, left[k][i]))
+                    .collect();
+                if fails_under(&d).is_empty() {
+                    return Solved::Data(d);
+                }
+                if !next_choice(&mut pick, |k| left[k].len()) {
+                    break 'choices false;
+                }
+            }
+            true
+        };
+    }
+    let mut pick = vec![0usize; params.len()];
+    // (The members a choice breaks the rule in, then the calls: each
+    // member broken is a `deep` to write.)
+    // (`fails` by place in `edges`.)
+    let cost = |fails: &[usize]| {
+        let broken: HashSet<usize> = fails.iter().map(|&i| edges[i].from).collect();
+        (broken.len(), fails.len())
+    };
+    let mut best: Option<(Vec<Option<usize>>, Vec<usize>)> = None;
+    let mut best_cost = (usize::MAX, usize::MAX);
+    for _ in 0..cap {
+        let d: Vec<Option<usize>> = (pick.iter().enumerate())
+            .map(|(k, &i)| descends(params, k, i))
+            .collect();
+        let fails = fails_under(&d);
+        let this = cost(&fails);
+        if this < best_cost {
+            best_cost = this;
+            best = Some((d, fails));
+        }
+        if !next_choice(&mut pick, |k| params[k].max(1)) {
+            break;
+        }
+    }
+    let (d, fails) = best.expect("one choice tried");
+    Solved::Refused(d, fails.iter().map(|&i| edges[i].id).collect(), capped)
+}
+
+/// Step `pick` to the next choice, the first member's counted fastest,
+/// each member `k` choosing among `count(k)`: false when it was the last.
+fn next_choice(pick: &mut [usize], count: impl Fn(usize) -> usize) -> bool {
+    for (k, p) in pick.iter_mut().enumerate() {
+        *p += 1;
+        if *p < count(k) {
+            return true;
+        }
+        *p = 0;
+    }
+    false
+}
+
+/// Whether `solve` with the same arguments passes, without trying the
+/// choices one by one: a choice passes when every site keeps the rule,
+/// and `solve` finds one when one is among the first `cap` it tries of
+/// those `open_choices` leaves. So: look for a passing choice among
+/// them in `solve`'s order, the last member's choice first, and give up
+/// where the choices left all come after the first `cap`.
+fn passes(params: &[usize], edges: &[Edge], cap: usize) -> bool {
+    if edges.iter().all(|e| e.site.is_tail_call()) {
+        return true;
+    }
+    let n = params.len();
+    let ok = |e: &Edge, a: usize, b: usize| {
+        site_ok(
+            e.site,
+            descends(params, e.from, a),
+            descends(params, e.to, b),
+        )
+    };
+    let Some(open) = open_choices(params, edges) else {
+        return false;
+    };
+    // The parameters left of each member, in order: `solve` counts
+    // through these.
+    let left: Vec<Vec<usize>> = (open.iter())
+        .map(|o| (0..o.len()).filter(|&a| o[a]).collect())
+        .collect();
     // How far apart in `solve`'s order two choices of each member are
     // (as far as `cap` counts).
     let mut weight = vec![1usize; n];
     for k in 1..n {
-        weight[k] = weight[k - 1].saturating_mul(choices[k - 1]).min(cap);
+        weight[k] = weight[k - 1].saturating_mul(left[k - 1].len()).min(cap);
     }
     // The sites between each member and the members after it, and its own.
     let mut back: Vec<Vec<&Edge>> = vec![Vec::new(); n];
     for e in edges {
         back[e.from.min(e.to)].push(e);
     }
-    // Choose from the last member down; `pick[k]` is the next parameter
-    // to try for member `k`, `index` where the choices so far stand in
-    // `solve`'s order.
+    // Choose from the last member down; `pick[k]` is the place in
+    // `left[k]` of the next parameter to try for member `k`, `index`
+    // where the choices so far stand in `solve`'s order.
     let mut pick = vec![0usize; n];
     let mut index = vec![0usize; n + 1];
+    let chosen = |pick: &[usize], k: usize| left[k][pick[k] - 1];
     let mut k = n;
     loop {
-        // Member `k - 1` is to choose: its next parameter that is open,
-        // still among the first `cap` choices, and keeps the rule with
-        // the members after it.
+        // Member `k - 1` is to choose: its next parameter left, still
+        // among the first `cap` choices, that keeps the rule with the
+        // members after it.
         let m = k - 1;
         let mut found = false;
-        while pick[m] < choices[m] {
-            let a = pick[m];
+        while pick[m] < left[m].len() {
+            let place = pick[m];
+            let a = left[m][place];
             pick[m] += 1;
-            let at = index[k].saturating_add(weight[m].saturating_mul(a));
+            let at = index[k].saturating_add(weight[m].saturating_mul(place));
             if at >= cap {
-                pick[m] = choices[m];
+                pick[m] = left[m].len();
                 break;
             }
-            let fits = open[m][a]
-                && back[m].iter().all(|e| {
-                    let (x, y) = match (e.from == m, e.to == m) {
-                        (true, true) => (a, a),
-                        (true, false) => (a, pick[e.to] - 1),
-                        (false, _) => (pick[e.from] - 1, a),
-                    };
-                    ok(e, x, y)
-                });
+            let fits = back[m].iter().all(|e| {
+                let (x, y) = match (e.from == m, e.to == m) {
+                    (true, true) => (a, a),
+                    (true, false) => (a, chosen(&pick, e.to)),
+                    (false, _) => (chosen(&pick, e.from), a),
+                };
+                ok(e, x, y)
+            });
             if fits {
                 index[m] = at;
                 found = true;
@@ -1818,6 +1931,30 @@ fn ends_in_return(e: &Expr) -> bool {
     }
 }
 
+/// Whether `m` is the `decode` of a `json.Decode` impl that decodes
+/// a value of its own type (`json.parse(text, User)` in the impl for
+/// `User`): the builtin calls the impl back, a call of its own trait.
+fn decodes_own_type(m: &FnDecl, trait_id: Option<crate::defs::DefId>) -> bool {
+    let decode = (trait_id.and_then(super::names::builtin_def)).is_some_and(|def| {
+        def.module.builtin_name() == Some("json") && resolve(def.name) == "Decode"
+    });
+    // (Its type is `Result(Self, json.JsonError)`.)
+    let own = match &m.body.ty {
+        Some(Type::Generic(_, args)) if decode => args.first().and_then(Type::type_ref),
+        _ => None,
+    };
+    let Some(own) = own else {
+        return false;
+    };
+    m.body.any_expr(&mut |e| match &e.ty {
+        Some(Type::Generic(name, args)) if name.is_builtin(crate::defs::TYPE_OF) => args
+            .first()
+            .and_then(Type::type_ref)
+            .is_some_and(|t| t.id == own.id),
+        _ => false,
+    })
+}
+
 /// `e` without the type a `as` gives it.
 fn unwrapped(e: &Expr) -> &Expr {
     match &e.kind {
@@ -1829,16 +1966,23 @@ fn unwrapped(e: &Expr) -> &Expr {
 /// The `list` call `callee` names, if it is one of `ELEMENT_CALLS`: the
 /// place of the element among its function's parameters.
 fn element_call(callee: &Expr) -> Option<usize> {
-    let ExprKind::FieldAccess(module, name, _) = &callee.kind else {
-        return None;
-    };
-    let Some(Res::Module(m)) = module.res else {
-        return None;
+    // `list.fold`, through an alias of the module or a name imported
+    // from it (`import list.{ fold }`).
+    let (m, name) = match (&callee.kind, callee.res) {
+        (ExprKind::FieldAccess(module, name, _), _) => match module.res {
+            Some(Res::Module(m)) => (m, *name),
+            _ => return None,
+        },
+        (ExprKind::Ident(_), Some(Res::Def(id))) => {
+            let def = super::names::builtin_def(id)?;
+            (def.module, def.name)
+        }
+        _ => return None,
     };
     if m.builtin_name() != Some("list") {
         return None;
     }
-    let name = resolve(*name);
+    let name = resolve(name);
     ELEMENT_CALLS
         .contains(&name.as_str())
         .then_some(if name == "fold" { 1 } else { 0 })
@@ -1968,6 +2112,56 @@ mod tests {
         }
     }
 
+    /// A ring of seven functions of five parameters each, each calling
+    /// the next on a part of its last: the one choice that passes comes
+    /// last of the 78,125, past the cap, and is found.
+    #[test]
+    fn the_one_choice_left_is_found_past_the_cap() {
+        let params = vec![5; 7];
+        let sites: Vec<Site> = (0..7)
+            .map(|from| {
+                let mut args = vec![None; 5];
+                args[4] = Some(Measure {
+                    param: 4,
+                    strict: true,
+                });
+                Site {
+                    from,
+                    to: (from + 1) % 7,
+                    span: Span::BUILTIN,
+                    kind: SiteKind::Call { tail: false, args },
+                    args: Vec::new(),
+                    made_from: Vec::new(),
+                    whole: Vec::new(),
+                    branch: 0,
+                    passed_to: None,
+                    named_at: Span::BUILTIN,
+                }
+            })
+            .collect();
+        let edges: Vec<Edge> = (sites.iter().enumerate())
+            .map(|(id, s)| Edge {
+                id,
+                from: s.from,
+                to: s.to,
+                site: s,
+            })
+            .collect();
+        assert!(matches!(
+            solve(&params, &edges, MAX_CHOICES),
+            Solved::Data(d) if d == vec![Some(4); 7]
+        ));
+        assert!(passes(&params, &edges, MAX_CHOICES));
+    }
+
+    /// `thousands` writes a count as a message does.
+    #[test]
+    fn thousands_are_marked() {
+        assert_eq!(thousands(20_000), "20,000");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+    }
+
     /// `passes` says what `solve` finds, also where `solve` stops at its
     /// cap before the first choice that passes.
     #[test]
@@ -2001,6 +2195,12 @@ mod tests {
             let solved = solves(cap);
             passed += usize::from(solved);
             capped += usize::from(!solved && solves(MAX_CHOICES));
+            // (A refusal says it gave up where a choice not tried passes.)
+            if let Solved::Refused(_, _, gave_up) = solve(&params, &edges, cap)
+                && solves(MAX_CHOICES)
+            {
+                assert!(gave_up, "params {params:?}, cap {cap}: gave up unsaid");
+            }
             assert_eq!(
                 passes(&params, &edges, cap),
                 solved,
