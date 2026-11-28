@@ -216,6 +216,9 @@ pub(crate) fn json_text(
     text: &[u8],
     parts: &Parts,
 ) -> Result<Outcome, serde_json::Error> {
+    // The text as the parser reads it: once it has refused a number
+    // beyond `f64`, with such numbers made finite (`json::finite_numbers`).
+    let mut finite: Option<Vec<u8>> = None;
     loop {
         let at = Cell::new(0);
         let restart = Cell::new(false);
@@ -224,13 +227,13 @@ pub(crate) fn json_text(
             r,
             rules: &json::RULES,
             format: Format::Json,
-            digits: Digits::Text(json::Numerals::new(text, &at)),
+            digits: Digits::Text(json::Numerals::new(text, &at, finite.is_some())),
             marked: None,
             parts,
             restart: &restart,
             kept: &kept,
         };
-        let mut de = serde_json::Deserializer::from_slice(text);
+        let mut de = serde_json::Deserializer::from_slice(finite.as_deref().unwrap_or(text));
         let read = Seed {
             cx: &cx,
             expected,
@@ -238,6 +241,14 @@ pub(crate) fn json_text(
         }
         .deserialize(&mut de)
         .and_then(|decoded| de.end().map(|()| decoded));
+        if let Err(e) = &read
+            && finite.is_none()
+            && json::beyond_f64(e)
+        {
+            finite = Some(json::finite_numbers(text));
+            parts.restart();
+            continue;
+        }
         if !restart.get() {
             return read;
         }
@@ -585,6 +596,15 @@ impl Format {
         }
     }
 
+    /// What a float that is no finite number is, as a value of the
+    /// format: of JSON, a number beyond `f64` (`1e400`).
+    fn non_finite(self) -> &'static str {
+        match self {
+            Format::Json => "a number out of Float's range",
+            Format::Toml | Format::Csv => "a non-finite float",
+        }
+    }
+
     /// What the format calls the kind of a table (JSON's object).
     fn table(self) -> &'static str {
         match self {
@@ -623,19 +643,23 @@ impl Digits<'_> {
     }
 
     /// The number the parser gave as the `f64` `f`: of a JSON text, an
-    /// `Int` when its digits are a whole number in `Int`'s range, and
-    /// one that is no finite `f64` is held as no number.
+    /// `Int` when its digits are a whole number in `Int`'s range; one
+    /// beyond `f64` is an infinite one, which no field holds.
     fn float(self, f: f64) -> Scalar<'static> {
         let Digits::Text(node) = self else {
             return Scalar::Float(f);
         };
-        if let Some(n) = json::exact_int(node.next_number()) {
+        let digits = node.next_number();
+        if let Some(n) = json::exact_int(digits) {
             return Scalar::Int(n);
         }
-        match f.is_finite() {
-            true => Scalar::Float(f),
-            false => Scalar::Null,
+        if !node.finite {
+            return Scalar::Float(f);
         }
+        let read = std::str::from_utf8(digits)
+            .ok()
+            .and_then(|d| d.parse().ok());
+        Scalar::Float(read.unwrap_or(f))
     }
 }
 
@@ -1050,7 +1074,7 @@ impl<'s> Seed<'s> {
                 Scalar::Int(n) => Ok(Value::Float(Float::from(n))),
                 Scalar::Float(f) => match Float::new(f) {
                     Some(f) => Ok(Value::Float(f)),
-                    None => Err(Error::mismatch("Float", "a non-finite float", at)),
+                    None => Err(Error::mismatch("Float", self.cx.format.non_finite(), at)),
                 },
                 _ => Err(mismatch("Float")),
             },
@@ -2233,9 +2257,11 @@ impl JsonSeed<'_> {
     /// The `json.Value` of `scalar`.
     fn scalar(&self, scalar: Scalar) -> Outcome {
         match scalar {
-            Scalar::Float(f) if !f.is_finite() => {
-                Err(Error::mismatch("json.Value", "a non-finite float", self.at))
-            }
+            Scalar::Float(f) if !f.is_finite() => Err(Error::mismatch(
+                "json.Value",
+                self.cx.format.non_finite(),
+                self.at,
+            )),
             scalar => Ok(scalar.json()),
         }
     }
