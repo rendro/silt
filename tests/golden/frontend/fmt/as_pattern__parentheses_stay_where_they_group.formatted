@@ -24,15 +24,15 @@ fn size(_s: Shape) -> Int {
 
 fn h(xs: List(Int)) -> Int {
   match xs {
-    [x as y, ..] as _all -> x + y
+    [1 as y, ..] as _all -> y
     [] -> 0
   }
 }
 
 fn k(p: (Int, Int)) -> Int {
-  let (a, b) as q as r = p
+  let (a, b) as q = p
   let c = { (u, v) as _w -> u + v }
-  a + b + c(q) + c(r)
+  a + b + c(q)
 }
 
 fn main() {

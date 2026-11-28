@@ -256,6 +256,10 @@ fn main() {
 }
 ```
 
+`as` stands behind a pattern that tests something. Behind a bare name or
+`_` (`x as y`, `_ as z`), or behind another `as`, a name already binds
+the whole value, and it is an error: write `z`.
+
 An or-pattern stands in parentheses in front of the `as`, which then
 names the value whichever alternative matched: `(0 | 1) as bit`. Written
 without them, `0 | 1 as bit` is an error, as is `0 as bit | 1`: an
