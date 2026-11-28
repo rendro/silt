@@ -28,8 +28,8 @@ show it with `"{e}"` when you just want a rendered string:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(msg, offset, line, column)` | `String`, `Int`, `Int`, `Int` | Malformed JSON, `offset` being the 0-based byte of the text where reading stopped (the text's length when it ends too soon), or a number beyond `Float`'s range (`1e400`: `number out of range`) |
-| `TypeMismatch(expected, actual, offset, line, column)` | `String`, `String`, `Int`, `Int`, `Int` | A value's JSON type did not match the type it decodes into; `actual` ends with the value's path, `offset` is the byte where the value starts |
+| `Syntax(msg, offset, line, column)` | `String`, `Int`, `Int`, `Int` | Malformed JSON, `offset` being the 0-based byte of the text where reading stopped (the text's length when it ends too soon) |
+| `TypeMismatch(expected, actual, offset, line, column)` | `String`, `String`, `Int`, `Int`, `Int` | A value's JSON type did not match the type it decodes into, or a number the type cannot hold (`1e400`, beyond `Float`'s range: `a number out of Float's range`; for an `Int`, `a number out of Int's range`); `actual` ends with the value's path, `offset` is the byte where the value starts |
 | `MissingField(name, offset, line, column)` | `String`, `Int`, `Int`, `Int` | A required (non-`Option`) field was absent; `name` is its path, `offset` the byte where the object it is missing from starts |
 | `Other(msg, offset, line, column)` | `String`, `Int`, `Int`, `Int` | Anything else: a tuple's array of the wrong length, a date that is none, a value too deep for `json.decode`; `offset` is the byte where the value starts |
 
@@ -320,9 +320,12 @@ error where it is read.
 
 - A number is an `Int` when it is a whole number in `Int`'s range (`1`,
   `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
-  a number out of that range).
+  a number out of that range). A number beyond `Float`'s range (`1e400`)
+  is none: a `TypeMismatch` where it starts.
 - An object is a `Map(String, Value)`. Its keys come out sorted, not in
-  the document's order, and of a key written twice the last value counts.
+  the document's order, and of a key written twice the last value counts;
+  a value that is no `json.Value` is the error all the same, the first
+  in the document's order.
 
 `json.stringify` and `json.pretty` write a `json.Value` as the JSON it
 holds: `json.Int(1)` as `1`, `json.Object` as an object.

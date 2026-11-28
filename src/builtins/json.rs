@@ -340,6 +340,14 @@ impl<'t> Numerals<'t> {
         Numerals { text, at, finite }
     }
 
+    /// Where the number read last starts: the number ends where the
+    /// reading is, and is preceded by no byte of a number.
+    pub(crate) fn last_start(self) -> usize {
+        let text = &self.text[..self.at.get().min(self.text.len())];
+        let number = |b: &u8| matches!(b, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E');
+        text.len() - text.iter().rev().take_while(|b| number(b)).count()
+    }
+
     /// The text of the next number of the document.
     pub(crate) fn next_number(self) -> &'t [u8] {
         let text = self.text;

@@ -642,6 +642,15 @@ impl Digits<'_> {
         }
     }
 
+    /// Where in the JSON text the number read last starts; `None` of
+    /// another reading.
+    fn number_start(self) -> Option<usize> {
+        match self {
+            Digits::Text(node) => Some(node.last_start()),
+            Digits::Read => None,
+        }
+    }
+
     /// The number the parser gave as the `f64` `f`: of a JSON text, an
     /// `Int` when its digits are a whole number in `Int`'s range; one
     /// beyond `f64` is an infinite one, which no field holds.
@@ -1074,7 +1083,8 @@ impl<'s> Seed<'s> {
                 Scalar::Int(n) => Ok(Value::Float(Float::from(n))),
                 Scalar::Float(f) => match Float::new(f) {
                     Some(f) => Ok(Value::Float(f)),
-                    None => Err(Error::mismatch("Float", self.cx.format.non_finite(), at)),
+                    None => Err(Error::mismatch("Float", self.cx.format.non_finite(), at)
+                        .at_offset(self.cx.digits.number_start())),
                 },
                 _ => Err(mismatch("Float")),
             },
@@ -2235,8 +2245,9 @@ impl<'de> IntoDeserializer<'de, de::value::Error> for ContentDe<'de> {
 
 /// The reading of a part, `at` a path, into the `json.Value` that holds
 /// it: a written impl's part, or a part of type `json.Value`. A TOML
-/// float that is no number has none: a type mismatch at its own path
-/// (the first in the decoder's order: a table's keys sorted).
+/// float that is no number has none, nor a JSON number beyond `f64`: a
+/// type mismatch at its own path (the first in the order the parser
+/// gives the parts: a JSON text's, a TOML table's keys sorted).
 #[derive(Clone, Copy)]
 struct JsonSeed<'s> {
     cx: &'s Cx<'s>,
@@ -2257,11 +2268,14 @@ impl JsonSeed<'_> {
     /// The `json.Value` of `scalar`.
     fn scalar(&self, scalar: Scalar) -> Outcome {
         match scalar {
-            Scalar::Float(f) if !f.is_finite() => Err(Error::mismatch(
-                "json.Value",
-                self.cx.format.non_finite(),
-                self.at,
-            )),
+            // (Placed where the number starts: of a key written twice, the
+            // first value may be the one at fault.)
+            Scalar::Float(f) if !f.is_finite() => {
+                Err(
+                    Error::mismatch("json.Value", self.cx.format.non_finite(), self.at)
+                        .at_offset(self.cx.digits.number_start()),
+                )
+            }
             scalar => Ok(scalar.json()),
         }
     }
@@ -2298,24 +2312,31 @@ impl JsonSeed<'_> {
         self,
         mut entries: Entries<'de, A>,
     ) -> Result<Outcome, A::Error> {
-        // (Of a key written twice only the last value counts, its error
-        // too: `{"a": 1e400, "a": 1}` is an object.)
+        // The first member that has none, in the order the members come
+        // (a JSON text's), is the error, also one of a key written again
+        // later: `{"a": 1e400, "a": 1}` is the error of its `1e400`, so
+        // the outcome does not depend on what follows.
         let mut members = BTreeMap::new();
+        let mut error = None;
         while let Some(key) = entries.key()? {
             let at = self.at.key(&key);
             let member = entries.value(JsonSeed {
                 cx: self.cx,
                 at: &at,
             })?;
-            members.insert(Arc::<str>::from(key), member);
+            match member {
+                Ok(member) => {
+                    members.insert(Arc::<str>::from(key), member);
+                }
+                Err(e) => {
+                    error.get_or_insert(e);
+                }
+            }
         }
-        if members.values().any(Result::is_err) {
-            let first = members.into_values().find_map(Result::err);
-            return Ok(Err(first.expect("a member has no json.Value")));
+        if let Some(e) = error {
+            return Ok(Err(e));
         }
-        let members = members
-            .into_iter()
-            .map(|(key, member)| (Value::string(key), member.expect("no member failed")));
+        let members = (members.into_iter()).map(|(key, member)| (Value::string(key), member));
         Ok(Ok(Value::variant(bv::JSON_OBJECT, [Value::map(members)])))
     }
 }

@@ -2,8 +2,10 @@
 -- number the field cannot hold: a type mismatch placed where the number
 -- starts, as one out of Int's range is, not a syntax error at its end.
 -- Every such number of a text is one, and a text that is no JSON after
--- one is still a syntax error. Of a key written twice only the last
--- value counts, a number beyond f64 too.
+-- one is still a syntax error. A json.Value is the error of the first
+-- such number in the text, also one of a key written again later (its
+-- outcome does not depend on what follows); a record's field takes the
+-- last value of its key. A key that no field has is not read.
 import json
 import string
 
@@ -18,6 +20,18 @@ type F {
 type Fs {
   a: Float,
   b: List(Float),
+}
+
+type A {
+  a: Float,
+}
+
+type V {
+  v: json.Value,
+}
+
+type OV {
+  v: Option(json.Value),
 }
 
 fn main() {
@@ -36,4 +50,10 @@ fn main() {
   println(json.parse("""{"n": 1e400, "n": 1}""", json.Value))
   println(json.parse("""{"n": 1, "n": 1e400}""", json.Value))
   println(json.parse("""{"n": 1e400, "n": 1.5}""", F))
+  println(json.parse("""{"a": 1e400, "a": 1}""", json.Value))
+  println(json.parse("""{"v": {"a": 1e400, "a": 2}}""", V))
+  println(json.parse("""{"v": {"x": [1e400], "x": null}}""", OV))
+  println(json.parse("""[{"b": -1e400, "b": "s"}]""", List(json.Value)))
+  println(json.parse("""{"a": {"b": 1e400}, "a": 3}""", json.Value))
+  println(json.parse("""{"a": 0.1, "junk": 1e400}""", A))
 }
