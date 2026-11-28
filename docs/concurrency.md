@@ -1263,7 +1263,8 @@ nothing is pending that could end one of the waits: no timer and no I/O.
 silt sees that at the moment it becomes true, and the wait of `main`
 fails with a runtime error that starts with `deadlock on main thread`;
 the program exits with status 1. When `main` waits in a call, the error
-names the call and has a line for each of its tasks that waits:
+names the call and has a line for each of its tasks that waits, placed
+where the task's function is written:
 
 ```silt
 -- noexec
@@ -1283,7 +1284,7 @@ error[runtime]: deadlock on main thread: task.join with no progress possible
    |
  6 |   task.join([{ -> println(channel.receive(ch)) }, { -> println("other") }])
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ deadlock on main thread: task.join with no progress possible
-  = help: a piece of `task.join` at main.silt:6:3 waits to receive from <channel:0>
+  = help: a piece of `task.join` at main.silt:6:14 waits to receive from <channel:0>
 ```
 
 A deadlock is no runtime error of the program: `task.guard` does not

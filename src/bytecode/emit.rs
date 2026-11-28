@@ -191,6 +191,7 @@ impl Emitter {
                 chunk: Chunk::new(),
                 hidden: 0,
                 dict_slot: false,
+                site: span,
             },
             height: arity,
             reachable: true,

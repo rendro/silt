@@ -491,9 +491,9 @@ and so does an enclosing `task.join` or `task.background` that stops.
 
 When no piece can go on and the program's own thread waits in the join,
 the program is deadlocked: the report says `task.join with no progress
-possible`, with a line for each piece that waits and what it waits on
-(``a piece of `task.join` at main.silt:6:3 waits to receive from
-<channel:0>``).
+possible`, with a line for each piece that waits and what it waits on,
+placed where the piece's function is written (``a piece of `task.join`
+at main.silt:7:5 waits to receive from <channel:0>``).
 
 ```silt
 import channel

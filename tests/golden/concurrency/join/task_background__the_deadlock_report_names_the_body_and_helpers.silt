@@ -1,9 +1,9 @@
 -- exit: 1
 -- stderr-contains: deadlock on main thread: task.background with no progress possible
--- stderr-contains: help: a helper of `task.background` at task_background__the_deadlock_report_names_the_body_and_helpers.silt:12:11 waits to receive from <channel:0>
--- stderr-contains: help: the body of `task.background` at task_background__the_deadlock_report_names_the_body_and_helpers.silt:12:11 waits to receive from <channel:0>
+-- stderr-contains: help: a helper of `task.background` at task_background__the_deadlock_report_names_the_body_and_helpers.silt:14:7 waits to receive from <channel:0>
+-- stderr-contains: help: the body of `task.background` at task_background__the_deadlock_report_names_the_body_and_helpers.silt:18:5 waits to receive from <channel:0>
 -- A background whose body and helpers can never go on is a deadlock of
--- the program's thread: the report has one line for each of them.
+-- the program's thread: a line for each of them, placed at its function.
 import channel
 import task
 
