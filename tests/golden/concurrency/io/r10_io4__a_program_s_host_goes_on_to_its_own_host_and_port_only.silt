@@ -3,7 +3,9 @@
 -- A `host` among a request's headers is sent instead of the URL's host,
 -- and so where a redirect leads on the same scheme, host and port. A
 -- redirect to another host or port names its own: the program's `host`
--- named the host it was given for (Go and curl send it so). Two keys of
+-- named the host it was given for (Go and curl send it so). Once left
+-- behind it stays so: a later redirect back to the first host and port
+-- names that host too. Two keys of
 -- the headers that are one name in another case are one header given
 -- twice: `Err(Other)`, and nothing is sent; so is a `host` or an
 -- `authorization` that is no ASCII text, which the transport cannot send.
@@ -31,6 +33,8 @@ fn answer(server: String, a: Int, b: Int, req: http.Request) -> http.Response {
       let location = match class {
         "host" -> "http://localhost:{a}/echo"
         "port" -> "http://127.0.0.1:{b}/echo"
+        "back" -> "http://127.0.0.1:{b}/to/a"
+        "a" -> "http://127.0.0.1:{a}/echo"
         _ -> "/echo"
       }
       http.Response { status: 307, body: bytes.empty(), headers: #{ "location": location } }
@@ -58,7 +62,7 @@ fn main() {
   let server_a = { -> http.serve(la) { req -> answer("A", a, b, req) } }
   let server_b = { -> http.serve(lb) { req -> answer("B", a, b, req) } }
   task.background([server_a, server_b]) { ->
-    list.each(["same", "host", "port"]) { class ->
+    list.each(["same", "host", "port", "back"]) { class ->
       println("GET {class}")
       let link = url_of("http://127.0.0.1:{a}/to/{class}")
       show(http.request(http.GET, link, bytes.empty(), #{ "Host": "app.example" }))

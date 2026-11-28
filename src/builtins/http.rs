@@ -1201,8 +1201,12 @@ fn request_hops(
             Err(location) => return invalid_url(location),
         };
         // A redirect to another scheme is not followed: `file:`, `ftp:`
-        // and the like are no URL of http's.
-        if !matches!(next.scheme(), "http" | "https") {
+        // and the like are no URL of http's. Nor is one from `https` to
+        // `http`: the headers and the body would go on in clear text,
+        // to whoever is on the path. (`http.request_once` lets a program
+        // that wants to go there follow it itself.)
+        let downgrade = url.scheme() == "https" && next.scheme() == "http";
+        if !matches!(next.scheme(), "http" | "https") || downgrade {
             return invalid_url(next.to_string());
         }
         // A 303 goes on without a body, as a GET (a HEAD stays a HEAD);
@@ -4497,6 +4501,92 @@ mod keep_alive_tests {
         assert_eq!(get(&agent, &url), "one");
         assert_eq!(get(&agent, &url), "two");
         assert_eq!(*got.lock(), vec![2, 1]);
+    }
+
+    /// A redirect from `https` to `http` is not followed: the call is
+    /// `Err(InvalidUrl(location))`, and the plain server gets nothing,
+    /// neither the body nor the program's headers. (A redirect from
+    /// `https` to `https` is followed.)
+    #[test]
+    #[cfg(feature = "tcp-tls")]
+    fn a_redirect_from_https_to_http_is_not_followed() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("a certificate");
+        let chain = vec![CertificateDer::from(cert.cert.der().to_vec())];
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
+        let config = Arc::new(
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(chain, key)
+                .expect("a server config"),
+        );
+        let plain = Server::new(vec![vec![Reply::Answer("plain")]]);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let url = format!("https://{}/", listener.local_addr().expect("its address"));
+        let (to_plain, to_tls) = (format!("{}x", plain.url), format!("{url}done"));
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { return };
+                let conn = rustls::ServerConnection::new(config.clone()).expect("a connection");
+                let mut tls = rustls::StreamOwned::new(conn, stream);
+                // The request to /done is answered; any other is sent on:
+                // /plain to the plain server, else to /done.
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match tls.read(&mut byte) {
+                        Ok(1) => head.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                // (The body is read: a connection closed with it unread
+                // could be reset before the answer reaches the client.)
+                let length = head.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    let named = name.eq_ignore_ascii_case("content-length");
+                    named.then(|| value.trim().parse::<usize>().ok()).flatten()
+                });
+                let mut body = vec![0u8; length.unwrap_or(0)];
+                let _ = tls.read_exact(&mut body);
+                let answer = match head.split(' ').nth(1) {
+                    Some("/done") => {
+                        "HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\ndone"
+                            .to_string()
+                    }
+                    Some("/plain") => format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nlocation: {to_plain}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    ),
+                    _ => format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nlocation: {to_tls}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    ),
+                };
+                let _ = tls.write_all(answer.as_bytes());
+                let _ = tls.flush();
+            }
+        });
+        let tls = ureq::tls::TlsConfig::builder()
+            .disable_verification(true)
+            .build();
+        let agent = client_of(
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            ureq::unversioned::resolver::DefaultResolver::default(),
+            tls,
+        );
+        let call = Arc::new(Call::default());
+        let headers = [("x-api-key".to_string(), "k".to_string())];
+        let post = |path: &str| {
+            let to = url_of(&format!("{url}{path}"));
+            do_http_request_on(&agent, &call, "POST", &to, b"secret", &headers, true)
+        };
+        assert_eq!(
+            http_error_tests::failure(&post("plain")),
+            format!("InvalidUrl({}x)", plain.url)
+        );
+        assert_eq!(plain.connections(), 0, "the plain server was reached");
+        assert_eq!(answered(&post("other")), "done");
     }
 
     /// The head of the next request of `tls`; `None` at its end.

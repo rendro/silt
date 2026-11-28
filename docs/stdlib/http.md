@@ -102,8 +102,8 @@ rendered string.
 | `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
-| `InvalidUrl(url)` | `String` | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes (the transport's limit), or has a user with a `:` in it once decoded; no connection is made. Also the location of a redirect that is no URL or has such a scheme, which is not followed. The URL is shown with its user and password hidden |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
+| `InvalidUrl(url)` | `String` | the URL has a scheme other than `http` and `https`, is longer than 65,534 bytes (the transport's limit), or has a user with a `:` in it once decoded; no connection is made. Also the location of a redirect that is no URL or has such a scheme, or that leads from `https` to `http`, which is not followed. The URL is shown with its user and password hidden |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes. Also a proxy (see [Proxies](#proxies)) that refuses the tunnel or is no proxy |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `TooManyRedirects` | — | `http.get` or `http.request` was redirected more than ten times |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a header given twice (in two cases of its name), a `Host` or `Authorization` that is no ASCII text |
@@ -135,6 +135,26 @@ counted until then among the I/O operations that cannot be interrupted
 pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)).
 The name lookup of a host name cannot be interrupted: it ends by the
 system's own time.
+
+## Proxies
+
+Like curl, Go and Python, the client goes through a proxy that the
+environment names. The first of `ALL_PROXY`, `all_proxy`, `HTTPS_PROXY`,
+`https_proxy`, `HTTP_PROXY` and `http_proxy` that holds a proxy's URL
+(`http://proxy.example:3128`) is the proxy of every request, to
+`http://` and `https://` URLs alike. A host that `NO_PROXY` (or
+`no_proxy`) names is reached without it: a list separated by commas, of
+hosts (`localhost`, `127.0.0.1`), of endings (`.example.com` or
+`*.example.com`, every host below `example.com`), or `*`, every host.
+The variables are read once, at the program's first request.
+
+The client asks the proxy for a tunnel (`CONNECT host:port`) and sends the
+request through it, for an `http://` URL too: the proxy sees the host
+and the port, not the request. A user and password in the proxy's URL
+(`http://user:pw@proxy.example:3128`) go to the proxy only, as
+`proxy-authorization`, and no error shows them. A proxy that cannot be
+reached is `Err(Connect(_))`; one that refuses the tunnel, or a server
+that is no proxy, is `Err(InvalidResponse(_))`.
 
 
 ## `http.get`
@@ -278,7 +298,10 @@ also when it leads to the same host: the `authorization`,
 the URL. Every other header among `headers` is, and so is the body after
 a 307 or 308, also to another host, as curl and Go send them. A `Host`
 among `headers` goes on only where the scheme, the host and the port stay
-the same: a request to another names the host it goes to. A location
+the same: a request to another names the host it goes to. A header
+that is left behind stays behind, as the credentials do: a `Host`
+dropped on one redirect is not sent again on a later one, also where
+that one leads back to the first scheme, host and port. A location
 is resolved against the URL that answered with `url.resolve`: `?y=2` on
 its path, `//host/x` on its scheme, `../x` next to its path. An
 empty location, or one that is a fragment alone (`#top`), is the URL that
@@ -291,7 +314,10 @@ cannot hold (a space, the bytes of `é`) is escaped first (`%20`,
 (`url.resolve` refuses it: escapes that are no UTF-8 text, a host that is
 none, `mailto:a@b`), or that resolves to one of a scheme other than
 `http` and `https` (`file:///x`, `ftp://host/x`), is not followed: it is
-`Err(InvalidUrl(location))`, a user and password in it hidden.
+`Err(InvalidUrl(location))`, a user and password in it hidden. So is a
+redirect from `https` to `http`: it would send the headers and the body
+in clear text, to anyone on the way. A program that means to go there
+follows the redirect itself, with `http.request_once`.
 
 Like `http.get`, this transparently yields to the scheduler when called from
 a task.
