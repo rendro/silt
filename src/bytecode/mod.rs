@@ -917,7 +917,7 @@ impl Function {
 
     /// Where the function is written, if that is a place in the
     /// program.
-    pub fn site(&self) -> Option<Span> {
+    pub(crate) fn site(&self) -> Option<Span> {
         Some(self.site).filter(|site| site.is_in_source())
     }
 
