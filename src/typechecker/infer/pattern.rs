@@ -865,6 +865,18 @@ impl TypeChecker {
                 ));
                 self.unify_pattern(&map_ty, expected, pattern_span);
                 let val_ty = self.apply(&val_ty);
+                // A key written twice: the pattern can never match, or
+                // gives one value two names.
+                let mut seen = std::collections::HashSet::new();
+                for (key, pat) in entries.iter() {
+                    if !seen.insert(key) {
+                        self.error(
+                            Code::DuplicateRecordField,
+                            format!("duplicate key {key:?} in map pattern"),
+                            pat.span,
+                        );
+                    }
+                }
                 for (_key, pat) in entries.iter_mut() {
                     self.type_pattern(pat, &val_ty, env, cx);
                 }

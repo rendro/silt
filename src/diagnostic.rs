@@ -203,7 +203,9 @@ codes! {
     InvalidTypeAnnotation = "E0335", Type;
     /// A name that hides another one where both are needed.
     Shadowing = "E0336", Type;
-    /// A field named twice in a record type, literal, pattern or update.
+    /// A field named twice in a record type, literal, pattern or update,
+    /// or a key written twice as the same constant in a map literal or
+    /// pattern.
     DuplicateRecordField = "E0338", Type;
     /// A top-level `let` whose initialiser can reach the `let` itself.
     InitCycle = "E0339", Type;

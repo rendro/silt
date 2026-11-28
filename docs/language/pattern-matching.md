@@ -168,6 +168,10 @@ match config {
 }
 ```
 
+A key written twice in one map pattern is an error (`duplicate key "a"
+in map pattern`): the pattern could never match, or would give one value
+two names.
+
 ## Or-Patterns
 
 Match multiple alternatives in a single arm with `|`:

@@ -49,18 +49,19 @@ fn make_list_source(n: usize) -> String {
 }
 
 /// Build a map literal source with exactly `n` pairs:
-/// `#{"k": 1, "k": 1, ...}`. silt map literals use the `#{ ... }`
+/// `#{k: 1, k: 1, ...}`. silt map literals use the `#{ ... }`
 /// (HashBrace) syntax — see parser.rs line 1559.
 fn make_map_source(n: usize) -> String {
     let mut s = String::with_capacity(n * 16 + 32);
-    s.push_str("fn main() {\n  let _m = #{");
+    s.push_str("fn main() {\n  let k = \"k\"\n  let _m = #{");
     for i in 0..n {
         if i > 0 {
             s.push_str(", ");
         }
         // One key and one value: the pairs are what is counted, and
-        // distinct ones would fill the constant pool first.
-        s.push_str("\"k\": 1");
+        // distinct ones would fill the constant pool first. (The key is
+        // a name: a constant written twice is a duplicate key.)
+        s.push_str("k: 1");
     }
     s.push_str("}\n}\n");
     s

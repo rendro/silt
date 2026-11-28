@@ -91,7 +91,7 @@ missing belong to codes that are gone.
 | `E0334` | A record, enum or alias declaration that is not well-formed. |
 | `E0335` | A type annotation or bound that is not well-formed. |
 | `E0336` | A name that hides another one where both are needed. |
-| `E0338` | A field named twice in a record type, literal, pattern or update. |
+| `E0338` | A field named twice in a record type, literal, pattern or update, or a key written twice as the same constant in a map literal or pattern. |
 | `E0339` | A top-level `let` whose initialiser can reach the `let` itself. |
 | `E0340` | A statement whose value nothing uses. |
 | `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type without its type arguments, ...), or an opaque type decoded or json-encoded outside its module without the module's impl. |

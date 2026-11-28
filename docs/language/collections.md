@@ -66,6 +66,13 @@ let grid = #{ (0, 0): "start", (1, 2): "end" }
 
 Use `map.contains` to check key membership.
 
+A key written twice as the same constant (a text, a number, a Bool, a
+variant without fields) in one map literal is an error, `duplicate key
+"a" in map literal`, as a field written twice in a record literal is: the
+first value would be lost. A key computed by an expression is not looked
+at, and a set literal keeps one of each element as a set does (`#[1, 1]`
+is `#[1]`).
+
 **Maps are homogeneous** -- all values must be the same type. This is
 enforced by the type system. For heterogeneous data, use records:
 
