@@ -322,10 +322,14 @@ fn main() {
   values that came before the failure. Every read of a stream raises it
   too: `channel.each`, `channel.receive`, `channel.try_receive`,
   `channel.receive_timeout` and a `Recv` arm of `channel.select`. A stage
-  that took a value and failed on it, where nobody reads its output any
-  more, is an error when the program ends: "a `stream.map` stage failed and its output was never
-  read". That is a stage that read ahead for `stream.buffered`, or one
-  that a read which did not wait asked for a value. A failure that a read
+  can take a value and fail on it before anybody reads its output: a
+  stage that read ahead for `stream.buffered`, or one that a read which
+  did not wait asked for a value. When the program lets go of the
+  stream, that failure goes with it, unreported; a binding is let go at
+  its last use, so a program that ends normally says nothing of it. Only
+  a program that ends while it still holds the stream (it fails, a
+  deadlock stops it, a REPL session ends) reports it: "a `stream.map`
+  stage failed and its output was never read". A failure that a read
   has raised is not reported again, a stage that nobody asked for a value
   computes nothing and so does not fail, and a pipeline that is cut short
   stays quiet.
