@@ -464,7 +464,10 @@ trait HashTable(Fn(Int) -> Int) for OtherStore { ... }
 
 An impl for every argument writes the trait's bound again on its
 variable, `trait HashTable(k) for AnyStore where k: Hash + Equal`, and
-each use of the impl owes it.
+each use of the impl owes it. So does a bound the trait does not
+declare, and one on a variable inside a trait argument (`trait
+Conv(Map(String, a)) for W where a: Number`): an impl may bound every
+variable its header writes.
 
 Supertraits can also reference the enclosing trait's params. The args
 flow automatically — a `where x: Child(Int)` constraint lets `x` be

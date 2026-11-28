@@ -485,6 +485,33 @@ trait Greet for Box(a) where a: Greet + Loud {
 }
 ```
 
+A variable that the impl's trait arguments write takes a bound the same
+way, whole or inside an argument, and each use of the impl owes it:
+
+```silt
+trait Conv(t) {
+  fn conv(self) -> t
+}
+
+type W {
+  v: Int,
+}
+
+trait Conv(Map(String, a)) for W where a: Number {
+  fn conv(self) -> Map(String, a) {
+    #{ "v": a.from_int(self.v) }
+  }
+}
+
+fn main() {
+  let m: Map(String, Float) = Conv.conv(W { v: 4 })
+  println(m) -- #{ "v": 4.0 }
+}
+```
+
+A use into `Map(String, String)` is an error: type 'String' does not
+implement trait 'Number'.
+
 An impl of `Display`, `json.Encode` or `json.Decode` asks only the
 traits found by the value (`Display`, `Equal`, `Compare`, `Hash`,
 `json.Encode`, `json.Decode`) and `Number` of its type's
