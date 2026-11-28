@@ -247,6 +247,121 @@ impl<'a> Search<'a> {
         }))
     }
 
+    /// Whether some row of values that `q` matches is matched by none of
+    /// `rows`: whether an arm of the pattern `q` after arms of the
+    /// patterns `rows` ever matches. The rows and `q` have one width. A
+    /// test whose values are not recorded (a string literal, a pin) is
+    /// taken to match values no other such test does: an arm is said
+    /// to be covered only when it is.
+    fn useful<'p>(
+        &mut self,
+        mut rows: Vec<Row<'p>>,
+        mut q: Row<'p>,
+        depth: usize,
+    ) -> Result<bool, Unverified> {
+        // A row with a test that may match nothing does not cover.
+        rows.retain(|row| !row.iter().any(|pat| covers_nothing(pat)));
+        if q.iter()
+            .any(|pat| !matches!(pat, Pat::Lit) && covers_nothing(pat))
+        {
+            return Ok(false);
+        }
+        self.cells += (rows.len() + 1) * q.len();
+        if self.cells > MAX_CELLS || depth > MAX_DEPTH {
+            return Err(Unverified);
+        }
+        // Where `q` tests nothing, the question is whether the rows
+        // leave a value out.
+        let Some(column) = q.iter().position(|pat| !matches!(pat, Pat::Wild)) else {
+            return Ok(self.uncovered(rows, q.len(), depth)?.is_some());
+        };
+        if column != 0 {
+            q.swap(0, column);
+            for row in &mut rows {
+                row.swap(0, column);
+            }
+        }
+        let mut expanded: Vec<Row<'p>> = Vec::with_capacity(rows.len());
+        for row in rows {
+            expand_or(row, &mut expanded);
+        }
+        expanded.retain(|row| !covers_nothing(row[0]));
+        match q[0] {
+            Pat::Or(alts) => {
+                for alt in alts {
+                    let mut one = q.clone();
+                    one[0] = alt;
+                    if self.useful(expanded.clone(), one, depth + 1)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            // Only the rows that do not test the column take its values.
+            Pat::Lit | Pat::Wild => {
+                self.useful(default_rows(&expanded), q[1..].to_vec(), depth + 1)
+            }
+            Pat::Ctor(id, args) => {
+                let (ctor, arity) = match id {
+                    CtorId::Record(_) | CtorId::Tuple => {
+                        let mut column: Vec<Row<'p>> = vec![q.clone()];
+                        column.extend(expanded.iter().cloned());
+                        self.signature(id, &column)
+                            .and_then(|mut signature| signature.pop())
+                            .unwrap_or((id.clone(), args.len()))
+                    }
+                    CtorId::Variant(enum_ty, index) => {
+                        let fields = self
+                            .enums
+                            .get(enum_ty)
+                            .and_then(|info| info.variants.get(*index))
+                            .map_or(args.len(), |variant| variant.field_types.len());
+                        (id.clone(), fields)
+                    }
+                    _ => (id.clone(), args.len()),
+                };
+                let rows = specialize(&expanded, &ctor, arity);
+                let Some(q) = specialize(&[q], &ctor, arity).pop() else {
+                    return Ok(false);
+                };
+                self.useful(rows, q, depth + 1)
+            }
+            Pat::IntRange(lo, hi) => {
+                let (lo, hi) = (i128::from(*lo), i128::from(*hi));
+                // The ranges of the rows cut `lo..hi` into intervals no
+                // range divides.
+                let mut cuts = vec![lo, hi + 1];
+                for row in &expanded {
+                    if let Pat::IntRange(a, b) = row[0] {
+                        for cut in [i128::from(*a), i128::from(*b) + 1] {
+                            if lo < cut && cut <= hi {
+                                cuts.push(cut);
+                            }
+                        }
+                    }
+                }
+                cuts.sort_unstable();
+                cuts.dedup();
+                for w in cuts.windows(2) {
+                    let (from, to) = (w[0], w[1] - 1);
+                    let kept = expanded
+                        .iter()
+                        .filter(|row| match row[0] {
+                            Pat::Wild => true,
+                            Pat::IntRange(a, b) => i128::from(*a) <= from && to <= i128::from(*b),
+                            _ => false,
+                        })
+                        .map(|row| row[1..].to_vec())
+                        .collect();
+                    if self.useful(kept, q[1..].to_vec(), depth + 1)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
     /// Every constructor of the type `id` is a constructor of, with its
     /// number of fields. `None` when the type is not known.
     fn signature(&self, id: &CtorId, rows: &[Row<'_>]) -> Option<Vec<(CtorId, usize)>> {
@@ -380,6 +495,29 @@ fn covers_nothing(pat: &Pat) -> bool {
         Pat::IntRange(lo, hi) => lo > hi,
         Pat::Or(alts) => alts.is_empty(),
         Pat::Wild | Pat::Ctor(..) => false,
+    }
+}
+
+/// Whether some value may match both `a` and `b`: false only when
+/// none can (two literals, two variants, two ranges apart).
+fn may_overlap(a: &Pat, b: &Pat) -> bool {
+    match (a, b) {
+        (Pat::Wild | Pat::Lit, _) | (_, Pat::Wild | Pat::Lit) => true,
+        (Pat::Or(alts), other) | (other, Pat::Or(alts)) => {
+            alts.iter().any(|alt| may_overlap(alt, other))
+        }
+        (Pat::IntRange(lo, hi), Pat::IntRange(lo2, hi2)) => lo <= hi2 && lo2 <= hi,
+        (Pat::Ctor(CtorId::Record(names), args), Pat::Ctor(CtorId::Record(names2), args2)) => {
+            names.iter().zip(args).all(|(name, arg)| {
+                (names2.iter().zip(args2))
+                    .find(|(name2, _)| *name2 == name)
+                    .is_none_or(|(_, arg2)| may_overlap(arg, arg2))
+            })
+        }
+        (Pat::Ctor(id, args), Pat::Ctor(id2, args2)) => {
+            id == id2 && args.iter().zip(args2).all(|(a, b)| may_overlap(a, b))
+        }
+        _ => true,
     }
 }
 
@@ -592,6 +730,185 @@ impl TypeChecker {
                 );
             }
         }
+    }
+
+    /// Whether `before`, patterns for one value, match every value
+    /// `pat` matches; `cells` as for `cover_together`.
+    fn covered_by(
+        &self,
+        before: &[&Pat],
+        pat: &Pat,
+        cells: &mut usize,
+    ) -> Result<bool, Unverified> {
+        let mut search = Search::new(&self.tables.enums, *cells);
+        // (Only a pattern that may match a value `pat` matches can take
+        // part: of a long match of literals that is mostly none.)
+        let rows = (before.iter())
+            .filter(|before| !covers_nothing(before) && may_overlap(before, pat))
+            .map(|before| vec![*before])
+            .collect();
+        let answer = search.useful(rows, vec![pat], 0);
+        *cells = search.cells;
+        answer.map(|useful| !useful)
+    }
+
+    /// Warn of each arm of a `match` that never matches: the arms
+    /// before it without a guard take every value it would. So of each
+    /// alternative of an arm's or-pattern that the arms and alternatives
+    /// before it take (in an arm with a guard, the arms before it). `pats` are the lowered patterns of `arms`, one
+    /// each; `alternatives` the lowered alternatives of the arms that
+    /// are or-patterns. The searches share one bound: past it nothing
+    /// more is said.
+    pub(super) fn warn_unreachable_arms(
+        &mut self,
+        arms: &[MatchArm],
+        pats: &[Pat],
+        alternatives: &[Option<Vec<Pat>>],
+    ) {
+        let mut cells = 0;
+        // The arms before, without a guard: where each starts, and its
+        // pattern; by its text, the first of them written so.
+        let mut before: Vec<(Span, &Pat)> = Vec::new();
+        let mut written_before: HashMap<&str, Span> = HashMap::new();
+        let mut warnings = Vec::new();
+        for (i, (arm, pat)) in arms.iter().zip(pats).enumerate() {
+            let rows: Vec<&Pat> = before.iter().map(|(_, pat)| *pat).collect();
+            match self.covered_by(&rows, pat, &mut cells) {
+                Err(Unverified) => break,
+                Ok(true) => {
+                    let by = self.covering_one(&before, pat, &mut cells);
+                    // (Of two arms that take the same values, the later
+                    // one is not put before: it is the one to remove.)
+                    let same = by.is_some_and(|by| {
+                        before.iter().any(|(at, one)| {
+                            *at == by && self.covered_by(&[pat], one, &mut cells) == Ok(true)
+                        })
+                    });
+                    warnings.push(("arm", arm.pattern.span, by, same));
+                }
+                // A test whose values the search does not record (a
+                // string, a pin) is the same test written again.
+                Ok(false)
+                    if let Some(by) = (self.written_pattern(arm.pattern.span))
+                        .and_then(|written| written_before.get(written)) =>
+                {
+                    warnings.push(("arm", arm.pattern.span, Some(*by), true));
+                }
+                Ok(false) => {
+                    let mut top = &arm.pattern;
+                    while let PatternKind::As { pattern, .. } = &top.kind {
+                        top = pattern;
+                    }
+                    if let (PatternKind::Or(written), Some(Some(alts))) =
+                        (&top.kind, alternatives.get(i))
+                    {
+                        self.covered_alternatives(
+                            arm,
+                            (alts, written),
+                            &before,
+                            &mut warnings,
+                            &mut cells,
+                        );
+                    }
+                }
+            }
+            if arm.guard.is_none() {
+                before.push((arm.pattern.span, pat));
+                if let Some(written) = self.written_pattern(arm.pattern.span) {
+                    written_before.entry(written).or_insert(arm.pattern.span);
+                }
+            }
+        }
+        for (what, span, by, same) in warnings {
+            let several = match what {
+                "arm" => "the arms before it",
+                _ => "the patterns before it",
+            };
+            let (by, takes, help) = match by {
+                Some(by) => {
+                    let one = match before.iter().any(|(at, _)| *at == by) {
+                        true => "the arm",
+                        false => "the alternative",
+                    };
+                    let one = match self.line_col(by) {
+                        Some((line, col)) => format!("{one} at {line}:{col}"),
+                        None => one.to_string(),
+                    };
+                    let help = match same {
+                        true => "remove it".to_string(),
+                        false => format!("remove it, or put it before {one}"),
+                    };
+                    (one, "takes", help)
+                }
+                None => (several.to_string(), "take", "remove it".to_string()),
+            };
+            self.errors.push(
+                Diagnostic::warning(
+                    Code::UnreachableArm,
+                    span,
+                    format!("this {what} never matches: {by} {takes} every value it would"),
+                )
+                .with_help(help),
+            );
+        }
+    }
+
+    /// `warn_unreachable_arms` for the alternatives of `arm`'s
+    /// or-pattern, lowered and as written, after the arms `before`.
+    fn covered_alternatives<'p>(
+        &self,
+        arm: &MatchArm,
+        (alts, written): (&'p [Pat], &[Pattern]),
+        before: &[(Span, &'p Pat)],
+        warnings: &mut Vec<(&'static str, Span, Option<Span>, bool)>,
+        cells: &mut usize,
+    ) {
+        let mut earlier = before.to_vec();
+        for (alt, written) in alts.iter().zip(written) {
+            let rows: Vec<&Pat> = earlier.iter().map(|(_, pat)| *pat).collect();
+            match self.covered_by(&rows, alt, cells) {
+                Err(Unverified) => return,
+                Ok(true) => {
+                    let by = self.covering_one(&earlier, alt, cells);
+                    warnings.push(("alternative", written.span, by, true));
+                }
+                Ok(false) => {}
+            }
+            // (An alternative of an arm with a guard is tried again when
+            // the guard of one before it fails.)
+            if arm.guard.is_none() {
+                earlier.push((written.span, alt));
+            }
+        }
+    }
+
+    /// The first of `before` that alone takes every value `pat` would.
+    fn covering_one(&self, before: &[(Span, &Pat)], pat: &Pat, cells: &mut usize) -> Option<Span> {
+        before
+            .iter()
+            .find(|(_, one)| self.covered_by(&[*one], pat, cells) == Ok(true))
+            .map(|(at, _)| *at)
+    }
+
+    /// The text of the pattern at `span`: two patterns of one `match`
+    /// written alike are one test.
+    fn written_pattern(&self, span: Span) -> Option<&str> {
+        let text = self.source_text.as_deref()?;
+        text.get(span.start as usize..span.end as usize)
+    }
+
+    /// The line and column, from 1, where `span` starts in the module's
+    /// text.
+    fn line_col(&self, span: Span) -> Option<(usize, usize)> {
+        let text = self.source_text.as_deref()?;
+        let before = text.get(..span.start as usize)?;
+        let line = before.matches('\n').count() + 1;
+        let col = before
+            .rsplit('\n')
+            .next()
+            .map_or(0, |last| last.chars().count())
+            + 1;
+        Some((line, col))
     }
 
     /// The enum that owns the variant a constructor pattern names, with

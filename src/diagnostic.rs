@@ -314,6 +314,9 @@ codes! {
     /// A `let`-bound `_name` in scope at a tail call that ends its block:
     /// the tail call lets it go before the call runs.
     LetGoAtTailCall = "W0302", Type;
+    /// An arm of a `match`, or an alternative of an arm's or-pattern,
+    /// that never matches: the arms before it take every value it would.
+    UnreachableArm = "W0303", Type;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────

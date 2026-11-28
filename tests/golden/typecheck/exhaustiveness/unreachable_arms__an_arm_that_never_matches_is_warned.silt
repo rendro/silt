@@ -1,0 +1,56 @@
+-- cmd: check --deny-warnings
+-- exit: 1
+-- stderr-contains: warning[type]: this arm never matches: the arm at 17:5 takes every value it would
+-- stderr-contains: .silt:18:5
+-- stderr-contains: warning[type]: this arm never matches: the arm at 19:5 takes every value it would
+-- stderr-contains: help: remove it, or put it before the arm at 19:5
+-- stderr-contains: this alternative never matches: the alternative at 26:5 takes every value it would
+-- stderr-contains: .silt:26:15
+-- stderr-contains: this arm never matches: the arms before it take every value it would
+-- stderr-contains: this arm never matches: the arm at 41:5 takes every value it would
+-- stderr-contains: this alternative never matches: the arm at 49:5 takes every value it would
+-- An arm the arms before it leave no value for never runs: an arm behind
+-- a catch-all, a literal written again, an arm the earlier arms cover
+-- between them, an alternative an earlier one covers.
+fn digits(n: Int) -> String {
+  match n {
+    0 -> "zero"
+    0 -> "zero again"
+    _ -> "other"
+    1 -> "one"
+  }
+}
+
+fn opt(o: Option(Int)) -> Int {
+  match o {
+    Some(_) | Some(1) -> 1
+    None -> 2
+  }
+}
+
+fn between(o: Option(Int)) -> Int {
+  match o {
+    Some(_) -> 1
+    None -> 2
+    _ -> 3
+  }
+}
+
+fn words(s: String) -> Int {
+  match s {
+    "a" -> 1
+    "a" -> 2
+    _ -> 3
+  }
+}
+
+fn later(o: Option(Int)) -> Int {
+  match o {
+    None -> 0
+    Some(_) | None -> 1
+  }
+}
+
+fn main() {
+  println("{digits(1)} {opt(None)} {between(None)} {words("a")} {later(None)}")
+}

@@ -2,7 +2,7 @@
 title: "Error Codes"
 section: "Language"
 order: 14
-description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warnings W0201 to W0302."
+description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warnings W0201 to W0303."
 ---
 
 # Error Codes
@@ -162,3 +162,4 @@ line names the fix, which is the one way to silence it.
 | `W0204` | A private function that nothing in its module calls: not `main`, a test, a `pub` function, an impl's or a trait's method, a top-level `let`, nor a function they call (one that only calls itself counts as unused). |
 | `W0301` | A `deep fn` the recursion check would accept without `deep`. |
 | `W0302` | A `let`-bound `_name` in scope at a tail call that ends its block: the call lets it go before it runs. |
+| `W0303` | An arm of a `match`, or an alternative of an arm's or-pattern, that never matches: the arms before it take every value it would. |

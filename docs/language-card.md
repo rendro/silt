@@ -169,7 +169,8 @@ fn main() {
   `p when cond`, pins `^x` (equal to the existing `x`), and
   `p as name` (matches `p` and binds the whole value to `name`:
   `[Token { tok: TEof, .. } as t, ..]`; an or-pattern before `as` is in
-  parentheses, `(0 | 1) as bit`).
+  parentheses, `(0 | 1) as bit`; behind a bare name or `_` it is an
+  error). An arm the arms before it leave no value for is a warning.
 - A `match` without a subject has conditions for patterns (`x > 0 ->
   ...`): it takes the first arm whose condition is true, and ends with a
   `_ -> ...` arm.

@@ -64,6 +64,10 @@ struct PatternCx {
     cells: usize,
     /// Whether one of those searches gave up.
     unverified: bool,
+    /// The span of the pattern's top, under any `as`, and, when it is
+    /// an or-pattern, its lowered alternatives.
+    top: Span,
+    alternatives: Option<Vec<Pat>>,
 }
 
 /// The names `pattern` pins.
@@ -119,13 +123,20 @@ impl TypeChecker {
                 (name, ty)
             })
             .collect();
+        let mut top = &*pattern;
+        while let PatternKind::As { pattern, .. } = &top.kind {
+            top = pattern;
+        }
         let mut cx = PatternCx {
             span,
             pins,
             cells: 0,
             unverified: false,
+            top: top.span,
+            alternatives: None,
         };
         let pat = self.type_pattern(pattern, expected, env, &mut cx);
+        self.last_alternatives = cx.alternatives.take();
         // What is matched has no type (it comes from a module that failed
         // to load, or an expression already reported): neither has what
         // the pattern binds, so that nothing is asked of it.
@@ -841,6 +852,9 @@ impl TypeChecker {
                 }
                 for (name, scheme) in bound.unwrap_or_default() {
                     env.define(name, scheme);
+                }
+                if pattern_span == cx.top {
+                    cx.alternatives = Some(subs.clone());
                 }
                 self.or_pat(subs, cx)
             }

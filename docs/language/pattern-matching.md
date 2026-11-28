@@ -411,6 +411,22 @@ between them cover `Int` (`-9223372036854775808..-1` and
 and map patterns never cover their type between them: a match on such a
 value needs an arm that takes every value (`_` or a name).
 
+An arm that never matches is a warning (`W0303`): the arms before it
+without a guard take every value it would, as an arm behind `_` or a
+name, a literal written a second time, or an arm the arms before it
+cover between them. So is an alternative of an or-pattern that the
+alternatives or arms before it take (`Some(_) | Some(1)`). Such an arm is
+never compiled, and is the usual sign of arms in the wrong order:
+
+```silt
+fn describe(n: Int) -> String {
+  match n {
+    _ -> "a number"
+    0 -> "zero" -- warning: this arm never matches: the arm at 3:5 takes every value it would
+  }
+}
+```
+
 A match with so many interdependent patterns that the check cannot finish
 is an error too ("could not verify that the match is exhaustive"); a `_`
 arm settles it.
