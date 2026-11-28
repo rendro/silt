@@ -644,6 +644,7 @@ trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
 json.decode(value: Value, type a) -> Result(a, JsonError) where a: Decode
 json.encode(value: a) -> Value where a: Encode
 json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
+json.parse_with(s: String, keys: Map(String, String), type a) -> Result(a, JsonError) where a: Decode
 json.pretty(value: a) -> String where a: Encode
 json.stringify(value: a) -> String where a: Encode
 ```
@@ -655,6 +656,7 @@ type TomlError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int
 toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
 toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode
+toml.parse_with(s: String, keys: Map(String, String), type a) -> Result(a, TomlError) where a: json.Decode
 toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
 toml.stringify(value: a) -> Result(String, TomlError) where a: json.Encode
 ```

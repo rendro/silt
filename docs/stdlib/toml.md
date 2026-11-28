@@ -15,6 +15,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 | `parse` | `(String, type a) -> Result(a, TomlError) where a: json.Decode` | Parse a TOML document (top-level table) into a record, an enum that has a variant with fields, a `json.Value` or a type with a `json.Decode` impl |
 | `parse_list` | `(String, type a) -> Result(List(a), TomlError) where a: json.Decode` | Parse the one array of a document (such as a `[[items]]` section) into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode` | Parse a top-level table into a map |
+| `parse_with` | `(String, Map(String, String), type a) -> Result(a, TomlError) where a: json.Decode` | As `toml.parse`, each field the map names (by its path, `a.b`) read from the key the map gives for it |
 | `pretty` | `(a) -> Result(String, TomlError) where a: json.Encode` | Pretty-print a value as TOML |
 | `stringify` | `(a) -> Result(String, TomlError) where a: json.Encode` | Serialize a value as TOML |
 
@@ -86,14 +87,15 @@ See [stdlib errors](errors.md) for how every error enum is shown.
 
 ## Decodable types
 
-The type argument of `toml.parse`, `toml.parse_list` and `toml.parse_map`
-names the type to decode into:
+The type argument of `toml.parse`, `toml.parse_with`, `toml.parse_list` and
+`toml.parse_map` names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
 | `toml.parse` | a record type, `json.Value`, an enum type that has a variant with fields, or a type with a `json.Decode` impl |
 | `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 | `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `toml.parse_with` | a record type, `json.Value`, an enum type that has a variant with fields, or a type with a `json.Decode` impl |
 
 A type argument is written in full (`toml.parse_list(text, List(Int))`,
 `toml.parse_map(text, (Int, String))`). An alias of one of these is the
@@ -284,7 +286,8 @@ from other programs, which add fields over time.) The first such key in
 the text is the table's error, before the errors of its fields. The table
 of a variant with fields takes the keys `variant` and `fields` alone. To
 allow other keys, read the table into a `Map` (`toml.parse_map`) or a
-`json.Value`, which take every key.
+`json.Value`, which take every key. A key no field can be named after
+(`default-features`) is read by [`toml.parse_with`](#tomlparse_with).
 
 ```silt
 import toml
@@ -341,6 +344,45 @@ fn main() {
     Ok(user) -> println(user.name)
     Err(e) -> println("Error: {e}")
   }
+}
+```
+
+
+## `toml.parse_with`
+
+```
+toml.parse_with(s: String, keys: Map(String, String), type a) -> Result(a, TomlError) where a: json.Decode
+```
+
+Parses a TOML document as `toml.parse` does, but each field that `keys`
+names is read from the key the map gives for it, as
+[`json.parse_with`](json.md#jsonparse_with) reads a JSON document: a field
+of a nested record by its path of fields (`package.default_features`), a
+list, an `Option`, a map, a tuple or a variant on the way adding nothing to
+it. This reads a key with a `-` (`default-features`) or a capital letter,
+which no field can be named. A key that no field reads is still an error,
+and `UnknownField` lists the keys the table takes as the document writes
+them. A key of the map that is no path of a field of the type, and a map
+that gives one key to two fields of a record, are runtime errors, as for
+`json.parse_with`.
+
+```silt
+import toml
+
+type Package {
+  name: String,
+  default_features: Bool,
+}
+
+type Manifest {
+  package: Package,
+}
+
+fn main() {
+  let text = "[package]\nname = \"x\"\ndefault-features = false\n"
+  let keys = #{ "package.default_features": "default-features" }
+  println(toml.parse_with(text, keys, Manifest)) -- Ok(Manifest { package: Package { name: "x", default_features: false } })
+  println(toml.parse(text, Manifest)) -- Err(toml unknown field at line 3, column 1: package.default-features, expected name or default_features)
 }
 ```
 

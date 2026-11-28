@@ -510,7 +510,13 @@ pub fn check_json_decoding(text: &[u8]) -> Result<(), String> {
         let impls = |id, args: &[FieldType]| targets.written(id, args);
         let plain = Reader::with_impls(rt, &none, Holes::Collect(Vec::new()));
         let finding = seed::Parts::finding();
-        let value = match seed::json_text(&plain, &FieldType::JsonValue, text, &finding) {
+        let value = match seed::json_text(
+            &plain,
+            &FieldType::JsonValue,
+            text,
+            &crate::builtins::decode::NO_KEYS,
+            &finding,
+        ) {
             Ok(Ok(value)) => Some(value),
             _ => None,
         };
@@ -522,7 +528,7 @@ pub fn check_json_decoding(text: &[u8]) -> Result<(), String> {
             {
                 let only_finding = with_impls == 1;
                 let from_text = |r: &Reader, parts: &seed::Parts| {
-                    seed::json_text(r, expected, text, parts)
+                    seed::json_text(r, expected, text, &crate::builtins::decode::NO_KEYS, parts)
                         .map_err(|e| json::json_result_err(&e, text, 0))
                 };
                 let first = read_decoding(only_finding, rt, written, &json::RULES, from_text);

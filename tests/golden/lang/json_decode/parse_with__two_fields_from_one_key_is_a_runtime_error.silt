@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: json.parse_with: the map reads the fields `a` and `b` of Two from one key, `b`
+-- A key is read once, so two fields of a record cannot both be read from
+-- it: the map is refused before the document is read.
+import json
+
+type Two { a: Int, b: Int }
+
+fn main() {
+  println(json.parse_with("""{"b": 1}""", #{"a": "b"}, Two))
+}

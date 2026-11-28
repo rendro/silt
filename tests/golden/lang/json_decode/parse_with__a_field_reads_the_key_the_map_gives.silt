@@ -1,0 +1,41 @@
+-- json.parse_with reads each field the map names from the key the map
+-- gives for it, every other field from the key of its own name: a key no
+-- field can be named after (Name, userId) is read. A nested field is
+-- named by its path of fields, through a list or an option on the way.
+import json
+
+type User { name: String, user_id: Int, tags: List(Tag), boss: Option(User) }
+type Tag { label: String }
+type Two { a: Int, b: Int }
+type Tags { names: List(String) }
+type Post { title: String, tags: Tags }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { names: [text] })
+      _ -> Err(json.Other("tags are a string", 0, 0, 0))
+    }
+  }
+}
+
+fn main() {
+  let text = """{"Name": "Ann", "userId": 7, "tags": [{"Label": "x"}], "boss": {"Name": "Bo", "userId": 1, "tags": []}}"""
+  -- json.parse matches the field names exactly, so the fields find no key.
+  println(json.parse(text, User))
+  let keys = #{"name": "Name", "user_id": "userId", "tags.label": "Label", "boss.name": "Name", "boss.user_id": "userId"}
+  println(json.parse_with(text, keys, User))
+  -- A field the map sends elsewhere is not read from the key of its own
+  -- name, and an error names the key as the document writes it.
+  println(json.parse_with("""{"a": 1, "b": 2}""", #{"a": "A"}, Two))
+  println(json.parse_with("""{"A": "1", "b": 2}""", #{"a": "A"}, Two))
+  -- Two fields may swap keys; an empty map is json.parse.
+  println(json.parse_with("""{"a": 1, "b": 2}""", #{"a": "b", "b": "a"}, Two))
+  println(json.parse_with("""{"a": 1, "b": 2}""", #{}, Two))
+  -- A list of records: each element's fields by the same path.
+  println(json.parse_with("""[{"A": 1, "b": 2}, {"A": 3, "b": 4}]""", #{"a": "A"}, List(Two)))
+  -- A part a written json.Decode decodes is found under the key the map
+  -- gives, and its error names that key.
+  println(json.parse_with("""{"Title": "a", "Tags": "x"}""", #{"title": "Title", "tags": "Tags"}, Post))
+  println(json.parse_with("""{"Title": "a", "Tags": 3}""", #{"title": "Title", "tags": "Tags"}, Post))
+}

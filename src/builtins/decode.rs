@@ -425,6 +425,203 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
     })
 }
 
+/// The path of record fields from the top of a document to a part: what
+/// a key of the map of `json.parse_with` and `toml.parse_with` names
+/// (`package.default_features`). A list, an option, a map, a tuple or a
+/// variant on the way adds nothing to it: a field of the records of
+/// `deps: List(Dep)` is `deps.name`.
+#[derive(Clone, Copy)]
+pub(crate) enum FieldPath<'a> {
+    /// The document itself.
+    Top,
+    /// The field of a record here.
+    Field(&'a FieldPath<'a>, &'a str),
+}
+
+impl<'a> FieldPath<'a> {
+    /// The field `name` of a record here.
+    pub(crate) fn field(&'a self, name: &'a str) -> FieldPath<'a> {
+        FieldPath::Field(self, name)
+    }
+
+    /// The path of the field `name` of a record here, as the map writes
+    /// it.
+    fn joined(&self, name: &str) -> std::string::String {
+        let mut names = vec![name];
+        let mut here = self;
+        while let FieldPath::Field(up, field) = here {
+            names.push(field);
+            here = up;
+        }
+        names.reverse();
+        names.join(".")
+    }
+}
+
+/// The key of the document each field is read from, by the path of the
+/// field: the map `json.parse_with` and `toml.parse_with` are given. A
+/// field the map does not name is read from the key of its own name.
+#[derive(Clone, Default)]
+pub(crate) struct Keys(std::collections::BTreeMap<std::string::String, std::string::String>);
+
+/// The keys of `json.parse` and `toml.parse`: each field its own name.
+pub(crate) static NO_KEYS: Keys = Keys(std::collections::BTreeMap::new());
+
+impl Keys {
+    /// The key the field `name` of a record at `path` is read from.
+    pub(crate) fn key<'k>(&'k self, path: &FieldPath, name: &'k str) -> &'k str {
+        if self.0.is_empty() {
+            return name;
+        }
+        self.0
+            .get(&path.joined(name))
+            .map_or(name, |key| key.as_str())
+    }
+
+    /// Whether every field is read from the key of its own name.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The keys `map`, given to `caller` for values of `expected`,
+    /// says. A path that is no field's, and two fields of a record read
+    /// from one key, are runtime errors of `caller`: the map is the
+    /// program's, not the document's.
+    pub(crate) fn of(
+        rt: &Runtime,
+        caller: &str,
+        expected: &FieldType,
+        map: &crate::value::Map,
+    ) -> Result<Keys, VmError> {
+        let mut keys = std::collections::BTreeMap::new();
+        for (path, key) in map.iter() {
+            let (Value::String(path, _), Value::String(key, _)) = (&path, &key) else {
+                return Err(super::typed::unsound(caller, "keys"));
+            };
+            let (up, name) = match path.rsplit_once('.') {
+                Some((up, name)) => (up.split('.').collect::<Vec<&str>>(), name),
+                None => (Vec::new(), &**path),
+            };
+            let named = records_at(rt, expected, &up)
+                .iter()
+                .any(|(info, _)| info.fields().iter().any(|(field, _)| field == name));
+            if !named {
+                let ty = shown(rt, expected);
+                let place = match up.is_empty() {
+                    true => "of that name",
+                    false => "at that path",
+                };
+                return Err(VmError::new(format!(
+                    "{caller}: the map names the field `{path}`, and {ty} has no field {place}"
+                )));
+            }
+            keys.insert(path.to_string(), key.to_string());
+        }
+        let keys = Keys(keys);
+        // (Each record a path of the map leads to, its fields' keys.)
+        for path in keys.0.keys() {
+            let up = path.rsplit_once('.').map_or("", |(up, _)| up);
+            let names: Vec<&str> = up.split('.').filter(|name| !name.is_empty()).collect();
+            let key_of = |field: &str| {
+                let path = match up {
+                    "" => field.to_string(),
+                    up => format!("{up}.{field}"),
+                };
+                keys.0
+                    .get(&path)
+                    .cloned()
+                    .unwrap_or_else(|| field.to_string())
+            };
+            for (info, _) in records_at(rt, expected, &names) {
+                let fields = info.fields();
+                for (k, (field, _)) in fields.iter().enumerate() {
+                    let key = key_of(field);
+                    let twice = fields[..k].iter().find(|(other, _)| key_of(other) == key);
+                    if let Some((other, _)) = twice {
+                        return Err(VmError::new(format!(
+                            "{caller}: the map reads the fields `{other}` and `{field}` of {} from one key, `{key}`",
+                            info.name
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(keys)
+    }
+}
+
+/// The record types, each at its type arguments, whose fields are at
+/// the path of field names `path` in a value of `expected`: through a
+/// list, an option, a map, a tuple or a variant on the way.
+fn records_at(
+    rt: &Runtime,
+    expected: &FieldType,
+    path: &[&str],
+) -> Vec<(Arc<TypeInfo>, Vec<FieldType>)> {
+    let mut here = Vec::new();
+    records(rt, expected, &mut here, &mut Vec::new());
+    for name in path {
+        let mut next = Vec::new();
+        let mut seen = Vec::new();
+        for (info, args) in &here {
+            for (field, ty) in info.fields() {
+                if field == name {
+                    records(rt, &ty.instantiated(args), &mut next, &mut seen);
+                }
+            }
+        }
+        here = next;
+    }
+    here
+}
+
+/// The record types a value of `ty` holds without a record's field in
+/// between, into `out`; `seen`: the types of records and enums already
+/// looked at.
+fn records(
+    rt: &Runtime,
+    ty: &FieldType,
+    out: &mut Vec<(Arc<TypeInfo>, Vec<FieldType>)>,
+    seen: &mut Vec<FieldType>,
+) {
+    match ty {
+        FieldType::List(inner)
+        | FieldType::Option(inner)
+        | FieldType::Map(inner)
+        | FieldType::KeyedMap(_, inner) => records(rt, inner, out, seen),
+        FieldType::Tuple(items) => {
+            for item in items {
+                records(rt, item, out, seen);
+            }
+        }
+        FieldType::Record(id) | FieldType::Enum(id) | FieldType::Applied(id, _) => {
+            if seen.contains(ty) {
+                return;
+            }
+            seen.push(ty.clone());
+            let args = match ty {
+                FieldType::Applied(_, args) => args.as_slice(),
+                _ => &[],
+            };
+            let Some(info) = rt.type_info(*id) else {
+                return;
+            };
+            match &info.shape {
+                Shape::Record(_) => out.push((info.clone(), args.to_vec())),
+                Shape::Enum(variants) => {
+                    for variant in variants {
+                        for field in &variant.fields {
+                            records(rt, &field.instantiated(args), out, seen);
+                        }
+                    }
+                }
+                Shape::Opaque | Shape::Applied(_) => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The value of the type `field_type`, its descriptor, as a `type a`
 /// parameter is given it: what a written `decode` of a generic type
 /// decodes a type argument by (`a.decode(v)`), and is called with.
@@ -1269,7 +1466,7 @@ mod tests {
     /// text `toml` as a value of `expected`.
     fn decoded(rt: &Reader, expected: &FieldType, json: &str, toml: &str) -> [String; 2] {
         let parts = seed::Parts::finding();
-        let from_json = match seed::json_text(rt, expected, json.as_bytes(), &parts) {
+        let from_json = match seed::json_text(rt, expected, json.as_bytes(), &NO_KEYS, &parts) {
             Ok(decoded) => outcome(decoded),
             Err(e) => format!("Syntax {e}"),
         };

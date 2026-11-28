@@ -64,6 +64,8 @@ misspelled key is no error: the field it was meant for is missing, an
 `Err(MissingField(...))`, or `None` for an `Option` field.
 A field may be named by a keyword, so the key `"type"` is read into the field
 of `type Event { type: String }` (see [Types](../language/types.md#records)).
+A key no field can be named after (`"Name"`, `"userId"`) is read by
+[`json.parse_with`](#jsonparse_with).
 One UTF-8 byte order mark (U+FEFF) before the document, which files written
 by Windows tools often start with, is dropped, as `toml.parse` and
 `csv.parse` drop it; the byte of a `Syntax` error is still counted from the
