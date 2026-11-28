@@ -1150,7 +1150,8 @@ fn one_repository_at_two_commits_is_said_so() {
     assert_eq!(out.status.code(), Some(1), "{err}");
     assert!(
         err.starts_with(&format!(
-            "error[package]: `remote` is required at two commits: {} (via `a`) and {} (via `b`)\n",
+            "error[package]: `remote` is required at two commits: {} (dependency `a` of `app`, \
+             tag `v0.2.0`) and {} (dependency `b` of `app`, tag `v0.1.0`)\n",
             &second[..7],
             &first[..7]
         )) && err.contains("make every dependency on `remote` point at the same source"),
@@ -1178,6 +1179,54 @@ fn one_repository_at_two_commits_is_said_so() {
             "{err}"
         );
     }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// One key at two commits, required by two packages: each commit is
+/// named with the package that requires it and the ref it gives. FAILS
+/// on the base: "(via `remote`) and (via `remote`)", the same words twice.
+#[test]
+fn one_key_at_two_commits_names_who_requires_each() {
+    let ws = fresh_workspace("one_key_two_commits");
+    if !git_installed() {
+        return;
+    }
+    let first = sibling_repository(&ws, "pub fn v() { 1 }\n");
+    let repo = ws.join("lib");
+    git(&ws, &repo, &["tag", "v0.1.0"]);
+    fs::write(repo.join("src").join("lib.silt"), "pub fn v() { 2 }\n").unwrap();
+    let second = commit_all(&ws, &repo, "two");
+    let app = ws.join("app");
+    // (A path dependency's git URL is relative to its own silt.toml.)
+    write_package(
+        &app.join("shared"),
+        "shared",
+        &["remote = { git = \"../../lib\", branch = \"main\" }"],
+        "lib.silt",
+        "pub fn w() { 1 }\n",
+    );
+    write_package(
+        &app,
+        "app",
+        &[
+            "remote = { git = \"../lib\", tag = \"v0.1.0\" }",
+            "shared = { path = \"shared\" }",
+        ],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    let out = silt(&ws, &app, &["check"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.starts_with(&format!(
+            "error[package]: `remote` is required at two commits: {} (dependency `remote` of \
+             `app`, tag `v0.1.0`) and {} (dependency `remote` of `shared`, branch `main`)\n",
+            &first[..7],
+            &second[..7]
+        )),
+        "{err}"
+    );
     let _ = fs::remove_dir_all(&ws);
 }
 
