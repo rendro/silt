@@ -5240,7 +5240,7 @@ pub(super) fn arith_operand_message(op_str: &str, ty: &Type, shown: &str) -> Str
 impl TypeChecker {
     /// Whether an expression is a syntactic value, for the value
     /// restriction on let-generalization: a literal, a name, a closure,
-    /// or a tuple, list, record or constructor application of syntactic
+    /// or a tuple, list, map, set, record or constructor application of syntactic
     /// values. Those are safe to generalize; any other call is not,
     /// because it may produce a type with shared mutable state (a
     /// channel) that must remain monomorphic.
@@ -5269,6 +5269,11 @@ impl TypeChecker {
             ExprKind::RecordCreate { fields, .. } => {
                 fields.iter().all(|(_, e)| self.is_syntactic_value(e))
             }
+            // A map or set literal of values, as a list one: `#{}`, `#[]`.
+            ExprKind::Map(entries) => entries
+                .iter()
+                .all(|(k, v)| self.is_syntactic_value(k) && self.is_syntactic_value(v)),
+            ExprKind::SetLit(elems) => elems.iter().all(|e| self.is_syntactic_value(e)),
             // A variant applied to values: `Some(1)`, `Err("x")`. (The
             // builtin environment, which the builtin definitions are
             // made from, cannot ask what a name resolves to.)
