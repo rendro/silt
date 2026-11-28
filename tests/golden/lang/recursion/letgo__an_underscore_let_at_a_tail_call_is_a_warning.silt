@@ -2,7 +2,9 @@
 -- A value kept only for its lifetime (a let whose name starts with _)
 -- is let go at a tail call that ends its block: the call runs in the
 -- function's place. A warning; a parameter named _x is not one, nor is
--- a call whose value is bound first.
+-- a call whose value is bound first. A call that goes on with the
+-- function's own loop cannot keep it by binding its value (each round
+-- would keep a frame): the help says where to bind it instead.
 fn work(n: Int) -> Int {
   n * 2
 }
@@ -22,6 +24,14 @@ fn param(_unused: Int, n: Int) -> Int {
   work(n)
 }
 
+fn countdown(n: Int) -> Int {
+  let _guard = [n]
+  match n {
+    0 -> 0
+    _ -> countdown(n - 1)
+  }
+}
+
 fn main() {
-  println(held(1) + kept(2) + param(0, 3))
+  println(held(1) + kept(2) + param(0, 3) + countdown(3))
 }

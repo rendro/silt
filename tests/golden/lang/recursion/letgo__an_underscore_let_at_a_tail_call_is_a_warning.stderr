@@ -1,13 +1,25 @@
 warning[type]: `_guard` is let go at this call
- --> letgo__an_underscore_let_at_a_tail_call_is_a_warning.silt:12:3
+ --> letgo__an_underscore_let_at_a_tail_call_is_a_warning.silt:14:3
     |
- 12 |   work(n)
+ 14 |   work(n)
     |   ^^^^^^^ `_guard` is let go at this call
- ::: letgo__an_underscore_let_at_a_tail_call_is_a_warning.silt:11:7
+ ::: letgo__an_underscore_let_at_a_tail_call_is_a_warning.silt:13:7
     |
- 11 |   let _guard = [n]
+ 13 |   let _guard = [n]
     |       ------ `_guard` is bound here
   = note: a call that ends its block is a tail call: the function's values are let go before the call runs
   = help: to keep `_guard` until the call returns, bind its value and end with it: `let result = work(n)`, then `result`
+
+warning[type]: `_guard` is let go at this call
+ --> letgo__an_underscore_let_at_a_tail_call_is_a_warning.silt:31:10
+    |
+ 31 |     _ -> countdown(n - 1)
+    |          ^^^^^^^^^^^^^^^^ `_guard` is let go at this call
+ ::: letgo__an_underscore_let_at_a_tail_call_is_a_warning.silt:28:7
+    |
+ 28 |   let _guard = [n]
+    |       ------ `_guard` is bound here
+  = note: a call that ends its block is a tail call: the function's values are let go before the call runs
+  = help: this call goes on with the loop of `countdown`, and a call whose value is bound keeps a frame for every round: to keep `_guard` for the whole loop, bind it in the function that starts the loop and pass it in
 
 checked 1 module: no errors

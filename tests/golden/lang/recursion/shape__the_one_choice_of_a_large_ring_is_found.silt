@@ -1,0 +1,49 @@
+-- A ring of seven functions of five parameters each, each descending on
+-- its last: 78,125 ways to choose what each descends on, and only one
+-- keeps the rule. The choices no call can keep it under are dropped
+-- first, so the one left is found wherever the parameter stands.
+fn f0(a0: Int, a1: Int, a2: Int, a3: Int, xs: List(Int)) -> Int {
+  match xs {
+    [] -> a0
+    [_, ..rest] -> 1 + f1(a0, a1, a2, a3, rest)
+  }
+}
+fn f1(a0: Int, a1: Int, a2: Int, a3: Int, xs: List(Int)) -> Int {
+  match xs {
+    [] -> a0
+    [_, ..rest] -> 1 + f2(a0, a1, a2, a3, rest)
+  }
+}
+fn f2(a0: Int, a1: Int, a2: Int, a3: Int, xs: List(Int)) -> Int {
+  match xs {
+    [] -> a0
+    [_, ..rest] -> 1 + f3(a0, a1, a2, a3, rest)
+  }
+}
+fn f3(a0: Int, a1: Int, a2: Int, a3: Int, xs: List(Int)) -> Int {
+  match xs {
+    [] -> a0
+    [_, ..rest] -> 1 + f4(a0, a1, a2, a3, rest)
+  }
+}
+fn f4(a0: Int, a1: Int, a2: Int, a3: Int, xs: List(Int)) -> Int {
+  match xs {
+    [] -> a0
+    [_, ..rest] -> 1 + f5(a0, a1, a2, a3, rest)
+  }
+}
+fn f5(a0: Int, a1: Int, a2: Int, a3: Int, xs: List(Int)) -> Int {
+  match xs {
+    [] -> a0
+    [_, ..rest] -> 1 + f6(a0, a1, a2, a3, rest)
+  }
+}
+fn f6(a0: Int, a1: Int, a2: Int, a3: Int, xs: List(Int)) -> Int {
+  match xs {
+    [] -> a0
+    [_, ..rest] -> 1 + f0(a0, a1, a2, a3, rest)
+  }
+}
+fn main() {
+  println("{f0(1, 1, 1, 1, [1, 2, 3])}")
+}

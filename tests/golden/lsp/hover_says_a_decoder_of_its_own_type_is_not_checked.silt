@@ -1,0 +1,23 @@
+-- cmd: lsp
+-- lsp: hover 10:6
+-- A json.Decode impl that decodes its own type (`json.parse(.., User)`)
+-- calls itself through its trait, as a method that calls a method of
+-- its own trait does: the editor says it is not checked.
+import json
+import map
+type User { name: String, age: Int }
+trait json.Decode for User {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Object(m) -> match (map.get(m, "name"), map.get(m, "age")) {
+        (Some(json.String(n)), Some(json.Int(a))) -> Ok(User { name: n, age: a })
+        _ -> json.parse("[]", User)
+      }
+      _ -> json.parse("null", User)
+    }
+  }
+}
+
+fn main() {
+  println(json.parse("5", User))
+}

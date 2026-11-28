@@ -1,0 +1,11 @@
+-- cmd: repl
+-- stdin: fn f(n: Int) -> Int { n }\nfn g(n: Int) -> Int { 1 + f(n) }\nfn f(n: Int) -> Int { match n { 0 -> 0\n _ -> g(n - 1) } }\ng(5)\nfn p(xs: List(Int)) -> Int { 0 }\nfn q(xs: List(Int)) -> Int { match xs { [] -> 0\n [_, ..rest] -> 1 + p(rest) } }\nfn p(xs: List(Int)) -> Int { match xs { [] -> 0\n [_, ..rest] -> 1 + q(rest) } }\nq([1, 2, 3])\n:quit\n
+-- stderr-contains: this call of `f` takes a frame for every round
+-- stderr-contains: `f` and `g` call each other, so they are checked together
+-- stdout-contains: 6
+-- stdout-contains: 3
+-- A function an entry defines again with its type takes the old one's
+-- place for every caller, so it can close a group with the functions of
+-- earlier entries: the group is checked whole, as in a file, and an
+-- entry it refuses leaves the old function in place (g(5) is still 6).
+-- One whose depth follows the data is accepted.

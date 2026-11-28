@@ -917,7 +917,10 @@ impl Session {
             && !check.diagnostics.iter().any(Diagnostic::is_error);
         if checked {
             let text = text.map_or("", |file| &file.text);
-            let shape = typechecker::shape::check(&ast, text, &self.defs);
+            let shape = match kind {
+                ModuleKind::Cell => self.entry_shape(id, &ast, text),
+                _ => typechecker::shape::check(&ast, text, &self.defs),
+            };
             if !shape.diagnostics.is_empty() {
                 check.diagnostics.extend(shape.diagnostics);
                 check.diagnostics.sort_by_key(|d| d.span.start);
@@ -1317,6 +1320,52 @@ impl Session {
             true => Ok(redefined),
             false => Err(errors),
         }
+    }
+
+    /// The recursion check of the REPL cell `id` (`ast`, of the text
+    /// `text`): with the functions of the earlier cells, as a function it
+    /// defines again with the same type takes the old one's place for
+    /// every caller.
+    #[cfg(feature = "repl")]
+    fn entry_shape(
+        &self,
+        id: ModuleId,
+        ast: &ast::Program,
+        text: &str,
+    ) -> typechecker::shape::Shape {
+        let Some(cell) = self.cells.info.get(&id) else {
+            return typechecker::shape::check(ast, text, &self.defs);
+        };
+        let earlier = self.cells.earlier_functions(&cell.names());
+        let functions = (earlier.iter())
+            .filter_map(|(f, slot)| {
+                let file = self.sources.get(f.name_span.file)?;
+                Some((&**f, &*file.text, *slot))
+            })
+            .collect();
+        // (One defined again with another type is a new function, or an
+        // error of its own.)
+        let takes = (self.redefinitions(id).unwrap_or_default().into_iter())
+            .map(|(def, slot)| (self.defs.get(def).name, slot))
+            .collect();
+        let slot_of = |def: crate::defs::DefId| self.cells.globals.def(def);
+        let earlier = typechecker::shape::Earlier {
+            functions,
+            slot_of: &slot_of,
+            takes,
+        };
+        typechecker::shape::check_entry(ast, text, &self.defs, &earlier)
+    }
+
+    /// Without the REPL a cell is checked as a file is.
+    #[cfg(not(feature = "repl"))]
+    fn entry_shape(
+        &self,
+        _: ModuleId,
+        ast: &ast::Program,
+        text: &str,
+    ) -> typechecker::shape::Shape {
+        typechecker::shape::check(ast, text, &self.defs)
     }
 
     /// Without the REPL no cell defines anything again.

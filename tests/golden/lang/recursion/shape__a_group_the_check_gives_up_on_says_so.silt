@@ -1,0 +1,58 @@
+-- exit: 1
+-- A ring of seven functions of five parameters each, each passing a
+-- part of every parameter on, the last one rotated: every parameter is
+-- left after the choices no call keeps the rule under are dropped, and
+-- the one way that passes is not among the first 20,000 tried. The
+-- first error says that the check gave up.
+fn f0(x0: List(Int), x1: List(Int), x2: List(Int), x3: List(Int), x4: List(Int)) -> Int {
+  match (x0, x1, x2, x3, x4) {
+    ([_, ..r0], [_, ..r1], [_, ..r2], [_, ..r3], [_, ..r4]) -> 1 + f1(r0, r1, r2, r3, r4)
+    _ -> 0
+  }
+}
+
+fn f1(x0: List(Int), x1: List(Int), x2: List(Int), x3: List(Int), x4: List(Int)) -> Int {
+  match (x0, x1, x2, x3, x4) {
+    ([_, ..r0], [_, ..r1], [_, ..r2], [_, ..r3], [_, ..r4]) -> 1 + f2(r0, r1, r2, r3, r4)
+    _ -> 0
+  }
+}
+
+fn f2(x0: List(Int), x1: List(Int), x2: List(Int), x3: List(Int), x4: List(Int)) -> Int {
+  match (x0, x1, x2, x3, x4) {
+    ([_, ..r0], [_, ..r1], [_, ..r2], [_, ..r3], [_, ..r4]) -> 1 + f3(r0, r1, r2, r3, r4)
+    _ -> 0
+  }
+}
+
+fn f3(x0: List(Int), x1: List(Int), x2: List(Int), x3: List(Int), x4: List(Int)) -> Int {
+  match (x0, x1, x2, x3, x4) {
+    ([_, ..r0], [_, ..r1], [_, ..r2], [_, ..r3], [_, ..r4]) -> 1 + f4(r0, r1, r2, r3, r4)
+    _ -> 0
+  }
+}
+
+fn f4(x0: List(Int), x1: List(Int), x2: List(Int), x3: List(Int), x4: List(Int)) -> Int {
+  match (x0, x1, x2, x3, x4) {
+    ([_, ..r0], [_, ..r1], [_, ..r2], [_, ..r3], [_, ..r4]) -> 1 + f5(r0, r1, r2, r3, r4)
+    _ -> 0
+  }
+}
+
+fn f5(x0: List(Int), x1: List(Int), x2: List(Int), x3: List(Int), x4: List(Int)) -> Int {
+  match (x0, x1, x2, x3, x4) {
+    ([_, ..r0], [_, ..r1], [_, ..r2], [_, ..r3], [_, ..r4]) -> 1 + f6(r0, r1, r2, r3, r4)
+    _ -> 0
+  }
+}
+
+fn f6(x0: List(Int), x1: List(Int), x2: List(Int), x3: List(Int), x4: List(Int)) -> Int {
+  match (x0, x1, x2, x3, x4) {
+    ([_, ..r0], [_, ..r1], [_, ..r2], [_, ..r3], [_, ..r4]) -> 1 + f0(r4, r0, r1, r2, r3)
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(f0([1, 2, 3], [1, 2, 3], [1, 2, 3], [1, 2, 3], [1, 2, 3]))
+}

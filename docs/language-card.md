@@ -193,7 +193,9 @@ fn main() {
   field, what a constructor pattern binds), "depth follows the data";
   anything else is an error (`E0345`) unless the function is written
   `deep fn name(...)`. A function of such a group that gives `()` ends
-  with `()`, `return e` or a call that gives `Never` (`E0346`).
+  with `()`, `return e` or a call that gives `Never` (`E0346`). A call
+  through a trait is not checked (a `json.Decode` impl that decodes its
+  own type is one).
 
 ## Errors
 
