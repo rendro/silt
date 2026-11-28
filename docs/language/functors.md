@@ -46,7 +46,9 @@ type. `Result(_, e)` maps over the `Ok` value with the error fixed; there
 is no constructor that maps over the error (that is `result.map_err`).
 A `Map`'s first argument is its key, so a map is no Functor over its
 values. A type without parameters (`Int`, `Shape`), a function type, a
-tuple and a record are no type constructors.
+tuple and a record are no type constructors. An alias is one where it
+renames one, its first parameter the constructor's first type argument
+(`type Opt(a) = Option(a)`); `type Pairs(a) = List((a, a))` is not.
 
 ## Constructor variables
 
