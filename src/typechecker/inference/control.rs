@@ -309,6 +309,9 @@ impl TypeChecker {
                 // What each arm's pattern tests, for the
                 // exhaustiveness check.
                 let mut arm_pats = Vec::with_capacity(arms.len());
+                // The alternatives of each arm that is an or-pattern, for
+                // the warning of one that never matches.
+                let mut arm_alternatives = Vec::with_capacity(arms.len());
                 // A match diverges when it has arms and every
                 // arm diverges. `unify` leaves `result_ty`
                 // unbound against `Never`, so the arms are
@@ -337,6 +340,7 @@ impl TypeChecker {
                         PatternMode::Arm,
                     ));
                     arm_mismatches = self.arm_mismatches.take().unwrap_or_default();
+                    arm_alternatives.push(self.last_alternatives.take());
                     if self.errors.len() > pat_err_count {
                         let new_diags: Vec<Diagnostic> =
                             self.errors.drain(pat_err_count..).collect();
@@ -386,6 +390,7 @@ impl TypeChecker {
                         &resolved_scrutinee_ty,
                         scrutinee_span,
                     );
+                    self.warn_unreachable_arms(arms, &arm_pats, &arm_alternatives);
                 }
 
                 if every_arm_diverges {

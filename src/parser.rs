@@ -2011,6 +2011,23 @@ impl<'src> Parser<'src> {
         let doc = self.doc_for_span(span);
         self.expect(&Token::Fn)?;
         let (name, name_span) = self.expect_ident()?;
+        // A capital starts a type, a trait or a variant, never a
+        // function: a function named like a variant would never be
+        // called, or would hide the prelude's.
+        let text = intern::resolve(name);
+        if !self.cut_short && text.starts_with(char::is_uppercase) {
+            self.keep_or_count(
+                Diagnostic::error(
+                    Code::ExpectedToken,
+                    name_span,
+                    format!(
+                        "function '{text}' starts with a capital: a function's name starts with a \
+                         lower-case letter"
+                    ),
+                )
+                .with_help(format!("write `{}`", snake_case(&text))),
+            );
+        }
         let mut decl = FnDecl {
             name,
             params: Vec::new(),
@@ -5379,6 +5396,28 @@ impl<'src> Parser<'src> {
                     ));
                 }
             };
+            // `as` stands behind a pattern that tests something: behind
+            // a name or `_`, or behind another `as`, a name already
+            // binds the whole value.
+            let named = match &pattern.kind {
+                PatternKind::Ident(_) | PatternKind::Wildcard => {
+                    Some(Some(intern::resolve(name).to_string()))
+                }
+                PatternKind::As { .. } => Some(self.written(pattern.span).map(str::to_string)),
+                _ => None,
+            };
+            if let Some(named) = named.filter(|_| !self.cut_short) {
+                let d = Diagnostic::error(
+                    Code::ExpectedPattern,
+                    pattern.span.to(name_span),
+                    "a name already binds the whole value: `as` stands behind a pattern that \
+                     tests it",
+                );
+                self.keep_or_count(match named {
+                    Some(named) => d.with_help(format!("write `{named}`")),
+                    None => d,
+                });
+            }
             let start = pattern.span;
             pattern = self.mk_pattern(
                 PatternKind::As {
@@ -5810,6 +5849,7 @@ impl<'src> Parser<'src> {
                 self.advance();
                 let entries =
                     self.comma_list("map pattern", start, ListEnd::Close(&Token::RBrace), |p| {
+                        let key_span = p.span();
                         let key = match p.peek().clone() {
                             Token::StringLit(s) => {
                                 p.advance();
@@ -5824,7 +5864,7 @@ impl<'src> Parser<'src> {
                             }
                         };
                         p.expect(&Token::Colon)?;
-                        Ok((key, p.parse_pattern()?))
+                        Ok((key, key_span, p.parse_pattern()?))
                     })?;
                 Ok(mk(PatternKind::Map(entries)))
             }
@@ -6934,16 +6974,32 @@ fn main() {
         };
         assert_eq!(*name, intern::intern("small"));
         assert!(matches!(&pattern.kind, PatternKind::Or(pats) if pats.len() == 2));
-        // `p as a as b` names the same value twice, the inner name first.
-        let prog = parse("fn f(n) {\n  match n {\n    x as a as b -> b\n  }\n}\n");
-        let arm = first_match_arm_of_main(&prog);
-        let PatternKind::As { pattern, name, .. } = &arm.pattern.kind else {
-            panic!("expected an as-pattern");
-        };
-        assert_eq!(*name, intern::intern("b"));
-        assert!(
-            matches!(&pattern.kind, PatternKind::As { name, .. } if *name == intern::intern("a"))
-        );
+    }
+
+    #[test]
+    fn test_as_behind_a_name_is_refused_and_read_on() {
+        // Behind a name, `_` or another `as`, a name already binds the
+        // whole value; the pattern is read on as written.
+        for (text, help) in [
+            ("x as a", "write `a`"),
+            ("_ as a", "write `a`"),
+            ("Some(_) as a as b", "write `Some(_) as a`"),
+        ] {
+            let source = format!("fn f(n) {{\n  match n {{\n    {text} -> a\n  }}\n}}\n");
+            let (prog, errors) = parse_recovering(&source);
+            assert_eq!(errors.len(), 1, "{text}: {errors:?}");
+            assert!(
+                errors[0]
+                    .message
+                    .starts_with("a name already binds the whole value")
+            );
+            assert_eq!(errors[0].help, vec![help.to_string()], "{text}");
+            let arm = first_match_arm_of_main(&prog);
+            assert!(
+                matches!(&arm.pattern.kind, PatternKind::As { .. }),
+                "{text}"
+            );
+        }
     }
 
     #[test]
@@ -7016,7 +7072,7 @@ fn main() {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].0, "key");
             assert!(
-                matches!(entries[0].1.kind, PatternKind::Ident(ref v) if *v == intern::intern("v"))
+                matches!(entries[0].2.kind, PatternKind::Ident(ref v) if *v == intern::intern("v"))
             );
         } else {
             panic!("expected map pattern");

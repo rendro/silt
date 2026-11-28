@@ -2762,7 +2762,7 @@ impl Printer<'_> {
                 Token::RBrace,
                 SPACED,
                 entries,
-                |p, (_, sub)| {
+                |p, (_, _, sub)| {
                     Doc::concat(vec![
                         p.tok(Token::StringLit(String::new())),
                         p.tok(Token::Colon),

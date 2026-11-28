@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A bound an impl's method adds on a trait argument (`b` of `trait
+-- Turn(b) for Int`) would not be owed by a call through the trait: the
+-- refusal points to the method in the trait (or the impl's header).
+import json
+
+trait Turn(b) {
+  fn turn(self) -> Result(b, json.JsonError)
+}
+
+trait Turn(b) for Int {
+  fn turn(self) -> Result(b, json.JsonError) where b: json.Decode {
+    Err(json.TypeMismatch("x", "y", 0, 0, 0))
+  }
+}
+
+fn main() {
+  println(1)
+}

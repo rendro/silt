@@ -148,14 +148,24 @@ pub(crate) fn builtin_trait_decls() -> Vec<TraitDecl> {
                     .to_string(),
             ),
         },
-        // trait Number { fn from_int(n: Int) -> Self }: the types
-        // arithmetic is on, Int and Float, and the number of the type
-        // that an Int is.
+        // trait Number: Equal + Compare + Hash + Display {
+        //   fn from_int(n: Int) -> Self }: the types arithmetic is on,
+        // Int and Float, which have the four, and the number of the
+        // type that an Int is.
         TraitDecl {
             name: intern("Number"),
             name_span: dummy_span,
             params: Vec::new(),
-            supertraits: Vec::new(),
+            supertraits: ["Equal", "Compare", "Hash", "Display"]
+                .into_iter()
+                .map(|name| TraitRef {
+                    module: None,
+                    name: intern(name),
+                    args: Vec::new(),
+                    span: dummy_span,
+                    res: None,
+                })
+                .collect(),
             param_where_clauses: Vec::new(),
             methods: vec![FnDecl {
                 return_type: Some(TypeExpr::new(TypeExprKind::SelfType, dummy_span)),
@@ -174,7 +184,8 @@ pub(crate) fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: Some(
                 "The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`,\n\
-                 `%` and unary `-` need it. No other type has it. `from_int` makes\n\
+                 `%` and unary `-` need it. No other type has it. It brings `Equal`,\n\
+                 `Compare`, `Hash` and `Display`, which both have. `from_int` makes\n\
                  the number of the type: `a.from_int(0)`, `Float.from_int(2)`."
                     .to_string(),
             ),

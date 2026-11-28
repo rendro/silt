@@ -421,7 +421,7 @@ fn collect_pattern_bindings(
                 Some(Type::Container(Container::Map(_, value))) => Some(&**value),
                 _ => None,
             };
-            for (_, p) in entries {
+            for (_, _, p) in entries {
                 collect_matched(p, visible_from, value_ty, scope_end, out);
             }
         }

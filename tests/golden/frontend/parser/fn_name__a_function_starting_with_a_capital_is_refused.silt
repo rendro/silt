@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: function 'Circle' starts with a capital: a function's name starts with a lower-case letter
+-- stderr-contains: .silt:16:4
+-- stderr-contains: write `circle`
+-- stderr-contains: function 'Some' starts with a capital
+-- stderr-contains: write `some`
+-- stderr-contains: function 'MakeOne' starts with a capital
+-- stderr-contains: write `make_one`
+-- stderr-contains: .silt:18:6
+-- A capital starts a type, a trait or a variant, never a function or a
+-- trait method: a function named like a variant of its module was never
+-- called (every call was the variant), and one named like a prelude
+-- variant hid it.
+type Shape { Circle(Int), Square(Int) }
+fn Circle(r: Int) -> Int { r }
+trait Mk {
+  fn MakeOne() -> Self
+}
+fn Some(x: Int) -> Int { x * 100 }
+
+fn main() {
+  println(Circle(3))
+}

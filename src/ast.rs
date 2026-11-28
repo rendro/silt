@@ -360,7 +360,7 @@ pub enum PatternKind {
     /// Float range pattern: 1.0..10.0 (inclusive on both ends)
     FloatRange(f64, f64),
     /// Map pattern: #{ "key": value } — keys are string literals, not identifiers
-    Map(Vec<(String, Pattern)>),
+    Map(Vec<(String, Span, Pattern)>),
     /// Pin pattern: ^name -- matches against the existing variable's value
     Pin(Symbol),
     /// `pattern as name`: what `pattern` matches, with the whole value
@@ -1181,7 +1181,7 @@ impl Pattern {
                 .filter_map(|(_, _, p)| p.as_ref())
                 .try_for_each(f),
             PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).try_for_each(f),
-            PatternKind::Map(entries) => entries.iter().try_for_each(|(_, p)| f(p)),
+            PatternKind::Map(entries) => entries.iter().try_for_each(|(_, _, p)| f(p)),
             PatternKind::As { pattern, .. } => f(pattern),
         }
     }

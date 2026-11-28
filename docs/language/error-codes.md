@@ -2,7 +2,7 @@
 title: "Error Codes"
 section: "Language"
 order: 14
-description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warnings W0201 to W0302."
+description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warnings W0201 to W0303."
 ---
 
 # Error Codes
@@ -91,7 +91,7 @@ missing belong to codes that are gone.
 | `E0334` | A record, enum or alias declaration that is not well-formed. |
 | `E0335` | A type annotation or bound that is not well-formed. |
 | `E0336` | A name that hides another one where both are needed. |
-| `E0338` | A field named twice in a record type, literal, pattern or update. |
+| `E0338` | A field named twice in a record type, literal, pattern or update, or a key written twice as the same constant in a map literal or pattern. |
 | `E0339` | A top-level `let` whose initialiser can reach the `let` itself. |
 | `E0340` | A statement whose value nothing uses. |
 | `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type without its type arguments, ...), or an opaque type decoded or json-encoded outside its module without the module's impl. |
@@ -162,3 +162,4 @@ line names the fix, which is the one way to silence it.
 | `W0204` | A private function that nothing in its module calls: not `main`, a test, a `pub` function, an impl's or a trait's method, a top-level `let`, nor a function they call (one that only calls itself counts as unused). |
 | `W0301` | A `deep fn` the recursion check would accept without `deep`. |
 | `W0302` | A `let`-bound `_name` in scope at a tail call that ends its block: the call lets it go before it runs. |
+| `W0303` | An arm of a `match`, or an alternative of an arm's or-pattern, that never matches: the arms before it take every value it would. |

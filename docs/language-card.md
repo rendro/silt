@@ -47,9 +47,10 @@ ends the program with status 1. `silt run main.silt
 - Comments: `-- to the end of the line`, `{- a block, {- nested -} -}`.
 - Keywords: `as else fn import let match opaque pub return trait type when
   where`. `true` and `false` are literals.
-- Names: values, functions and record fields `snake_case` (a field
-  starting with a capital is an error); types, traits and variants
-  `CamelCase`; a type variable is a lowercase name (`a`, `e`, `item`).
+- Names: values, functions and record fields `snake_case` (a function,
+  a trait method or a field starting with a capital is an error); types,
+  traits and variants `CamelCase`; a type variable is a lowercase name
+  (`a`, `e`, `item`).
 - Each statement and declaration starts on a line of its own.
   Indentation never changes meaning. A statement goes on in the next
   line after an open bracket or an operator that ends the line, and
@@ -168,7 +169,8 @@ fn main() {
   `p when cond`, pins `^x` (equal to the existing `x`), and
   `p as name` (matches `p` and binds the whole value to `name`:
   `[Token { tok: TEof, .. } as t, ..]`; an or-pattern before `as` is in
-  parentheses, `(0 | 1) as bit`).
+  parentheses, `(0 | 1) as bit`; behind a bare name or `_` it is an
+  error). An arm the arms before it leave no value for is a warning.
 - A `match` without a subject has conditions for patterns (`x > 0 ->
   ...`): it takes the first arm whose condition is true, and ends with a
   `_ -> ...` arm.
@@ -258,8 +260,8 @@ fn main() {
   never imported.
 - Built in: `Display` (by structure, or a written impl), `Equal`, `Hash`
   and `Compare` (always by structure; an impl of them is an error),
-  `Number` (`Int` and `Float`; `a.from_int(0)` is
-  the 0 of the type). `Functor`,
+  `Number` (`Int` and `Float`; it brings `Equal`, `Compare`, `Hash`
+  and `Display`; `a.from_int(0)` is the 0 of the type). `Functor`,
   `Applicative` and `Monad` are traits of type constructors (see
   [Functors](language/functors.md)). A record compares
   field by field in declared order, an enum by variant order, then
@@ -351,7 +353,7 @@ type Result(a, e) { Ok(a), Err(e) }
 type Option(a) { Some(a), None }
 type Step(a) { Stop(a), Continue(a) }
 type Bytes  -- opaque
-trait Number { fn from_int(n: Int) -> Self }
+trait Number: Equal + Compare + Hash + Display { fn from_int(n: Int) -> Self }
 trait Functor { fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b) }
 trait Applicative: Functor { fn pure(x: a) -> Self(a); fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c) }
 trait Monad: Applicative { fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b) }

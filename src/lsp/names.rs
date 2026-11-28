@@ -713,7 +713,7 @@ impl<'a> Names<'a> {
                 }
             }
             PatternKind::Map(entries) => {
-                for (_, p) in entries {
+                for (_, _, p) in entries {
                     self.pattern(p);
                 }
             }

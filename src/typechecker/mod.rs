@@ -138,6 +138,10 @@ pub(crate) struct TypeChecker {
     /// the mismatches the patterns of its earlier arms reported, which
     /// `unify_pattern` does not report again.
     pub(super) arm_mismatches: Option<std::collections::HashSet<String>>,
+    /// The lowered alternatives of the or-pattern the last pattern
+    /// checked is (also under `as`), for the warning of an alternative
+    /// that never matches.
+    last_alternatives: Option<Vec<exhaustiveness::Pat>>,
     /// The places that write a prelude variant's name bare, as a value,
     /// a call or a pattern (`Stop`, `Stop(n)`), with the name and, for
     /// a value or a call, the type whose variant the name is: where a
@@ -879,6 +883,7 @@ impl TypeChecker {
         TypeChecker {
             errors: Vec::new(),
             arm_mismatches: None,
+            last_alternatives: None,
             prelude_variant_uses: Vec::new(),
             match_arm_bodies: Vec::new(),
             bounds: HashMap::new(),

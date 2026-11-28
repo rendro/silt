@@ -1,0 +1,76 @@
+-- An impl may bound every variable its trait arguments write, inside an
+-- argument (`Map(String, a)`, `(a, List(a))`) or the whole of it, with
+-- the trait's own bound or another: each use of the impl owes the bound,
+-- as it owes one on a variable of the target type, and gives it.
+trait Conv(t) {
+  fn conv(self) -> t
+}
+
+type W {
+  v: Int,
+}
+
+trait Conv(Map(String, a)) for W where a: Number {
+  fn conv(self) -> Map(String, a) { #{ "v": a.from_int(self.v) } }
+}
+
+trait Two(t) {
+  fn two(self) -> t
+}
+
+trait Two((a, List(a))) for W where a: Number {
+  fn two(self) -> (a, List(a)) { (a.from_int(self.v), [a.from_int(1), a.from_int(self.v * 2)]) }
+}
+
+fn via(w: W, type n) -> (n, List(n)) where n: Number {
+  Two.two(w)
+}
+
+trait Def {
+  fn def() -> Self
+}
+
+trait Def for Int {
+  fn def() -> Self { 42 }
+}
+
+trait Make(b) {
+  fn make(self) -> b
+}
+
+trait Make(a) for W where a: Def {
+  fn make(self) -> a { a.def() }
+}
+
+trait Key {
+  fn key(self) -> String
+}
+
+trait Key for Int {
+  fn key(self) -> String { "i{self}" }
+}
+
+trait Tbl(k) where k: Key {
+  fn show(self, x: k) -> String { Key.key(x) }
+}
+
+type V {
+  v: Int,
+}
+
+trait Tbl(a) for W where a: Key + Display {}
+
+trait Tbl(a) for V where a: Display + Key {}
+
+fn main() {
+  let f: Map(String, Float) = Conv.conv(W { v: 4 })
+  let i: Map(String, Int) = Conv.conv(W { v: 4 })
+  println("{f} {i}")
+  let p: (Float, List(Float)) = Two.two(W { v: 3 })
+  println(p)
+  println(via(W { v: 2 }, Int))
+  let d: Int = Make.make(W { v: 0 })
+  println(d)
+  println(Tbl.show(W { v: 1 }, 5))
+  println(Tbl.show(V { v: 1 }, 6))
+}

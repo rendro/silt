@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'String' does not implement trait 'Number'
+-- stderr-contains: the impl of 'Conv' for 'W' asks `a: Number`
+-- stderr-contains: type 'String' does not implement trait 'Named'
+-- stderr-contains: .silt:45:20
+-- stderr-not-contains: impl-level where clause
+-- A bound on a variable of an impl's trait argument is owed at each use:
+-- a use at a type that does not meet it is refused, inside an argument
+-- (`Map(String, a)`) and for the whole of it with a bound beyond the
+-- trait's own.
+trait Conv(t) {
+  fn conv(self) -> t
+}
+
+type W {
+  v: Int,
+}
+
+trait Conv(Map(String, a)) for W where a: Number {
+  fn conv(self) -> Map(String, a) { #{ "v": a.from_int(self.v) } }
+}
+
+trait Key {
+  fn key(self) -> String
+}
+
+trait Key for String {
+  fn key(self) -> String { self }
+}
+
+trait Named {
+  fn name(self) -> String
+}
+
+trait Tbl(k) where k: Key {
+  fn show(self, x: k) -> String { Key.key(x) }
+}
+
+trait Tbl(a) for W where a: Key + Named {}
+
+fn main() {
+  let m: Map(String, String) = Conv.conv(W { v: 4 })
+  println(m)
+  println(Tbl.show(W { v: 1 }, "s"))
+}

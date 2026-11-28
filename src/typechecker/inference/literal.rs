@@ -121,6 +121,24 @@ impl TypeChecker {
         let ExprKind::Map(entries) = &mut expr.kind else {
             unreachable!("infer_map of another form");
         };
+        // A key written twice as the same constant: the first value
+        // would be lost without a word. (A computed key is not looked
+        // at.)
+        let mut seen = Vec::new();
+        for (key, _) in entries.iter() {
+            let Some(constant) = MapKey::of(key) else {
+                continue;
+            };
+            if seen.contains(&constant) {
+                self.error(
+                    Code::DuplicateRecordField,
+                    format!("duplicate key {constant} in map literal"),
+                    key.span,
+                );
+            } else {
+                seen.push(constant);
+            }
+        }
         if entries.is_empty() {
             let k = self.fresh_var();
             let v = self.fresh_var();
@@ -204,6 +222,60 @@ impl TypeChecker {
             // A set hashes its elements.
             self.want_hash(&elem_type, span);
             Type::Container(Container::Set(Box::new(elem_type)))
+        }
+    }
+}
+
+/// A map key written as a constant: a text, a number, a Bool or a
+/// variant without fields (`Red`, `Color.Red`). Two keys of one map
+/// literal written as the same constant are the same key.
+#[derive(PartialEq)]
+enum MapKey {
+    Text(String),
+    Int(i64),
+    /// By its bits, a zero of either sign as `0.0`: two floats are
+    /// one key when the map takes them for one (`-0.0 == 0.0`).
+    Float(u64),
+    Bool(bool),
+    Variant(Symbol),
+}
+
+impl MapKey {
+    fn float(x: f64) -> MapKey {
+        MapKey::Float(if x == 0.0 { 0.0f64 } else { x }.to_bits())
+    }
+
+    fn of(key: &Expr) -> Option<MapKey> {
+        Some(match &key.kind {
+            ExprKind::StringLit(text) => MapKey::Text(text.clone()),
+            ExprKind::Int(n) => MapKey::Int(*n),
+            ExprKind::Float(x) => MapKey::float(*x),
+            ExprKind::Bool(b) => MapKey::Bool(*b),
+            ExprKind::Unary(UnaryOp::Neg, inner) => match inner.kind {
+                ExprKind::Int(n) => MapKey::Int(n.checked_neg()?),
+                ExprKind::Float(x) => MapKey::float(-x),
+                _ => return None,
+            },
+            // A capital names a variant (`Red`, `shapes.Red`,
+            // `Color.Red`): one with fields is no key a map can have.
+            ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _)
+                if resolve(*name).starts_with(char::is_uppercase) =>
+            {
+                MapKey::Variant(*name)
+            }
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for MapKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapKey::Text(text) => write!(f, "{text:?}"),
+            MapKey::Int(n) => write!(f, "{n}"),
+            MapKey::Float(bits) => write!(f, "{:?}", f64::from_bits(*bits)),
+            MapKey::Bool(b) => write!(f, "{b}"),
+            MapKey::Variant(name) => write!(f, "{}", resolve(*name)),
         }
     }
 }

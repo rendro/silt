@@ -485,6 +485,33 @@ trait Greet for Box(a) where a: Greet + Loud {
 }
 ```
 
+A variable that the impl's trait arguments write takes a bound the same
+way, whole or inside an argument, and each use of the impl owes it:
+
+```silt
+trait Conv(t) {
+  fn conv(self) -> t
+}
+
+type W {
+  v: Int,
+}
+
+trait Conv(Map(String, a)) for W where a: Number {
+  fn conv(self) -> Map(String, a) {
+    #{ "v": a.from_int(self.v) }
+  }
+}
+
+fn main() {
+  let m: Map(String, Float) = Conv.conv(W { v: 4 })
+  println(m) -- #{ "v": 4.0 }
+}
+```
+
+A use into `Map(String, String)` is an error: type 'String' does not
+implement trait 'Number'.
+
 An impl of `Display`, `json.Encode` or `json.Decode` asks only the
 traits found by the value (`Display`, `Equal`, `Compare`, `Hash`,
 `json.Encode`, `json.Decode`) and `Number` of its type's
@@ -915,14 +942,16 @@ types arithmetic is on, `Int` and `Float`, and nothing else. `Functor`,
 | `Equal`   | Equality comparison              | by structure | no (an error) |
 | `Hash`    | Hash value for maps/sets         | by structure | no (an error) |
 | `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
-| `Number`  | `+ - * / %`, unary `-`, and `from_int` | Int and Float only | no |
+| `Number`  | `+ - * / %`, unary `-`, and `from_int`; includes `Equal`, `Compare`, `Hash`, `Display` | Int and Float only | no |
 | `Functor` | `map` over a type constructor | `List`, `Option`, `Result`, `Channel`; types with an impl | yes, for a type of your own |
 | `Applicative` | `pure` and `map2`; includes `Functor` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
 | `Monad` | `flat_map`; includes `Applicative` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
 
 Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
 `>=` need `Compare`, interpolation and `println` need `Display`,
-arithmetic needs `Number`. A function without annotations is general
+arithmetic needs `Number`, which brings the other four: Int and Float
+have them all, so `where a: Number` lets a body compare, print and hash
+its numbers too. A function without annotations is general
 over them (`fn add(a, b) { a + b }` is `(a, a) -> a where a: Number`);
 with annotation variables it declares them:
 

@@ -226,7 +226,7 @@ fn collect_let_pattern_defs(
         PatternKind::Map(entries) => {
             // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
-            for (_, p) in entries {
+            for (_, _, p) in entries {
                 collect_let_pattern_defs(p, None, None, false, defs, records);
             }
         }

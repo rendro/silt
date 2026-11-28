@@ -2783,7 +2783,7 @@ impl Resolver<'_> {
                 }
             }
             PatternKind::Map(entries) => {
-                for (_, sub) in entries {
+                for (_, _, sub) in entries {
                     self.pattern(sub);
                 }
             }

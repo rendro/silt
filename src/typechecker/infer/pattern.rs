@@ -64,6 +64,10 @@ struct PatternCx {
     cells: usize,
     /// Whether one of those searches gave up.
     unverified: bool,
+    /// The span of the pattern's top, under any `as`, and, when it is
+    /// an or-pattern, its lowered alternatives.
+    top: Span,
+    alternatives: Option<Vec<Pat>>,
 }
 
 /// The names `pattern` pins.
@@ -119,13 +123,20 @@ impl TypeChecker {
                 (name, ty)
             })
             .collect();
+        let mut top = &*pattern;
+        while let PatternKind::As { pattern, .. } = &top.kind {
+            top = pattern;
+        }
         let mut cx = PatternCx {
             span,
             pins,
             cells: 0,
             unverified: false,
+            top: top.span,
+            alternatives: None,
         };
         let pat = self.type_pattern(pattern, expected, env, &mut cx);
+        self.last_alternatives = cx.alternatives.take();
         // What is matched has no type (it comes from a module that failed
         // to load, or an expression already reported): neither has what
         // the pattern binds, so that nothing is asked of it.
@@ -842,6 +853,9 @@ impl TypeChecker {
                 for (name, scheme) in bound.unwrap_or_default() {
                     env.define(name, scheme);
                 }
+                if pattern_span == cx.top {
+                    cx.alternatives = Some(subs.clone());
+                }
                 self.or_pat(subs, cx)
             }
             PatternKind::Map(entries) => {
@@ -865,7 +879,19 @@ impl TypeChecker {
                 ));
                 self.unify_pattern(&map_ty, expected, pattern_span);
                 let val_ty = self.apply(&val_ty);
-                for (_key, pat) in entries.iter_mut() {
+                // A key written twice: the pattern can never match, or
+                // gives one value two names.
+                let mut seen = std::collections::HashSet::new();
+                for (key, key_span, _) in entries.iter() {
+                    if !seen.insert(key) {
+                        self.error(
+                            Code::DuplicateRecordField,
+                            format!("duplicate key {key:?} in map pattern"),
+                            *key_span,
+                        );
+                    }
+                }
+                for (_key, _, pat) in entries.iter_mut() {
                     self.type_pattern(pat, &val_ty, env, cx);
                 }
                 // A key may be missing whatever the value patterns are.

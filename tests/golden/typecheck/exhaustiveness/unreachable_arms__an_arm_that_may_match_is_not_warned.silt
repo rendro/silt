@@ -1,0 +1,64 @@
+-- cmd: check --deny-warnings
+-- exit: 0
+-- stderr-not-contains: never matches
+-- An arm is warned of only when no value is left for it: behind an arm
+-- with a guard, behind arms that leave some value out, in an arm whose
+-- guard tries each alternative, after a string or a range that may differ.
+type P {
+  a: Int,
+  b: Int,
+}
+
+fn guarded(n: Int) -> Int {
+  match n {
+    x when x > 0 -> 1
+    0 -> 2
+    _ -> 3
+  }
+}
+
+fn fields(p: P) -> Int {
+  match p {
+    P { a: 1, .. } -> 1
+    P { b: 2, .. } -> 2
+    _ -> 3
+  }
+}
+
+fn ranges(n: Int) -> Int {
+  match n {
+    0..5 -> 1
+    7..9 -> 2
+    6 -> 3
+    _ -> 4
+  }
+}
+
+fn tried(p: (Int, Int)) -> Int {
+  match p {
+    (x, _) | (_, x) when x > 3 -> x
+    _ -> 0
+  }
+}
+
+fn texts(s: String) -> Int {
+  match s {
+    "a" -> 1
+    "b" -> 2
+    _ -> 3
+  }
+}
+
+fn lists(xs: List(Int)) -> Int {
+  match xs {
+    [1, ..] -> 1
+    [_, 2, ..] -> 2
+    [] -> 0
+    _ -> 3
+  }
+}
+
+fn main() {
+  let p = P { a: 2, b: 2 }
+  println("{guarded(0)} {fields(p)} {ranges(6)} {tried((1, 5))} {texts("b")} {lists([0, 2])}")
+}

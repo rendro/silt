@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: 'b'
--- stderr-contains: not declared in the target type arguments
+-- stderr-contains: written neither in the target type's arguments nor in the trait's
 type Box(a) { Box(a) }
 trait Show { fn show(self) -> String }
 trait Show for Box(a) where b: Show {

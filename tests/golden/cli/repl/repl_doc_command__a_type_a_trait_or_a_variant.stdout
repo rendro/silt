@@ -18,7 +18,7 @@ trait Compare: Equal { fn compare(self, other: Self) -> Int }
 The order of values: `<`, `>`, `<=` and `>=` need it.
 trait Hash { fn hash(self) -> Int }
 A value as a map's key or a set's element.
-trait Number { fn from_int(n: Int) -> Self }
+trait Number: Equal + Compare + Hash + Display { fn from_int(n: Int) -> Self }
 The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`, `%` and unary `-` need it.
 type Option(a) { Some(a), None }
 Constructs a present variant of `Option`.

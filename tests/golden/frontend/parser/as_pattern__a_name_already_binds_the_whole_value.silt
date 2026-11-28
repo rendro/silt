@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: a name already binds the whole value: `as` stands behind a pattern that tests it
+-- stderr-contains: .silt:17:6
+-- stderr-contains: write `all`
+-- stderr-contains: .silt:22:13
+-- stderr-contains: write `y`
+-- stderr-contains: .silt:23:13
+-- stderr-contains: write `z`
+-- stderr-contains: .silt:24:7
+-- stderr-contains: write `b`
+-- stderr-contains: .silt:26:5
+-- stderr-contains: write `Some(_) as p`
+-- `as` names the value a pattern tests. Behind a bare name or `_`, or
+-- behind another `as`, a name already binds the whole value: one value
+-- is bound one way.
+fn f(xs as all: List(Int)) -> Int {
+  0
+}
+
+fn main() {
+  match 5 { x as y -> println("{x} {y}") }
+  match 6 { _ as z -> println(z) }
+  let a as b = 7
+  match Some(1) {
+    Some(_) as p as q -> println("{p} {q}")
+    None -> ()
+  }
+  println("{a} {b} {f([])}")
+}

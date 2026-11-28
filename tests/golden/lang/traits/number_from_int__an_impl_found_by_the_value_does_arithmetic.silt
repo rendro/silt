@@ -10,7 +10,7 @@ fn double(x) {
   x + x
 }
 
-trait Display for Money(a) where a: Number + Display {
+trait Display for Money(a) where a: Number {
   fn display(self) -> String {
     "{double(self.amount) - self.amount + self.amount}"
   }

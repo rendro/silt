@@ -203,7 +203,9 @@ codes! {
     InvalidTypeAnnotation = "E0335", Type;
     /// A name that hides another one where both are needed.
     Shadowing = "E0336", Type;
-    /// A field named twice in a record type, literal, pattern or update.
+    /// A field named twice in a record type, literal, pattern or update,
+    /// or a key written twice as the same constant in a map literal or
+    /// pattern.
     DuplicateRecordField = "E0338", Type;
     /// A top-level `let` whose initialiser can reach the `let` itself.
     InitCycle = "E0339", Type;
@@ -311,6 +313,9 @@ codes! {
     /// A `let`-bound `_name` in scope at a tail call that ends its block:
     /// the tail call lets it go before the call runs.
     LetGoAtTailCall = "W0302", Type;
+    /// An arm of a `match`, or an alternative of an arm's or-pattern,
+    /// that never matches: the arms before it take every value it would.
+    UnreachableArm = "W0303", Type;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────

@@ -30,5 +30,5 @@ type Option(a) { Some(a), None }
 Constructs a present variant of `Option`.
 type Step(a) { Stop(a), Continue(a) }
 The step that ends a fold that can end early (`list.fold_until`, `channel.fold_until`, `stream.fold_until`): the value is what the fold gives.
-trait Number { fn from_int(n: Int) -> Self }
+trait Number: Equal + Compare + Hash + Display { fn from_int(n: Int) -> Self }
 The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`, `%` and unary `-` need it.

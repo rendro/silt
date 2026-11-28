@@ -168,6 +168,10 @@ match config {
 }
 ```
 
+A key written twice in one map pattern is an error (`duplicate key "a"
+in map pattern`): the pattern could never match, or would give one value
+two names.
+
 ## Or-Patterns
 
 Match multiple alternatives in a single arm with `|`:
@@ -255,6 +259,10 @@ fn main() {
   println(swap((3, 4))) -- (3, 4) becomes (4, 3)
 }
 ```
+
+`as` stands behind a pattern that tests something. Behind a bare name or
+`_` (`x as y`, `_ as z`), or behind another `as`, a name already binds
+the whole value, and it is an error: write `z`.
 
 An or-pattern stands in parentheses in front of the `as`, which then
 names the value whichever alternative matched: `(0 | 1) as bit`. Written
@@ -402,6 +410,22 @@ between them cover `Int` (`-9223372036854775808..-1` and
 `0..9223372036854775807`). Float and string literals, Float ranges, pins
 and map patterns never cover their type between them: a match on such a
 value needs an arm that takes every value (`_` or a name).
+
+An arm that never matches is a warning (`W0303`): the arms before it
+without a guard take every value it would, as an arm behind `_` or a
+name, a literal written a second time, or an arm the arms before it
+cover between them. So is an alternative of an or-pattern that the
+alternatives or arms before it take (`Some(_) | Some(1)`). Such an arm is
+never compiled, and is the usual sign of arms in the wrong order:
+
+```silt
+fn describe(n: Int) -> String {
+  match n {
+    _ -> "a number"
+    0 -> "zero" -- warning: this arm never matches: the arm at 3:5 takes every value it would
+  }
+}
+```
 
 A match with so many interdependent patterns that the check cannot finish
 is an error too ("could not verify that the match is exhaustive"); a `_`

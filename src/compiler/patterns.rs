@@ -394,7 +394,7 @@ impl Compiler<'_> {
             PatternKind::Map(entries) => {
                 let mut all_jumps = Vec::new();
 
-                for (key, sub_pat) in entries {
+                for (key, _, sub_pat) in entries {
                     let key_idx = self.add_constant(Value::string(key.clone()), span)?;
                     self.emit(Asm::TestMapHasKey { key: key_idx }, span)?;
                     let key_jump = self.jump_if_false(span)?;
@@ -706,7 +706,7 @@ impl Compiler<'_> {
             PatternKind::Map(entries) => {
                 let items: Vec<(BindDestructKind, Pattern)> = entries
                     .iter()
-                    .filter_map(|(key, sub_pat)| {
+                    .filter_map(|(key, _, sub_pat)| {
                         if sub_pat.binds_any() {
                             Some((BindDestructKind::MapValue(key.clone()), sub_pat.clone()))
                         } else {
@@ -976,7 +976,7 @@ impl Compiler<'_> {
             PatternKind::Record { fields, .. } => {
                 product(&mut fields.iter().filter_map(|(_, _, part)| part.as_ref()))
             }
-            PatternKind::Map(entries) => product(&mut entries.iter().map(|(_, part)| part)),
+            PatternKind::Map(entries) => product(&mut entries.iter().map(|(_, _, part)| part)),
             PatternKind::As { pattern, .. } => Self::or_way_count(pattern),
             _ => 1,
         }
@@ -1068,11 +1068,11 @@ impl Compiler<'_> {
                 })
                 .collect(),
             PatternKind::Map(entries) => {
-                let parts: Vec<Pattern> = entries.iter().map(|(_, part)| part.clone()).collect();
+                let parts: Vec<Pattern> = entries.iter().map(|(_, _, part)| part.clone()).collect();
                 (ways(&parts).into_iter())
                     .map(|parts| {
                         let entries = (entries.iter().zip(parts))
-                            .map(|((key, _), part)| (key.clone(), part))
+                            .map(|((key, key_span, _), part)| (key.clone(), *key_span, part))
                             .collect();
                         rebuilt(PatternKind::Map(entries))
                     })
