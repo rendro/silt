@@ -817,16 +817,35 @@ impl Resolver<'_> {
                 "`{name}` is required from one repository, its URL written in different ways"
             );
         }
-        // By the key that requires each, in the order of the keys.
-        let mut each: Vec<(String, &String)> = ids
+        // Each by the dependency that requires it, the package that
+        // declares that and its ref, in the order of the keys.
+        let mut each: Vec<(String, String, String, &String)> = ids
             .iter()
             .zip(&found)
-            .map(|(id, (_, commit))| (self.via_key(*id), commit))
+            .map(|(id, (_, commit))| {
+                let parent = match self.via[id.0 as usize] {
+                    Some((parent, _)) => intern::resolve(self.nodes[parent.0 as usize].name),
+                    None => intern::resolve(self.nodes[id.0 as usize].name),
+                };
+                let pin = match &self.locked[id.0 as usize].0 {
+                    LockedSource::Git {
+                        ref_spec: ref_spec @ (GitRef::Branch(name) | GitRef::Tag(name)),
+                        ..
+                    } => format!(", {} `{}`", ref_spec.kind(), escape_for_display(name)),
+                    _ => String::new(),
+                };
+                (self.via_key(*id), parent.to_string(), pin, commit)
+            })
             .collect();
         each.sort();
         let each: Vec<String> = each
             .into_iter()
-            .map(|(key, commit)| format!("{} (via `{key}`)", &commit[..commit.len().min(7)]))
+            .map(|(key, parent, pin, commit)| {
+                format!(
+                    "{} (dependency `{key}` of `{parent}`{pin})",
+                    &commit[..commit.len().min(7)]
+                )
+            })
             .collect();
         format!(
             "`{name}` is required at {count} commits: {}",

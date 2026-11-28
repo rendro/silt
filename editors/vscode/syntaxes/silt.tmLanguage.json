@@ -10,6 +10,7 @@
     { "include": "#function-def" },
     { "include": "#type-def" },
     { "include": "#trait-def" },
+    { "include": "#deep" },
     { "include": "#keywords" },
     { "include": "#booleans" },
     { "include": "#primitives" },
@@ -111,6 +112,11 @@
           "match": "\\b(?:0|[1-9](?:_?\\d)*)\\b"
         }
       ]
+    },
+    "deep": {
+      "comment": "deep is a word of its own only right before fn (deep fn, pub deep fn); everywhere else it is a name.",
+      "name": "keyword.control.silt",
+      "match": "\\bdeep(?=\\s+fn\\b)"
     },
     "keywords": {
       "name": "keyword.control.silt",

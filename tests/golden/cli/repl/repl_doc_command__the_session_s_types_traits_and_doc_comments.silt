@@ -1,0 +1,7 @@
+-- cmd: repl
+-- What an input declared is found by :doc as code writes it: a type, a
+-- variant (also by its type), a trait and its method; a builtin variant by
+-- its enum and a method of a builtin trait by its trait. An input of
+-- nothing but comments is the doc comment of the next input's declaration;
+-- a blank line, another input or a command between them takes it away.
+-- stdin: -- Two kinds.\ntype T {\n  A,\n  B(Int),\n}\n:doc T\n:doc A\n:doc T.B\n:doc T.C\n-- Says it short.\ntrait Sh { fn sh(self) -> String }\n:doc Sh\n:doc Sh.sh\n-- Halves.\nfn half(n: Int) -> Int { n / 2 }\n:doc half\n-- Lost.\n\nfn third(n: Int) -> Int { n / 3 }\n:doc third\n-- Lost to a command.\n:type 1\nfn fourth() -> Int { 4 }\n:doc fourth\n-- Lost to :doc.\n:doc half\nfn fifth() -> Int { 5 }\n:doc fifth\n:doc Option.Some\n:doc Step.Stop\n:doc Number.from_int\n:quit\n

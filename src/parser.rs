@@ -100,6 +100,15 @@ fn doc_of(
     Some(dedented.join("\n"))
 }
 
+/// The doc comment that the comments of `text`, which holds nothing
+/// else, give a declaration on the line right after it: the text a
+/// REPL input of comments gives the next input's declaration.
+#[cfg(feature = "repl")]
+pub(crate) fn doc_above(text: &str) -> Option<String> {
+    let lexed = crate::lexer::Lexer::new(crate::source::FileId::default(), text).tokenize();
+    doc_of(&lexed.comments, 1, true, text)
+}
+
 // ── Top-level names ──────────────────────────────────────────────────
 
 /// The names a top-level declaration binds, each with the span to report

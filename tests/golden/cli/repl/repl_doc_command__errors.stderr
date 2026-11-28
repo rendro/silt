@@ -1,4 +1,4 @@
 :doc needs a name, as in :doc list.map
-no builtin and no function of this session is named 'nope'
-no builtin and no function of this session is named 'list.nope'
-no builtin and no function of this session is named 'json.Nope'
+no builtin and no declaration of this session is named 'nope'
+no builtin and no declaration of this session is named 'list.nope'
+no builtin and no declaration of this session is named 'json.Nope'

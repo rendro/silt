@@ -176,3 +176,34 @@ fn test_silt_test_unknown_flag_does_not_leak_vm_error_prefix() {
         "stdout leaked `VM error:` prefix to user:\n{stdout}"
     );
 }
+
+/// An empty pattern is refused the same in both spellings: `--filter=`
+/// and `--filter ""` would select every test.
+#[test]
+fn test_filter_refuses_an_empty_pattern_in_both_spellings() {
+    let dir = std::env::temp_dir().join(format!("silt_filter_empty_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a_test.silt"), "fn test_alpha() {}\n").unwrap();
+    let dir_arg = dir.to_string_lossy().to_string();
+    let spellings: [&[&str]; 2] = [&["--filter="], &["--filter", ""]];
+    for spelling in spellings {
+        let out = silt_cmd()
+            .arg("test")
+            .args(spelling)
+            .arg(&dir_arg)
+            .output()
+            .expect("spawn silt");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{spelling:?}: {stderr}");
+        assert!(
+            stderr.contains("error: silt test: --filter requires a pattern"),
+            "{spelling:?}: {stderr}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("PASS"),
+            "{spelling:?} ran a test"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

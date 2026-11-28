@@ -42,7 +42,7 @@ Use the explicit module function for the collection you have:
 
 Higher precedence wins. Given `a + b * c`, `*` (80) binds tighter than `+` (70), so the expression parses as `a + (b * c)`. All infix operators are left-associative, so `a - b - c` parses as `(a - b) - c`.
 
-Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as Float` parses as `-(x as Float)`.
+Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as Int` parses as `-(x as Int)`.
 
 ## Division and Modulo (`/`, `%`)
 

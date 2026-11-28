@@ -37,7 +37,9 @@ pub(crate) fn arguments(args: &[String]) -> (Vec<String>, Option<String>) {
             crate::cli::once_only("test", "--filter");
         }
         if args[i] == "--filter" {
-            if i + 1 < args.len() {
+            // An empty pattern (`--filter ""`) is refused as `--filter=`
+            // is: it would select every test.
+            if i + 1 < args.len() && !args[i + 1].is_empty() {
                 filter = Some(args[i + 1].clone());
                 i += 2;
             } else {

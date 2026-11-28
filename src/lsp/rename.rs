@@ -10,13 +10,15 @@
 //!
 //! What cannot be renamed: one of silt's own definitions (`Some`,
 //! `list.map`, `Int`) and their fields, a field of a type of another
-//! package, `self`, and anything the resolver gave no meaning (a
-//! keyword). The new name must be one identifier to the lexer, of the
+//! package, a name that a file of a fetched git dependency holds,
+//! `self`, and anything the resolver gave no meaning (a keyword). The
+//! new name must be one identifier to the lexer, of the
 //! same kind as the old one (a type, a variant or a trait starts with
 //! an upper-case letter, anything else does not), and free where the
 //! old one is written: a rename that would capture another name, or be
 //! captured by one, is refused with the clash; so is a field name the
-//! type has already.
+//! type has already, and a name that an import would come to bind in a
+//! file where a local has it (the local would hide the import).
 //! A record field written without its value (`P { x }`) is written out:
 //! renaming what it holds gives `P { x: new }`, since the field keeps
 //! its name; renaming the field gives `P { new: x }`, since the local
@@ -34,6 +36,7 @@ use crate::lexer;
 
 use super::Server;
 use super::conversions::{position_to_offset, span_to_range};
+use super::diagnostics::uri_to_path;
 use super::workspace::Target;
 
 impl Server {
@@ -53,6 +56,7 @@ impl Server {
         if self.not_renameable(uri, &target).is_some()
             || self.incomplete_for_rename(uri, &target).is_some()
             || self.unknown_field_reads(&target).is_some()
+            || self.fetched_place(uri, &target).is_some()
         {
             return None;
         }
@@ -126,6 +130,11 @@ impl Server {
                  can find every place of the field"
             )));
         }
+        if let Some(fetched) = self.fetched_place(uri, &target) {
+            return Err(invalid(format!(
+                "`{old_name}` cannot be renamed: {fetched}"
+            )));
+        }
         if let Some(clash) = self.rename_clash(uri, &target, &new_name) {
             // (A field is named after its value only: no other name
             // can capture it.)
@@ -137,6 +146,12 @@ impl Server {
             return Err(invalid(format!(
                 "`{old_name}` cannot be renamed to `{new_name}`: {clash}, and the rename would \
                  change what a name means"
+            )));
+        }
+
+        if let Some(hidden) = self.hidden_import(uri, &target, &new_name) {
+            return Err(invalid(format!(
+                "`{old_name}` cannot be renamed to `{new_name}`: {hidden}"
             )));
         }
 
@@ -199,6 +214,34 @@ impl Server {
             "a top-level function whose name starts with `test_` or `skip_test_` is a test, \
              and the rename would change which functions are tests"
                 .to_string()
+        })
+    }
+
+    /// Where a rename of `target` would edit a file of a fetched git
+    /// dependency, which silt keeps as it fetched it (the lock's
+    /// checksum covers it, and the files are read-only): what that
+    /// dependency is, in words. `None` when every place is elsewhere.
+    fn fetched_place(&mut self, uri: &Uri, target: &Target) -> Option<String> {
+        let canonical = |path: &std::path::Path| crate::source::canonical_path_lenient(path);
+        let fetched = self
+            .places_of(uri, target, true)
+            .into_iter()
+            .map(|place| canonical(&uri_to_path(&place.location.uri)))
+            .find(|path| crate::git::is_in_cache(path))?;
+        let package = self
+            .projects
+            .values()
+            .flat_map(|project| project.session.graph().modules())
+            .find(|module| canonical(&module.path) == fetched)
+            .map(|module| crate::intern::resolve(module.package_name));
+        Some(match package {
+            Some(name) => format!(
+                "it is named in the files of `{name}`, a git dependency that silt fetched and \
+                 keeps as it was fetched; rename it in its repository"
+            ),
+            None => "it is named in the files of a git dependency that silt fetched and keeps as \
+                     it was fetched; rename it in its repository"
+                .to_string(),
         })
     }
 

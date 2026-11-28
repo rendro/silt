@@ -64,7 +64,7 @@ ends the program with status 1. `silt run main.silt
 | `Int`, 64-bit, overflow is a runtime error | `42`, `-7`, `1_000`, `0xFF`, `0b1010` |
 | `Float`, always finite | `3.5`, `1e3`, `2.5e-3` |
 | `Bool` | `true`, `false` |
-| `String`, UTF-8 | `"hi {name}, {n + 1}"`, escapes `\n \t \\ \" \{ \} \u{e9}` |
+| `String`, UTF-8 | `"hi {name}, {n + 1}"`, escapes `\n \r \t \0 \\ \" \{ \} \u{e9}` |
 | raw string, no escapes or interpolation | `"""C:\dir {x}"""` |
 | unit | `()` |
 | tuple | `(1, "a")`, one element `(1,)` |

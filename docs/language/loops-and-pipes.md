@@ -435,7 +435,7 @@ The rule is about functions that give `()`; one that gives a value (a
 a value, `channel.fold_until` asks every arm to say `Continue` or `Stop`.
 
 **What the check does not see.** It reads direct calls. A call through
-a trait (`Show.show(left)`, `x.show()`) is a call of the impl of the
+a trait (`Show.show(left)`) is a call of the impl of the
 argument's type and is not checked (the editor says "not checked: trait
 call" on such a method), and neither is a function reached through a
 value kept in data (a list, a tuple, a record, a map of handlers). A

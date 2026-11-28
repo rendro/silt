@@ -261,3 +261,51 @@ fn vscode_string_escape_class_matches_lexer() {
         fmt_set(&lexer_set)
     );
 }
+
+/// The language card lists every escape the lexer takes, and no other:
+/// the one-character escapes of its `String` row and `\u{...}`.
+#[test]
+fn language_card_lists_the_lexer_escapes() {
+    let card = read_grammar("docs/language-card.md");
+    let row = card
+        .lines()
+        .find(|l| l.starts_with("| `String`"))
+        .expect("docs/language-card.md has a `String` row");
+    let list = row
+        .split("escapes `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .unwrap_or_else(|| panic!("the `String` row of the card lists no escapes: {row}"));
+    let mut card_set = HashSet::new();
+    let mut unicode = false;
+    for item in list.split_whitespace() {
+        let mut chars = item.chars();
+        assert_eq!(
+            chars.next(),
+            Some('\\'),
+            "card escape {item:?} does not start with a backslash"
+        );
+        let c = chars
+            .next()
+            .unwrap_or_else(|| panic!("card escape {item:?} is a lone backslash"));
+        if c == 'u' {
+            unicode = true;
+        } else {
+            assert_eq!(
+                chars.next(),
+                None,
+                "card escape {item:?} is more than one character"
+            );
+            card_set.insert(c);
+        }
+    }
+    assert!(unicode, "the card lists no `\\u{{...}}` escape: {list}");
+    let lexer_set = lexer_escape_set(&card_set);
+    assert_eq!(
+        card_set,
+        lexer_set,
+        "docs/language-card.md lists the escapes {} but the lexer takes {}",
+        fmt_set(&card_set),
+        fmt_set(&lexer_set)
+    );
+}

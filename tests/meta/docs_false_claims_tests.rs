@@ -92,3 +92,34 @@ fn no_doc_resolves_an_import_by_an_order() {
         "a doc says an import picks among same-named modules by an order",
     );
 }
+
+/// A trait's method is called through the trait (`Show.show(x)`):
+/// `x.show()` reads a field `show` of `x`, which the checker refuses.
+#[test]
+fn no_doc_calls_a_trait_method_on_its_value() {
+    assert_no_doc_says(
+        &["(`Show.show(left)`, `x.show()`)"],
+        "a doc calls a trait's method with a dot after the value",
+    );
+}
+
+/// `as` states a type and converts nothing: `-x as Float` of an Int
+/// `x` is a type error, so it is no example of how `as` binds.
+#[test]
+fn no_doc_shows_as_converting_an_int() {
+    assert_no_doc_says(
+        &["`-x as Float` parses as"],
+        "a doc shows `as` as if it made a Float of an Int",
+    );
+}
+
+/// The failure of a stage nobody read is let go with its stream, and a
+/// binding is let go at its last use: a program that ends normally
+/// does not report it.
+#[test]
+fn no_doc_promises_a_report_for_a_stream_the_program_let_go() {
+    assert_no_doc_says(
+        &["where nobody reads its output any more, is an error when the program ends"],
+        "a doc promises a report for an unread stage failure of a stream the program let go",
+    );
+}

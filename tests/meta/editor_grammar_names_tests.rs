@@ -277,3 +277,41 @@ fn the_editor_setup_page_names_only_highlighted_names() {
         }
     }
 }
+
+/// `deep` is a word of its own only right before `fn` (the lexer reads
+/// it as a name), so neither keyword list holds it: each grammar marks
+/// it a keyword there with a pattern of its own.
+#[test]
+fn the_editor_grammars_mark_deep_before_fn_a_keyword() {
+    assert!(
+        !silt::testing::lexer::KEYWORDS.contains(&"deep"),
+        "`deep` is a keyword of the lexer now: the grammars' own patterns for it can go"
+    );
+    let vim = repo_file(VIM);
+    assert!(
+        vim.lines()
+            .any(|l| l == r#"syntax match siltKeyword "\<deep\ze\s\+fn\>""#),
+        "{VIM} does not mark `deep` before `fn` a siltKeyword"
+    );
+    let vscode: serde_json::Value =
+        serde_json::from_str(&repo_file(VSCODE)).unwrap_or_else(|e| panic!("{VSCODE}: {e}"));
+    let deep = &vscode["repository"]["deep"];
+    assert_eq!(
+        deep["name"], "keyword.control.silt",
+        "{VSCODE}: the entry `deep`"
+    );
+    assert_eq!(
+        deep["match"], r"\bdeep(?=\s+fn\b)",
+        "{VSCODE}: the entry `deep`"
+    );
+    let includes: Vec<&str> = vscode["patterns"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{VSCODE} has no top-level patterns"))
+        .iter()
+        .filter_map(|p| p["include"].as_str())
+        .collect();
+    assert!(
+        includes.contains(&"#deep"),
+        "{VSCODE}: the top-level patterns do not include #deep: {includes:?}"
+    );
+}

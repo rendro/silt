@@ -1447,6 +1447,56 @@ impl Server {
         None
     }
 
+    /// Where a rename of `target` to `new` would make an import bind
+    /// `new` in a file that has a local named `new`: the local would
+    /// hide the import, which the checker warns of. What and where that
+    /// local is, in words.
+    pub(super) fn hidden_import(
+        &mut self,
+        uri: &Uri,
+        target: &Target,
+        new: &str,
+    ) -> Option<String> {
+        let new_sym = crate::intern::intern(new);
+        let places = self.places_of(uri, target, true);
+        for place in &places {
+            let Some(doc) = self.documents.get(&place.location.uri) else {
+                continue;
+            };
+            let Some(program) = &doc.program else {
+                continue;
+            };
+            let at =
+                super::conversions::position_to_offset(&doc.source, &place.location.range.start);
+            let imports_here = program.decls.iter().any(|decl| match decl {
+                Decl::Import(ImportTarget::Items(_, items), _) => {
+                    items.iter().any(|(_, span)| span.start as usize == at)
+                }
+                Decl::Import(ImportTarget::Alias(_, _, span), _) => span.start as usize == at,
+                _ => false,
+            });
+            if !imports_here {
+                continue;
+            }
+            if let Some(local) = (doc.locals.iter())
+                .filter(|local| local.name == new_sym)
+                .min_by_key(|local| local.binding_offset)
+            {
+                let file = doc
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                return Some(format!(
+                    "`{new}` is a local name in {file} (bound at line {}), which would hide the \
+                     import of `{new}` there",
+                    line_of(&doc.source, local.binding_offset as u32)
+                ));
+            }
+        }
+        None
+    }
+
     /// The workspace symbols whose name holds `query`, whatever the
     /// case; every symbol for an empty query. A document a session has
     /// checked gives its definitions; one that is only parsed, its
