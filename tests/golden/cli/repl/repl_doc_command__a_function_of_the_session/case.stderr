@@ -1,4 +1,4 @@
-no builtin and no function of this session is named 'stats.top_pages'
-no builtin and no function of this session is named 'stats.take_first'
-no builtin and no function of this session is named 'n'
-no builtin and no function of this session is named 'nope'
+no builtin and no declaration of this session is named 'stats.top_pages'
+no builtin and no declaration of this session is named 'stats.take_first'
+no builtin and no declaration of this session is named 'n'
+no builtin and no declaration of this session is named 'nope'

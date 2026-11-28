@@ -9,7 +9,7 @@ Commands:
   :help, :h      Show this help
   :quit, :q      Exit the REPL
   :type <expr>   Show the type of an expression without running it
-  :doc <name>    Show the signature and docs of a builtin (list.map, Option, string) or of a function defined or imported here
+  :doc <name>    Show the signature and docs of a builtin (list.map, Option, string) or of what an input declared or imported
   <Tab>          Autocomplete builtins and user-defined names
 
 Enter expressions to evaluate, or declarations (fn, type, trait, import).

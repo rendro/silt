@@ -203,7 +203,13 @@ pub(crate) fn run_repl() {
                             print_help();
                             continue;
                         }
-                        "" => continue,
+                        "" => {
+                            // (A blank line between a comment and a
+                            // declaration: the comment documents nothing,
+                            // as in a file.)
+                            repl.borrow_mut().pending_doc.clear();
+                            continue;
+                        }
                         other if command(other, ":type") == Some("") => {
                             show_type(&mut rl, &mut repl.borrow_mut(), "");
                             continue;
@@ -334,7 +340,7 @@ fn show_type(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input
     });
 }
 
-/// `:doc name`: what [`Repl::session_doc`] says of the function
+/// `:doc name`: what [`Repl::session_doc`] says of the declaration
 /// `name` of the session, else what [`doc_text`] says of the builtin
 /// `name`.
 fn show_doc(repl: &Repl, name: &str) {
@@ -342,7 +348,7 @@ fn show_doc(repl: &Repl, name: &str) {
     crate::scheduler::report(|| match (name, text) {
         ("", _) => eprintln!(":doc needs a name, as in :doc list.map"),
         (_, Some(text)) => println!("{text}"),
-        (_, None) => eprintln!("no builtin and no function of this session is named '{name}'"),
+        (_, None) => eprintln!("no builtin and no declaration of this session is named '{name}'"),
     });
 }
 
@@ -479,6 +485,36 @@ fn written(
     text
 }
 
+/// The text of the declaration of `source` that starts at `at`, as it
+/// was written: up to the end of its last line, where every bracket it
+/// opened is closed again.
+fn declaration_text(source: &str, at: Span) -> Option<String> {
+    use crate::lexer::Token;
+    let lexed = Lexer::new(FileId::default(), source).tokenize();
+    let first = lexed
+        .tokens
+        .iter()
+        .position(|tok| tok.span.start == at.start)?;
+    let mut depth = 0usize;
+    let mut end = at.end;
+    for (i, tok) in lexed.tokens[first..].iter().enumerate() {
+        if tok.kind == Token::Eof || (i > 0 && depth == 0 && tok.newlines_before > 0) {
+            break;
+        }
+        match tok.kind {
+            Token::LParen
+            | Token::LBracket
+            | Token::LBrace
+            | Token::HashBrace
+            | Token::HashBracket => depth += 1,
+            Token::RParen | Token::RBracket | Token::RBrace => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        end = tok.span.end;
+    }
+    Some(source.get(at.start as usize..end as usize)?.to_string())
+}
+
 /// What `:doc name` shows of the builtin `name`, a line that states it
 /// and, where the docs have one, a line that says what it is:
 /// - a function or a constant: its signature and its summary;
@@ -551,6 +587,16 @@ pub(crate) fn doc_text(name: &str) -> Option<String> {
             .or_else(|| docs::type_summary(&enum_name));
         return Some(with_summary(line, summary));
     }
+    // A variant by its enum (`Option.Some`) and a method by its trait
+    // (`Number.from_int`), as code writes them.
+    if let Some((owner, member)) = name.split_once('.')
+        && registry.module(owner).is_none()
+    {
+        if docs::variant_enum(member).is_some_and(|(_, enum_name)| enum_name == owner) {
+            return doc_text(member);
+        }
+        return docs::prelude_method_text(owner, member);
+    }
     let builtin = (crate::types::builtins::BUILTIN_TYPES.iter()).find(|t| {
         t.name == name
             && t.name.chars().all(char::is_alphabetic)
@@ -588,6 +634,13 @@ pub struct Repl {
     /// module read for one input is not warned about again under the
     /// next.
     warned: HashSet<(Span, String)>,
+    /// The inputs of nothing but comments since the last other input,
+    /// one a line: the doc comment of the declaration the next input
+    /// starts with, as comments directly above it are in a file.
+    pending_doc: String,
+    /// The doc comments that inputs of comments gave the declarations
+    /// of the next input, by the span of the declared name.
+    input_docs: HashMap<Span, String>,
 }
 
 /// What evaluating one input gives.
@@ -624,6 +677,8 @@ impl Repl {
             cwd,
             committed: None,
             warned: HashSet::new(),
+            pending_doc: String::new(),
+            input_docs: HashMap::new(),
         }
     }
 
@@ -660,6 +715,23 @@ impl Repl {
 
     /// Check, compile and run `input` as the next cell.
     pub fn eval(&mut self, input: &str) -> Evaluation {
+        // An input of nothing but comments documents the declaration the
+        // next input starts with; any other input takes what came before.
+        let comments_only = {
+            let lexed = Lexer::new(FileId::default(), input).tokenize();
+            !lexed.comments.is_empty()
+                && matches!(
+                    lexed.tokens[..],
+                    [crate::lexer::Tok {
+                        kind: crate::lexer::Token::Eof,
+                        ..
+                    }]
+                )
+        };
+        let doc = match comments_only {
+            true => String::new(),
+            false => std::mem::take(&mut self.pending_doc),
+        };
         let file = self.session.add_cell(input.to_string());
         let analysis = self.session.analyze(file);
         let (diagnostics, failed) = (analysis.diagnostics.clone(), analysis.has_errors());
@@ -700,6 +772,14 @@ impl Repl {
             Ok(value) => {
                 self.session.commit_cell(file);
                 self.committed = Some(self.session.module_of(file));
+                if comments_only {
+                    if !self.pending_doc.is_empty() {
+                        self.pending_doc.push('\n');
+                    }
+                    self.pending_doc.push_str(input);
+                } else if let Some(doc) = crate::parser::doc_above(&doc) {
+                    self.keep_input_doc(file, doc);
+                }
                 evaluation.value = Some(value);
                 evaluation.committed = true;
             }
@@ -742,56 +822,171 @@ impl Repl {
         })
     }
 
-    /// What `:doc name` shows of a function the next input sees, `f`
-    /// (one an earlier input defined) or `m.f` (one of a module an
-    /// earlier input imported): its signature, as `:doc` writes a
-    /// builtin's and its types as `:type` writes them, and its doc
-    /// comment. `None` when the name is no such function.
+    /// Keep `doc`, which inputs of comments gave the input `file`, as
+    /// the doc comment of the declaration that input starts with (a
+    /// function, a type or a trait) when it has none of its own.
+    fn keep_input_doc(&mut self, file: FileId, doc: String) {
+        use crate::ast::Decl;
+        let module = self.session.module_of(file);
+        let Some(program) = self.session.graph().module(module).ast.as_ref() else {
+            return;
+        };
+        // (An input of statements is the body of a function whose name
+        // is the whole input.)
+        let none = |doc: &Option<String>| doc.as_deref().is_none_or(|doc| doc.trim().is_empty());
+        // The input's first declaration, of those it wrote (the session
+        // adds some of its own, at no place of the input).
+        let first = (program.decls.iter())
+            .filter_map(|decl| {
+                let span = match decl {
+                    Decl::Fn(f) => f.span,
+                    Decl::Type(t) => t.span,
+                    Decl::Trait(t) => t.span,
+                    Decl::TraitImpl(t) => t.header_span,
+                    Decl::Import(_, span) | Decl::Let { span, .. } => *span,
+                };
+                (span.file == file && span.is_in_source()).then_some((span.start, decl))
+            })
+            .min_by_key(|(start, _)| *start)
+            .map(|(_, decl)| decl);
+        let name_span = match first {
+            Some(Decl::Fn(f)) if none(&f.doc) && f.name_span != f.span => f.name_span,
+            Some(Decl::Type(t)) if none(&t.doc) => t.name_span,
+            Some(Decl::Trait(t)) if none(&t.doc) => t.name_span,
+            _ => return,
+        };
+        self.input_docs.insert(name_span, doc);
+    }
+
+    /// What `:doc name` shows of a name the next input sees that an
+    /// earlier input declared or imported, `None` when it is no such
+    /// name:
+    /// - a function, `f` or `m.f` (of a module an earlier input
+    ///   imported): its signature, as `:doc` writes a builtin's and its
+    ///   types as `:type` writes them, and its doc comment;
+    /// - a type, a trait (`T`, `m.T`): its declaration as it was
+    ///   written, and its doc comment;
+    /// - a variant (`A`, `T.A`): the declaration of its type and that
+    ///   type's doc comment;
+    /// - a method of a trait (`Sh.sh`): the declaration of the trait,
+    ///   and the method's doc comment, else the trait's.
     pub(crate) fn session_doc(&self, name: &str) -> Option<String> {
+        use crate::ast::Decl;
+        use crate::defs::DefKind;
         let session = &self.session;
         let committed = self.committed?;
         let scope = &session.module_analysis(committed)?.scope;
-        let function = |binding: Option<&Binding>| match binding {
+        let def_of = |binding: Option<&Binding>| match binding {
             Some(Binding::Def(id)) => Some(*id),
             _ => None,
         };
-        let def = match name.split_once('.') {
-            None => function(scope.values.get(&intern::intern(name)))?,
-            Some((module, member)) => {
-                let Some(Binding::Module(id)) = scope.values.get(&intern::intern(module)) else {
-                    return None;
-                };
-                let exports = &session.module_analysis(*id)?.scope.exports;
-                function(exports.values.get(&intern::intern(member)))?
-            }
+        let either = |values: &HashMap<intern::Symbol, Binding>,
+                      types: &HashMap<intern::Symbol, Binding>,
+                      name: &str| {
+            let name = intern::intern(name);
+            def_of(values.get(&name)).or_else(|| def_of(types.get(&name)))
+        };
+        // The definition, and for `Trait.method` the method's name.
+        let (def, method) = match name.split_once('.') {
+            None => (either(&scope.values, &scope.types, name)?, None),
+            Some((first, member)) => match scope.values.get(&intern::intern(first)) {
+                Some(Binding::Module(id)) => {
+                    let exports = &session.module_analysis(*id)?.scope.exports;
+                    (either(&exports.values, &exports.types, member)?, None)
+                }
+                _ => {
+                    let owner = def_of(scope.types.get(&intern::intern(first)))?;
+                    match session.defs().get(owner).kind {
+                        DefKind::Type(_) => {
+                            let variant = (session.defs().variants(owner).iter().copied())
+                                .find(|v| intern::resolve(session.defs().get(*v).name) == member)?;
+                            (variant, None)
+                        }
+                        DefKind::Trait(_) => (owner, Some(member)),
+                        _ => return None,
+                    }
+                }
+            },
         };
         let entry = session.defs().get(def);
-        if !matches!(entry.kind, crate::defs::DefKind::Fn) {
-            return None;
-        }
         // (The declaration as parsed: the session gives up the check of a
         // cell that a later cell imports no longer.)
-        let program = session.graph().module(entry.module).ast.as_ref()?;
-        let decl = (program.decls.iter()).find_map(|decl| match decl {
-            crate::ast::Decl::Fn(f) if f.name_span == entry.span => Some(f),
+        let declared_in = |def: &crate::defs::Def| {
+            let module = session.graph().module(def.module);
+            let program = module.ast.as_ref()?;
+            let source = session.sources().get(module.file?)?;
+            Some((program, source))
+        };
+        let doc_text = |doc: Option<&String>, span: Span| {
+            (doc.filter(|doc| !doc.trim().is_empty()))
+                .or_else(|| self.input_docs.get(&span))
+                .map(|doc| doc.trim_end().to_string())
+                .filter(|doc| !doc.trim().is_empty())
+        };
+        let with_doc = |mut text: String, doc: Option<String>| {
+            if let Some(doc) = doc {
+                text.push('\n');
+                text.push_str(&doc);
+            }
+            text
+        };
+        match entry.kind {
+            DefKind::Fn => {
+                let (program, _) = declared_in(entry)?;
+                let decl = (program.decls.iter()).find_map(|decl| match decl {
+                    Decl::Fn(f) if f.name_span == entry.span => Some(f),
+                    _ => None,
+                })?;
+                let params: Vec<String> = (decl.params.iter())
+                    .map(|param| match &param.pattern.kind {
+                        crate::ast::PatternKind::Ident(name) => intern::resolve(*name),
+                        _ => "_".to_string(),
+                    })
+                    .collect();
+                let scheme = session.def_scheme(def)?;
+                let file = session.cell_file(committed)?;
+                let text = written_signature(&scheme, name, &params, |def, name| {
+                    session.shadowed_cell_name(file, def, name)
+                });
+                Some(with_doc(text, doc_text(decl.doc.as_ref(), decl.name_span)))
+            }
+            DefKind::Type(_) | DefKind::TypeAlias | DefKind::Variant { .. } => {
+                let ty = match entry.kind {
+                    DefKind::Variant { ty, .. } => session.defs().get(ty.0),
+                    _ => entry,
+                };
+                let (program, source) = declared_in(ty)?;
+                let decl = (program.decls.iter()).find_map(|decl| match decl {
+                    Decl::Type(t) if t.name_span == ty.span => Some(t),
+                    _ => None,
+                })?;
+                let text = declaration_text(&source.text, decl.span)?;
+                Some(with_doc(text, doc_text(decl.doc.as_ref(), decl.name_span)))
+            }
+            DefKind::Trait(_) => {
+                let (program, source) = declared_in(entry)?;
+                let decl = (program.decls.iter()).find_map(|decl| match decl {
+                    Decl::Trait(t) if t.name_span == entry.span => Some(t),
+                    _ => None,
+                })?;
+                let text = declaration_text(&source.text, decl.span)?;
+                let own = doc_text(decl.doc.as_ref(), decl.name_span);
+                let doc = match method {
+                    None => own,
+                    Some(method) => {
+                        let method =
+                            (decl.methods.iter()).find(|m| intern::resolve(m.name) == method)?;
+                        method
+                            .doc
+                            .as_ref()
+                            .map(|doc| doc.trim_end().to_string())
+                            .or(own)
+                    }
+                };
+                Some(with_doc(text, doc))
+            }
             _ => None,
-        })?;
-        let params: Vec<String> = (decl.params.iter())
-            .map(|param| match &param.pattern.kind {
-                crate::ast::PatternKind::Ident(name) => intern::resolve(*name),
-                _ => "_".to_string(),
-            })
-            .collect();
-        let scheme = session.def_scheme(def)?;
-        let file = session.cell_file(committed)?;
-        let mut text = written_signature(&scheme, name, &params, |def, name| {
-            session.shadowed_cell_name(file, def, name)
-        });
-        if let Some(doc) = decl.doc.as_ref().filter(|doc| !doc.trim().is_empty()) {
-            text.push('\n');
-            text.push_str(doc.trim_end());
         }
-        Some(text)
     }
 
     /// The names `<Tab>` offers now: those of [`builtin_names`], and
@@ -1027,7 +1222,7 @@ fn print_help() {
     println!("  :quit, :q      Exit the REPL");
     println!("  :type <expr>   Show the type of an expression without running it");
     println!(
-        "  :doc <name>    Show the signature and docs of a builtin (list.map, Option, string) or of a function defined or imported here"
+        "  :doc <name>    Show the signature and docs of a builtin (list.map, Option, string) or of what an input declared or imported"
     );
     println!("  <Tab>          Autocomplete builtins and user-defined names");
     println!();
@@ -1776,6 +1971,70 @@ mod tests {
             value(&mut repl, "match col {\n  Color.Red -> 1\n  Green -> 2\n}"),
             "1"
         );
+    }
+
+    #[test]
+    fn an_input_of_comments_documents_the_declaration_of_the_next_input() {
+        let mut repl = repl();
+        value(&mut repl, "-- Halves.");
+        value(&mut repl, "fn half(n: Int) -> Int {\n  n / 2\n}");
+        assert_eq!(
+            repl.session_doc("half").as_deref(),
+            Some("half(n: Int) -> Int\nHalves.")
+        );
+        // Two inputs of comments are two lines of one doc comment.
+        value(&mut repl, "-- Two kinds.");
+        value(&mut repl, "-- The second line.");
+        value(&mut repl, "type T { A, B }");
+        assert_eq!(
+            repl.session_doc("T").as_deref(),
+            Some("type T { A, B }\nTwo kinds.\nThe second line.")
+        );
+        // Another input between them takes the comment.
+        value(&mut repl, "-- Not this one's.");
+        value(&mut repl, "1 + 1");
+        value(&mut repl, "fn third(n: Int) -> Int { n / 3 }");
+        assert_eq!(
+            repl.session_doc("third").as_deref(),
+            Some("third(n: Int) -> Int")
+        );
+    }
+
+    #[test]
+    fn doc_takes_the_types_variants_and_traits_of_the_session_as_code_writes_them() {
+        let mut repl = repl();
+        value(&mut repl, "type T {\n  A,\n  B(Int),\n}");
+        let t = "type T {\n  A,\n  B(Int),\n}";
+        for name in ["T", "A", "T.B"] {
+            assert_eq!(repl.session_doc(name).as_deref(), Some(t), ":doc {name}");
+        }
+        assert_eq!(repl.session_doc("T.C"), None);
+        value(&mut repl, "-- Shows it short.");
+        value(&mut repl, "trait Sh { fn sh(self) -> String }");
+        let sh = "trait Sh { fn sh(self) -> String }\nShows it short.";
+        assert_eq!(repl.session_doc("Sh").as_deref(), Some(sh));
+        assert_eq!(repl.session_doc("Sh.sh").as_deref(), Some(sh));
+        assert_eq!(repl.session_doc("Sh.other"), None);
+    }
+
+    #[test]
+    fn doc_takes_a_builtin_variant_by_its_enum_and_a_method_by_its_trait() {
+        for (written, bare) in [
+            ("Option.Some", "Some"),
+            ("Step.Stop", "Stop"),
+            ("Result.Ok", "Ok"),
+        ] {
+            let text = doc_text(written);
+            assert!(text.is_some(), ":doc {written}");
+            assert_eq!(text, doc_text(bare), ":doc {written}");
+        }
+        assert_eq!(doc_text("Option.Ok"), None);
+        let text = doc_text("Number.from_int").expect(":doc Number.from_int");
+        assert!(
+            text.starts_with("trait Number { fn from_int(n: Int) -> Self }\n"),
+            "{text}"
+        );
+        assert_eq!(doc_text("Number.to_int"), None);
     }
 
     #[test]

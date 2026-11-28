@@ -30,6 +30,15 @@ type Result<T> = std::result::Result<T, Diagnostic>;
 /// comments on one line give two lines, as they do once `silt fmt` has
 /// put each on a line of its own. The indentation the lines share is
 /// taken off.
+/// The doc comment that the comments of `text`, which holds nothing
+/// else, give a declaration on the line right after it: the text a
+/// REPL input of comments gives the next input's declaration.
+#[cfg(feature = "repl")]
+pub(crate) fn doc_above(text: &str) -> Option<String> {
+    let lexed = crate::lexer::Lexer::new(crate::source::FileId::default(), text).tokenize();
+    doc_of(&lexed.comments, 1, true, text)
+}
+
 fn doc_of(
     comments: &[Comment],
     newlines_before: u8,

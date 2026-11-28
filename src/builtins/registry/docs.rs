@@ -526,6 +526,24 @@ pub(crate) fn prelude_trait_summary(name: &str) -> Option<String> {
     summary(decl.doc.as_deref()?)
 }
 
+/// What `:doc Trait.method` shows of the method `method` of the
+/// prelude's trait `trait_name` (`Number.from_int`): the declaration
+/// of the trait, and the first sentence of the method's documentation,
+/// else of the trait's.
+pub(crate) fn prelude_method_text(trait_name: &str, method: &str) -> Option<String> {
+    let decl = (crate::typechecker::builtin_trait_decls().into_iter())
+        .find(|t| crate::intern::resolve(t.name) == trait_name)?;
+    let found = (decl.methods.iter()).find(|m| crate::intern::resolve(m.name) == method)?;
+    let doc = (found.doc.as_deref())
+        .and_then(summary)
+        .or_else(|| summary(decl.doc.as_deref()?));
+    let text = trait_text(&decl);
+    Some(match doc {
+        Some(doc) => format!("{text}\n{doc}"),
+        None => text,
+    })
+}
+
 /// `trait Compare: Equal { fn compare(self, other: Self) -> Int }`.
 fn trait_text(decl: &crate::ast::TraitDecl) -> String {
     use crate::ast::{PatternKind, TypeExpr, TypeExprKind};

@@ -1,0 +1,29 @@
+Silt REPL (type :quit to exit, :help for commands)
+type T {
+  A,
+  B(Int),
+}
+Two kinds.
+type T {
+  A,
+  B(Int),
+}
+Two kinds.
+type T {
+  A,
+  B(Int),
+}
+Two kinds.
+trait Sh { fn sh(self) -> String }
+Says it short.
+trait Sh { fn sh(self) -> String }
+Says it short.
+half(n: Int) -> Int
+Halves.
+third(n: Int) -> Int
+type Option(a) { Some(a), None }
+Constructs a present variant of `Option`.
+type Step(a) { Stop(a), Continue(a) }
+The step that ends a fold that can end early (`list.fold_until`, `channel.fold_until`, `stream.fold_until`): the value is what the fold gives.
+trait Number { fn from_int(n: Int) -> Self }
+The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`, `%` and unary `-` need it.
