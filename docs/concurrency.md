@@ -1574,7 +1574,8 @@ its I/O and its `time.sleep` are waits too.
   thousand tasks of ordinary depth take nothing of it. A task whose
   recursion asks for more once it is used up ends with "stack overflow:
   call frames take more than 128 MiB; this task holds 2 MiB", whichever
-  tasks hold the rest (see
+  tasks hold the rest. The budget counts the frames only: recursions that
+  reach it use about three times as much memory (see
   [Repeating](language/loops-and-pipes.md#repeating)).
 
 

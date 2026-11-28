@@ -46,9 +46,10 @@ pub(crate) fn floored_div(a: i64, b: i64) -> Option<i64> {
 }
 
 /// `a % b` with the sign of `b`, for a `b` that is not 0. The smallest
-/// Int over -1 leaves 0, as every Int over -1 does.
+/// Int over -1 leaves 0, as every Int over -1 does. (`int.checked_rem`
+/// takes the remainder so too.)
 #[inline(always)]
-fn floored_mod(a: i64, b: i64) -> i64 {
+pub(crate) fn floored_mod(a: i64, b: i64) -> i64 {
     if b == -1 {
         return 0;
     }

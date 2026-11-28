@@ -50,7 +50,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `product` | `(List(a)) -> a where a: Number` | Product of a list of numbers (`a.from_int(1)` on empty) |
 | `remove_at` | `(List(a), Int) -> Option(List(a))` | The list without the element at index, or None if there is none |
 | `reverse` | `(List(a)) -> List(a)` | Reverse element order |
-| `scan` | `(List(a), b, Fn(b, a) -> b) -> List(b)` | Prefix fold; returns all intermediate accumulators |
+| `scan` | `(List(a), b, Fn(b, a) -> b) -> List(b)` | Running fold: the accumulator after each element |
 | `sequence` | `(List(m(a))) -> m(List(a)) where m: Applicative` | One Applicative value of the list of the values: the first failure, if there is one |
 | `set` | `(List(a), Int, a) -> Option(List(a))` | The list with the element at index replaced, or None if there is none |
 | `sort` | `(List(a)) -> List(a) where a: Compare` | Sort in natural order |
@@ -808,20 +808,19 @@ fn main() {
 list.scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)
 ```
 
-Like `fold`, but returns every intermediate accumulator rather than just the
-final one. The result length is `length(xs) + 1`: the first element is `init`,
-and each subsequent element is the accumulator after applying `f` to the next
-input. This matches Haskell's `scanl` and Rust's `std::iter::successors`
-(in spirit) — the convention is **inclusive of the initial value**.
+Like `fold`, but returns every accumulator on the way rather than just the
+final one: the accumulator after applying `f` to each element, one for each
+element, so the result is as long as `xs`. `init` itself is not in it, as
+`stream.scan` does not send it.
 
 ```silt
 import list
 
 fn main() {
-  -- Prefix sums: [0, 1, 3, 6, 10]
+  -- Prefix sums: [1, 3, 6, 10]
   let sums = list.scan([1, 2, 3, 4], 0) { acc, x -> acc + x }
   println(sums)
-  println(list.scan([], 0) { acc, x -> acc + x }) -- [0]
+  println(list.scan([], 0) { acc, x -> acc + x }) -- []
 }
 ```
 

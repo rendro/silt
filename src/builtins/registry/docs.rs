@@ -1019,7 +1019,7 @@ mod tests {
             )
         };
         let page = render_page(&table(
-            "| `toml.parse` | stale |\n| `toml.parse_list` | stale |\n| `toml.parse_map` | stale |",
+            "| `toml.parse` | stale |\n| `toml.parse_list` | stale |\n| `toml.parse_map` | stale |\n| `toml.parse_with` | stale |",
         ))
         .expect("a page");
         assert!(

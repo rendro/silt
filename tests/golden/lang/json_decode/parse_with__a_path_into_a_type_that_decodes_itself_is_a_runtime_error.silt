@@ -1,0 +1,25 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: json.parse_with: the map names the field `tags.names`, and Tags decodes itself with its json.Decode impl
+-- A type with a written json.Decode decodes its part itself, so the map
+-- reaches no field of it: an entry that names one would do nothing, and
+-- is refused before the document is read. The field that holds it may
+-- be given a key.
+import json
+
+type Tags { names: List(String) }
+type Post { title: String, tags: Tags }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { names: [text] })
+      _ -> Err(json.Other("tags are a string", 0, 0, 0))
+    }
+  }
+}
+
+fn main() {
+  println(json.parse_with("""{"title": "a", "Tags": "x"}""", #{"tags": "Tags"}, Post))
+  println(json.parse_with("""{"title": "a", "tags": "x"}""", #{"tags.names": "Names"}, Post))
+}

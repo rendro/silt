@@ -39,10 +39,10 @@ use serde::de::value::{MapDeserializer, SeqDeserializer};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 
 use super::{
-    At, Error, Hole, I64_MAX_PLUS_ONE, Numbers, Reader, Rules, Where, decodable_enum,
-    decodable_record, descriptor, field_record_type, invalid_date_message, invalid_time_message,
-    parse_date, parse_datetime, parse_time, shown, unsupported_field_type_message,
-    variant_field_message,
+    At, Error, FieldPath, Hole, I64_MAX_PLUS_ONE, Keys, NO_KEYS, Numbers, Reader, Rules, Where,
+    decodable_enum, decodable_record, descriptor, field_record_type, invalid_date_message,
+    invalid_time_message, parse_date, parse_datetime, parse_time, shown,
+    unsupported_field_type_message, variant_field_message,
 };
 use crate::builtins::registry::decoding::Leaf;
 use crate::builtins::time::{make_date, make_datetime, make_time};
@@ -207,13 +207,14 @@ pub(crate) fn reaches_written(r: &Reader, rules: &Rules, expected: &FieldType) -
     reaches(r, rules, expected, &mut Vec::new())
 }
 
-/// The JSON text `text` decoded into a value of `expected` by `r`, its
-/// parts of a type with a written impl as `parts` says: the decoder's
-/// outcome, or the parser's error.
+/// The JSON text `text` decoded into a value of `expected` by `r`, each
+/// field from the key `keys` gives it, its parts of a type with a written
+/// impl as `parts` says: the decoder's outcome, or the parser's error.
 pub(crate) fn json_text(
     r: &Reader,
     expected: &FieldType,
     text: &[u8],
+    keys: &Keys,
     parts: &Parts,
 ) -> Result<Outcome, serde_json::Error> {
     // The text as the parser reads it: once it has refused a number
@@ -232,12 +233,14 @@ pub(crate) fn json_text(
             parts,
             restart: &restart,
             kept: &kept,
+            keys,
         };
         let mut de = serde_json::Deserializer::from_slice(finite.as_deref().unwrap_or(text));
         let read = Seed {
             cx: &cx,
             expected,
             at: &At::Top,
+            path: &FieldPath::Top,
         }
         .deserialize(&mut de)
         .and_then(|decoded| de.end().map(|()| decoded));
@@ -274,10 +277,10 @@ pub(crate) fn json_cell(
 ) -> Result<Outcome, serde_json::Error> {
     use super::Holes;
     let Some(impls) = &r.impls else {
-        return json_text(r, expected, text, &Parts::finding());
+        return json_text(r, expected, text, &NO_KEYS, &Parts::finding());
     };
     let finding = Parts::finding();
-    let decoded = json_text(r, expected, text, &finding)?;
+    let decoded = json_text(r, expected, text, &NO_KEYS, &finding)?;
     let (found, keep_fields) = finding.into_found();
     let mut holes = impls.holes.borrow_mut();
     match &mut *holes {
@@ -298,7 +301,7 @@ pub(crate) fn json_cell(
             }
             drop(holes);
             let supplying = Parts::supplying(&numbers, given, keep_fields);
-            json_text(r, expected, text, &supplying)
+            json_text(r, expected, text, &NO_KEYS, &supplying)
         }
     }
 }
@@ -323,11 +326,13 @@ pub(crate) fn csv_rows<'de, D: de::Deserializer<'de>>(
         parts,
         restart: &restart,
         kept: &kept,
+        keys: &NO_KEYS,
     };
     let read = Seed {
         cx: &cx,
         expected,
         at: &At::Top,
+        path: &FieldPath::Top,
     }
     .deserialize(de);
     read.map_err(|e| e.to_string())
@@ -356,11 +361,13 @@ pub(crate) fn json_value(
         parts,
         restart: &restart,
         kept: &kept,
+        keys: &NO_KEYS,
     };
     let read = Seed {
         cx: &cx,
         expected,
         at: &At::Top,
+        path: &FieldPath::Top,
     }
     .deserialize(JsonValueDe {
         value: v.clone(),
@@ -480,6 +487,7 @@ pub(crate) fn toml_text(
     top: &Top,
     text: &str,
     marked: &'static str,
+    keys: &Keys,
     parts: &Parts,
 ) -> Result<Outcome, ::toml::de::Error> {
     // (A reading that ended in the parser's error is read again.)
@@ -495,6 +503,7 @@ pub(crate) fn toml_text(
         parts,
         restart: &restart,
         kept: &kept,
+        keys,
     };
     let de = ::toml::Deserializer::new(text);
     let map;
@@ -503,6 +512,7 @@ pub(crate) fn toml_text(
             cx: &cx,
             expected,
             at: &At::Top,
+            path: &FieldPath::Top,
         }
         .deserialize(de),
         Top::Map(element) => {
@@ -511,6 +521,7 @@ pub(crate) fn toml_text(
                 cx: &cx,
                 expected: &map,
                 at: &At::Top,
+                path: &FieldPath::Top,
             };
             Only { seed, table: true }.deserialize(de)
         }
@@ -540,6 +551,9 @@ struct Cx<'c> {
     /// What was kept of a part that is read again ([`Capture`]), handed
     /// over as it is.
     kept: &'c Cell<Option<Content>>,
+    /// The key each field is read from (`json.parse_with`,
+    /// `toml.parse_with`).
+    keys: &'c Keys,
 }
 
 impl Cx<'_> {
@@ -814,6 +828,9 @@ struct Seed<'s> {
     cx: &'s Cx<'s>,
     expected: &'s FieldType,
     at: &'s At<'s>,
+    /// The record fields from the top to the part, for the keys of
+    /// [`Cx::keys`].
+    path: &'s FieldPath<'s>,
 }
 
 impl<'s> Seed<'s> {
@@ -823,6 +840,7 @@ impl<'s> Seed<'s> {
             cx: self.cx,
             expected,
             at,
+            path: self.path,
         }
     }
 
@@ -1330,24 +1348,44 @@ impl<'s> Seed<'s> {
         args: &[FieldType],
     ) -> Result<Outcome, A::Error> {
         let fields = ty.fields();
+        // The key of the document each field is read from: its name,
+        // unless the map of `parse_with` gives another.
+        let keys = self.cx.keys;
+        let given: Option<Vec<&str>> = (!keys.is_empty()).then(|| {
+            (fields.iter())
+                .map(|(name, _)| keys.key(self.path, (ty.id, args), name))
+                .collect()
+        });
+        let key_of = |k: usize| {
+            given
+                .as_ref()
+                .map_or(fields[k].0.as_str(), |given| given[k])
+        };
         let parts = self.cx.parts;
         let start = parts.mark();
         let mut read: Vec<Option<(Outcome, Range<usize>)>> =
             (0..fields.len()).map(|_| None).collect();
         let mut unknown = None;
         while let Some(key) = entries.key()? {
-            match fields.iter().position(|(name, _)| *name == *key) {
+            match (0..fields.len()).position(|k| key_of(k) == &*key) {
                 Some(k) => {
                     let (name, field) = &fields[k];
                     let field = field.instantiated(args);
-                    let at = self.at.key(name);
+                    let at = self.at.key(key_of(k));
+                    let path = self.path.field(name, (ty.id, args));
                     let from = parts.mark();
-                    let decoded = entries.value(self.of(&field, &at))?;
+                    let seed = Seed {
+                        cx: self.cx,
+                        expected: &field,
+                        at: &at,
+                        path: &path,
+                    };
+                    let decoded = entries.value(seed)?;
                     read[k] = Some((decoded, from..parts.mark()));
                 }
                 None => {
                     if unknown.is_none() {
-                        let names = || fields.iter().map(|(name, _)| name.clone()).collect();
+                        let names = || (0..fields.len()).map(|k| key_of(k).to_string()).collect();
                         unknown = self.unknown(&key, names);
                     }
                     entries.value(self.skip())?
@@ -1366,7 +1404,7 @@ impl<'s> Seed<'s> {
         let mut values = Vec::with_capacity(fields.len());
         let mut ranges = Vec::new();
         let mut error = None;
-        for ((name, field), read) in fields.iter().zip(read) {
+        for (k, ((name, field), read)) in fields.iter().zip(read).enumerate() {
             let decoded = match read {
                 Some((decoded, found)) => {
                     if found_any {
@@ -1378,7 +1416,7 @@ impl<'s> Seed<'s> {
                 None => match &*field.instantiated(args) {
                     FieldType::Option(_) => Ok(Value::variant(bv::NONE, [])),
                     _ => Err(Error::MissingField(
-                        self.at.key(name).to_string(),
+                        self.at.key(key_of(k)).to_string(),
                         Where::of(self.at),
                     )),
                 },
@@ -1388,7 +1426,7 @@ impl<'s> Seed<'s> {
                 Ok(_) => {}
                 Err(Error::Unsupported(declared)) => {
                     let message = unsupported_field_type_message(&ty.name, name, &declared);
-                    error = Some(Error::Other(message, Where::of(&self.at.key(name))));
+                    error = Some(Error::Other(message, Where::of(&self.at.key(key_of(k)))));
                     break;
                 }
                 Err(e) => {
@@ -1825,6 +1863,7 @@ impl<'de> Visitor<'de> for ListUnderItsKey<'_> {
                         cx: self.cx,
                         expected: self.list,
                         at: &at,
+                        path: &FieldPath::Top,
                     };
                     decoded = Some(entries.value(Only { seed, table: false })?);
                 }
@@ -2467,21 +2506,28 @@ mod tests {
         for levels in [1, 10, 20] {
             let text = nested(NUMBERS, levels, false);
             let parts = Parts::finding();
-            let from_text = kept(|| json_text(&reader, &e, text.as_bytes(), &parts).expect("JSON"));
+            let from_text =
+                kept(|| json_text(&reader, &e, text.as_bytes(), &NO_KEYS, &parts).expect("JSON"));
             assert!(
                 from_text <= NUMBERS + 10 * levels,
                 "{levels} levels: {from_text} parts kept"
             );
-            let value = json_text(&reader, &FieldType::JsonValue, text.as_bytes(), &parts)
-                .expect("JSON")
-                .expect("a json.Value");
+            let value = json_text(
+                &reader,
+                &FieldType::JsonValue,
+                text.as_bytes(),
+                &NO_KEYS,
+                &parts,
+            )
+            .expect("JSON")
+            .expect("a json.Value");
             let from_value = kept(|| json_value(&reader, &e, &value, &parts).expect("not deep"));
             // (Each variant's name alone.)
             assert_eq!(from_value, levels + 1, "{levels} levels of a json.Value");
             let toml = format!("e = {}\n", nested(NUMBERS, levels.min(10), true));
             let top = Top::One(&r);
             let from_toml =
-                kept(|| toml_text(&reader, &top, &toml, "\u{0}", &parts).expect("TOML"));
+                kept(|| toml_text(&reader, &top, &toml, "\u{0}", &NO_KEYS, &parts).expect("TOML"));
             assert!(
                 from_toml <= NUMBERS + 10 * levels,
                 "{levels} levels of TOML: {from_toml} parts kept"

@@ -183,10 +183,15 @@ enum Form<'a> {
     Ints { lo: i64, hi: i64 },
 }
 
-/// The most elements a list has: what its length, a `usize`, counts.
-/// (All the Ints there are, from the least to the greatest, are one
-/// more than that where a `usize` has 64 bits.)
-const MAX_LEN: u64 = usize::MAX as u64;
+/// The most elements a list has: as many as an `Int` counts, so that
+/// its length and the index of every element are Ints (and no more
+/// than its length, a `usize`, counts). A range of more, like
+/// `0..9223372036854775807`, is refused where it is made.
+const MAX_LEN: u64 = if (usize::MAX as u64) < i64::MAX as u64 {
+    usize::MAX as u64
+} else {
+    i64::MAX as u64
+};
 
 /// Where a list's elements are.
 enum Kept<'a> {
@@ -258,12 +263,10 @@ impl List {
             return Ok(List::new());
         }
         // Its length is one more than the difference of the ends.
-        let counted = usize::try_from(hi.abs_diff(lo))
-            .ok()
-            .and_then(|difference| difference.checked_add(1));
+        let counted = hi.abs_diff(lo).checked_add(1);
         match counted {
-            Some(_) => Ok(List::ints_of(lo, hi)),
-            None => Err(TooLong {
+            Some(len) if len <= MAX_LEN => Ok(List::ints_of(lo, hi)),
+            _ => Err(TooLong {
                 lo,
                 hi,
                 most: MAX_LEN,

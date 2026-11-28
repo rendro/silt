@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: json.parse_with: the map names the field `tags.lable`, and User has no field at that path
+-- A key of the map that is no field of the type is the program's mistake,
+-- not the document's: a runtime error, before the document is read.
+import json
+
+type User { name: String, tags: List(Tag) }
+type Tag { label: String }
+
+fn main() {
+  println(json.parse_with("\{}", #{"name": "Name"}, User))
+  println(json.parse_with("\{}", #{"tags.lable": "Label"}, User))
+}

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::data::{self, Data, Format};
 use super::decode::{self, Decoder, I64_MAX_PLUS_ONE, Numbers, Rules};
 use super::registry::decoding::Family;
-use super::typed::{Type, builtins};
+use super::typed::{self, Type, builtins};
 use crate::typeinfo::FieldType;
 use crate::typeinfo::bv;
 use crate::value::Value;
@@ -700,8 +700,8 @@ pub(crate) fn offset_at(text: &[u8], path: &[decode::Seg]) -> usize {
 }
 
 /// A JSON text read again, read after a byte order mark of so many
-/// bytes.
-struct Text(Box<[u8]>, usize);
+/// bytes, each field from the key the keys give it.
+struct Text(Box<[u8]>, usize, decode::Keys);
 
 impl Source for Text {
     fn read(
@@ -710,7 +710,7 @@ impl Source for Text {
         expected: &FieldType,
         parts: &decode::seed::Parts,
     ) -> Result<decode::seed::Outcome, Value> {
-        decode::seed::json_text(r, expected, &self.0, parts)
+        decode::seed::json_text(r, expected, &self.0, &self.2, parts)
             .map(|outcome| located(outcome, &self.0, self.1))
             .map_err(|e| json_result_err(&e, &self.0, self.1))
     }
@@ -733,28 +733,56 @@ fn written_text(
 
 static DECODE: Decoder = Decoder::new("json.decode");
 static PARSE: Decoder = Decoder::new("json.parse");
+static PARSE_WITH: Decoder = Decoder::new("json.parse_with");
+
+/// The JSON text `s` decoded into a value of the type `ty` by `decoder`,
+/// each field from the key `keys` gives it (of `json.parse_with`), else
+/// from the key of its own name. One byte order mark before the document
+/// is dropped, as toml and csv drop it; a syntax error's byte is still
+/// counted in `s`.
+fn parse_text(
+    vm: &mut Vm,
+    decoder: &'static Decoder,
+    s: &str,
+    keys: Option<&crate::value::Map>,
+    ty: Type,
+) -> Result<Step, VmError> {
+    let mark = match s.starts_with('\u{feff}') {
+        true => '\u{feff}'.len_utf8(),
+        false => 0,
+    };
+    let text = &s.as_bytes()[mark..];
+    let expected = decode::target(decoder, ty)?.element();
+    let keys = match keys {
+        Some(keys) => {
+            let table = vm.decoding_table();
+            let written = |id, args: &[FieldType]| table.decoded(id, args).is_some();
+            decode::Keys::of(&vm.runtime, decoder.name, &expected, keys, &written)?
+        }
+        None => decode::Keys::default(),
+    };
+    let read = |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
+        decode::seed::json_text(r, expected, text, &keys, parts)
+            .map(|outcome| located(outcome, text, mark))
+            .map_err(|e| json_result_err(&e, text, mark))
+    };
+    let source = || -> Box<dyn Source> { Box::new(Text(text.into(), mark, keys.clone())) };
+    vm.decode_read("json.decode", &RULES, expected, read, source)
+}
 
 builtins! {
     fn decode(vm, value: &Value, ty: Type) -> Result<Step, VmError> {
         decode_value(vm, value, ty)
     }
 
-    // One byte order mark before the document is dropped, as toml and
-    // csv drop it; a syntax error's byte is still counted in `s`.
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        let mark = match s.starts_with('\u{feff}') {
-            true => '\u{feff}'.len_utf8(),
-            false => 0,
-        };
-        let text = &s.as_bytes()[mark..];
-        let expected = decode::target(&PARSE, ty)?.element();
-        let read = |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
-            decode::seed::json_text(r, expected, text, parts)
-                .map(|outcome| located(outcome, text, mark))
-                .map_err(|e| json_result_err(&e, text, mark))
-        };
-        let source = || -> Box<dyn Source> { Box::new(Text(text.into(), mark)) };
-        vm.decode_read("json.decode", &RULES, expected, read, source)
+        parse_text(vm, &PARSE, s, None, ty)
+    }
+
+    // As `parse`, each field the map names (by its path of fields,
+    // `a.b`) read from the key the map gives for it.
+    fn parse_with(vm, s: &str, keys: typed::Map, ty: Type) -> Result<Step, VmError> {
+        parse_text(vm, &PARSE_WITH, s, Some(keys), ty)
     }
 
     // (A part of a type with a written `json.Encode` impl is written

@@ -870,14 +870,15 @@ pub(crate) mod list {
             )
         }
 
-        // The running value, and the list of the values it had, the
-        // initial one first.
+        // The running value, and the list of the values it took, one
+        // for each element (the initial one is not in it), as
+        // `stream.scan` sends them.
         fn scan(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.scan",
                 made(xs)?,
                 f.clone(),
-                (init.clone(), vec![init.clone()]),
+                (init.clone(), Vec::new()),
                 |(running, _), item, stack| acc_and_item(running, item, stack),
                 |(running, prefix), _, result| {
                     fits("list.scan", Kind::List, prefix.len() + 1)?;
@@ -956,14 +957,10 @@ pub(crate) mod list {
             Ok(xs.contains(elem))
         }
 
-        // The list of the Ints between two far ends can have more
-        // elements than an `Int` counts.
-        fn length(xs: List) -> Result<i64, VmError> {
-            i64::try_from(xs.len()).map_err(|_| {
-                VmError::new(
-                    "list.length overflow: the list has more elements than an Int counts".into(),
-                )
-            })
+        // A list has at most as many elements as an `Int` counts: a
+        // range of more is refused where it is made.
+        fn length(xs: List) -> i64 {
+            xs.len() as i64
         }
 
         fn is_empty(xs: List) -> bool {
@@ -1068,10 +1065,8 @@ pub(crate) mod list {
             let Some(at) = xs.position(target) else {
                 return Ok(None);
             };
-            let at = i64::try_from(at).map_err(|_| {
-                VmError::new("list.index_of overflow: index too large to represent as Int".into())
-            })?;
-            Ok(Some(Value::Int(at)))
+            // An index is less than the length, an `Int`.
+            Ok(Some(Value::Int(at as i64)))
         }
 
         fn remove_at(xs: List, index: i64) -> Result<Option<Value>, VmError> {
@@ -1589,11 +1584,13 @@ mod cap_tests {
             "list.unfold(0) { n -> Some((n, n + 1)) }",
             "list.unfold: list exceeds maximum size of 3 elements",
         );
+        // One result for each element: a list scanned is as long as the
+        // list, so only a range can give one too long.
         refused(
-            "list.scan([1, 2, 3], 0) { a, x -> a + x }",
+            "list.scan(1..4, 0) { a, x -> a + x }",
             "list.scan: list exceeds maximum size of 3 elements",
         );
-        allowed("list.scan([1, 2], 0) { a, x -> a + x }", "[0, 1, 3]");
+        allowed("list.scan([1, 2, 3], 0) { a, x -> a + x }", "[1, 3, 6]");
         refused(
             "list.flat_map([1, 2]) { x -> [x, x] }",
             "list.flat_map: list exceeds maximum size of 3 elements",

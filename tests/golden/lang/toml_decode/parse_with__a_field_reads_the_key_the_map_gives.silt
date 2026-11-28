@@ -1,0 +1,25 @@
+-- toml.parse_with reads each field the map names from the key the map
+-- gives for it, every other field from the key of its own name: a key
+-- with a "-" (default-features) is read, and toml still refuses a key no
+-- field reads, naming the keys as the document writes them.
+import toml
+
+type Manifest { package: Package, dependencies: Map(String, Dep) }
+type Package { name: String, default_features: Bool }
+type Dep { version: String, default_features: Option(Bool) }
+
+fn main() {
+  let text = """
+[package]
+name = "x"
+default-features = false
+
+[dependencies]
+a = { version = "1", default-features = true }
+b = { version = "2" }
+"""
+  println(toml.parse(text, Manifest))
+  let keys = #{"package.default_features": "default-features", "dependencies.default_features": "default-features"}
+  println(toml.parse_with(text, keys, Manifest))
+  println(toml.parse_with("[package]\nname = \"x\"\ndefault_features = true\n[dependencies]\n", keys, Manifest))
+}

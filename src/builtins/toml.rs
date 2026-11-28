@@ -51,7 +51,7 @@ use crate::vm::{Source, Step, Vm, VmError};
 
 use super::data::{self, Data, Format};
 use super::decode::{self, Decoder, Numbers, Rules, seed, shown};
-use super::typed::{Type, builtins};
+use super::typed::{self, Type, builtins};
 use crate::typeinfo::FieldType;
 
 // ── TomlError helpers ────────────────────────────────────────────────
@@ -398,6 +398,40 @@ fn from_impl(error: &Value, at: &str) -> Value {
 static PARSE: Decoder = Decoder::new("toml.parse");
 static PARSE_LIST: Decoder = Decoder::new("toml.parse_list");
 static PARSE_MAP: Decoder = Decoder::new("toml.parse_map");
+static PARSE_WITH: Decoder = Decoder::new("toml.parse_with");
+
+/// The TOML text `s` decoded into a value of the type `ty` by
+/// `decoder`, each field from the key `keys` gives it (of
+/// `toml.parse_with`), else from the key of its own name.
+fn parse_text(
+    vm: &mut Vm,
+    decoder: &'static Decoder,
+    s: &str,
+    keys: Option<&crate::value::Map>,
+    ty: Type,
+) -> Result<Step, VmError> {
+    let expected = decode::target(decoder, ty)?.element();
+    let keys = match keys {
+        Some(keys) => {
+            let table = vm.decoding_table();
+            let written = |id, args: &[FieldType]| table.decoded(id, args).is_some();
+            decode::Keys::of(&vm.runtime, decoder.name, &expected, keys, &written)?
+        }
+        None => decode::Keys::default(),
+    };
+    let read = |r: &decode::Reader, expected: &FieldType, parts: &seed::Parts| {
+        read_text_with(r, &seed::Top::One(expected), s, &keys, parts)
+    };
+    let source = || -> Box<dyn Source> {
+        Box::new(Text {
+            text: s.to_string(),
+            list: None,
+            map: false,
+            keys: keys.clone(),
+        })
+    };
+    vm.decode_read(decoder.name, &RULES, expected, read, source)
+}
 
 /// `value` as TOML text, for `toml.<name>`, `pretty` or not:
 /// `Ok(text)`, or the `TomlError` of a value that TOML has no form for.
@@ -581,7 +615,19 @@ pub(crate) fn read_text(
     s: &str,
     parts: &seed::Parts,
 ) -> Result<seed::Outcome, Value> {
-    let read = |text: &str| seed::toml_text(r, top, text, marked(), parts);
+    read_text_with(r, top, s, &decode::NO_KEYS, parts)
+}
+
+/// As [`read_text`], each field read from the key `keys` gives it
+/// (`toml.parse_with`).
+fn read_text_with(
+    r: &decode::Reader,
+    top: &seed::Top,
+    s: &str,
+    keys: &decode::Keys,
+    parts: &seed::Parts,
+) -> Result<seed::Outcome, Value> {
+    let read = |text: &str| seed::toml_text(r, top, text, marked(), keys, parts);
     // (The marked strings, counted where any was written.)
     let marked_in = |_: &seed::Outcome, text: &str| {
         ::toml::from_str::<::toml::Value>(text).map_or(usize::MAX, |doc| marked_strings(&doc))
@@ -670,6 +716,8 @@ struct Text {
     text: String,
     list: Option<String>,
     map: bool,
+    /// The key each field is read from (`toml.parse_with`).
+    keys: decode::Keys,
 }
 
 impl Source for Text {
@@ -685,7 +733,7 @@ impl Source for Text {
             (None, true) => seed::Top::Map(expected),
             (None, false) => seed::Top::One(expected),
         };
-        read_text(r, &top, &self.text, parts)
+        read_text_with(r, &top, &self.text, &self.keys, parts)
     }
 }
 
@@ -861,14 +909,13 @@ fn not_one_key(shown: &str, keys: usize) -> String {
 // impl, which is the program's code: the decoders are steps.)
 builtins! {
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        let expected = decode::target(&PARSE, ty)?.element();
-        let read = |r: &decode::Reader, expected: &FieldType, parts: &seed::Parts| {
-            read_text(r, &seed::Top::One(expected), s, parts)
-        };
-        let source = || -> Box<dyn Source> {
-            Box::new(Text { text: s.to_string(), list: None, map: false })
-        };
-        vm.decode_read(PARSE.name, &RULES, expected, read, source)
+        parse_text(vm, &PARSE, s, None, ty)
+    }
+
+    // As `parse`, each field the map names (by its path of fields,
+    // `a.b`) read from the key the map gives for it.
+    fn parse_with(vm, s: &str, keys: typed::Map, ty: Type) -> Result<Step, VmError> {
+        parse_text(vm, &PARSE_WITH, s, Some(keys), ty)
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Step, VmError> {
@@ -879,7 +926,12 @@ builtins! {
             read_text(r, &seed::Top::List(element, &keys), s, parts)
         };
         let source = || -> Box<dyn Source> {
-            Box::new(Text { text: s.to_string(), list: Some(shown.clone()), map: false })
+            Box::new(Text {
+                text: s.to_string(),
+                list: Some(shown.clone()),
+                map: false,
+                keys: decode::Keys::default(),
+            })
         };
         vm.decode_read(PARSE_LIST.name, &RULES, element, read, source)
     }
@@ -890,7 +942,12 @@ builtins! {
             read_text(r, &seed::Top::Map(element), s, parts)
         };
         let source = || -> Box<dyn Source> {
-            Box::new(Text { text: s.to_string(), list: None, map: true })
+            Box::new(Text {
+                text: s.to_string(),
+                list: None,
+                map: true,
+                keys: decode::Keys::default(),
+            })
         };
         vm.decode_read(PARSE_MAP.name, &RULES, element, read, source)
     }

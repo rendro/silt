@@ -17,6 +17,7 @@ A document whose shape is not known in advance is read into a
 | `decode` | `(Value, type a) -> Result(a, JsonError) where a: Decode` | Decode a json.Value into a typed value |
 | `encode` | `(a) -> Value where a: Encode` | Encode a value as a json.Value |
 | `parse` | `(String, type a) -> Result(a, JsonError) where a: Decode` | Parse a JSON document into a value of the type |
+| `parse_with` | `(String, Map(String, String), type a) -> Result(a, JsonError) where a: Decode` | As `json.parse`, each field the map names (by its path, `a.b`) read from the key the map gives for it |
 | `pretty` | `(a) -> String where a: Encode` | Pretty-print value as JSON |
 | `stringify` | `(a) -> String where a: Encode` | Serialize value as compact JSON |
 
@@ -64,12 +65,13 @@ See [stdlib errors](errors.md) for how every error enum is shown.
 
 ## Decodable types
 
-The type argument of `json.parse` and `json.decode` names the type to
-decode into:
+The type argument of `json.parse`, `json.parse_with` and `json.decode`
+names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
 | `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `json.parse_with` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 | `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 
 A type argument is written in full, at any depth: `json.parse(text,
@@ -665,6 +667,8 @@ misspelled key is no error: the field it was meant for is missing, an
 `Err(MissingField(...))`, or `None` for an `Option` field.
 A field may be named by a keyword, so the key `"type"` is read into the field
 of `type Event { type: String }` (see [Types](../language/types.md#records)).
+A key no field can be named after (`"Name"`, `"userId"`) is read by
+[`json.parse_with`](#jsonparse_with).
 One UTF-8 byte order mark (U+FEFF) before the document, which files written
 by Windows tools often start with, is dropped, as `toml.parse` and
 `csv.parse` drop it; the byte of a `Syntax` error is still counted from the
@@ -751,6 +755,70 @@ fn main() -> Result((), json.JsonError) {
   let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
   println(e.date |> time.weekday) -- Friday
   Ok(())
+}
+```
+
+
+## `json.parse_with`
+
+```
+json.parse_with(s: String, keys: Map(String, String), type a) -> Result(a, JsonError) where a: Decode
+```
+
+Parses a JSON document as `json.parse` does, but each field that `keys`
+names is read from the key the map gives for it: `#{"user_id": "userId"}`
+reads the field `user_id` from the key `userId`. A field the map does
+not name is read from the key of its own name, as `json.parse` reads it.
+This reads a key that can never be a field's name: a capital letter
+(`Name`), camelCase (`userId`), a `-` (`default-features`). Keys are
+still matched exactly, the map's as the fields' own; it is the same
+map `csv.parse_with` takes for columns.
+
+A field of a nested record is named by its path of fields from the type
+given, each field's name and not its key: `#{"owner.user_id": "userId"}`
+for the field `user_id` of the record in the field `owner`. A list, an
+`Option`, a map, a tuple or a variant on the way adds nothing to the path:
+the records of `tags: List(Tag)` have their fields at `tags.label`, the
+same key for every element. An entry holds at its path and at every
+depth below it where the same type comes again inside itself: for `type
+Node { label: String, kids: List(Node) }`, `#{"label": "Label"}` reads
+`Label` in every node of the tree. A longer entry of the same field wins
+below its own path (`kids.label` for every node but the top), and one type
+at two places that are not inside each other keeps an entry for each
+(`author.name` holds for the author, not the editor). The map reaches no field of a type with a
+`json.Decode` impl, which decodes its part itself: an entry whose path
+goes into such a type is a runtime error (``json.parse_with: the map names
+the field `tags.names`, and Tags decodes itself with its json.Decode
+impl``); the field that holds it may be given a key.
+
+A key of the map that is no path of a field of the type is a runtime
+error (``json.parse_with: the map names the field `tags.lable`, and User
+has no field at that path``), and so is a map that gives one key to two
+fields of a record (``json.parse_with: the map reads the fields `a` and
+`b` of Two from one key, `b```): the map is the program's, not the
+document's. An error names the key as the document writes it
+(`Err(json missing field at line 1, column 1: userId)`). Everything else
+is as for `json.parse`. `json.stringify` writes each field under its own
+name.
+
+```silt
+import json
+
+type Owner {
+  name: String,
+  user_id: Int,
+}
+
+type Repo {
+  full_name: String,
+  owner: Owner,
+}
+
+fn main() {
+  let text = """{"fullName": "a/b", "owner": {"Name": "Ann", "userId": 7}}"""
+  let keys = #{ "full_name": "fullName", "owner.name": "Name", "owner.user_id": "userId" }
+  println(json.parse_with(text, keys, Repo)) -- Ok(Repo { full_name: "a/b", owner: Owner { name: "Ann", user_id: 7 } })
+  println(json.parse(text, Repo)) -- Err(json missing field at line 1, column 1: full_name)
 }
 ```
 

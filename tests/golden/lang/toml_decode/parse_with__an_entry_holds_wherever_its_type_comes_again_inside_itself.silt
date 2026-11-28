@@ -1,0 +1,19 @@
+-- As for json.parse_with: an entry holds at its path and at every depth
+-- below it where its type comes again inside itself.
+import toml
+
+type Node { label: String, kids: List(Node) }
+
+fn main() {
+  let tree = """
+Label = "a"
+
+[[kids]]
+Label = "b"
+
+[[kids.kids]]
+Label = "c"
+kids = []
+"""
+  println(toml.parse_with(tree, #{"label": "Label"}, Node))
+}

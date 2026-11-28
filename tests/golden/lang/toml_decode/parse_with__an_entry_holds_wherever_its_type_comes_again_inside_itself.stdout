@@ -1,0 +1,1 @@
+Ok(Node { label: "a", kids: [Node { label: "b", kids: [Node { label: "c", kids: [] }] }] })

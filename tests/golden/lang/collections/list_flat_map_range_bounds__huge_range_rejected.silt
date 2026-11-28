@@ -3,5 +3,5 @@
 -- stderr-contains: materializing more than 10000000 is not allowed
 import list
 fn main() {
-  println([1] |> list.flat_map { _ -> 0..9223372036854775807 })
+  println([1] |> list.flat_map { _ -> 1..9223372036854775807 })
 }

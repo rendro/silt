@@ -1,0 +1,13 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: json.parse_with: the map reads the fields `label` and `name` of Node from one key, `x`
+-- The entry of label holds in every node below the top too, where the
+-- entry of kids.name gives name the same key: refused before the
+-- document is read.
+import json
+
+type Node { label: String, name: String, kids: List(Node) }
+
+fn main() {
+  println(json.parse_with("\{}", #{"label": "x", "kids.name": "x"}, Node))
+}

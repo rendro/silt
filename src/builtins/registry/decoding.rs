@@ -638,8 +638,14 @@ mod tests {
                     let parts = decode::seed::Parts::finding();
                     let json = |doc: &serde_json::Value, expected| {
                         let text = doc.to_string();
-                        decode::seed::json_text(rt, expected, text.as_bytes(), &parts)
-                            .expect("JSON")
+                        decode::seed::json_text(
+                            rt,
+                            expected,
+                            text.as_bytes(),
+                            &decode::NO_KEYS,
+                            &parts,
+                        )
+                        .expect("JSON")
                     };
                     let decoded = match family {
                         Family::Json => json(doc, &target.element()),

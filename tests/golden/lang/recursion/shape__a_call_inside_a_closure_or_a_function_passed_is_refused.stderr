@@ -24,5 +24,5 @@ error[type]: this call of `on_the_sum` is inside a closure: it takes a frame for
     |
  37 |     Node(_, kids) -> list.fold(kids, t) { acc, _k -> Node(on_the_sum(acc), []) } |> size
     |                                                           ^^^^^^^^^^^^^^^ this call of `on_the_sum` is inside a closure: it takes a frame for the closure and one for the call
-  = help: a closure may call it only when it is handed to `list.each`, `list.map`, `list.flat_map`, `list.fold`, `list.filter`, `list.find`, `list.any` or `list.all` over a part of a parameter, with the element
+  = help: a closure may call it only when it is handed to a `list` function that calls it with one element at a time (`list.map`, `list.fold`, `list.fold_until`, `list.find`, `list.try_each` and the others of their kind) over a part of a parameter, with the element
   = help: if its depth is bounded by something the compiler cannot see, write `deep fn on_the_sum`

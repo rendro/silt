@@ -188,7 +188,9 @@ fn main() {
 - Any other call takes a frame until it returns. The frames of a program
   and its tasks may take 128 MiB in all (`SILT_FRAME_BUDGET` sets
   another, in MiB), about 700,000 levels of `x + sum(rest)`; a recursion
-  that would take more is the runtime error "stack overflow".
+  that would take more is the runtime error "stack overflow". The budget
+  counts the frames only: a recursion that reaches it uses about three
+  times as much memory (about 400 MB at the default).
 - Functions that call themselves (or each other) are checked: every call
   among them a tail call is "constant stack"; else each call that keeps a
   frame must pass a part of a parameter (`rest` of `[x, ..rest]`, a
@@ -434,6 +436,7 @@ int.bit_xor(a: Int, b: Int) -> Int
 int.checked_add(a: Int, b: Int) -> Option(Int)
 int.checked_div(a: Int, b: Int) -> Option(Int)
 int.checked_mul(a: Int, b: Int) -> Option(Int)
+int.checked_rem(a: Int, b: Int) -> Option(Int)
 int.checked_sub(a: Int, b: Int) -> Option(Int)
 int.clamp(x: Int, lo: Int, hi: Int) -> Int
 int.max(a: Int, b: Int) -> Int
@@ -643,6 +646,7 @@ trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
 json.decode(value: Value, type a) -> Result(a, JsonError) where a: Decode
 json.encode(value: a) -> Value where a: Encode
 json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
+json.parse_with(s: String, keys: Map(String, String), type a) -> Result(a, JsonError) where a: Decode
 json.pretty(value: a) -> String where a: Encode
 json.stringify(value: a) -> String where a: Encode
 ```
@@ -654,6 +658,7 @@ type TomlError { Syntax(String, Int, Int, Int), TypeMismatch(String, String, Int
 toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
 toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode
+toml.parse_with(s: String, keys: Map(String, String), type a) -> Result(a, TomlError) where a: json.Decode
 toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
 toml.stringify(value: a) -> Result(String, TomlError) where a: json.Encode
 ```

@@ -54,17 +54,17 @@
      59 |   let _ = json.stringify(long())
         |           ^^^^^^^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
   FAIL range_too_long_to_write_out.silt::test_all_the_ints_there_are
-    error[runtime]: range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: a list has at most 18446744073709551615
+    error[runtime]: range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: a list has at most 9223372036854775807
      --> range_too_long_to_write_out.silt:63:11
         |
      63 |   let _ = -9223372036854775807 - 1..9223372036854775807
         |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
-  FAIL range_too_long_to_write_out.silt::test_length_of_more_than_an_int_counts
-    error[runtime]: list.length overflow: the list has more elements than an Int counts
+  FAIL range_too_long_to_write_out.silt::test_more_elements_than_an_int_counts
+    error[runtime]: range 0..9223372036854775807 has 9223372036854775808 elements: a list has at most 9223372036854775807
      --> range_too_long_to_write_out.silt:67:11
         |
-     67 |   let _ = list.length(0..9223372036854775807)
-        |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ list.length overflow: the list has more elements than an Int counts
+     67 |   let _ = 0..9223372036854775807
+        |           ^^^^^^^^^^^^^^^^^^^^^^ range 0..9223372036854775807 has 9223372036854775808 elements: a list has at most 9223372036854775807
   FAIL range_too_long_to_write_out.silt::test_sum_that_is_no_int
     error[runtime]: list.sum overflow
      --> range_too_long_to_write_out.silt:71:11

@@ -1674,28 +1674,34 @@ fn a_list_of_the_ints_between_two_ends_holds_none_of_them() {
 }
 
 #[test]
-fn a_list_has_at_most_as_many_elements_as_its_length_counts() {
-    // More elements than an Int counts, by one: a list.
-    let naturals = ints(0, i64::MAX);
-    assert_eq!(naturals.len(), 1 << 63);
+fn a_list_has_at_most_as_many_elements_as_an_int_counts() {
+    // As many as an Int counts: a list, whose length and the index of
+    // whose every element are Ints.
+    let most = i64::MAX as usize;
+    let naturals = ints(1, i64::MAX);
+    assert_eq!(naturals.len(), most);
     assert_eq!(naturals.last(), Some(Value::Int(i64::MAX)));
-    // All the Ints but the greatest: the index of an element can be
-    // more than an Int holds.
-    let most = ints(i64::MIN, i64::MAX - 1);
-    assert_eq!(most.len(), usize::MAX);
-    assert_eq!(most.get(usize::MAX - 1), Some(Value::Int(i64::MAX - 1)));
-    assert_eq!(most.get(usize::MAX), None);
-    assert_eq!(most.position(&Value::Int(5)), Some((1 << 63) + 5));
-    let upper = most.slice((1 << 63) + 5, usize::MAX);
-    assert_eq!(upper.first(), Some(Value::Int(5)));
-    assert_eq!(upper.last(), Some(Value::Int(i64::MAX - 1)));
-    // All the Ints there are: one too many.
-    let too_long = List::ints(i64::MIN, i64::MAX).expect_err("one too many");
-    assert_eq!(
-        too_long.to_string(),
-        "range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: \
-         a list has at most 18446744073709551615"
-    );
+    let negatives = ints(i64::MIN, -2);
+    assert_eq!(negatives.len(), most);
+    assert_eq!(negatives.get(most - 1), Some(Value::Int(-2)));
+    assert_eq!(negatives.get(most), None);
+    assert_eq!(negatives.position(&Value::Int(-2)), Some(most - 1));
+    let upper = negatives.slice((1 << 62) + 5, most);
+    assert_eq!(upper.first(), Some(Value::Int(i64::MIN + (1 << 62) + 5)));
+    assert_eq!(upper.last(), Some(Value::Int(-2)));
+    // One more is refused where the range is made, with the limit in
+    // the text, and so is the range of all the Ints there are.
+    for (lo, hi, len) in [
+        (0, i64::MAX, "9223372036854775808"),
+        (i64::MIN, -1, "9223372036854775808"),
+        (i64::MIN, i64::MAX, "18446744073709551616"),
+    ] {
+        let too_long = List::ints(lo, hi).expect_err("one too many");
+        assert_eq!(
+            too_long.to_string(),
+            format!("range {lo}..{hi} has {len} elements: a list has at most 9223372036854775807")
+        );
+    }
     assert!(List::ints(i64::MAX, i64::MIN).expect("empty").is_empty());
 }
 
@@ -1742,10 +1748,11 @@ fn the_sum_of_a_list_of_ints() {
     assert_eq!(sum(&ints(1, 4_294_967_296)), Err("overflow"));
     assert_eq!(sum(&ints(1, i64::MAX)), Err("overflow"));
     assert_eq!(sum(&ints(i64::MIN, -2)), Err("overflow"));
-    assert_eq!(sum(&ints(i64::MIN + 1, i64::MAX)), Ok(0));
-    assert_eq!(sum(&ints(i64::MIN + 1, i64::MAX - 1)), Ok(-i64::MAX));
-    assert_eq!(sum(&ints(i64::MIN, i64::MAX - 1)), Err("overflow"));
-    assert_eq!(sum(&ints(i64::MIN, i64::MAX - 2)), Err("overflow"));
+    // The longest lists around 0 (each of as many elements as an Int
+    // counts).
+    assert_eq!(sum(&ints(-(1 << 62) + 1, (1 << 62) - 1)), Ok(0));
+    assert_eq!(sum(&ints(-(1 << 62), (1 << 62) - 2)), Ok(-i64::MAX));
+    assert_eq!(sum(&ints(-(1 << 62) - 1, (1 << 62) - 3)), Err("overflow"));
     assert_eq!(sum(&made([i64::MAX, 1])), Err("overflow"));
     assert_eq!(
         sum(&[Value::Int(1), Value::Unit].into_iter().collect()),
@@ -1780,11 +1787,11 @@ fn the_product_of_a_list_of_ints() {
         assert_eq!(product(&ints(lo, hi)), Ok(0), "{lo}..{hi}");
         assert_eq!(product(&made(lo..=hi)), Ok(0), "{lo}..{hi}");
     }
-    assert_eq!(product(&ints(0, i64::MAX)), Ok(0));
-    assert_eq!(product(&ints(i64::MIN, 0)), Ok(0));
-    assert_eq!(product(&ints(i64::MIN + 1, i64::MAX)), Ok(0));
+    assert_eq!(product(&ints(0, i64::MAX - 1)), Ok(0));
+    assert_eq!(product(&ints(i64::MIN + 2, 0)), Ok(0));
+    assert_eq!(product(&ints(-(1 << 62) + 1, (1 << 62) - 1)), Ok(0));
     assert_eq!(product(&ints(1, i64::MAX)), Err("overflow"));
-    assert_eq!(product(&ints(i64::MIN, -1)), Err("overflow"));
+    assert_eq!(product(&ints(i64::MIN, -2)), Err("overflow"));
     assert_eq!(product(&made([i64::MAX, 2])), Err("overflow"));
     assert_eq!(product(&made([i64::MAX, 2, 0])), Ok(0));
     assert_eq!(

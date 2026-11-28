@@ -1151,7 +1151,13 @@ fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value,
             let none = |_, _: &[FieldType]| None;
             let reader = Reader::with_impls(rt, &none, Holes::Collect(Vec::new()));
             let finding = decode::seed::Parts::finding();
-            let decoded = decode::seed::json_text(&reader, &FieldType::JsonValue, text, &finding);
+            let decoded = decode::seed::json_text(
+                &reader,
+                &FieldType::JsonValue,
+                text,
+                &decode::NO_KEYS,
+                &finding,
+            );
             // (A document is a json.Value.)
             decoded.map_err(|_| malformed())?.expect("a json.Value")
         }
@@ -1467,7 +1473,13 @@ mod tests {
                 let r = Reader::new(&vm.runtime);
                 let text = document(&col, &raw).expect("a document");
                 let finding = decode::seed::Parts::finding();
-                let decoded = decode::seed::json_text(&r, &FieldType::JsonValue, text, &finding);
+                let decoded = decode::seed::json_text(
+                    &r,
+                    &FieldType::JsonValue,
+                    text,
+                    &decode::NO_KEYS,
+                    &finding,
+                );
                 decoded.expect("JSON").expect("a json.Value").to_string()
             };
             assert_eq!(cell("9007199254740993.0"), "Int(9007199254740993)");

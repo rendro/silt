@@ -1,0 +1,4 @@
+Ok(Node { label: "a", kids: [Node { label: "b", kids: [Node { label: "c", kids: [] }] }] })
+Ok(Node { label: "a", kids: [Node { label: "b", kids: [Node { label: "c", kids: [] }] }] })
+Err(json missing field at line 1, column 25: kids[0].Label)
+Ok(Book { author: Person { name: "Ann" }, editor: Person { name: "Bo" } })

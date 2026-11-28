@@ -27,7 +27,7 @@ fn stack_overflow_error(limit: usize, bytes: usize) -> VmError {
         "stack overflow: call frames take more than {limit} MiB; this task holds {holds}"
     ))
     .with_help(
-        "a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own",
+        "a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own; the budget counts the frames only, and a recursion that reaches it uses about three times as much memory",
     )
 }
 

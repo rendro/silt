@@ -425,6 +425,343 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
     })
 }
 
+/// The path of record fields from the top of a document to a part: what
+/// a key of the map of `json.parse_with` and `toml.parse_with` names
+/// (`package.default_features`). A list, an option, a map, a tuple or a
+/// variant on the way adds nothing to it: a field of the records of
+/// `deps: List(Dep)` is `deps.name`.
+#[derive(Clone, Copy)]
+pub(crate) enum FieldPath<'a> {
+    /// The document itself.
+    Top,
+    /// The field of a record here, of the record type at its arguments
+    /// given.
+    Field(&'a FieldPath<'a>, &'a str, Record<'a>),
+}
+
+/// A record type at its type arguments, as the map's rules tell two
+/// apart.
+pub(crate) type Record<'a> = (TypeId, &'a [FieldType]);
+
+impl<'a> FieldPath<'a> {
+    /// The field `name` of a record of type `record` here.
+    pub(crate) fn field(&'a self, name: &'a str, record: Record<'a>) -> FieldPath<'a> {
+        FieldPath::Field(self, name, record)
+    }
+
+    /// The path as the map writes it (empty for the document).
+    fn text(&self) -> std::string::String {
+        let mut names = Vec::new();
+        let mut here = self;
+        while let FieldPath::Field(up, field, _) = here {
+            names.push(*field);
+            here = up;
+        }
+        names.reverse();
+        names.join(".")
+    }
+}
+
+/// The path of the field `name` of a record at the path `at`.
+fn joined(at: &str, name: &str) -> std::string::String {
+    match at {
+        "" => name.to_string(),
+        at => format!("{at}.{name}"),
+    }
+}
+
+/// A record the map's rules meet: its path, its type and its arguments.
+type Met = (std::string::String, TypeId, Vec<FieldType>);
+
+/// The key of the document each field is read from, by the path of the
+/// field: the map `json.parse_with` and `toml.parse_with` are given. A
+/// field the map does not name is read from the key of its own name.
+#[derive(Clone, Default)]
+pub(crate) struct Keys(std::collections::BTreeMap<std::string::String, std::string::String>);
+
+/// The keys of `json.parse` and `toml.parse`: each field its own name.
+pub(crate) static NO_KEYS: Keys = Keys(std::collections::BTreeMap::new());
+
+impl Keys {
+    /// The key the field `name` of a record of type `here` at `path`
+    /// is read from: the entry of its own path; else, where the type
+    /// comes again inside itself, the entry of the field at the nearest
+    /// record of the same type above it (so `label` holds at every
+    /// depth of `type Node { label: String, kids: List(Node) }`, and
+    /// `kids.label` below the top); else its own name.
+    pub(crate) fn key<'k>(&'k self, path: &FieldPath, here: Record, name: &'k str) -> &'k str {
+        if self.0.is_empty() {
+            return name;
+        }
+        if let Some(key) = self.0.get(&joined(&path.text(), name)) {
+            return key;
+        }
+        let mut at = path;
+        while let FieldPath::Field(up, _, record) = at {
+            if *record == here
+                && let Some(key) = self.0.get(&joined(&up.text(), name))
+            {
+                return key;
+            }
+            at = up;
+        }
+        name
+    }
+
+    /// As [`Keys::key`], for a record of type `here` at the path `path`
+    /// (`None` where no entry names a field at it), in the records
+    /// `above` (nearest first).
+    fn key_among(
+        &self,
+        path: Option<&str>,
+        here: Record,
+        above: &[Met],
+        name: &str,
+    ) -> std::string::String {
+        let own = path.and_then(|path| self.0.get(&joined(path, name)));
+        let below = || {
+            (above.iter())
+                .filter(|(_, id, args)| (*id, args.as_slice()) == here)
+                .find_map(|(at, _, _)| self.0.get(&joined(at, name)))
+        };
+        own.or_else(below)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Two fields of the record type `info` at its arguments `args` that
+    /// the map reads from one key, there: a runtime error of `caller`.
+    fn read_once(
+        &self,
+        caller: &str,
+        info: &TypeInfo,
+        args: &[FieldType],
+        path: Option<&str>,
+        above: &[Met],
+    ) -> Result<(), VmError> {
+        let here = (info.id, args);
+        let fields = info.fields();
+        let keys: Vec<std::string::String> = (fields.iter())
+            .map(|(field, _)| self.key_among(path, here, above, field))
+            .collect();
+        for (k, key) in keys.iter().enumerate() {
+            if let Some(j) = keys[..k].iter().position(|other| other == key) {
+                return Err(VmError::new(format!(
+                    "{caller}: the map reads the fields `{}` and `{}` of {} from one key, `{key}`",
+                    fields[j].0, fields[k].0, info.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Every record a document of the type can hold, as the map reads
+    /// it: each one at a path the map names a field below, at its path;
+    /// below those, every record type a field reaches once (no entry
+    /// names a field at its path, so what it is read with is fixed by
+    /// the records above).
+    fn read_once_everywhere(
+        &self,
+        walk: &mut Walk,
+        caller: &str,
+        path: &str,
+        info: &TypeInfo,
+        args: &[FieldType],
+        above: &[Met],
+    ) -> Result<(), VmError> {
+        self.read_once(caller, info, args, Some(path), above)?;
+        let named_below = |at: &str| {
+            (self.0.keys()).any(|entry| {
+                let up = entry.rsplit_once('.').map_or("", |(up, _)| up);
+                up == at || up.starts_with(&format!("{at}."))
+            })
+        };
+        let mut inside = vec![(path.to_string(), info.id, args.to_vec())];
+        inside.extend(above.iter().cloned());
+        for (field, ty) in info.fields() {
+            let at = joined(path, field);
+            let mut records = Vec::new();
+            walk.records(&ty.instantiated(args), &mut records, &mut Vec::new());
+            if named_below(&at) {
+                for (record, record_args) in records {
+                    self.read_once_everywhere(walk, caller, &at, &record, &record_args, &inside)?;
+                }
+                continue;
+            }
+            let mut seen: Vec<(TypeId, Vec<FieldType>)> = Vec::new();
+            while let Some((record, record_args)) = records.pop() {
+                if seen.contains(&(record.id, record_args.clone())) {
+                    continue;
+                }
+                seen.push((record.id, record_args.clone()));
+                self.read_once(caller, &record, &record_args, None, &inside)?;
+                for (_, ty) in record.fields() {
+                    walk.records(
+                        &ty.instantiated(&record_args),
+                        &mut records,
+                        &mut Vec::new(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether every field is read from the key of its own name.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The keys `map`, given to `caller` for values of `expected`,
+    /// says; `written`: whether the program wrote a `json.Decode` impl
+    /// for a type at its arguments. A path that is no field's, one into
+    /// a type that decodes itself with such an impl, and two fields of a
+    /// record read from one key, are runtime errors of `caller`: the map
+    /// is the program's, not the document's.
+    pub(crate) fn of(
+        rt: &Runtime,
+        caller: &str,
+        expected: &FieldType,
+        map: &crate::value::Map,
+        written: &dyn Fn(TypeId, &[FieldType]) -> bool,
+    ) -> Result<Keys, VmError> {
+        let mut keys = std::collections::BTreeMap::new();
+        for (path, key) in map.iter() {
+            let (Value::String(path, _), Value::String(key, _)) = (&path, &key) else {
+                return Err(super::typed::unsound(caller, "keys"));
+            };
+            let (up, name) = match path.rsplit_once('.') {
+                Some((up, name)) => (up.split('.').collect::<Vec<&str>>(), name),
+                None => (Vec::new(), &**path),
+            };
+            let mut own = Vec::new();
+            let named = records_at(rt, written, expected, &up, &mut own)
+                .iter()
+                .any(|(info, _)| info.fields().iter().any(|(field, _)| field == name));
+            if let (false, Some(ty)) = (named, own.first()) {
+                return Err(VmError::new(format!(
+                    "{caller}: the map names the field `{path}`, and {ty} decodes itself with its json.Decode impl"
+                )));
+            }
+            if !named {
+                let ty = shown(rt, expected);
+                let place = match up.is_empty() {
+                    true => "of that name",
+                    false => "at that path",
+                };
+                return Err(VmError::new(format!(
+                    "{caller}: the map names the field `{path}`, and {ty} has no field {place}"
+                )));
+            }
+            keys.insert(path.to_string(), key.to_string());
+        }
+        let keys = Keys(keys);
+        // (Every record of the document, its fields' keys.)
+        let mut own = Vec::new();
+        let mut walk = Walk {
+            rt,
+            written,
+            own: &mut own,
+        };
+        let mut tops = Vec::new();
+        walk.records(expected, &mut tops, &mut Vec::new());
+        for (info, args) in tops {
+            keys.read_once_everywhere(&mut walk, caller, "", &info, &args, &[])?;
+        }
+        Ok(keys)
+    }
+}
+
+/// The record types, each at its type arguments, whose fields are at
+/// the path of field names `path` in a value of `expected`: through a
+/// list, an option, a map, a tuple or a variant on the way. A type with
+/// a written `json.Decode` impl (`written`) decodes its part itself: the
+/// path goes no further into it, and its name is put in `own`.
+fn records_at(
+    rt: &Runtime,
+    written: &dyn Fn(TypeId, &[FieldType]) -> bool,
+    expected: &FieldType,
+    path: &[&str],
+    own: &mut Vec<std::string::String>,
+) -> Vec<(Arc<TypeInfo>, Vec<FieldType>)> {
+    let mut here = Vec::new();
+    let mut walk = Walk { rt, written, own };
+    walk.records(expected, &mut here, &mut Vec::new());
+    for name in path {
+        let mut next = Vec::new();
+        let mut seen = Vec::new();
+        for (info, args) in &here {
+            for (field, ty) in info.fields() {
+                if field == name {
+                    walk.records(&ty.instantiated(args), &mut next, &mut seen);
+                }
+            }
+        }
+        here = next;
+    }
+    here
+}
+
+/// What [`records_at`] walks the types with.
+struct Walk<'w> {
+    rt: &'w Runtime,
+    written: &'w dyn Fn(TypeId, &[FieldType]) -> bool,
+    own: &'w mut Vec<std::string::String>,
+}
+
+impl Walk<'_> {
+    /// The record types a value of `ty` holds without a record's field
+    /// in between, into `out`; `seen`: the types of records and enums
+    /// already looked at.
+    fn records(
+        &mut self,
+        ty: &FieldType,
+        out: &mut Vec<(Arc<TypeInfo>, Vec<FieldType>)>,
+        seen: &mut Vec<FieldType>,
+    ) {
+        match ty {
+            FieldType::List(inner)
+            | FieldType::Option(inner)
+            | FieldType::Map(inner)
+            | FieldType::KeyedMap(_, inner) => self.records(inner, out, seen),
+            FieldType::Tuple(items) => {
+                for item in items {
+                    self.records(item, out, seen);
+                }
+            }
+            FieldType::Record(id) | FieldType::Enum(id) | FieldType::Applied(id, _) => {
+                if seen.contains(ty) {
+                    return;
+                }
+                seen.push(ty.clone());
+                let args = match ty {
+                    FieldType::Applied(_, args) => args.as_slice(),
+                    _ => &[],
+                };
+                let Some(info) = self.rt.type_info(*id) else {
+                    return;
+                };
+                if (self.written)(*id, args) {
+                    self.own.push(info.name.clone());
+                    return;
+                }
+                match &info.shape {
+                    Shape::Record(_) => out.push((info.clone(), args.to_vec())),
+                    Shape::Enum(variants) => {
+                        for variant in variants {
+                            for field in &variant.fields {
+                                self.records(&field.instantiated(args), out, seen);
+                            }
+                        }
+                    }
+                    Shape::Opaque | Shape::Applied(_) => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// The value of the type `field_type`, its descriptor, as a `type a`
 /// parameter is given it: what a written `decode` of a generic type
 /// decodes a type argument by (`a.decode(v)`), and is called with.
@@ -1269,7 +1606,7 @@ mod tests {
     /// text `toml` as a value of `expected`.
     fn decoded(rt: &Reader, expected: &FieldType, json: &str, toml: &str) -> [String; 2] {
         let parts = seed::Parts::finding();
-        let from_json = match seed::json_text(rt, expected, json.as_bytes(), &parts) {
+        let from_json = match seed::json_text(rt, expected, json.as_bytes(), &NO_KEYS, &parts) {
             Ok(decoded) => outcome(decoded),
             Err(e) => format!("Syntax {e}"),
         };
