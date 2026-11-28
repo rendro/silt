@@ -13,6 +13,7 @@
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 
 use super::queue::{Waiter, Wakes};
@@ -103,6 +104,12 @@ pub struct Channel {
     /// The stream function whose stage feeds it (`stream.map`, ...):
     /// a stream's channel is only read ([`Channel::fed_by`]).
     fed_by: OnceLock<&'static str>,
+    /// The channel its feeder passes on (`stream.from_fn`: the one its
+    /// function sends into), and whether the feeder holds a value it
+    /// took from there: a receive that finds this one empty while the
+    /// feeder holds none takes from there ([`Channel::relay_from`]). Set
+    /// once, when the channel is made.
+    relay: OnceLock<(Arc<Channel>, Arc<AtomicBool>)>,
     pub(super) state: Mutex<State>,
 }
 
@@ -172,6 +179,20 @@ impl State {
     }
 
     pub(super) fn receive(&mut self, wakes: &mut Wakes) -> TryReceive {
+        if let Some(taken) = self.take(wakes) {
+            return taken;
+        }
+        // A receive that finds nothing asks for a value, whether it
+        // waits for one or not: a later read gets it.
+        self.asked = true;
+        self.wake_feeders(wakes);
+        TryReceive::Empty
+    }
+
+    /// What a receive finds, if it finds something: the oldest value, or
+    /// the close of a channel that is closed and empty. `None` asks for
+    /// nothing.
+    fn take(&mut self, wakes: &mut Wakes) -> Option<TryReceive> {
         if let Some(value) = self.buf.pop_front() {
             // The place that came free goes to the oldest parked sender.
             match self.take_from_sender(wakes) {
@@ -180,21 +201,17 @@ impl State {
                 None if self.demand().is_some() => self.wake_feeders(wakes),
                 None => {}
             }
-            return TryReceive::Value(value);
+            return Some(TryReceive::Value(value));
         }
         if let Some(value) = self.take_from_sender(wakes) {
-            return TryReceive::Value(value);
+            return Some(TryReceive::Value(value));
         }
-        match &self.closed {
-            Some(close) => TryReceive::Closed(close.clone()),
-            None => {
-                // A receive that finds nothing asks for a value, whether
-                // it waits for one or not: a later read gets it.
-                self.asked = true;
-                self.wake_feeders(wakes);
-                TryReceive::Empty
-            }
-        }
+        self.closed.clone().map(TryReceive::Closed)
+    }
+
+    /// Whether the channel is empty and open.
+    fn is_empty_and_open(&self) -> bool {
+        self.buf.is_empty() && self.closed.is_none()
     }
 
     /// What a feeder that waits to be asked for a value finds:
@@ -327,6 +344,7 @@ impl Channel {
             timer: OnceLock::new(),
             from_outside: OnceLock::new(),
             fed_by: OnceLock::new(),
+            relay: OnceLock::new(),
             state: Mutex::new(State {
                 capacity,
                 buf: VecDeque::new(),
@@ -370,12 +388,62 @@ impl Channel {
         result
     }
 
-    /// Take the oldest value: from the buffer, or from a parked sender.
+    /// The channel's feeder passes on what is sent into `from`
+    /// (`stream.from_fn`), and `passing` holds while it has a value it
+    /// took from there and has not yet passed on (it is true from before
+    /// its take until after its send): a receive that does not wait, and
+    /// finds the channel empty while the feeder holds none, takes straight
+    /// from `from`, as the feeder would. Set once, when the channel is
+    /// made, before anybody reads it.
+    pub(crate) fn relay_from(&self, from: Arc<Channel>, passing: Arc<AtomicBool>) {
+        let _ = self.relay.set((from, passing));
+    }
+
+    /// Take the oldest value: from the buffer, or from a parked sender;
+    /// for a channel whose feeder relays another one
+    /// ([`Channel::relay_from`]) and holds no value it took, from that
+    /// one.
     pub fn try_receive(&self, wake: &dyn Wake) -> TryReceive {
         let mut wakes = Wakes::default();
-        let result = self.state.lock().receive(&mut wakes);
+        let result = match self.relay.get() {
+            Some((from, passing)) => self.receive_relayed(from, passing, &mut wakes),
+            None => self.state.lock().receive(&mut wakes),
+        };
         wakes.send(wake);
         result
+    }
+
+    /// [`Channel::try_receive`] of a channel whose feeder relays `from`.
+    /// Under the locks of both, so the feeder takes nothing from `from`
+    /// meanwhile: what it passes on and what is taken here come in the
+    /// order they were sent. Only while the feeder holds no value it took
+    /// (`passing`): one it is passing on comes first.
+    /// What `from` gives is that of the feeder's end too, once it is
+    /// closed and empty: the close, with the failure of what fed it. A
+    /// receive that finds both empty then asks for nothing: what is sent
+    /// into `from` later waits there for the next one, and the feeder
+    /// is woken only by a wait (it parks on the channel, which asks).
+    fn receive_relayed(
+        &self,
+        from: &Channel,
+        passing: &AtomicBool,
+        wakes: &mut Wakes,
+    ) -> TryReceive {
+        // In address order, as a wait on several channels locks them.
+        let (mut state, mut fed) = if std::ptr::from_ref(self) < std::ptr::from_ref(from) {
+            let state = self.state.lock();
+            (state, from.state.lock())
+        } else {
+            let fed = from.state.lock();
+            (self.state.lock(), fed)
+        };
+        // (Set before the feeder takes, under no lock: read under both,
+        // a take of the feeder's comes after this one, or is seen here.)
+        if state.is_empty_and_open() && !passing.load(Ordering::SeqCst) {
+            return fed.take(wakes).unwrap_or(TryReceive::Empty);
+        }
+        drop(fed);
+        state.receive(wakes)
     }
 
     /// Close the channel. Every parked sender and receiver is woken

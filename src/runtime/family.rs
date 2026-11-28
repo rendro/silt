@@ -1,7 +1,11 @@
 //! Who started whom, for a stop: a cancel of a task (a stop of the tasks
 //! of a call, a deadline's function let go of) also cancels every task
 //! it started that still runs, and theirs, whether or not the tasks
-//! between have ended (`Scheduler::cancel`).
+//! between have ended (`Scheduler::cancel`). Not the stage of a stream,
+//! nor what that started: a stream ends when its readers let it go, as
+//! every stream does, whoever built it. One that the stopped task still
+//! holds is let go of as the task ends; one it handed on (returned it,
+//! or sent it) stays whole for whoever has it.
 //!
 //! A task joins a tree when a task spawns it (`Scheduler::submit`), its
 //! spawner with it: a task that only `main` (or a front end) spawns, and
@@ -133,8 +137,9 @@ pub(crate) fn spawned(parent: &Arc<TaskHandle>, child: &Arc<TaskHandle>) -> bool
 /// The tasks below `handle` in its tree that have no result yet, each
 /// marked as cancelled ([`TaskHandle::mark_cancelled`]) before the lock
 /// is released. Below a task that has ended the search goes on: what
-/// that task spawned may still run. The caller has marked `handle`
-/// itself.
+/// that task spawned may still run. It does not go into a stream's
+/// stage: the stage is its stream's, and ends when the stream's readers
+/// let it go. The caller has marked `handle` itself.
 pub(crate) fn running_below(handle: &TaskHandle) -> Vec<Arc<TaskHandle>> {
     // (After the mark of `handle`: a first spawn of its task either is
     // seen here or sees the mark.)
@@ -156,8 +161,13 @@ pub(crate) fn running_below(handle: &TaskHandle) -> Vec<Arc<TaskHandle>> {
             let Some(node) = nodes.get(&key) else {
                 continue;
             };
+            let task = node.handle.upgrade();
+            if let Some(stage) = task.as_ref().filter(|task| task.stage_of().is_some()) {
+                ended.push(stage.clone());
+                continue;
+            }
             todo.extend(node.kids.iter().copied());
-            let Some(task) = node.handle.upgrade() else {
+            let Some(task) = task else {
                 continue;
             };
             if task.has_result() {
@@ -239,6 +249,36 @@ mod tests {
         assert!(leaf.is_cancelled());
         assert!(!done.is_cancelled() && !middle.is_cancelled());
         assert!(running_below(&leaf).is_empty());
+    }
+
+    /// A stream's stage, and what it spawned, are not found: a stage ends
+    /// when its stream's readers let it go, not with whoever built it.
+    #[test]
+    fn a_stage_and_what_it_spawned_are_not_found() {
+        let stage = || {
+            Arc::new(TaskHandle::new(0).of_stage(super::super::handle::StageOf {
+                name: "stream.map",
+                source: false,
+                at: None,
+                inputs: Arc::from([]),
+                output: 0,
+                relays: false,
+            }))
+        };
+        let (root, built, below_it, other) = (task(), stage(), task(), task());
+        assert!(!spawned(&root, &built));
+        assert!(!spawned(&built, &below_it));
+        assert!(!spawned(&root, &other));
+        assert_eq!(
+            ids(&running_below(&root)),
+            ids(std::slice::from_ref(&other))
+        );
+        assert!(!built.is_cancelled() && !below_it.is_cancelled());
+        // The stage's own stop still reaches what it spawned.
+        assert_eq!(
+            ids(&running_below(&built)),
+            ids(std::slice::from_ref(&below_it))
+        );
     }
 
     /// When the handle of a task between two is dropped, what it spawned

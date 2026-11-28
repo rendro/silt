@@ -213,6 +213,11 @@ struct Pipe {
     taking: Option<super::common::Taking>,
     /// The function such a sink calls again (`Again::Call`).
     callee: Option<Arc<crate::bytecode::VmClosure>>,
+    /// For a stage that relays (`stream.from_fn`'s source): set from
+    /// before it takes a value until it has passed the value on, so that
+    /// a read that does not wait takes from its input only while it holds
+    /// none (`Channel::relay_from`).
+    passing: Option<Arc<AtomicBool>>,
 }
 
 /// The stop that a stage on a connection is stopped with: run
@@ -292,6 +297,7 @@ impl Pipe {
             armed: None,
             taking: None,
             callee: None,
+            passing: None,
         }
     }
 
@@ -320,13 +326,16 @@ impl Pipe {
             let stage = failure.as_ref().and(self.handle.clone());
             let failed = failure.is_some();
             // A failure that comes after the output was closed reaches no
-            // reader: the function of `stream.from_fn` closed its channel
-            // itself and failed after that.
+            // reader: its stream had ended (the function of
+            // `stream.from_fn` closed its channel itself and failed after
+            // that). It is dismissed, as the failure of every stream that
+            // ended. (Before the task's end records it: whatever the
+            // reader does meanwhile, the same on every run.)
             if !out.close(Close { failure, stage }, wake)
                 && failed
                 && let Some(handle) = &self.handle
             {
-                handle.fails_after_its_output_closed();
+                handle.mark_read();
             }
         }
         for (input, open) in self.inputs.iter().zip(&self.open) {
@@ -400,6 +409,9 @@ impl Pipe {
                     return Ok(Step::park(wait));
                 }
                 Next::Take(index) => {
+                    if let Some(passing) = &self.passing {
+                        passing.store(true, Ordering::SeqCst);
+                    }
                     let input = &self.inputs[index];
                     match input.try_receive(vm.scheduler().wake()) {
                         TryReceive::Value(value) => Got::Value(index, value),
@@ -434,7 +446,12 @@ impl Pipe {
                         return Ok(Step::Done(Value::Unit));
                     };
                     match out.try_send(value, vm.scheduler().wake()) {
-                        TrySend::Sent => Got::Emitted,
+                        TrySend::Sent => {
+                            if let Some(passing) = &self.passing {
+                                passing.store(false, Ordering::SeqCst);
+                            }
+                            Got::Emitted
+                        }
                         // Nobody reads the output.
                         TrySend::Closed(_) => {
                             self.cut_short(vm);
@@ -619,21 +636,23 @@ fn stage(
     output: Output,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
-    stage_on(vm, name, inputs, output, None, false, logic)
+    stage_on(vm, name, inputs, output, None, None, logic)
 }
 
 /// Start a stage, as [`stage`] does, that works on a connection: `stop`
 /// is run when the stage is stopped, whenever that is: in a read,
 /// between two, or before the stage has run at all. A stage that
-/// `relays` only passes on what another task of the same call sends,
-/// which the deadlock report names instead (`stream.from_fn`).
+/// relays (`relay` is its [`Pipe::passing`]) only passes on what
+/// another task of the same call sends into its input, which the
+/// deadlock report names instead (`stream.from_fn`); a read that does
+/// not wait takes from that input itself (`Channel::relay_from`).
 fn stage_on(
     vm: &mut Vm,
     name: &'static str,
     inputs: Vec<Arc<Channel>>,
     output: Output,
     stop: Option<Arc<Armed>>,
-    relays: bool,
+    relay: Option<Arc<AtomicBool>>,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
     if vm.takes_nothing_new() {
@@ -654,7 +673,7 @@ fn stage_on(
         at: vm.place_here(),
         inputs: inputs.iter().map(|input| input.id()).collect(),
         output: out.id(),
-        relays,
+        relays: relay.is_some(),
     };
     let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(stage));
     // Whoever reads the output and stops reading stops the stage.
@@ -707,8 +726,12 @@ fn stage_on(
             }
         }
     });
+    if let (Some(passing), [input]) = (&relay, inputs.as_slice()) {
+        out.relay_from(input.clone(), passing.clone());
+    }
     let mut pipe = Pipe::new(name, inputs, logic);
     pipe.armed = armed;
+    pipe.passing = relay;
     pipe.out = Some(Arc::downgrade(&out));
     pipe.handle = Some(handle.clone());
     if drains {
@@ -909,7 +932,7 @@ fn reading(
     let mut failed = false;
     let mut items = std::collections::VecDeque::new();
     let stop = on.stop.clone().map(|stop| Arc::new(Armed::new(stop)));
-    stage_on(vm, name, vec![], SOURCE, stop, false, move |got| {
+    stage_on(vm, name, vec![], SOURCE, stop, None, move |got| {
         // The next item read, which ends the source if it is an error.
         fn emit(item: Value, failed: &mut bool) -> Next {
             *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
@@ -1415,7 +1438,10 @@ fn writing(
 /// asks for a value, as a transform does ([`STOPS`]), and emits it on the
 /// output. (A channel of capacity 0 between them, with the source
 /// working ahead instead, cost three times the time a value: the two
-/// tasks met at every send.)
+/// tasks met at every send.) A read that does not wait asks for nothing
+/// that comes later: it takes from that channel itself while the source
+/// waits to be asked (`Channel::relay_from`), so it gets what `feed` has
+/// sent, and the stream's end once `feed` has ended, as from any source.
 ///
 /// The program never has the output in `feed`'s hands: the source holds
 /// it weakly as every stage does, so a reader that lets it go stops the
@@ -1451,20 +1477,19 @@ fn fed_by_a_function(vm: &mut Vm, feed: Value) -> Result<Step, VmError> {
     // it returns or nobody reads the stream any more. A feeder that
     // returned is not cancelled: that would stop what it spawned and left
     // running. One that failed is, as every stage that is stopped: that
-    // dismisses a failure nobody will read, but for one that came after
-    // `feed` closed its channel, which is `feed`'s own.
+    // dismisses a failure nobody will read.
     let stop: Stop = Arc::new(move || {
         let returned = matches!(stopped.try_get(), Some(Ok(_)));
         if let Some(scheduler) = scheduler.upgrade()
             && !returned
-            && !stopped.failed_after_its_output_closed()
         {
             scheduler.cancel(&stopped);
         }
         true
     });
     let stop = Some(Arc::new(Armed::lasting(stop)));
-    let source = stage_on(vm, NAME, vec![into.clone()], STOPS, stop, true, |got| {
+    let passing = Some(Arc::new(AtomicBool::new(false)));
+    let source = stage_on(vm, NAME, vec![into.clone()], STOPS, stop, passing, |got| {
         Ok(match got {
             Got::Start | Got::Emitted => Next::Take(0),
             Got::Value(_, value) => Next::Emit(value),

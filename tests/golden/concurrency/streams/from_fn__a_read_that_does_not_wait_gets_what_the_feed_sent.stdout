@@ -1,0 +1,10 @@
+a: Message(1) Message(2) Message(3)
+a end: Closed
+a after: Closed None
+b first: Some(1)
+b: Message(2) Message(3)
+b end: Closed
+c before: Empty
+c: Message(1) Empty
+c: Message(2)
+c end: Closed

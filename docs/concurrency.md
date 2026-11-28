@@ -479,6 +479,13 @@ A task that a call started is stopped when the call no longer needs it:
 - the task that waits in the call is stopped itself: every task of the
   call.
 
+A stop reaches every task that the stopped task started. A stream it
+built ends as every stream does, when its readers let it go: one the
+task still holds goes with the task and is stopped with it; one it
+handed on (returned it, sent it on a channel, or put it in a value it
+returned or sent) stays whole for whoever has it. See
+[Stops](stdlib/channel-task.md#stops).
+
 A stop is no value in the work that is stopped, and no error: the work
 ends, `task.guard` does not catch it, and nothing after the place where
 it ended runs. The call that stopped it goes on.
@@ -713,7 +720,8 @@ other, never both: a receive under a deadline that gives `None` took no
 value, so a loop that tries again loses nothing. Whatever `work` waits
 for (I/O, a sleep, a channel, its own tasks, a stream), the deadline ends
 it; a function that never waits, one that only computes, is ended within
-about 2,000 steps; and what `work` started is stopped with it. A failure
+about 2,000 steps; and what `work` started is stopped with it, the
+streams it still holds too (a stream it handed on stays whole). A failure
 inside `work` is raised by `task.deadline`, in the caller. The value of
 `work` is inside the `Some`, so a function that returns a `Result` gives
 two layers. The rule, step by step, is in the reference:

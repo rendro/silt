@@ -284,9 +284,8 @@ codes! {
     /// `main` returned `Err(..)`.
     MainReturnedErr = "E0702", Runtime;
     /// A failure that nothing read: a stream stage failed and nobody read
-    /// its output; the function of a `stream.from_fn` failed after it
-    /// closed its channel; or the handler of an `http.serve` that a test
-    /// started called `process.exit`.
+    /// its output, or the handler of an `http.serve` that a test started
+    /// called `process.exit`.
     UnreadFailure = "E0703", Runtime;
     /// An instruction met a value of a kind it cannot work on: the
     /// typechecker let through a program it should have rejected.

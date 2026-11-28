@@ -712,8 +712,12 @@ gave `Ok` (the others), another task of the call failed, the time of a
 [`task.deadline`](#taskdeadline) passed (its function), nobody reads a
 `stream.from_fn` stream any more (its `feed`), or the task that waits in
 the call was stopped itself. A stop reaches every task that the stopped
-task started, in calls inside it however deep, and the stages of the
-streams it built. The call that stops tasks returns when they have
+task started, in calls inside it however deep. A stream that the
+stopped task built ends as every stream does, when its readers let it
+go: one that the task still holds goes with the task, and its stages are
+stopped with it; one that the task handed on (returned it, sent it on a
+channel, or put it in a value it returned or sent) stays whole for
+whoever has it. The call that stops tasks returns when they have
 ended, and every task below them: their last steps (below) have run.
 What comes after it (closing the channel the tasks sent on, counting
 what they sent, removing a file they wrote) sees everything they did.
@@ -897,9 +901,10 @@ which lists what takes and what gives).
   past that time are one count for the two. (A function whose time is
   already over cannot begin an inner deadline: the call ends it.)
 - **A deadline ends its function and what it started.** The tasks of the
-  calls inside the function (pieces, helpers, workers) and the stages of
-  the streams it built are stopped with it, however deep (see
-  [Stops](#stops)), and `task.deadline` answers when they have ended.
+  calls inside the function (pieces, helpers, workers) are stopped with
+  it, however deep, and so are the streams it still holds; a stream it
+  handed on stays whole (see [Stops](#stops)). `task.deadline` answers
+  when they have ended.
 - The value of `work` is inside the `Some`, so a function that returns a
   `Result` gives two layers: `Some(Err(io.NotFound(path)))` is a read that
   failed in time, `None` one that did not finish.
