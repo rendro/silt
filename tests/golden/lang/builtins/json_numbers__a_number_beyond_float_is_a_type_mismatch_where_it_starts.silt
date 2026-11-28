@@ -2,7 +2,8 @@
 -- number the field cannot hold: a type mismatch placed where the number
 -- starts, as one out of Int's range is, not a syntax error at its end.
 -- Every such number of a text is one, and a text that is no JSON after
--- one is still a syntax error.
+-- one is still a syntax error. Of a key written twice only the last
+-- value counts, a number beyond f64 too.
 import json
 import string
 
@@ -32,4 +33,7 @@ fn main() {
   println(json.parse("[1e-400, 2.5]", List(Float)))
   println(json.parse("""{"a": 1e400, "b": [01]}""", Fs))
   println(json.parse("""{"a": "1e400", "b": [1e400x]}""", Fs))
+  println(json.parse("""{"n": 1e400, "n": 1}""", json.Value))
+  println(json.parse("""{"n": 1, "n": 1e400}""", json.Value))
+  println(json.parse("""{"n": 1e400, "n": 1.5}""", F))
 }

@@ -9,3 +9,6 @@ Err(json type mismatch at line 1, column 7: expected Float, got a number out of 
 Ok([0.0, 2.5])
 Err(json syntax error at line 1, column 21: invalid number)
 Err(json syntax error at line 1, column 27: expected `,` or `]`)
+Ok(Object(#{ "n": Int(1) }))
+Err(json type mismatch at line 1, column 15: expected json.Value, got a number out of Float's range at n)
+Ok(F { n: 1.5 })

@@ -2298,20 +2298,19 @@ impl JsonSeed<'_> {
         self,
         mut entries: Entries<'de, A>,
     ) -> Result<Outcome, A::Error> {
-        let mut members = Vec::new();
-        let mut failed = false;
+        // (Of a key written twice only the last value counts, its error
+        // too: `{"a": 1e400, "a": 1}` is an object.)
+        let mut members = BTreeMap::new();
         while let Some(key) = entries.key()? {
             let at = self.at.key(&key);
             let member = entries.value(JsonSeed {
                 cx: self.cx,
                 at: &at,
             })?;
-            failed |= member.is_err();
-            members.push((Arc::<str>::from(key), member));
+            members.insert(Arc::<str>::from(key), member);
         }
-        if failed {
-            let sorted: BTreeMap<_, _> = members.into_iter().collect();
-            let first = sorted.into_values().find_map(Result::err);
+        if members.values().any(Result::is_err) {
+            let first = members.into_values().find_map(Result::err);
             return Ok(Err(first.expect("a member has no json.Value")));
         }
         let members = members
