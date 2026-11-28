@@ -229,7 +229,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn product(xs: List(a)) -> a where a: Number", "Product of a list of numbers (`a.from_int(1)` on empty)", list::product),
                 f("fn remove_at(xs: List(a), index: Int) -> Option(List(a))", "The list without the element at index, or None if there is none", list::remove_at),
                 f("fn reverse(xs: List(a)) -> List(a)", "Reverse element order", list::reverse),
-                f("fn scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)", "Prefix fold; returns all intermediate accumulators", list::scan),
+                f("fn scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)", "Running fold: the accumulator after each element", list::scan),
                 f("fn sequence(xs: List(m(a))) -> m(List(a)) where m: Applicative", "One Applicative value of the list of the values: the first failure, if there is one", list::sequence),
                 f("fn set(xs: List(a), index: Int, value: a) -> Option(List(a))", "The list with the element at index replaced, or None if there is none", list::set),
                 f("fn sort(xs: List(a)) -> List(a) where a: Compare", "Sort in natural order", list::sort),

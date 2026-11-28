@@ -662,8 +662,8 @@ import host
 
 /// A map that is held elsewhere when it is changed stays as it was:
 /// the map a fold starts from and `main` still holds, the map an
-/// update of it captures, each map of a `list.scan` (the first is the
-/// one it starts from), a map in a record.
+/// update of it captures, each map of a `list.scan` (each one step on
+/// from the one it starts from), a map in a record.
 #[test]
 fn a_map_held_elsewhere_stays_as_it_was_when_a_fold_changes_it() {
     let (program, given) = crate::session::testing::compile_given(
@@ -693,7 +693,7 @@ import host
         .run_program(&program)
         .expect("it runs");
     let ints = |ns: &[i64]| Value::list(ns.iter().map(|&n| int(n)).collect());
-    let steps: Vec<i64> = (0..=40).map(|i| 3_000 - 10 * i).collect();
+    let steps: Vec<i64> = (1..=40).map(|i| 3_000 - 10 * i).collect();
     let sums = ints(&[3_000, 6_000, 3_000 + 3_000 * 300, 3_000, 6_000]);
     assert_eq!(given.last(), Some(Value::tuple(vec![sums, ints(&steps)])));
 }
@@ -797,7 +797,7 @@ import host
         given,
         Value::tuple(vec![
             ints(&[100, 300, 200, 600, 200, 600, 100, 300, 200, 600, 303]),
-            ints(&[300, 301, 302, 303, 304, 305]),
+            ints(&[301, 302, 303, 304, 305]),
             ints(&[302, 301, 300]),
         ])
     );

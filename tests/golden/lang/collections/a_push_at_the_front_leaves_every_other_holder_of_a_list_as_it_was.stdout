@@ -15,7 +15,7 @@
 [x, ..acc] tree 6 set.fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
 [x, ..acc] tree 7 a step that sends the old one away: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)"]; made 207/691120/Some(2)
 [x, ..acc] tree 7 a step that keeps the old ones: ["206/688685/Some(0)", "205/688685/Some(1)", "204/264645/Some(2)", "203/721160/Some(0)", "202/721160/Some(2)", "201/842343/Some(1)", "200/731394/Some(199)"]; made 207/691120/Some(2)
-[x, ..acc] tree 7 list.scan: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)", "207/691120/Some(2)"]
+[x, ..acc] tree 7 list.scan: ["201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)", "207/691120/Some(2)"]
 [x, ..acc] tree 7 a step that sometimes gives it back: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/44705/Some(2)
 [x, ..acc] tree 7 a fold in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 249/744177/Some(1)
 [x, ..acc] tree 7 a step that reads it after the change: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
@@ -55,7 +55,7 @@
 [x, ..acc] small 6 set.fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
 [x, ..acc] small 7 a step that sends the old one away: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)"]; made 10/95549/Some(2)
 [x, ..acc] small 7 a step that keeps the old ones: ["9/411465/Some(0)", "8/411465/Some(1)", "7/879893/Some(2)", "6/877856/Some(0)", "5/877856/Some(2)", "4/30817/Some(1)", "3/1026/Some(1)"]; made 10/95549/Some(2)
-[x, ..acc] small 7 list.scan: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)", "10/95549/Some(2)"]
+[x, ..acc] small 7 list.scan: ["4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)", "10/95549/Some(2)"]
 [x, ..acc] small 7 a step that sometimes gives it back: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/381886/Some(2)
 [x, ..acc] small 7 a fold in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 52/51399/Some(1)
 [x, ..acc] small 7 a step that reads it after the change: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)
@@ -167,7 +167,7 @@ list.prepend tree 6 fold_until: same 200/731394/Some(199) -> 200/731394/Some(199
 list.prepend tree 6 set.fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 203/414140/Some(2)
 list.prepend tree 7 a step that sends the old one away: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)"]; made 207/691120/Some(2)
 list.prepend tree 7 a step that keeps the old ones: ["206/688685/Some(0)", "205/688685/Some(1)", "204/264645/Some(2)", "203/721160/Some(0)", "202/721160/Some(2)", "201/842343/Some(1)", "200/731394/Some(199)"]; made 207/691120/Some(2)
-list.prepend tree 7 list.scan: ["200/731394/Some(199)", "201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)", "207/691120/Some(2)"]
+list.prepend tree 7 list.scan: ["201/842343/Some(1)", "202/721160/Some(2)", "203/721160/Some(0)", "204/264645/Some(2)", "205/688685/Some(1)", "206/688685/Some(0)", "207/691120/Some(2)"]
 list.prepend tree 7 a step that sometimes gives it back: same 200/731394/Some(199) -> 200/731394/Some(199); made 205/44705/Some(2)
 list.prepend tree 7 a fold in a fold: same 200/731394/Some(199) -> 200/731394/Some(199); made 249/744177/Some(1)
 list.prepend tree 7 a step that reads it after the change: same 200/731394/Some(199) -> 200/731394/Some(199); made 207/691120/Some(2)
@@ -207,7 +207,7 @@ list.prepend small 6 fold_until: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/8
 list.prepend small 6 set.fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 6/182675/Some(2)
 list.prepend small 7 a step that sends the old one away: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)"]; made 10/95549/Some(2)
 list.prepend small 7 a step that keeps the old ones: ["9/411465/Some(0)", "8/411465/Some(1)", "7/879893/Some(2)", "6/877856/Some(0)", "5/877856/Some(2)", "4/30817/Some(1)", "3/1026/Some(1)"]; made 10/95549/Some(2)
-list.prepend small 7 list.scan: ["3/1026/Some(1)", "4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)", "10/95549/Some(2)"]
+list.prepend small 7 list.scan: ["4/30817/Some(1)", "5/877856/Some(2)", "6/877856/Some(0)", "7/879893/Some(2)", "8/411465/Some(1)", "9/411465/Some(0)", "10/95549/Some(2)"]
 list.prepend small 7 a step that sometimes gives it back: same 3/1026/Some(1) -> 3/1026/Some(1); made 8/381886/Some(2)
 list.prepend small 7 a fold in a fold: same 3/1026/Some(1) -> 3/1026/Some(1); made 52/51399/Some(1)
 list.prepend small 7 a step that reads it after the change: same 3/1026/Some(1) -> 3/1026/Some(1); made 10/95549/Some(2)

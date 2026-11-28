@@ -15,7 +15,7 @@ map.set tree 6 fold_until: same 100/39600 -> 100/39600; made 100/39609
 map.set tree 6 set.fold: same 100/39600 -> 100/39600; made 100/39609
 map.set tree 7 a step that sends the old one away: ["100/39600", "100/39603", "100/39608", "100/39609", "100/39609", "100/39609", "100/39609"]; made 100/39609
 map.set tree 7 a step that keeps the old ones: ["100/39609", "100/39609", "100/39609", "100/39609", "100/39608", "100/39603", "100/39600"]; made 100/39609
-map.set tree 7 list.scan: ["100/39600", "100/39603", "100/39608", "100/39609", "100/39609", "100/39609", "100/39609", "100/39609"]
+map.set tree 7 list.scan: ["100/39603", "100/39608", "100/39609", "100/39609", "100/39609", "100/39609", "100/39609"]
 map.set tree 7 a step that sometimes gives it back: same 100/39600 -> 100/39600; made 100/39606
 map.set tree 7 a fold in a fold: same 100/39600 -> 100/39600; made 100/39609
 map.set tree 7 a step that reads it after the change: same 100/39600 -> 100/39600; made 100/39609
@@ -55,7 +55,7 @@ map.set small 6 fold_until: same 3/102 -> 3/102; made 4/84
 map.set small 6 set.fold: same 3/102 -> 3/102; made 4/84
 map.set small 7 a step that sends the old one away: ["3/102", "3/96", "3/83", "4/84", "4/84", "4/84", "4/84"]; made 4/84
 map.set small 7 a step that keeps the old ones: ["4/84", "4/84", "4/84", "4/84", "3/83", "3/96", "3/102"]; made 4/84
-map.set small 7 list.scan: ["3/102", "3/96", "3/83", "4/84", "4/84", "4/84", "4/84", "4/84"]
+map.set small 7 list.scan: ["3/96", "3/83", "4/84", "4/84", "4/84", "4/84", "4/84"]
 map.set small 7 a step that sometimes gives it back: same 3/102 -> 3/102; made 4/90
 map.set small 7 a fold in a fold: same 3/102 -> 3/102; made 4/84
 map.set small 7 a step that reads it after the change: same 3/102 -> 3/102; made 4/84
@@ -95,7 +95,7 @@ map.update tree 6 fold_until: same 100/39600 -> 100/39600; made 100/39603
 map.update tree 6 set.fold: same 100/39600 -> 100/39600; made 100/39603
 map.update tree 7 a step that sends the old one away: ["100/39600", "100/39601", "100/39602", "100/39603", "100/39604", "100/39605", "100/39606"]; made 100/39607
 map.update tree 7 a step that keeps the old ones: ["100/39606", "100/39605", "100/39604", "100/39603", "100/39602", "100/39601", "100/39600"]; made 100/39607
-map.update tree 7 list.scan: ["100/39600", "100/39601", "100/39602", "100/39603", "100/39604", "100/39605", "100/39606", "100/39607"]
+map.update tree 7 list.scan: ["100/39601", "100/39602", "100/39603", "100/39604", "100/39605", "100/39606", "100/39607"]
 map.update tree 7 a step that sometimes gives it back: same 100/39600 -> 100/39600; made 100/39605
 map.update tree 7 a fold in a fold: same 100/39600 -> 100/39600; made 100/39649
 map.update tree 7 a step that reads it after the change: same 100/39600 -> 100/39600; made 100/39607
@@ -135,7 +135,7 @@ map.update small 6 fold_until: same 3/102 -> 3/102; made 4/105
 map.update small 6 set.fold: same 3/102 -> 3/102; made 4/105
 map.update small 7 a step that sends the old one away: ["3/102", "3/103", "3/104", "4/105", "4/106", "4/107", "4/108"]; made 4/109
 map.update small 7 a step that keeps the old ones: ["4/108", "4/107", "4/106", "4/105", "3/104", "3/103", "3/102"]; made 4/109
-map.update small 7 list.scan: ["3/102", "3/103", "3/104", "4/105", "4/106", "4/107", "4/108", "4/109"]
+map.update small 7 list.scan: ["3/103", "3/104", "4/105", "4/106", "4/107", "4/108", "4/109"]
 map.update small 7 a step that sometimes gives it back: same 3/102 -> 3/102; made 4/107
 map.update small 7 a fold in a fold: same 3/102 -> 3/102; made 4/151
 map.update small 7 a step that reads it after the change: same 3/102 -> 3/102; made 4/109
@@ -175,7 +175,7 @@ set.insert tree 6 fold_until: same 100/4950 -> 100/4950; made 103/6453
 set.insert tree 6 set.fold: same 100/4950 -> 100/4950; made 103/6453
 set.insert tree 7 a step that sends the old one away: ["100/4950", "101/5451", "102/5953", "103/6453", "103/6453", "103/6453", "103/6453"]; made 103/6453
 set.insert tree 7 a step that keeps the old ones: ["103/6453", "103/6453", "103/6453", "103/6453", "102/5953", "101/5451", "100/4950"]; made 103/6453
-set.insert tree 7 list.scan: ["100/4950", "101/5451", "102/5953", "103/6453", "103/6453", "103/6453", "103/6453", "103/6453"]
+set.insert tree 7 list.scan: ["101/5451", "102/5953", "103/6453", "103/6453", "103/6453", "103/6453", "103/6453"]
 set.insert tree 7 a step that sometimes gives it back: same 100/4950 -> 100/4950; made 102/5952
 set.insert tree 7 a fold in a fold: same 100/4950 -> 100/4950; made 103/6453
 set.insert tree 7 a step that reads it after the change: same 100/4950 -> 100/4950; made 103/6453
@@ -215,7 +215,7 @@ set.insert small 6 fold_until: same 3/6 -> 3/6; made 6/1509
 set.insert small 6 set.fold: same 3/6 -> 3/6; made 6/1509
 set.insert small 7 a step that sends the old one away: ["3/6", "4/507", "5/1009", "6/1509", "6/1509", "6/1509", "6/1509"]; made 6/1509
 set.insert small 7 a step that keeps the old ones: ["6/1509", "6/1509", "6/1509", "6/1509", "5/1009", "4/507", "3/6"]; made 6/1509
-set.insert small 7 list.scan: ["3/6", "4/507", "5/1009", "6/1509", "6/1509", "6/1509", "6/1509", "6/1509"]
+set.insert small 7 list.scan: ["4/507", "5/1009", "6/1509", "6/1509", "6/1509", "6/1509", "6/1509"]
 set.insert small 7 a step that sometimes gives it back: same 3/6 -> 3/6; made 5/1008
 set.insert small 7 a fold in a fold: same 3/6 -> 3/6; made 6/1509
 set.insert small 7 a step that reads it after the change: same 3/6 -> 3/6; made 6/1509
@@ -255,7 +255,7 @@ list.append tree 6 fold_until: same 200/19900/Some(199) -> 200/19900/Some(199); 
 list.append tree 6 set.fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 203/19903/Some(2)
 list.append tree 7 a step that sends the old one away: ["200/19900/Some(199)", "201/19901/Some(1)", "202/19903/Some(2)", "203/19903/Some(0)", "204/19905/Some(2)", "205/19906/Some(1)", "206/19906/Some(0)"]; made 207/19908/Some(2)
 list.append tree 7 a step that keeps the old ones: ["206/19906/Some(0)", "205/19906/Some(1)", "204/19905/Some(2)", "203/19903/Some(0)", "202/19903/Some(2)", "201/19901/Some(1)", "200/19900/Some(199)"]; made 207/19908/Some(2)
-list.append tree 7 list.scan: ["200/19900/Some(199)", "201/19901/Some(1)", "202/19903/Some(2)", "203/19903/Some(0)", "204/19905/Some(2)", "205/19906/Some(1)", "206/19906/Some(0)", "207/19908/Some(2)"]
+list.append tree 7 list.scan: ["201/19901/Some(1)", "202/19903/Some(2)", "203/19903/Some(0)", "204/19905/Some(2)", "205/19906/Some(1)", "206/19906/Some(0)", "207/19908/Some(2)"]
 list.append tree 7 a step that sometimes gives it back: same 200/19900/Some(199) -> 200/19900/Some(199); made 205/19906/Some(2)
 list.append tree 7 a fold in a fold: same 200/19900/Some(199) -> 200/19900/Some(199); made 249/19949/Some(1)
 list.append tree 7 a step that reads it after the change: same 200/19900/Some(199) -> 200/19900/Some(199); made 207/19908/Some(2)
@@ -295,7 +295,7 @@ list.append small 6 fold_until: same 3/6/Some(3) -> 3/6/Some(3); made 6/9/Some(0
 list.append small 6 set.fold: same 3/6/Some(3) -> 3/6/Some(3); made 6/9/Some(2)
 list.append small 7 a step that sends the old one away: ["3/6/Some(3)", "4/7/Some(1)", "5/9/Some(2)", "6/9/Some(0)", "7/11/Some(2)", "8/12/Some(1)", "9/12/Some(0)"]; made 10/14/Some(2)
 list.append small 7 a step that keeps the old ones: ["9/12/Some(0)", "8/12/Some(1)", "7/11/Some(2)", "6/9/Some(0)", "5/9/Some(2)", "4/7/Some(1)", "3/6/Some(3)"]; made 10/14/Some(2)
-list.append small 7 list.scan: ["3/6/Some(3)", "4/7/Some(1)", "5/9/Some(2)", "6/9/Some(0)", "7/11/Some(2)", "8/12/Some(1)", "9/12/Some(0)", "10/14/Some(2)"]
+list.append small 7 list.scan: ["4/7/Some(1)", "5/9/Some(2)", "6/9/Some(0)", "7/11/Some(2)", "8/12/Some(1)", "9/12/Some(0)", "10/14/Some(2)"]
 list.append small 7 a step that sometimes gives it back: same 3/6/Some(3) -> 3/6/Some(3); made 8/12/Some(2)
 list.append small 7 a fold in a fold: same 3/6/Some(3) -> 3/6/Some(3); made 52/55/Some(1)
 list.append small 7 a step that reads it after the change: same 3/6/Some(3) -> 3/6/Some(3); made 10/14/Some(2)
@@ -335,7 +335,7 @@ list.set tree 6 fold_until: same 200/19900/Some(1) -> 200/19900/Some(1); made 20
 list.set tree 6 set.fold: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
 list.set tree 7 a step that sends the old one away: ["200/19900/Some(1)", "200/19911/Some(12)", "200/19926/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)"]; made 200/19933/Some(12)
 list.set tree 7 a step that keeps the old ones: ["200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19926/Some(12)", "200/19911/Some(12)", "200/19900/Some(1)"]; made 200/19933/Some(12)
-list.set tree 7 list.scan: ["200/19900/Some(1)", "200/19911/Some(12)", "200/19926/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)"]
+list.set tree 7 list.scan: ["200/19911/Some(12)", "200/19926/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)", "200/19933/Some(12)"]
 list.set tree 7 a step that sometimes gives it back: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19922/Some(1)
 list.set tree 7 a fold in a fold: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
 list.set tree 7 a step that reads it after the change: same 200/19900/Some(1) -> 200/19900/Some(1); made 200/19933/Some(12)
@@ -375,7 +375,7 @@ list.set small 6 fold_until: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
 list.set small 6 set.fold: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
 list.set small 7 a step that sends the old one away: ["3/6/Some(2)", "3/16/Some(12)", "3/30/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)"]; made 3/36/Some(12)
 list.set small 7 a step that keeps the old ones: ["3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/30/Some(12)", "3/16/Some(12)", "3/6/Some(2)"]; made 3/36/Some(12)
-list.set small 7 list.scan: ["3/6/Some(2)", "3/16/Some(12)", "3/30/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)"]
+list.set small 7 list.scan: ["3/16/Some(12)", "3/30/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)", "3/36/Some(12)"]
 list.set small 7 a step that sometimes gives it back: same 3/6/Some(2) -> 3/6/Some(2); made 3/26/Some(2)
 list.set small 7 a fold in a fold: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)
 list.set small 7 a step that reads it after the change: same 3/6/Some(2) -> 3/6/Some(2); made 3/36/Some(12)

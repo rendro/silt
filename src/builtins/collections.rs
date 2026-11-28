@@ -870,14 +870,15 @@ pub(crate) mod list {
             )
         }
 
-        // The running value, and the list of the values it had, the
-        // initial one first.
+        // The running value, and the list of the values it took, one
+        // for each element (the initial one is not in it), as
+        // `stream.scan` sends them.
         fn scan(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.scan",
                 made(xs)?,
                 f.clone(),
-                (init.clone(), vec![init.clone()]),
+                (init.clone(), Vec::new()),
                 |(running, _), item, stack| acc_and_item(running, item, stack),
                 |(running, prefix), _, result| {
                     fits("list.scan", Kind::List, prefix.len() + 1)?;
@@ -1589,11 +1590,13 @@ mod cap_tests {
             "list.unfold(0) { n -> Some((n, n + 1)) }",
             "list.unfold: list exceeds maximum size of 3 elements",
         );
+        // One result for each element: a list scanned is as long as the
+        // list, so only a range can give one too long.
         refused(
-            "list.scan([1, 2, 3], 0) { a, x -> a + x }",
+            "list.scan(1..4, 0) { a, x -> a + x }",
             "list.scan: list exceeds maximum size of 3 elements",
         );
-        allowed("list.scan([1, 2], 0) { a, x -> a + x }", "[0, 1, 3]");
+        allowed("list.scan([1, 2, 3], 0) { a, x -> a + x }", "[1, 3, 6]");
         refused(
             "list.flat_map([1, 2]) { x -> [x, x] }",
             "list.flat_map: list exceeds maximum size of 3 elements",
