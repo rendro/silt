@@ -2011,6 +2011,23 @@ impl<'src> Parser<'src> {
         let doc = self.doc_for_span(span);
         self.expect(&Token::Fn)?;
         let (name, name_span) = self.expect_ident()?;
+        // A capital starts a type, a trait or a variant, never a
+        // function: a function named like a variant would never be
+        // called, or would hide the prelude's.
+        let text = intern::resolve(name);
+        if !self.cut_short && text.starts_with(char::is_uppercase) {
+            self.keep_or_count(
+                Diagnostic::error(
+                    Code::ExpectedToken,
+                    name_span,
+                    format!(
+                        "function '{text}' starts with a capital: a function's name starts with a \
+                         lower-case letter"
+                    ),
+                )
+                .with_help(format!("write `{}`", snake_case(&text))),
+            );
+        }
         let mut decl = FnDecl {
             name,
             params: Vec::new(),
