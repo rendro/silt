@@ -199,7 +199,9 @@ deadlocked fails with the deadlock report.
 `silt test` exits with code 0 if all tests pass and code 1 if any test fails.
 A run that finds no test fails too, with code 1: where there is no test file
 (`no test files found`), and where the test files hold no `test_*` function,
-as where `--filter` matches no test.
+as where `--filter` matches no test. So does a run in which every test found
+is skipped: a `skip_test_*` function is not run, and `silt test` writes
+`no test ran (1 skipped)` under the summary.
 
 A test does not end the run. A call of `process.exit` in a test, or in a task
 of a call it made, fails that test, whatever the code, and the run goes on with the
@@ -212,3 +214,19 @@ next test:
 
 To test a tool's exit code, test the function that decides it (one that
 returns the code), and let `main` pass it to `process.exit`.
+
+A run that is stopped, by Ctrl-C or by a SIGTERM (a CI job's time limit, say),
+names the test it was in and how long that test had run, then gives the
+summary so far, and exits with code 1:
+
+```text
+  PASS ./math_test.silt::test_addition
+  STOPPED ./math_test.silt::test_search (after 600.0 s)
+
+2 tests: 1 passed, 0 failed, 0 skipped, 1 stopped
+```
+
+A run stopped in a file's top-level code names the file
+(`STOPPED ./math_test.silt (in its top-level code, after 600.0 s)`). A test
+that asks for the stop signals with `process.stop_signals` gets the signal
+instead, while it holds the channel.

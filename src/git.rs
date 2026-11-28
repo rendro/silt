@@ -1538,9 +1538,10 @@ pub(crate) fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitEr
     })?;
 
     // Full clone (not shallow): the user picked a specific commit and
-    // we don't know whether `--depth=1` would include it. `--` ends
-    // option parsing so neither the URL nor the path can be read as an
-    // option.
+    // we don't know whether `--depth=1` would include it. The history
+    // is needed only to find the commit: the checkout keeps none of it
+    // (`finish_checkout`). `--` ends option parsing so neither the URL
+    // nor the path can be read as an option.
     let result = run_git(&["clone", "--quiet", "--", url, tmp_str])
         .and_then(|_| finish_checkout(url, &rev, &tmp, tmp_str));
     // Whatever happened, the temporary directory is this process's own:
@@ -1600,7 +1601,9 @@ fn make_writable(dir: &Path) -> std::io::Result<()> {
 }
 
 /// The rest of [`fetch_rev`] once `tmp` holds a clone: resolve `rev`,
-/// check the commit out, refuse symbolic links, move it into place.
+/// check the commit out, drop the clone's history (its `.git`: nothing
+/// reads it again, and the cache holds one checkout per commit), refuse
+/// symbolic links, move it into place.
 fn finish_checkout(
     url: &str,
     rev: &str,
@@ -1620,6 +1623,13 @@ fn finish_checkout(
     // `commit` is a full id here, which git reads as an object id even
     // if a ref of the same name exists.
     run_git(&["-C", tmp_str, "checkout", "--quiet", "--detach", &commit])?;
+    // The checkout is the commit's files and nothing else: a commit not
+    // in the cache is cloned again.
+    let history = tmp.join(".git");
+    remove_checkout(&history).map_err(|e| GitError::Io {
+        context: format!("remove the history {}", history.display()),
+        error: e,
+    })?;
     match crate::lockfile::checksum_path_source(tmp) {
         Ok(_) => {}
         Err(crate::lockfile::ChecksumError::Symlink(path)) => {

@@ -31,7 +31,8 @@ pub enum ProjectSetup {
 #[derive(Debug, Clone)]
 pub(crate) struct Package {
     pub id: PackageId,
-    /// `[package].name`, unique in a graph; `__local__` for a script.
+    /// `[package].name`; `__local__` for a script. Two packages of a
+    /// graph may have one name: each is known by its source.
     pub name: Symbol,
     /// The directory of its modules; `None` when there is no project.
     pub src: Option<PathBuf>,
@@ -65,6 +66,70 @@ impl Packages {
             .iter()
             .find(|(k, _, _)| *k == key)
             .map(|(_, id, _)| *id)
+    }
+
+    /// The name a message gives the package `id`: its own, and where
+    /// another package of the program has that name too, with the
+    /// dependency that brings it in (`utils (dependency `helpers` of
+    /// `lb`)`) or `(this package)`; where that is the text of another
+    /// package too (two dependents of one name, each with its own
+    /// `utils` under one key), with where it comes from as well
+    /// (`utils (dependency `utils` of `la`, from deps/u3)`). So the types
+    /// of two packages are never written alike.
+    pub(crate) fn shown_name(&self, id: PackageId) -> Symbol {
+        let Some(package) = self.packages.get(id.0 as usize) else {
+            return intern("");
+        };
+        let name = package.name;
+        if !(self.packages.iter()).any(|other| other.id != id && other.name == name) {
+            return name;
+        }
+        let label = self.labelled(id);
+        let coincides = (self.packages.iter())
+            .any(|other| other.id != id && other.name == name && self.labelled(other.id) == label);
+        match (coincides, self.place(id)) {
+            (true, Some(place)) => match label.strip_suffix(')') {
+                Some(open) => intern(&format!("{open}, from {place})")),
+                None => intern(&format!("{label} (from {place})")),
+            },
+            _ => intern(&label),
+        }
+    }
+
+    /// The name of the package `id` with the dependency that brings it
+    /// in, or `(this package)`: `utils (dependency `helpers` of `lb`)`.
+    fn labelled(&self, id: PackageId) -> String {
+        let name = crate::intern::resolve(self.package(id).name);
+        if id == self.root {
+            return format!("{name} (this package)");
+        }
+        let by = self.packages.iter().find_map(|from| {
+            let (key, _, _) = from.deps.iter().find(|(_, dep, _)| *dep == id)?;
+            Some((*key, from.name))
+        });
+        match by {
+            Some((key, from)) => format!(
+                "{name} (dependency `{}` of `{}`)",
+                crate::intern::resolve(key),
+                crate::intern::resolve(from)
+            ),
+            None => name.to_string(),
+        }
+    }
+
+    /// Where the package `id` comes from, in words: a fetched one by its
+    /// commit (`commit 0f1a42a`), any other by its directory from the
+    /// project's (`deps/u3`, `../u3`).
+    fn place(&self, id: PackageId) -> Option<String> {
+        let root = self.package(id).src.as_ref()?.parent()?;
+        if crate::git::is_in_cache(root) {
+            // A checkout's directory is named by its full commit id.
+            let commit = root.file_name()?.to_string_lossy().into_owned();
+            return Some(format!("commit {}", &commit[..commit.len().min(7)]));
+        }
+        let project = self.package(self.root).src.as_ref()?.parent()?;
+        crate::lockfile::relative_path(project, root)
+            .map(|path| crate::git::escape_for_display(&path))
     }
 
     /// One unnamed package whose modules are in `src`.

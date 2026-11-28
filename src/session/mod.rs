@@ -862,8 +862,7 @@ impl Session {
             }
             found
         };
-        let package_name = (packages.packages.get(module.package.0 as usize))
-            .map_or_else(|| intern(""), |package| package.name);
+        let package_name = packages.shown_name(module.package);
         let mut check = typechecker::check_module(
             &mut ast,
             ModuleContext {

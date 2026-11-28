@@ -8,6 +8,10 @@ use crate::vm::{Exit, VmError};
 
 mod stop;
 
+// (For `silt test`, which the wasm32 build has not.)
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use stop::when_untaken;
+
 builtins! {
     // What the exit does is the host's to say (`Vm::set_exit`).
     fn exit(vm, code: i64) -> Result<Value, VmError> {

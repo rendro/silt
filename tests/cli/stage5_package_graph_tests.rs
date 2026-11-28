@@ -818,9 +818,11 @@ fn silt_add_leaves_the_manifest_alone_when_resolution_fails() {
     let _ = fs::remove_dir_all(&ws);
 }
 
-/// Every package of a shared name is reported, not just the first two.
+/// Three packages of one name from three directories are three
+/// packages: each key names its own. FAILS on the base: "three
+/// different packages are named `x`".
 #[test]
-fn three_packages_of_one_name_are_all_reported() {
+fn three_packages_of_one_name_are_three_packages() {
     let ws = fresh_workspace("three_names");
     let app = ws.join("app");
     write_package(
@@ -838,26 +840,86 @@ fn three_packages_of_one_name_are_all_reported() {
         write_package(&ws.join(dir), "x", &[], "lib.silt", "pub fn f() { 1 }\n");
     }
 
-    let errors = resolve_packages(&app, LockPolicy::ReadOnly, &mut SourceMap::new())
-        .expect_err("three sources named `x`");
+    let graph = resolve_packages(&app, LockPolicy::ReadOnly, &mut SourceMap::new())
+        .expect("three sources named `x` are three packages");
 
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    let d = &errors[0];
-    assert_eq!(
-        d.message(),
-        "three different packages are named `x`",
-        "{d:?}"
+    assert_eq!(graph.packages.len(), 4, "{graph:?}");
+    let root = &graph.packages[graph.root.0 as usize];
+    let mut targets: Vec<u32> = root.deps.iter().map(|(_, id, _)| id.0).collect();
+    targets.sort();
+    targets.dedup();
+    assert_eq!(targets.len(), 3, "{graph:?}");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// Two packages named `utils` from two directories, each the private
+/// dependency of another package under its own key: the program runs,
+/// silt.lock pins both, a second `silt update` finds it up to date, and
+/// what `silt update` says names each. FAILS on the base: "two
+/// different packages are named `utils`".
+#[test]
+fn two_private_dependencies_of_one_name_are_two_packages() {
+    let ws = fresh_workspace("two_utils");
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &["la = { path = \"../la\" }", "lb = { path = \"../lb\" }"],
+        "main.silt",
+        "import la\nimport lb\nfn main() {\n  println(la.which())\n  println(lb.which())\n}\n",
     );
-    for dir in ["x1", "x2", "x3"] {
+    write_package(
+        &ws.join("la"),
+        "la",
+        &["utils = { path = \"../u1\" }"],
+        "lib.silt",
+        "import utils\npub fn which() { utils.which() }\n",
+    );
+    write_package(
+        &ws.join("lb"),
+        "lb",
+        &["helpers = { path = \"../u2\" }"],
+        "lib.silt",
+        "import helpers\npub fn which() { helpers.which() }\n",
+    );
+    for dir in ["u1", "u2"] {
+        let body = format!("pub fn which() {{ \"{dir}\" }}\n");
+        write_package(&ws.join(dir), "utils", &[], "lib.silt", &body);
+    }
+
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let said = stderr(&out).replace('\\', "/");
+    for dir in ["u1", "u2"] {
         assert!(
-            d.notes()
-                .iter()
-                .any(|n| n.replace('\\', "/").ends_with(&format!("{dir}/silt.toml"))),
-            "a note for {dir}: {d:?}"
+            said.contains(&format!("utils: added, path ../{dir}\n")),
+            "{said}"
         );
     }
-    // The primary span is the third key; the other two are labels.
-    assert_eq!(d.labels().len(), 2, "{d:?}");
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert_eq!(lock.matches("name = \"utils\"").count(), 2, "{lock}");
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(fs::read_to_string(app.join("silt.lock")).unwrap(), lock);
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "u1\nu2\n");
+
+    // One of them moves to another directory: that one is said to.
+    fs::rename(ws.join("u2"), ws.join("u3")).unwrap();
+    write_package(
+        &ws.join("lb"),
+        "lb",
+        &["helpers = { path = \"../u3\" }"],
+        "lib.silt",
+        "import helpers\npub fn which() { helpers.which() }\n",
+    );
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let said = stderr(&out).replace('\\', "/");
+    assert!(said.contains("utils (path ../u2): removed\n"), "{said}");
+    assert!(said.contains("utils: added, path ../u3\n"), "{said}");
+    assert!(!said.contains("u1"), "{said}");
     let _ = fs::remove_dir_all(&ws);
 }
 
@@ -1154,7 +1216,10 @@ fn one_repository_at_two_commits_is_said_so() {
              tag `v0.2.0`) and {} (dependency `b` of `app`, tag `v0.1.0`)\n",
             &second[..7],
             &first[..7]
-        )) && err.contains("make every dependency on `remote` point at the same source"),
+        )) && err.contains(
+            "a graph holds one copy of a repository: make every dependency on `remote` point at \
+             the same source"
+        ),
         "{err}"
     );
 
@@ -1508,6 +1573,38 @@ fn a_fetched_checkout_is_read_only() {
     assert!(fs::metadata(&lib).unwrap().permissions().readonly());
     // And it can be deleted, as the checksum error's help says.
     fs::remove_dir_all(&checkout).unwrap();
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A fetched checkout holds the commit's files and not the clone's
+/// history: the cache grows by the size of the code per commit, not by
+/// the whole repository's. FAILS on the base: each checkout kept its
+/// `.git`.
+#[test]
+fn a_fetched_checkout_holds_no_history() {
+    let ws = fresh_workspace("checkout_no_history");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, _) = app_with_a_cached_git_dependency(&ws);
+    let entries = |dir: &Path| {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(entries(&checkout), ["silt.toml", "src"]);
+    // `silt update` fetches it again, with no history either, and the
+    // program still runs from it.
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(entries(&checkout), ["silt.toml", "src"]);
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "from lib\n");
     let _ = fs::remove_dir_all(&ws);
 }
 

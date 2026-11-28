@@ -158,8 +158,10 @@ console; closing the console window, a logoff and a shutdown end the process
 as before. The playground has no signals: nothing is sent into the channel.
 
 The signals are the process's: under `silt test` a test that calls
-`stop_signals` takes them for the rest of the run, and in a program that a
-Rust program runs through the embedding API, they are the host's process's
+`stop_signals` takes the next one while it holds the channel, and a signal
+that no channel waits for stops the run, which names the test it was in (see
+[Exit Code](../language/testing.md#exit-code)); in a program that a Rust
+program runs through the embedding API, they are the host's process's
 signals.
 
 

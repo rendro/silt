@@ -52,7 +52,7 @@
 //!   - The current `toml` crate dep is configured `default-features =
 //!     false, features = ["parse"]` — adding `display` would pull in
 //!     extra serialization machinery we don't otherwise need.
-//!   - Stable, deterministic output (sorted by name, fixed key order,
+//!   - Stable, deterministic output (sorted by name, then by source, fixed key order,
 //!     literal "do not edit" header) is easier to produce by hand than
 //!     to coax out of a generic serializer. The format is small enough
 //!     (≤6 fields per package) that the manual writer is trivial.
@@ -77,7 +77,8 @@ pub struct Lockfile {
     /// don't silently misread a newer file.
     pub version: u32,
     /// All packages in the dep graph, including the local (root)
-    /// package. Sorted by name for stable output.
+    /// package. Sorted by name (and by source within a name) for stable
+    /// output.
     pub packages: Vec<LockedPackage>,
 }
 
@@ -95,6 +96,14 @@ pub struct LockedPackage {
     /// computed by `checksum_path_source` (internal). Only a git
     /// dependency has one: empty for the root and for a path dependency.
     pub checksum: String,
+}
+
+impl LockedPackage {
+    /// The order of a lockfile's entries: by name, and the packages of
+    /// one name (from different sources) by their source.
+    pub(crate) fn order(a: &LockedPackage, b: &LockedPackage) -> std::cmp::Ordering {
+        (a.name.cmp(&b.name)).then_with(|| a.source.order_text().cmp(&b.source.order_text()))
+    }
 }
 
 /// Where a locked package lives. The root entry uses `Local`; transitive
@@ -189,7 +198,9 @@ impl Lockfile {
                 .iter()
                 .map(|p| (p.name.clone(), p.version.clone(), p.source.clone()))
                 .collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            entries.sort_by(|a, b| {
+                (a.0.cmp(&b.0)).then_with(|| a.2.order_text().cmp(&b.2.order_text()))
+            });
             entries
         };
         key(self) == key(other)
@@ -202,7 +213,7 @@ impl Lockfile {
     pub(crate) fn same_places(&self, other: &Lockfile, base: &Path) -> bool {
         let sorted = |lock: &Lockfile| {
             let mut entries: Vec<LockedPackage> = lock.packages.clone();
-            entries.sort_by(|a, b| a.name.cmp(&b.name));
+            entries.sort_by(LockedPackage::order);
             entries
         };
         let (mine, theirs) = (sorted(self), sorted(other));
@@ -214,6 +225,18 @@ impl Lockfile {
 }
 
 impl LockedSource {
+    /// The text that orders the entries of one name
+    /// ([`LockedPackage::order`]).
+    fn order_text(&self) -> String {
+        match self {
+            LockedSource::Local => String::new(),
+            LockedSource::Path { path } => format!("path {}", path.to_string_lossy()),
+            LockedSource::Git {
+                url, resolved_sha, ..
+            } => format!("git {url} {resolved_sha}"),
+        }
+    }
+
     /// Whether `self` and `other` are one source: a path entry by the
     /// directory it names from `base`, however it is written.
     pub(crate) fn same_place(&self, other: &LockedSource, base: &Path) -> bool {
@@ -428,7 +451,7 @@ pub(crate) fn render_lockfile(lock: &Lockfile) -> String {
     out.push_str(LOCKFILE_HEADER);
     out.push_str(&format!("version = {}\n", lock.version));
     let mut sorted: Vec<&LockedPackage> = lock.packages.iter().collect();
-    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    sorted.sort_by(|a, b| LockedPackage::order(a, b));
     for pkg in sorted {
         out.push('\n');
         out.push_str("[[package]]\n");

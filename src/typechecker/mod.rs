@@ -2456,7 +2456,9 @@ pub(crate) struct ModuleContext<'a> {
     /// of the file can reach (`beta`, where the package depends on
     /// `alpha`, which depends on `beta`).
     pub(crate) farther_dependencies: Vec<FartherKey>,
-    /// The name of the package, from its `silt.toml`.
+    /// The name of the package, from its `silt.toml`, as messages write
+    /// it (`Packages::shown_name`: told apart from another package of
+    /// that name).
     pub(crate) package_name: Symbol,
     /// Its name, for diagnostics.
     pub(crate) module_name: Symbol,

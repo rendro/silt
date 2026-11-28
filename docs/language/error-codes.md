@@ -122,7 +122,7 @@ missing belong to codes that are gone.
 | `E0601` | A `silt.toml` that is not well-formed. |
 | `E0602` | A path dependency whose directory is not there. |
 | `E0603` | A dependency whose directory holds no `silt.toml`. |
-| `E0604` | Two different package sources with one `[package].name`. |
+| `E0604` | One repository required at two commits, or at one commit by URLs written in different ways. |
 | `E0605` | A dependency key equal to a module of the same package. |
 | `E0606` | A git dependency that cannot be resolved or fetched. |
 | `E0607` | A `silt.lock` that is not well-formed. |

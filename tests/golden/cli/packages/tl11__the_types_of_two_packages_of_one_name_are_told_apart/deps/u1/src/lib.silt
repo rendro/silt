@@ -1,0 +1,3 @@
+pub type Thing { n: Int }
+
+pub fn make() -> Thing { Thing { n: 1 } }
