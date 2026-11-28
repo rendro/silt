@@ -67,9 +67,10 @@ println(int.abs(min)) -- runtime error: integer overflow: abs(-92233720368547758
 ```
 
 A program that must go on when a number it was given does not fit
-asks first: `int.checked_add`, `int.checked_sub`, `int.checked_mul` and
-`int.checked_div` give `None` where the operator would end the program
-([int](../stdlib/int-float.md#intchecked_add-intchecked_sub-intchecked_mul-intchecked_div)).
+asks first: `int.checked_add`, `int.checked_sub`, `int.checked_mul`,
+`int.checked_div` and `int.checked_rem` give `None` where the operator
+would end the program
+([int](../stdlib/int-float.md#intchecked_add-intchecked_sub-intchecked_mul-intchecked_div-intchecked_rem)).
 
 ```silt
 import int

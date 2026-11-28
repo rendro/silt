@@ -153,6 +153,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn checked_add(a: Int, b: Int) -> Option(Int)", "`a + b`, or None where the sum is no Int", int::checked_add),
                 f("fn checked_div(a: Int, b: Int) -> Option(Int)", "`a / b` rounded down, or None for a division by zero or a quotient that is no Int", int::checked_div),
                 f("fn checked_mul(a: Int, b: Int) -> Option(Int)", "`a * b`, or None where the product is no Int", int::checked_mul),
+                f("fn checked_rem(a: Int, b: Int) -> Option(Int)", "`a % b` with the sign of `b`, or None for a division by zero", int::checked_rem),
                 f("fn checked_sub(a: Int, b: Int) -> Option(Int)", "`a - b`, or None where the difference is no Int", int::checked_sub),
                 f("fn clamp(x: Int, lo: Int, hi: Int) -> Int", "Clamp value to `[lo, hi]`", int::clamp),
                 f("fn max(a: Int, b: Int) -> Int", "Larger of two values", int::max),

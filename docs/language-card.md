@@ -432,6 +432,7 @@ int.bit_xor(a: Int, b: Int) -> Int
 int.checked_add(a: Int, b: Int) -> Option(Int)
 int.checked_div(a: Int, b: Int) -> Option(Int)
 int.checked_mul(a: Int, b: Int) -> Option(Int)
+int.checked_rem(a: Int, b: Int) -> Option(Int)
 int.checked_sub(a: Int, b: Int) -> Option(Int)
 int.clamp(x: Int, lo: Int, hi: Int) -> Int
 int.max(a: Int, b: Int) -> Int

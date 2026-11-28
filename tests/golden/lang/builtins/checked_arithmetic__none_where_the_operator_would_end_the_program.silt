@@ -1,4 +1,4 @@
--- int.checked_add, checked_sub, checked_mul and checked_div give the
+-- int.checked_add, checked_sub, checked_mul, checked_div and checked_rem give the
 -- operator's result where it is an Int, and None where the operator would
 -- end the program: a result past the Ints, a division by zero.
 import int
@@ -29,6 +29,14 @@ fn main() {
   println(show(int.checked_div(-7, 2)))
   println(show(int.checked_div(7, -2)))
   println(show(int.checked_div(-7, -2)))
+  -- A remainder by zero is None; every other one is an Int, with the
+  -- sign of the divisor, as % takes it.
+  println(show(int.checked_rem(7, 0)))
+  println(show(int.checked_rem(int.min_value, 0)))
+  println(show(int.checked_rem(int.min_value, -1)))
+  println(show(int.checked_rem(-7, 2)))
+  println(show(int.checked_rem(7, -2)))
+  println(show(int.checked_rem(-7, -2)))
   -- Where it fits, each is its operator.
   let pairs = [(7, 3), (-7, 3), (7, -3), (-7, -3), (0, 5), (123456789, -987)]
   list.each(pairs) { (a, b) ->
@@ -36,6 +44,7 @@ fn main() {
       && int.checked_sub(a, b) == Some(a - b)
       && int.checked_mul(a, b) == Some(a * b)
       && int.checked_div(a, b) == Some(a / b)
+      && int.checked_rem(a, b) == Some(a % b)
     println("{a} {b} {same}")
   }
   -- A sum of what a user typed, with its own error for one too large.

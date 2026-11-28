@@ -242,9 +242,9 @@ pub(crate) mod int {
             }
         }
 
-        // `a + b`, `a - b`, `a * b` and `a / b` as the operators
-        // compute them, `None` where the operator would end the program:
-        // a result outside the Ints, and a division by zero.
+        // `a + b`, `a - b`, `a * b`, `a / b` and `a % b` as the
+        // operators compute them, `None` where the operator would end the
+        // program: a result outside the Ints, and a division by zero.
         fn checked_add(a: i64, b: i64) -> Option<Value> {
             a.checked_add(b).map(Value::Int)
         }
@@ -262,6 +262,15 @@ pub(crate) mod int {
             match b {
                 0 => None,
                 b => crate::vm::arithmetic::floored_div(a, b).map(Value::Int),
+            }
+        }
+
+        // With the sign of `b`, as `%` takes it. Every Int over -1 leaves
+        // 0, so only a zero `b` gives None.
+        fn checked_rem(a: i64, b: i64) -> Option<Value> {
+            match b {
+                0 => None,
+                b => Some(Value::Int(crate::vm::arithmetic::floored_mod(a, b))),
             }
         }
 

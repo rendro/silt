@@ -20,6 +20,7 @@ the bits of an integer, and the limits of `Int`.
 | `checked_add` | `(Int, Int) -> Option(Int)` | `a + b`, or None where the sum is no Int |
 | `checked_div` | `(Int, Int) -> Option(Int)` | `a / b` rounded down, or None for a division by zero or a quotient that is no Int |
 | `checked_mul` | `(Int, Int) -> Option(Int)` | `a * b`, or None where the product is no Int |
+| `checked_rem` | `(Int, Int) -> Option(Int)` | `a % b` with the sign of `b`, or None for a division by zero |
 | `checked_sub` | `(Int, Int) -> Option(Int)` | `a - b`, or None where the difference is no Int |
 | `clamp` | `(Int, Int, Int) -> Int` | Clamp value to `[lo, hi]` |
 | `max` | `(Int, Int) -> Int` | Larger of two values |
@@ -80,20 +81,22 @@ fn main() {
 ```
 
 
-## `int.checked_add`, `int.checked_sub`, `int.checked_mul`, `int.checked_div`
+## `int.checked_add`, `int.checked_sub`, `int.checked_mul`, `int.checked_div`, `int.checked_rem`
 
 ```
 int.checked_add(a: Int, b: Int) -> Option(Int)
 int.checked_sub(a: Int, b: Int) -> Option(Int)
 int.checked_mul(a: Int, b: Int) -> Option(Int)
 int.checked_div(a: Int, b: Int) -> Option(Int)
+int.checked_rem(a: Int, b: Int) -> Option(Int)
 ```
 
-`a + b`, `a - b`, `a * b` and `a / b` as the operators compute them, as
-`Some(result)`, or `None` where the operator would end the program: a
-result that is no `Int` (beyond `int.max_value` or `int.min_value`), and
-for `checked_div` a division by zero too. `checked_div` rounds down, as `/`
-does. Use them where a number comes from outside the program and too
+`a + b`, `a - b`, `a * b`, `a / b` and `a % b` as the operators compute
+them, as `Some(result)`, or `None` where the operator would end the
+program: a result that is no `Int` (beyond `int.max_value` or
+`int.min_value`), and for `checked_div` and `checked_rem` a division by
+zero too. `checked_div` rounds down, as `/` does; `checked_rem` takes the
+sign of `b`, as `%` does, so only a zero `b` gives `None`. Use them where a number comes from outside the program and too
 large a one must be an error of its own, not the end of the program.
 
 ```silt
@@ -107,6 +110,8 @@ fn main() {
   println(int.checked_div(7, 0)) -- None
   println(int.checked_div(int.min_value, -1)) -- None
   println(int.checked_div(-7, 2)) -- Some(-4)
+  println(int.checked_rem(7, 0)) -- None
+  println(int.checked_rem(-7, 2)) -- Some(1)
 }
 ```
 
