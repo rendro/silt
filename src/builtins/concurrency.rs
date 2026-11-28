@@ -897,10 +897,10 @@ impl Joined {
         })))
     }
 
-    /// Stop every task that has not ended.
-    fn stop_the_rest(&self, vm: &mut Vm) {
-        for task in &self.tasks {
-            if !task.has_stopped() {
+    /// Stop every task that has not ended, but the one at `keep`.
+    fn stop_the_rest(&self, vm: &mut Vm, keep: Option<usize>) {
+        for (at, task) in self.tasks.iter().enumerate() {
+            if Some(at) != keep && !task.has_stopped() {
                 vm.scheduler().stop_task(task);
             }
         }
@@ -968,7 +968,14 @@ impl Native for Joined {
             }
             JoinedState::Settling => {
                 vm.woken()?;
-                self.stop_the_rest(vm);
+                // The piece that gave the first `Ok` of a
+                // `task.first_ok` is not stopped: it is ending, and
+                // what it gave (a stream it built) is the call's.
+                let keep = match &self.gives {
+                    Gives::FirstOk(race) => race.winner(),
+                    _ => None,
+                };
+                self.stop_the_rest(vm, keep);
                 self.state = JoinedState::Ending;
                 let wait = Wait::new(vec![Arm::Cell(self.together.ended())])
                     .unbounded()
@@ -986,7 +993,7 @@ impl Native for Joined {
     /// The caller was cancelled, or ended, or an error passes through
     /// the frame: what still runs of the call is stopped.
     fn abandon(&mut self, vm: &mut Vm) {
-        self.stop_the_rest(vm);
+        self.stop_the_rest(vm, None);
     }
 }
 
@@ -1063,8 +1070,8 @@ impl Native for MapWorker {
 
 /// The pieces of a `task.first_ok` and what they gave.
 struct Race {
-    /// The value of the first `Ok`.
-    won: Mutex<Option<Value>>,
+    /// The place of the piece that gave the first `Ok`, and its value.
+    won: Mutex<Option<(usize, Value)>>,
     /// The error of each piece that gave `Err`, in the order of the
     /// pieces.
     errs: Mutex<Vec<Option<Value>>>,
@@ -1074,7 +1081,7 @@ impl Race {
     /// `Ok` of the first `Ok`, or `Err` of every error if every piece
     /// gave `Err`.
     fn result(&self) -> Option<Value> {
-        if let Some(won) = self.won.lock().clone() {
+        if let Some((_, won)) = self.won.lock().clone() {
             return Some(Value::variant(bv::OK, [won]));
         }
         let errs = self
@@ -1085,10 +1092,16 @@ impl Race {
             .collect::<Option<Vec<_>>>()?;
         Some(Value::variant(bv::ERR, [Value::list(errs)]))
     }
+
+    /// The place of the piece that gave the first `Ok`, if one has.
+    fn winner(&self) -> Option<usize> {
+        self.won.lock().as_ref().map(|(at, _)| *at)
+    }
 }
 
 /// A piece of a `task.first_ok`: it calls its function and keeps what
-/// it gave. The first `Ok` settles the call, which stops the others.
+/// it gave. The first `Ok` settles the call, which stops the others
+/// (not this one: a stream it built and gave stays whole).
 struct Racer {
     /// The function, until it is called.
     work: Option<Value>,
@@ -1114,7 +1127,7 @@ impl Native for Racer {
                 };
                 let mut won = self.race.won.lock();
                 if won.is_none() {
-                    *won = Some(value.clone());
+                    *won = Some((self.at, value.clone()));
                     drop(won);
                     self.together.settle(vm.scheduler().wake());
                 }

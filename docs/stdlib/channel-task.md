@@ -674,7 +674,8 @@ task.first_ok(works: List(Fn() -> Result(a, e))) -> Result(a, List(e))
 
 Runs each function of `works` as a task, all at the same time. The first
 that gives `Ok(value)` wins: the others are stopped, and the call gives
-`Ok(value)` when they have ended. If every function gives an `Err`, the
+`Ok(value)` when they have ended. The winner is not stopped: a stream it
+built and gave in its `Ok` comes out whole. If every function gives an `Err`, the
 call gives `Err` of the list of their errors, in the order of `works`
 (not the order they ended in); `task.first_ok([])` is `Err([])`.
 

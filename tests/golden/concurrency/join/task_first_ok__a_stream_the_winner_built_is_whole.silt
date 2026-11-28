@@ -1,0 +1,42 @@
+-- The piece that gives the first Ok is not stopped with the others: a
+-- stream it built and gave comes out whole, every round, whether
+-- another piece still runs or it is the only one.
+import list
+import stream
+import task
+import time
+
+fn main() {
+  list.each(1..200) { i ->
+    let raced = task.first_ok(
+      [
+        { -> Ok(stream.from_list([1, 2, 3]) |> stream.map { x -> x * 2 }) },
+        { ->
+          time.sleep(time.ms(50))
+          Err("slow")
+        },
+      ],
+    )
+    match raced {
+      Ok(s) -> {
+        let got = stream.collect(s)
+        match got == [2, 4, 6] {
+          true -> ()
+          false -> println("round {i}: two pieces gave {got}")
+        }
+      }
+      Err(_) -> println("round {i}: no Ok")
+    }
+    match task.first_ok([{ -> Ok(stream.from_range(1, 3)) }]) {
+      Ok(s) -> {
+        let got = stream.collect(s)
+        match got == [1, 2, 3] {
+          true -> ()
+          false -> println("round {i}: one piece gave {got}")
+        }
+      }
+      Err(_) -> println("round {i}: no Ok")
+    }
+  }
+  println("done")
+}
