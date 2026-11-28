@@ -1209,6 +1209,37 @@ impl TypeChecker {
         }
     }
 
+    /// Of the alias `alias` with parameters, given where a type
+    /// constructor goes: `None` when it renames one, its first parameter
+    /// standing for the constructor's first type argument and in no other
+    /// place (`type Opt(a) = Option(a)`, `type Res(a, e) = Result(a, e)`);
+    /// else its target as a message writes it (`List((a, a))` of `type
+    /// Pairs(a) = List((a, a))`), which no constructor stands for.
+    pub(super) fn alias_no_constructor(&self, alias: TypeRef) -> Option<String> {
+        let info = self.tables.resolver.lookup_alias(alias)?;
+        let target = crate::types::canonical::canonicalize(&self.tables.resolver, &info.target);
+        if let (Some(&first), Some((_, rest, Type::Var(hole)))) =
+            (info.param_var_ids.first(), target.split_constructor())
+            && hole == first
+            && !rest.iter().any(|t| free_vars_in(t).contains(&first))
+        {
+            return None;
+        }
+        // (Its parameters by their names.)
+        let named: HashMap<TyVar, Type> = (info.param_var_ids.iter().zip(&info.params))
+            .map(|(var, name)| {
+                (
+                    *var,
+                    Type::Rigid(RigidId {
+                        var: *var,
+                        name: *name,
+                    }),
+                )
+            })
+            .collect();
+        Some(self.show_type(&substitute_vars(&target, &named)))
+    }
+
     /// The type of an argument of the type `arg_ty` for the parameter
     /// `param`: a type given to a `type m` that the callee's signature
     /// applies is the type constructor of the type (`Option(_)` for
@@ -1219,7 +1250,7 @@ impl TypeChecker {
     fn constructor_argument(
         &mut self,
         param: &Type,
-        (arg_ty, full): (Type, bool),
+        (arg_ty, full, alias): (Type, bool, Option<TypeRef>),
         callee: &Expr,
         shown: (&[String], usize),
         at: Span,
@@ -1246,6 +1277,24 @@ impl TypeChecker {
             || self.of_constructors(&given)
         {
             return arg_ty;
+        }
+        // An alias stands for a constructor only where it renames one:
+        // its target's head is not what `Pairs` of `type Pairs(a) =
+        // List((a, a))` means.
+        if !full
+            && let Some(alias) = alias
+            && let Some(target) = self.alias_no_constructor(alias)
+        {
+            let message = format!(
+                "'{}' is an alias of `{target}`, which no type constructor stands for: an \
+                 alias given for a type constructor renames one, its first parameter the \
+                 constructor's first type argument (`type Opt(a) = Option(a)`)",
+                alias.name
+            );
+            self.error(Code::KindMismatch, message, at);
+            // (The constructor is unknown: what the call gives is too.)
+            self.unify(m, &Type::Error, at);
+            return Type::Error;
         }
         match given.split_constructor().filter(|_| !full) {
             Some((head, rest, _)) => Type::type_of(Type::Con(head, rest)),
@@ -4039,7 +4088,17 @@ impl TypeChecker {
         let reported = self.errors.len();
         let arg_ty = match param {
             Some(param) => {
-                self.constructor_argument(param, (arg_ty, full), callee, (shown_args, i), arg.span)
+                let alias = (self.res_def(arg.res))
+                    .filter(|def| def.kind == crate::defs::DefKind::TypeAlias)
+                    .and(self.res_type(arg.res))
+                    .filter(|_| alone);
+                self.constructor_argument(
+                    param,
+                    (arg_ty, full, alias),
+                    callee,
+                    (shown_args, i),
+                    arg.span,
+                )
             }
             None => arg_ty,
         };

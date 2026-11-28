@@ -1,0 +1,15 @@
+-- An alias stands for a type constructor where it renames one, its
+-- first parameter the constructor's first type argument: `Opt` is
+-- `Option(_)`, `Res` is `Result(_, String)`.
+type Opt(a) = Option(a)
+type Res(a) = Result(a, String)
+
+fn lift(v: Int, type m) -> m(Int) where m: Applicative {
+  m.pure(v)
+}
+
+fn main() {
+  println(lift(3, Opt))
+  let r: Result(Int, String) = lift(4, Res)
+  println(r)
+}

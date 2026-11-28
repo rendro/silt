@@ -2040,6 +2040,21 @@ impl TypeChecker {
             return false;
         }
         let trait_name = self.impl_trait_name(ti);
+        // An alias stands for a type constructor only where it renames
+        // one (`type B(a) = Box(List(a))` is no constructor of `a`): no
+        // impl, so its methods owe no second error.
+        if holes.as_slice() == [0]
+            && let Some(target) = self.alias_no_constructor(written)
+        {
+            let message = format!(
+                "'{head}' is an alias of `{target}`, which no type constructor stands for: an \
+                 impl for a type constructor names one, or an alias that renames one, its \
+                 first parameter the constructor's first type argument (`type Opt(a) = \
+                 Option(a)`)"
+            );
+            self.error(Code::KindMismatch, message, ti.header_span);
+            return false;
+        }
         match holes.as_slice() {
             [0] => self.header_rest_are_variables(ti, &trait_name, &head),
             // No `_`, or one more after the first: the header with `_`

@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: 'Pairs' is an alias of `List((a, a))`, which no type constructor stands for: an alias given for a type constructor renames one, its first parameter the constructor's first type argument (`type Opt(a) = Option(a)`)
+-- stderr-contains: error[type]: 'Rev' is an alias of `Result(String, a)`, which no type constructor stands for
+-- stderr-contains: error[type]: 'B' is an alias of `Box(List(a))`, which no type constructor stands for: an impl for a type constructor names one, or an alias that renames one
+-- stderr-not-contains: _(
+-- stderr-not-contains: type mismatch
+-- An alias whose target's head is not what it means (`Pairs(Int)` is
+-- `List((Int, Int))`, not a `List` of `Int`) is refused where a type
+-- constructor goes: as an argument and as the type of an impl, with no
+-- error after it about the type the call or the method would have.
+type Pairs(a) = List((a, a))
+type Rev(a) = Result(String, a)
+
+type Box(a) {
+  held: a,
+}
+
+type B(a) = Box(List(a))
+
+fn lift(v: Int, type m) -> m(Int) where m: Applicative {
+  m.pure(v)
+}
+
+trait Functor for B(_) {
+  fn map(xs: B(a), f: Fn(a) -> b) -> B(b) { xs }
+}
+
+fn main() {
+  let z: List((Int, Int)) = lift(3, Pairs)
+  println(z)
+  let w: Rev(Int) = lift(3, Rev)
+  println(w)
+}
