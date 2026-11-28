@@ -1,0 +1,11 @@
+true
+false
+Err("negative -4")
+Ok(())
+None
+Some(())
+Some(5)
+[1]
+4
+21
+7

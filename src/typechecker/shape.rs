@@ -33,11 +33,39 @@ use crate::source::{FileId, Span};
 use crate::types::Type;
 
 /// The calls of the `list` module whose function is called on the
-/// elements of the list given first: a call of a member from such a
-/// closure, on the element, descends.
+/// elements of the list given first, one at a time, and on nothing
+/// else of the list (with the running value, for `fold`, `fold_until`
+/// and `scan`): a call of a member from such a closure, on the
+/// element, descends. (`sort_with` hands its function two elements;
+/// `unfold` has no list.)
 const ELEMENT_CALLS: &[&str] = &[
-    "each", "map", "flat_map", "fold", "filter", "find", "any", "all",
+    "all",
+    "any",
+    "drop_while",
+    "each",
+    "filter",
+    "filter_map",
+    "find",
+    "find_map",
+    "flat_map",
+    "fold",
+    "fold_until",
+    "group_by",
+    "map",
+    "max_by",
+    "min_by",
+    "scan",
+    "sort_by",
+    "take_while",
+    "traverse",
+    "try_each",
+    "try_each_option",
+    "unique_by",
 ];
+
+/// The calls of `ELEMENT_CALLS` whose function takes the running value
+/// first and the element second.
+const ACC_ELEMENT_CALLS: &[&str] = &["fold", "fold_until", "scan"];
 
 /// How many choices of descending parameters are tried for a group.
 const MAX_CHOICES: usize = 20_000;
@@ -1471,9 +1499,10 @@ impl<'a, 'd> Walk<'a, 'd> {
             )
             .with_help(
                 // (The calls the rule names, by the module's own name)
-                "a closure may call it only when it is handed to `list.each`, `list.map`, \
-                 `list.flat_map`, `list.fold`, `list.filter`, `list.find`, `list.any` or \
-                 `list.all` over a part of a parameter, with the element",
+                "a closure may call it only when it is handed to a `list` function that calls \
+                 it with one element at a time (`list.map`, `list.fold`, `list.fold_until`, \
+                 `list.find`, `list.try_each` and the others of their kind) over a part of a \
+                 parameter, with the element",
             )
             .with_help(deep_help),
             SiteKind::Call { tail: true, .. } => {
@@ -2073,9 +2102,14 @@ fn element_call(callee: &Expr) -> Option<usize> {
         return None;
     }
     let name = resolve(name);
+    let name = name.as_str();
     ELEMENT_CALLS
-        .contains(&name.as_str())
-        .then_some(if name == "fold" { 1 } else { 0 })
+        .contains(&name)
+        .then_some(if ACC_ELEMENT_CALLS.contains(&name) {
+            1
+        } else {
+            0
+        })
 }
 
 /// The strongly connected parts of the graph `edges` (Tarjan's).

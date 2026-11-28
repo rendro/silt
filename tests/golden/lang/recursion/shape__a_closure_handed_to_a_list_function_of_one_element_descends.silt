@@ -1,0 +1,123 @@
+-- A closure handed to a list function that calls it with one element
+-- at a time (and the running value, for list.fold_until and list.scan),
+-- over a part, may call the function on the element: its depth follows
+-- the data, as with list.fold. So may the function itself, passed.
+import list
+import map
+import option
+
+type Tree {
+  Node(Int, List(Tree))
+}
+
+fn find(t: Tree, want: Int) -> Bool {
+  match t {
+    Node(v, kids) -> match v == want {
+      true -> true
+      false -> list.fold_until(kids, false) { acc, k ->
+        match find(k, want) {
+          true -> Stop(true)
+          false -> Continue(acc)
+        }
+      }
+    }
+  }
+}
+
+fn check(t: Tree) -> Result((), String) {
+  match t {
+    Node(v, kids) -> match v < 0 {
+      true -> Err("negative {v}")
+      false -> list.try_each(kids) { k -> check(k) }
+    }
+  }
+}
+
+fn present(t: Tree) -> Option(()) {
+  match t {
+    Node(0, _) -> None
+    Node(_, kids) -> list.try_each_option(kids, present)
+  }
+}
+
+fn first_big(t: Tree) -> Option(Int) {
+  match t {
+    Node(v, kids) -> match v > 3 {
+      true -> Some(v)
+      false -> list.find_map(kids) { k -> first_big(k) }
+    }
+  }
+}
+
+fn odd_sizes(t: Tree) -> List(Int) {
+  match t {
+    Node(_, kids) -> list.filter_map(kids) { k ->
+      let n = size(k)
+      match n % 2 {
+        1 -> Some(n)
+        _ -> None
+      }
+    }
+  }
+}
+
+fn size(t: Tree) -> Int {
+  match t {
+    Node(_, kids) -> 1 + list.fold(kids, 0) { acc, k -> acc + size(k) }
+  }
+}
+
+fn small_front(t: Tree) -> Int {
+  match t {
+    Node(_, kids) -> {
+      let front = list.take_while(kids) { k -> small_front(k) < 3 }
+      let rest = list.drop_while(kids) { k -> small_front(k) < 3 }
+      1 + list.length(front) + list.length(rest)
+    }
+  }
+}
+
+fn keyed(t: Tree) -> Int {
+  match t {
+    Node(v, kids) -> {
+      let sorted = list.sort_by(kids) { k -> keyed(k) }
+      let unique = list.unique_by(kids) { k -> keyed(k) }
+      let groups = list.group_by(kids) { k -> keyed(k) % 2 }
+      let running = list.scan(kids, 0) { acc, k -> acc + keyed(k) }
+      let counted = list.length(sorted) + list.length(unique) + map.length(groups)
+      let top = list.max_by(kids) { k -> keyed(k) }
+      let low = list.min_by(kids) { k -> keyed(k) }
+      match (top, low) {
+        (Some(_), Some(_)) -> v + counted + option.unwrap_or(list.last(running), 0)
+        _ -> v
+      }
+    }
+  }
+}
+
+fn weight(t: Tree) -> Int {
+  match t {
+    Node(v, kids) -> {
+      let all = list.traverse(kids) { k -> Some(weight(k)) }
+      match all {
+        Some(ws) -> v + list.sum(ws)
+        None -> v
+      }
+    }
+  }
+}
+
+fn main() {
+  let t = Node(1, [Node(2, [Node(5, [])]), Node(3, []), Node(-4, [Node(0, [])])])
+  println(find(t, 5))
+  println(find(t, 9))
+  println(check(t))
+  println(check(Node(1, [Node(2, [])])))
+  println(present(t))
+  println(present(Node(1, [Node(2, [])])))
+  println(first_big(t))
+  println(odd_sizes(t))
+  println(small_front(t))
+  println(keyed(t))
+  println(weight(t))
+}

@@ -336,10 +336,18 @@ A part is a name a pattern binds strictly inside the parameter: `rest`
 in `[x, ..rest]`, `l` and `r` in `Node(l, v, r)`, a field read
 (`t.kids`), and so on down. The parameter's own name in an arm
 (`all -> ...`) is the whole value, not a part, and so is a name bound
-again by a `let`. A closure handed to `list.each`, `list.map`,
-`list.flat_map`, `list.fold`, `list.filter`, `list.find`, `list.any` or
-`list.all` over a part may call the function on the element, and
-`list.map(kids, walk)` passes it each element:
+again by a `let`. A closure handed over a part to a `list` function that
+calls it with one element at a time (and the running value, for
+`list.fold`, `list.fold_until` and `list.scan`) may call the function on
+the element, and `list.map(kids, walk)` passes it each element. Those
+functions are `list.all`, `list.any`, `list.drop_while`, `list.each`,
+`list.filter`, `list.filter_map`, `list.find`, `list.find_map`,
+`list.flat_map`, `list.fold`, `list.fold_until`, `list.group_by`,
+`list.map`, `list.max_by`, `list.min_by`, `list.scan`, `list.sort_by`,
+`list.take_while`, `list.traverse`, `list.try_each`,
+`list.try_each_option` and `list.unique_by`. A function of your own that
+does the same gets nothing: the function that hands it the closure is
+then a `deep fn`.
 
 ```silt
 import list
