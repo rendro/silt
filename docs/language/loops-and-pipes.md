@@ -466,6 +466,12 @@ ends with a runtime error and its call stack:
 error[runtime]: stack overflow: call frames take more than 128 MiB; this task holds 128 MiB
 ```
 
+The budget counts the frames, not all the memory a recursion uses: what
+each level keeps beside its frame takes about twice as much again, so a
+recursion that reaches the budget uses about three times it in memory
+(about 400 MB at the default 128 MiB) before it stops. A program that must
+stay in less memory sets a smaller budget.
+
 The budget is the program's, so where tasks recurse at the same time, the
 one whose frames ask for more once it is used up gets the error, and the
 error says how much of it that task holds itself. Each task gives back

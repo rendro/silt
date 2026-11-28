@@ -3,7 +3,7 @@ error[runtime]: stack overflow: call frames take more than 1 MiB; this task hold
     |
  10 |   [_, ..m] -> 1 + deep(x, m)
     |                   ^^^^^^^^^^ stack overflow: call frames take more than 1 MiB; this task holds 1 MiB
-  = help: a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own
+  = help: a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own; the budget counts the frames only, and a recursion that reaches it uses about three times as much memory
 
 call stack:
   -> deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:10:19

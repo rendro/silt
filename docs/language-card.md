@@ -186,7 +186,9 @@ fn main() {
 - Any other call takes a frame until it returns. The frames of a program
   and its tasks may take 128 MiB in all (`SILT_FRAME_BUDGET` sets
   another, in MiB), about 700,000 levels of `x + sum(rest)`; a recursion
-  that would take more is the runtime error "stack overflow".
+  that would take more is the runtime error "stack overflow". The budget
+  counts the frames only: a recursion that reaches it uses about three
+  times as much memory (about 400 MB at the default).
 - Functions that call themselves (or each other) are checked: every call
   among them a tail call is "constant stack"; else each call that keeps a
   frame must pass a part of a parameter (`rest` of `[x, ..rest]`, a
