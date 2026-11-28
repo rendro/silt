@@ -167,6 +167,10 @@ pub(super) struct Cells {
     /// The same of each method of an impl and default method of a trait
     /// of the committed cells, by its name (`Int.n`, `N.n`).
     method_uses: Vec<(String, HashSet<u16>)>,
+    /// Each top-level function the session binds now, as its cell's
+    /// check left it, with the cell's number: the recursion check of a
+    /// later cell reads it (`Cells::earlier_functions`).
+    functions: HashMap<Symbol, (usize, Arc<ast::FnDecl>)>,
 }
 
 impl Cells {
@@ -397,6 +401,25 @@ impl Cells {
         Some((def, self.globals.def(def)?))
     }
 
+    /// The top-level functions the committed cells bind, but those of the
+    /// names `replaced`, each with its global slot, in the order the
+    /// cells wrote them.
+    pub(super) fn earlier_functions(
+        &self,
+        replaced: &HashSet<Symbol>,
+    ) -> Vec<(Arc<ast::FnDecl>, u16)> {
+        let mut functions: Vec<(usize, u32, Arc<ast::FnDecl>, u16)> = (self.functions.iter())
+            .filter(|(name, _)| !replaced.contains(*name))
+            .filter_map(|(name, (n, f))| {
+                Some((*n, f.name_span.start, f.clone(), self.function(*name)?.1))
+            })
+            .collect();
+        functions.sort_by_key(|(n, start, ..)| (*n, *start));
+        (functions.into_iter())
+            .map(|(_, _, f, slot)| (f, slot))
+            .collect()
+    }
+
     /// What names the definition of the global slot `slot` of what the
     /// session binds now, but what a cell binds again (`replaced`): its
     /// functions and the `let`s whose closures name it, by name, then
@@ -513,7 +536,20 @@ impl Cells {
         }
         let names: Vec<Symbol> = info.own.iter().map(|(name, ..)| *name).collect();
         let wrapper = intern(&info.wrapper());
+        let n = info.n;
         self.note_uses(own, &names, wrapper);
+        for name in &names {
+            self.functions.remove(name);
+        }
+        for decl in own {
+            if let Decl::Fn(f) = decl
+                && f.name != wrapper
+                && !f.is_recovery_stub
+                && !f.is_signature_only
+            {
+                self.functions.insert(f.name, (n, Arc::new(f.clone())));
+            }
+        }
         self.installed.extend(
             modules
                 .iter()

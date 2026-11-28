@@ -29,7 +29,7 @@ use crate::ast::*;
 use crate::defs::{DefKind, DefTable, Res};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, resolve};
-use crate::source::Span;
+use crate::source::{FileId, Span};
 use crate::types::Type;
 
 /// The calls of the `list` module whose function is called on the
@@ -91,6 +91,56 @@ pub(crate) fn check(program: &Program, text: &str, defs: &DefTable) -> Shape {
     walk.finish(true)
 }
 
+/// What the check of a REPL entry sees of the entries before it: a
+/// function defined again with its type takes the old one's place for
+/// every caller, so a group can join functions of several entries.
+#[cfg(feature = "repl")]
+pub(crate) struct Earlier<'a> {
+    /// The functions the session binds that the entry does not bind
+    /// again, each with the text of its entry and its global slot.
+    pub(crate) functions: Vec<(&'a FnDecl, &'a str, u16)>,
+    /// The global slot of a definition of an earlier entry.
+    pub(crate) slot_of: &'a dyn Fn(crate::defs::DefId) -> Option<u16>,
+    /// The slots the entry's functions take, by name.
+    pub(crate) takes: HashMap<Symbol, u16>,
+}
+
+/// Check the REPL entry `program` as `check` does, with the functions
+/// of the entries before it: a group that a function of the entry is
+/// in is checked whole; one of earlier functions only was checked with
+/// its entry.
+#[cfg(feature = "repl")]
+pub(crate) fn check_entry<'a>(
+    program: &'a Program,
+    text: &'a str,
+    defs: &DefTable,
+    earlier: &Earlier<'a>,
+) -> Shape {
+    let mut walk = Walk::new(program, Some(text), Some(defs));
+    walk.slot_of = Some(earlier.slot_of);
+    for &(f, text, slot) in &earlier.functions {
+        walk.earlier_texts.insert(f.name_span.file, text);
+        walk.slot_node.insert(slot, walk.nodes.len());
+        walk.nodes.push(Node {
+            name: f.name,
+            name_span: f.name_span,
+            deep: f.deep,
+            top: true,
+            value: false,
+            params: &f.params,
+            body: &f.body,
+            earlier: true,
+        });
+    }
+    for (name, slot) in &earlier.takes {
+        if let Some(&n) = walk.top.get(name) {
+            walk.slot_node.insert(*slot, n);
+        }
+    }
+    walk.run(program);
+    walk.finish(true)
+}
+
 /// The verdicts of `program`'s recursive functions, for the editor.
 #[cfg_attr(not(feature = "lsp"), allow(dead_code))]
 pub(crate) fn verdicts(program: &Program) -> Vec<(Span, Symbol, Verdict)> {
@@ -115,6 +165,8 @@ struct Node<'a> {
     value: bool,
     params: &'a [Param],
     body: &'a Expr,
+    /// A function of an earlier REPL entry (or a closure in one).
+    earlier: bool,
 }
 
 /// What a local name is bound to, as far as the check cares.
@@ -211,6 +263,14 @@ impl Site {
 
 struct Walk<'a, 'd> {
     text: Option<&'a str>,
+    /// The texts of the earlier REPL entries whose functions are nodes.
+    earlier_texts: HashMap<FileId, &'a str>,
+    /// The global slot of a definition of an earlier REPL entry.
+    slot_of: Option<&'a dyn Fn(crate::defs::DefId) -> Option<u16>>,
+    /// The node of each global slot the nodes of a REPL entry's check
+    /// stand for: an earlier entry's function, or the entry's function
+    /// that takes its slot.
+    slot_node: HashMap<u16, usize>,
     defs: Option<&'d DefTable>,
     nodes: Vec<Node<'a>>,
     /// The top-level nodes by name.
@@ -282,6 +342,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                         value: false,
                         params: &f.params,
                         body: &f.body,
+                        earlier: false,
                     });
                 }
                 // A top-level `let` is a node whatever its value: `let g = f`
@@ -308,6 +369,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                             value: is_value,
                             params,
                             body,
+                            earlier: false,
                         });
                     }
                 }
@@ -352,6 +414,9 @@ impl<'a, 'd> Walk<'a, 'd> {
             .collect();
         Walk {
             text,
+            earlier_texts: HashMap::new(),
+            slot_of: None,
+            slot_node: HashMap::new(),
             defs,
             nodes,
             top,
@@ -537,6 +602,14 @@ impl<'a, 'd> Walk<'a, 'd> {
             // (The definition the name names is the node's when it is
             // declared where the node's name is: in a REPL entry a name
             // can still name an earlier entry's definition of it.)
+            // (A definition of an earlier REPL entry is the node of its
+            // global slot: its function, or the one that took its place.)
+            Some(Res::Def(id))
+                if let Some(slot_of) = self.slot_of
+                    && let Some(&n) = slot_of(id).and_then(|slot| self.slot_node.get(&slot)) =>
+            {
+                Some(n)
+            }
             Some(Res::Def(id)) => {
                 let declared_at =
                     |span: Span| self.defs.is_none_or(|defs| defs.get(id).span == span);
@@ -755,6 +828,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                         // call itself by the name.
                         (PatternKind::Ident(name), ExprKind::Lambda { params, body }) => {
                             let n = self.nodes.len();
+                            let earlier = self.node.is_some_and(|m| self.nodes[m].earlier);
                             self.nodes.push(Node {
                                 name: *name,
                                 name_span: pattern.span,
@@ -763,6 +837,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                                 value: false,
                                 params,
                                 body,
+                                earlier,
                             });
                             self.scopes.push((*name, Origin::Node(n)));
                             self.function(n);
@@ -1020,6 +1095,9 @@ impl<'a, 'd> Walk<'a, 'd> {
             to,
         } in std::mem::take(&mut self.let_go)
         {
+            if from.is_some_and(|n| self.nodes[n].earlier) {
+                continue;
+            }
             let looped = match (from, to) {
                 (Some(from), Some(to)) => {
                     self.nodes[from].deep.is_none()
@@ -1071,9 +1149,15 @@ impl<'a, 'd> Walk<'a, 'd> {
 
     // ── Text ────────────────────────────────────────────────────────
 
+    /// The text `span` is in: the program's, or an earlier REPL
+    /// entry's.
+    fn text_of(&self, span: Span) -> Option<&'a str> {
+        self.earlier_texts.get(&span.file).copied().or(self.text)
+    }
+
     /// The text of `span` on one line, cut short when it is long.
     fn shown(&self, span: Span) -> String {
-        let Some(text) = self.text else {
+        let Some(text) = self.text_of(span) else {
             return String::new();
         };
         let raw = text
@@ -1099,7 +1183,10 @@ impl<'a, 'd> Walk<'a, 'd> {
     // ── The groups ──────────────────────────────────────────────────
 
     fn finish(mut self, report: bool) -> Shape {
-        let groups = self.groups();
+        // (A group of an earlier REPL entry's functions only was checked
+        // with it.)
+        let mut groups = self.groups();
+        groups.retain(|members| members.iter().any(|&m| !self.nodes[m].earlier));
         self.let_go_helps(&groups);
         let mut verdicts = Vec::new();
         let mut grouped = HashSet::new();
@@ -1111,6 +1198,7 @@ impl<'a, 'd> Walk<'a, 'd> {
             for n in 0..self.nodes.len() {
                 if let Some(deep) = self.nodes[n].deep
                     && !grouped.contains(&n)
+                    && !self.nodes[n].earlier
                 {
                     let name = self.nodes[n].name;
                     self.diagnostics.push(
@@ -1542,7 +1630,9 @@ impl<'a, 'd> Walk<'a, 'd> {
     /// The `n` of an argument `n - 1` (an Int counted down), written as
     /// it is.
     fn counted_down(&self, span: Span) -> Option<String> {
-        let text = self.text?.get(span.start as usize..span.end as usize)?;
+        let text = self
+            .text_of(span)?
+            .get(span.start as usize..span.end as usize)?;
         let (n, k) = text.split_once('-')?;
         let (n, k) = (n.trim(), k.trim());
         let is_name = n.chars().all(|c| c.is_alphanumeric() || c == '_')
