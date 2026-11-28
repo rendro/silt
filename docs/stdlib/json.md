@@ -779,10 +779,13 @@ given, each field's name and not its key: `#{"owner.user_id": "userId"}`
 for the field `user_id` of the record in the field `owner`. A list, an
 `Option`, a map, a tuple or a variant on the way adds nothing to the path:
 the records of `tags: List(Tag)` have their fields at `tags.label`, the
-same key for every element. A field of a recursive type is named at
-each depth by its own path: for `type Node { label: String, kids:
-List(Node) }`, `label` is the label of the top node and `kids.label` the
-label of its children only. The map reaches no field of a type with a
+same key for every element. An entry holds at its path and at every
+depth below it where the same type comes again inside itself: for `type
+Node { label: String, kids: List(Node) }`, `#{"label": "Label"}` reads
+`Label` in every node of the tree. A longer entry of the same field wins
+below its own path (`kids.label` for every node but the top), and one type
+at two places that are not inside each other keeps an entry for each
+(`author.name` holds for the author, not the editor). The map reaches no field of a type with a
 `json.Decode` impl, which decodes its part itself: an entry whose path
 goes into such a type is a runtime error (``json.parse_with: the map names
 the field `tags.names`, and Tags decodes itself with its json.Decode

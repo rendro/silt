@@ -1,0 +1,22 @@
+-- An entry of json.parse_with's map holds at its path and at every depth
+-- below it where the same type comes again inside itself: "label" reads
+-- the key Label in every node of a tree. A longer entry of the same field
+-- wins below its own path; one type at two places that are not inside
+-- each other keeps an entry for each.
+import json
+
+type Node { label: String, kids: List(Node) }
+type Person { name: String }
+type Book { author: Person, editor: Person }
+
+fn main() {
+  let tree = """{"Label": "a", "kids": [{"Label": "b", "kids": [{"Label": "c", "kids": []}]}]}"""
+  println(json.parse_with(tree, #{"label": "Label"}, Node))
+  -- Below the top, kids.label wins, at every depth below it.
+  let mixed = """{"Label": "a", "kids": [{"Kid": "b", "kids": [{"Kid": "c", "kids": []}]}]}"""
+  println(json.parse_with(mixed, #{"label": "Label", "kids.label": "Kid"}, Node))
+  println(json.parse_with(mixed, #{"label": "Label"}, Node))
+  -- author is not inside editor: each place keeps its own entry.
+  let book = """{"author": {"Name": "Ann"}, "editor": {"name": "Bo"}}"""
+  println(json.parse_with(book, #{"author.name": "Name"}, Book))
+}

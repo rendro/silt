@@ -434,29 +434,44 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
 pub(crate) enum FieldPath<'a> {
     /// The document itself.
     Top,
-    /// The field of a record here.
-    Field(&'a FieldPath<'a>, &'a str),
+    /// The field of a record here, of the record type at its arguments
+    /// given.
+    Field(&'a FieldPath<'a>, &'a str, Record<'a>),
 }
 
+/// A record type at its type arguments, as the map's rules tell two
+/// apart.
+pub(crate) type Record<'a> = (TypeId, &'a [FieldType]);
+
 impl<'a> FieldPath<'a> {
-    /// The field `name` of a record here.
-    pub(crate) fn field(&'a self, name: &'a str) -> FieldPath<'a> {
-        FieldPath::Field(self, name)
+    /// The field `name` of a record of type `record` here.
+    pub(crate) fn field(&'a self, name: &'a str, record: Record<'a>) -> FieldPath<'a> {
+        FieldPath::Field(self, name, record)
     }
 
-    /// The path of the field `name` of a record here, as the map writes
-    /// it.
-    fn joined(&self, name: &str) -> std::string::String {
-        let mut names = vec![name];
+    /// The path as the map writes it (empty for the document).
+    fn text(&self) -> std::string::String {
+        let mut names = Vec::new();
         let mut here = self;
-        while let FieldPath::Field(up, field) = here {
-            names.push(field);
+        while let FieldPath::Field(up, field, _) = here {
+            names.push(*field);
             here = up;
         }
         names.reverse();
         names.join(".")
     }
 }
+
+/// The path of the field `name` of a record at the path `at`.
+fn joined(at: &str, name: &str) -> std::string::String {
+    match at {
+        "" => name.to_string(),
+        at => format!("{at}.{name}"),
+    }
+}
+
+/// A record the map's rules meet: its path, its type and its arguments.
+type Met = (std::string::String, TypeId, Vec<FieldType>);
 
 /// The key of the document each field is read from, by the path of the
 /// field: the map `json.parse_with` and `toml.parse_with` are given. A
@@ -468,14 +483,128 @@ pub(crate) struct Keys(std::collections::BTreeMap<std::string::String, std::stri
 pub(crate) static NO_KEYS: Keys = Keys(std::collections::BTreeMap::new());
 
 impl Keys {
-    /// The key the field `name` of a record at `path` is read from.
-    pub(crate) fn key<'k>(&'k self, path: &FieldPath, name: &'k str) -> &'k str {
+    /// The key the field `name` of a record of type `here` at `path`
+    /// is read from: the entry of its own path; else, where the type
+    /// comes again inside itself, the entry of the field at the nearest
+    /// record of the same type above it (so `label` holds at every
+    /// depth of `type Node { label: String, kids: List(Node) }`, and
+    /// `kids.label` below the top); else its own name.
+    pub(crate) fn key<'k>(&'k self, path: &FieldPath, here: Record, name: &'k str) -> &'k str {
         if self.0.is_empty() {
             return name;
         }
-        self.0
-            .get(&path.joined(name))
-            .map_or(name, |key| key.as_str())
+        if let Some(key) = self.0.get(&joined(&path.text(), name)) {
+            return key;
+        }
+        let mut at = path;
+        while let FieldPath::Field(up, _, record) = at {
+            if *record == here
+                && let Some(key) = self.0.get(&joined(&up.text(), name))
+            {
+                return key;
+            }
+            at = up;
+        }
+        name
+    }
+
+    /// As [`Keys::key`], for a record of type `here` at the path `path`
+    /// (`None` where no entry names a field at it), in the records
+    /// `above` (nearest first).
+    fn key_among(
+        &self,
+        path: Option<&str>,
+        here: Record,
+        above: &[Met],
+        name: &str,
+    ) -> std::string::String {
+        let own = path.and_then(|path| self.0.get(&joined(path, name)));
+        let below = || {
+            (above.iter())
+                .filter(|(_, id, args)| (*id, args.as_slice()) == here)
+                .find_map(|(at, _, _)| self.0.get(&joined(at, name)))
+        };
+        own.or_else(below)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Two fields of the record type `info` at its arguments `args` that
+    /// the map reads from one key, there: a runtime error of `caller`.
+    fn read_once(
+        &self,
+        caller: &str,
+        info: &TypeInfo,
+        args: &[FieldType],
+        path: Option<&str>,
+        above: &[Met],
+    ) -> Result<(), VmError> {
+        let here = (info.id, args);
+        let fields = info.fields();
+        let keys: Vec<std::string::String> = (fields.iter())
+            .map(|(field, _)| self.key_among(path, here, above, field))
+            .collect();
+        for (k, key) in keys.iter().enumerate() {
+            if let Some(j) = keys[..k].iter().position(|other| other == key) {
+                return Err(VmError::new(format!(
+                    "{caller}: the map reads the fields `{}` and `{}` of {} from one key, `{key}`",
+                    fields[j].0, fields[k].0, info.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Every record a document of the type can hold, as the map reads
+    /// it: each one at a path the map names a field below, at its path;
+    /// below those, every record type a field reaches once (no entry
+    /// names a field at its path, so what it is read with is fixed by
+    /// the records above).
+    fn read_once_everywhere(
+        &self,
+        walk: &mut Walk,
+        caller: &str,
+        path: &str,
+        info: &TypeInfo,
+        args: &[FieldType],
+        above: &[Met],
+    ) -> Result<(), VmError> {
+        self.read_once(caller, info, args, Some(path), above)?;
+        let named_below = |at: &str| {
+            (self.0.keys()).any(|entry| {
+                let up = entry.rsplit_once('.').map_or("", |(up, _)| up);
+                up == at || up.starts_with(&format!("{at}."))
+            })
+        };
+        let mut inside = vec![(path.to_string(), info.id, args.to_vec())];
+        inside.extend(above.iter().cloned());
+        for (field, ty) in info.fields() {
+            let at = joined(path, field);
+            let mut records = Vec::new();
+            walk.records(&ty.instantiated(args), &mut records, &mut Vec::new());
+            if named_below(&at) {
+                for (record, record_args) in records {
+                    self.read_once_everywhere(walk, caller, &at, &record, &record_args, &inside)?;
+                }
+                continue;
+            }
+            let mut seen: Vec<(TypeId, Vec<FieldType>)> = Vec::new();
+            while let Some((record, record_args)) = records.pop() {
+                if seen.contains(&(record.id, record_args.clone())) {
+                    continue;
+                }
+                seen.push((record.id, record_args.clone()));
+                self.read_once(caller, &record, &record_args, None, &inside)?;
+                for (_, ty) in record.fields() {
+                    walk.records(
+                        &ty.instantiated(&record_args),
+                        &mut records,
+                        &mut Vec::new(),
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Whether every field is read from the key of its own name.
@@ -527,33 +656,17 @@ impl Keys {
             keys.insert(path.to_string(), key.to_string());
         }
         let keys = Keys(keys);
-        // (Each record a path of the map leads to, its fields' keys.)
-        for path in keys.0.keys() {
-            let up = path.rsplit_once('.').map_or("", |(up, _)| up);
-            let names: Vec<&str> = up.split('.').filter(|name| !name.is_empty()).collect();
-            let key_of = |field: &str| {
-                let path = match up {
-                    "" => field.to_string(),
-                    up => format!("{up}.{field}"),
-                };
-                keys.0
-                    .get(&path)
-                    .cloned()
-                    .unwrap_or_else(|| field.to_string())
-            };
-            for (info, _) in records_at(rt, written, expected, &names, &mut Vec::new()) {
-                let fields = info.fields();
-                for (k, (field, _)) in fields.iter().enumerate() {
-                    let key = key_of(field);
-                    let twice = fields[..k].iter().find(|(other, _)| key_of(other) == key);
-                    if let Some((other, _)) = twice {
-                        return Err(VmError::new(format!(
-                            "{caller}: the map reads the fields `{other}` and `{field}` of {} from one key, `{key}`",
-                            info.name
-                        )));
-                    }
-                }
-            }
+        // (Every record of the document, its fields' keys.)
+        let mut own = Vec::new();
+        let mut walk = Walk {
+            rt,
+            written,
+            own: &mut own,
+        };
+        let mut tops = Vec::new();
+        walk.records(expected, &mut tops, &mut Vec::new());
+        for (info, args) in tops {
+            keys.read_once_everywhere(&mut walk, caller, "", &info, &args, &[])?;
         }
         Ok(keys)
     }

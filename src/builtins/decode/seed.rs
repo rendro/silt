@@ -1353,7 +1353,7 @@ impl<'s> Seed<'s> {
         let keys = self.cx.keys;
         let given: Option<Vec<&str>> = (!keys.is_empty()).then(|| {
             (fields.iter())
-                .map(|(name, _)| keys.key(self.path, name))
+                .map(|(name, _)| keys.key(self.path, (ty.id, args), name))
                 .collect()
         });
         let key_of = |k: usize| {
@@ -1372,7 +1372,7 @@ impl<'s> Seed<'s> {
                     let (name, field) = &fields[k];
                     let field = field.instantiated(args);
                     let at = self.at.key(key_of(k));
-                    let path = self.path.field(name);
+                    let path = self.path.field(name, (ty.id, args));
                     let from = parts.mark();
                     let seed = Seed {
                         cx: self.cx,
