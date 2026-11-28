@@ -366,7 +366,7 @@ their own, are two packages, and their types are two types (a message
 tells them apart: ``Thing of package utils (dependency `helpers` of `lb`)``).
 One repository at two commits is an error (E0604, "`utils` is required at
 two commits"), and so is one commit reached by URLs written in different
-ways: a program holds one copy of a library.
+ways: a program holds one copy of a repository.
 
 A package consumed as a dependency exposes `src/lib.silt` instead of
 `src/main.silt` (`silt init --lib` creates one). Such a library-only package has nothing to execute — `silt

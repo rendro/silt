@@ -1,0 +1,6 @@
+[package]
+name = "la"
+version = "0.1.0"
+
+[dependencies]
+utils = { path = "../u3" }

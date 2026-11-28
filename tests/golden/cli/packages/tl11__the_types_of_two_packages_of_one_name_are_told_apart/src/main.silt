@@ -1,12 +1,16 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type mismatch: expected Thing of package utils (dependency `helpers` of `lb`), got Thing of package utils (dependency `utils` of `la`)
--- Two packages named `utils`, each another package's private
--- dependency: their types are two types, told apart where a message
--- names them.
+-- stderr-contains: error[type]: type mismatch: expected Thing of package utils (dependency `helpers` of `lb`), got Thing of package utils (dependency `utils` of `la`, from deps/u1)
+-- stderr-contains: error[type]: type mismatch: expected Thing of package utils (dependency `utils` of `la`, from deps/u3), got Thing of package utils (dependency `utils` of `la`, from deps/u1)
+-- Packages named `utils`, each another package's private dependency:
+-- their types are distinct, and messages tell them apart. Two of them
+-- are brought in by two packages both named `la` under one key, so
+-- they are told apart by where they come from too.
 import la
 import lb
+import lc
 
 fn main() {
   println(lb.take(la.make()))
+  println(lc.take(la.make()))
 }

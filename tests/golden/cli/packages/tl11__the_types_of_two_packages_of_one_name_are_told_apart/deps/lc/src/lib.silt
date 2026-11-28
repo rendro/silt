@@ -1,0 +1,3 @@
+import utils
+
+pub fn take(t: utils.Thing) -> Int { t.n }
