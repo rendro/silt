@@ -246,18 +246,48 @@ pub(crate) trait Runner {
 #[cfg(unix)]
 static RUNNING_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+/// How long the watcher waits, after a SIGINT, for the command it runs to
+/// end by the same Ctrl-C before it sends SIGTERM: more than the second a
+/// command takes to write out what its program printed
+/// (`scheduler::LAST_WORDS`) and to report.
+#[cfg(unix)]
+const CTRL_C_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// On SIGTERM or SIGINT, stop the command the watcher runs, wait for it,
 /// and end the watcher by the same signal: killing the watcher leaves no
 /// orphaned program behind, and its parent sees it die of the signal. A
 /// signal the watcher was started with ignored stays ignored.
+///
+/// A SIGINT is most often a Ctrl-C at the terminal, which the command
+/// got too: it is given [`CTRL_C_GRACE`] to end by it (`silt test` says
+/// which test it stopped in) before it is sent SIGTERM, which would end
+/// it before it has said so.
 #[cfg(unix)]
 fn forward_termination_to_the_child() {
     extern "C" fn on_signal(signal: libc::c_int) {
         let pid = RUNNING_CHILD.load(std::sync::atomic::Ordering::SeqCst);
-        // SAFETY: kill(2), waitpid(2), signal(2) and raise(3) are
-        // async-signal-safe.
+        // SAFETY: kill(2), waitpid(2), nanosleep(2), signal(2) and
+        // raise(3) are async-signal-safe.
         unsafe {
-            if pid > 0 {
+            // Whether the command has ended (or was reaped by the
+            // watcher's own thread).
+            let ended = |pid| libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) != 0;
+            let mut gone = false;
+            if pid > 0 && signal == libc::SIGINT {
+                let step = libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: 10_000_000,
+                };
+                let steps = CTRL_C_GRACE.as_millis() / 10;
+                for _ in 0..steps {
+                    if ended(pid) {
+                        gone = true;
+                        break;
+                    }
+                    libc::nanosleep(&step, std::ptr::null_mut());
+                }
+            }
+            if pid > 0 && !gone {
                 libc::kill(pid, libc::SIGTERM);
                 libc::waitpid(pid, std::ptr::null_mut(), 0);
             }

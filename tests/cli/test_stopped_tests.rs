@@ -42,19 +42,27 @@ fn lines_of(read: impl std::io::Read + Send + 'static) -> Receiver<String> {
 
 /// Run `silt test h_test.silt` on `source` in a directory of its own.
 fn start(tag: &str, source: &str) -> Run {
+    start_with(tag, source, &["test", "h_test.silt"])
+}
+
+/// Run `silt <args>` with `source` as `h_test.silt` in a directory of
+/// its own, as the leader of a process group of its own (as a shell
+/// starts a command: a Ctrl-C at the terminal reaches the whole group).
+fn start_with(tag: &str, source: &str, args: &[&str]) -> Run {
     let dir = std::env::temp_dir().join(format!("silt-test-stopped-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("h_test.silt"), source).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-        .args(["test", "h_test.silt"])
+    let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
+    command
+        .args(args)
         .current_dir(&dir)
         .env("NO_COLOR", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("silt test starts");
+        .stderr(Stdio::piped());
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = command.spawn().expect("silt starts");
     let stdout = lines_of(child.stdout.take().unwrap());
     let stderr = lines_of(child.stderr.take().unwrap());
     Run {
@@ -88,6 +96,15 @@ impl Run {
         assert_eq!(unsafe { libc::kill(pid, signal) }, 0, "kill");
     }
 
+    /// Send `signal` to the run's whole process group, as a Ctrl-C at a
+    /// terminal does.
+    #[cfg(feature = "watch")]
+    fn signal_group(&self, signal: libc::c_int) {
+        let pid = libc::pid_t::try_from(self.child.id()).unwrap();
+        // SAFETY: kill(2) of the process group the child leads.
+        assert_eq!(unsafe { libc::kill(-pid, signal) }, 0, "kill");
+    }
+
     /// The exit code of the run, and every line of its stderr.
     fn finish(&mut self) -> (Option<i32>, Vec<String>) {
         let end = Instant::now() + LIMIT;
@@ -111,6 +128,13 @@ impl Run {
 
 impl Drop for Run {
     fn drop(&mut self) {
+        if let Ok(pid) = libc::pid_t::try_from(self.child.id()) {
+            // SAFETY: kill(2) of the process group the child leads
+            // (`start_with`): nothing it started outlives the test.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -230,4 +254,25 @@ fn test_spins() {
         Some("2 tests: 1 passed, 0 failed, 0 skipped, 1 stopped"),
         "{lines:?}"
     );
+}
+
+/// Ctrl-C at the terminal under `silt test --watch`: the watcher and
+/// the run it started both get the SIGINT; the watcher waits for the run
+/// to end by it, so the run still names the test it stopped in. FAILS
+/// on the base about half the time: the watcher's SIGTERM ended the run
+/// before it had said so. Four rounds.
+#[cfg(feature = "watch")]
+#[test]
+fn a_ctrl_c_under_watch_still_names_the_test() {
+    for round in 0..4 {
+        let tag = format!("watch{round}");
+        let mut run = start_with(&tag, SPINS, &["test", "--watch", "h_test.silt"]);
+        run.wait_for("spinning");
+        run.signal_group(libc::SIGINT);
+        let (_, lines) = run.finish();
+        assert!(
+            stopped_line(&lines, "test_b").is_some(),
+            "round {round}: {lines:?}"
+        );
+    }
 }
