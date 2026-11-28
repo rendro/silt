@@ -97,14 +97,14 @@ fn extract_http_response(val: &Value) -> Result<(u16, &[u8], &crate::value::Reco
     ) else {
         return Err(unsound("http.serve", "handler"));
     };
-    // A status has three digits, and the one of a response is final:
-    // 1xx only announces a response, and a client that got one would
-    // wait for the response itself.
+    // A status is one of RFC 9110's, 100 to 599, and the one of a
+    // response is final: 1xx only announces a response, and a client
+    // that got one would wait for the response itself.
     let status = match u16::try_from(given) {
-        Ok(status) if (200..=999).contains(&status) => status,
+        Ok(status) if (200..=599).contains(&status) => status,
         _ => {
             return Err(VmError::new(format!(
-                "Response.status out of range: {given} is not the status of a response (200..=999)"
+                "Response.status out of range: {given} is not the status of a response (200..=599)"
             )));
         }
     };
@@ -305,9 +305,10 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 ///   chunk length that is no number, a head that is too large, a body
 ///   that is all there and does not unpack): `InvalidResponse(why)`. The library
 ///   keeps the kinds of these to itself (`Protocol` holds a type it
-///   does not export), so the few of them that are about the request
-///   and not the response (a header of the program's that the protocol
-///   forbids) are `InvalidResponse` too.
+///   does not export); the few of them that are about the request and
+///   not the response (two `host` headers, a `host` or `authorization`
+///   that is no ASCII text) are refused before the request is sent
+///   ([`request_hops`]), as `Other`.
 /// - TLS: `Tls(why)`. A failed handshake reaches silt as a failure of
 ///   the socket with invalid data, around an error of the TLS library;
 ///   on an `https` URL that is `Tls`.
@@ -1125,6 +1126,30 @@ fn request_hops(
     ) {
         return invalid_url(format!("unknown method: {method_tag}"));
     }
+    // A header's name is the same in any case: two keys that differ in
+    // case alone (`User-Agent`, `user-agent`) are one header given twice,
+    // which the program means one value of.
+    // The transport reads a `host` and an `authorization` as ASCII text,
+    // and refuses another one after it has connected, as if the response
+    // were at fault: refused here, before anything is sent.
+    let mut names = std::collections::HashSet::new();
+    for (key, value) in headers {
+        let name = key.to_ascii_lowercase();
+        let why = match names.contains(&name) {
+            true => format!("the header {name} is given twice"),
+            false if matches!(name.as_str(), "host" | "authorization") && !value.is_ascii() => {
+                format!("the header {name} is no ASCII text")
+            }
+            false => {
+                names.insert(name);
+                continue;
+            }
+        };
+        return Value::variant(
+            bv::ERR,
+            [Value::variant(bv::HTTP_OTHER, [Value::string(why)])],
+        );
+    }
     let mut method = method_tag;
     let mut url = url.clone();
     let mut body = body;
@@ -1202,6 +1227,13 @@ fn request_hops(
                 .iter()
                 .any(|credential| key.eq_ignore_ascii_case(credential))
         });
+        // The program's `host` names the host it was given for: a request
+        // to another scheme, host or port names its own (as Go and curl
+        // send it).
+        let origin = |u: &Url| (u.scheme().to_string(), u.host().to_string(), u.port());
+        if origin(&next) != origin(&url) {
+            headers.retain(|(key, _)| !key.eq_ignore_ascii_case("host"));
+        }
         if let Ok(mut response) = result {
             drain(&mut response);
         }
@@ -2913,12 +2945,12 @@ mod http_response_tests {
 
     #[test]
     fn test_response_status_bounds() {
-        for status in [200, 404, 599, 999] {
+        for status in [200, 404, 599] {
             let val = make_response(status);
             assert_eq!(extract_http_response(&val).unwrap().0 as i64, status);
         }
-        // 1xx is no final status; a status has three digits.
-        for status in [0, 100, 101, 199, 1000, 65535] {
+        // 1xx is no final status; RFC 9110's statuses end at 599.
+        for status in [0, 100, 101, 199, 600, 999, 1000, 65535] {
             let val = make_response(status);
             let err = extract_http_response(&val).unwrap_err();
             assert!(

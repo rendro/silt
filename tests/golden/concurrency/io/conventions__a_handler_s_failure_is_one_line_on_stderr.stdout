@@ -1,3 +1,5 @@
 status: 500
+six: 500
+five: 599
 fail: 500
 after: 200

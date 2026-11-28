@@ -320,17 +320,32 @@ pub(crate) fn text(caller: &str, data: &Data, pretty: bool) -> Result<String, Vm
 /// `Int`'s range (`1`, `1.0`, `1e3`, `9223372036854775807.0`) is an
 /// `Int`. `at` is how far the numbers of the text are read: serde_json
 /// gives the values in the order the text has them, so the next number
-/// it gives is the next number token after `at`.
+/// it gives is the next number token after `at`. `finite`: the parser
+/// reads the text as [`finite_numbers`] has it, so the value of a number
+/// that is no integer is read from its digits too.
 #[derive(Clone, Copy)]
 pub(crate) struct Numerals<'t> {
     text: &'t [u8],
     at: &'t std::cell::Cell<usize>,
+    pub(crate) finite: bool,
 }
 
 impl<'t> Numerals<'t> {
     /// The numbers of the text `text`, read up to `at`.
-    pub(crate) fn new(text: &'t [u8], at: &'t std::cell::Cell<usize>) -> Numerals<'t> {
-        Numerals { text, at }
+    pub(crate) fn new(
+        text: &'t [u8],
+        at: &'t std::cell::Cell<usize>,
+        finite: bool,
+    ) -> Numerals<'t> {
+        Numerals { text, at, finite }
+    }
+
+    /// Where the number read last starts: the number ends where the
+    /// reading is, and is preceded by no byte of a number.
+    pub(crate) fn last_start(self) -> usize {
+        let text = &self.text[..self.at.get().min(self.text.len())];
+        let number = |b: &u8| matches!(b, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E');
+        text.len() - text.iter().rev().take_while(|b| number(b)).count()
     }
 
     /// The text of the next number of the document.
@@ -357,6 +372,88 @@ impl<'t> Numerals<'t> {
         self.at.set(i);
         &text[start..i]
     }
+}
+
+/// Whether `err`, of reading a JSON text, is serde_json's of a number
+/// beyond `f64` (`1e400`, 400 digits), which it refuses as no JSON.
+pub(crate) fn beyond_f64(err: &serde_json::Error) -> bool {
+    err.classify() == serde_json::error::Category::Syntax
+        && err.to_string().starts_with("number out of range")
+}
+
+/// The JSON text `text` with each number of it that is beyond `f64`
+/// written as one of the same length that is not (`1e000` for `1e400`),
+/// so that serde_json reads the document and its places stay; the
+/// decoder reads the number from its digits in `text` (`Numerals`),
+/// and a valid JSON number that no field can hold is a type mismatch,
+/// placed where it starts. A number that is no JSON (`01`) is kept.
+pub(crate) fn finite_numbers(text: &[u8]) -> Vec<u8> {
+    let mut out = text.to_vec();
+    let mut i = 0;
+    let mut in_string = false;
+    while let Some(&b) = text.get(i) {
+        match (in_string, b) {
+            (true, b'\\') => i += 1,
+            (_, b'"') => in_string = !in_string,
+            (false, b'-' | b'0'..=b'9') => {
+                let start = i;
+                while text
+                    .get(i)
+                    .is_some_and(|b| matches!(b, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E'))
+                {
+                    i += 1;
+                }
+                let number = &text[start..i];
+                let beyond = json_number(number)
+                    && std::str::from_utf8(number)
+                        .ok()
+                        .and_then(|n| n.parse::<f64>().ok())
+                        .is_some_and(f64::is_infinite);
+                if beyond {
+                    // (Such a number has five bytes at least: `1e309`.)
+                    let sign = usize::from(number[0] == b'-');
+                    let place = &mut out[start..i];
+                    place.fill(b'0');
+                    place[..sign].fill(b'-');
+                    place[sign] = b'1';
+                    place[sign + 1] = b'e';
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Whether `text` is a number as JSON writes one (RFC 8259):
+/// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`.
+fn json_number(text: &[u8]) -> bool {
+    let digits = |at: usize| text[at..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let mut at = usize::from(text.first() == Some(&b'-'));
+    match (text.get(at), digits(at)) {
+        (Some(b'0'), 1) => at += 1,
+        (Some(b'1'..=b'9'), n) => at += n,
+        _ => return false,
+    }
+    if text.get(at) == Some(&b'.') {
+        match digits(at + 1) {
+            0 => return false,
+            n => at += 1 + n,
+        }
+    }
+    if matches!(text.get(at), Some(b'e' | b'E')) {
+        at += 1;
+        if matches!(text.get(at), Some(b'+' | b'-')) {
+            at += 1;
+        }
+        match digits(at) {
+            0 => return false,
+            n => at += n,
+        }
+    }
+    at == text.len()
 }
 
 /// The `Int` the JSON number `text` is, decided on its digits: `None`

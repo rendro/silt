@@ -1,0 +1,89 @@
+-- timeout: 60
+-- requires-feature: http
+-- A `host` among a request's headers is sent instead of the URL's host,
+-- and so where a redirect leads on the same scheme, host and port. A
+-- redirect to another host or port names its own: the program's `host`
+-- named the host it was given for (Go and curl send it so). Two keys of
+-- the headers that are one name in another case are one header given
+-- twice: `Err(Other)`, and nothing is sent; so is a `host` or an
+-- `authorization` that is no ASCII text, which the transport cannot send.
+import bytes
+import http
+import list
+import map
+import string
+import task
+import tcp
+import url
+
+fn answer(server: String, a: Int, b: Int, req: http.Request) -> http.Response {
+  let host = match map.get(req.headers, "host") {
+    Some("app.example") -> "app.example"
+    Some(h) -> match h == "localhost:{a}" || h == "127.0.0.1:{b}" || h == "127.0.0.1:{a}" {
+      true -> "the URL's"
+      false -> "another: {h}"
+    }
+    None -> "none"
+  }
+  println("  {server}: {url.path(req.url)} host {host}")
+  match string.split(url.path(req.url), "/") {
+    ["", "to", class] -> {
+      let location = match class {
+        "host" -> "http://localhost:{a}/echo"
+        "port" -> "http://127.0.0.1:{b}/echo"
+        _ -> "/echo"
+      }
+      http.Response { status: 307, body: bytes.empty(), headers: #{ "location": location } }
+    }
+    _ -> http.Response { status: 200, body: bytes.empty(), headers: #{} }
+  }
+}
+
+fn show(answered: Result(http.Response, http.HttpError)) {
+  match answered {
+    Ok(resp) -> println("  the client: {resp.status}")
+    Err(http.Other(why)) -> println("  the client: Other: {why}")
+    Err(e) -> println("  the client: {e}")
+  }
+}
+
+fn main() {
+  when let Ok(la) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  when let Ok(lb) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let (a, b) = (tcp.local_port(la), tcp.local_port(lb))
+  let server_a = { -> http.serve(la) { req -> answer("A", a, b, req) } }
+  let server_b = { -> http.serve(lb) { req -> answer("B", a, b, req) } }
+  task.background([server_a, server_b]) { ->
+    list.each(["same", "host", "port"]) { class ->
+      println("GET {class}")
+      let link = url_of("http://127.0.0.1:{a}/to/{class}")
+      show(http.request(http.GET, link, bytes.empty(), #{ "Host": "app.example" }))
+    }
+    let echo = url_of("http://127.0.0.1:{a}/echo")
+    list.each(
+      [
+        #{ "Host": "a.example", "host": "b.example" },
+        #{ "User-Agent": "u1", "user-agent": "u2" },
+        #{ "x-a": "1", "X-A": "2", "x-b": "3" },
+        #{ "Host": "caf\u{e9}.example" },
+        #{ "authorization": "Basic caf\u{e9}" },
+      ],
+    ) { headers ->
+      println("GET refused {list.length(map.keys(headers))}")
+      show(http.request(http.GET, echo, bytes.empty(), headers))
+    }
+    println("GET once")
+    show(http.request(http.GET, echo, bytes.empty(), #{ "x-a": "1", "x-b": "2" }))
+  }
+}
+
+fn url_of(text: String) -> url.Url {
+  match url.parse(text) {
+    Ok(u) -> u
+    Err(e) -> panic("{e}")
+  }
+}

@@ -247,6 +247,8 @@ cases!(
     a_cursor_ends_at_a_batch_that_fails,
     a_statement_right_after_the_server_ends_its_sessions_runs,
     a_listen_nobody_waits_for_gives_its_connection_back,
+    a_listener_left_open_ends_with_its_program,
+    a_listener_ends_when_its_pool_is_closed,
     a_connect_nobody_waits_for_leaves_no_session,
     a_pool_statement_without_its_connection_is_not_sent,
     a_parameter_is_written_as_its_json_encode_impl_says,

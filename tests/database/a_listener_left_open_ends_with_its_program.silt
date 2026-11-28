@@ -1,0 +1,39 @@
+-- A program whose `main` returns ends, also when it did not close its
+-- listeners: one that nobody reads, and one whose channel is full (100
+-- notifications came for its 64 places). Before, the listener counted as
+-- pending for ever and the process never ended: the case failed at its
+-- time limit.
+import channel
+import env
+import list
+import postgres
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> match (postgres.listen(db, "silt_left_open"), postgres.listen(db, "silt_left_full")) {
+      (Ok(open), Ok(full)) -> {
+        list.each(1..100) { n ->
+          match postgres.notify(db, "silt_left_full", "{n}") {
+            Ok(_) -> ()
+            Err(e) -> println("notify: {e}")
+          }
+        }
+        match channel.receive(full) {
+          Some(n) -> println("the first: {n.payload}")
+          None -> println("the listener ended")
+        }
+        let _ = open
+        println("main returns")
+      }
+      _ -> println("listen failed")
+    }
+    Err(e) -> println("connect: {e}")
+  }
+}

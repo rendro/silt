@@ -114,6 +114,10 @@ pub(crate) struct Where {
     /// Whether the error is about the key at the end of the path, not
     /// its value: a key no field names is found where the key is.
     pub(crate) key: bool,
+    /// The offset of the value when the reader knew it as it read
+    /// ([`Error::at_offset`]): of a key written twice, a value the path
+    /// would not find (it finds the last).
+    pub(crate) exact: Option<usize>,
 }
 
 impl Where {
@@ -125,6 +129,7 @@ impl Where {
             line: 0,
             column: 0,
             key: false,
+            exact: None,
         }
     }
 
@@ -930,8 +935,20 @@ impl Error {
     /// it is the key at its end that is meant).
     pub(crate) fn locate(&mut self, find: impl FnOnce(&[Seg], bool) -> usize) {
         if let Some(at) = self.place_mut() {
-            at.offset = find(&at.path, at.key);
+            at.offset = match at.exact {
+                Some(offset) => offset,
+                None => find(&at.path, at.key),
+            };
         }
+    }
+
+    /// The error with the offset `offset` of its value, where the reader
+    /// knows it, found instead of by its path ([`Error::locate`]).
+    pub(crate) fn at_offset(mut self, offset: Option<usize>) -> Error {
+        if let Some(at) = self.place_mut() {
+            at.exact = offset;
+        }
+        self
     }
 
     /// The error with the line and the column of its offset in `text`,

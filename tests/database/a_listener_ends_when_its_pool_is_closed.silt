@@ -1,0 +1,35 @@
+-- `postgres.close(pool)` ends the pool's listeners: their channels are
+-- closed, so a task that waits on one gets `None`, and the program ends.
+-- Before, the listener kept its connection after the pool was closed,
+-- and the process never ended.
+import channel
+import env
+import postgres
+import task
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> match postgres.listen(db, "silt_pool_closed") {
+      Ok(events) -> {
+        let waiter = { ->
+          match channel.receive(events) {
+            Some(n) -> println("a notification: {n.payload}")
+            None -> println("the listener ended with its pool")
+          }
+        }
+        let closer = { -> postgres.close(db) }
+        task.join([waiter, closer])
+        println("main returns")
+      }
+      Err(e) -> println("listen: {e}")
+    }
+    Err(e) -> println("connect: {e}")
+  }
+}

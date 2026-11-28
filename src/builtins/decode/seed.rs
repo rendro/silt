@@ -216,6 +216,9 @@ pub(crate) fn json_text(
     text: &[u8],
     parts: &Parts,
 ) -> Result<Outcome, serde_json::Error> {
+    // The text as the parser reads it: once it has refused a number
+    // beyond `f64`, with such numbers made finite (`json::finite_numbers`).
+    let mut finite: Option<Vec<u8>> = None;
     loop {
         let at = Cell::new(0);
         let restart = Cell::new(false);
@@ -224,13 +227,13 @@ pub(crate) fn json_text(
             r,
             rules: &json::RULES,
             format: Format::Json,
-            digits: Digits::Text(json::Numerals::new(text, &at)),
+            digits: Digits::Text(json::Numerals::new(text, &at, finite.is_some())),
             marked: None,
             parts,
             restart: &restart,
             kept: &kept,
         };
-        let mut de = serde_json::Deserializer::from_slice(text);
+        let mut de = serde_json::Deserializer::from_slice(finite.as_deref().unwrap_or(text));
         let read = Seed {
             cx: &cx,
             expected,
@@ -238,6 +241,14 @@ pub(crate) fn json_text(
         }
         .deserialize(&mut de)
         .and_then(|decoded| de.end().map(|()| decoded));
+        if let Err(e) = &read
+            && finite.is_none()
+            && json::beyond_f64(e)
+        {
+            finite = Some(json::finite_numbers(text));
+            parts.restart();
+            continue;
+        }
         if !restart.get() {
             return read;
         }
@@ -585,6 +596,15 @@ impl Format {
         }
     }
 
+    /// What a float that is no finite number is, as a value of the
+    /// format: of JSON, a number beyond `f64` (`1e400`).
+    fn non_finite(self) -> &'static str {
+        match self {
+            Format::Json => "a number out of Float's range",
+            Format::Toml | Format::Csv => "a non-finite float",
+        }
+    }
+
     /// What the format calls the kind of a table (JSON's object).
     fn table(self) -> &'static str {
         match self {
@@ -622,20 +642,33 @@ impl Digits<'_> {
         }
     }
 
+    /// Where in the JSON text the number read last starts; `None` of
+    /// another reading.
+    fn number_start(self) -> Option<usize> {
+        match self {
+            Digits::Text(node) => Some(node.last_start()),
+            Digits::Read => None,
+        }
+    }
+
     /// The number the parser gave as the `f64` `f`: of a JSON text, an
-    /// `Int` when its digits are a whole number in `Int`'s range, and
-    /// one that is no finite `f64` is held as no number.
+    /// `Int` when its digits are a whole number in `Int`'s range; one
+    /// beyond `f64` is an infinite one, which no field holds.
     fn float(self, f: f64) -> Scalar<'static> {
         let Digits::Text(node) = self else {
             return Scalar::Float(f);
         };
-        if let Some(n) = json::exact_int(node.next_number()) {
+        let digits = node.next_number();
+        if let Some(n) = json::exact_int(digits) {
             return Scalar::Int(n);
         }
-        match f.is_finite() {
-            true => Scalar::Float(f),
-            false => Scalar::Null,
+        if !node.finite {
+            return Scalar::Float(f);
         }
+        let read = std::str::from_utf8(digits)
+            .ok()
+            .and_then(|d| d.parse().ok());
+        Scalar::Float(read.unwrap_or(f))
     }
 }
 
@@ -1050,7 +1083,8 @@ impl<'s> Seed<'s> {
                 Scalar::Int(n) => Ok(Value::Float(Float::from(n))),
                 Scalar::Float(f) => match Float::new(f) {
                     Some(f) => Ok(Value::Float(f)),
-                    None => Err(Error::mismatch("Float", "a non-finite float", at)),
+                    None => Err(Error::mismatch("Float", self.cx.format.non_finite(), at)
+                        .at_offset(self.cx.digits.number_start())),
                 },
                 _ => Err(mismatch("Float")),
             },
@@ -2211,8 +2245,9 @@ impl<'de> IntoDeserializer<'de, de::value::Error> for ContentDe<'de> {
 
 /// The reading of a part, `at` a path, into the `json.Value` that holds
 /// it: a written impl's part, or a part of type `json.Value`. A TOML
-/// float that is no number has none: a type mismatch at its own path
-/// (the first in the decoder's order: a table's keys sorted).
+/// float that is no number has none, nor a JSON number beyond `f64`: a
+/// type mismatch at its own path (the first in the order the parser
+/// gives the parts: a JSON text's, a TOML table's keys sorted).
 #[derive(Clone, Copy)]
 struct JsonSeed<'s> {
     cx: &'s Cx<'s>,
@@ -2233,8 +2268,13 @@ impl JsonSeed<'_> {
     /// The `json.Value` of `scalar`.
     fn scalar(&self, scalar: Scalar) -> Outcome {
         match scalar {
+            // (Placed where the number starts: of a key written twice, the
+            // first value may be the one at fault.)
             Scalar::Float(f) if !f.is_finite() => {
-                Err(Error::mismatch("json.Value", "a non-finite float", self.at))
+                Err(
+                    Error::mismatch("json.Value", self.cx.format.non_finite(), self.at)
+                        .at_offset(self.cx.digits.number_start()),
+                )
             }
             scalar => Ok(scalar.json()),
         }
@@ -2272,25 +2312,31 @@ impl JsonSeed<'_> {
         self,
         mut entries: Entries<'de, A>,
     ) -> Result<Outcome, A::Error> {
-        let mut members = Vec::new();
-        let mut failed = false;
+        // The first member that has none, in the order the members come
+        // (a JSON text's), is the error, also one of a key written again
+        // later: `{"a": 1e400, "a": 1}` is the error of its `1e400`, so
+        // the outcome does not depend on what follows.
+        let mut members = BTreeMap::new();
+        let mut error = None;
         while let Some(key) = entries.key()? {
             let at = self.at.key(&key);
             let member = entries.value(JsonSeed {
                 cx: self.cx,
                 at: &at,
             })?;
-            failed |= member.is_err();
-            members.push((Arc::<str>::from(key), member));
+            match member {
+                Ok(member) => {
+                    members.insert(Arc::<str>::from(key), member);
+                }
+                Err(e) => {
+                    error.get_or_insert(e);
+                }
+            }
         }
-        if failed {
-            let sorted: BTreeMap<_, _> = members.into_iter().collect();
-            let first = sorted.into_values().find_map(Result::err);
-            return Ok(Err(first.expect("a member has no json.Value")));
+        if let Some(e) = error {
+            return Ok(Err(e));
         }
-        let members = members
-            .into_iter()
-            .map(|(key, member)| (Value::string(key), member.expect("no member failed")));
+        let members = (members.into_iter()).map(|(key, member)| (Value::string(key), member));
         Ok(Ok(Value::variant(bv::JSON_OBJECT, [Value::map(members)])))
     }
 }

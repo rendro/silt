@@ -646,6 +646,18 @@ fn checked_host(host: &str, scheme: &str, named: bool) -> Result<String, Fault> 
                 label_start,
             ));
         }
+        if label.starts_with('-') {
+            return Err(Fault::new(
+                "a label of a host name does not start with `-`",
+                label_start,
+            ));
+        }
+        if label.ends_with('-') {
+            return Err(Fault::new(
+                "a label of a host name does not end with `-`",
+                label_start + label.len() - 1,
+            ));
+        }
         label_start += label.len() + 1;
     }
     let last = name.rsplit('.').next().unwrap_or(name);
