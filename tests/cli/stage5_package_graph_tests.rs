@@ -1511,6 +1511,38 @@ fn a_fetched_checkout_is_read_only() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// A fetched checkout holds the commit's files and not the clone's
+/// history: the cache grows by the size of the code per commit, not by
+/// the whole repository's. FAILS on the base: each checkout kept its
+/// `.git`.
+#[test]
+fn a_fetched_checkout_holds_no_history() {
+    let ws = fresh_workspace("checkout_no_history");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, _) = app_with_a_cached_git_dependency(&ws);
+    let entries = |dir: &Path| {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(entries(&checkout), ["silt.toml", "src"]);
+    // `silt update` fetches it again, with no history either, and the
+    // program still runs from it.
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(entries(&checkout), ["silt.toml", "src"]);
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "from lib\n");
+    let _ = fs::remove_dir_all(&ws);
+}
+
 /// The checksum of the one git dependency in the app's silt.lock.
 fn locked_checksum(app: &Path) -> String {
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
