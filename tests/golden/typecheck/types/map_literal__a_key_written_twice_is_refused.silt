@@ -1,27 +1,31 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]: duplicate key "a" in map literal
--- stderr-contains: .silt:22:22
+-- stderr-contains: .silt:25:22
 -- stderr-contains: duplicate key 1 in map literal
 -- stderr-contains: duplicate key -1 in map literal
 -- stderr-contains: duplicate key 1.5 in map literal
+-- stderr-contains: duplicate key 0.0 in map literal
+-- stderr-contains: .silt:28:23
 -- stderr-contains: duplicate key true in map literal
 -- stderr-contains: duplicate key Red in map literal
--- stderr-contains: .silt:26:32
+-- stderr-contains: .silt:30:32
 -- stderr-contains: duplicate key "a" in map pattern
--- stderr-contains: .silt:31:21
+-- stderr-contains: .silt:35:16
 -- stderr-not-contains: duplicate key k
 -- stderr-not-contains: set literal
 -- A key written twice as the same constant in one map literal loses the
 -- first value without a word; in a map pattern it can never match, or
 -- gives one value two names. Computed keys are not looked at, and a set
--- literal drops its repeats as a set does.
+-- literal drops its repeats as a set does. A float key is the map's:
+-- -0.0 and 0.0 are one key.
 type Color { Red, Green }
 
 fn main() {
   let m = #{ "a": 1, "a": 2 }
   let n = #{ 1: "x", 1: "y", -1: "z", -1: "w" }
   let f = #{ 1.5: 1, 1.5: 2 }
+  let z = #{ -0.0: 3, 0.0: 4 }
   let b = #{ true: 1, false: 2, true: 3 }
   let c = #{ Red: 1, Green: 2, Color.Red: 3 }
   let k = "a"
@@ -31,5 +35,5 @@ fn main() {
     #{ "a": x, "a": y } -> println("{x} {y}")
     _ -> ()
   }
-  println("{n} {f} {b} {c} {computed} {s}")
+  println("{n} {f} {z} {b} {c} {computed} {s}")
 }

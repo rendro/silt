@@ -707,7 +707,7 @@ impl<'a, 'd> Walk<'a, 'd> {
                 self.scopes.extend(merged.unwrap_or_default());
             }
             PatternKind::Map(entries) => {
-                for (_, value) in entries {
+                for (_, _, value) in entries {
                     self.bind(value, rel, true);
                 }
             }

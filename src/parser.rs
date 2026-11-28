@@ -5849,6 +5849,7 @@ impl<'src> Parser<'src> {
                 self.advance();
                 let entries =
                     self.comma_list("map pattern", start, ListEnd::Close(&Token::RBrace), |p| {
+                        let key_span = p.span();
                         let key = match p.peek().clone() {
                             Token::StringLit(s) => {
                                 p.advance();
@@ -5863,7 +5864,7 @@ impl<'src> Parser<'src> {
                             }
                         };
                         p.expect(&Token::Colon)?;
-                        Ok((key, p.parse_pattern()?))
+                        Ok((key, key_span, p.parse_pattern()?))
                     })?;
                 Ok(mk(PatternKind::Map(entries)))
             }
@@ -7071,7 +7072,7 @@ fn main() {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].0, "key");
             assert!(
-                matches!(entries[0].1.kind, PatternKind::Ident(ref v) if *v == intern::intern("v"))
+                matches!(entries[0].2.kind, PatternKind::Ident(ref v) if *v == intern::intern("v"))
             );
         } else {
             panic!("expected map pattern");

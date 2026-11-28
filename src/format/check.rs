@@ -1015,7 +1015,7 @@ impl ShapeWriter {
             }
             PatternKind::Map(entries) => {
                 self.open("map");
-                for (key, value) in entries {
+                for (key, _, value) in entries {
                     self.open("entry");
                     self.text(key);
                     self.pattern(value);

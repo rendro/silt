@@ -233,23 +233,27 @@ impl TypeChecker {
 enum MapKey {
     Text(String),
     Int(i64),
-    /// By its bits: two floats are this one constant when they are
-    /// written alike.
+    /// By its bits, a zero of either sign as `0.0`: two floats are
+    /// one key when the map takes them for one (`-0.0 == 0.0`).
     Float(u64),
     Bool(bool),
     Variant(Symbol),
 }
 
 impl MapKey {
+    fn float(x: f64) -> MapKey {
+        MapKey::Float(if x == 0.0 { 0.0f64 } else { x }.to_bits())
+    }
+
     fn of(key: &Expr) -> Option<MapKey> {
         Some(match &key.kind {
             ExprKind::StringLit(text) => MapKey::Text(text.clone()),
             ExprKind::Int(n) => MapKey::Int(*n),
-            ExprKind::Float(x) => MapKey::Float(x.to_bits()),
+            ExprKind::Float(x) => MapKey::float(*x),
             ExprKind::Bool(b) => MapKey::Bool(*b),
             ExprKind::Unary(UnaryOp::Neg, inner) => match inner.kind {
                 ExprKind::Int(n) => MapKey::Int(n.checked_neg()?),
-                ExprKind::Float(x) => MapKey::Float((-x).to_bits()),
+                ExprKind::Float(x) => MapKey::float(-x),
                 _ => return None,
             },
             // A capital names a variant (`Red`, `shapes.Red`,
