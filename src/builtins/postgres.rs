@@ -3076,10 +3076,14 @@ fn do_cursor_close(cursor_id: u64, wanted: &Wanted) -> Value {
 const LISTEN_CHANNEL_CAPACITY: usize = 64;
 
 /// How long the listener worker waits for a notification before it
-/// looks whether its channel was closed. Upper bound on the delay
-/// between `channel.close(listen_ch)` and the worker dropping the
-/// pinned connection back into the pool.
+/// looks whether its channel or its pool was closed. Upper bound on the
+/// delay between `channel.close(listen_ch)` or `postgres.close(pool)`
+/// and the worker dropping the pinned connection back into the pool.
 const LISTEN_POLL_TICK_MS: u64 = 200;
+
+/// How long the listener worker waits for room in a full channel
+/// before it looks again.
+const LISTEN_ROOM_TICK_MS: u64 = 5;
 
 /// The most bytes of a channel name PostgreSQL keeps: it cuts a longer
 /// name in `LISTEN`, and refuses it in a notification.
@@ -3135,21 +3139,38 @@ fn make_notification(channel: &str, payload: &str, pid: i64) -> Value {
 /// dropped back into the pool. LISTEN was already issued before this
 /// function starts (see `listen`'s io-pool closure), with `told`
 /// attached to the connection; we just pump notifications until the
-/// channel closes or the connection ends.
+/// channel closes, the pool `pool` is closed or the connection ends.
+///
+/// It counts for nothing of the program's: the channel is fed from
+/// outside, so a task that waits on it is not deadlocked, and a program
+/// whose `main` returns ends, its listeners with it. So it waits for
+/// room in a full channel by looking again, not as a task that waits
+/// to send (which would be a wait that a notification could end, and
+/// hold the end of the program up).
 fn do_listen_worker(
     conn: PinnedConn,
+    pool: u64,
     channel_name: String,
     mut told: tokio::sync::mpsc::Receiver<Notification>,
     ch: Arc<Channel>,
     scheduler: Arc<Scheduler>,
 ) {
     let tick = Duration::from_millis(LISTEN_POLL_TICK_MS);
-    while !ch.is_closed() {
+    let open = || !ch.is_closed() && lookup_pool(pool).is_some();
+    'pump: while open() {
         match conn.wait(async { tokio::time::timeout(tick, told.recv()).await.ok() }) {
             Some(Some(n)) => {
-                let rec = notification_to_record(&n);
-                if !scheduler.send_wait(&ch, rec) {
-                    break;
+                let mut rec = notification_to_record(&n);
+                loop {
+                    match ch.try_send(rec, scheduler.wake()) {
+                        TrySend::Sent => break,
+                        TrySend::Closed(_) => break 'pump,
+                        TrySend::Full(back) => rec = back,
+                    }
+                    if !open() {
+                        break 'pump;
+                    }
+                    std::thread::sleep(Duration::from_millis(LISTEN_ROOM_TICK_MS));
                 }
             }
             // The connection has ended. We don't surface that on the
@@ -3590,6 +3611,7 @@ builtins! {
     // channel that silently closes. The long-lived worker is spawned only
     // after LISTEN succeeds.
     fn listen(vm, pool: PoolHandle, channel: &str) -> Started {
+        let pool_handle = pool;
         let pool = pool.open()?;
         if let Some(refused) = refused_channel_name("postgres.listen", channel) {
             return Err(refused.into());
@@ -3599,7 +3621,11 @@ builtins! {
         // owned Arc synchronously.
         let ch_id = vm.next_channel_id();
         let worker_channel = Channel::new(ch_id, LISTEN_CHANNEL_CAPACITY);
+        // A notification may come at any time: a task that waits for one
+        // is not deadlocked.
+        worker_channel.set_fed_from_outside();
         let nobodys = worker_channel.clone();
+        let pool_id = pool_handle.0;
 
         // LISTEN happens on the io_pool so it doesn't block the VM thread,
         // but we still wait for its completion before returning so LISTEN
@@ -3631,15 +3657,12 @@ builtins! {
             }
             // LISTEN ok — spawn the long-lived worker onto the io_pool.
             // The worker owns `conn` for its whole lifetime; on exit the
-            // conn drops back into the pool.
-            // The worker counts as pending for as long as it runs: a
-            // notification may come at any time.
+            // conn drops back into the pool. It counts as pending for
+            // nothing (`do_listen_worker`).
             let worker_ch = worker_channel.clone();
             let scheduler = runtime.scheduler.clone();
-            let serving = scheduler.external();
             runtime.io_pool.background(pg_timeout_err, move || {
-                do_listen_worker(conn, channel_name, told, worker_ch, scheduler);
-                drop(serving);
+                do_listen_worker(conn, pool_id, channel_name, told, worker_ch, scheduler);
                 Value::Unit
             });
             ok(Value::Channel(worker_channel))

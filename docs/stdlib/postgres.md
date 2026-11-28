@@ -323,7 +323,7 @@ fn main() -> Result((), postgres.PostgresError) {
 postgres.listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PostgresError)
 ```
 
-Listens on the PostgreSQL channel `channel` and gives a channel that receives a `Notification` (`channel`, `payload`, and `pid`, the session that sent it) for each `NOTIFY` on it. The listener holds one of the pool's connections until its channel is closed. See [LISTEN / NOTIFY](#listen--notify).
+Listens on the PostgreSQL channel `channel` and gives a channel that receives a `Notification` (`channel`, `payload`, and `pid`, the session that sent it) for each `NOTIFY` on it. The listener holds one of the pool's connections until its channel is closed, or its pool (`postgres.close`, which closes the channel). See [LISTEN / NOTIFY](#listen--notify).
 
 ```silt
 import channel
@@ -782,7 +782,11 @@ PostgreSQL channel: its `channel`, its `payload`, and `pid`, the process
 id of the session that sent it. The listener holds one of the pool's
 connections until its channel is closed: while it is open, the pool has
 one connection fewer for statements (with `max_pool_size` 1, a
-statement waits the pool's 30 seconds and is `Timeout`).
+statement waits the pool's 30 seconds and is `Timeout`). `postgres.close`
+of its pool closes the channel too: a task that waits on it gets `None`.
+A notification may come at any time, so a task that waits on the channel
+is never judged deadlocked; and a listener keeps no program going: a
+program ends when `main` returns, whether or not it closed its listeners.
 `postgres.notify(target, channel, payload)` sends a single NOTIFY.
 
 A channel name is used as it is written: its case is kept (`"Orders"`
