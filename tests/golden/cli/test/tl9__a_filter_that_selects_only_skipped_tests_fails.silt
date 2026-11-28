@@ -1,0 +1,11 @@
+-- cmd: test --filter later
+-- exit: 1
+import test
+
+fn test_now() {
+  test.assert(true)
+}
+
+fn skip_test_later() {
+  test.assert(false)
+}

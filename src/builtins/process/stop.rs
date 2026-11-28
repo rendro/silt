@@ -18,8 +18,12 @@
 //! A channel asked for is fed from outside the program
 //! (`Channel::set_fed_from_outside`): a task that waits on it is never
 //! judged deadlocked, as a signal may come at any time.
+//!
+//! The command that runs the programs can ask too (`when_untaken`):
+//! `silt test` is told of a stop signal that no channel waits for, and
+//! says which test it stopped in.
 
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::runtime::sync::{Channel, Close};
 use crate::scheduler::Scheduler;
@@ -30,6 +34,26 @@ use crate::value::Value;
 /// scheduler of its program. Held weakly: a channel that the program has
 /// let go of waits for nothing.
 static WAITING: Mutex<Vec<(Weak<Channel>, Weak<Scheduler>)>> = Mutex::new(Vec::new());
+
+/// What a stop signal that no channel waits for does, once the command
+/// has asked (`when_untaken`): called with `interrupt` as `arrived` is,
+/// on the thread that reads the signals.
+static UNTAKEN: OnceLock<fn(bool)> = OnceLock::new();
+
+/// A stop signal that no channel of a program waits for calls `action`
+/// (`silt test`'s, which ends the process), instead of ending the
+/// process as the system ends it. The first `action` given stays.
+/// Called again, it listens again where a signal that a program took
+/// has put the system's way back. Where the signals cannot be listened
+/// for, nothing is done: the system's way stays.
+pub(crate) fn when_untaken(action: fn(bool)) {
+    if !os::HAS_STOP_SIGNALS {
+        return;
+    }
+    let _ = UNTAKEN.set(action);
+    let _waiting = WAITING.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = os::listen();
+}
 
 /// The next stop signal is sent into `ch`, a channel of `scheduler`'s
 /// program, which is then closed. `Err` with the reason when the
@@ -63,12 +87,17 @@ fn arrived(interrupt: bool) {
         true => bv::SIGNAL_INTERRUPT,
         false => bv::SIGNAL_TERMINATE,
     };
+    let mut taken = false;
     for (ch, scheduler) in waiting {
         let (Some(ch), Some(scheduler)) = (ch.upgrade(), scheduler.upgrade()) else {
             continue;
         };
+        taken = true;
         let _ = ch.try_send(Value::variant(signal, []), scheduler.wake());
         ch.close(Close::default(), scheduler.wake());
+    }
+    if !taken && let Some(action) = UNTAKEN.get() {
+        action(interrupt);
     }
 }
 

@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process;
+use std::sync::Mutex;
+use std::time::Instant;
 
 use crate::diagnostic::{Diagnostic, render_human};
 use crate::session::{Entry, EntryPoint, LockPolicy, TestKind, selected_tests};
@@ -232,6 +234,9 @@ fn no_test_files(walked: &[String]) -> String {
 }
 
 fn run_tests(given: &[String], filter: Option<String>) {
+    // A stop signal (Ctrl-C, SIGTERM) that no test's program waits for
+    // ends the run with the test it stopped in named.
+    crate::builtins::process::when_untaken(stopped);
     // Each path given is what the commands that take one make of it
     // (`paths::path_arg`); one that is none of them, or names nothing
     // (a misspelled file or directory), is refused before anything runs.
@@ -428,12 +433,18 @@ fn run_tests(given: &[String], filter: Option<String>) {
         #[cfg(feature = "test-hooks")]
         crate::cli::run::panic_where_a_test_says(&vm);
         vm.set_task_owner(setup_owner);
+        Progress::now(
+            &counts,
+            (total, skipped),
+            Some(Running::TopLevel(written.clone())),
+        );
         let setup = vm.run_program(&program);
         // The top-level code has ended when its tasks can do no more.
         // Those that wait then stay: a test may be what they wait for.
         if setup.is_ok() {
             vm.wait_until_idle();
         }
+        Progress::now(&counts, (total, skipped), None);
         // (No report of the command's once a thread of a runtime has
         // panicked and is ending the process: everything it writes
         // from here on goes through `say`.)
@@ -472,7 +483,12 @@ fn run_tests(given: &[String], filter: Option<String>) {
             // The tasks of the file's top-level code are still there,
             // and may work for the test.
             vm.set_task_owner_within(owner, setup_owner);
-            let started = std::time::Instant::now();
+            Progress::now(
+                &counts,
+                (total, skipped),
+                Some(Running::Test(format!("{written}::{name}"))),
+            );
+            let started = Instant::now();
             let outcome = vm.call_test(test);
             // The test has ended when its tasks can do no more: one
             // that fails after the test function has returned fails
@@ -529,6 +545,7 @@ fn run_tests(given: &[String], filter: Option<String>) {
             } else {
                 counts.passed += 1;
             }
+            Progress::now(&counts, (total, skipped), None);
         }
         // The file's own tasks: one report for the file.
         owners.report_file(setup_owner, &mut counts);
@@ -548,26 +565,123 @@ fn run_tests(given: &[String], filter: Option<String>) {
         failed,
         file_errors,
     } = counts;
-    let test_word = if total == 1 { "test" } else { "tests" };
-    let mut said = match file_errors.any() {
-        true => format!(
-            "\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped ({})\n",
-            file_errors.describe()
-        ),
-        false => {
-            format!("\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped\n")
-        }
-    };
+    let mut said = summary(total, (passed, failed, skipped, 0), &file_errors);
     if total == 0 && !file_errors.any() {
         said +=
             "hint: test functions must be named 'fn test_*'; test files end with '_test.silt'\n";
     }
+    // Skipped tests are found, but none of them ran: the run tested
+    // nothing.
+    let none_ran = passed + failed == 0;
+    if none_ran && skipped > 0 {
+        said += &format!("no test ran ({skipped} skipped)\n");
+    }
     say(&said);
     // (The tests may have left threads: see `vm_run_file`.) Test files
-    // that hold no test fail the run, as finding no test file does.
-    if failed > 0 || file_errors.any() || total == 0 {
+    // that hold no test fail the run, as finding no test file does, and
+    // so do test files whose every test is skipped.
+    if failed > 0 || file_errors.any() || none_ran {
         crate::scheduler::exit_with_status(1);
     }
+}
+
+/// The summary line of a run of `total` tests: how many passed,
+/// failed, were skipped and, where the run was stopped in one, `stopped`;
+/// then the files that failed as files.
+fn summary(
+    total: usize,
+    (passed, failed, skipped, stopped): (usize, usize, usize, usize),
+    file_errors: &FileErrors,
+) -> String {
+    let test_word = if total == 1 { "test" } else { "tests" };
+    let mut said =
+        format!("\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped");
+    if stopped > 0 {
+        said += &format!(", {stopped} stopped");
+    }
+    if file_errors.any() {
+        said += &format!(" ({})", file_errors.describe());
+    }
+    said + "\n"
+}
+
+/// Where a `silt test` run is, for a stop signal that comes before it
+/// ends (`stopped`): the tallies so far, and what runs now.
+struct Progress {
+    total: usize,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    file_errors: FileErrors,
+    /// What runs, since when; `None` between them (a file is read and
+    /// checked, a result is said).
+    running: Option<(Running, Instant)>,
+}
+
+/// What of a test file runs.
+enum Running {
+    /// The file's top-level code, of the file as its result lines name
+    /// it.
+    TopLevel(String),
+    /// A test, as its result line names it (`a_test.silt::test_x`).
+    Test(String),
+}
+
+/// The run's progress, as `Progress::now` last set it.
+static PROGRESS: Mutex<Option<Progress>> = Mutex::new(None);
+
+impl Progress {
+    /// The run has `counts`, of `total` tests of which `skipped` were
+    /// skipped, and now runs `running`.
+    fn now(counts: &Counts, (total, skipped): (usize, usize), running: Option<Running>) {
+        let progress = Progress {
+            total,
+            passed: counts.passed,
+            failed: counts.failed,
+            skipped,
+            file_errors: counts.file_errors.clone(),
+            running: running.map(|running| (running, Instant::now())),
+        };
+        let starts = progress.running.is_some();
+        *PROGRESS.lock().unwrap_or_else(|e| e.into_inner()) = Some(progress);
+        // A stop signal that an earlier test's program took has put the
+        // system's way back: what starts now is listened for again.
+        if starts {
+            crate::builtins::process::when_untaken(stopped);
+        }
+    }
+}
+
+/// A stop signal (Ctrl-C, SIGTERM) came that no test's program waits
+/// for: say what it stopped (the test, or a file's top-level code, with
+/// how long it had run) and the summary so far, and end the run with 1.
+/// Called on the thread that reads the signals.
+fn stopped(_interrupt: bool) {
+    let progress = PROGRESS.lock().unwrap_or_else(|e| e.into_inner()).take();
+    // What the tests printed and the writers still hold goes first, as
+    // long as their readers take it.
+    crate::vm::drain_process_output(crate::scheduler::LAST_WORDS);
+    let mut said = String::new();
+    if let Some(progress) = progress {
+        let mut stopped = 0;
+        match &progress.running {
+            Some((Running::Test(test), since)) => {
+                stopped = 1;
+                let after = since.elapsed().as_secs_f64();
+                said += &format!("  STOPPED {test} (after {after:.1} s)\n");
+            }
+            Some((Running::TopLevel(file), since)) => {
+                let after = since.elapsed().as_secs_f64();
+                said += &format!("  STOPPED {file} (in its top-level code, after {after:.1} s)\n");
+            }
+            None => {}
+        }
+        // (A test that is stopped is counted in `total` already.)
+        let tallies = (progress.passed, progress.failed, progress.skipped, stopped);
+        said += &summary(progress.total, tallies, &progress.file_errors);
+    }
+    say(&said);
+    crate::scheduler::exit_with_status(1);
 }
 
 /// The tallies of a `silt test` run.
@@ -585,7 +699,7 @@ struct Counts {
 
 /// The files of a `silt test` run that failed as files, by what happened
 /// to each.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct FileErrors {
     /// Files that could not be read.
     unreadable: usize,

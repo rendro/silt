@@ -1,0 +1,7 @@
+-- cmd: test
+-- exit: 1
+import test
+
+fn skip_test_later() {
+  test.assert(false)
+}

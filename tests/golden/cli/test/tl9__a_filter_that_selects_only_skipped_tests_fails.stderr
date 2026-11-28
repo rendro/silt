@@ -1,0 +1,4 @@
+  SKIP tl9__a_filter_that_selects_only_skipped_tests_fails.silt::skip_test_later
+
+1 test: 0 passed, 0 failed, 1 skipped
+no test ran (1 skipped)

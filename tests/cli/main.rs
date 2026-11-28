@@ -59,6 +59,7 @@ mod stdin_reading_tests;
 mod stdout_failure_tests;
 mod stop_signals_tests;
 mod stuck_stdout_tests;
+mod test_stopped_tests;
 mod trait_init_parity_tests;
 mod watch;
 mod watch_clear_tty_guard_tests;
