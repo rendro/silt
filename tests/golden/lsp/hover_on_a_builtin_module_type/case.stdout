@@ -176,9 +176,12 @@ error where it is read.
 
 - A number is an `Int` when it is a whole number in `Int`'s range (`1`,
   `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
-  a number out of that range).
+  a number out of that range). A number beyond `Float`'s range (`1e400`)
+  is none: a `TypeMismatch` where it starts.
 - An object is a `Map(String, Value)`. Its keys come out sorted, not in
-  the document's order, and of a key written twice the last value counts.
+  the document's order, and of a key written twice the last value counts;
+  a value that is no `json.Value` is the error all the same, the first
+  in the document's order.
 
 `json.stringify` and `json.pretty` write a `json.Value` as the JSON it
 holds: `json.Int(1)` as `1`, `json.Object` as an object.
